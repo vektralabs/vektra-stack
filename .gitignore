@@ -22,5 +22,6 @@ Thumbs.db
 tmp/
 temp/
 
-# Claude Code
-.claude/
+# Claude Code - local/personal files only
+.claude/settings.local.json
+CLAUDE.local.md

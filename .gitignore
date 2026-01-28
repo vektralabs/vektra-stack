@@ -1,27 +1,69 @@
 # OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Editor files
+# IDE / Editor
+.idea/
+.vscode/
 *.swp
 *.swo
 *~
-.idea/
-.vscode/
-*.sublime-*
-
-# Environment files
-.env
-.env.local
-.env.*.local
 
 # Logs
 *.log
+logs/
+
+# Local development
+.env
+.env.local
+.env.*.local
+.claude/settings.local.json
+.claude/claude.local.md
+
+# Build outputs
+dist/
+build/
+out/
+
+# Dependencies (if we add any later)
+node_modules/
+vendor/
+
+# Test coverage
+coverage/
+.nyc_output/
 
 # Temporary files
 tmp/
 temp/
+*.tmp
 
-# Claude Code - local/personal files only
-.claude/settings.local.json
-CLAUDE.local.md
+# S2S local state (not part of plugin distribution)
+# When using s2s to develop s2s itself, these are generated files
+# NOTE: Use .s2s/* (not .s2s/) to ignore contents but allow exceptions
+.s2s/*
+
+# But track development artifacts for s2s itself (dogfooding)
+!.s2s/BACKLOG.md
+!.s2s/CONTEXT.md
+!.s2s/README.md
+!.s2s/config.yaml
+!.s2s/workspace.yaml
+!.s2s/requirements.md
+!.s2s/architecture.md
+!.s2s/ideas.md
+!.s2s/decisions/
+!.s2s/decisions/**
+!.s2s/plans/
+!.s2s/plans/**
+# Note: sessions/ intentionally NOT tracked - they are temporary working artifacts
+
+# All docs/ content is public - no exclusions
+
+# Local archive (development notes, test suites, etc.)
+.archive/

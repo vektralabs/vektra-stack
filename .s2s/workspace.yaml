@@ -1,44 +1,65 @@
 # Spec2Ship Workspace Configuration
-# This file is created by /s2s:init --workspace
-# For help, ask Claude: "how do workspaces work in s2s" (loads s2s-guide skill)
+# Updated after roundtable 20260128 - hybrid monorepo strategy
+# See ADR-0001 for rationale
 
 name: "Vektra"
 version: "0.1.0"
 
-# === GIT STRUCTURE ===
-# Detected automatically by init, informs reference patterns
-structure: "multi-repo"
+# === REPOSITORY STRUCTURE ===
+# Hybrid: monorepo for Python components, separate repos for incompatible stacks
+# - Monorepo components: vektra-core, vektra-ingest, vektra-index, vektra-analytics, vektra-learn, vektra-admin
+# - Separate repos (Phase 2+): vektra-moodle (PHP), vektra-sdk-py, vektra-sdk-js
+structure: "hybrid"
 
 # === COMPONENT REGISTRY ===
-# Components are added via /s2s:init from each component folder
+# Components listed with has_own_git to indicate repo strategy
+# TODO: Create folders for components not yet existing
 components:
+  # --- PHASE 1 COMPONENTS (monorepo) ---
   - id: "vektra-core"
     name: "RAG Engine"
     path: "./vektra-core"
     type: "service"
     has_own_git: false
     depends_on: []
+    # TODO: mkdir vektra-core
 
   - id: "vektra-ingest"
     name: "Ingestion Pipeline"
     path: "./vektra-ingest"
     type: "service"
     has_own_git: false
-    depends_on: []
+    depends_on:
+      - "vektra-core"
+    # TODO: mkdir vektra-ingest
 
   - id: "vektra-index"
     name: "Vector Store"
     path: "./vektra-index"
     type: "service"
     has_own_git: false
-    depends_on: []
+    depends_on:
+      - "vektra-core"
+    # TODO: mkdir vektra-index
 
+  - id: "vektra-admin"
+    name: "System Administration"
+    path: "./vektra-admin"
+    type: "application"
+    has_own_git: false
+    depends_on:
+      - "vektra-analytics"
+    # TODO: mkdir vektra-admin (minimal in Phase 1)
+
+  # --- PHASE 2 COMPONENTS ---
   - id: "vektra-analytics"
     name: "Analytics"
     path: "./vektra-analytics"
     type: "service"
     has_own_git: false
-    depends_on: []
+    depends_on:
+      - "vektra-core"
+    # TODO: mkdir vektra-analytics (Phase 2)
 
   - id: "vektra-learn"
     name: "E-Learning Vertical"
@@ -48,56 +69,57 @@ components:
     depends_on:
       - "vektra-core"
       - "vektra-analytics"
+    # TODO: mkdir vektra-learn (Phase 2)
+    # Note: LMS-agnostic backend. Exposes APIs for enrollment, ingestion trigger, dashboard tokens.
 
   - id: "vektra-moodle"
     name: "Moodle LMS Adapter"
-    path: "./vektra-moodle"
+    path: "../vektra-moodle"
     type: "service"
-    has_own_git: false
+    has_own_git: true
     depends_on:
       - "vektra-learn"
+    # TODO: Create separate repo vektralabs/vektra-moodle (Phase 2)
+    # Note: PHP plugin deployed into Moodle. Published via Moodle Plugin Directory.
 
-  - id: "vektra-admin"
-    name: "System Administration"
-    path: "./vektra-admin"
-    type: "application"
-    has_own_git: false
-    depends_on:
-      - "vektra-analytics"
-
+  # --- PHASE 3 COMPONENTS ---
   - id: "vektra-sdk-py"
     name: "Python SDK"
-    path: "./vektra-sdk-py"
+    path: "../vektra-sdk-py"
     type: "library"
-    has_own_git: false
+    has_own_git: true
     depends_on:
       - "vektra-core"
+    # TODO: Create separate repo vektralabs/vektra-sdk-py (Phase 3)
+    # Note: Published to PyPI. Independent versioning.
 
   - id: "vektra-sdk-js"
     name: "JavaScript/TypeScript SDK"
-    path: "./vektra-sdk-js"
+    path: "../vektra-sdk-js"
     type: "library"
-    has_own_git: false
+    has_own_git: true
     depends_on:
       - "vektra-core"
+    # TODO: Create separate repo vektralabs/vektra-sdk-js (Phase 3)
+    # Note: Published to npm. Independent versioning.
 
 # === CROSS-CUTTING CONCERNS ===
 # Decisions that affect multiple components
 # Updated when workspace-level roundtables produce decisions
-cross_cutting: []
+cross_cutting:
+  - id: "repository-strategy"
+    decision: "ADR-0001"
+    affects: ["vektra-core", "vektra-ingest", "vektra-index", "vektra-analytics", "vektra-learn", "vektra-admin", "vektra-moodle", "vektra-sdk-py", "vektra-sdk-js"]
 
 # === ROUNDTABLE SCOPE ===
 # Guides facilitator on appropriate discussion levels
-# Uses PRINCIPLES (for LLM reasoning) instead of topic lists
 roundtable_scope:
   workspace_level:
-    # Core decision principle for facilitator
     decision_principle: |
       Workspace discussions focus on decisions that AFFECT MULTIPLE components.
       Key question: "Does this decision require coordination between teams?"
       If yes -> workspace level. If no -> component level.
 
-    # Keywords that indicate workspace-level scope
     indicators:
       - "cross-component"
       - "shared"
@@ -110,7 +132,6 @@ roundtable_scope:
       - "API versioning"
       - "security policy"
 
-    # Keywords that indicate should defer to component
     defer_indicators:
       - "internal"
       - "implementation detail"
@@ -126,7 +147,7 @@ roundtable_scope:
       Decisions made here may generate backlog items in components.
 
   component_level:
-    inherits_context_from: "workspace"  # Include workspace CONTEXT.md as background
+    inherits_context_from: "workspace"
 
     decision_principle: |
       Component discussions focus on decisions INTERNAL to this component.

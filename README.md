@@ -1,103 +1,101 @@
 # Vektra
 
-**Modular open-source platform for Retrieval-Augmented Generation (RAG) with specialized verticals for e-learning and beyond.**
+**Modular, open-source RAG infrastructure you deploy on your own terms.**
 
-Vektra is designed as infrastructure, not as a consumer application. It provides building blocks for developers and organizations that need to integrate RAG capabilities into their systems, with a specialized vertical for learning management and knowledge delivery.
+Plug in any LLM provider, vector store, or pipeline, keep data on-premises, and extend with vertical modules like e-learning, all through configuration rather than code forks.
 
-## What is this repository?
+## Who is Vektra for?
 
-`vektra-stack` is the **entrypoint** for understanding Vektra. It does not contain core implementation code. Instead, it serves as:
+- **Platform engineers / DevOps teams** deploying RAG at their organization with data sovereignty requirements
+- **Developers** building RAG-powered applications via SDKs
+- **Domain specialists** (e.g., university e-learning teams) using vertical modules without touching infrastructure
 
-- A central reference for the overall architecture
-- Documentation hub for the multi-repo ecosystem
-- A guide to understanding how components relate to each other
+## What makes Vektra different?
 
-The actual implementation lives in separate, focused repositories.
+Unlike RAG toolkits (LangChain, LlamaIndex, Haystack), Vektra ships as a **deployable platform**:
 
-## Platform Structure
+| Aspect | Toolkits | Vektra |
+|--------|----------|--------|
+| Deployment | Build your own | `docker-compose up` |
+| Configuration | Code changes | YAML/environment |
+| On-premises | DIY | First-class support |
+| GDPR compliance | DIY | Built-in (retention, audit logs) |
+| Vertical features | None | E-learning module included |
 
-Vektra is organized in layers:
+## Quick start
+
+```bash
+git clone https://github.com/vektralabs/vektra-stack.git
+cd vektra-stack
+docker-compose up
+```
+
+Target: from clone to first RAG query in under 30 minutes.
+
+## Repository structure
+
+Vektra uses a hybrid monorepo approach ([ADR-0001](.s2s/decisions/ADR-0001-hybrid-monorepo-strategy.md)):
+
+```
+vektra-stack/              # This repository (monorepo)
+├── vektra-core/           # RAG engine, LLM abstraction
+├── vektra-ingest/         # Document processing (PDF, OCR, PPT, Word)
+├── vektra-index/          # Vector store abstraction, embedding
+├── vektra-analytics/      # Metrics, reporting, alerting
+├── vektra-learn/          # E-learning vertical (chatbot, dashboard)
+├── vektra-admin/          # System administration
+├── docs/                  # Documentation
+└── docker-compose.yml     # Orchestration
+
+# Separate repositories (different tech stack or deployment target)
+vektra-moodle/             # Moodle LMS adapter (PHP plugin)
+vektra-sdk-py/             # Python SDK (published to PyPI)
+vektra-sdk-js/             # JavaScript SDK (published to npm)
+```
+
+## Platform architecture
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│  DEPLOYMENTS         Branded instances for specific institutions │
-├───────────────────────────────────────────────────────────────────┤
 │  VERTICALS           Domain solutions (vektra-learn for e-learning)│
 ├───────────────────────────────────────────────────────────────────┤
-│  LMS ADAPTERS        Platform integrations (vektra-moodle, etc.) │
+│  LMS ADAPTERS        Platform integrations (vektra-moodle, etc.)  │
 ├───────────────────────────────────────────────────────────────────┤
-│  CORE                RAG engine, ingestion, indexing, analytics  │
+│  CORE                RAG engine, ingestion, indexing, analytics   │
 ├───────────────────────────────────────────────────────────────────┤
-│  OPERATIONS          System administration (vektra-admin)        │
+│  OPERATIONS          System administration (vektra-admin)         │
 ├───────────────────────────────────────────────────────────────────┤
-│  INTEGRATION         SDKs (Python, JavaScript)                   │
+│  INTEGRATION         SDKs (Python, JavaScript)                    │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-For detailed architecture documentation, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+## Development status
 
-## Design Principles
+See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
-1. **Separation of concerns** — Each repository has a single, well-defined responsibility
-2. **No tight coupling** — Components communicate through stable interfaces, not internal dependencies
-3. **Infrastructure-first** — Built as platform components, not end-user applications
-4. **Composability** — Use only what you need; components work independently or together
-5. **Deployment parity** — Same architecture for cloud and on-premises installations
-6. **Workflow orchestration** — Pipeline components designed for external orchestration (n8n)
+| Phase | Focus | Status |
+|-------|-------|--------|
+| Phase 1 | MVP (core + ingest + index + minimal admin) | In progress |
+| Phase 2 | Verticals (learn + moodle + analytics) | Planned |
+| Phase 3 | Ecosystem (SDKs, plugins) | Planned |
 
-## Repository Structure
+## Documentation
 
-```
-vektra-stack/
-├── README.md           # This file
-├── ARCHITECTURE.md     # High-level system design
-├── ROADMAP.md          # Development phases and milestones
-└── CONTRIBUTING.md     # How to contribute
-```
-
-## Current Status
-
-Vektra is in early development (Phase 0: Foundation). We are:
-
-- Defining component boundaries and interfaces
-- Documenting architecture and data flows
-- Preparing the foundation for individual component repositories
-
-See [ROADMAP.md](./ROADMAP.md) for planned phases.
-
-## Ecosystem Repositories
-
-### Core Layer
-
-| Repository | Description | Status |
-|------------|-------------|--------|
-| [vektra-core](https://github.com/vektralabs/vektra-core) | RAG engine, LLM abstraction, conversation management, safeguards | Planned |
-| [vektra-ingest](https://github.com/vektralabs/vektra-ingest) | Document processing pipeline (PDF, OCR, PPT, Word) | Planned |
-| [vektra-index](https://github.com/vektralabs/vektra-index) | Vector store abstraction, embedding, semantic search | Planned |
-| [vektra-analytics](https://github.com/vektralabs/vektra-analytics) | Metrics aggregation, reporting API, alerting | Planned |
-
-### Verticals and Adapters
-
-| Repository | Description | Status |
-|------------|-------------|--------|
-| [vektra-learn](https://github.com/vektralabs/vektra-learn) | E-learning vertical (chatbot, instructor dashboard) | Planned |
-| [vektra-moodle](https://github.com/vektralabs/vektra-moodle) | Moodle LMS adapter (SSO, content sync, embed) | Planned |
-
-### Operations and Integration
-
-| Repository | Description | Status |
-|------------|-------------|--------|
-| [vektra-admin](https://github.com/vektralabs/vektra-admin) | System administration interface | Planned |
-| [vektra-sdk-py](https://github.com/vektralabs/vektra-sdk-py) | Python SDK | Planned |
-| [vektra-sdk-js](https://github.com/vektralabs/vektra-sdk-js) | JavaScript/TypeScript SDK | Planned |
+- [ROADMAP.md](ROADMAP.md) - Development phases and milestones
+- [GOVERNANCE.md](GOVERNANCE.md) - Project governance and contributor ladder
+- [CONTRIBUTING.md](CONTRIBUTING.md) - How to contribute
+- [.s2s/decisions/](.s2s/decisions/) - Architecture Decision Records
 
 ## Contributing
 
-We welcome contributions. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting issues or pull requests.
+We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+- Developer Certificate of Origin (DCO) sign-off
+- Conventional Commits format
+- PR workflow
 
 ## License
 
-This project is open source. License details will be finalized as the project matures.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 ---
 

@@ -96,6 +96,20 @@ vektra-moodle ──────────────── (integrates learn
 
 **vektra-moodle** is the Moodle-specific adapter that calls these APIs.
 
+## Requirements
+
+See [requirements.md](requirements.md) for the complete Software Requirements Specification.
+
+**Key Phase 1 deliverables**:
+- 46 approved functional requirements (REQ-001 to REQ-051, some IDs unused)
+- 5 business rules
+- 13 non-functional requirements (8 HARD, 5 TARGET)
+- 12 explicit exclusions (Phase 2/3 deferrals)
+- 5 open questions (deferred to design or Phase 2)
+
+**Primary user persona**: Platform Operator (DevOps/platform teams)
+**MVP exit criterion**: 30 minutes from git clone to successful query
+
 ## Architecture Principles
 
 <!-- Populated by /s2s:design -->
@@ -109,4 +123,4 @@ TBD - run `/s2s:design` to define architecture
 
 ---
 
-*Last updated: 2026-01-29*
+*Last updated: 2026-02-01*

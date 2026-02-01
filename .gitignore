@@ -23,7 +23,7 @@ logs/
 .env.local
 .env.*.local
 .claude/settings.local.json
-.claude/claude.local.md
+CLAUDE.local.md
 
 # Build outputs
 dist/

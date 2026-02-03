@@ -192,14 +192,17 @@ class SafeguardHook(Protocol):
 ```yaml
 services:
   postgres:
-    image: postgres:16-alpine  # with pgvector extension
+    image: postgres:16-alpine  # with pgvector extension pre-installed
     mem_limit: 1536m
     mem_reservation: 512m
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "vektra"]
+      test: ["CMD-SHELL", "pg_isready -U vektra && psql -U vektra -c \"SELECT 1 FROM pg_extension WHERE extname='vector'\""]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    volumes:
+      - vektra_pgdata:/var/lib/postgresql/data
 
   vektra:
     image: vektra:latest
@@ -212,13 +215,28 @@ services:
       test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
+      retries: 3
       start_period: 45s
+    volumes:
+      - ./ingest:/app/ingest  # input documents
 
   ollama:
     image: ollama:latest
     profiles: ["local-llm"]
     mem_limit: 3072m
     mem_reservation: 1024m
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - vektra_ollama:/root/.ollama
+
+volumes:
+  vektra_pgdata:
+  vektra_ollama:
 ```
 
 ### Resource limits (NFR-006 compliant)

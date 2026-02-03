@@ -24,7 +24,7 @@ Three-service stack (postgres, vektra, ollama) in single docker-compose.yml.
 ```yaml
 postgres:
   healthcheck:
-    test: ["CMD", "pg_isready", "-U", "vektra"]
+    test: ["CMD-SHELL", "pg_isready -U vektra && psql -U vektra -c \"SELECT 1 FROM pg_extension WHERE extname='vector'\""]
     interval: 10s
     timeout: 5s
     retries: 5

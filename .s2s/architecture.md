@@ -3,24 +3,402 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.0
+**Version**: 1.1
 **Date**: 2026-02-03
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
 
-## System Context
+---
+
+## Table of contents
+
+1. [Introduction and goals](#1-introduction-and-goals)
+2. [Constraints](#2-constraints)
+3. [Context and scope](#3-context-and-scope)
+4. [Solution strategy](#4-solution-strategy)
+5. [Building blocks view](#5-building-blocks-view)
+6. [Runtime view](#6-runtime-view)
+7. [Deployment view](#7-deployment-view)
+8. [Cross-cutting concepts](#8-cross-cutting-concepts)
+9. [Architectural decisions](#9-architectural-decisions)
+10. [Quality requirements](#10-quality-requirements)
+11. [Risks and technical debt](#11-risks-and-technical-debt)
+12. [Glossary](#12-glossary)
+A. [Traceability matrix](#appendix-a-traceability-matrix)
+
+---
+
+## 1. Introduction and goals
+
+### 1.1 Requirements overview
 
 Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG) designed as infrastructure for developers and organizations. Phase 1 deploys as a **modular monolith**: a single container with internal package boundaries, enabling simple deployment while maintaining clean architecture for future extraction.
 
-The system integrates with:
-- **PostgreSQL + pgvector**: Document storage, embeddings, job persistence
-- **Ollama** (optional): Local LLM for testing and on-premises deployment
-- **External LLM providers**: OpenAI, Anthropic via litellm abstraction
-- **n8n**: External pipeline orchestration for document ingestion workflows
+**Primary stakeholder**: Platform Operator (DevOps/platform teams) - REQ-001
 
-## Architecture Principles
+**Key functional goals**:
+- Document ingestion pipeline: PDF, Word, PowerPoint (REQ-002, REQ-045, REQ-046)
+- RAG query with source citations (REQ-003)
+- Multi-provider LLM support: OpenAI, Anthropic, Ollama (REQ-047)
+- API key authentication with scoped permissions (REQ-019, REQ-023)
+- Streaming query responses (REQ-042)
 
-### High-level architecture
+**MVP exit criterion**: 30 minutes from git clone to successful query (REQ-005)
+
+### 1.2 Quality goals
+
+| Priority | Quality Goal | Scenario | Reference |
+|----------|-------------|----------|-----------|
+| 1 | Operability | Complete MVP workflow in <30 minutes without external docs | REQ-005, NFR-004 |
+| 2 | Performance | Query response <10s with local Ollama | NFR-001 |
+| 3 | Security | All API traffic encrypted, conversation content inaccessible to operators | NFR-012, REQ-051 |
+| 4 | Reliability | Zero data loss on graceful restart | NFR-005 |
+
+### 1.3 Stakeholders
+
+| Stakeholder | Concerns | Addressed by |
+|-------------|----------|--------------|
+| Platform Operator | Deployment simplicity, clear errors, API-first | REQ-001, REQ-007, REQ-009 |
+| Security Officer | GDPR compliance, audit trails, encryption | NFR-007, NFR-012, REQ-051 |
+| Downstream Application | Stable API, streaming support, consistent errors | REQ-010, REQ-042, REQ-018 |
+
+---
+
+## 2. Constraints
+
+### 2.1 Technical constraints
+
+| Constraint | Background | Reference |
+|------------|------------|-----------|
+| On-premises deployment | University infrastructure requires local deployment | CONTEXT.md |
+| 4GB RAM ceiling | Minimum deployment target | NFR-006 |
+| PostgreSQL required | pgvector extension for vector storage | ARCH-002 |
+| Python 3.11+ | Type hints, async/await, performance | ARCH-012 |
+
+### 2.2 Organizational constraints
+
+| Constraint | Background |
+|------------|------------|
+| Configuration over fork | Customizations via config, not code modifications |
+| n8n for orchestration | Pipeline orchestration delegated to external tool |
+| Vendor-neutral LLM | No hardcoded provider preference |
+
+### 2.3 Conventions
+
+| Convention | Description |
+|------------|-------------|
+| API versioning | URL prefix /api/v1/, 6-month deprecation window |
+| Error codes | ERR-{COMPONENT}-{NUMBER} pattern |
+| Logging | structlog JSON format with PII redaction |
+
+---
+
+## 3. Context and scope
+
+### 3.1 Business context
+
+```
+                                   ┌─────────────────────────────────────┐
+                                   │         External Systems            │
+                                   └─────────────────────────────────────┘
+                                                    │
+              ┌──────────────────┬──────────────────┼──────────────────┬──────────────────┐
+              │                  │                  │                  │                  │
+              ▼                  ▼                  ▼                  ▼                  ▼
+    ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+    │ Platform         │ │ Downstream       │ │ n8n              │ │ LLM Providers    │ │ PostgreSQL       │
+    │ Operator         │ │ Applications     │ │ Workflows        │ │ (OpenAI/         │ │ + pgvector       │
+    │                  │ │                  │ │                  │ │ Anthropic/Ollama)│ │                  │
+    └────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
+             │                    │                    │                    │                    │
+             │ Admin API          │ Query API          │ Ingest API         │ LLM API            │ SQL/pgvector
+             │ (HTTPS)            │ (HTTPS)            │ (HTTPS)            │ (HTTPS)            │
+             │                    │                    │                    │                    │
+             └────────────────────┴────────────────────┼────────────────────┴────────────────────┘
+                                                       │
+                                                       ▼
+                                        ┌──────────────────────────┐
+                                        │                          │
+                                        │         VEKTRA           │
+                                        │    (Modular Monolith)    │
+                                        │                          │
+                                        └──────────────────────────┘
+```
+
+| Actor | Description | Interface |
+|-------|-------------|-----------|
+| Platform Operator | Deploys, configures, monitors Vektra | Admin REST API, Makefile |
+| Downstream Application | Consumes RAG queries | Query REST API (JSON/SSE) |
+| n8n Workflows | Orchestrates document ingestion | Ingest REST API (async polling) |
+| LLM Providers | Generate responses | litellm abstraction (HTTPS) |
+| PostgreSQL | Stores documents, embeddings, jobs | SQL + pgvector extension |
+
+### 3.2 Technical context
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                    Docker Network                                    │
+│                                                                                      │
+│  ┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐  │
+│  │                     │      │                     │      │                     │  │
+│  │      postgres       │◄────►│       vektra        │◄────►│       ollama        │  │
+│  │    :5432 (internal) │      │     :8000 (HTTP)    │      │   :11434 (optional) │  │
+│  │                     │      │                     │      │                     │  │
+│  │  • pgvector ext     │      │  • vektra-core      │      │  • Local LLM        │  │
+│  │  • Document store   │      │  • vektra-ingest    │      │  • On-premises      │  │
+│  │  • Job persistence  │      │  • vektra-index     │      │                     │  │
+│  │  • Audit logs       │      │  • vektra-admin     │      │                     │  │
+│  │                     │      │                     │      │                     │  │
+│  └─────────────────────┘      └──────────┬──────────┘      └─────────────────────┘  │
+│                                          │                                          │
+└──────────────────────────────────────────┼──────────────────────────────────────────┘
+                                           │
+                                           │ TLS (reverse proxy)
+                                           ▼
+                                    ┌─────────────┐
+                                    │   Client    │
+                                    └─────────────┘
+```
+
+| Channel | Protocol | Purpose |
+|---------|----------|---------|
+| Client → Vektra | HTTPS (TLS 1.2+) | All API traffic |
+| Vektra → PostgreSQL | TCP :5432 | Data persistence |
+| Vektra → Ollama | HTTP :11434 | Local LLM (optional) |
+| Vektra → OpenAI/Anthropic | HTTPS | Cloud LLM providers |
+
+---
+
+## 4. Solution strategy
+
+### 4.1 Technology decisions
+
+| Decision | Rationale | Alternatives Considered |
+|----------|-----------|------------------------|
+| **Modular monolith** | Satisfies 30-min MVP, 4GB RAM constraint, simplifies on-premises deployment | Microservices (rejected: operational complexity), serverless (rejected: on-premises requirement) |
+| **FastAPI + Pydantic v2** | Type safety, async support, automatic OpenAPI docs | Flask (less async), Django (heavier) |
+| **litellm for LLM abstraction** | ~5MB footprint, native async, multi-provider support | LangChain (too heavy), direct SDK (no abstraction) |
+| **pgvector** | PostgreSQL native, no additional service, familiar ops | Qdrant (extra service), Pinecone (cloud-only) |
+| **arq for background jobs** | Lightweight, PostgreSQL-backed, Python native | Celery (Redis dependency), RQ (limited features) |
+| **pdfplumber** | Pure Python, ~5MB, no system dependencies | PyMuPDF (complex licensing), pdfminer (slower) |
+
+### 4.2 Architectural approach
+
+| Goal | Approach | Reference |
+|------|----------|-----------|
+| Deployment simplicity | Single container, docker-compose, inline defaults | ARCH-001, ARCH-002 |
+| Extensibility | Protocol interfaces for all integration points | ARCH-029 |
+| Security | Single trust boundary, encrypted conversations | ARCH-020, ARCH-031 |
+| Observability | Structured logging, Prometheus metrics, correlation IDs | ARCH-008, ARCH-013, ARCH-014 |
+| Future extraction | Module boundaries enforced via import-linter | ARCH-003 |
+
+### 4.3 Quality approach
+
+| Quality | Strategy |
+|---------|----------|
+| Performance | Streaming responses, batch operations, memory budgets |
+| Reliability | PostgreSQL job persistence, atomic ingestion |
+| Maintainability | Protocol-based interfaces, clean package boundaries |
+| Security | Defense in depth: TLS, API keys, RLS, encryption |
+
+---
+
+## 5. Building blocks view
+
+### 5.1 Level 1: System context
+
+See [section 3.1](#31-business-context) for system context diagram.
+
+### 5.2 Level 2: Container view
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                              vektra container (:8000)                               │
+│                                                                                     │
+│  ┌───────────────────────────────────────────────────────────────────────────────┐ │
+│  │                           vektra_shared (library)                              │ │
+│  │  • Config schemas    • Error types    • Protocol interfaces    • Auth middleware│ │
+│  └───────────────────────────────────────────────────────────────────────────────┘ │
+│         ▲                    ▲                    ▲                    ▲            │
+│         │                    │                    │                    │            │
+│  ┌──────┴──────┐      ┌──────┴──────┐      ┌──────┴──────┐      ┌──────┴──────┐    │
+│  │             │      │             │      │             │      │             │    │
+│  │ vektra-core │─────►│vektra-ingest│─────►│ vektra-index│      │ vektra-admin│    │
+│  │             │      │             │      │             │      │             │    │
+│  │  • Query    │      │  • Extract  │      │  • Store    │      │  • Health   │    │
+│  │  • LLM call │      │  • Chunk    │      │  • Search   │      │  • API keys │    │
+│  │  • Safeguard│      │  • Jobs     │      │  • Delete   │      │  • Audit    │    │
+│  │             │      │             │      │             │      │             │    │
+│  └──────┬──────┘      └─────────────┘      └──────┬──────┘      └─────────────┘    │
+│         │                                         │                                 │
+│         │ LLMProvider                             │ VectorStoreProvider            │
+│         ▼                                         ▼                                 │
+│  ┌─────────────┐                          ┌─────────────┐                          │
+│  │   litellm   │                          │  pgvector   │                          │
+│  │  (wrapper)  │                          │  (adapter)  │                          │
+│  └─────────────┘                          └─────────────┘                          │
+│                                                                                     │
+└────────────────────────────────────────────────────────────────────────────────────┘
+         │                                         │
+         ▼                                         ▼
+┌─────────────────┐                       ┌─────────────────┐
+│ LLM Providers   │                       │   PostgreSQL    │
+│ (external)      │                       │   + pgvector    │
+└─────────────────┘                       └─────────────────┘
+```
+
+### 5.3 Level 3: Component responsibilities
+
+| Component | Responsibility | State Owned | Dependencies |
+|-----------|---------------|-------------|--------------|
+| vektra-core | RAG orchestration, LLM calls, safeguards | conversations, llm_providers, safeguard_rules | vektra-index, LLM providers |
+| vektra-ingest | Document processing, chunking, async jobs | ingest_jobs, source_documents | vektra-index |
+| vektra-index | Vector storage, semantic search | document_chunks, embeddings | PostgreSQL/pgvector |
+| vektra-admin | Health monitoring, API key management | api_keys, audit_log | All components |
+| vektra_shared | Cross-cutting types and middleware | namespaces | None |
+
+---
+
+## 6. Runtime view
+
+### 6.1 WF-INGEST: Document ingestion workflow
+
+```
+┌──────────┐    ┌──────────┐    ┌────────────┐    ┌───────────┐    ┌──────────┐
+│ Operator │    │   core   │    │   ingest   │    │   index   │    │ postgres │
+└────┬─────┘    └────┬─────┘    └─────┬──────┘    └─────┬─────┘    └────┬─────┘
+     │               │                │                 │               │
+     │ POST /ingest  │                │                 │               │
+     │ (PDF file)    │                │                 │               │
+     │──────────────►│                │                 │               │
+     │               │                │                 │               │
+     │               │ validate_auth()│                 │               │
+     │               │───────────────►│                 │               │
+     │               │                │                 │               │
+     │               │                │ compute SHA-256 │               │
+     │               │                │────────────────►│               │
+     │               │                │                 │               │
+     │               │                │                 │ check_exists()│
+     │               │                │                 │──────────────►│
+     │               │                │                 │◄──────────────│
+     │               │                │                 │               │
+     │               │                │ [<10MB: sync]   │               │
+     │               │                │ extract_text()  │               │
+     │               │                │                 │               │
+     │               │                │ chunk_text()    │               │
+     │               │                │ (1000 tokens,   │               │
+     │               │                │  200 overlap)   │               │
+     │               │                │                 │               │
+     │               │                │ generate_embeddings()           │
+     │               │                │────────────────►│               │
+     │               │                │                 │               │
+     │               │                │                 │ store_chunks()│
+     │               │                │                 │──────────────►│
+     │               │                │                 │◄──────────────│
+     │               │                │                 │               │
+     │               │◄───────────────│                 │               │
+     │               │  {doc_id, status: indexed}       │               │
+     │◄──────────────│                │                 │               │
+     │  200 OK       │                │                 │               │
+     │               │                │                 │               │
+     │ [>10MB: async]│                │                 │               │
+     │◄──────────────│                │                 │               │
+     │  202 Accepted │                │                 │               │
+     │  {job_id}     │                │                 │               │
+     │               │                │                 │               │
+     │ GET /ingest/jobs/{id}/status   │                 │               │
+     │──────────────►│───────────────►│                 │               │
+     │◄──────────────│◄───────────────│                 │               │
+     │  {status: processing|indexed|failed}             │               │
+     │               │                │                 │               │
+```
+
+**Key decisions**:
+- Synchronous for <10MB (REQ-029)
+- SHA-256 deduplication before processing (REQ-034)
+- Atomic: all chunks stored or none (BR-003)
+- Job persistence in PostgreSQL survives restarts (ARCH-005)
+
+### 6.2 WF-QUERY: RAG query workflow
+
+```
+┌──────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐    ┌─────────┐
+│  Client  │    │   core   │    │   index   │    │ postgres │    │   LLM   │
+└────┬─────┘    └────┬─────┘    └─────┬─────┘    └────┬─────┘    └────┬────┘
+     │               │                │               │               │
+     │ POST /query   │                │               │               │
+     │ {question,    │                │               │               │
+     │  conv_id?}    │                │               │               │
+     │──────────────►│                │               │               │
+     │               │                │               │               │
+     │               │ validate_auth()│               │               │
+     │               │                │               │               │
+     │               │ safeguard.pre_query()          │               │
+     │               │                │               │               │
+     │               │ [if conv_id]   │               │               │
+     │               │ load_conversation()            │               │
+     │               │────────────────────────────────►               │
+     │               │◄────────────────────────────────               │
+     │               │                │               │               │
+     │               │ generate_query_embedding()     │               │
+     │               │───────────────►│               │               │
+     │               │                │               │               │
+     │               │                │ vector_search()               │
+     │               │                │ (top_k=5)     │               │
+     │               │                │──────────────►│               │
+     │               │                │◄──────────────│               │
+     │               │                │               │               │
+     │               │◄───────────────│               │               │
+     │               │  [chunks with scores]          │               │
+     │               │                │               │               │
+     │               │ safeguard.post_retrieval()     │               │
+     │               │                │               │               │
+     │               │ build_prompt(context, history) │               │
+     │               │                │               │               │
+     │               │ [streaming: Accept: text/event-stream]         │
+     │               │ llm.stream()   │               │               │
+     │               │────────────────────────────────────────────────►
+     │◄──────────────│ SSE: data: {chunk}             │               │
+     │◄──────────────│ SSE: data: {chunk}             │               │
+     │               │◄────────────────────────────────────────────────
+     │               │                │               │               │
+     │               │ [non-streaming]│               │               │
+     │               │ llm.complete() │               │               │
+     │               │────────────────────────────────────────────────►
+     │               │◄────────────────────────────────────────────────
+     │               │                │               │               │
+     │               │ safeguard.pre_response()       │               │
+     │               │                │               │               │
+     │               │ save_conversation_turn()       │               │
+     │               │ (encrypted)    │               │               │
+     │               │────────────────────────────────►               │
+     │               │                │               │               │
+     │◄──────────────│                │               │               │
+     │ {answer,      │                │               │               │
+     │  sources: [{doc_id, chunk_id, score, snippet}],│               │
+     │  conv_id}     │                │               │               │
+     │               │                │               │               │
+```
+
+**Key decisions**:
+- First token <2s for streaming (REQ-042)
+- Source citations in structured format (REQ-003)
+- Conversation context encrypted (ARCH-031)
+- Safeguard hooks at 3 points (REQ-044)
+
+---
+
+## 7. Deployment view
+
+See [section 8.4](#84-deployment) for Docker Compose specification and resource limits.
+
+---
+
+## 8. Cross-cutting concepts
+
+### 8.1 Architecture principles
+
+#### High-level architecture
 
 - **ARCH-001 - Modular monolith for Phase 1**: Single deployable container with internal package boundaries (vektra-core, vektra-ingest, vektra-index). Satisfies 30-minute MVP target, 4GB RAM constraint, and on-premises deployment simplicity.
 - **ARCH-002 - Minimal docker-compose stack**: Three services maximum: vektra (application), postgres (with pgvector), and optionally ollama.
@@ -33,7 +411,7 @@ The system integrates with:
 - **ARCH-026 - Memory budget allocation**: Container 3.5GB hard limit, internal advisory limits (INDEX=512MB, INGEST=256MB).
 - **ARCH-027 - Memory observability**: GET /health/memory endpoint, Prometheus metrics for per-component usage.
 
-### Data flow
+#### Data flow
 
 - **ARCH-006 - Hybrid DTO/domain model**: Synchronous flows use shared domain models via repository pattern. Asynchronous boundaries (arq jobs) use explicit DTOs.
 - **ARCH-007 - Namespace isolation via RLS**: PostgreSQL row-level security policies on tenant-scoped tables.
@@ -45,7 +423,7 @@ The system integrates with:
 - **ARCH-032 - Document re-indexing**: SHA-256 hash comparison. Delete-then-reindex on content change.
 - **ARCH-034 - Database schema implementation**: DDL via Alembic migrations with auto-execution on startup. Security constraints documented.
 
-### Technology choices
+#### Technology choices
 
 - **ARCH-012 - Tech stack**: FastAPI 0.115+ with Pydantic v2, sentence-transformers (all-MiniLM-L6-v2), Python 3.11+.
 - **ARCH-013 - Structured logging**: structlog with JSON output, PII redaction processors.
@@ -54,14 +432,14 @@ The system integrates with:
 - **ARCH-029 - Protocol method signatures**: Standardized async Protocols for LLMProvider, VectorStoreProvider, DocumentExtractor, SafeguardHook.
 - **ARCH-030 - PDF extraction: pdfplumber**: Pure Python, ~5MB footprint. Implements DocumentExtractor Protocol.
 
-### Components
+#### Components
 
 - **ARCH-019 - Component responsibilities**: vektra-core (RAG orchestration), vektra-ingest (document processing), vektra-index (vector storage), vektra-admin (system administration). Each has exclusive state ownership.
 - **ARCH-020 - Authentication gateway**: Single trust boundary at vektra-core. Internal components have no external REST endpoints.
 - **ARCH-021 - Protocol interfaces**: CoreService, IngestService, IndexService, AdminService defined in vektra_shared.
 - **ARCH-022 - Hierarchical health endpoints**: GET /health (aggregated), GET /health/{component} for targeted debugging.
 
-### Integration
+#### Integration
 
 - **ARCH-015 - Internal communication**: Direct Python function calls within monolith. REST only at external boundary.
 - **ARCH-016 - n8n integration**: Async job polling pattern. POST -> job_id -> poll status -> get result.
@@ -69,7 +447,7 @@ The system integrates with:
 - **ARCH-018 - API versioning**: URL prefixes (/api/v1/), 6-month deprecation window, CI schema validation.
 - **ARCH-033 - Docker Compose specification**: Healthcheck-based startup ordering, ARCH-026 memory limits, profile-based Ollama.
 
-## Components
+### 8.2 Component details
 
 | Component | Responsibility | Technology |
 |-----------|---------------|------------|
@@ -79,7 +457,7 @@ The system integrates with:
 | vektra-admin | System administration: health monitoring, API key management, configuration | FastAPI |
 | vektra_shared | Cross-cutting infrastructure: types, config schemas, error definitions, auth middleware, Protocol interfaces | Pydantic v2 |
 
-### vektra-core
+#### vektra-core
 
 **Responsibility**: Orchestrates RAG query flow - receives queries, retrieves context from vektra-index, generates LLM responses via litellm, enforces safeguards.
 
@@ -94,7 +472,7 @@ The system integrates with:
 
 **Dependencies**: vektra-index, external LLM providers
 
-### vektra-ingest
+#### vektra-ingest
 
 **Responsibility**: Processes documents into indexable chunks - format conversion (PDF, Word, PowerPoint), chunking (1000 tokens, 200 overlap), async job management.
 
@@ -108,7 +486,7 @@ The system integrates with:
 
 **Dependencies**: vektra-index
 
-### vektra-index
+#### vektra-index
 
 **Responsibility**: Manages vector storage and semantic search - embedding generation, vector similarity search, chunk persistence.
 
@@ -122,7 +500,7 @@ The system integrates with:
 
 **Dependencies**: PostgreSQL with pgvector extension
 
-### vektra-admin
+#### vektra-admin
 
 **Responsibility**: System administration - health monitoring, API key management, configuration, audit log access.
 
@@ -136,7 +514,7 @@ The system integrates with:
 
 **Dependencies**: All internal components
 
-### vektra_shared
+#### vektra_shared
 
 **Responsibility**: Cross-cutting infrastructure (not a deployable component).
 
@@ -145,9 +523,9 @@ The system integrates with:
 
 **Provides**: Types, config schemas, error definitions, auth middleware, Protocol interfaces
 
-## Protocol Interfaces
+### 8.3 Protocol interfaces
 
-### LLMProvider
+#### LLMProvider
 
 ```python
 class LLMProvider(Protocol):
@@ -157,7 +535,7 @@ class LLMProvider(Protocol):
     def count_tokens(text: str, model: str) -> int
 ```
 
-### VectorStoreProvider
+#### VectorStoreProvider
 
 ```python
 class VectorStoreProvider(Protocol):
@@ -167,7 +545,7 @@ class VectorStoreProvider(Protocol):
     async def health_check() -> HealthStatus
 ```
 
-### DocumentExtractor
+#### DocumentExtractor
 
 ```python
 class DocumentExtractor(Protocol):
@@ -176,7 +554,7 @@ class DocumentExtractor(Protocol):
     async def health_check() -> HealthStatus
 ```
 
-### SafeguardHook
+#### SafeguardHook
 
 ```python
 class SafeguardHook(Protocol):
@@ -185,9 +563,9 @@ class SafeguardHook(Protocol):
     async def pre_response(response_ref: str, context: SafeguardContext) -> SafeguardResult
 ```
 
-## Deployment
+### 8.4 Deployment
 
-### Docker Compose stack
+#### Docker Compose stack
 
 ```yaml
 services:
@@ -239,7 +617,7 @@ volumes:
   vektra_ollama:
 ```
 
-### Resource limits (NFR-006 compliant)
+#### Resource limits (NFR-006 compliant)
 
 | Service | Memory Limit | Memory Reservation |
 |---------|-------------|-------------------|
@@ -247,9 +625,9 @@ volumes:
 | vektra | 3584 MB | 2048 MB |
 | ollama | 3072 MB | 1024 MB |
 
-## Security
+### 8.5 Security
 
-### TLS encryption (NFR-012)
+#### TLS encryption (NFR-012)
 
 All API traffic must be encrypted via TLS 1.2+ in production mode.
 
@@ -275,13 +653,13 @@ All API traffic must be encrypted via TLS 1.2+ in production mode.
 - [ ] Reverse proxy configured with TLS 1.2+ minimum
 - [ ] Internal network isolated (vektra container not exposed directly)
 
-### Encryption at rest (NFR-013)
+#### Encryption at rest (NFR-013)
 
 - **Conversation content**: pgcrypto column-level encryption (ARCH-031)
 - **Database storage**: PostgreSQL native encryption (operator responsibility)
 - **Vector embeddings**: stored in pgvector, encryption delegated to PostgreSQL TDE
 
-### Authentication summary
+#### Authentication summary
 
 | Layer | Mechanism | Reference |
 |-------|-----------|-----------|
@@ -290,31 +668,208 @@ All API traffic must be encrypted via TLS 1.2+ in production mode.
 | Namespace isolation | PostgreSQL RLS | ARCH-007, ARCH-025 |
 | Conversation privacy | pgcrypto encryption | ARCH-031 |
 
-## Deferred to Phase 2
+---
 
-| Item | Reason | Reference |
-|------|--------|-----------|
-| Confidence scoring | Algorithm needs research spike | OQ-014 (requirements.md) |
-| Circuit breakers | Phase 1 uses retry only | ARCH-024, BR-002 |
-| OAuth/OIDC | May be needed for vektra-learn | OQ-006 (session) |
-| RLS enforcement | Activates with multi-tenancy | ARCH-025 |
-
-## Key Decisions
+## 9. Architectural decisions
 
 See ADRs in `.s2s/decisions/`:
 
-| ADR | Title |
-|-----|-------|
-| ADR-0003 | Modular monolith for Phase 1 |
-| ADR-0004 | Minimal docker-compose stack |
-| ADR-0005 | Module boundary enforcement |
-| ADR-0006 | Background tasks with arq |
-| ADR-0007 | Technology stack selection |
-| ADR-0008 | LLM abstraction with litellm |
-| ADR-0009 | Namespace isolation via RLS |
-| ADR-0010 | Authentication gateway pattern |
-| ADR-0011 | Conversation storage encryption |
-| ADR-0012 | Docker Compose specification |
+| ADR | Title | Status |
+|-----|-------|--------|
+| ADR-0001 | Hybrid monorepo strategy | accepted |
+| ADR-0002 | Repository split criteria | accepted |
+| ADR-0003 | Modular monolith for Phase 1 | accepted |
+| ADR-0004 | Minimal docker-compose stack | accepted |
+| ADR-0005 | Module boundary enforcement | accepted |
+| ADR-0006 | Background tasks with arq | accepted |
+| ADR-0007 | Technology stack selection | accepted |
+| ADR-0008 | LLM abstraction with litellm | accepted |
+| ADR-0009 | Namespace isolation via RLS | accepted |
+| ADR-0010 | Authentication gateway pattern | accepted |
+| ADR-0011 | Conversation storage encryption | accepted |
+| ADR-0012 | Docker Compose specification | accepted |
 
 ---
+
+## 10. Quality requirements
+
+### 10.1 Quality tree
+
+```
+                              ┌─────────────────────────────────────┐
+                              │          Quality Goals              │
+                              └─────────────────────────────────────┘
+                                              │
+          ┌───────────────────┬───────────────┼───────────────┬───────────────────┐
+          │                   │               │               │                   │
+          ▼                   ▼               ▼               ▼                   ▼
+    ┌───────────┐       ┌───────────┐   ┌───────────┐   ┌───────────┐       ┌───────────┐
+    │Performance│       │Reliability│   │ Security  │   │Operability│       │Maintainab.│
+    └─────┬─────┘       └─────┬─────┘   └─────┬─────┘   └─────┬─────┘       └─────┬─────┘
+          │                   │               │               │                   │
+    ┌─────┼─────┐       ┌─────┼─────┐   ┌─────┼─────┐   ┌─────┼─────┐       ┌─────┼─────┐
+    │     │     │       │     │     │   │     │     │   │     │     │       │     │     │
+    ▼     ▼     ▼       ▼     ▼     ▼   ▼     ▼     ▼   ▼     ▼     ▼       ▼     ▼     ▼
+  Query Search Ingest Startup Data  Job TLS  Encrypt Audit MVP  Error  Health Module Protocol
+  <10s  <500ms <30s   <60s   Loss  Persist 1.2+ AtRest Compl 30min Action Checks Bound Interface
+```
+
+### 10.2 Quality scenarios
+
+| ID | Quality | Scenario | Response Measure | Reference |
+|----|---------|----------|------------------|-----------|
+| QS-01 | Performance | User executes query with Ollama | Response in <10s (p95) | NFR-001 |
+| QS-02 | Performance | Vector search over 10k chunks | Results in <500ms (p95) | NFR-002 |
+| QS-03 | Performance | Ingest 10-page PDF | Complete in <30s | NFR-003 |
+| QS-04 | Reliability | Container restarted gracefully | Zero data loss | NFR-005 |
+| QS-05 | Reliability | Container startup | Healthy in <60s | NFR-004 |
+| QS-06 | Security | All API requests | Logged with key_id | NFR-007 |
+| QS-07 | Security | Production deployment | TLS 1.2+ enforced | NFR-012 |
+| QS-08 | Security | Conversation data | Encrypted at rest | NFR-013 |
+| QS-09 | Operability | First-time deployment | MVP complete in <30min | REQ-005 |
+| QS-10 | Operability | API error occurs | Actionable remediation provided | NFR-009 |
+| QS-11 | Scalability | 10 concurrent queries | Latency <2x baseline | NFR-011 |
+| QS-12 | Scalability | Single-node deployment | Runs on 4GB RAM | NFR-006 |
+
+### 10.3 Classification
+
+| Type | Meaning | Enforcement |
+|------|---------|-------------|
+| HARD | Blocks release if violated | CI gate, mandatory |
+| TARGET | Logged as warning if violated | Monitoring, advisory |
+
+| NFR | Classification |
+|-----|----------------|
+| NFR-001 Query latency | TARGET |
+| NFR-002 Search latency | HARD |
+| NFR-003 Ingest latency | TARGET |
+| NFR-004 Startup time | HARD |
+| NFR-005 Data durability | HARD |
+| NFR-006 Resource ceiling | TARGET |
+| NFR-007 Audit completeness | HARD |
+| NFR-008 Retention config | HARD |
+| NFR-009 Error actionability | HARD |
+| NFR-010 Progress feedback | TARGET |
+| NFR-011 Concurrent queries | TARGET |
+| NFR-012 TLS encryption | HARD |
+| NFR-013 Encryption at rest | HARD |
+
+---
+
+## 11. Risks and technical debt
+
+### 11.1 Identified risks
+
+| ID | Risk | Probability | Impact | Mitigation | Owner |
+|----|------|-------------|--------|------------|-------|
+| R-01 | litellm provider compatibility breaks | Medium | High | Pin versions, integration tests per provider | Tech Lead |
+| R-02 | pgvector performance degrades at scale | Low | High | Monitor query times, plan Qdrant migration path | DevOps |
+| R-03 | Memory limits too aggressive for large docs | Medium | Medium | Configurable limits, streaming extraction | Tech Lead |
+| R-04 | Bootstrap key misuse in production | Low | High | Single-use enforcement, audit logging | Security |
+| R-05 | arq job queue backpressure | Medium | Medium | Job limits, monitoring, operator alerts | DevOps |
+
+### 11.2 Accepted technical debt
+
+| ID | Debt | Rationale | Retirement Plan |
+|----|------|-----------|-----------------|
+| TD-01 | In-memory conversation storage | Simplifies Phase 1, persistent storage in Phase 2 | REQ-049 notes Phase 2 migration |
+| TD-02 | Application-level namespace filtering | RLS complexity deferred | ARCH-025, activate via feature flag |
+| TD-03 | No circuit breakers | Retry responsibility on caller | ARCH-024, BR-002, add in Phase 2 |
+| TD-04 | Single chunking strategy | Fixed-size only | EX-012, add semantic chunking in Phase 2 |
+| TD-05 | No OAuth/OIDC | API keys sufficient for Phase 1 | Add for vektra-learn in Phase 2 |
+| TD-06 | Confidence scoring undefined | Algorithm needs research spike | OQ-014, Phase 2 spike |
+
+### 11.3 Deferred to Phase 2
+
+| Item | Reason | Reference |
+|------|--------|-----------|
+| Confidence scoring | Algorithm needs research spike | OQ-014 |
+| Circuit breakers | Phase 1 uses retry only | ARCH-024, BR-002 |
+| OAuth/OIDC | May be needed for vektra-learn | Session OQ-006 |
+| RLS enforcement | Activates with multi-tenancy | ARCH-025 |
+| OCR support | Requires Tesseract dependency | EX-002 |
+| Batch operations | Single-document operations sufficient | EX-005 |
+| Analytics component | Audit logs provide raw data | EX-007 |
+
+---
+
+## 12. Glossary
+
+| Term | Definition |
+|------|------------|
+| **API key** | Static credential for authenticating API requests. Stored as argon2id hash, scoped to permissions (admin/ingest/query). |
+| **arq** | Lightweight async job queue for Python, used for background tasks with PostgreSQL persistence. |
+| **Bootstrap key** | Single-use credential (VEKTRA_ADMIN_BOOTSTRAP_KEY) for initial API key creation. Consumed after first use. |
+| **Chunk** | Fixed-size segment of extracted document text (1000 tokens with 200 token overlap). Unit of storage in vector index. |
+| **Conversation** | Multi-turn interaction context stored encrypted. Identified by conversation_id UUID. |
+| **Correlation ID** | UUID assigned at request entry, propagated through all logs and job payloads for traceability. |
+| **Embedding** | Dense vector representation of text generated by sentence-transformers (all-MiniLM-L6-v2, 384 dimensions). |
+| **litellm** | Python library abstracting LLM provider APIs (OpenAI, Anthropic, Ollama) behind unified interface. |
+| **Modular monolith** | Architectural style: single deployable with internal package boundaries enforced at build time. |
+| **n8n** | External workflow automation tool used for orchestrating document ingestion pipelines. |
+| **Namespace** | Logical partition for document isolation. Phase 1 uses single "default" namespace. |
+| **pgvector** | PostgreSQL extension enabling vector similarity search operations. |
+| **Platform Operator** | Primary Phase 1 user persona: DevOps engineer responsible for deploying and maintaining Vektra. |
+| **Protocol interface** | Python typing.Protocol defining contract for pluggable components (LLMProvider, VectorStoreProvider, etc.). |
+| **RAG** | Retrieval-Augmented Generation: technique combining document retrieval with LLM generation. |
+| **RLS** | Row-Level Security: PostgreSQL feature for row-based access control. Deferred to Phase 2 multi-tenancy. |
+| **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering. |
+| **SSE** | Server-Sent Events: streaming protocol for real-time query responses (Accept: text/event-stream). |
+| **TLS termination** | Decrypting HTTPS traffic at reverse proxy, forwarding HTTP to application container. |
+| **Top-k** | Number of most relevant chunks retrieved for RAG context (default: 5). |
+| **Vector store** | Database optimized for similarity search over embeddings. Vektra uses pgvector. |
+
+---
+
+## Appendix A: Traceability matrix
+
+### A.1 Requirements to architecture decisions
+
+| Requirement | Architecture Decision(s) | Rationale |
+|-------------|-------------------------|-----------|
+| REQ-001 Primary user: Operator | ARCH-001 Modular monolith | Single container simplifies operator deployment |
+| REQ-002 Document ingestion | ARCH-005 arq jobs, ARCH-009 payload design | Async processing with restart resilience |
+| REQ-003 RAG query | ARCH-028 litellm, ARCH-029 Protocols | Multi-provider LLM with streaming support |
+| REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033 | Minimal services, inline defaults, health ordering |
+| REQ-019 API key auth | ARCH-020 Auth gateway, ARCH-023 Key lifecycle | Single trust boundary, argon2id hashing |
+| REQ-042 Streaming responses | ARCH-028 litellm async | Native SSE streaming support |
+| REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via Protocol |
+| REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding | Future multi-tenant isolation |
+| REQ-049 Conversation context | ARCH-031 Encrypted storage | Privacy-preserving persistence |
+| REQ-051 Operator privacy | ARCH-031 pgcrypto encryption | Content inaccessible to admin scope |
+| NFR-001 Query latency | ARCH-011 Streaming, ARCH-026 Memory budget | Bounded resources, streaming responses |
+| NFR-005 Data durability | ARCH-005 arq PostgreSQL, ARCH-034 DDL | Jobs and data persist across restarts |
+| NFR-006 Resource ceiling | ARCH-026 Memory allocation, ARCH-033 Docker limits | Advisory and hard limits enforced |
+| NFR-007 Audit completeness | ARCH-008 Correlation ID, ARCH-013 Structured logs | Request tracing, JSON output |
+| NFR-012 TLS encryption | ARCH-020 Gateway, Security section | TLS at reverse proxy layer |
+| NFR-013 Encryption at rest | ARCH-031 pgcrypto | Column-level conversation encryption |
+
+### A.2 Architecture decisions to components
+
+| Decision | Component(s) Affected |
+|----------|----------------------|
+| ARCH-001 Modular monolith | All (vektra-core, vektra-ingest, vektra-index, vektra-admin) |
+| ARCH-005 arq jobs | vektra-ingest |
+| ARCH-007 RLS | vektra-index, vektra_shared |
+| ARCH-008 Correlation ID | vektra_shared (middleware) |
+| ARCH-020 Auth gateway | vektra-core, vektra_shared |
+| ARCH-023 API key lifecycle | vektra-admin |
+| ARCH-028 litellm | vektra-core |
+| ARCH-029 Protocol interfaces | vektra_shared (definitions), all (implementations) |
+| ARCH-030 pdfplumber | vektra-ingest |
+| ARCH-031 Conversation encryption | vektra-core |
+
+### A.3 Components to requirements
+
+| Component | Requirements Addressed |
+|-----------|----------------------|
+| vektra-core | REQ-003, REQ-013, REQ-042, REQ-047, REQ-049 |
+| vektra-ingest | REQ-002, REQ-014, REQ-045, REQ-046 |
+| vektra-index | REQ-012, REQ-048 |
+| vektra-admin | REQ-006, REQ-020, REQ-021, REQ-022, REQ-025 |
+| vektra_shared | REQ-010, REQ-019, REQ-023, REQ-041 |
+
+---
+
 *Generated by Spec2Ship /s2s:design*
+*Version 1.1 - Added arc42 sections: Solution Strategy, Context Diagrams, Runtime Views, Quality Requirements, Risks, Glossary, Traceability Matrix*

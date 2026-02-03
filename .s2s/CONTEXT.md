@@ -45,11 +45,11 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 
 ## Cross-Cutting Concerns
 
-<!-- Populated by /s2s:design or manually -->
-- **Authentication**: TBD
-- **Authorization**: TBD
-- **Logging**: TBD
-- **Monitoring**: TBD
+<!-- Populated by /s2s:design -->
+- **Authentication**: API key authentication with argon2id hashing, scoped permissions (read/ingest/admin). Single trust boundary at vektra-core gateway. See [ADR-0010](decisions/ADR-0010-authentication-gateway.md).
+- **Authorization**: Namespace isolation via PostgreSQL RLS policies. Application-level filtering for Phase 1, RLS binding via feature flag for multi-tenant activation. See [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md).
+- **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries.
+- **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
 
 ## Components
 
@@ -110,10 +110,35 @@ See [requirements.md](requirements.md) for the complete Software Requirements Sp
 **Primary user persona**: Platform Operator (DevOps/platform teams)
 **MVP exit criterion**: 30 minutes from git clone to successful query
 
-## Architecture Principles
+## Architecture
 
-<!-- Populated by /s2s:design -->
-TBD - run `/s2s:design` to define architecture
+See [architecture.md](architecture.md) for complete architecture documentation.
+
+**Architectural style**: Modular monolith for Phase 1. Single deployable container with internal package boundaries. See [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md).
+
+**Deployment**: Three-service docker-compose stack (vektra + postgres + ollama optional). See [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md), [ADR-0012](decisions/ADR-0012-docker-compose-spec.md).
+
+**Key technology choices**:
+- Web framework: FastAPI 0.115+ with Pydantic v2
+- LLM abstraction: litellm (~5MB footprint)
+- Embeddings: sentence-transformers (all-MiniLM-L6-v2)
+- Vector store: pgvector (PostgreSQL extension)
+- Background tasks: arq with PostgreSQL job persistence
+- PDF extraction: pdfplumber
+
+**Protocol interfaces** (defined in vektra_shared):
+- LLMProvider: multi-provider LLM abstraction
+- VectorStoreProvider: pluggable vector store backend
+- DocumentExtractor: PDF, Word, PowerPoint extraction
+- SafeguardHook: pre/post query safeguards
+
+**Key decisions** (34 total, 10 ADRs generated):
+- [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
+- [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
+- [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
+- [ADR-0007](decisions/ADR-0007-tech-stack.md): Technology stack selection
+- [ADR-0008](decisions/ADR-0008-llm-abstraction-litellm.md): LLM abstraction with litellm
+- [ADR-0011](decisions/ADR-0011-conversation-encryption.md): Conversation encryption
 
 ## Open Questions
 
@@ -123,4 +148,4 @@ TBD - run `/s2s:design` to define architecture
 
 ---
 
-*Last updated: 2026-02-01*
+*Last updated: 2026-02-03*

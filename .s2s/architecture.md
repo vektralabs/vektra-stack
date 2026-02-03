@@ -247,6 +247,58 @@ volumes:
 | vektra | 3584 MB | 2048 MB |
 | ollama | 3072 MB | 1024 MB |
 
+## Security
+
+### TLS encryption (NFR-012)
+
+All API traffic must be encrypted via TLS 1.2+ in production mode.
+
+**Architecture approach**: TLS termination at reverse proxy layer (not in application).
+
+```
+┌─────────────┐     TLS      ┌─────────────┐     HTTP     ┌─────────────┐
+│   Client    │ ──────────── │   Reverse   │ ──────────── │   Vektra    │
+│             │   (HTTPS)    │   Proxy     │  (internal)  │   :8000     │
+└─────────────┘              └─────────────┘              └─────────────┘
+                              nginx/Traefik
+```
+
+**Implementation requirements**:
+- Reverse proxy (nginx or Traefik) handles TLS termination
+- Application rejects non-TLS connections when `VEKTRA_ENV=production`
+- Health endpoint (`GET /health`) exempt for internal load balancer probes
+- Example TLS configurations provided in `deploy/` directory
+
+**Production deployment checklist**:
+- [ ] TLS certificate configured (Let's Encrypt or organizational CA)
+- [ ] `VEKTRA_ENV=production` set
+- [ ] Reverse proxy configured with TLS 1.2+ minimum
+- [ ] Internal network isolated (vektra container not exposed directly)
+
+### Encryption at rest (NFR-013)
+
+- **Conversation content**: pgcrypto column-level encryption (ARCH-031)
+- **Database storage**: PostgreSQL native encryption (operator responsibility)
+- **Vector embeddings**: stored in pgvector, encryption delegated to PostgreSQL TDE
+
+### Authentication summary
+
+| Layer | Mechanism | Reference |
+|-------|-----------|-----------|
+| API authentication | API keys with argon2id hash | ARCH-023 |
+| Trust boundary | Single gateway at vektra-core | ARCH-020 |
+| Namespace isolation | PostgreSQL RLS | ARCH-007, ARCH-025 |
+| Conversation privacy | pgcrypto encryption | ARCH-031 |
+
+## Deferred to Phase 2
+
+| Item | Reason | Reference |
+|------|--------|-----------|
+| Confidence scoring | Algorithm needs research spike | OQ-014 (requirements.md) |
+| Circuit breakers | Phase 1 uses retry only | ARCH-024, BR-002 |
+| OAuth/OIDC | May be needed for vektra-learn | OQ-006 (session) |
+| RLS enforcement | Activates with multi-tenancy | ARCH-025 |
+
 ## Key Decisions
 
 See ADRs in `.s2s/decisions/`:

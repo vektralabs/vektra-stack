@@ -50,6 +50,7 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 - **Authorization**: Namespace isolation via PostgreSQL RLS policies. Application-level filtering for Phase 1, RLS binding via feature flag for multi-tenant activation. See [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md).
 - **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries.
 - **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
+- **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. See [architecture.md](architecture.md#security).
 
 ## Components
 

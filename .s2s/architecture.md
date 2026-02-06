@@ -770,7 +770,7 @@ class BoundingBox:
 class DocumentChunk:
     text: str
     element_type: ElementType = ElementType.TEXT
-    content_format: str = "text"           # "text" | "html" | "markdown" (ARCH-049)
+    content_format: str = "text"           # "text" | "html" | "markdown"
     metadata: dict = {}                    # page, position, source_file, filterable fields
     parent_id: str | None = None           # for parent-child hierarchy (Phase 2)
     coordinates: BoundingBox | None = None # for PDF highlighting (Phase 2)
@@ -1209,11 +1209,11 @@ See ADRs in `.s2s/decisions/`:
 | REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033 | Minimal services, inline defaults, health ordering |
 | REQ-019 API key auth | ARCH-020 Auth gateway, ARCH-023 Key lifecycle | Single trust boundary, argon2id hashing |
 | REQ-042 Streaming responses | ARCH-028 litellm async, ARCH-036 QueryPipeline | Native SSE via execute_stream() |
+| REQ-044 Safeguard hooks | ARCH-029 Protocols, ARCH-049 Content modification | Three trust boundary points, blocking + filtering + modification |
 | REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via LLMProvider Protocol |
 | REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity | First-class namespace with metadata |
 | REQ-049 Conversation context | ARCH-031 Encrypted storage | Privacy-preserving persistence |
 | REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version | Extended VectorStoreProvider with SearchMode, filters, index_version |
-| REQ-044 Safeguard hooks | ARCH-029 Protocols, ARCH-049 Content modification | Three trust boundary points, blocking + filtering + modification |
 | REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation, ARCH-050 Evaluation strategy | Content inaccessible, QueryTrace separate from audit, evaluation only in CI/staging |
 | REQ-052 EmbeddingProvider | ARCH-035 EmbeddingProvider Protocol | Shared instance, asymmetric embedding, configurable model |
 | REQ-053 QueryPipeline | ARCH-036 QueryPipeline Protocol, ARCH-046 LlamaIndex deferral | Pipeline abstraction, direct implementation for Phase 1-2 |

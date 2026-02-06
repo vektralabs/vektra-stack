@@ -626,7 +626,7 @@ class DocumentExtractor(Protocol):
     async def health_check() -> HealthStatus
 ```
 
-Phase 1: PdfplumberExtractor, WordExtractor, PowerPointExtractor. Content type detection via magic bytes (ARCH-042) before dispatch.
+Phase 1: PdfplumberExtractor, WordExtractor, PowerPointExtractor. Content type detection via magic bytes (ARCH-042) before dispatch. Phase 2 option: Unstructured as local library or as external API (self-hosted Docker), offloading heavy dependencies (Tesseract, PyTorch for table detection) from the Vektra container. Same pattern as TEI for EmbeddingProvider. ExtractionRequest maps 1:1 with Unstructured's `partition()` parameters.
 
 #### ChunkingStrategy (new - ARCH-037)
 
@@ -1014,6 +1014,8 @@ See ADRs in `.s2s/decisions/`:
 | [ADR-0015](decisions/ADR-0015-forward-compatible-data-model.md) | Forward-compatible data model | accepted |
 | [ADR-0016](decisions/ADR-0016-llamaindex-deferral.md) | LlamaIndex deferral (Phase 1-2) | accepted |
 | [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md) | Audit/analytics separation via QueryTrace | accepted |
+| [ADR-0018](decisions/ADR-0018-safeguard-content-modification.md) | SafeguardResult content modification | accepted |
+| [ADR-0019](decisions/ADR-0019-rag-evaluation-strategy.md) | Three-tier RAG evaluation strategy | accepted |
 
 ---
 

@@ -139,7 +139,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (50 total, 17 ADRs):
+**Key decisions** (50 total, 19 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
@@ -151,6 +151,8 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - [ADR-0015](decisions/ADR-0015-forward-compatible-data-model.md): Forward-compatible data model
 - [ADR-0016](decisions/ADR-0016-llamaindex-deferral.md): LlamaIndex deferral (Phase 1-2)
 - [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md): Audit/analytics separation via QueryTrace
+- [ADR-0018](decisions/ADR-0018-safeguard-content-modification.md): SafeguardResult content modification
+- [ADR-0019](decisions/ADR-0019-rag-evaluation-strategy.md): Three-tier RAG evaluation strategy
 
 ## Open Questions
 

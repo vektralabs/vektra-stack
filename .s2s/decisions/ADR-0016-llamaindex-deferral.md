@@ -147,3 +147,23 @@ Revisit this decision if any of the following apply:
 - Agentic RAG (tool use within retrieval) becomes a requirement
 - LlamaIndex achieves API stability (no breaking changes across 3+ minor releases)
 - A lighter RAG framework emerges that aligns with Protocol-based design
+
+### Phase 3+ framework landscape (February 2026)
+
+Beyond LlamaIndex, two other RAG frameworks were assessed for potential Phase 3+ adoption as internal QueryPipeline implementations:
+
+**Haystack (deepset)** - preferred candidate if framework adoption becomes necessary:
+- Pipeline-based architecture (DAG), closely aligned with Vektra's QueryPipeline model
+- Typed components with declared inputs/outputs, similar to our Protocol contracts
+- Production-focused (deepset is an enterprise RAG company)
+- Serializable pipelines, deployable via REST (Hayhooks)
+- Multi-query retrieval (QueryExpander + MultiQueryRetriever) built-in
+- Haystack 2.x has reached architectural stability
+
+Integration consideration: if Haystack manages its own retrievers/embedders internally, there is duplication with our EmbeddingProvider/VectorStoreProvider. Two integration strategies exist: (a) Haystack wraps our Protocols (Haystack as orchestrator, Vektra Protocols as components) preserving our contracts but adding indirection, or (b) Haystack uses its own adapters (Haystack as opaque pipeline) reducing indirection but bypassing our Protocol layer.
+
+**LangChain / LangGraph** - alternative for agentic scenarios only:
+- LangChain v1.0 reached (stability milestone)
+- LangGraph provides stateful agents with loops and dynamic decisions, suitable for agentic RAG
+- Architecturally more distant from Vektra: many overlapping abstractions, heavier dependency footprint
+- Not recommended for standard RAG pipeline (Haystack is a better fit), but worth evaluating specifically for agentic RAG in Phase 3+

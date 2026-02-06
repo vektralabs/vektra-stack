@@ -3,7 +3,7 @@
 # Software Requirements Specification
 
 **Project**: Vektra
-**Version**: 1.4
+**Version**: 1.4.1
 **Date**: 2026-02-06
 **Sessions**: 20260129-specs-vektra (baseline), 20260201-specs-vektra-integration (merged)
 **Corrections**: Manual gap closure v1.2 (REQ-048/049), v1.3 (REQ-050/051, EX-009 to EX-012, path fixes), v1.4 (architectural review: REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019), v1.4.1 (consistency review: OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases, EX-014 ref)

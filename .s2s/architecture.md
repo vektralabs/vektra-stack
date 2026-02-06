@@ -185,7 +185,7 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 | **arq for background jobs** | Lightweight, PostgreSQL-backed, Python native | Celery (Redis dependency), RQ (limited features) |
 | **pdfplumber** | Pure Python, ~5MB, no system dependencies | PyMuPDF (complex licensing), pdfminer (slower), Unstructured (Phase 2, heavy deps) |
 | **python-magic** | Magic bytes content type detection, ~2MB | Extension-only detection (unreliable for mislabeled files) |
-| **No LlamaIndex** | RAG features implemented directly behind QueryPipeline Protocol | LlamaIndex (heavy deps, opaque debugging, version churn, opinionated abstractions) |
+| **No LlamaIndex (Phase 1-2)** | RAG features implemented directly behind QueryPipeline Protocol. Standalone evaluation via RAGAS/DeepEval. Reassess for Phase 3+. | LlamaIndex (version instability, ~150-200 MB deps, abstraction mismatch with Protocol design) |
 
 ### 4.2 Architectural approach
 
@@ -429,7 +429,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-043 - LLM graceful degradation**: Primary model timeout triggers fallback model. Both fail triggers context-only response (chunks without LLM synthesis). Client always receives value.
 - **ARCH-044 - Chunk metadata filtering**: JSONB metadata column on chunks with GIN index. SearchFilters parameter in VectorStoreProvider.search(). Standard filterable fields defined for vektra-learn compatibility.
 - **ARCH-045 - Zero-downtime reindex via index_version**: Integer version on chunks, configurable active version, search filtered by active version. Enables embedding model and chunking strategy changes without downtime.
-- **ARCH-046 - LlamaIndex exclusion**: RAG pipeline features (hybrid search, reranking, query routing) implemented directly behind QueryPipeline Protocol. LlamaIndex excluded due to dependency weight, debugging opacity, version instability, and opinionated abstractions.
+- **ARCH-046 - LlamaIndex deferral**: RAG pipeline features (hybrid search, reranking, query routing) implemented directly behind QueryPipeline Protocol for Phase 1-2. LlamaIndex not adopted due to version instability (v0.14 breaking changes), ~150-200 MB dependency footprint, debugging opacity, and abstraction mismatch with Protocol-based design. RAG quality evaluation addressed by standalone frameworks (RAGAS or DeepEval). Reassessment for Phase 3+ if sub-question decomposition or agentic RAG features are needed.
 - **ARCH-047 - Namespace as first-class entity**: Database table with owner, quota, config overrides, retention. Phase 1: "default" namespace pre-created, metadata fields unenforced.
 - **ARCH-048 - Prompt versioning**: SHA-256 hash of template content (8-char prefix) recorded in QueryTrace. Enables correlation between template changes and response quality.
 
@@ -644,7 +644,7 @@ class QueryPipeline(Protocol):
     async def execute_stream(query: QueryRequest) -> AsyncIterator[QueryChunk]
 ```
 
-Phase 1: SimpleQueryPipeline (embed -> search -> prompt -> LLM, with graceful degradation). Phase 2: AdvancedQueryPipeline (classify -> retrieve -> rerank -> synthesize -> verify, implemented directly without LlamaIndex per ARCH-046). Config: `VEKTRA_QUERY_PIPELINE`.
+Phase 1: SimpleQueryPipeline (embed -> search -> prompt -> LLM, with graceful degradation). Phase 2: AdvancedQueryPipeline (classify -> retrieve -> rerank -> synthesize -> verify, implemented directly per ARCH-046). Config: `VEKTRA_QUERY_PIPELINE`.
 
 #### SafeguardHook
 
@@ -1001,7 +1001,7 @@ See ADRs in `.s2s/decisions/`:
 | [ADR-0013](decisions/ADR-0013-embedding-provider-protocol.md) | EmbeddingProvider Protocol | accepted |
 | [ADR-0014](decisions/ADR-0014-query-pipeline-abstraction.md) | QueryPipeline abstraction | accepted |
 | [ADR-0015](decisions/ADR-0015-forward-compatible-data-model.md) | Forward-compatible data model | accepted |
-| [ADR-0016](decisions/ADR-0016-llamaindex-exclusion.md) | LlamaIndex exclusion | accepted |
+| [ADR-0016](decisions/ADR-0016-llamaindex-deferral.md) | LlamaIndex deferral (Phase 1-2) | accepted |
 | [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md) | Audit/analytics separation via QueryTrace | accepted |
 
 ---
@@ -1116,6 +1116,7 @@ See ADRs in `.s2s/decisions/`:
 | OCR support | Unstructured includes Tesseract | EX-002 |
 | Batch operations | Single-document operations sufficient | EX-005 |
 | Analytics storage and API | QueryTrace emitted via structlog in Phase 1 | ARCH-041, REQ-060 |
+| RAG quality evaluation | Standalone framework (RAGAS or DeepEval) for faithfulness, relevancy, correctness | ARCH-046, ADR-0016 |
 | Feedback API | response_id and citation_id exist, endpoint deferred | REQ-055 |
 | Namespace quota enforcement | Table and fields exist, enforcement deferred | ARCH-047 |
 | Reindex API | index_version field and filter exist, API deferred | ARCH-045, REQ-064 |
@@ -1192,7 +1193,7 @@ See ADRs in `.s2s/decisions/`:
 | REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version | Extended VectorStoreProvider with SearchMode, filters, index_version |
 | REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation | Content inaccessible, QueryTrace separate from audit |
 | REQ-052 EmbeddingProvider | ARCH-035 EmbeddingProvider Protocol | Shared instance, asymmetric embedding, configurable model |
-| REQ-053 QueryPipeline | ARCH-036 QueryPipeline Protocol, ARCH-046 No LlamaIndex | Pipeline abstraction, direct implementation |
+| REQ-053 QueryPipeline | ARCH-036 QueryPipeline Protocol, ARCH-046 LlamaIndex deferral | Pipeline abstraction, direct implementation for Phase 1-2 |
 | REQ-054 ChunkingStrategy | ARCH-037 ChunkingStrategy Protocol | Strategy swap without pipeline changes |
 | REQ-055 Response traceability | ARCH-040 Forward-compatible data model | response_id and citation_id for feedback loops |
 | REQ-056 Document versioning | ARCH-040 Forward-compatible data model | Version and supersedes_id fields |
@@ -1237,7 +1238,7 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-043 LLM graceful degradation | vektra-core (QueryPipeline) |
 | ARCH-044 Metadata filtering | vektra-index (GIN index, WHERE clause), vektra_shared (SearchFilters type) |
 | ARCH-045 Index version | vektra-index (filter), vektra-ingest (version tag) |
-| ARCH-046 LlamaIndex exclusion | vektra-core (direct implementation) |
+| ARCH-046 LlamaIndex deferral | vektra-core (direct implementation) |
 | ARCH-047 Namespace entity | vektra-admin (management), vektra_shared (type) |
 | ARCH-048 Prompt versioning | vektra-core (hash computation, QueryTrace field) |
 
@@ -1255,5 +1256,5 @@ See ADRs in `.s2s/decisions/`:
 
 *Generated by Spec2Ship /s2s:design*
 *Version 1.1 - Added arc42 sections: Solution Strategy, Context Diagrams, Runtime Views, Quality Requirements, Risks, Glossary, Traceability Matrix*
-*Version 1.2 - Architectural review: 8 Protocol interfaces (4 new + 4 extended), forward-compatible data model (ARCH-040), audit/analytics separation (ARCH-041), 17 ADRs, LlamaIndex exclusion (ARCH-046)*
+*Version 1.2 - Architectural review: 8 Protocol interfaces (4 new + 4 extended), forward-compatible data model (ARCH-040), audit/analytics separation (ARCH-041), 17 ADRs, LlamaIndex deferral (ARCH-046)*
 *Version 1.2.1 - Consistency review: 6 Protocol support types added (8.3.1), SafeguardHook and DocumentExtractor types added, traceability matrix A.3 corrected, ADR links unified, glossary expanded to 43 terms*

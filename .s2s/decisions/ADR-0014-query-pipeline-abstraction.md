@@ -79,7 +79,7 @@ Both implementations share the same Protocol. Selection via `VEKTRA_QUERY_PIPELI
 - Opinionated abstractions conflict with infrastructure platform goals
 - With LLM-assisted development, direct implementation is feasible
 
-See ADR-0016 for the full LlamaIndex exclusion rationale.
+See ADR-0016 for the full LlamaIndex deferral rationale and feature-by-feature assessment.
 
 ## Consequences
 

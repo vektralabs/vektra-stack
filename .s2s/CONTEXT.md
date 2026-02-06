@@ -51,7 +51,7 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 - **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries. QueryTrace (ARCH-041) for RAG-specific observability, separate from audit log.
 - **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
 - **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. Soft delete for compliance (REQ-057). See [architecture.md](architecture.md#security).
-- **Extensibility**: 8 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). No LlamaIndex dependency (ARCH-046).
+- **Extensibility**: 8 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). LlamaIndex not adopted for Phase 1-2, standalone evaluation via RAGAS/DeepEval (ARCH-046).
 
 ## Components
 
@@ -149,7 +149,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - [ADR-0013](decisions/ADR-0013-embedding-provider-protocol.md): EmbeddingProvider Protocol
 - [ADR-0014](decisions/ADR-0014-query-pipeline-abstraction.md): QueryPipeline abstraction
 - [ADR-0015](decisions/ADR-0015-forward-compatible-data-model.md): Forward-compatible data model
-- [ADR-0016](decisions/ADR-0016-llamaindex-exclusion.md): LlamaIndex exclusion
+- [ADR-0016](decisions/ADR-0016-llamaindex-deferral.md): LlamaIndex deferral (Phase 1-2)
 - [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md): Audit/analytics separation via QueryTrace
 
 ## Open Questions

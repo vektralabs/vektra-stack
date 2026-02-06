@@ -46,11 +46,12 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 ## Cross-Cutting Concerns
 
 <!-- Populated by /s2s:design -->
-- **Authentication**: API key authentication with argon2id hashing, scoped permissions (read/ingest/admin). Single trust boundary at vektra-core gateway. See [ADR-0010](decisions/ADR-0010-authentication-gateway.md).
-- **Authorization**: Namespace isolation via PostgreSQL RLS policies. Application-level filtering for Phase 1, RLS binding via feature flag for multi-tenant activation. See [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md).
-- **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries.
+- **Authentication**: API key authentication with argon2id hashing, scoped permissions (read/ingest/admin). Single trust boundary at vektra-core gateway. Rate limiting slot in middleware (Phase 2 enforcement). See [ADR-0010](decisions/ADR-0010-authentication-gateway.md).
+- **Authorization**: Namespace isolation via PostgreSQL RLS policies. Application-level filtering for Phase 1, RLS binding via feature flag for multi-tenant activation. Namespace as first-class entity with metadata (ARCH-047). See [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md).
+- **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries. QueryTrace (ARCH-041) for RAG-specific observability, separate from audit log.
 - **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
-- **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. See [architecture.md](architecture.md#security).
+- **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. Soft delete for compliance (REQ-057). See [architecture.md](architecture.md#security).
+- **Extensibility**: 8 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). No LlamaIndex dependency (ARCH-046).
 
 ## Components
 
@@ -102,11 +103,11 @@ vektra-moodle ──────────────── (integrates learn
 See [requirements.md](requirements.md) for the complete Software Requirements Specification.
 
 **Key Phase 1 deliverables**:
-- 46 approved functional requirements (REQ-001 to REQ-051, some IDs unused)
+- 60 approved functional requirements (REQ-001 to REQ-065, some IDs unused)
 - 5 business rules
 - 13 non-functional requirements (8 HARD, 5 TARGET)
-- 12 explicit exclusions (Phase 2/3 deferrals)
-- 5 open questions (deferred to design or Phase 2)
+- 14 explicit exclusions (Phase 2/3 deferrals)
+- 7 open questions (1 resolved, remainder deferred to design or Phase 2)
 
 **Primary user persona**: Platform Operator (DevOps/platform teams)
 **MVP exit criterion**: 30 minutes from git clone to successful query
@@ -122,31 +123,43 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 **Key technology choices**:
 - Web framework: FastAPI 0.115+ with Pydantic v2
 - LLM abstraction: litellm (~5MB footprint)
-- Embeddings: sentence-transformers (all-MiniLM-L6-v2)
-- Vector store: pgvector (PostgreSQL extension)
+- Embeddings: sentence-transformers (all-MiniLM-L6-v2) via EmbeddingProvider Protocol
+- Vector store: pgvector (PostgreSQL extension) via VectorStoreProvider Protocol
 - Background tasks: arq with PostgreSQL job persistence
-- PDF extraction: pdfplumber
+- PDF extraction: pdfplumber (Phase 1), Unstructured (Phase 2) via DocumentExtractor Protocol
+- Content type detection: python-magic (magic bytes)
 
-**Protocol interfaces** (defined in vektra_shared):
-- LLMProvider: multi-provider LLM abstraction
-- VectorStoreProvider: pluggable vector store backend
-- DocumentExtractor: PDF, Word, PowerPoint extraction
-- SafeguardHook: pre/post query safeguards
+**Protocol interfaces** (8 defined in vektra_shared):
+- LLMProvider: multi-provider LLM abstraction with graceful degradation
+- EmbeddingProvider: shared embedding generation with asymmetric model support
+- VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning
+- DocumentExtractor: PDF, Word, PowerPoint extraction with element classification
+- ChunkingStrategy: pluggable chunking (fixed-size Phase 1, dual-strategy Phase 2)
+- QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace
+- SafeguardHook: pre/post query safeguards (3 trust boundary points)
+- EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (34 total, 10 ADRs generated):
+**Key decisions** (48 total, 17 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
 - [ADR-0007](decisions/ADR-0007-tech-stack.md): Technology stack selection
 - [ADR-0008](decisions/ADR-0008-llm-abstraction-litellm.md): LLM abstraction with litellm
 - [ADR-0011](decisions/ADR-0011-conversation-encryption.md): Conversation encryption
+- [ADR-0013](decisions/ADR-0013-embedding-provider-protocol.md): EmbeddingProvider Protocol
+- [ADR-0014](decisions/ADR-0014-query-pipeline-abstraction.md): QueryPipeline abstraction
+- [ADR-0015](decisions/ADR-0015-forward-compatible-data-model.md): Forward-compatible data model
+- [ADR-0016](decisions/ADR-0016-llamaindex-exclusion.md): LlamaIndex exclusion
+- [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md): Audit/analytics separation via QueryTrace
 
 ## Open Questions
 
 - **Periodic indexing pattern**: n8n orchestrates ingestion, but the scheduling pattern (e.g., daily sync of Moodle materials) needs documentation as a reference workflow
-- **learn-ui architecture**: is the chatbot widget a standalone npm package or served by the backend? (decide in /s2s:design)
-- **admin-ui architecture**: is admin a separate SPA or integrated? (decide in /s2s:design)
+- **ORM layer**: SQLAlchemy 2.0 async (with asyncpg) vs SQLModel. Must be decided before implementation (OQ-017)
+- **learn-ui architecture**: is the chatbot widget a standalone npm package or served by the backend? (OQ-018)
+- **admin-ui architecture**: is admin a separate SPA or integrated? (OQ-018)
+- **Phase 2 hardware minimum**: Phase 2 full-featured estimated at ~3.4GB total. Recommend 8GB / 4 CPU target (OQ-019)
 
 ---
 
-*Last updated: 2026-02-03*
+*Last updated: 2026-02-06*

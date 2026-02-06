@@ -3,10 +3,10 @@
 # Software Requirements Specification
 
 **Project**: Vektra
-**Version**: 1.3
-**Date**: 2026-02-01
+**Version**: 1.4
+**Date**: 2026-02-06
 **Sessions**: 20260129-specs-vektra (baseline), 20260201-specs-vektra-integration (merged)
-**Corrections**: Manual gap closure v1.2 (REQ-048/049), v1.3 (REQ-050/051, EX-009 to EX-012, path fixes)
+**Corrections**: Manual gap closure v1.2 (REQ-048/049), v1.3 (REQ-050/051, EX-009 to EX-012, path fixes), v1.4 (architectural review: REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019), v1.4.1 (consistency review: OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases, EX-014 ref)
 
 ## 1. Introduction
 
@@ -390,13 +390,14 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-043: Configurable prompt templates
 - **Priority**: should
-- **Description**: Platform Operators can customize system and RAG prompt templates via configuration files without code changes. Templates use Jinja2 format with documented variables. Phase 1 scope limited to system prompts and RAG context injection prompts.
+- **Description**: Platform Operators can customize system and RAG prompt templates via configuration files without code changes. Templates use Jinja2 format with documented variables. Phase 1 scope limited to system prompts and RAG context injection prompts. Each loaded template is identified by a prompt_version (SHA-256 hash of content, first 8 chars) for traceability. See REQ-065 for prompt versioning details.
 - **Acceptance Criteria**:
   - [ ] Template files loaded from configurable path with fallback to built-in defaults
   - [ ] Jinja2 template format supported
   - [ ] Template variables documented (available context per template type)
   - [ ] 2-3 built-in templates provided as examples
   - [ ] Integration test verifies custom template loading
+  - [ ] Each template identified by prompt_version hash (REQ-065)
 
 ### REQ-044: Safeguard hook interface
 - **Priority**: should
@@ -438,14 +439,16 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-048: Namespace support for document isolation
 - **Priority**: must
-- **Description**: vektra-index supports namespaces for logical document separation. All document operations (store, search, delete) are scoped to a namespace. Phase 1: single default namespace ("default"). Phase 2: multi-namespace with per-API-key namespace restrictions for tenant isolation.
+- **Description**: vektra-index supports namespaces for logical document separation. All document operations (store, search, delete) are scoped to a namespace. Namespace is a first-class entity with its own database table including metadata (owner, quota, config overrides, GDPR retention). Phase 1: single default namespace ("default") pre-created via migration, metadata fields nullable and unenforced. Phase 2: multi-namespace with per-API-key namespace restrictions, quota enforcement, and per-namespace configuration overrides.
 - **Acceptance Criteria**:
+  - [ ] `namespaces` table exists with id, display_name, owner_key_id, quota_chunks, quota_documents, config (JSONB), retention_days, created_at, updated_at
+  - [ ] "default" namespace pre-created via Alembic migration
   - [ ] POST /documents/{id}/chunks accepts optional namespace parameter (default: "default")
   - [ ] POST /search accepts namespace parameter, searches only within specified namespace
   - [ ] DELETE /documents/{id} requires namespace parameter for explicit scoping
   - [ ] GET /stats accepts optional namespace filter
-  - [ ] Namespace stored as metadata on each chunk
   - [ ] Cross-namespace queries not supported (by design)
+  - [ ] Quota and config fields nullable in Phase 1 (enforcement deferred to Phase 2)
 
 ### REQ-049: Multi-turn conversation context
 - **Priority**: should
@@ -461,10 +464,12 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-050: Pluggable vector store backend
 - **Priority**: should
-- **Description**: vektra-index abstracts vector store operations behind a provider interface, allowing deployment-time selection of backend. Phase 1: pgvector is the only implemented backend. Phase 2: additional backends (Qdrant, Pinecone) may be added. The abstraction exists from Phase 1 to avoid retrofitting.
+- **Description**: vektra-index abstracts vector store operations behind a VectorStoreProvider Protocol, allowing deployment-time selection of backend. The search interface supports SearchMode (DENSE, SPARSE, HYBRID), QueryEmbedding (dense + optional sparse vector), and optional SearchFilters for metadata filtering. Phase 1: pgvector is the only implemented backend, SearchMode.DENSE only, sparse vector ignored, SearchFilters applied as WHERE clause. Phase 2: hybrid search (dense + sparse + RRF fusion), additional backends.
 - **Acceptance Criteria**:
-  - [ ] VectorStoreProvider interface defined with store, search, delete operations
+  - [ ] VectorStoreProvider Protocol defined with store, search, delete, health_check
+  - [ ] search() accepts QueryEmbedding (dense + optional sparse), SearchMode enum, optional SearchFilters
   - [ ] pgvector implementation of VectorStoreProvider
+  - [ ] Phase 1: SearchMode.DENSE only, sparse vector ignored if provided
   - [ ] Backend selection via VEKTRA_VECTOR_STORE_PROVIDER env var (default: "pgvector")
   - [ ] Unknown provider value rejected at startup with clear error
   - [ ] Interface documented for future backend implementations
@@ -478,6 +483,143 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - [ ] Query text and response text never written to audit logs
   - [ ] Conversation content stored separately from audit data with different access controls
   - [ ] Admin dashboard shows only aggregate metrics, never individual conversations
+
+### REQ-052: EmbeddingProvider Protocol
+- **Priority**: must
+- **Description**: Embedding generation abstracted behind EmbeddingProvider Protocol in vektra_shared. Separates embed_documents() from embed_query() to support asymmetric models (e.g., e5-large requires "query: ..." vs "passage: ..." prefixes). Single model instance shared between vektra-ingest and vektra-core to avoid double memory loading. Phase 1: SentenceTransformersProvider with all-MiniLM-L6-v2. Provider and model configurable via environment variables.
+- **Acceptance Criteria**:
+  - [ ] EmbeddingProvider Protocol defined with embed_documents(), embed_query(), dimensions(), health_check()
+  - [ ] Single model instance shared between vektra-ingest and vektra-core (no double loading)
+  - [ ] Provider selection via VEKTRA_EMBEDDING_PROVIDER env var (default: "sentence-transformers")
+  - [ ] Model selection via VEKTRA_EMBEDDING_MODEL env var (default: "all-MiniLM-L6-v2")
+  - [ ] dimensions() returns vector dimensionality for schema validation
+
+### REQ-053: QueryPipeline Protocol
+- **Priority**: must
+- **Description**: RAG query pipeline abstracted behind QueryPipeline Protocol. execute() returns both QueryResponse and QueryTrace for observability. execute_stream() returns AsyncIterator for SSE streaming. Phase 1: SimpleQueryPipeline (embed -> search -> prompt -> LLM). Supports graceful degradation (REQ-059). Selectable via config.
+- **Acceptance Criteria**:
+  - [ ] QueryPipeline Protocol defined with execute() and execute_stream()
+  - [ ] execute() returns tuple of (QueryResponse, QueryTrace)
+  - [ ] SimpleQueryPipeline implements current RAG flow behind the Protocol
+  - [ ] Pipeline selection via VEKTRA_QUERY_PIPELINE env var (default: "simple")
+  - [ ] Pipeline receives dependencies via constructor injection (EmbeddingProvider, VectorStoreProvider, LLMProvider, SafeguardHook)
+
+### REQ-054: ChunkingStrategy Protocol
+- **Priority**: must
+- **Description**: Text chunking abstracted behind ChunkingStrategy Protocol. Receives AsyncIterator[DocumentChunk] from DocumentExtractor, returns AsyncIterator[DocumentChunk] with chunked output. Phase 1: FixedSizeChunking preserving REQ-016 parameters (1000 tokens, 200 overlap). Phase 2: DualStrategyChunking (text split with overlap, tables never split, parent-child hierarchy).
+- **Acceptance Criteria**:
+  - [ ] ChunkingStrategy Protocol defined with chunk() method
+  - [ ] FixedSizeChunking implementation preserves REQ-016 behavior
+  - [ ] Strategy selection via VEKTRA_CHUNKING_STRATEGY env var (default: "fixed")
+  - [ ] Input and output are both AsyncIterator[DocumentChunk]
+
+### REQ-055: Response and citation traceability
+- **Priority**: must
+- **Description**: Every query response includes a response_id (UUID) for downstream correlation, and every source citation includes a citation_id (UUID) for granular feedback. Phase 1: IDs generated and returned to client, no feedback endpoint. Phase 2: POST /feedback/{response_id} and POST /feedback/citation/{citation_id} enable quality improvement loops.
+- **Acceptance Criteria**:
+  - [ ] QueryResponse includes response_id: UUID (v4)
+  - [ ] Each SourceRef in response includes citation_id: UUID (v4)
+  - [ ] response_id persisted in QueryTrace for correlation (REQ-060)
+  - [ ] IDs included in JSON response to client
+  - [ ] No feedback endpoint required in Phase 1
+
+### REQ-056: Document versioning in data model
+- **Priority**: should
+- **Description**: SourceDocument includes version (int, default 1) and supersedes_id (nullable FK to previous version). SearchResult includes document_version. Phase 1: version always 1, supersedes_id always null. Phase 2: re-ingestion of updated content creates new version instead of delete-then-reindex, preserving correlation between historical responses and document versions. **Phase 2 note**: when document versioning is active, re-ingestion of same filename with different content creates a new version (superseding REQ-033's 409 Conflict behavior for this case). The 409 behavior remains for Phase 1.
+- **Acceptance Criteria**:
+  - [ ] SourceDocument schema includes version (NOT NULL, default 1)
+  - [ ] SourceDocument schema includes supersedes_id (nullable FK to source_documents.id)
+  - [ ] SearchResult includes document_version field
+  - [ ] Existing Phase 1 behavior preserved (version=1 for all documents)
+  - [ ] Phase 2: re-ingestion with same filename but different content creates version N+1 (not 409)
+
+### REQ-057: Soft delete for documents
+- **Priority**: should
+- **Description**: Document deletion uses soft delete pattern for GDPR compliance. SourceDocument includes deleted_at (timestamp, nullable) and deletion_reason (enum: "user_request", "superseded", "expired"). All queries filter WHERE deleted_at IS NULL. Phase 2: periodic cleanup job hard-deletes records past retention period. **Deduplication interaction**: content hash dedup checks (REQ-033, REQ-034) exclude soft-deleted documents (WHERE deleted_at IS NULL). Re-ingesting a soft-deleted document creates a new record.
+- **Acceptance Criteria**:
+  - [ ] DELETE /documents/{id} sets deleted_at and deletion_reason instead of hard delete
+  - [ ] All search and list queries exclude soft-deleted documents
+  - [ ] Dedup checks (REQ-033) exclude soft-deleted documents
+  - [ ] Audit log records deletion event with document_id and reason
+  - [ ] Soft-deleted documents not returned by any API endpoint
+  - [ ] Phase 2: arq cleanup job removes records past VEKTRA_RETENTION_DAYS
+
+### REQ-058: Content type detection via magic bytes
+- **Priority**: should
+- **Description**: Ingest pipeline detects actual file content type via magic bytes (first bytes of file) before dispatching to DocumentExtractor. Dispatches based on detected type (more reliable than file extension). Logs warning on mismatch between detected and declared type. Uses python-magic library (~2MB, requires libmagic on Linux).
+- **Acceptance Criteria**:
+  - [ ] Magic bytes detection runs before DocumentExtractor dispatch
+  - [ ] Mismatch between detected and declared MIME type logged as warning
+  - [ ] Dispatch uses detected type, not declared extension
+  - [ ] Unsupported detected content type rejected with ERR-INGEST-001 and detected MIME in message
+
+### REQ-059: LLM graceful degradation
+- **Priority**: should
+- **Description**: LLM configuration supports optional fallback_model, fallback_timeout_ms (default 30000), and context_only_enabled (default true). When primary model times out, system switches to fallback model. When fallback also fails and context_only_enabled is true, system returns retrieved chunks without LLM synthesis. Client always receives value (relevant sources at minimum) instead of an error.
+- **Acceptance Criteria**:
+  - [ ] LLMConfig includes fallback_model (string, nullable), fallback_timeout_ms (int), context_only_enabled (bool)
+  - [ ] Primary model timeout triggers fallback attempt with structured log warning
+  - [ ] Context-only response includes sources array, answer=null, context_only=true flag
+  - [ ] Fallback and context-only events recorded in QueryTrace (REQ-060)
+
+### REQ-060: QueryTrace for RAG observability
+- **Priority**: should
+- **Description**: Every query execution produces a QueryTrace with per-step timing, chunk references (IDs and scores), and pipeline metadata. QueryTrace is separate from audit logging and does not contain query text or response content (REQ-051 compliance preserved). Correlates with QueryResponse via response_id (REQ-055). Phase 1: emitted via structlog as JSON. Phase 2: dedicated storage with query API for RAG quality analysis.
+- **Acceptance Criteria**:
+  - [ ] QueryTrace includes response_id, steps (list of StepTrace), total_duration_ms, chunks_retrieved (id + score), llm_model, prompt_version
+  - [ ] Each StepTrace includes name, duration_ms, metadata dict
+  - [ ] QueryTrace does NOT contain query text or response text
+  - [ ] Emitted as structured log event separate from audit log
+  - [ ] response_id links QueryTrace to QueryResponse
+
+### REQ-061: EventEmitter interface
+- **Priority**: should
+- **Description**: Internal event hook system with EventEmitter Protocol. Phase 1: NoOpEventEmitter (all events silently discarded). Emission points defined at: document.indexed, document.failed, query.completed, safeguard.triggered, apikey.created, apikey.revoked. Phase 2: WebhookEventEmitter with HMAC-SHA256 signature verification.
+- **Acceptance Criteria**:
+  - [ ] EventEmitter Protocol defined with async emit(event_type: str, payload: dict)
+  - [ ] NoOpEventEmitter as default implementation
+  - [ ] emit() calls present at all documented emission points in production code
+  - [ ] Less than 1ms overhead with NoOp implementation
+  - [ ] Event type names follow dotted convention (e.g., "document.indexed")
+
+### REQ-062: ProviderRegistry pattern
+- **Priority**: should
+- **Description**: Unified registry for all Protocol implementations selectable via configuration. Consistent env var pattern: VEKTRA_{CATEGORY}_PROVIDER or VEKTRA_{CATEGORY} for all pluggable components. Phase 1: dict-based registry populated at startup. Phase 2: extensible with Python entry_points for plugin discovery.
+- **Acceptance Criteria**:
+  - [ ] ProviderRegistry in vektra_shared with register(), get(), list() methods
+  - [ ] All Protocol implementations registered during application startup
+  - [ ] Consistent VEKTRA_* env var pattern for provider selection
+  - [ ] Unknown provider name rejected at startup with clear error listing available options
+  - [ ] list() returns available providers per category for diagnostics
+
+### REQ-063: Chunk metadata filtering
+- **Priority**: should
+- **Description**: VectorStoreProvider.search() accepts optional filters parameter for metadata-based filtering. ChunkMetadata defines standard filterable fields: course_id, module_id, academic_year, content_type, language. Phase 1: filters applied as WHERE clause on JSONB metadata column with GIN index. Metadata fields populated optionally during ingest. Phase 2: vektra-learn populates metadata automatically, filtering used in course-scoped queries.
+- **Acceptance Criteria**:
+  - [ ] search() accepts filters: SearchFilters | None parameter
+  - [ ] ChunkMetadata type defines standard filterable fields
+  - [ ] GIN index created on document_chunks.metadata JSONB column
+  - [ ] Filtering combined with vector similarity in single SQL query (not post-filtering)
+  - [ ] None filters preserves current behavior (no additional filtering)
+
+### REQ-064: Zero-downtime reindex via index_version
+- **Priority**: should
+- **Description**: Document chunks include index_version (int, default 1). All search queries filter by active index version (VEKTRA_ACTIVE_INDEX_VERSION env var, default 1). Enables embedding model or chunking strategy changes without downtime: new chunks created with incremented version alongside old, atomic switch via config change, cleanup of old version afterwards. Phase 1: all chunks at version 1, filter applied in queries. Phase 2: reindex API with progress tracking.
+- **Acceptance Criteria**:
+  - [ ] document_chunks table includes index_version (NOT NULL, default 1)
+  - [ ] B-tree index on index_version column
+  - [ ] All search queries include WHERE index_version = active_version filter
+  - [ ] VEKTRA_ACTIVE_INDEX_VERSION env var controls active version (default: 1)
+  - [ ] Embedding model change documented as requiring full reindex via index_version pattern
+
+### REQ-065: Prompt versioning
+- **Priority**: should
+- **Description**: Every prompt template (REQ-043) is identified by a prompt_version computed as truncated SHA-256 hash of template content (first 8 hex chars). prompt_version recorded in QueryTrace (REQ-060) for correlation between template changes and response quality. Amends REQ-043.
+- **Acceptance Criteria**:
+  - [ ] prompt_version computed as SHA-256(template_content)[:8] on template load
+  - [ ] prompt_version included in QueryTrace
+  - [ ] Template content change produces different prompt_version
+  - [ ] Built-in default templates have documented prompt_version values
 
 ## 3. Business Rules
 
@@ -583,6 +725,8 @@ Documents in INDEXED state before restart must be queryable after restart.
 
 Scope: includes vektra-core, vektra-index, vektra-ingest API containers. Excludes PostgreSQL/pgvector (external dependency) and LLM provider (Ollama runs separately or uses external API). This is deployment minimum floor; NFR-001 uses 4-core/16GB as performance test baseline.
 
+**Phase 2 note**: Phase 2 full-featured deployment (e5-large embeddings, cross-encoder reranking, Presidio safeguards) is estimated at ~2.9GB application RAM. Recommended Phase 2 target: 8GB RAM / 4 CPU. See OQ-019.
+
 ### NFR-007: Audit log completeness
 - **Category**: security
 - **Target**: 100% of authenticated requests logged
@@ -659,18 +803,25 @@ Vector store and metadata database encryption delegated to PostgreSQL native enc
 - **EX-009**: Markdown ingestion deferred to Phase 2 - Markdown file extraction is excluded from Phase 1. PDF, Word, and PowerPoint cover primary use cases. Markdown support is low complexity and can be added in Phase 2 if needed.
 - **EX-010**: Granular ingest APIs deferred to Phase 2 - Separate APIs for extract, clean, and chunk steps are excluded. Phase 1 provides atomic POST /ingest only. Granular APIs may be added in Phase 2 for advanced debugging and custom pipelines.
 - **EX-011**: Ingest event emission deferred to Phase 2 - Event emission for monitoring and retry orchestration is excluded. Phase 1 uses polling (GET /ingest/jobs/{id}/status). Webhook/event-based notifications may be added in Phase 2 for n8n integration.
-- **EX-012**: Multiple chunking strategies deferred to Phase 2 - Phase 1 supports only fixed-size chunking (REQ-016). Semantic chunking, sentence-based chunking, and other strategies are deferred to Phase 2.
+- **EX-012**: Multiple chunking strategies deferred to Phase 2 - Phase 1 supports only fixed-size chunking (REQ-016) behind ChunkingStrategy Protocol (REQ-054). Semantic chunking, dual-strategy chunking (text + table preservation), and parent-child hierarchy are deferred to Phase 2 as implementation swaps.
+- **EX-013**: LlamaIndex framework excluded - RAG pipeline features (hybrid search, reranking, query routing) are implemented directly behind QueryPipeline Protocol (REQ-053). LlamaIndex is excluded due to heavy dependency footprint (~hundreds of MB), opaque debugging, version churn between releases, and opinionated abstractions that conflict with Vektra's infrastructure platform goals. With LLM-assisted development, direct implementation is feasible without framework overhead.
+- **EX-014**: NeMo Guardrails excluded from Phase 2 baseline - NeMo Guardrails excluded from default SafeguardHook (REQ-044) implementation due to heavy footprint. Presidio for PII detection is accepted for Phase 2. For query and output guardrails, lighter alternatives (keyword filtering + embedding-based classification) should be evaluated before committing to NeMo.
 
 ## 6. Open Questions (Deferred)
 
 - **OQ-012**: Concurrent ingestion limit - Maximum concurrent ingestion jobs per tenant is undefined. Suggested baseline: 5 concurrent jobs on minimum hardware (2-core/4GB), 10 on recommended (4-core/16GB). Deferred to design phase for implementation spike.
-- **OQ-013**: Graceful degradation matrix - Behavior when external dependencies fail needs explicit definition. Deferred to design phase for detailed failure mode analysis.
+- **OQ-013**: Graceful degradation matrix - Behavior when external dependencies fail needs explicit definition. **Partially resolved**: ARCH-043 and REQ-059 address LLM provider failures (fallback model, context-only response). Remaining: PostgreSQL unavailability, pgvector degradation, embedding service failure. Deferred to design phase for complete failure mode matrix.
 - **OQ-014**: Confidence scoring algorithm basis - Algorithm for response confidence scores needs research. Factors: chunk relevance scores, coverage of query terms, source diversity. Deferred to Phase 2 spike.
-- **OQ-015**: Safeguard hook points specification - Exact hook points (pre_query, post_retrieval, pre_response) need signature definition. Deferred to design phase.
+- **OQ-015**: ~~Safeguard hook points specification~~ - **Resolved**: SafeguardHook Protocol fully defined in architecture.md section 8.3 with signatures for pre_query(), post_retrieval(), pre_response(). See REQ-044.
 - **OQ-016**: File storage encryption scope - Encryption at rest for ingested files depends on vektra-ingest storage architecture. Deferred to design phase.
+- **OQ-017**: ORM/database layer selection - SQLAlchemy 2.0 async (with asyncpg) vs SQLModel. Both support repository pattern and Alembic migrations. Decision needed before implementation start, to be documented as ADR.
+- **OQ-018**: UI architecture for admin and learn chatbot - Phase 2 requires admin UI and chatbot widget. Options: SPA (React/Vue) vs server-side (HTMX/Jinja2) for admin; standalone JS widget vs npm package for chatbot. Decision deferred to Phase 2 design.
+- **OQ-019**: Phase 2 hardware minimum - Phase 2 full-featured (e5-large + cross-encoder + Presidio) estimated at ~2.9GB application + ~512MB PostgreSQL = ~3.4GB. Recommendation: document 8GB RAM / 4 CPU as Phase 2 target. Phase 2 with only hybrid search + reranking (without e5-large) can stay within 4GB. Phase 1 stays at 4GB / 2 CPU per NFR-006.
 
 ---
 *Generated by Spec2Ship /s2s:specs*
 *Sessions: 20260129-specs-vektra (baseline), 20260201-specs-vektra-integration (merged)*
 *Manual corrections: 2026-02-01 (REQ-048, REQ-049, citation format, path alignment)*
-*Artifacts: 46 functional requirements, 13 NFRs, 5 business rules, 12 exclusions, 5 open questions*
+*Architectural review: 2026-02-06 (REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019, REQ-043/048/050 amended)*
+*Consistency review: 2026-02-06 (OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases clarified, EX-014 ref added)*
+*Artifacts: 60 functional requirements, 13 NFRs, 5 business rules, 14 exclusions, 7 open questions (1 resolved)*

@@ -3,10 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.1
-**Date**: 2026-02-03
+**Version**: 1.2
+**Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
+**Updated**: 2026-02-06 (ARCH-035 to ARCH-048, ADR-0013 to ADR-0017, consistency review)
 
 ---
 
@@ -42,6 +43,8 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 - Multi-provider LLM support: OpenAI, Anthropic, Ollama (REQ-047)
 - API key authentication with scoped permissions (REQ-019, REQ-023)
 - Streaming query responses (REQ-042)
+- Protocol-based extensibility: 8 pluggable interfaces for all integration points (REQ-050, REQ-052, REQ-053, REQ-054, REQ-061, REQ-062)
+- Forward-compatible data model: versioning, soft delete, traceability fields from Phase 1 (REQ-055, REQ-056, REQ-057)
 
 **MVP exit criterion**: 30 minutes from git clone to successful query (REQ-005)
 
@@ -180,17 +183,20 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 | **litellm for LLM abstraction** | ~5MB footprint, native async, multi-provider support | LangChain (too heavy), direct SDK (no abstraction) |
 | **pgvector** | PostgreSQL native, no additional service, familiar ops | Qdrant (extra service), Pinecone (cloud-only) |
 | **arq for background jobs** | Lightweight, PostgreSQL-backed, Python native | Celery (Redis dependency), RQ (limited features) |
-| **pdfplumber** | Pure Python, ~5MB, no system dependencies | PyMuPDF (complex licensing), pdfminer (slower) |
+| **pdfplumber** | Pure Python, ~5MB, no system dependencies | PyMuPDF (complex licensing), pdfminer (slower), Unstructured (Phase 2, heavy deps) |
+| **python-magic** | Magic bytes content type detection, ~2MB | Extension-only detection (unreliable for mislabeled files) |
+| **No LlamaIndex** | RAG features implemented directly behind QueryPipeline Protocol | LlamaIndex (heavy deps, opaque debugging, version churn, opinionated abstractions) |
 
 ### 4.2 Architectural approach
 
 | Goal | Approach | Reference |
 |------|----------|-----------|
 | Deployment simplicity | Single container, docker-compose, inline defaults | ARCH-001, ARCH-002 |
-| Extensibility | Protocol interfaces for all integration points | ARCH-029 |
-| Security | Single trust boundary, encrypted conversations | ARCH-020, ARCH-031 |
-| Observability | Structured logging, Prometheus metrics, correlation IDs | ARCH-008, ARCH-013, ARCH-014 |
+| Extensibility | 8 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039 |
+| Security | Single trust boundary, encrypted conversations, soft delete for compliance | ARCH-020, ARCH-031, ARCH-040 |
+| Observability | Structured logging, Prometheus metrics, correlation IDs, RAG-specific QueryTrace | ARCH-008, ARCH-013, ARCH-014, ARCH-041 |
 | Future extraction | Module boundaries enforced via import-linter | ARCH-003 |
+| Forward compatibility | Data model fields and Protocol signatures designed for Phase 2 features from day one | ARCH-040, ARCH-044, ARCH-045 |
 
 ### 4.3 Quality approach
 
@@ -217,7 +223,8 @@ See [section 3.1](#31-business-context) for system context diagram.
 │                                                                                     │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐ │
 │  │                           vektra_shared (library)                              │ │
-│  │  • Config schemas    • Error types    • Protocol interfaces    • Auth middleware│ │
+│  │  • Config schemas    • Error types    • 8 Protocol interfaces                  │ │
+│  │  • Auth middleware   • ProviderRegistry  • Types (QueryTrace, Namespace, ...)  │ │
 │  └───────────────────────────────────────────────────────────────────────────────┘ │
 │         ▲                    ▲                    ▲                    ▲            │
 │         │                    │                    │                    │            │
@@ -225,18 +232,19 @@ See [section 3.1](#31-business-context) for system context diagram.
 │  │             │      │             │      │             │      │             │    │
 │  │ vektra-core │─────►│vektra-ingest│─────►│ vektra-index│      │ vektra-admin│    │
 │  │             │      │             │      │             │      │             │    │
-│  │  • Query    │      │  • Extract  │      │  • Store    │      │  • Health   │    │
-│  │  • LLM call │      │  • Chunk    │      │  • Search   │      │  • API keys │    │
-│  │  • Safeguard│      │  • Jobs     │      │  • Delete   │      │  • Audit    │    │
-│  │             │      │             │      │             │      │             │    │
+│  │• QueryPipe  │      │• Extractor  │      │  • Store    │      │  • Health   │    │
+│  │• LLM call   │      │• Chunking   │      │  • Search   │      │  • API keys │    │
+│  │• Safeguard  │      │• Jobs       │      │  • Delete   │      │  • Audit    │    │
+│  │• Embedding* │      │• Embedding* │      │             │      │• Namespace  │    │
+│  │             │      │• MagicBytes │      │             │      │             │    │
 │  └──────┬──────┘      └─────────────┘      └──────┬──────┘      └─────────────┘    │
 │         │                                         │                                 │
 │         │ LLMProvider                             │ VectorStoreProvider            │
 │         ▼                                         ▼                                 │
-│  ┌─────────────┐                          ┌─────────────┐                          │
-│  │   litellm   │                          │  pgvector   │                          │
-│  │  (wrapper)  │                          │  (adapter)  │                          │
-│  └─────────────┘                          └─────────────┘                          │
+│  ┌─────────────┐  ┌─────────────┐         ┌─────────────┐                          │
+│  │   litellm   │  │ Embedding   │         │  pgvector   │                          │
+│  │  (wrapper)  │  │ (shared*)   │         │  (adapter)  │                          │
+│  └─────────────┘  └─────────────┘         └─────────────┘                          │
 │                                                                                     │
 └────────────────────────────────────────────────────────────────────────────────────┘
          │                                         │
@@ -251,11 +259,11 @@ See [section 3.1](#31-business-context) for system context diagram.
 
 | Component | Responsibility | State Owned | Dependencies |
 |-----------|---------------|-------------|--------------|
-| vektra-core | RAG orchestration, LLM calls, safeguards | conversations, llm_providers, safeguard_rules | vektra-index, LLM providers |
-| vektra-ingest | Document processing, chunking, async jobs | ingest_jobs, source_documents | vektra-index |
-| vektra-index | Vector storage, semantic search | document_chunks, embeddings | PostgreSQL/pgvector |
-| vektra-admin | Health monitoring, API key management | api_keys, audit_log | All components |
-| vektra_shared | Cross-cutting types and middleware | namespaces | None |
+| vektra-core | RAG orchestration via QueryPipeline, LLM calls, safeguards, conversation management | conversations, query_traces | vektra-index, LLM providers, EmbeddingProvider (shared) |
+| vektra-ingest | Document processing via DocumentExtractor + ChunkingStrategy, magic bytes detection, async jobs | ingest_jobs, source_documents | vektra-index, EmbeddingProvider (shared) |
+| vektra-index | Vector storage via VectorStoreProvider, semantic search with metadata filtering | document_chunks, embeddings | PostgreSQL/pgvector |
+| vektra-admin | Health monitoring, API key management, namespace management | api_keys, audit_log, namespaces | All components |
+| vektra_shared | Protocol definitions (8), types, config schemas, error definitions, auth middleware, ProviderRegistry, EventEmitter | - | None |
 
 ---
 
@@ -410,6 +418,20 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-025 - RLS binding deferred**: Application-level namespace filtering for Phase 1. RLS activates when multi-tenancy enabled.
 - **ARCH-026 - Memory budget allocation**: Container 3.5GB hard limit, internal advisory limits (INDEX=512MB, INGEST=256MB).
 - **ARCH-027 - Memory observability**: GET /health/memory endpoint, Prometheus metrics for per-component usage.
+- **ARCH-035 - EmbeddingProvider Protocol**: Dedicated Protocol for embedding generation. Separates embed_documents() from embed_query() for asymmetric models. Single shared instance between ingest and core. Configurable provider and model via env vars.
+- **ARCH-036 - QueryPipeline Protocol**: Abstraction of RAG query pipeline. execute() returns (QueryResponse, QueryTrace). Phase 1: SimpleQueryPipeline. Selectable via VEKTRA_QUERY_PIPELINE.
+- **ARCH-037 - ChunkingStrategy Protocol**: Abstraction of text chunking. Receives DocumentChunk stream, returns chunked stream. Phase 1: FixedSizeChunking. Selectable via VEKTRA_CHUNKING_STRATEGY.
+- **ARCH-038 - EventEmitter interface**: Internal event hooks with NoOp default. Emission points at document lifecycle, query completion, safeguard triggers, API key operations. Phase 2: WebhookEventEmitter with HMAC-SHA256.
+- **ARCH-039 - ProviderRegistry pattern**: Unified registry for all Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery in Phase 2. Consistent VEKTRA_* env var configuration pattern.
+- **ARCH-040 - Forward-compatible data model**: Phase 1 schema includes fields for Phase 2 features: response_id and citation_id for feedback loops, document version and supersedes_id for versioning, deleted_at and deletion_reason for soft delete, index_version for zero-downtime reindex. All fields nullable/defaulted, no behavioral change in Phase 1.
+- **ARCH-041 - Audit/analytics separation**: QueryTrace (per-step timing, chunk refs, model info) emitted separately from audit log. QueryTrace does not contain query text or response content (REQ-051 compliance). Phase 1: structlog emission. Phase 2: dedicated storage.
+- **ARCH-042 - Content type detection**: Magic bytes validation before DocumentExtractor dispatch. python-magic for MIME detection. Logs warning on mismatch with declared type.
+- **ARCH-043 - LLM graceful degradation**: Primary model timeout triggers fallback model. Both fail triggers context-only response (chunks without LLM synthesis). Client always receives value.
+- **ARCH-044 - Chunk metadata filtering**: JSONB metadata column on chunks with GIN index. SearchFilters parameter in VectorStoreProvider.search(). Standard filterable fields defined for vektra-learn compatibility.
+- **ARCH-045 - Zero-downtime reindex via index_version**: Integer version on chunks, configurable active version, search filtered by active version. Enables embedding model and chunking strategy changes without downtime.
+- **ARCH-046 - LlamaIndex exclusion**: RAG pipeline features (hybrid search, reranking, query routing) implemented directly behind QueryPipeline Protocol. LlamaIndex excluded due to dependency weight, debugging opacity, version instability, and opinionated abstractions.
+- **ARCH-047 - Namespace as first-class entity**: Database table with owner, quota, config overrides, retention. Phase 1: "default" namespace pre-created, metadata fields unenforced.
+- **ARCH-048 - Prompt versioning**: SHA-256 hash of template content (8-char prefix) recorded in QueryTrace. Enables correlation between template changes and response quality.
 
 #### Data flow
 
@@ -421,7 +443,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-011 - Streaming extraction**: Large documents processed page-by-page, bounded memory usage.
 - **ARCH-031 - Conversation storage encrypted**: pgcrypto column-level encryption. Encryption key isolated from admin scope.
 - **ARCH-032 - Document re-indexing**: SHA-256 hash comparison. Delete-then-reindex on content change.
-- **ARCH-034 - Database schema implementation**: DDL via Alembic migrations with auto-execution on startup. Security constraints documented.
+- **ARCH-034 - Database schema implementation**: DDL via Alembic migrations with auto-execution on startup. Security constraints documented. Schema includes forward-compatible fields per ARCH-040.
 
 #### Technology choices
 
@@ -459,39 +481,38 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 
 #### vektra-core
 
-**Responsibility**: Orchestrates RAG query flow - receives queries, retrieves context from vektra-index, generates LLM responses via litellm, enforces safeguards.
+**Responsibility**: Orchestrates RAG query flow via QueryPipeline Protocol - receives queries, retrieves context from vektra-index, generates LLM responses via LLMProvider (litellm), enforces SafeguardHook chain, manages conversations. Supports graceful degradation (fallback model, context-only responses).
 
 **State Owned**:
-- conversations
-- llm_providers
-- safeguard_rules
+- conversations (encrypted via pgcrypto)
+- query_traces (Phase 1: structlog emission; Phase 2: dedicated storage)
 
 **Interfaces**:
 - Provides: External REST API (POST /query, GET /providers, GET /health)
-- Requires: vektra-index (search), LLM providers (external)
+- Requires: vektra-index (VectorStoreProvider), LLM providers (LLMProvider), EmbeddingProvider (shared instance), SafeguardHook, EventEmitter
 
-**Dependencies**: vektra-index, external LLM providers
+**Dependencies**: vektra-index, external LLM providers, EmbeddingProvider (shared)
 
 #### vektra-ingest
 
-**Responsibility**: Processes documents into indexable chunks - format conversion (PDF, Word, PowerPoint), chunking (1000 tokens, 200 overlap), async job management.
+**Responsibility**: Processes documents into indexable chunks - magic bytes content type detection (ARCH-042), format conversion via DocumentExtractor Protocol (PDF, Word, PowerPoint), chunking via ChunkingStrategy Protocol, async job management via arq.
 
 **State Owned**:
-- ingest_jobs
-- source_documents
+- ingest_jobs (with idempotency_key support)
+- source_documents (with version, soft delete fields)
 
 **Interfaces**:
 - Provides: Internal Protocol only (callable via vektra-core)
-- Requires: vektra-index (store chunks)
+- Requires: vektra-index (store chunks), EmbeddingProvider (shared instance), EventEmitter
 
-**Dependencies**: vektra-index
+**Dependencies**: vektra-index, EmbeddingProvider (shared)
 
 #### vektra-index
 
-**Responsibility**: Manages vector storage and semantic search - embedding generation, vector similarity search, chunk persistence.
+**Responsibility**: Manages vector storage and semantic search via VectorStoreProvider Protocol - vector similarity search with metadata filtering (ARCH-044), chunk persistence with index_version (ARCH-045).
 
 **State Owned**:
-- document_chunks
+- document_chunks (with metadata JSONB, index_version, coordinates)
 - embeddings
 
 **Interfaces**:
@@ -502,28 +523,30 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 
 #### vektra-admin
 
-**Responsibility**: System administration - health monitoring, API key management, configuration, audit log access.
+**Responsibility**: System administration - health monitoring, API key management (with rate_limit_rpm field), namespace management (ARCH-047), configuration, audit log access.
 
 **State Owned**:
-- api_keys
+- api_keys (with rate_limit_rpm)
 - audit_log
+- namespaces
 
 **Interfaces**:
 - Provides: External REST API (admin endpoints)
-- Requires: All other components (health aggregation)
+- Requires: All other components (health aggregation), EventEmitter
 
 **Dependencies**: All internal components
 
 #### vektra_shared
 
-**Responsibility**: Cross-cutting infrastructure (not a deployable component).
+**Responsibility**: Cross-cutting infrastructure (not a deployable component). Defines all 8 Protocol interfaces, extended types, ProviderRegistry, and auth middleware.
 
-**State Owned**:
-- namespaces
-
-**Provides**: Types, config schemas, error definitions, auth middleware, Protocol interfaces
+**Provides**: 8 Protocol definitions (LLMProvider, EmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter), ProviderRegistry, types (DocumentChunk, QueryResponse, QueryTrace, SourceDocument, SourceRef, Namespace, SearchFilters, ChunkMetadata, BoundingBox, ElementType, SearchMode, QueryEmbedding, SparseVector, ChunkEmbedding, SearchResult, ChunkRef, QueryRequest, QueryChunk), config schemas, error definitions, auth middleware
 
 ### 8.3 Protocol interfaces
+
+Phase 1 defines 8 Protocol interfaces. Each has a simple Phase 1 implementation and is designed for Phase 2 swap without contract changes.
+
+**Design principle**: Protocol signatures designed for Phase 2 features; Phase 1 implementations are simple. Fields and parameters that Phase 1 ignores still exist in the types so that Phase 2 swaps implementations without schema migrations or API changes.
 
 #### LLMProvider
 
@@ -535,15 +558,61 @@ class LLMProvider(Protocol):
     def count_tokens(text: str, model: str) -> int
 ```
 
-#### VectorStoreProvider
+Phase 1: LitellmProvider. Config extended with fallback (ARCH-043):
 
 ```python
+class LLMConfig:
+    primary_model: str                    # e.g., "ollama/llama3"
+    fallback_model: str | None = None     # e.g., "ollama/llama3:smaller"
+    fallback_timeout_ms: int = 30000
+    context_only_enabled: bool = True     # return chunks without LLM if both fail
+```
+
+#### EmbeddingProvider (new - ARCH-035)
+
+```python
+class EmbeddingProvider(Protocol):
+    async def embed_documents(texts: list[str]) -> list[list[float]]
+    async def embed_query(query: str) -> list[float]
+    def dimensions() -> int
+    async def health_check() -> HealthStatus
+```
+
+Phase 1: SentenceTransformersProvider (all-MiniLM-L6-v2, 384 dims, single shared instance). The distinction between embed_documents() and embed_query() supports asymmetric models (e.g., e5-large requires "query: ..." vs "passage: ..." prefixes). Config: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_EMBEDDING_MODEL`.
+
+#### VectorStoreProvider (extended - REQ-050)
+
+```python
+class SearchMode(str, Enum):
+    DENSE = "dense"
+    SPARSE = "sparse"
+    HYBRID = "hybrid"
+
+class QueryEmbedding:
+    dense: list[float]
+    sparse: SparseVector | None = None
+
+class SearchFilters(TypedDict, total=False):
+    course_id: str | list[str]
+    module_id: str | list[str]
+    academic_year: str | list[str]
+    content_type: str | list[str]
+    language: str | list[str]
+
 class VectorStoreProvider(Protocol):
-    async def store(namespace: str, embeddings: Sequence[Embedding]) -> list[str]
-    async def search(namespace: str, query_vector: list[float], top_k: int) -> list[SearchResult]
+    async def store(namespace: str, chunks: Sequence[ChunkEmbedding]) -> list[str]
+    async def search(
+        namespace: str,
+        query_embedding: QueryEmbedding,
+        top_k: int,
+        search_mode: SearchMode = SearchMode.DENSE,
+        filters: SearchFilters | None = None,
+    ) -> list[SearchResult]
     async def delete(namespace: str, ids: list[str]) -> int
     async def health_check() -> HealthStatus
 ```
+
+Phase 1: PgvectorProvider, SearchMode.DENSE only (sparse ignored), filters applied as JSONB WHERE clause, GIN index on metadata column, index_version filter applied.
 
 #### DocumentExtractor
 
@@ -554,6 +623,29 @@ class DocumentExtractor(Protocol):
     async def health_check() -> HealthStatus
 ```
 
+Phase 1: PdfplumberExtractor, WordExtractor, PowerPointExtractor. Content type detection via magic bytes (ARCH-042) before dispatch.
+
+#### ChunkingStrategy (new - ARCH-037)
+
+```python
+class ChunkingStrategy(Protocol):
+    async def chunk(
+        elements: AsyncIterator[DocumentChunk],
+    ) -> AsyncIterator[DocumentChunk]
+```
+
+Phase 1: FixedSizeChunking (1000 tokens, 200 overlap per REQ-016). Phase 2: DualStrategyChunking (text: split with overlap; tables: never split; parent-child: 2 levels). Config: `VEKTRA_CHUNKING_STRATEGY`.
+
+#### QueryPipeline (new - ARCH-036)
+
+```python
+class QueryPipeline(Protocol):
+    async def execute(query: QueryRequest) -> tuple[QueryResponse, QueryTrace]
+    async def execute_stream(query: QueryRequest) -> AsyncIterator[QueryChunk]
+```
+
+Phase 1: SimpleQueryPipeline (embed -> search -> prompt -> LLM, with graceful degradation). Phase 2: AdvancedQueryPipeline (classify -> retrieve -> rerank -> synthesize -> verify, implemented directly without LlamaIndex per ARCH-046). Config: `VEKTRA_QUERY_PIPELINE`.
+
 #### SafeguardHook
 
 ```python
@@ -562,6 +654,194 @@ class SafeguardHook(Protocol):
     async def post_retrieval(query_ref: str, results: list[SearchResult], context: SafeguardContext) -> SafeguardResult
     async def pre_response(response_ref: str, context: SafeguardContext) -> SafeguardResult
 ```
+
+Phase 1: PassthroughSafeguard (no-op, <5ms overhead). Phase 2: Presidio for PII detection, lighter alternatives evaluated for query/output guardrails (EX-014). Config: `VEKTRA_SAFEGUARD_MODE`.
+
+#### EventEmitter (new - ARCH-038)
+
+```python
+class EventEmitter(Protocol):
+    async def emit(event_type: str, payload: dict) -> None
+```
+
+Phase 1: NoOpEventEmitter. Emission points: document.indexed, document.failed, query.completed, safeguard.triggered, apikey.created, apikey.revoked. Phase 2: WebhookEventEmitter with HMAC-SHA256 signature.
+
+### 8.3.1 Extended types
+
+#### Protocol support types
+
+Types used in Protocol signatures that are not specific to a single Protocol.
+
+```python
+class SparseVector:
+    indices: list[int]
+    values: list[float]
+
+class ChunkEmbedding:
+    chunk_id: str
+    text: str
+    dense: list[float]
+    sparse: SparseVector | None = None     # Phase 2: hybrid search
+    metadata: dict = {}
+
+class SearchResult:
+    chunk_id: str
+    score: float
+    text_snippet: str
+    document_id: UUID
+    document_version: int = 1              # from SourceDocument.version (REQ-056)
+    metadata: dict = {}
+
+class ChunkRef:
+    chunk_id: str
+    score: float                           # relevance score at retrieval time
+
+class QueryRequest:
+    question: str
+    namespace: str = "default"
+    conversation_id: UUID | None = None
+    top_k: int = 5
+    search_mode: SearchMode = SearchMode.DENSE
+    filters: SearchFilters | None = None
+    stream: bool = False
+
+class QueryChunk:
+    """SSE streaming chunk emitted by QueryPipeline.execute_stream()."""
+    type: str                              # "token" | "sources" | "trace" | "error" | "done"
+    data: str | dict                       # token text, sources list, QueryTrace dict, error dict
+```
+
+Phase 1: SparseVector ignored (SearchMode.DENSE only). QueryRequest.filters ignored unless populated. QueryChunk emitted as SSE `data:` events.
+
+#### DocumentChunk (extended)
+
+```python
+class ElementType(str, Enum):
+    TEXT = "text"
+    TABLE = "table"
+    TITLE = "title"
+    LIST = "list"
+
+class BoundingBox:
+    page: int
+    x0: float      # left
+    y0: float      # top
+    x1: float      # right
+    y1: float      # bottom
+
+class DocumentChunk:
+    text: str
+    element_type: ElementType = ElementType.TEXT
+    metadata: dict = {}                    # page, position, source_file, filterable fields
+    parent_id: str | None = None           # for parent-child hierarchy (Phase 2)
+    coordinates: BoundingBox | None = None # for PDF highlighting (Phase 2)
+    index_version: int = 1                 # for zero-downtime reindex (ARCH-045)
+```
+
+Phase 1: element_type always TEXT, parent_id always None, coordinates always None, index_version always 1.
+
+#### QueryResponse (extended)
+
+```python
+class QueryResponse:
+    response_id: UUID                      # unique response identifier (REQ-055)
+    answer: str | None                     # None when context_only=True
+    sources: list[SourceRef]
+    conversation_id: UUID | None
+    context_only: bool = False             # True when LLM unavailable (ARCH-043)
+    confidence_tier: str | None = None     # Phase 2: HIGH | MEDIUM | LOW
+```
+
+#### SourceRef (extended)
+
+```python
+class SourceRef:
+    doc_id: UUID
+    chunk_id: str
+    score: float
+    snippet: str
+    citation_id: UUID                      # unique citation identifier (REQ-055)
+    document_version: int = 1              # from SearchResult (REQ-056)
+```
+
+#### SourceDocument (extended)
+
+```python
+class SourceDocument:
+    id: UUID
+    filename: str
+    content_hash: str                      # SHA-256 of raw file bytes (REQ-034)
+    version: int = 1                       # document version (REQ-056)
+    supersedes_id: UUID | None = None      # FK to previous version (REQ-056)
+    deleted_at: datetime | None = None     # soft delete timestamp (REQ-057)
+    deletion_reason: str | None = None     # "user_request" | "superseded" | "expired"
+    created_at: datetime
+    updated_at: datetime
+```
+
+#### QueryTrace and StepTrace (new - ARCH-041)
+
+```python
+class StepTrace:
+    name: str           # embed_query | vector_search | rerank | build_prompt | llm_call | safeguard
+    duration_ms: int
+    metadata: dict      # step-specific data (model, dimensions, top_k, token count, etc.)
+
+class QueryTrace:
+    response_id: UUID
+    steps: list[StepTrace]
+    total_duration_ms: int
+    chunks_retrieved: list[ChunkRef]   # id + score
+    llm_model: str
+    prompt_version: str                # SHA-256[:8] of template content (ARCH-048)
+    created_at: datetime
+```
+
+Phase 1: emitted via structlog as JSON. Phase 2: dedicated storage with query API.
+
+#### Namespace (new - ARCH-047)
+
+```python
+class Namespace:
+    id: str                         # "default", "corso-ml-2026"
+    display_name: str | None
+    owner_key_id: UUID | None       # API key that created it
+    quota_chunks: int | None        # None = unlimited
+    quota_documents: int | None     # None = unlimited
+    config: dict                    # per-namespace overrides (e.g., embedding_model)
+    retention_days: int | None      # GDPR retention, None = global default
+    created_at: datetime
+    updated_at: datetime
+```
+
+Phase 1: "default" namespace pre-created via migration. Quota and config fields nullable, unenforced.
+
+#### ChunkMetadata (new - ARCH-044)
+
+```python
+class ChunkMetadata(TypedDict, total=False):
+    # Base fields (always present)
+    page: int
+    position: int
+    source_file: str
+    # Standard filterable fields (optional, for vektra-learn)
+    course_id: str | None
+    module_id: str | None
+    academic_year: str | None
+    content_type: str | None        # "lecture" | "exercise" | "exam" | "notes"
+    language: str | None
+```
+
+#### ProviderRegistry (new - ARCH-039)
+
+```python
+class ProviderRegistry:
+    def register(category: str, name: str, factory: Callable) -> None
+    def get(category: str, name: str) -> Any
+    def list(category: str) -> list[str]
+```
+
+Phase 1: dict-based. Unified env var pattern: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_VECTOR_STORE_PROVIDER`, `VEKTRA_QUERY_PIPELINE`, `VEKTRA_CHUNKING_STRATEGY`, `VEKTRA_SAFEGUARD_MODE`, `VEKTRA_DOCUMENT_EXTRACTOR`.
 
 ### 8.4 Deployment
 
@@ -625,6 +905,8 @@ volumes:
 | vektra | 3584 MB | 2048 MB |
 | ollama | 3072 MB | 1024 MB |
 
+**Phase 2 hardware note**: Phase 2 full-featured deployment (e5-large embeddings ~1.2GB, cross-encoder reranking ~200MB, Presidio safeguards ~300MB) is estimated at ~2.9GB application RAM. Recommended Phase 2 target: 8GB RAM / 4 CPU. Phase 2 with only hybrid search + reranking (without e5-large) can stay within 4GB. Mitigations: lazy model loading, external embedding API via EmbeddingProvider swap, profile-based docker-compose. See OQ-019.
+
 ### 8.5 Security
 
 #### TLS encryption (NFR-012)
@@ -676,18 +958,23 @@ See ADRs in `.s2s/decisions/`:
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| ADR-0001 | Hybrid monorepo strategy | accepted |
-| ADR-0002 | Repository split criteria | accepted |
-| ADR-0003 | Modular monolith for Phase 1 | accepted |
-| ADR-0004 | Minimal docker-compose stack | accepted |
-| ADR-0005 | Module boundary enforcement | accepted |
-| ADR-0006 | Background tasks with arq | accepted |
-| ADR-0007 | Technology stack selection | accepted |
-| ADR-0008 | LLM abstraction with litellm | accepted |
-| ADR-0009 | Namespace isolation via RLS | accepted |
-| ADR-0010 | Authentication gateway pattern | accepted |
-| ADR-0011 | Conversation storage encryption | accepted |
-| ADR-0012 | Docker Compose specification | accepted |
+| [ADR-0001](decisions/ADR-0001-hybrid-monorepo-strategy.md) | Hybrid monorepo strategy | accepted |
+| [ADR-0002](decisions/ADR-0002-repo-split-criteria.md) | Repository split criteria | accepted |
+| [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md) | Modular monolith for Phase 1 | accepted |
+| [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md) | Minimal docker-compose stack | accepted |
+| [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md) | Module boundary enforcement | accepted |
+| [ADR-0006](decisions/ADR-0006-background-tasks-arq.md) | Background tasks with arq | accepted |
+| [ADR-0007](decisions/ADR-0007-tech-stack.md) | Technology stack selection | accepted |
+| [ADR-0008](decisions/ADR-0008-llm-abstraction-litellm.md) | LLM abstraction with litellm | accepted |
+| [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md) | Namespace isolation via RLS | accepted |
+| [ADR-0010](decisions/ADR-0010-authentication-gateway.md) | Authentication gateway pattern | accepted |
+| [ADR-0011](decisions/ADR-0011-conversation-encryption.md) | Conversation storage encryption | accepted |
+| [ADR-0012](decisions/ADR-0012-docker-compose-spec.md) | Docker Compose specification | accepted |
+| [ADR-0013](decisions/ADR-0013-embedding-provider-protocol.md) | EmbeddingProvider Protocol | accepted |
+| [ADR-0014](decisions/ADR-0014-query-pipeline-abstraction.md) | QueryPipeline abstraction | accepted |
+| [ADR-0015](decisions/ADR-0015-forward-compatible-data-model.md) | Forward-compatible data model | accepted |
+| [ADR-0016](decisions/ADR-0016-llamaindex-exclusion.md) | LlamaIndex exclusion | accepted |
+| [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md) | Audit/analytics separation via QueryTrace | accepted |
 
 ---
 
@@ -763,33 +1050,49 @@ See ADRs in `.s2s/decisions/`:
 | ID | Risk | Probability | Impact | Mitigation | Owner |
 |----|------|-------------|--------|------------|-------|
 | R-01 | litellm provider compatibility breaks | Medium | High | Pin versions, integration tests per provider | Tech Lead |
-| R-02 | pgvector performance degrades at scale | Low | High | Monitor query times, plan Qdrant migration path | DevOps |
-| R-03 | Memory limits too aggressive for large docs | Medium | Medium | Configurable limits, streaming extraction | Tech Lead |
+| R-02 | pgvector performance degrades at scale | Low | High | Monitor query times, plan Qdrant migration via VectorStoreProvider swap | DevOps |
+| R-03 | Memory limits too aggressive for large docs | Medium | Medium | Configurable limits, streaming extraction (ARCH-011) | Tech Lead |
 | R-04 | Bootstrap key misuse in production | Low | High | Single-use enforcement, audit logging | Security |
 | R-05 | arq job queue backpressure | Medium | Medium | Job limits, monitoring, operator alerts | DevOps |
+| R-06 | Embedding model change requires full reindex | Medium | Medium | index_version pattern (ARCH-045) enables zero-downtime reindex | Tech Lead |
+| R-07 | Phase 2 RAM budget tight at 4GB | High | Medium | Document 8GB Phase 2 target (OQ-019), lazy loading, external embedding API option | DevOps |
+| R-08 | ORM layer decision delayed | Medium | Low | OQ-017 must be resolved before implementation start | Tech Lead |
 
 ### 11.2 Accepted technical debt
 
 | ID | Debt | Rationale | Retirement Plan |
 |----|------|-----------|-----------------|
-| TD-01 | In-memory conversation storage | Simplifies Phase 1, persistent storage in Phase 2 | REQ-049 notes Phase 2 migration |
+| TD-01 | In-memory conversation storage | Simplifies Phase 1, persistent storage in Phase 2 | REQ-049 notes Phase 2 migration, ADR-0011 schema ready |
 | TD-02 | Application-level namespace filtering | RLS complexity deferred | ARCH-025, activate via feature flag |
-| TD-03 | No circuit breakers | Retry responsibility on caller | ARCH-024, BR-002, add in Phase 2 |
-| TD-04 | Single chunking strategy | Fixed-size only | EX-012, add semantic chunking in Phase 2 |
+| TD-03 | No circuit breakers | Retry responsibility on caller, graceful degradation via ARCH-043 | ARCH-024, BR-002, add in Phase 2 |
+| TD-04 | Single chunking strategy | Fixed-size only, behind ChunkingStrategy Protocol (ARCH-037) | REQ-054, swap to DualStrategyChunking in Phase 2 |
 | TD-05 | No OAuth/OIDC | API keys sufficient for Phase 1 | Add for vektra-learn in Phase 2 |
-| TD-06 | Confidence scoring undefined | Algorithm needs research spike | OQ-014, Phase 2 spike |
+| TD-06 | Confidence scoring undefined | Algorithm needs research spike, confidence_tier field exists in QueryResponse | OQ-014, Phase 2 spike, field ready (ARCH-040) |
+| TD-07 | Dense-only vector search | Hybrid search Protocol ready (SearchMode enum), implementation deferred | REQ-050, swap PgvectorProvider in Phase 2 |
+| TD-08 | NoOp event emission | EventEmitter hooks in place, no handler | REQ-061, swap to WebhookEventEmitter in Phase 2 |
+| TD-09 | Passthrough safeguards | SafeguardHook hooks in place, no enforcement | REQ-044, swap to Presidio-based in Phase 2 |
 
 ### 11.3 Deferred to Phase 2
 
 | Item | Reason | Reference |
 |------|--------|-----------|
-| Confidence scoring | Algorithm needs research spike | OQ-014 |
-| Circuit breakers | Phase 1 uses retry only | ARCH-024, BR-002 |
+| Hybrid search (dense + sparse + RRF) | Protocol ready (SearchMode, QueryEmbedding), implementation deferred | REQ-050, VectorStoreProvider |
+| Cross-encoder reranking | Step in AdvancedQueryPipeline | ARCH-036 |
+| Dual-strategy chunking | Swap ChunkingStrategy implementation | ARCH-037, REQ-054 |
+| Unstructured document extraction | Swap DocumentExtractor implementation | DocumentChunk types ready |
+| Presidio PII detection | Swap SafeguardHook implementation | EX-014 for guardrails evaluation |
+| Confidence scoring | Algorithm research, field exists in QueryResponse | OQ-014, ARCH-040 |
+| Circuit breakers | Phase 1 has graceful degradation (ARCH-043) | ARCH-024, BR-002 |
 | OAuth/OIDC | May be needed for vektra-learn | Session OQ-006 |
 | RLS enforcement | Activates with multi-tenancy | ARCH-025 |
-| OCR support | Requires Tesseract dependency | EX-002 |
+| OCR support | Unstructured includes Tesseract | EX-002 |
 | Batch operations | Single-document operations sufficient | EX-005 |
-| Analytics component | Audit logs provide raw data | EX-007 |
+| Analytics storage and API | QueryTrace emitted via structlog in Phase 1 | ARCH-041, REQ-060 |
+| Feedback API | response_id and citation_id exist, endpoint deferred | REQ-055 |
+| Namespace quota enforcement | Table and fields exist, enforcement deferred | ARCH-047 |
+| Reindex API | index_version field and filter exist, API deferred | ARCH-045, REQ-064 |
+| Webhook event handlers | EventEmitter hooks exist, handler deferred | ARCH-038, REQ-061 |
+| Rate limiting enforcement | rate_limit_rpm field exists, middleware slot exists | ARCH-039 |
 
 ---
 
@@ -799,21 +1102,40 @@ See ADRs in `.s2s/decisions/`:
 |------|------------|
 | **API key** | Static credential for authenticating API requests. Stored as argon2id hash, scoped to permissions (admin/ingest/query). |
 | **arq** | Lightweight async job queue for Python, used for background tasks with PostgreSQL persistence. |
+| **Asymmetric embedding** | Embedding models (e.g., e5-large) that require different input formatting for documents vs queries ("passage: ..." vs "query: ..."). EmbeddingProvider separates embed_documents() and embed_query() to support this. |
 | **Bootstrap key** | Single-use credential (VEKTRA_ADMIN_BOOTSTRAP_KEY) for initial API key creation. Consumed after first use. |
-| **Chunk** | Fixed-size segment of extracted document text (1000 tokens with 200 token overlap). Unit of storage in vector index. |
+| **BoundingBox** | Spatial coordinates (page, x0, y0, x1, y1) locating a chunk within its source document. Nullable in Phase 1, populated by Unstructured in Phase 2 for PDF highlighting. |
+| **ChunkingStrategy** | Protocol abstracting text segmentation. Phase 1: FixedSizeChunking. Phase 2: DualStrategyChunking (text split + table preservation + parent-child). |
+| **Chunk** | Segment of extracted document text. Unit of storage in vector index. Includes element_type, metadata, coordinates, and index_version. |
+| **Citation ID** | UUID identifying a specific source citation within a query response. Enables granular feedback in Phase 2. |
+| **Context-only response** | Fallback response returning retrieved chunks without LLM synthesis when all LLM providers are unavailable (ARCH-043). |
 | **Conversation** | Multi-turn interaction context stored encrypted. Identified by conversation_id UUID. |
 | **Correlation ID** | UUID assigned at request entry, propagated through all logs and job payloads for traceability. |
-| **Embedding** | Dense vector representation of text generated by sentence-transformers (all-MiniLM-L6-v2, 384 dimensions). |
+| **Embedding** | Dense vector representation of text generated by EmbeddingProvider. Default: all-MiniLM-L6-v2 (384 dimensions). |
+| **EmbeddingProvider** | Protocol abstracting embedding generation. Separates document and query embedding for asymmetric models. Single shared instance. |
+| **EventEmitter** | Protocol for internal event hooks. Phase 1: NoOp. Phase 2: webhook and handler implementations. |
+| **Index version** | Integer tag on chunks enabling zero-downtime reindex: new chunks created with incremented version, atomic switch via config, old version cleaned up. |
 | **litellm** | Python library abstracting LLM provider APIs (OpenAI, Anthropic, Ollama) behind unified interface. |
+| **Magic bytes** | First bytes of a file that identify its format (e.g., `%PDF` for PDF). Used for reliable content type detection before extraction dispatch. |
 | **Modular monolith** | Architectural style: single deployable with internal package boundaries enforced at build time. |
 | **n8n** | External workflow automation tool used for orchestrating document ingestion pipelines. |
-| **Namespace** | Logical partition for document isolation. Phase 1 uses single "default" namespace. |
+| **Namespace** | First-class entity for logical document isolation. Database table with owner, quota, config, retention. Phase 1: single "default" namespace. |
 | **pgvector** | PostgreSQL extension enabling vector similarity search operations. |
 | **Platform Operator** | Primary Phase 1 user persona: DevOps engineer responsible for deploying and maintaining Vektra. |
-| **Protocol interface** | Python typing.Protocol defining contract for pluggable components (LLMProvider, VectorStoreProvider, etc.). |
+| **Presidio** | Microsoft open-source library for PII (Personally Identifiable Information) detection and anonymization. Accepted for Phase 2 SafeguardHook implementation for input/output content filtering. |
+| **Prompt version** | SHA-256 hash (8-char prefix) of prompt template content. Recorded in QueryTrace for quality correlation. |
+| **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 8 Protocols defined: LLMProvider, EmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter. |
+| **ProviderRegistry** | Unified registry for Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery. |
+| **QueryPipeline** | Protocol abstracting the RAG query flow. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline with reranking and verification. |
+| **QueryTrace** | Structured per-step trace of a query execution (timing, chunk refs, model info). Separate from audit log. No query/response text. |
 | **RAG** | Retrieval-Augmented Generation: technique combining document retrieval with LLM generation. |
+| **Response ID** | UUID identifying a specific query response. Enables feedback loops and analytics correlation in Phase 2. |
 | **RLS** | Row-Level Security: PostgreSQL feature for row-based access control. Deferred to Phase 2 multi-tenancy. |
-| **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering. |
+| **RRF** | Reciprocal Rank Fusion: algorithm that combines results from multiple retrieval methods (dense + sparse) into a single ranked list. Used in SearchMode.HYBRID (Phase 2). |
+| **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering. Phase 2: Presidio PII detection. |
+| **SearchFilters** | Typed metadata filters for vector search (course_id, module_id, academic_year, content_type, language). Applied as JSONB WHERE clause with GIN index. |
+| **SearchMode** | Enum controlling vector search strategy: DENSE (Phase 1), SPARSE, HYBRID (Phase 2 with RRF fusion). |
+| **Soft delete** | Deletion pattern marking records with deleted_at timestamp instead of removing them. Cleanup job removes after retention period. |
 | **SSE** | Server-Sent Events: streaming protocol for real-time query responses (Accept: text/event-stream). |
 | **TLS termination** | Decrypting HTTPS traffic at reverse proxy, forwarding HTTP to application container. |
 | **Top-k** | Number of most relevant chunks retrieved for RAG context (default: 5). |
@@ -829,17 +1151,32 @@ See ADRs in `.s2s/decisions/`:
 |-------------|-------------------------|-----------|
 | REQ-001 Primary user: Operator | ARCH-001 Modular monolith | Single container simplifies operator deployment |
 | REQ-002 Document ingestion | ARCH-005 arq jobs, ARCH-009 payload design | Async processing with restart resilience |
-| REQ-003 RAG query | ARCH-028 litellm, ARCH-029 Protocols | Multi-provider LLM with streaming support |
+| REQ-003 RAG query | ARCH-028 litellm, ARCH-029 Protocols, ARCH-036 QueryPipeline | Multi-provider LLM with pipeline abstraction |
 | REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033 | Minimal services, inline defaults, health ordering |
 | REQ-019 API key auth | ARCH-020 Auth gateway, ARCH-023 Key lifecycle | Single trust boundary, argon2id hashing |
-| REQ-042 Streaming responses | ARCH-028 litellm async | Native SSE streaming support |
-| REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via Protocol |
-| REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding | Future multi-tenant isolation |
+| REQ-042 Streaming responses | ARCH-028 litellm async, ARCH-036 QueryPipeline | Native SSE via execute_stream() |
+| REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via LLMProvider Protocol |
+| REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity | First-class namespace with metadata |
 | REQ-049 Conversation context | ARCH-031 Encrypted storage | Privacy-preserving persistence |
-| REQ-051 Operator privacy | ARCH-031 pgcrypto encryption | Content inaccessible to admin scope |
+| REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version | Extended VectorStoreProvider with SearchMode, filters, index_version |
+| REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation | Content inaccessible, QueryTrace separate from audit |
+| REQ-052 EmbeddingProvider | ARCH-035 EmbeddingProvider Protocol | Shared instance, asymmetric embedding, configurable model |
+| REQ-053 QueryPipeline | ARCH-036 QueryPipeline Protocol, ARCH-046 No LlamaIndex | Pipeline abstraction, direct implementation |
+| REQ-054 ChunkingStrategy | ARCH-037 ChunkingStrategy Protocol | Strategy swap without pipeline changes |
+| REQ-055 Response traceability | ARCH-040 Forward-compatible data model | response_id and citation_id for feedback loops |
+| REQ-056 Document versioning | ARCH-040 Forward-compatible data model | Version and supersedes_id fields |
+| REQ-057 Soft delete | ARCH-040 Forward-compatible data model | deleted_at and deletion_reason for compliance |
+| REQ-058 Content type detection | ARCH-042 Magic bytes | Reliable dispatch, mismatch warnings |
+| REQ-059 LLM graceful degradation | ARCH-043 Graceful degradation | Fallback model, context-only response |
+| REQ-060 QueryTrace | ARCH-041 Audit/analytics separation | Per-step RAG tracing, GDPR-safe |
+| REQ-061 EventEmitter | ARCH-038 EventEmitter interface | NoOp Phase 1, webhook Phase 2 |
+| REQ-062 ProviderRegistry | ARCH-039 ProviderRegistry pattern | Unified provider configuration |
+| REQ-063 Metadata filtering | ARCH-044 Chunk metadata filtering | JSONB + GIN index, SearchFilters in search() |
+| REQ-064 Zero-downtime reindex | ARCH-045 Index version | Atomic version switch, no downtime |
+| REQ-065 Prompt versioning | ARCH-048 Prompt versioning | Template hash in QueryTrace |
 | NFR-001 Query latency | ARCH-011 Streaming, ARCH-026 Memory budget | Bounded resources, streaming responses |
 | NFR-005 Data durability | ARCH-005 arq PostgreSQL, ARCH-034 DDL | Jobs and data persist across restarts |
-| NFR-006 Resource ceiling | ARCH-026 Memory allocation, ARCH-033 Docker limits | Advisory and hard limits enforced |
+| NFR-006 Resource ceiling | ARCH-026 Memory allocation, ARCH-033 Docker limits | Phase 1: 4GB. Phase 2: 8GB recommended (OQ-019) |
 | NFR-007 Audit completeness | ARCH-008 Correlation ID, ARCH-013 Structured logs | Request tracing, JSON output |
 | NFR-012 TLS encryption | ARCH-020 Gateway, Security section | TLS at reverse proxy layer |
 | NFR-013 Encryption at rest | ARCH-031 pgcrypto | Column-level conversation encryption |
@@ -858,18 +1195,34 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-029 Protocol interfaces | vektra_shared (definitions), all (implementations) |
 | ARCH-030 pdfplumber | vektra-ingest |
 | ARCH-031 Conversation encryption | vektra-core |
+| ARCH-035 EmbeddingProvider | vektra_shared (definition), vektra-core + vektra-ingest (shared instance) |
+| ARCH-036 QueryPipeline | vektra_shared (definition), vektra-core (implementation) |
+| ARCH-037 ChunkingStrategy | vektra_shared (definition), vektra-ingest (implementation) |
+| ARCH-038 EventEmitter | vektra_shared (definition), all (emission points) |
+| ARCH-039 ProviderRegistry | vektra_shared (registry), all (registration) |
+| ARCH-040 Forward-compatible model | vektra_shared (types), all (extended schemas) |
+| ARCH-041 Audit/analytics separation | vektra-core (QueryTrace emission), vektra_shared (types) |
+| ARCH-042 Content type detection | vektra-ingest (magic bytes dispatcher) |
+| ARCH-043 LLM graceful degradation | vektra-core (QueryPipeline) |
+| ARCH-044 Metadata filtering | vektra-index (GIN index, WHERE clause), vektra_shared (SearchFilters type) |
+| ARCH-045 Index version | vektra-index (filter), vektra-ingest (version tag) |
+| ARCH-046 LlamaIndex exclusion | vektra-core (direct implementation) |
+| ARCH-047 Namespace entity | vektra-admin (management), vektra_shared (type) |
+| ARCH-048 Prompt versioning | vektra-core (hash computation, QueryTrace field) |
 
 ### A.3 Components to requirements
 
 | Component | Requirements Addressed |
 |-----------|----------------------|
-| vektra-core | REQ-003, REQ-013, REQ-042, REQ-047, REQ-049 |
-| vektra-ingest | REQ-002, REQ-014, REQ-045, REQ-046 |
-| vektra-index | REQ-012, REQ-048 |
-| vektra-admin | REQ-006, REQ-020, REQ-021, REQ-022, REQ-025 |
-| vektra_shared | REQ-010, REQ-019, REQ-023, REQ-041 |
+| vektra-core | REQ-003, REQ-013, REQ-042, REQ-044, REQ-047, REQ-049, REQ-053, REQ-055, REQ-059, REQ-060, REQ-061 (emission: query.completed), REQ-065 |
+| vektra-ingest | REQ-002, REQ-014, REQ-045, REQ-046, REQ-054, REQ-056, REQ-057, REQ-058, REQ-061 (emission: document.indexed, document.failed) |
+| vektra-index | REQ-012, REQ-048, REQ-050, REQ-063, REQ-064 |
+| vektra-admin | REQ-006, REQ-020, REQ-021, REQ-022, REQ-025, REQ-048 (namespace management), REQ-061 (emission: apikey.created, apikey.revoked) |
+| vektra_shared | REQ-010, REQ-019, REQ-023, REQ-041, REQ-044 (Protocol definition), REQ-052, REQ-061 (Protocol definition), REQ-062 |
 
 ---
 
 *Generated by Spec2Ship /s2s:design*
 *Version 1.1 - Added arc42 sections: Solution Strategy, Context Diagrams, Runtime Views, Quality Requirements, Risks, Glossary, Traceability Matrix*
+*Version 1.2 - Architectural review: 8 Protocol interfaces (4 new + 4 extended), forward-compatible data model (ARCH-040), audit/analytics separation (ARCH-041), 17 ADRs, LlamaIndex exclusion (ARCH-046)*
+*Version 1.2.1 - Consistency review: 6 Protocol support types added (8.3.1), traceability matrix A.3 corrected, ADR links unified, glossary expanded to 40 terms*

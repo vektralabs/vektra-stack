@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.2.1
+**Version**: 1.3
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-06 (ARCH-035 to ARCH-048, ADR-0013 to ADR-0017, consistency review)
+**Updated**: 2026-02-06 (ARCH-049 to ARCH-050, integration readiness: SafeguardResult modification, evaluation strategy, extended ElementType, content_format, raw_filters, TEI/rerankers)
 
 ---
 
@@ -432,6 +432,8 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-046 - LlamaIndex deferral**: RAG pipeline features (hybrid search, reranking, query routing) implemented directly behind QueryPipeline Protocol for Phase 1-2. LlamaIndex not adopted due to version instability (v0.14 breaking changes), ~150-200 MB dependency footprint, debugging opacity, and abstraction mismatch with Protocol-based design. RAG quality evaluation addressed by standalone frameworks (RAGAS or DeepEval). Reassessment for Phase 3+ if sub-question decomposition or agentic RAG features are needed.
 - **ARCH-047 - Namespace as first-class entity**: Database table with owner, quota, config overrides, retention. Phase 1: "default" namespace pre-created, metadata fields unenforced.
 - **ARCH-048 - Prompt versioning**: SHA-256 hash of template content (8-char prefix) recorded in QueryTrace. Enables correlation between template changes and response quality.
+- **ARCH-049 - SafeguardResult content modification**: SafeguardResult includes `modified_content: str | None` to support content modification (PII anonymization via Presidio, output correction via Guardrails AI, content redaction). Phase 1: PassthroughSafeguard never sets it. QueryPipeline uses modified_content when present instead of original text. Modification details recorded in SafeguardResult.annotations for QueryTrace.
+- **ARCH-050 - RAG evaluation strategy**: Three-tier hybrid pattern for RAG quality evaluation that respects GDPR constraints (REQ-051). CI: synthetic test suite generated from ingested documents via RAGAS or DeepEval, used as regression gate. Staging: evaluation mode (VEKTRA_EVAL_MODE) enabling temporary text capture for batch evaluation, not active in production. Production: QueryTrace metrics only (timing, scores, chunk refs), feedback via response_id/citation_id (REQ-055). No query/response text persisted in production.
 
 #### Data flow
 
@@ -578,7 +580,7 @@ class EmbeddingProvider(Protocol):
     async def health_check() -> HealthStatus
 ```
 
-Phase 1: SentenceTransformersProvider (all-MiniLM-L6-v2, 384 dims, single shared instance). The distinction between embed_documents() and embed_query() supports asymmetric models (e.g., e5-large requires "query: ..." vs "passage: ..." prefixes). Config: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_EMBEDDING_MODEL`.
+Phase 1: SentenceTransformersProvider (all-MiniLM-L6-v2, 384 dims, single shared instance). The distinction between embed_documents() and embed_query() supports asymmetric models (e.g., e5-large requires "query: ..." vs "passage: ..." prefixes). Config: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_EMBEDDING_MODEL`. Phase 2 option: TEI (Hugging Face Text Embeddings Inference) as external embedding server, freeing model RAM from the application container (~90 MB for MiniLM, ~1.2 GB for e5-large). Protocol supports this as a zero-change swap.
 
 #### VectorStoreProvider (extended - REQ-050)
 
@@ -607,12 +609,13 @@ class VectorStoreProvider(Protocol):
         top_k: int,
         search_mode: SearchMode = SearchMode.DENSE,
         filters: SearchFilters | None = None,
+        raw_filters: dict | None = None,       # provider-specific filter escape hatch
     ) -> list[SearchResult]
     async def delete(namespace: str, ids: list[str]) -> int
     async def health_check() -> HealthStatus
 ```
 
-Phase 1: PgvectorProvider, SearchMode.DENSE only (sparse ignored), filters applied as JSONB WHERE clause, GIN index on metadata column, index_version filter applied.
+Phase 1: PgvectorProvider, SearchMode.DENSE only (sparse ignored), filters applied as JSONB WHERE clause, GIN index on metadata column, index_version filter applied, raw_filters ignored. The raw_filters parameter is an escape hatch for provider-specific filter expressions (e.g., Qdrant range/geo filters, Milvus boolean expressions, ChromaDB operator dicts). When both filters and raw_filters are provided, the implementation defines precedence.
 
 #### DocumentExtractor
 
@@ -644,7 +647,7 @@ class QueryPipeline(Protocol):
     async def execute_stream(query: QueryRequest) -> AsyncIterator[QueryChunk]
 ```
 
-Phase 1: SimpleQueryPipeline (embed -> search -> prompt -> LLM, with graceful degradation). Phase 2: AdvancedQueryPipeline (classify -> retrieve -> rerank -> synthesize -> verify, implemented directly per ARCH-046). Config: `VEKTRA_QUERY_PIPELINE`.
+Phase 1: SimpleQueryPipeline (embed -> search -> prompt -> LLM, with graceful degradation). Phase 2: AdvancedQueryPipeline (classify -> retrieve -> rerank -> synthesize -> verify, implemented directly per ARCH-046). Reranking step recommended via `rerankers` library (Answer.AI): unified API for cross-encoder, FlashRank (~4 MB), Cohere, ColBERT, making the reranking backend swappable without touching pipeline code. Config: `VEKTRA_QUERY_PIPELINE`.
 
 #### SafeguardHook
 
@@ -655,7 +658,7 @@ class SafeguardHook(Protocol):
     async def pre_response(response_ref: str, context: SafeguardContext) -> SafeguardResult
 ```
 
-Phase 1: PassthroughSafeguard (no-op, <5ms overhead). Phase 2: Presidio for PII detection, lighter alternatives evaluated for query/output guardrails (EX-014). Config: `VEKTRA_SAFEGUARD_MODE`.
+Phase 1: PassthroughSafeguard (no-op, <5ms overhead). SafeguardResult supports blocking (allowed=False), chunk filtering (filtered_ids), and content modification (modified_content per ARCH-049). Phase 2: Presidio for PII anonymization (modified_content carries anonymized text), Guardrails AI for output validation, lighter alternatives evaluated for query guardrails (EX-014). Config: `VEKTRA_SAFEGUARD_MODE`.
 
 #### EventEmitter (new - ARCH-038)
 
@@ -726,10 +729,11 @@ class SafeguardResult:
     allowed: bool = True                   # False to block the request
     reason: str | None = None              # human-readable explanation when blocked
     filtered_ids: list[str] | None = None  # chunk IDs to exclude (post_retrieval only)
+    modified_content: str | None = None    # modified text replacing original (ARCH-049)
     annotations: dict = {}                 # metadata recorded in QueryTrace
 ```
 
-Phase 1: PassthroughSafeguard returns `SafeguardResult(allowed=True)` for all methods. Phase 2: Presidio-based implementation populates reason and annotations.
+Phase 1: PassthroughSafeguard returns `SafeguardResult(allowed=True)` for all methods, modified_content always None. Phase 2: Presidio-based implementation sets modified_content with anonymized text (e.g., "Mario Rossi" -> "`<PERSON>`"), Guardrails AI sets it with corrected output. When modified_content is not None, QueryPipeline uses it instead of original text. Modification details (entity types, positions, operator applied) recorded in annotations for QueryTrace.
 
 #### DocumentExtractor types
 
@@ -749,6 +753,12 @@ class ElementType(str, Enum):
     TABLE = "table"
     TITLE = "title"
     LIST = "list"
+    IMAGE = "image"                        # Phase 2: Unstructured image elements
+    HEADER = "header"                      # Phase 2: page/section headers
+    FOOTER = "footer"                      # Phase 2: page footers
+    FIGURE_CAPTION = "caption"             # Phase 2: figure/table captions
+    PAGE_BREAK = "page_break"              # Phase 2: page boundary markers
+    FORMULA = "formula"                    # Phase 2: mathematical formulas
 
 class BoundingBox:
     page: int
@@ -760,13 +770,14 @@ class BoundingBox:
 class DocumentChunk:
     text: str
     element_type: ElementType = ElementType.TEXT
+    content_format: str = "text"           # "text" | "html" | "markdown" (ARCH-049)
     metadata: dict = {}                    # page, position, source_file, filterable fields
     parent_id: str | None = None           # for parent-child hierarchy (Phase 2)
     coordinates: BoundingBox | None = None # for PDF highlighting (Phase 2)
     index_version: int = 1                 # for zero-downtime reindex (ARCH-045)
 ```
 
-Phase 1: element_type always TEXT, parent_id always None, coordinates always None, index_version always 1.
+Phase 1: element_type always TEXT, content_format always "text", parent_id always None, coordinates always None, index_version always 1. Phase 2 with Unstructured: tables extracted as content_format="html" (`<table>...</table>`), element_type mapped to extended enum values.
 
 #### QueryResponse (extended)
 
@@ -1107,8 +1118,8 @@ See ADRs in `.s2s/decisions/`:
 | Hybrid search (dense + sparse + RRF) | Protocol ready (SearchMode, QueryEmbedding), implementation deferred | REQ-050, VectorStoreProvider |
 | Cross-encoder reranking | Step in AdvancedQueryPipeline | ARCH-036 |
 | Dual-strategy chunking | Swap ChunkingStrategy implementation | ARCH-037, REQ-054 |
-| Unstructured document extraction | Swap DocumentExtractor implementation | DocumentChunk types ready |
-| Presidio PII detection | Swap SafeguardHook implementation | EX-014 for guardrails evaluation |
+| Unstructured document extraction | Swap DocumentExtractor implementation | DocumentChunk types ready, ElementType enum extended, content_format field present |
+| Presidio PII detection | Swap SafeguardHook implementation, modified_content field ready (ARCH-049) | EX-014 for guardrails evaluation |
 | Confidence scoring | Algorithm research, field exists in QueryResponse | OQ-014, ARCH-040 |
 | Circuit breakers | Phase 1 has graceful degradation (ARCH-043) | ARCH-024, BR-002 |
 | OAuth/OIDC | May be needed for vektra-learn | Session OQ-006 |
@@ -1116,12 +1127,16 @@ See ADRs in `.s2s/decisions/`:
 | OCR support | Unstructured includes Tesseract | EX-002 |
 | Batch operations | Single-document operations sufficient | EX-005 |
 | Analytics storage and API | QueryTrace emitted via structlog in Phase 1 | ARCH-041, REQ-060 |
-| RAG quality evaluation | Standalone framework (RAGAS or DeepEval) for faithfulness, relevancy, correctness | ARCH-046, ADR-0016 |
+| RAG quality evaluation | Standalone framework (RAGAS or DeepEval), three-tier evaluation strategy defined (ARCH-050) | ARCH-046, ARCH-050, ADR-0016 |
 | Feedback API | response_id and citation_id exist, endpoint deferred | REQ-055 |
 | Namespace quota enforcement | Table and fields exist, enforcement deferred | ARCH-047 |
 | Reindex API | index_version field and filter exist, API deferred | ARCH-045, REQ-064 |
 | Webhook event handlers | EventEmitter hooks exist, handler deferred | ARCH-038, REQ-061 |
 | Rate limiting enforcement | rate_limit_rpm field exists, middleware slot exists | ARCH-039 |
+| External embedding server (TEI) | EmbeddingProvider Protocol supports zero-change swap to HTTP-based provider | ARCH-035 |
+| Reranking in AdvancedQueryPipeline | `rerankers` library (Answer.AI) recommended for backend-agnostic reranking | ARCH-036 |
+| Advanced vector store filters | raw_filters parameter on VectorStoreProvider.search() ready for Qdrant/Weaviate/Milvus | ARCH-044 |
+| Guardrails AI output validation | SafeguardHook + modified_content field supports correction/re-ask patterns | ARCH-049, EX-014 |
 
 ---
 
@@ -1137,13 +1152,16 @@ See ADRs in `.s2s/decisions/`:
 | **ChunkingStrategy** | Protocol abstracting text segmentation. Phase 1: FixedSizeChunking. Phase 2: DualStrategyChunking (text split + table preservation + parent-child). |
 | **Chunk** | Segment of extracted document text. Unit of storage in vector index. Includes element_type, metadata, coordinates, and index_version. |
 | **Citation ID** | UUID identifying a specific source citation within a query response. Enables granular feedback in Phase 2. |
+| **Content format** | Field on DocumentChunk indicating text representation: "text" (plain text, default), "html" (e.g., tables from Unstructured), or "markdown". Phase 1: always "text". |
 | **Context-only response** | Fallback response returning retrieved chunks without LLM synthesis when all LLM providers are unavailable (ARCH-043). |
 | **Conversation** | Multi-turn interaction context stored encrypted. Identified by conversation_id UUID. |
 | **Correlation ID** | UUID assigned at request entry, propagated through all logs and job payloads for traceability. |
+| **DeepEval** | Pytest-style LLM evaluation framework with CI/CD integration. Alternative to RAGAS for RAG quality evaluation (ARCH-050). Metrics include faithfulness, answer relevancy, contextual precision. |
 | **DocumentExtractor** | Protocol abstracting document text extraction. Phase 1: PdfplumberExtractor (PDF), WordExtractor (.docx), PowerPointExtractor (.pptx). Content type detected via magic bytes (ARCH-042) before dispatch. |
 | **Embedding** | Dense vector representation of text generated by EmbeddingProvider. Default: all-MiniLM-L6-v2 (384 dimensions). |
 | **EmbeddingProvider** | Protocol abstracting embedding generation. Separates document and query embedding for asymmetric models. Single shared instance. |
 | **EventEmitter** | Protocol for internal event hooks. Phase 1: NoOp. Phase 2: webhook and handler implementations. |
+| **Guardrails AI** | Open-source framework for LLM input/output validation. Supports PII detection (via Presidio), toxicity, hallucination detection, format validation. Integrates with litellm. Candidate for Phase 2 SafeguardHook implementation alongside Presidio. |
 | **Index version** | Integer tag on chunks enabling zero-downtime reindex: new chunks created with incremented version, atomic switch via config, old version cleaned up. |
 | **litellm** | Python library abstracting LLM provider APIs (OpenAI, Anthropic, Ollama) behind unified interface. |
 | **LLMProvider** | Protocol abstracting LLM provider interactions. Phase 1: LitellmProvider wrapping litellm. Includes graceful degradation with fallback model and context-only response (ARCH-043). |
@@ -1160,14 +1178,18 @@ See ADRs in `.s2s/decisions/`:
 | **QueryPipeline** | Protocol abstracting the RAG query flow. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline with reranking and verification. |
 | **QueryTrace** | Structured per-step trace of a query execution (timing, chunk refs, model info). Separate from audit log. No query/response text. |
 | **RAG** | Retrieval-Augmented Generation: technique combining document retrieval with LLM generation. |
+| **RAGAS** | Standalone RAG evaluation framework (Apache 2.0). Reference-free metrics: Faithfulness, Context Relevancy, Answer Relevancy, Context Recall, Context Precision. Supports synthetic test generation. Candidate for Phase 2 evaluation (ARCH-050). |
+| **raw_filters** | Provider-specific filter escape hatch on VectorStoreProvider.search(). Dict parameter for advanced filter expressions (Qdrant range/geo, Milvus boolean expressions, ChromaDB operator dicts) that SearchFilters cannot express. Phase 1: ignored. |
+| **rerankers** | Unified reranking library by Answer.AI. Single API for cross-encoder, FlashRank, Cohere, ColBERT, T5 backends. Recommended for Phase 2 AdvancedQueryPipeline reranking step. |
 | **Response ID** | UUID identifying a specific query response. Enables feedback loops and analytics correlation in Phase 2. |
 | **RLS** | Row-Level Security: PostgreSQL feature for row-based access control. Deferred to Phase 2 multi-tenancy. |
 | **RRF** | Reciprocal Rank Fusion: algorithm that combines results from multiple retrieval methods (dense + sparse) into a single ranked list. Used in SearchMode.HYBRID (Phase 2). |
-| **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering. Phase 2: Presidio PII detection. |
-| **SearchFilters** | Typed metadata filters for vector search (course_id, module_id, academic_year, content_type, language). Applied as JSONB WHERE clause with GIN index. |
+| **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering, blocking, and modification (ARCH-049). SafeguardResult supports blocking, chunk filtering, and content modification via modified_content field. Phase 2: Presidio PII anonymization, Guardrails AI output validation. |
+| **SearchFilters** | Typed metadata filters for vector search (course_id, module_id, academic_year, content_type, language). Applied as JSONB WHERE clause with GIN index. For provider-specific advanced filters (range, geo, boolean), see raw_filters parameter. |
 | **SearchMode** | Enum controlling vector search strategy: DENSE (Phase 1), SPARSE, HYBRID (Phase 2 with RRF fusion). |
 | **Soft delete** | Deletion pattern marking records with deleted_at timestamp instead of removing them. Cleanup job removes after retention period. |
 | **SSE** | Server-Sent Events: streaming protocol for real-time query responses (Accept: text/event-stream). |
+| **TEI** | Text Embeddings Inference (Hugging Face): external embedding server with dynamic batching and Prometheus metrics. Phase 2 option for EmbeddingProvider, offloading model RAM from the application container. |
 | **TLS termination** | Decrypting HTTPS traffic at reverse proxy, forwarding HTTP to application container. |
 | **Top-k** | Number of most relevant chunks retrieved for RAG context (default: 5). |
 | **Vector store** | Database optimized for similarity search over embeddings. Vektra uses pgvector. |
@@ -1191,7 +1213,8 @@ See ADRs in `.s2s/decisions/`:
 | REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity | First-class namespace with metadata |
 | REQ-049 Conversation context | ARCH-031 Encrypted storage | Privacy-preserving persistence |
 | REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version | Extended VectorStoreProvider with SearchMode, filters, index_version |
-| REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation | Content inaccessible, QueryTrace separate from audit |
+| REQ-044 Safeguard hooks | ARCH-029 Protocols, ARCH-049 Content modification | Three trust boundary points, blocking + filtering + modification |
+| REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation, ARCH-050 Evaluation strategy | Content inaccessible, QueryTrace separate from audit, evaluation only in CI/staging |
 | REQ-052 EmbeddingProvider | ARCH-035 EmbeddingProvider Protocol | Shared instance, asymmetric embedding, configurable model |
 | REQ-053 QueryPipeline | ARCH-036 QueryPipeline Protocol, ARCH-046 LlamaIndex deferral | Pipeline abstraction, direct implementation for Phase 1-2 |
 | REQ-054 ChunkingStrategy | ARCH-037 ChunkingStrategy Protocol | Strategy swap without pipeline changes |
@@ -1241,6 +1264,8 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-046 LlamaIndex deferral | vektra-core (direct implementation) |
 | ARCH-047 Namespace entity | vektra-admin (management), vektra_shared (type) |
 | ARCH-048 Prompt versioning | vektra-core (hash computation, QueryTrace field) |
+| ARCH-049 SafeguardResult content modification | vektra_shared (SafeguardResult type), vektra-core (QueryPipeline modified_content handling) |
+| ARCH-050 RAG evaluation strategy | vektra-core (evaluation mode flag), CI/CD (synthetic test suite) |
 
 ### A.3 Components to requirements
 
@@ -1258,3 +1283,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.1 - Added arc42 sections: Solution Strategy, Context Diagrams, Runtime Views, Quality Requirements, Risks, Glossary, Traceability Matrix*
 *Version 1.2 - Architectural review: 8 Protocol interfaces (4 new + 4 extended), forward-compatible data model (ARCH-040), audit/analytics separation (ARCH-041), 17 ADRs, LlamaIndex deferral (ARCH-046)*
 *Version 1.2.1 - Consistency review: 6 Protocol support types added (8.3.1), SafeguardHook and DocumentExtractor types added, traceability matrix A.3 corrected, ADR links unified, glossary expanded to 43 terms*
+*Version 1.3 - Integration readiness: ARCH-049 (SafeguardResult content modification), ARCH-050 (RAG evaluation strategy), ElementType extended (6 new values), content_format on DocumentChunk, raw_filters on VectorStoreProvider.search(), TEI and rerankers as Phase 2 options, glossary expanded to 50 terms*

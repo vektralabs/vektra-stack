@@ -50,8 +50,8 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 - **Authorization**: Namespace isolation via PostgreSQL RLS policies. Application-level filtering for Phase 1, RLS binding via feature flag for multi-tenant activation. Namespace as first-class entity with metadata (ARCH-047). See [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md).
 - **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries. QueryTrace (ARCH-041) for RAG-specific observability, separate from audit log.
 - **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
-- **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. Soft delete for compliance (REQ-057). See [architecture.md](architecture.md#security).
-- **Extensibility**: 8 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). LlamaIndex not adopted for Phase 1-2, standalone evaluation via RAGAS/DeepEval (ARCH-046).
+- **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. Soft delete for compliance (REQ-057). SafeguardResult supports content modification for PII anonymization (ARCH-049). See [architecture.md](architecture.md#security).
+- **Extensibility**: 8 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). LlamaIndex not adopted for Phase 1-2, standalone evaluation via RAGAS/DeepEval (ARCH-046). Three-tier evaluation strategy: CI synthetic tests, staging eval mode, production metrics-only (ARCH-050).
 
 ## Components
 
@@ -132,14 +132,14 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 **Protocol interfaces** (8 defined in vektra_shared):
 - LLMProvider: multi-provider LLM abstraction with graceful degradation
 - EmbeddingProvider: shared embedding generation with asymmetric model support
-- VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning
-- DocumentExtractor: PDF, Word, PowerPoint extraction with element classification
+- VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning, raw_filters escape hatch
+- DocumentExtractor: PDF, Word, PowerPoint extraction with extended element classification (10 ElementType values)
 - ChunkingStrategy: pluggable chunking (fixed-size Phase 1, dual-strategy Phase 2)
-- QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace
-- SafeguardHook: pre/post query safeguards (3 trust boundary points)
+- QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace, rerankers library recommended for Phase 2
+- SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (48 total, 17 ADRs):
+**Key decisions** (50 total, 17 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq

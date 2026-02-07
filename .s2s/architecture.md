@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.4
+**Version**: 1.5
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-07 (ARCH-053: SparseEmbeddingProvider Protocol, Qdrant Docker Compose profile, hybrid search data path complete)
+**Updated**: 2026-02-07 (ARCH-054/055/056/057: prompt template architecture, token budget allocation, retrieval quality controls, startup validation sequence)
 
 ---
 
@@ -223,7 +223,7 @@ See [section 3.1](#31-business-context) for system context diagram.
 │                                                                                     │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐ │
 │  │                           vektra_shared (library)                              │ │
-│  │  • Config schemas    • Error types    • 8 Protocol interfaces                  │ │
+│  │  • Config schemas    • Error types    • 9 Protocol interfaces                  │ │
 │  │  • Auth middleware   • ProviderRegistry  • Types (QueryTrace, Namespace, ...)  │ │
 │  └───────────────────────────────────────────────────────────────────────────────┘ │
 │         ▲                    ▲                    ▲                    ▲            │
@@ -395,6 +395,9 @@ See [section 3.1](#31-business-context) for system context diagram.
 - Source citations in structured format (REQ-003)
 - Conversation context encrypted (ARCH-031)
 - Safeguard hooks at 3 points (REQ-044)
+- Retrieval results filtered by minimum relevance score before prompt construction (ARCH-056)
+- Token budget allocated across prompt components based on model context window (ARCH-055)
+- Prompt assembled from three composable Jinja2 templates (ARCH-054)
 
 *Note: `postgres` in this diagram represents the VectorStoreProvider for vector_search() (Phase 1: pgvector, Phase 2: may be Qdrant - ARCH-051) and PostgreSQL for conversation storage (always PostgreSQL).*
 
@@ -423,24 +426,26 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-026 - Memory budget allocation**: Container 3.5GB hard limit, internal advisory limits (INDEX=512MB, INGEST=256MB).
 - **ARCH-027 - Memory observability**: GET /health/memory endpoint, Prometheus metrics for per-component usage.
 - **ARCH-035 - EmbeddingProvider Protocol**: Dedicated Protocol for embedding generation. Separates embed_documents() from embed_query() for asymmetric models. Single shared instance between ingest and core. Configurable provider and model via env vars.
-- **ARCH-036 - QueryPipeline Protocol**: Abstraction of RAG query pipeline. execute() returns (QueryResponse, QueryTrace). Phase 1: SimpleQueryPipeline. Selectable via VEKTRA_QUERY_PIPELINE.
+- **ARCH-036 - QueryPipeline Protocol**: Abstraction of RAG query pipeline. execute() returns (QueryResponse, QueryTrace). Phase 1: SimpleQueryPipeline (embed -> search -> relevance_filter -> build_prompt -> LLM, with graceful degradation). relevance_filter applies minimum score threshold and overlap deduplication (ARCH-056). build_prompt calculates token budget from model context window (ARCH-055), renders composable Jinja2 templates (ARCH-054). Phase 2: AdvancedQueryPipeline adds classify, rerank, verify steps. Selectable via VEKTRA_QUERY_PIPELINE.
 - **ARCH-037 - ChunkingStrategy Protocol**: Abstraction of text chunking. Receives DocumentChunk stream, returns chunked stream. Phase 1: FixedSizeChunking. Selectable via VEKTRA_CHUNKING_STRATEGY.
 - **ARCH-038 - EventEmitter interface**: Internal event hooks with NoOp default. Emission points at document lifecycle, query completion, safeguard triggers, API key operations. Phase 2: WebhookEventEmitter with HMAC-SHA256.
 - **ARCH-039 - ProviderRegistry pattern**: Unified registry for all Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery in Phase 2. Consistent VEKTRA_* env var configuration pattern.
 - **ARCH-040 - Forward-compatible data model**: Phase 1 schema includes fields for Phase 2 features: response_id and citation_id for feedback loops, document version and supersedes_id for versioning, deleted_at and deletion_reason for soft delete, index_version for zero-downtime reindex. All fields nullable/defaulted, no behavioral change in Phase 1.
 - **ARCH-041 - Audit/analytics separation**: QueryTrace (per-step timing, chunk refs, model info) emitted separately from audit log. QueryTrace does not contain query text or response content (REQ-051 compliance). Phase 1: structlog emission. Phase 2: dedicated storage.
 - **ARCH-042 - Content type detection**: Magic bytes validation before DocumentExtractor dispatch. python-magic for MIME detection. Logs warning on mismatch with declared type.
-- **ARCH-043 - LLM graceful degradation**: Primary model timeout triggers fallback model. Both fail triggers context-only response (chunks without LLM synthesis). Client always receives value.
+- **ARCH-043 - Graceful degradation**: Two degradation paths. LLM degradation: primary model timeout triggers fallback model; both fail triggers context-only response (chunks without LLM synthesis). Retrieval degradation (ARCH-056): when no chunk passes the relevance threshold, QueryResponse.no_relevant_context=True; system returns explicit "no relevant information" instead of synthesizing from irrelevant context. Client always receives value (relevant sources, or empty sources with explanation, at minimum).
 - **ARCH-044 - Chunk metadata filtering**: JSONB metadata column on chunks with GIN index. SearchFilters parameter in VectorStoreProvider.search(). Standard filterable fields defined for vektra-learn compatibility.
 - **ARCH-045 - Zero-downtime reindex via index_version**: Integer version on chunks, configurable active version, search filtered by active version. Enables embedding model and chunking strategy changes without downtime.
 - **ARCH-046 - LlamaIndex deferral**: RAG pipeline features (hybrid search, reranking, query routing) implemented directly behind QueryPipeline Protocol for Phase 1-2. LlamaIndex not adopted due to version instability (v0.14 breaking changes), ~150-200 MB dependency footprint, debugging opacity, and abstraction mismatch with Protocol-based design. RAG quality evaluation addressed by standalone frameworks (RAGAS or DeepEval). Reassessment for Phase 3+ if sub-question decomposition or agentic RAG features are needed.
 - **ARCH-047 - Namespace as first-class entity**: Database table with owner, quota, config overrides, retention. Phase 1: "default" namespace pre-created, metadata fields unenforced.
-- **ARCH-048 - Prompt versioning**: SHA-256 hash of template content (8-char prefix) recorded in QueryTrace. Enables correlation between template changes and response quality.
+- **ARCH-048 - Prompt versioning**: SHA-256 hash of concatenated template sources (system + context + conversation, 8-char prefix) recorded in QueryTrace.prompt_version. Per-template hashes recorded in StepTrace metadata for build_prompt step (ARCH-054). Enables correlation between template changes and response quality.
 - **ARCH-049 - SafeguardResult content modification**: SafeguardResult includes `modified_content: str | None` to support content modification (PII anonymization via Presidio, output correction via Guardrails AI, content redaction). Phase 1: PassthroughSafeguard never sets it. QueryPipeline uses modified_content when present instead of original text. Modification details recorded in SafeguardResult.annotations for QueryTrace.
 - **ARCH-050 - RAG evaluation strategy**: Three-tier hybrid pattern for RAG quality evaluation that respects GDPR constraints (REQ-051). CI: synthetic test suite generated from ingested documents via RAGAS or DeepEval, used as regression gate. Staging: evaluation mode (VEKTRA_EVAL_MODE) enabling temporary text capture for batch evaluation, not active in production. Production: QueryTrace metrics only (timing, scores, chunk refs), feedback via response_id/citation_id (REQ-055). No query/response text persisted in production.
 - **ARCH-051 - VectorStoreProvider full-store contract**: VectorStoreProvider implementations own chunk text, metadata, and embeddings as a self-contained unit. store() persists all three; search() returns text_snippet directly from the provider without secondary lookups. This keeps the Protocol self-contained and avoids dual-query patterns (vector search + relational text lookup). PostgreSQL retains source_documents as canonical source of original documents; chunks in the vector store are derived, re-generable artifacts. When switching providers (e.g., pgvector to Qdrant), chunks are re-ingested into the new provider via the existing reindex mechanism (ARCH-045), not migrated.
 - **ARCH-052 - Provider-specific ingest atomicity**: Batch chunk ingest atomicity depends on provider capabilities. PgvectorProvider: multi-row INSERT in single SQL transaction (ARCH-010). Non-transactional providers (e.g., Qdrant, Milvus): batch upsert with best-effort durability (Qdrant: wait=true). On partial batch failure, the ingest job is marked as failed and a compensating delete by document_id removes partial writes. The IngestService treats atomicity as a provider contract, not a universal guarantee.
 - **ARCH-053 - SparseEmbeddingProvider Protocol**: Dedicated Protocol for sparse vector generation, completing the hybrid search data path. SparseVector fields already exist in ChunkEmbedding and QueryEmbedding; this Protocol defines who populates them. Phase 1: not registered in ProviderRegistry (None). When absent, SearchMode.HYBRID is unavailable and sparse fields remain None. Phase 2: register one of FastEmbedBM25Provider (tokenization + TF, lightweight, Qdrant IDF modifier handles the rest server-side), SPLADEProvider (neural term expansion via fastembed, ~500 MB), or BM25sProvider (in-memory BM25 for pgvector hybrid search). Config: `VEKTRA_SPARSE_EMBEDDING_PROVIDER`, `VEKTRA_SPARSE_EMBEDDING_MODEL`.
+- **ARCH-054 - Prompt template architecture**: Three composable Jinja2 template files for prompt construction: `system.j2` (LLM role and behavioral instructions), `context.j2` (retrieved chunk formatting), `conversation.j2` (multi-turn history formatting). Loaded from configurable directory (`VEKTRA_PROMPT_TEMPLATES_DIR`, default: built-in package defaults). Each template defines a typed variable contract: system receives `namespace` and `model_name`; context receives `chunks` (list of dicts with text, score, doc_id, element_type, metadata) and `num_chunks`; conversation receives `turns` (list of dicts with question and answer) and `num_turns`. Composition order is fixed: system + context (if chunks) + conversation (if conversation_id) + user question. prompt_version (ARCH-048) computed as SHA-256[:8] of concatenated template sources; per-template hashes recorded in StepTrace metadata for build_prompt. See ADR-0020.
+- **ARCH-056 - Retrieval quality controls**: Three controls in SimpleQueryPipeline between vector_search and build_prompt: (1) minimum relevance threshold (`VEKTRA_MIN_RELEVANCE_SCORE`, default 0.3) filters chunks below the score floor; (2) overlap deduplication removes redundant chunks from fixed-size chunking overlap (same document, adjacent positions) keeping the higher-scored chunk; (3) no-relevant-context detection sets QueryResponse.no_relevant_context=True when no chunk passes the threshold, triggering a dedicated response path instead of forcing synthesis from irrelevant context. All three controls are configurable and produce diagnostics in QueryTrace via a retrieval_filter StepTrace. See ADR-0021.
 
 #### Data flow
 
@@ -453,6 +458,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-031 - Conversation storage encrypted**: pgcrypto column-level encryption. Encryption key isolated from admin scope.
 - **ARCH-032 - Document re-indexing**: SHA-256 hash comparison. Delete-then-reindex on content change.
 - **ARCH-034 - Database schema implementation**: DDL via Alembic migrations with auto-execution on startup. Security constraints documented. Schema includes forward-compatible fields per ARCH-040.
+- **ARCH-055 - Token budget allocation**: QueryPipeline allocates model context window across prompt components before rendering. Priority order (non-negotiable): (1) system prompt (fixed), (2) user question (fixed), (3) response reserve (`VEKTRA_RESPONSE_TOKEN_RESERVE`, default 1024 tokens), (4) retrieved chunks (up to 60% of remaining, `VEKTRA_CONTEXT_CHUNK_RATIO`), (5) conversation history (remaining budget, sliding window keeping most recent turns plus first turn for original intent). Token counting via LLMProvider.count_tokens(); fallback to conservative estimate (4 chars/token) with warning when tokenizer unavailable. Chunks that exceed chunk budget are excluded from prompt but remain in QueryTrace.chunks_retrieved. History turns that exceed history budget are replaced with "[N previous turns omitted]" marker. Budget diagnostics (model_context_window, prompt_tokens, chunks_included/excluded, history_turns_included/excluded, budget_utilization) recorded in StepTrace metadata for build_prompt.
 
 #### Technology choices
 
@@ -469,6 +475,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-020 - Authentication gateway**: Single trust boundary at vektra-core. Internal components have no external REST endpoints.
 - **ARCH-021 - Protocol interfaces**: CoreService, IngestService, IndexService, AdminService defined in vektra_shared.
 - **ARCH-022 - Hierarchical health endpoints**: GET /health (aggregated), GET /health/{component} for targeted debugging.
+- **ARCH-057 - Startup validation sequence**: Ordered validation phase before FastAPI accepts requests. 8 steps in fixed order: (1) config schema validation (Pydantic on all VEKTRA_* env vars), (2) database connectivity (asyncpg to PostgreSQL), (3) database schema (Alembic migration check/apply), (4) pgvector extension check, (5) provider registration (ProviderRegistry from config), (6) embedding model load (first inference with test text), (7) LLM connectivity (health_check, warning-only - not fatal), (8) template loading (Jinja2 templates from ARCH-054). Steps 1-6 and 8 are fatal: container exits with code 1 and structured plain-text error message including config variable, error detail, and remediation hint. Step 7 is warning-only (LLM provider may still be starting). Config: `VEKTRA_STARTUP_LLM_CHECK` (default true) to skip LLM check. Entire sequence must complete within NFR-004 (60s). Aligns with NFR-009 (error actionability) and REQ-005 (30-min MVP).
 
 #### Integration
 
@@ -667,7 +674,7 @@ class QueryPipeline(Protocol):
     async def execute_stream(query: QueryRequest) -> AsyncIterator[QueryChunk]
 ```
 
-Phase 1: SimpleQueryPipeline (embed -> search -> prompt -> LLM, with graceful degradation). Phase 2: AdvancedQueryPipeline (classify -> retrieve -> rerank -> synthesize -> verify, implemented directly per ARCH-046). Reranking step recommended via `rerankers` library (Answer.AI): unified API for cross-encoder, FlashRank (~4 MB), Cohere, ColBERT, making the reranking backend swappable without touching pipeline code. Config: `VEKTRA_QUERY_PIPELINE`.
+Phase 1: SimpleQueryPipeline (embed -> search -> relevance_filter -> build_prompt -> LLM, with graceful degradation). relevance_filter applies minimum score threshold, overlap deduplication, and no-relevant-context detection (ARCH-056). build_prompt calculates token budget from model context window (ARCH-055) and renders composable Jinja2 templates (ARCH-054). Phase 2: AdvancedQueryPipeline (classify -> retrieve -> rerank -> synthesize -> verify, implemented directly per ARCH-046). Reranking step recommended via `rerankers` library (Answer.AI): unified API for cross-encoder, FlashRank (~4 MB), Cohere, ColBERT, making the reranking backend swappable without touching pipeline code. Config: `VEKTRA_QUERY_PIPELINE`.
 
 #### SafeguardHook
 
@@ -804,10 +811,11 @@ Phase 1: element_type always TEXT, content_format always "text", parent_id alway
 ```python
 class QueryResponse:
     response_id: UUID                      # unique response identifier (REQ-055)
-    answer: str | None                     # None when context_only=True
+    answer: str | None                     # None when context_only=True or no_relevant_context=True
     sources: list[SourceRef]
     conversation_id: UUID | None
     context_only: bool = False             # True when LLM unavailable (ARCH-043)
+    no_relevant_context: bool = False      # True when no chunk passes relevance threshold (ARCH-056)
     confidence_tier: str | None = None     # Phase 2: HIGH | MEDIUM | LOW
 ```
 
@@ -842,9 +850,9 @@ class SourceDocument:
 
 ```python
 class StepTrace:
-    name: str           # embed_query | vector_search | rerank | build_prompt | llm_call | safeguard
+    name: str           # embed_query | vector_search | retrieval_filter | build_prompt | llm_call | safeguard
     duration_ms: int
-    metadata: dict      # step-specific data (model, dimensions, top_k, token count, etc.)
+    metadata: dict      # step-specific data (model, dimensions, top_k, token count, budget, etc.)
 
 class QueryTrace:
     response_id: UUID
@@ -852,7 +860,7 @@ class QueryTrace:
     total_duration_ms: int
     chunks_retrieved: list[ChunkRef]   # id + score
     llm_model: str
-    prompt_version: str                # SHA-256[:8] of template content (ARCH-048)
+    prompt_version: str                # SHA-256[:8] of concatenated template sources (ARCH-048, ARCH-054)
     created_at: datetime
 ```
 
@@ -984,6 +992,23 @@ Phase 2: when `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, activate with `docker compo
 
 **Phase 2 hardware note**: Phase 2 full-featured deployment (e5-large embeddings ~1.2GB, cross-encoder reranking ~200MB, Presidio safeguards ~300MB) is estimated at ~2.9GB application RAM. Recommended Phase 2 target: 8GB RAM / 4 CPU. Phase 2 with only hybrid search + reranking (without e5-large) can stay within 4GB. Mitigations: lazy model loading, external embedding API via EmbeddingProvider swap, profile-based docker-compose. See OQ-019.
 
+#### Startup validation sequence (ARCH-057)
+
+Before FastAPI begins accepting requests, the application executes a structured validation sequence. If a critical step fails, the container terminates with exit code 1 and a plain-text error message (structlog may not be configured yet).
+
+| Step | Check | Fatal | Error format |
+|------|-------|-------|--------------|
+| 1 | Config schema: Pydantic validation of all VEKTRA_* env vars | Yes | "VEKTRA_X: value '{v}' invalid. Accepted: [...]" |
+| 2 | Database connectivity: asyncpg connection to PostgreSQL | Yes | "PostgreSQL unreachable at {host}:{port}. Verify postgres container is healthy" |
+| 3 | Database schema: Alembic migration check/apply | Yes | "Migration failed: {detail}. Verify schema compatibility" |
+| 4 | pgvector extension: `SELECT 1 FROM pg_extension WHERE extname='vector'` | Yes | "pgvector extension not installed. Use postgres image with pgvector" |
+| 5 | Provider registration: ProviderRegistry from config | Yes | "Provider '{name}' not found for {category}. Available: [...]" |
+| 6 | Embedding model load: first inference with test text | Yes | "Embedding model '{model}' unavailable. Verify installation or TEI connectivity" |
+| 7 | LLM connectivity: LLMProvider.health_check() | No (warning) | "LLM provider unreachable. Queries will fail until connection established" |
+| 8 | Template loading: Jinja2 templates from VEKTRA_PROMPT_TEMPLATES_DIR (ARCH-054) | Yes | "Template '{name}' not found in {path} and no built-in default available" |
+
+Entire sequence must complete within 60s (NFR-004). Step 7 is warning-only because the LLM provider may still be starting (e.g., Ollama pulling a model). Config: `VEKTRA_STARTUP_LLM_CHECK=true` (default) to include or skip the LLM check.
+
 ### 8.5 Security
 
 #### TLS encryption (NFR-012)
@@ -1054,6 +1079,8 @@ See ADRs in `.s2s/decisions/`:
 | [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md) | Audit/analytics separation via QueryTrace | accepted |
 | [ADR-0018](decisions/ADR-0018-safeguard-content-modification.md) | SafeguardResult content modification | accepted |
 | [ADR-0019](decisions/ADR-0019-rag-evaluation-strategy.md) | Three-tier RAG evaluation strategy | accepted |
+| [ADR-0020](decisions/ADR-0020-prompt-template-architecture.md) | Composable Jinja2 prompt templates | accepted |
+| [ADR-0021](decisions/ADR-0021-retrieval-quality-controls.md) | Retrieval quality controls in QueryPipeline | accepted |
 
 ---
 
@@ -1136,6 +1163,7 @@ See ADRs in `.s2s/decisions/`:
 | R-06 | Embedding model change requires full reindex | Medium | Medium | index_version pattern (ARCH-045) enables zero-downtime reindex | Tech Lead |
 | R-07 | Phase 2 RAM budget tight at 4GB | High | Medium | Document 8GB Phase 2 target (OQ-019), lazy loading, external embedding API option | DevOps |
 | R-08 | ORM layer decision delayed | Medium | Low | OQ-017 must be resolved before implementation start | Tech Lead |
+| R-09 | Token budget calculation inaccurate for unknown models | Medium | Low | Conservative fallback estimate (4 chars/token), warning logged, configurable reserve (ARCH-055) | Tech Lead |
 
 ### 11.2 Accepted technical debt
 
@@ -1214,10 +1242,12 @@ See ADRs in `.s2s/decisions/`:
 | **Modular monolith** | Architectural style: single deployable with internal package boundaries enforced at build time. |
 | **n8n** | External workflow automation tool used for orchestrating document ingestion pipelines. |
 | **Namespace** | First-class entity for logical document isolation. Database table with owner, quota, config, retention. Phase 1: single "default" namespace. |
+| **No relevant context** | QueryResponse state (no_relevant_context=True) indicating no retrieved chunks passed the relevance threshold (ARCH-056). System returns explicit "no relevant information" instead of synthesizing from irrelevant context. |
 | **pgvector** | PostgreSQL extension enabling vector similarity search operations. |
 | **Platform Operator** | Primary Phase 1 user persona: DevOps engineer responsible for deploying and maintaining Vektra. |
 | **Presidio** | Microsoft open-source library for PII (Personally Identifiable Information) detection and anonymization. Accepted for Phase 2 SafeguardHook implementation for input/output content filtering. |
-| **Prompt version** | SHA-256 hash (8-char prefix) of prompt template content. Recorded in QueryTrace for quality correlation. |
+| **Prompt template** | Jinja2 template file for prompt construction (ARCH-054). Three composable templates: system.j2 (LLM behavior), context.j2 (chunk formatting), conversation.j2 (history formatting). Loaded from configurable directory with built-in fallback. |
+| **Prompt version** | SHA-256 hash (8-char prefix) of concatenated template sources (ARCH-048, ARCH-054). Recorded in QueryTrace for quality correlation. Per-template hashes in StepTrace metadata. |
 | **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 9 Protocols defined: LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter. |
 | **ProviderRegistry** | Unified registry for Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery. |
 | **QueryPipeline** | Protocol abstracting the RAG query flow. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline with reranking and verification. |
@@ -1228,6 +1258,7 @@ See ADRs in `.s2s/decisions/`:
 | **raw_filters** | Provider-specific filter escape hatch on VectorStoreProvider.search(). Dict parameter for advanced filter expressions (Qdrant range/geo, Milvus boolean expressions, ChromaDB operator dicts) that SearchFilters cannot express. Phase 1: ignored. |
 | **rerankers** | Unified reranking library by Answer.AI. Single API for cross-encoder, FlashRank, Cohere, ColBERT, T5 backends. Recommended for Phase 2 AdvancedQueryPipeline reranking step. |
 | **Response ID** | UUID identifying a specific query response. Enables feedback loops and analytics correlation in Phase 2. |
+| **Relevance threshold** | Minimum similarity score for a retrieved chunk to be included in the prompt (ARCH-056). Configurable via VEKTRA_MIN_RELEVANCE_SCORE (default 0.3). Chunks below threshold excluded from prompt construction. |
 | **RLS** | Row-Level Security: PostgreSQL feature for row-based access control. Deferred to Phase 2 multi-tenancy. |
 | **RRF** | Reciprocal Rank Fusion: algorithm that combines results from multiple retrieval methods (dense + sparse) into a single ranked list. Used in SearchMode.HYBRID (Phase 2). |
 | **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering, blocking, and modification (ARCH-049). SafeguardResult supports blocking, chunk filtering, and content modification via modified_content field. Phase 2: Presidio PII anonymization, Guardrails AI output validation. |
@@ -1237,8 +1268,10 @@ See ADRs in `.s2s/decisions/`:
 | **SPLADE** | Sparse Lexical and Expansion Model: neural model that generates sparse vectors with term expansion. More powerful than BM25 (expands semantically related terms) but heavier (~500 MB). Phase 2 candidate for SparseEmbeddingProvider. |
 | **Soft delete** | Deletion pattern marking records with deleted_at timestamp instead of removing them. Cleanup job removes after retention period. |
 | **SSE** | Server-Sent Events: streaming protocol for real-time query responses (Accept: text/event-stream). |
+| **Startup validation** | Ordered sequence of 8 checks executed before the application accepts requests (ARCH-057). Validates configuration, connectivity, schema, providers, and templates. Fails fast with structured plain-text error messages including remediation hints. |
 | **TEI** | Text Embeddings Inference (Hugging Face): external embedding server with dynamic batching and Prometheus metrics. Phase 2 option for EmbeddingProvider, offloading model RAM from the application container. |
 | **TLS termination** | Decrypting HTTPS traffic at reverse proxy, forwarding HTTP to application container. |
+| **Token budget** | Allocation strategy (ARCH-055) that distributes model context window across prompt components (system prompt, question, response reserve, chunks, history) by priority order. Ensures prompt never exceeds model capacity. |
 | **Top-k** | Number of most relevant chunks retrieved for RAG context (default: 5). |
 | **Vector store** | Database or service optimized for similarity search over embeddings. Phase 1: pgvector (PostgreSQL extension). Phase 2 candidate: Qdrant (dedicated vector database). |
 | **VectorStoreProvider** | Protocol abstracting vector storage and similarity search. Supports SearchMode (DENSE/SPARSE/HYBRID), metadata filtering via SearchFilters, index versioning, and full-store contract (ARCH-051). Phase 1: PgvectorProvider with dense search only. |
@@ -1253,14 +1286,15 @@ See ADRs in `.s2s/decisions/`:
 |-------------|-------------------------|-----------|
 | REQ-001 Primary user: Operator | ARCH-001 Modular monolith | Single container simplifies operator deployment |
 | REQ-002 Document ingestion | ARCH-005 arq jobs, ARCH-009 payload design | Async processing with restart resilience |
-| REQ-003 RAG query | ARCH-028 litellm, ARCH-029 Protocols, ARCH-036 QueryPipeline | Multi-provider LLM with pipeline abstraction |
-| REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033 | Minimal services, inline defaults, health ordering |
+| REQ-003 RAG query | ARCH-028 litellm, ARCH-029 Protocols, ARCH-036 QueryPipeline, ARCH-056 Retrieval quality | Multi-provider LLM with pipeline abstraction, score threshold, no-relevant-context path |
+| REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033, ARCH-057 Startup validation | Minimal services, inline defaults, health ordering, clear startup errors |
 | REQ-019 API key auth | ARCH-020 Auth gateway, ARCH-023 Key lifecycle | Single trust boundary, argon2id hashing |
 | REQ-042 Streaming responses | ARCH-028 litellm async, ARCH-036 QueryPipeline | Native SSE via execute_stream() |
 | REQ-044 Safeguard hooks | ARCH-029 Protocols, ARCH-049 Content modification | Three trust boundary points, blocking + filtering + modification |
 | REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via LLMProvider Protocol |
 | REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity | First-class namespace with metadata |
-| REQ-049 Conversation context | ARCH-031 Encrypted storage | Privacy-preserving persistence |
+| REQ-043 Configurable prompts | ARCH-054 Prompt template architecture, ARCH-048 Prompt versioning | Three composable Jinja2 templates, configurable path, per-template hashing |
+| REQ-049 Conversation context | ARCH-031 Encrypted storage, ARCH-055 Token budget allocation | Privacy-preserving persistence, history bounded within model context window |
 | REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version, ARCH-051 Full-store contract, ARCH-052 Provider atomicity, ARCH-053 SparseEmbeddingProvider | Extended VectorStoreProvider with SearchMode, filters, index_version, full-store contract, provider-specific atomicity, sparse embedding generation |
 | REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation, ARCH-050 Evaluation strategy | Content inaccessible, QueryTrace separate from audit, evaluation only in CI/staging |
 | REQ-052 EmbeddingProvider | ARCH-035 EmbeddingProvider Protocol | Shared instance, asymmetric embedding, configurable model |
@@ -1270,14 +1304,16 @@ See ADRs in `.s2s/decisions/`:
 | REQ-056 Document versioning | ARCH-040 Forward-compatible data model | Version and supersedes_id fields |
 | REQ-057 Soft delete | ARCH-040 Forward-compatible data model | deleted_at and deletion_reason for compliance |
 | REQ-058 Content type detection | ARCH-042 Magic bytes | Reliable dispatch, mismatch warnings |
-| REQ-059 LLM graceful degradation | ARCH-043 Graceful degradation | Fallback model, context-only response |
+| REQ-059 LLM graceful degradation | ARCH-043 Graceful degradation, ARCH-056 Retrieval quality | Fallback model, context-only response, no-relevant-context path |
 | REQ-060 QueryTrace | ARCH-041 Audit/analytics separation | Per-step RAG tracing, GDPR-safe |
 | REQ-061 EventEmitter | ARCH-038 EventEmitter interface | NoOp Phase 1, webhook Phase 2 |
 | REQ-062 ProviderRegistry | ARCH-039 ProviderRegistry pattern | Unified provider configuration |
 | REQ-063 Metadata filtering | ARCH-044 Chunk metadata filtering | JSONB + GIN index, SearchFilters in search() |
 | REQ-064 Zero-downtime reindex | ARCH-045 Index version | Atomic version switch, no downtime |
-| REQ-065 Prompt versioning | ARCH-048 Prompt versioning | Template hash in QueryTrace |
+| REQ-065 Prompt versioning | ARCH-048 Prompt versioning, ARCH-054 Prompt template architecture | Composite hash in QueryTrace, per-template hashes in StepTrace |
 | NFR-001 Query latency | ARCH-011 Streaming, ARCH-026 Memory budget | Bounded resources, streaming responses |
+| NFR-004 Startup time | ARCH-057 Startup validation | 8-step validation within 60s constraint |
+| NFR-009 Error actionability | ARCH-057 Startup validation | Structured startup errors with remediation hints |
 | NFR-005 Data durability | ARCH-005 arq PostgreSQL, ARCH-034 DDL | Jobs and data persist across restarts |
 | NFR-006 Resource ceiling | ARCH-026 Memory allocation, ARCH-033 Docker limits | Phase 1: 4GB. Phase 2: 8GB recommended (OQ-019) |
 | NFR-007 Audit completeness | ARCH-008 Correlation ID, ARCH-013 Structured logs | Request tracing, JSON output |
@@ -1306,7 +1342,7 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-040 Forward-compatible model | vektra_shared (types), all (extended schemas) |
 | ARCH-041 Audit/analytics separation | vektra-core (QueryTrace emission), vektra_shared (types) |
 | ARCH-042 Content type detection | vektra-ingest (magic bytes dispatcher) |
-| ARCH-043 LLM graceful degradation | vektra-core (QueryPipeline) |
+| ARCH-043 Graceful degradation | vektra-core (QueryPipeline, LLM + retrieval degradation paths) |
 | ARCH-044 Metadata filtering | vektra-index (GIN index, WHERE clause), vektra_shared (SearchFilters type) |
 | ARCH-045 Index version | vektra-index (filter), vektra-ingest (version tag) |
 | ARCH-046 LlamaIndex deferral | vektra-core (direct implementation) |
@@ -1317,12 +1353,16 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-051 Full-store contract | vektra_shared (VectorStoreProvider Protocol contract), vektra-index (implementation) |
 | ARCH-052 Provider-specific atomicity | vektra-ingest (compensating delete on failure), vektra-index (provider implementation) |
 | ARCH-053 SparseEmbeddingProvider | vektra_shared (Protocol definition), vektra-core (query sparse embedding), vektra-ingest (document sparse embedding) |
+| ARCH-054 Prompt template architecture | vektra-core (template loading and rendering in SimpleQueryPipeline) |
+| ARCH-055 Token budget allocation | vektra-core (budget calculation in SimpleQueryPipeline) |
+| ARCH-056 Retrieval quality controls | vektra-core (retrieval filter in SimpleQueryPipeline), vektra_shared (QueryResponse.no_relevant_context) |
+| ARCH-057 Startup validation | All components (cross-cutting startup sequence) |
 
 ### A.3 Components to requirements
 
 | Component | Requirements Addressed |
 |-----------|----------------------|
-| vektra-core | REQ-003, REQ-013, REQ-042, REQ-044, REQ-047, REQ-049, REQ-053, REQ-055, REQ-059, REQ-060, REQ-061 (emission: query.completed), REQ-065 |
+| vektra-core | REQ-003, REQ-013, REQ-042, REQ-043, REQ-044, REQ-047, REQ-049, REQ-053, REQ-055, REQ-059, REQ-060, REQ-061 (emission: query.completed), REQ-065 |
 | vektra-ingest | REQ-002, REQ-014, REQ-045, REQ-046, REQ-054, REQ-056, REQ-057, REQ-058, REQ-061 (emission: document.indexed, document.failed) |
 | vektra-index | REQ-012, REQ-048, REQ-050, REQ-063, REQ-064 |
 | vektra-admin | REQ-006, REQ-020, REQ-021, REQ-022, REQ-025, REQ-048 (namespace management), REQ-061 (emission: apikey.created, apikey.revoked) |
@@ -1337,3 +1377,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.3 - Integration readiness: ARCH-049 (SafeguardResult content modification), ARCH-050 (RAG evaluation strategy), ElementType extended (6 new values), content_format on DocumentChunk, raw_filters on VectorStoreProvider.search(), TEI and rerankers as Phase 2 options, glossary expanded to 50 terms*
 *Version 1.3.1 - Vector store portability: ARCH-051 (full-store contract), ARCH-052 (provider-specific ingest atomicity), Qdrant as Phase 2 candidate, glossary expanded to 52 terms*
 *Version 1.4 - Hybrid search readiness: ARCH-053 (SparseEmbeddingProvider Protocol), Qdrant Docker Compose profile, BM25/SPLADE/fastembed as Phase 2 options, 9 Protocol interfaces, glossary expanded to 56 terms*
+*Version 1.5 - Pipeline quality and startup: ARCH-054 (prompt template architecture), ARCH-055 (token budget allocation), ARCH-056 (retrieval quality controls), ARCH-057 (startup validation sequence), ADR-0020/0021, QueryResponse.no_relevant_context field, ARCH-043 extended with retrieval degradation, glossary expanded to 61 terms*

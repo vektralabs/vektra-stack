@@ -51,7 +51,8 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 - **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries. QueryTrace (ARCH-041) for RAG-specific observability, separate from audit log.
 - **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
 - **Security**: TLS termination at reverse proxy layer (NFR-012). Encryption at rest via pgcrypto for conversations (ARCH-031) and PostgreSQL TDE for database. Soft delete for compliance (REQ-057). SafeguardResult supports content modification for PII anonymization (ARCH-049). See [architecture.md](architecture.md#security).
-- **Extensibility**: 8 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). LlamaIndex not adopted for Phase 1-2, standalone evaluation via RAGAS/DeepEval (ARCH-046). Three-tier evaluation strategy: CI synthetic tests, staging eval mode, production metrics-only (ARCH-050).
+- **Extensibility**: 9 Protocol interfaces with ProviderRegistry (ARCH-039). Forward-compatible data model with Phase 2 fields present from Phase 1 (ARCH-040). EventEmitter for internal hooks (ARCH-038). LlamaIndex not adopted for Phase 1-2, standalone evaluation via RAGAS/DeepEval (ARCH-046). Three-tier evaluation strategy: CI synthetic tests, staging eval mode, production metrics-only (ARCH-050).
+- **Pipeline quality**: SimpleQueryPipeline includes retrieval quality controls (relevance threshold, overlap deduplication, no-relevant-context detection per ARCH-056) and token budget allocation (ARCH-055) for prompt construction. Prompt templates are composable Jinja2 files (system, context, conversation per ARCH-054) with configurable path. Startup validation sequence (ARCH-057) ensures clear error reporting on misconfiguration.
 
 ## Components
 
@@ -140,7 +141,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (53 total, 19 ADRs):
+**Key decisions** (57 total, 21 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
@@ -154,6 +155,8 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - [ADR-0017](decisions/ADR-0017-audit-analytics-separation.md): Audit/analytics separation via QueryTrace
 - [ADR-0018](decisions/ADR-0018-safeguard-content-modification.md): SafeguardResult content modification
 - [ADR-0019](decisions/ADR-0019-rag-evaluation-strategy.md): Three-tier RAG evaluation strategy
+- [ADR-0020](decisions/ADR-0020-prompt-template-architecture.md): Composable Jinja2 prompt templates
+- [ADR-0021](decisions/ADR-0021-retrieval-quality-controls.md): Retrieval quality controls in QueryPipeline
 
 ## Open Questions
 

@@ -118,7 +118,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 **Architectural style**: Modular monolith for Phase 1. Single deployable container with internal package boundaries. See [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md).
 
-**Deployment**: Three-service docker-compose stack (vektra + postgres + ollama optional). See [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md), [ADR-0012](decisions/ADR-0012-docker-compose-spec.md).
+**Deployment**: Docker-compose stack: vektra + postgres (always), ollama (profile: local-llm), qdrant (profile: qdrant, Phase 2). See [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md), [ADR-0012](decisions/ADR-0012-docker-compose-spec.md).
 
 **Key technology choices**:
 - Web framework: FastAPI 0.115+ with Pydantic v2
@@ -129,9 +129,10 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - PDF extraction: pdfplumber (Phase 1), Unstructured (Phase 2) via DocumentExtractor Protocol
 - Content type detection: python-magic (magic bytes)
 
-**Protocol interfaces** (8 defined in vektra_shared):
+**Protocol interfaces** (9 defined in vektra_shared):
 - LLMProvider: multi-provider LLM abstraction with graceful degradation
 - EmbeddingProvider: shared embedding generation with asymmetric model support
+- SparseEmbeddingProvider: sparse vector generation for hybrid search (ARCH-053). Phase 1: not registered. Phase 2: BM25 or SPLADE via fastembed
 - VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning, raw_filters escape hatch, full-store contract (ARCH-051), provider-specific atomicity (ARCH-052). Phase 2 candidate: Qdrant
 - DocumentExtractor: PDF, Word, PowerPoint extraction with extended element classification (10 ElementType values)
 - ChunkingStrategy: pluggable chunking (fixed-size Phase 1, dual-strategy Phase 2)
@@ -139,7 +140,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (52 total, 19 ADRs):
+**Key decisions** (53 total, 19 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq

@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.3.1
+**Version**: 1.4
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-07 (ARCH-051, ARCH-052: vector store portability, full-store contract, provider-specific atomicity, Qdrant as Phase 2 candidate)
+**Updated**: 2026-02-07 (ARCH-053: SparseEmbeddingProvider Protocol, Qdrant Docker Compose profile, hybrid search data path complete)
 
 ---
 
@@ -43,7 +43,7 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 - Multi-provider LLM support: OpenAI, Anthropic, Ollama (REQ-047)
 - API key authentication with scoped permissions (REQ-019, REQ-023)
 - Streaming query responses (REQ-042)
-- Protocol-based extensibility: 8 pluggable interfaces for all integration points (REQ-050, REQ-052, REQ-053, REQ-054, REQ-061, REQ-062)
+- Protocol-based extensibility: 9 pluggable interfaces for all integration points (REQ-050, REQ-052, REQ-053, REQ-054, REQ-061, REQ-062)
 - Forward-compatible data model: versioning, soft delete, traceability fields from Phase 1 (REQ-055, REQ-056, REQ-057)
 
 **MVP exit criterion**: 30 minutes from git clone to successful query (REQ-005)
@@ -192,7 +192,7 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 | Goal | Approach | Reference |
 |------|----------|-----------|
 | Deployment simplicity | Single container, docker-compose, inline defaults | ARCH-001, ARCH-002 |
-| Extensibility | 8 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039 |
+| Extensibility | 9 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039, ARCH-053 |
 | Security | Single trust boundary, encrypted conversations, soft delete for compliance | ARCH-020, ARCH-031, ARCH-040 |
 | Observability | Structured logging, Prometheus metrics, correlation IDs, RAG-specific QueryTrace | ARCH-008, ARCH-013, ARCH-014, ARCH-041 |
 | Future extraction | Module boundaries enforced via import-linter | ARCH-003 |
@@ -440,6 +440,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-050 - RAG evaluation strategy**: Three-tier hybrid pattern for RAG quality evaluation that respects GDPR constraints (REQ-051). CI: synthetic test suite generated from ingested documents via RAGAS or DeepEval, used as regression gate. Staging: evaluation mode (VEKTRA_EVAL_MODE) enabling temporary text capture for batch evaluation, not active in production. Production: QueryTrace metrics only (timing, scores, chunk refs), feedback via response_id/citation_id (REQ-055). No query/response text persisted in production.
 - **ARCH-051 - VectorStoreProvider full-store contract**: VectorStoreProvider implementations own chunk text, metadata, and embeddings as a self-contained unit. store() persists all three; search() returns text_snippet directly from the provider without secondary lookups. This keeps the Protocol self-contained and avoids dual-query patterns (vector search + relational text lookup). PostgreSQL retains source_documents as canonical source of original documents; chunks in the vector store are derived, re-generable artifacts. When switching providers (e.g., pgvector to Qdrant), chunks are re-ingested into the new provider via the existing reindex mechanism (ARCH-045), not migrated.
 - **ARCH-052 - Provider-specific ingest atomicity**: Batch chunk ingest atomicity depends on provider capabilities. PgvectorProvider: multi-row INSERT in single SQL transaction (ARCH-010). Non-transactional providers (e.g., Qdrant, Milvus): batch upsert with best-effort durability (Qdrant: wait=true). On partial batch failure, the ingest job is marked as failed and a compensating delete by document_id removes partial writes. The IngestService treats atomicity as a provider contract, not a universal guarantee.
+- **ARCH-053 - SparseEmbeddingProvider Protocol**: Dedicated Protocol for sparse vector generation, completing the hybrid search data path. SparseVector fields already exist in ChunkEmbedding and QueryEmbedding; this Protocol defines who populates them. Phase 1: not registered in ProviderRegistry (None). When absent, SearchMode.HYBRID is unavailable and sparse fields remain None. Phase 2: register one of FastEmbedBM25Provider (tokenization + TF, lightweight, Qdrant IDF modifier handles the rest server-side), SPLADEProvider (neural term expansion via fastembed, ~500 MB), or BM25sProvider (in-memory BM25 for pgvector hybrid search). Config: `VEKTRA_SPARSE_EMBEDDING_PROVIDER`, `VEKTRA_SPARSE_EMBEDDING_MODEL`.
 
 #### Data flow
 
@@ -546,13 +547,13 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 
 #### vektra_shared
 
-**Responsibility**: Cross-cutting infrastructure (not a deployable component). Defines all 8 Protocol interfaces, extended types, ProviderRegistry, and auth middleware.
+**Responsibility**: Cross-cutting infrastructure (not a deployable component). Defines all 9 Protocol interfaces, extended types, ProviderRegistry, and auth middleware.
 
-**Provides**: 8 Protocol definitions (LLMProvider, EmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter), ProviderRegistry, types (DocumentChunk, QueryResponse, QueryTrace, SourceDocument, SourceRef, Namespace, SearchFilters, ChunkMetadata, BoundingBox, ElementType, SearchMode, QueryEmbedding, SparseVector, ChunkEmbedding, SearchResult, ChunkRef, QueryRequest, QueryChunk, SafeguardContext, SafeguardResult, ExtractionRequest), config schemas, error definitions, auth middleware
+**Provides**: 9 Protocol definitions (LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter), ProviderRegistry, types (DocumentChunk, QueryResponse, QueryTrace, SourceDocument, SourceRef, Namespace, SearchFilters, ChunkMetadata, BoundingBox, ElementType, SearchMode, QueryEmbedding, SparseVector, ChunkEmbedding, SearchResult, ChunkRef, QueryRequest, QueryChunk, SafeguardContext, SafeguardResult, ExtractionRequest), config schemas, error definitions, auth middleware
 
 ### 8.3 Protocol interfaces
 
-Phase 1 defines 8 Protocol interfaces. Each has a simple Phase 1 implementation and is designed for Phase 2 swap without contract changes.
+Phase 1 defines 9 Protocol interfaces. Each has a simple Phase 1 implementation (or is not registered when optional) and is designed for Phase 2 swap without contract changes.
 
 **Design principle**: Protocol signatures designed for Phase 2 features; Phase 1 implementations are simple. Fields and parameters that Phase 1 ignores still exist in the types so that Phase 2 swaps implementations without schema migrations or API changes.
 
@@ -587,6 +588,17 @@ class EmbeddingProvider(Protocol):
 ```
 
 Phase 1: SentenceTransformersProvider (all-MiniLM-L6-v2, 384 dims, single shared instance). The distinction between embed_documents() and embed_query() supports asymmetric models (e.g., e5-large requires "query: ..." vs "passage: ..." prefixes). Config: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_EMBEDDING_MODEL`. Phase 2 option: TEI (Hugging Face Text Embeddings Inference) as external embedding server, freeing model RAM from the application container (~90 MB for MiniLM, ~1.2 GB for e5-large). Protocol supports this as a zero-change swap.
+
+#### SparseEmbeddingProvider (new - ARCH-053)
+
+```python
+class SparseEmbeddingProvider(Protocol):
+    async def embed_documents(texts: list[str]) -> list[SparseVector]
+    async def embed_query(text: str) -> SparseVector
+    def vocab_size() -> int | None
+```
+
+Phase 1: not registered (None in ProviderRegistry). When absent, the IngestService skips sparse vector generation (ChunkEmbedding.sparse = None) and the QueryPipeline skips sparse query embedding (QueryEmbedding.sparse = None), making SearchMode.HYBRID unavailable. Phase 2 candidates: FastEmbedBM25Provider (fastembed `Qdrant/bm25` model, tokenization + term frequencies, lightweight), SPLADEProvider (fastembed `Splade_PP_en_v1`, neural term expansion, ~500 MB, vocabulary ~30K tokens), BM25sProvider (bm25s library, ~100 KB, in-memory index for pgvector hybrid search). Config: `VEKTRA_SPARSE_EMBEDDING_PROVIDER`, `VEKTRA_SPARSE_EMBEDDING_MODEL`. When using Qdrant with IDF modifier (`sparse_vectors_config.modifier = "idf"`), the provider sends only term frequencies and Qdrant computes IDF server-side, keeping the IDF in sync with the corpus automatically.
 
 #### VectorStoreProvider (extended - REQ-050)
 
@@ -623,7 +635,7 @@ class VectorStoreProvider(Protocol):
 
 **Full-store contract (ARCH-051)**: each VectorStoreProvider implementation owns chunk text, metadata, and embeddings. store() persists all three; search() returns text_snippet directly without secondary lookups. Switching provider means re-ingesting chunks (via ARCH-045 reindex), not migrating data.
 
-Phase 1: PgvectorProvider, SearchMode.DENSE only (sparse ignored), filters applied as JSONB WHERE clause, GIN index on metadata column, index_version filter applied, raw_filters ignored. Phase 2 candidate: QdrantVectorStoreProvider with native DENSE/SPARSE/HYBRID support, payload-based namespace and index_version filtering, raw_filters for Qdrant-specific expressions (range, geo, full-text). The raw_filters parameter is an escape hatch for provider-specific filter expressions (e.g., Qdrant range/geo filters, Milvus boolean expressions, ChromaDB operator dicts). When both filters and raw_filters are provided, the implementation defines precedence. Batch ingest atomicity is provider-specific (ARCH-052).
+Phase 1: PgvectorProvider, SearchMode.DENSE only (sparse ignored), filters applied as JSONB WHERE clause, GIN index on metadata column, index_version filter applied, raw_filters ignored. Phase 2 candidate: QdrantVectorStoreProvider with native DENSE/SPARSE/HYBRID support, payload-based namespace and index_version filtering, raw_filters for Qdrant-specific expressions (range, geo, full-text). Qdrant hybrid search: store() persists both dense and sparse vectors as named vectors in the same point; search(mode=HYBRID) maps to Qdrant's prefetch + fusion API (RRF or DBSF, server-side, single round trip). With Qdrant IDF modifier (`sparse_vectors_config.modifier = "idf"`), the server computes IDF from the corpus automatically, keeping BM25 scores in sync as documents are added/removed. The raw_filters parameter is an escape hatch for provider-specific filter expressions (e.g., Qdrant range/geo filters, Milvus boolean expressions, ChromaDB operator dicts). When both filters and raw_filters are provided, the implementation defines precedence. Batch ingest atomicity is provider-specific (ARCH-052).
 
 #### DocumentExtractor
 
@@ -888,7 +900,7 @@ class ProviderRegistry:
     def list(category: str) -> list[str]
 ```
 
-Phase 1: dict-based. Unified env var pattern: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_VECTOR_STORE_PROVIDER`, `VEKTRA_QUERY_PIPELINE`, `VEKTRA_CHUNKING_STRATEGY`, `VEKTRA_SAFEGUARD_MODE`, `VEKTRA_DOCUMENT_EXTRACTOR`.
+Phase 1: dict-based. Unified env var pattern: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_SPARSE_EMBEDDING_PROVIDER` (optional, Phase 2), `VEKTRA_VECTOR_STORE_PROVIDER`, `VEKTRA_QUERY_PIPELINE`, `VEKTRA_CHUNKING_STRATEGY`, `VEKTRA_SAFEGUARD_MODE`, `VEKTRA_DOCUMENT_EXTRACTOR`.
 
 ### 8.4 Deployment
 
@@ -939,18 +951,36 @@ services:
     volumes:
       - vektra_ollama:/root/.ollama
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: ["qdrant"]
+    mem_limit: 1024m
+    mem_reservation: 512m
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - vektra_qdrant:/qdrant/storage
+
 volumes:
   vektra_pgdata:
   vektra_ollama:
+  vektra_qdrant:
 ```
+
+Phase 2: when `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, activate with `docker compose --profile qdrant up`. PostgreSQL remains required (source documents, jobs, auth, audit). Qdrant replaces only the vector search role of pgvector.
 
 #### Resource limits (NFR-006 compliant)
 
-| Service | Memory Limit | Memory Reservation |
-|---------|-------------|-------------------|
-| postgres | 1536 MB | 512 MB |
-| vektra | 3584 MB | 2048 MB |
-| ollama | 3072 MB | 1024 MB |
+| Service | Memory Limit | Memory Reservation | Profile |
+|---------|-------------|-------------------|---------|
+| postgres | 1536 MB | 512 MB | always |
+| vektra | 3584 MB | 2048 MB | always |
+| ollama | 3072 MB | 1024 MB | local-llm |
+| qdrant | 1024 MB | 512 MB | qdrant (Phase 2) |
 
 **Phase 2 hardware note**: Phase 2 full-featured deployment (e5-large embeddings ~1.2GB, cross-encoder reranking ~200MB, Presidio safeguards ~300MB) is estimated at ~2.9GB application RAM. Recommended Phase 2 target: 8GB RAM / 4 CPU. Phase 2 with only hybrid search + reranking (without e5-large) can stay within 4GB. Mitigations: lazy model loading, external embedding API via EmbeddingProvider swap, profile-based docker-compose. See OQ-019.
 
@@ -1120,12 +1150,13 @@ See ADRs in `.s2s/decisions/`:
 | TD-07 | Dense-only vector search | Hybrid search Protocol ready (SearchMode enum), implementation deferred | REQ-050, swap PgvectorProvider or add QdrantVectorStoreProvider in Phase 2 (ARCH-051) |
 | TD-08 | NoOp event emission | EventEmitter hooks in place, no handler | REQ-061, swap to WebhookEventEmitter in Phase 2 |
 | TD-09 | Passthrough safeguards | SafeguardHook hooks in place, no enforcement | REQ-044, swap to Presidio-based in Phase 2 |
+| TD-10 | No sparse embeddings | SparseEmbeddingProvider Protocol defined, not registered | ARCH-053, register FastEmbedBM25Provider or SPLADEProvider in Phase 2 |
 
 ### 11.3 Deferred to Phase 2
 
 | Item | Reason | Reference |
 |------|--------|-----------|
-| Hybrid search (dense + sparse + RRF) | Protocol ready (SearchMode, QueryEmbedding), implementation deferred. Qdrant candidate: native hybrid search | REQ-050, VectorStoreProvider, ARCH-051 |
+| Hybrid search (dense + sparse + RRF) | Protocol ready (SearchMode, QueryEmbedding, SparseEmbeddingProvider). Qdrant candidate: native hybrid search with server-side fusion. BM25 vs SPLADE trade-off deferred to implementation | REQ-050, VectorStoreProvider, ARCH-051, ARCH-053 |
 | Cross-encoder reranking | Step in AdvancedQueryPipeline | ARCH-036 |
 | Dual-strategy chunking | Swap ChunkingStrategy implementation | ARCH-037, REQ-054 |
 | Unstructured document extraction | Swap DocumentExtractor implementation | DocumentChunk types ready, ElementType enum extended, content_format field present |
@@ -1147,6 +1178,7 @@ See ADRs in `.s2s/decisions/`:
 | Reranking in AdvancedQueryPipeline | `rerankers` library (Answer.AI) recommended for backend-agnostic reranking | ARCH-036 |
 | Advanced vector store filters | raw_filters parameter on VectorStoreProvider.search() ready for Qdrant/Weaviate/Milvus | ARCH-044 |
 | Guardrails AI output validation | SafeguardHook + modified_content field supports correction/re-ask patterns | ARCH-049, EX-014 |
+| Sparse embedding generation | SparseEmbeddingProvider Protocol defined (ARCH-053), implementation deferred. BM25 vs SPLADE trade-off: BM25 lightweight (tokenization + TF, Qdrant IDF server-side), SPLADE heavier (~500 MB) but richer (neural term expansion). fastembed recommended for both | ARCH-053 |
 
 ---
 
@@ -1158,6 +1190,7 @@ See ADRs in `.s2s/decisions/`:
 | **arq** | Lightweight async job queue for Python, used for background tasks with PostgreSQL persistence. |
 | **Asymmetric embedding** | Embedding models (e.g., e5-large) that require different input formatting for documents vs queries ("passage: ..." vs "query: ..."). EmbeddingProvider separates embed_documents() and embed_query() to support this. |
 | **Bootstrap key** | Single-use credential (VEKTRA_ADMIN_BOOTSTRAP_KEY) for initial API key creation. Consumed after first use. |
+| **BM25** | Best Matching 25: ranking function for term-based retrieval. Scores documents by term frequency (TF), inverse document frequency (IDF), and document length normalization. Used in sparse retrieval for hybrid search (Phase 2). |
 | **BoundingBox** | Spatial coordinates (page, x0, y0, x1, y1) locating a chunk within its source document. Nullable in Phase 1, populated by Unstructured in Phase 2 for PDF highlighting. |
 | **ChunkingStrategy** | Protocol abstracting text segmentation. Phase 1: FixedSizeChunking. Phase 2: DualStrategyChunking (text split + table preservation + parent-child). |
 | **Chunk** | Segment of extracted document text. Unit of storage in vector index. Includes element_type, metadata, coordinates, and index_version. |
@@ -1171,6 +1204,7 @@ See ADRs in `.s2s/decisions/`:
 | **Embedding** | Dense vector representation of text generated by EmbeddingProvider. Default: all-MiniLM-L6-v2 (384 dimensions). |
 | **EmbeddingProvider** | Protocol abstracting embedding generation. Separates document and query embedding for asymmetric models. Single shared instance. |
 | **EventEmitter** | Protocol for internal event hooks. Phase 1: NoOp. Phase 2: webhook and handler implementations. |
+| **fastembed** | Lightweight embedding library by Qdrant. Supports dense models and sparse models (BM25 tokenization via `Qdrant/bm25`, SPLADE via `Splade_PP_en_v1`). Recommended for Phase 2 SparseEmbeddingProvider implementations. |
 | **Full-store contract** | VectorStoreProvider design principle (ARCH-051): each provider owns chunk text, metadata, and embeddings as a self-contained unit. Avoids dual-query patterns and enables clean provider swaps via reindex. |
 | **Guardrails AI** | Open-source framework for LLM input/output validation. Supports PII detection (via Presidio), toxicity, hallucination detection, format validation. Integrates with litellm. Candidate for Phase 2 SafeguardHook implementation alongside Presidio. |
 | **Index version** | Integer tag on chunks enabling zero-downtime reindex: new chunks created with incremented version, atomic switch via config, old version cleaned up. |
@@ -1184,7 +1218,7 @@ See ADRs in `.s2s/decisions/`:
 | **Platform Operator** | Primary Phase 1 user persona: DevOps engineer responsible for deploying and maintaining Vektra. |
 | **Presidio** | Microsoft open-source library for PII (Personally Identifiable Information) detection and anonymization. Accepted for Phase 2 SafeguardHook implementation for input/output content filtering. |
 | **Prompt version** | SHA-256 hash (8-char prefix) of prompt template content. Recorded in QueryTrace for quality correlation. |
-| **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 8 Protocols defined: LLMProvider, EmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter. |
+| **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 9 Protocols defined: LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter. |
 | **ProviderRegistry** | Unified registry for Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery. |
 | **QueryPipeline** | Protocol abstracting the RAG query flow. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline with reranking and verification. |
 | **QueryTrace** | Structured per-step trace of a query execution (timing, chunk refs, model info). Separate from audit log. No query/response text. |
@@ -1199,6 +1233,8 @@ See ADRs in `.s2s/decisions/`:
 | **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering, blocking, and modification (ARCH-049). SafeguardResult supports blocking, chunk filtering, and content modification via modified_content field. Phase 2: Presidio PII anonymization, Guardrails AI output validation. |
 | **SearchFilters** | Typed metadata filters for vector search (course_id, module_id, academic_year, content_type, language). Each VectorStoreProvider translates to provider-specific syntax (Phase 1 pgvector: JSONB WHERE clause with GIN index; Qdrant: payload filter). For advanced filters beyond SearchFilters fields, see raw_filters parameter. |
 | **SearchMode** | Enum controlling vector search strategy: DENSE (Phase 1), SPARSE, HYBRID (Phase 2 with RRF fusion). |
+| **SparseEmbeddingProvider** | Protocol abstracting sparse vector generation for hybrid search. Converts text to SparseVector (token indices + weights). Phase 1: not registered (None). Phase 2: FastEmbedBM25Provider, SPLADEProvider, or BM25sProvider. |
+| **SPLADE** | Sparse Lexical and Expansion Model: neural model that generates sparse vectors with term expansion. More powerful than BM25 (expands semantically related terms) but heavier (~500 MB). Phase 2 candidate for SparseEmbeddingProvider. |
 | **Soft delete** | Deletion pattern marking records with deleted_at timestamp instead of removing them. Cleanup job removes after retention period. |
 | **SSE** | Server-Sent Events: streaming protocol for real-time query responses (Accept: text/event-stream). |
 | **TEI** | Text Embeddings Inference (Hugging Face): external embedding server with dynamic batching and Prometheus metrics. Phase 2 option for EmbeddingProvider, offloading model RAM from the application container. |
@@ -1225,7 +1261,7 @@ See ADRs in `.s2s/decisions/`:
 | REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via LLMProvider Protocol |
 | REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity | First-class namespace with metadata |
 | REQ-049 Conversation context | ARCH-031 Encrypted storage | Privacy-preserving persistence |
-| REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version, ARCH-051 Full-store contract, ARCH-052 Provider atomicity | Extended VectorStoreProvider with SearchMode, filters, index_version, full-store contract, provider-specific atomicity |
+| REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version, ARCH-051 Full-store contract, ARCH-052 Provider atomicity, ARCH-053 SparseEmbeddingProvider | Extended VectorStoreProvider with SearchMode, filters, index_version, full-store contract, provider-specific atomicity, sparse embedding generation |
 | REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation, ARCH-050 Evaluation strategy | Content inaccessible, QueryTrace separate from audit, evaluation only in CI/staging |
 | REQ-052 EmbeddingProvider | ARCH-035 EmbeddingProvider Protocol | Shared instance, asymmetric embedding, configurable model |
 | REQ-053 QueryPipeline | ARCH-036 QueryPipeline Protocol, ARCH-046 LlamaIndex deferral | Pipeline abstraction, direct implementation for Phase 1-2 |
@@ -1280,6 +1316,7 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-050 RAG evaluation strategy | vektra-core (evaluation mode flag), CI/CD (synthetic test suite) |
 | ARCH-051 Full-store contract | vektra_shared (VectorStoreProvider Protocol contract), vektra-index (implementation) |
 | ARCH-052 Provider-specific atomicity | vektra-ingest (compensating delete on failure), vektra-index (provider implementation) |
+| ARCH-053 SparseEmbeddingProvider | vektra_shared (Protocol definition), vektra-core (query sparse embedding), vektra-ingest (document sparse embedding) |
 
 ### A.3 Components to requirements
 
@@ -1299,3 +1336,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.2.1 - Consistency review: 6 Protocol support types added (8.3.1), SafeguardHook and DocumentExtractor types added, traceability matrix A.3 corrected, ADR links unified, glossary expanded to 43 terms*
 *Version 1.3 - Integration readiness: ARCH-049 (SafeguardResult content modification), ARCH-050 (RAG evaluation strategy), ElementType extended (6 new values), content_format on DocumentChunk, raw_filters on VectorStoreProvider.search(), TEI and rerankers as Phase 2 options, glossary expanded to 50 terms*
 *Version 1.3.1 - Vector store portability: ARCH-051 (full-store contract), ARCH-052 (provider-specific ingest atomicity), Qdrant as Phase 2 candidate, glossary expanded to 52 terms*
+*Version 1.4 - Hybrid search readiness: ARCH-053 (SparseEmbeddingProvider Protocol), Qdrant Docker Compose profile, BM25/SPLADE/fastembed as Phase 2 options, 9 Protocol interfaces, glossary expanded to 56 terms*

@@ -132,14 +132,14 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 **Protocol interfaces** (8 defined in vektra_shared):
 - LLMProvider: multi-provider LLM abstraction with graceful degradation
 - EmbeddingProvider: shared embedding generation with asymmetric model support
-- VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning, raw_filters escape hatch
+- VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning, raw_filters escape hatch, full-store contract (ARCH-051), provider-specific atomicity (ARCH-052). Phase 2 candidate: Qdrant
 - DocumentExtractor: PDF, Word, PowerPoint extraction with extended element classification (10 ElementType values)
 - ChunkingStrategy: pluggable chunking (fixed-size Phase 1, dual-strategy Phase 2)
 - QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace, rerankers library recommended for Phase 2
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (50 total, 19 ADRs):
+**Key decisions** (52 total, 19 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
@@ -164,4 +164,4 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 ---
 
-*Last updated: 2026-02-06*
+*Last updated: 2026-02-07*

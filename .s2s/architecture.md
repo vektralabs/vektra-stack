@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.3
+**Version**: 1.3.1
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-06 (ARCH-049 to ARCH-050, integration readiness: SafeguardResult modification, evaluation strategy, extended ElementType, content_format, raw_filters, TEI/rerankers)
+**Updated**: 2026-02-07 (ARCH-051, ARCH-052: vector store portability, full-store contract, provider-specific atomicity, Qdrant as Phase 2 candidate)
 
 ---
 
@@ -261,7 +261,7 @@ See [section 3.1](#31-business-context) for system context diagram.
 |-----------|---------------|-------------|--------------|
 | vektra-core | RAG orchestration via QueryPipeline, LLM calls, safeguards, conversation management | conversations, query_traces | vektra-index, LLM providers, EmbeddingProvider (shared) |
 | vektra-ingest | Document processing via DocumentExtractor + ChunkingStrategy, magic bytes detection, async jobs | ingest_jobs, source_documents | vektra-index, EmbeddingProvider (shared) |
-| vektra-index | Vector storage via VectorStoreProvider, semantic search with metadata filtering | document_chunks, embeddings | PostgreSQL/pgvector |
+| vektra-index | Vector storage via VectorStoreProvider, semantic search with metadata filtering | document_chunks, embeddings | VectorStoreProvider (Phase 1: pgvector) |
 | vektra-admin | Health monitoring, API key management, namespace management | api_keys, audit_log, namespaces | All components |
 | vektra_shared | Protocol definitions (8), types, config schemas, error definitions, auth middleware, ProviderRegistry, EventEmitter | - | None |
 
@@ -324,8 +324,10 @@ See [section 3.1](#31-business-context) for system context diagram.
 **Key decisions**:
 - Synchronous for <10MB (REQ-029)
 - SHA-256 deduplication before processing (REQ-034)
-- Atomic: all chunks stored or none (BR-003)
+- Atomic: all chunks stored or none (BR-003). Phase 1 (pgvector): SQL transaction. Other providers: compensating delete on partial failure (ARCH-052)
 - Job persistence in PostgreSQL survives restarts (ARCH-005)
+
+*Note: the `postgres` participant in this diagram represents the VectorStoreProvider implementation. Phase 1: pgvector (PostgreSQL). Phase 2: may be Qdrant or another provider (ARCH-051). Source documents and jobs always remain in PostgreSQL.*
 
 ### 6.2 WF-QUERY: RAG query workflow
 
@@ -394,6 +396,8 @@ See [section 3.1](#31-business-context) for system context diagram.
 - Conversation context encrypted (ARCH-031)
 - Safeguard hooks at 3 points (REQ-044)
 
+*Note: `postgres` in this diagram represents the VectorStoreProvider for vector_search() (Phase 1: pgvector, Phase 2: may be Qdrant - ARCH-051) and PostgreSQL for conversation storage (always PostgreSQL).*
+
 ---
 
 ## 7. Deployment view
@@ -434,6 +438,8 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-048 - Prompt versioning**: SHA-256 hash of template content (8-char prefix) recorded in QueryTrace. Enables correlation between template changes and response quality.
 - **ARCH-049 - SafeguardResult content modification**: SafeguardResult includes `modified_content: str | None` to support content modification (PII anonymization via Presidio, output correction via Guardrails AI, content redaction). Phase 1: PassthroughSafeguard never sets it. QueryPipeline uses modified_content when present instead of original text. Modification details recorded in SafeguardResult.annotations for QueryTrace.
 - **ARCH-050 - RAG evaluation strategy**: Three-tier hybrid pattern for RAG quality evaluation that respects GDPR constraints (REQ-051). CI: synthetic test suite generated from ingested documents via RAGAS or DeepEval, used as regression gate. Staging: evaluation mode (VEKTRA_EVAL_MODE) enabling temporary text capture for batch evaluation, not active in production. Production: QueryTrace metrics only (timing, scores, chunk refs), feedback via response_id/citation_id (REQ-055). No query/response text persisted in production.
+- **ARCH-051 - VectorStoreProvider full-store contract**: VectorStoreProvider implementations own chunk text, metadata, and embeddings as a self-contained unit. store() persists all three; search() returns text_snippet directly from the provider without secondary lookups. This keeps the Protocol self-contained and avoids dual-query patterns (vector search + relational text lookup). PostgreSQL retains source_documents as canonical source of original documents; chunks in the vector store are derived, re-generable artifacts. When switching providers (e.g., pgvector to Qdrant), chunks are re-ingested into the new provider via the existing reindex mechanism (ARCH-045), not migrated.
+- **ARCH-052 - Provider-specific ingest atomicity**: Batch chunk ingest atomicity depends on provider capabilities. PgvectorProvider: multi-row INSERT in single SQL transaction (ARCH-010). Non-transactional providers (e.g., Qdrant, Milvus): batch upsert with best-effort durability (Qdrant: wait=true). On partial batch failure, the ingest job is marked as failed and a compensating delete by document_id removes partial writes. The IngestService treats atomicity as a provider contract, not a universal guarantee.
 
 #### Data flow
 
@@ -441,7 +447,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-007 - Namespace isolation via RLS**: PostgreSQL row-level security policies on tenant-scoped tables.
 - **ARCH-008 - Correlation ID propagation**: UUID at entry, propagated through calls and arq job payloads. OpenTelemetry spans at module boundaries.
 - **ARCH-009 - arq job payload design**: References only (document_id), never content. Enables retry without re-upload.
-- **ARCH-010 - Batch operations for chunks**: Multi-row INSERT in single transaction for atomicity.
+- **ARCH-010 - Batch operations for chunks**: Multi-row INSERT in single transaction for atomicity. This describes the PgvectorProvider behavior; non-SQL providers have different atomicity guarantees (see ARCH-052).
 - **ARCH-011 - Streaming extraction**: Large documents processed page-by-page, bounded memory usage.
 - **ARCH-031 - Conversation storage encrypted**: pgcrypto column-level encryption. Encryption key isolated from admin scope.
 - **ARCH-032 - Document re-indexing**: SHA-256 hash comparison. Delete-then-reindex on content change.
@@ -477,7 +483,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 |-----------|---------------|------------|
 | vektra-core | Orchestrates RAG query flow: receives queries, retrieves context, generates LLM responses, enforces safeguards | FastAPI, litellm, sentence-transformers |
 | vektra-ingest | Processes documents into indexable chunks: format conversion, chunking, async job management | arq, pdfplumber, python-docx, python-pptx |
-| vektra-index | Manages vector storage and semantic search | pgvector, sentence-transformers |
+| vektra-index | Manages vector storage and semantic search | VectorStoreProvider (Phase 1: pgvector), sentence-transformers |
 | vektra-admin | System administration: health monitoring, API key management, configuration | FastAPI |
 | vektra_shared | Cross-cutting infrastructure: types, config schemas, error definitions, auth middleware, Protocol interfaces | Pydantic v2 |
 
@@ -519,9 +525,9 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 
 **Interfaces**:
 - Provides: Internal Protocol only (callable via vektra-core)
-- Requires: pgvector (external)
+- Requires: VectorStoreProvider implementation (Phase 1: pgvector)
 
-**Dependencies**: PostgreSQL with pgvector extension
+**Dependencies**: VectorStoreProvider (Phase 1: PostgreSQL with pgvector extension, Phase 2 candidate: Qdrant)
 
 #### vektra-admin
 
@@ -615,7 +621,9 @@ class VectorStoreProvider(Protocol):
     async def health_check() -> HealthStatus
 ```
 
-Phase 1: PgvectorProvider, SearchMode.DENSE only (sparse ignored), filters applied as JSONB WHERE clause, GIN index on metadata column, index_version filter applied, raw_filters ignored. The raw_filters parameter is an escape hatch for provider-specific filter expressions (e.g., Qdrant range/geo filters, Milvus boolean expressions, ChromaDB operator dicts). When both filters and raw_filters are provided, the implementation defines precedence.
+**Full-store contract (ARCH-051)**: each VectorStoreProvider implementation owns chunk text, metadata, and embeddings. store() persists all three; search() returns text_snippet directly without secondary lookups. Switching provider means re-ingesting chunks (via ARCH-045 reindex), not migrating data.
+
+Phase 1: PgvectorProvider, SearchMode.DENSE only (sparse ignored), filters applied as JSONB WHERE clause, GIN index on metadata column, index_version filter applied, raw_filters ignored. Phase 2 candidate: QdrantVectorStoreProvider with native DENSE/SPARSE/HYBRID support, payload-based namespace and index_version filtering, raw_filters for Qdrant-specific expressions (range, geo, full-text). The raw_filters parameter is an escape hatch for provider-specific filter expressions (e.g., Qdrant range/geo filters, Milvus boolean expressions, ChromaDB operator dicts). When both filters and raw_filters are provided, the implementation defines precedence. Batch ingest atomicity is provider-specific (ARCH-052).
 
 #### DocumentExtractor
 
@@ -978,7 +986,7 @@ All API traffic must be encrypted via TLS 1.2+ in production mode.
 
 - **Conversation content**: pgcrypto column-level encryption (ARCH-031)
 - **Database storage**: PostgreSQL native encryption (operator responsibility)
-- **Vector embeddings**: stored in pgvector, encryption delegated to PostgreSQL TDE
+- **Vector embeddings**: Phase 1 (pgvector): encryption delegated to PostgreSQL TDE. Other providers: encryption at rest is provider-specific (e.g., Qdrant supports on-disk encryption)
 
 #### Authentication summary
 
@@ -1091,7 +1099,7 @@ See ADRs in `.s2s/decisions/`:
 | ID | Risk | Probability | Impact | Mitigation | Owner |
 |----|------|-------------|--------|------------|-------|
 | R-01 | litellm provider compatibility breaks | Medium | High | Pin versions, integration tests per provider | Tech Lead |
-| R-02 | pgvector performance degrades at scale | Low | High | Monitor query times, plan Qdrant migration via VectorStoreProvider swap | DevOps |
+| R-02 | pgvector performance degrades at scale | Low | High | Monitor query times, plan Qdrant migration via VectorStoreProvider swap (ARCH-051, ARCH-052) | DevOps |
 | R-03 | Memory limits too aggressive for large docs | Medium | Medium | Configurable limits, streaming extraction (ARCH-011) | Tech Lead |
 | R-04 | Bootstrap key misuse in production | Low | High | Single-use enforcement, audit logging | Security |
 | R-05 | arq job queue backpressure | Medium | Medium | Job limits, monitoring, operator alerts | DevOps |
@@ -1109,7 +1117,7 @@ See ADRs in `.s2s/decisions/`:
 | TD-04 | Single chunking strategy | Fixed-size only, behind ChunkingStrategy Protocol (ARCH-037) | REQ-054, swap to DualStrategyChunking in Phase 2 |
 | TD-05 | No OAuth/OIDC | API keys sufficient for Phase 1 | Add for vektra-learn in Phase 2 |
 | TD-06 | Confidence scoring undefined | Algorithm needs research spike, confidence_tier field exists in QueryResponse | OQ-014, Phase 2 spike, field ready (ARCH-040) |
-| TD-07 | Dense-only vector search | Hybrid search Protocol ready (SearchMode enum), implementation deferred | REQ-050, swap PgvectorProvider in Phase 2 |
+| TD-07 | Dense-only vector search | Hybrid search Protocol ready (SearchMode enum), implementation deferred | REQ-050, swap PgvectorProvider or add QdrantVectorStoreProvider in Phase 2 (ARCH-051) |
 | TD-08 | NoOp event emission | EventEmitter hooks in place, no handler | REQ-061, swap to WebhookEventEmitter in Phase 2 |
 | TD-09 | Passthrough safeguards | SafeguardHook hooks in place, no enforcement | REQ-044, swap to Presidio-based in Phase 2 |
 
@@ -1117,7 +1125,7 @@ See ADRs in `.s2s/decisions/`:
 
 | Item | Reason | Reference |
 |------|--------|-----------|
-| Hybrid search (dense + sparse + RRF) | Protocol ready (SearchMode, QueryEmbedding), implementation deferred | REQ-050, VectorStoreProvider |
+| Hybrid search (dense + sparse + RRF) | Protocol ready (SearchMode, QueryEmbedding), implementation deferred. Qdrant candidate: native hybrid search | REQ-050, VectorStoreProvider, ARCH-051 |
 | Cross-encoder reranking | Step in AdvancedQueryPipeline | ARCH-036 |
 | Dual-strategy chunking | Swap ChunkingStrategy implementation | ARCH-037, REQ-054 |
 | Unstructured document extraction | Swap DocumentExtractor implementation | DocumentChunk types ready, ElementType enum extended, content_format field present |
@@ -1163,6 +1171,7 @@ See ADRs in `.s2s/decisions/`:
 | **Embedding** | Dense vector representation of text generated by EmbeddingProvider. Default: all-MiniLM-L6-v2 (384 dimensions). |
 | **EmbeddingProvider** | Protocol abstracting embedding generation. Separates document and query embedding for asymmetric models. Single shared instance. |
 | **EventEmitter** | Protocol for internal event hooks. Phase 1: NoOp. Phase 2: webhook and handler implementations. |
+| **Full-store contract** | VectorStoreProvider design principle (ARCH-051): each provider owns chunk text, metadata, and embeddings as a self-contained unit. Avoids dual-query patterns and enables clean provider swaps via reindex. |
 | **Guardrails AI** | Open-source framework for LLM input/output validation. Supports PII detection (via Presidio), toxicity, hallucination detection, format validation. Integrates with litellm. Candidate for Phase 2 SafeguardHook implementation alongside Presidio. |
 | **Index version** | Integer tag on chunks enabling zero-downtime reindex: new chunks created with incremented version, atomic switch via config, old version cleaned up. |
 | **litellm** | Python library abstracting LLM provider APIs (OpenAI, Anthropic, Ollama) behind unified interface. |
@@ -1179,6 +1188,7 @@ See ADRs in `.s2s/decisions/`:
 | **ProviderRegistry** | Unified registry for Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery. |
 | **QueryPipeline** | Protocol abstracting the RAG query flow. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline with reranking and verification. |
 | **QueryTrace** | Structured per-step trace of a query execution (timing, chunk refs, model info). Separate from audit log. No query/response text. |
+| **Qdrant** | Open-source vector database with native dense, sparse, and hybrid search. Phase 2 candidate for VectorStoreProvider (alternative to pgvector). Supports payload filtering, scalar quantization, and geo-search. |
 | **RAG** | Retrieval-Augmented Generation: technique combining document retrieval with LLM generation. |
 | **RAGAS** | Standalone RAG evaluation framework (Apache 2.0). Reference-free metrics: Faithfulness, Context Relevancy, Answer Relevancy, Context Recall, Context Precision. Supports synthetic test generation. Candidate for Phase 2 evaluation (ARCH-050). |
 | **raw_filters** | Provider-specific filter escape hatch on VectorStoreProvider.search(). Dict parameter for advanced filter expressions (Qdrant range/geo, Milvus boolean expressions, ChromaDB operator dicts) that SearchFilters cannot express. Phase 1: ignored. |
@@ -1187,15 +1197,15 @@ See ADRs in `.s2s/decisions/`:
 | **RLS** | Row-Level Security: PostgreSQL feature for row-based access control. Deferred to Phase 2 multi-tenancy. |
 | **RRF** | Reciprocal Rank Fusion: algorithm that combines results from multiple retrieval methods (dense + sparse) into a single ranked list. Used in SearchMode.HYBRID (Phase 2). |
 | **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering, blocking, and modification (ARCH-049). SafeguardResult supports blocking, chunk filtering, and content modification via modified_content field. Phase 2: Presidio PII anonymization, Guardrails AI output validation. |
-| **SearchFilters** | Typed metadata filters for vector search (course_id, module_id, academic_year, content_type, language). Applied as JSONB WHERE clause with GIN index. For provider-specific advanced filters (range, geo, boolean), see raw_filters parameter. |
+| **SearchFilters** | Typed metadata filters for vector search (course_id, module_id, academic_year, content_type, language). Each VectorStoreProvider translates to provider-specific syntax (Phase 1 pgvector: JSONB WHERE clause with GIN index; Qdrant: payload filter). For advanced filters beyond SearchFilters fields, see raw_filters parameter. |
 | **SearchMode** | Enum controlling vector search strategy: DENSE (Phase 1), SPARSE, HYBRID (Phase 2 with RRF fusion). |
 | **Soft delete** | Deletion pattern marking records with deleted_at timestamp instead of removing them. Cleanup job removes after retention period. |
 | **SSE** | Server-Sent Events: streaming protocol for real-time query responses (Accept: text/event-stream). |
 | **TEI** | Text Embeddings Inference (Hugging Face): external embedding server with dynamic batching and Prometheus metrics. Phase 2 option for EmbeddingProvider, offloading model RAM from the application container. |
 | **TLS termination** | Decrypting HTTPS traffic at reverse proxy, forwarding HTTP to application container. |
 | **Top-k** | Number of most relevant chunks retrieved for RAG context (default: 5). |
-| **Vector store** | Database optimized for similarity search over embeddings. Vektra uses pgvector. |
-| **VectorStoreProvider** | Protocol abstracting vector storage and similarity search. Supports SearchMode (DENSE/SPARSE/HYBRID), metadata filtering via SearchFilters, and index versioning. Phase 1: PgvectorProvider with dense search only. |
+| **Vector store** | Database or service optimized for similarity search over embeddings. Phase 1: pgvector (PostgreSQL extension). Phase 2 candidate: Qdrant (dedicated vector database). |
+| **VectorStoreProvider** | Protocol abstracting vector storage and similarity search. Supports SearchMode (DENSE/SPARSE/HYBRID), metadata filtering via SearchFilters, index versioning, and full-store contract (ARCH-051). Phase 1: PgvectorProvider with dense search only. |
 
 ---
 
@@ -1215,7 +1225,7 @@ See ADRs in `.s2s/decisions/`:
 | REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via LLMProvider Protocol |
 | REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity | First-class namespace with metadata |
 | REQ-049 Conversation context | ARCH-031 Encrypted storage | Privacy-preserving persistence |
-| REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version | Extended VectorStoreProvider with SearchMode, filters, index_version |
+| REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version, ARCH-051 Full-store contract, ARCH-052 Provider atomicity | Extended VectorStoreProvider with SearchMode, filters, index_version, full-store contract, provider-specific atomicity |
 | REQ-051 Operator privacy | ARCH-031 pgcrypto, ARCH-041 Audit/analytics separation, ARCH-050 Evaluation strategy | Content inaccessible, QueryTrace separate from audit, evaluation only in CI/staging |
 | REQ-052 EmbeddingProvider | ARCH-035 EmbeddingProvider Protocol | Shared instance, asymmetric embedding, configurable model |
 | REQ-053 QueryPipeline | ARCH-036 QueryPipeline Protocol, ARCH-046 LlamaIndex deferral | Pipeline abstraction, direct implementation for Phase 1-2 |
@@ -1268,6 +1278,8 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-048 Prompt versioning | vektra-core (hash computation, QueryTrace field) |
 | ARCH-049 SafeguardResult content modification | vektra_shared (SafeguardResult type), vektra-core (QueryPipeline modified_content handling) |
 | ARCH-050 RAG evaluation strategy | vektra-core (evaluation mode flag), CI/CD (synthetic test suite) |
+| ARCH-051 Full-store contract | vektra_shared (VectorStoreProvider Protocol contract), vektra-index (implementation) |
+| ARCH-052 Provider-specific atomicity | vektra-ingest (compensating delete on failure), vektra-index (provider implementation) |
 
 ### A.3 Components to requirements
 
@@ -1286,3 +1298,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.2 - Architectural review: 8 Protocol interfaces (4 new + 4 extended), forward-compatible data model (ARCH-040), audit/analytics separation (ARCH-041), 17 ADRs, LlamaIndex deferral (ARCH-046)*
 *Version 1.2.1 - Consistency review: 6 Protocol support types added (8.3.1), SafeguardHook and DocumentExtractor types added, traceability matrix A.3 corrected, ADR links unified, glossary expanded to 43 terms*
 *Version 1.3 - Integration readiness: ARCH-049 (SafeguardResult content modification), ARCH-050 (RAG evaluation strategy), ElementType extended (6 new values), content_format on DocumentChunk, raw_filters on VectorStoreProvider.search(), TEI and rerankers as Phase 2 options, glossary expanded to 50 terms*
+*Version 1.3.1 - Vector store portability: ARCH-051 (full-store contract), ARCH-052 (provider-specific ingest atomicity), Qdrant as Phase 2 candidate, glossary expanded to 52 terms*

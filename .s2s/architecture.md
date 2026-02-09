@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.5
+**Version**: 1.6
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-07 (ARCH-054/055/056/057: prompt template architecture, token budget allocation, retrieval quality controls, startup validation sequence)
+**Updated**: 2026-02-09 (ARCH-058: database schema specification - 7 tables, indexes, forward-compatible fields)
 
 ---
 
@@ -1054,6 +1054,259 @@ All API traffic must be encrypted via TLS 1.2+ in production mode.
 | Namespace isolation | PostgreSQL RLS | ARCH-007, ARCH-025 |
 | Conversation privacy | pgcrypto encryption | ARCH-031 |
 
+### 8.6 Database schema
+
+Physical data model derived from extended types (section 8.3.1) and ADR-0022 (SQLAlchemy 2.0 async + asyncpg). All tables use UUID primary keys, TIMESTAMPTZ for timestamps, and JSONB for extensible metadata. Forward-compatible fields (ARCH-040) are present as nullable/defaulted columns.
+
+**Phase 1 tables**: 7 tables. Conversations are in-memory (TD-01), no table until Phase 2.
+
+#### ARCH-058 - Database schema specification
+
+```sql
+-- ============================================================
+-- 1. namespaces (ARCH-047, REQ-048)
+-- Owner: vektra-admin
+-- ============================================================
+CREATE TABLE namespaces (
+    id              VARCHAR(64)     PRIMARY KEY,        -- "default", "corso-ml-2026"
+    display_name    VARCHAR(255)    NULL,
+    owner_key_id    UUID            NULL,               -- FK deferred (circular with api_keys)
+    quota_chunks    INTEGER         NULL,               -- Phase 2: enforcement
+    quota_documents INTEGER         NULL,               -- Phase 2: enforcement
+    config          JSONB           NOT NULL DEFAULT '{}',  -- per-namespace overrides
+    retention_days  INTEGER         NULL,               -- GDPR, NULL = global default
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT now()
+);
+
+-- "default" namespace pre-created via Alembic migration
+
+
+-- ============================================================
+-- 2. api_keys (REQ-023, ARCH-023)
+-- Owner: vektra-admin
+-- ============================================================
+CREATE TABLE api_keys (
+    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    key_hash        VARCHAR(255)    NOT NULL,           -- argon2id hash
+    label           VARCHAR(255)    NULL,               -- operator-assigned name
+    scope           VARCHAR(16)     NOT NULL DEFAULT 'admin',  -- admin | ingest | query
+    rate_limit_rpm  INTEGER         NULL,               -- Phase 2: per-key rate limiting
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    last_used_at    TIMESTAMPTZ     NULL,
+    revoked_at      TIMESTAMPTZ     NULL,
+
+    CONSTRAINT ck_api_keys_scope CHECK (scope IN ('admin', 'ingest', 'query'))
+);
+
+-- FK from namespaces.owner_key_id (deferred to avoid circular dependency)
+ALTER TABLE namespaces
+    ADD CONSTRAINT fk_namespaces_owner_key
+    FOREIGN KEY (owner_key_id) REFERENCES api_keys(id)
+    ON DELETE SET NULL;
+
+
+-- ============================================================
+-- 3. source_documents (REQ-034, REQ-056, REQ-057, BR-005)
+-- Owner: vektra-ingest
+-- ============================================================
+CREATE TABLE source_documents (
+    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    namespace_id    VARCHAR(64)     NOT NULL REFERENCES namespaces(id),
+    filename        VARCHAR(1024)   NOT NULL,
+    content_hash    VARCHAR(64)     NOT NULL,           -- SHA-256 hex
+    content_type    VARCHAR(255)    NOT NULL,           -- MIME type from magic bytes
+    file_size_bytes BIGINT          NOT NULL,
+    chunk_count     INTEGER         NULL,               -- set after indexing
+    version         INTEGER         NOT NULL DEFAULT 1, -- Phase 2: document versioning (REQ-056)
+    supersedes_id   UUID            NULL REFERENCES source_documents(id),  -- REQ-056
+    filename_aliases JSONB          NOT NULL DEFAULT '[]',  -- BR-005: alias list
+    deleted_at      TIMESTAMPTZ     NULL,               -- soft delete (REQ-057)
+    deletion_reason VARCHAR(32)     NULL,               -- user_request | superseded | expired
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_source_documents_deletion_reason
+        CHECK (deletion_reason IS NULL OR deletion_reason IN ('user_request', 'superseded', 'expired'))
+);
+
+-- Dedup: unique hash per namespace, excluding soft-deleted
+CREATE UNIQUE INDEX uq_source_documents_hash
+    ON source_documents (namespace_id, content_hash)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX ix_source_documents_namespace
+    ON source_documents (namespace_id);
+
+CREATE INDEX ix_source_documents_content_hash
+    ON source_documents (content_hash);
+
+
+-- ============================================================
+-- 4. document_chunks (ARCH-044, ARCH-045, ARCH-051)
+-- Owner: vektra-index
+-- ============================================================
+CREATE TABLE document_chunks (
+    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id     UUID            NOT NULL REFERENCES source_documents(id),
+    namespace_id    VARCHAR(64)     NOT NULL REFERENCES namespaces(id),  -- denormalized for search
+    content         TEXT            NOT NULL,
+    embedding       vector(384)     NOT NULL,           -- all-MiniLM-L6-v2 default
+    metadata        JSONB           NOT NULL DEFAULT '{}',  -- page, position, content_type, language, ...
+    element_type    VARCHAR(32)     NOT NULL DEFAULT 'text',
+    content_format  VARCHAR(16)     NOT NULL DEFAULT 'text',  -- text | html | markdown
+    position        INTEGER         NOT NULL,           -- chunk position within document
+    index_version   INTEGER         NOT NULL DEFAULT 1, -- ARCH-045
+    parent_id       UUID            NULL,               -- Phase 2: parent-child hierarchy
+    coordinates     JSONB           NULL,               -- Phase 2: BoundingBox {page, x0, y0, x1, y1}
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_document_chunks_element_type
+        CHECK (element_type IN ('text', 'table', 'title', 'list',
+               'image', 'header', 'footer', 'caption', 'page_break', 'formula')),
+    CONSTRAINT ck_document_chunks_content_format
+        CHECK (content_format IN ('text', 'html', 'markdown'))
+);
+
+-- HNSW index for vector similarity search
+CREATE INDEX ix_document_chunks_embedding_hnsw
+    ON document_chunks
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+-- GIN index for JSONB metadata filtering (REQ-063)
+CREATE INDEX ix_document_chunks_metadata_gin
+    ON document_chunks
+    USING gin (metadata);
+
+-- Composite index for namespace-scoped search with index_version filter
+CREATE INDEX ix_document_chunks_ns_version
+    ON document_chunks (namespace_id, index_version);
+
+-- FK lookups
+CREATE INDEX ix_document_chunks_document_id
+    ON document_chunks (document_id);
+
+
+-- ============================================================
+-- 5. ingest_jobs (BR-004, REQ-014, ARCH-005)
+-- Owner: vektra-ingest
+-- ============================================================
+CREATE TABLE ingest_jobs (
+    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id     UUID            NULL REFERENCES source_documents(id),  -- set after doc creation
+    namespace_id    VARCHAR(64)     NOT NULL REFERENCES namespaces(id),
+    status          VARCHAR(16)     NOT NULL DEFAULT 'pending',  -- pending | processing | indexed | failed
+    filename        VARCHAR(1024)   NOT NULL,
+    file_size_bytes BIGINT          NOT NULL,
+    error_code      VARCHAR(32)     NULL,               -- ERR-INGEST-xxx
+    error_message   TEXT            NULL,
+    idempotency_key VARCHAR(255)    NULL,
+    chunk_count     INTEGER         NULL,               -- set after indexing
+    started_at      TIMESTAMPTZ     NULL,
+    completed_at    TIMESTAMPTZ     NULL,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_ingest_jobs_status
+        CHECK (status IN ('pending', 'processing', 'indexed', 'failed'))
+);
+
+CREATE UNIQUE INDEX uq_ingest_jobs_idempotency
+    ON ingest_jobs (idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX ix_ingest_jobs_status
+    ON ingest_jobs (status);
+
+
+-- ============================================================
+-- 6. audit_log (REQ-022, NFR-007, NFR-008)
+-- Owner: vektra-admin
+-- ============================================================
+CREATE TABLE audit_log (
+    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    key_id          UUID            NOT NULL,           -- not FK: key may be revoked/deleted
+    endpoint        VARCHAR(255)    NOT NULL,
+    method          VARCHAR(8)      NOT NULL,           -- GET | POST | DELETE | ...
+    status_code     INTEGER         NOT NULL,
+    request_id      UUID            NOT NULL,           -- correlation ID (ARCH-008)
+    action          VARCHAR(64)     NULL,               -- e.g., bootstrap_key_consumed, document_deduplicated
+    metadata        JSONB           NOT NULL DEFAULT '{}',  -- action-specific details
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now()
+);
+
+-- Never contains query text or response content (REQ-051)
+
+CREATE INDEX ix_audit_log_key_id
+    ON audit_log (key_id);
+
+CREATE INDEX ix_audit_log_created_at
+    ON audit_log (created_at);
+
+CREATE INDEX ix_audit_log_action
+    ON audit_log (action)
+    WHERE action IS NOT NULL;
+
+
+-- ============================================================
+-- 7. system_state (REQ-036)
+-- Owner: vektra-admin
+-- ============================================================
+CREATE TABLE system_state (
+    key             VARCHAR(64)     PRIMARY KEY,
+    value           TEXT            NOT NULL,
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT now()
+);
+
+-- Bootstrap consumption tracked here (REQ-036)
+-- Initial row: ('bootstrap_consumed', 'false', now())
+
+
+-- ============================================================
+-- pgvector extension (required, verified at startup step 4)
+-- ============================================================
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- pgcrypto extension (ARCH-031, for Phase 2 conversation encryption)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+```
+
+#### Schema notes
+
+| Aspect | Decision | Reference |
+|--------|----------|-----------|
+| Embedding dimension | `vector(384)` for all-MiniLM-L6-v2. Model change requires migration + reindex via index_version | ARCH-045, REQ-064 |
+| HNSW parameters | m=16, ef_construction=64 (pgvector defaults, suitable for <100K vectors) | ADR-0022 |
+| Namespace FK denormalization | `document_chunks.namespace_id` duplicates `source_documents.namespace_id` for single-query vector search (avoid JOIN) | ARCH-051 |
+| Soft delete scope | `source_documents` only. Chunks cascade-deleted with parent document (re-generable artifacts) | ARCH-051 |
+| Dedup uniqueness | Partial unique index on `(namespace_id, content_hash) WHERE deleted_at IS NULL` | REQ-033, REQ-057 |
+| Conversation tables | Not created in Phase 1 (in-memory storage, TD-01). Phase 2 Alembic migration adds encrypted conversation tables | REQ-049, ARCH-031 |
+| Bootstrap state | `system_state` table avoids coupling auth logic to audit_log | REQ-036 |
+| arq job tables | Managed by arq library, not part of application schema | ARCH-005 |
+| RLS policies | Phase 2: raw SQL in dedicated Alembic migrations, not via ORM | ADR-0022, ARCH-025 |
+| ORM mapping | SQLAlchemy 2.0 `Mapped[]` declarative style. ORM models internal to each module | ADR-0022 |
+
+#### Table ownership (per ADR-0005 module boundaries)
+
+| Table | Owner Module | Alembic Branch |
+|-------|-------------|----------------|
+| namespaces | vektra-admin | admin |
+| api_keys | vektra-admin | admin |
+| source_documents | vektra-ingest | ingest |
+| document_chunks | vektra-index | index |
+| ingest_jobs | vektra-ingest | ingest |
+| audit_log | vektra-admin | admin |
+| system_state | vektra-admin | admin |
+
+#### Phase 2 schema additions (not created in Phase 1)
+
+| Table | Purpose | Reference |
+|-------|---------|-----------|
+| conversations | Persistent conversation sessions with pgcrypto encryption | REQ-049, ARCH-031 |
+| conversation_turns | Individual Q&A turns within a conversation (encrypted content) | REQ-049 |
+| query_traces | Dedicated QueryTrace storage (Phase 1: structlog only) | ARCH-041 |
+| feedback | Response and citation feedback (response_id, citation_id) | REQ-055 |
+
 ---
 
 ## 9. Architectural decisions
@@ -1295,7 +1548,7 @@ See ADRs in `.s2s/decisions/`:
 | REQ-042 Streaming responses | ARCH-028 litellm async, ARCH-036 QueryPipeline | Native SSE via execute_stream() |
 | REQ-044 Safeguard hooks | ARCH-029 Protocols, ARCH-049 Content modification | Three trust boundary points, blocking + filtering + modification |
 | REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via LLMProvider Protocol |
-| REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity | First-class namespace with metadata |
+| REQ-048 Namespace support | ARCH-007 RLS, ARCH-025 Deferred binding, ARCH-047 Namespace entity, ARCH-058 Schema | First-class namespace with metadata, physical table |
 | REQ-043 Configurable prompts | ARCH-054 Prompt template architecture, ARCH-048 Prompt versioning | Three composable Jinja2 templates, configurable path, per-template hashing |
 | REQ-049 Conversation context | ARCH-031 Encrypted storage, ARCH-055 Token budget allocation | Privacy-preserving persistence, history bounded within model context window |
 | REQ-050 Pluggable vector store | ARCH-029 Protocols, ARCH-044 Metadata filtering, ARCH-045 Index version, ARCH-051 Full-store contract, ARCH-052 Provider atomicity, ARCH-053 SparseEmbeddingProvider | Extended VectorStoreProvider with SearchMode, filters, index_version, full-store contract, provider-specific atomicity, sparse embedding generation |
@@ -1360,6 +1613,7 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-055 Token budget allocation | vektra-core (budget calculation in SimpleQueryPipeline) |
 | ARCH-056 Retrieval quality controls | vektra-core (retrieval filter in SimpleQueryPipeline), vektra_shared (QueryResponse.no_relevant_context) |
 | ARCH-057 Startup validation | All components (cross-cutting startup sequence) |
+| ARCH-058 Database schema | All components (7 tables with module ownership per ADR-0005) |
 
 ### A.3 Components to requirements
 
@@ -1381,3 +1635,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.3.1 - Vector store portability: ARCH-051 (full-store contract), ARCH-052 (provider-specific ingest atomicity), Qdrant as Phase 2 candidate, glossary expanded to 52 terms*
 *Version 1.4 - Hybrid search readiness: ARCH-053 (SparseEmbeddingProvider Protocol), Qdrant Docker Compose profile, BM25/SPLADE/fastembed as Phase 2 options, 9 Protocol interfaces, glossary expanded to 56 terms*
 *Version 1.5 - Pipeline quality and startup: ARCH-054 (prompt template architecture), ARCH-055 (token budget allocation), ARCH-056 (retrieval quality controls), ARCH-057 (startup validation sequence), ADR-0020/0021, QueryResponse.no_relevant_context field, ARCH-043 extended with retrieval degradation, glossary expanded to 61 terms*
+*Version 1.6 - Database schema: ARCH-058 (7 tables, indexes, forward-compatible fields, module ownership, Phase 2 schema roadmap)*

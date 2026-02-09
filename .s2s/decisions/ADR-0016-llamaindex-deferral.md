@@ -162,8 +162,32 @@ Beyond LlamaIndex, two other RAG frameworks were assessed for potential Phase 3+
 
 Integration consideration: if Haystack manages its own retrievers/embedders internally, there is duplication with our EmbeddingProvider/VectorStoreProvider. Two integration strategies exist: (a) Haystack wraps our Protocols (Haystack as orchestrator, Vektra Protocols as components) preserving our contracts but adding indirection, or (b) Haystack uses its own adapters (Haystack as opaque pipeline) reducing indirection but bypassing our Protocol layer.
 
-**LangChain / LangGraph** - alternative for agentic scenarios only:
-- LangChain v1.0 reached (stability milestone)
-- LangGraph provides stateful agents with loops and dynamic decisions, suitable for agentic RAG
-- Architecturally more distant from Vektra: many overlapping abstractions, heavier dependency footprint
-- Not recommended for standard RAG pipeline (Haystack is a better fit), but worth evaluating specifically for agentic RAG in Phase 3+
+**LangChain / LangGraph** - assessed in detail (February 2026, see design-vektra-integration-6.md):
+
+LangChain core (v1.2.9): not recommended for any phase. Feature-by-feature analysis shows near-total overlap with Vektra's 9 Protocol interfaces (6 of 9 Protocols have LangChain equivalents that add no value over direct implementation). LangChain's abstractions (BaseChatModel, Embeddings, VectorStore, Document Loaders) duplicate what litellm, sentence-transformers, and pgvector already provide with less indirection. Specific Vektra features (token budget allocation ARCH-055, retrieval quality controls ARCH-056, prompt template versioning ARCH-054, SafeguardHook with content modification ARCH-049) have no LangChain equivalent.
+
+Additional concerns:
+- langsmith (observability SaaS client) is a hard dependency of langchain-core, conflicting with on-premises deployment requirements
+- ~80-150 MB installed footprint with transitive dependencies (numpy, SQLAlchemy, aiohttp)
+- Community trust remains low: 45% of developers who experiment with LangChain never use it in production (2025 survey)
+
+LangGraph (v1.0.8): candidate for Phase 3+ agentic RAG only. Unlike LangChain core, LangGraph operates at a level ABOVE the RAG pipeline, not inside it. It would orchestrate when and how to call QueryPipeline.execute(), not replace the pipeline logic. Key capabilities relevant to Vektra:
+- Stateful graphs with cycles (query refinement loops)
+- Human-in-the-loop with automatic checkpointing
+- Multi-agent orchestration (supervisor, hierarchical patterns)
+- Fault recovery with state persistence
+
+Integration path: Vektra's QueryPipeline becomes a "tool" in a LangGraph StateGraph. The adapter is ~20 lines wrapping execute() into a graph node. No architectural changes needed now: QueryResponse/QueryTrace (Pydantic models) are directly compatible with LangGraph's typed state, and EventEmitter (ARCH-038) provides observation hooks.
+
+Note: langgraph (~158 KB) depends on langchain-core (~496 KB) but not the full langchain package. A minimal adoption would pull ~650 KB of framework code plus langsmith. The langsmith hard dependency remains the primary friction point for on-premises deployment.
+
+**Framework adoption summary for Phase 3+:**
+
+| Scenario | Candidate | Rationale |
+|----------|-----------|-----------|
+| Advanced deterministic pipeline | Haystack | DAG architecture aligns with QueryPipeline, typed components similar to Protocols |
+| Agentic RAG (cycles, tool use) | LangGraph | Only mature option for stateful agent workflows with persistence |
+| Sub-question decomposition | Haystack or direct | Manageable complexity (~400 lines) without framework |
+| Response synthesis (long docs) | LlamaIndex or direct | LlamaIndex has battle-tested edge case handling |
+
+Haystack and LangGraph are complementary, not alternatives: Haystack for pipeline internals, LangGraph for orchestration above the pipeline.

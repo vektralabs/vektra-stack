@@ -191,3 +191,13 @@ Note: langgraph (~158 KB) depends on langchain-core (~496 KB) but not the full l
 | Response synthesis (long docs) | LlamaIndex or direct | LlamaIndex has battle-tested edge case handling |
 
 Haystack and LangGraph are complementary, not alternatives: Haystack for pipeline internals, LangGraph for orchestration above the pipeline.
+
+**DataPizza AI** (datapizza-labs) - assessed February 2026, not recommended for any phase:
+- Agent-first Python toolkit (v0.0.19, pre-1.0, created September 2025)
+- ABC-based abstractions (Client, BaseEmbedder, Vectorstore, Parser, Splitter, Reranker) overlap with 4 of 9 Vektra Protocols without adding value
+- Default stack (OpenAI + Qdrant) differs from Vektra's (litellm + pgvector)
+- No persistence layer, authentication, multi-tenancy, safeguards, or compliance features
+- MCP SDK is a hard dependency of core (unnecessary overhead for Vektra's use case)
+- Maturity concerns: 15 contributors (one dominant), ~165 commits, validation stubs (`assert 1 == 1`), yanked PyPI versions
+- For Phase 3+ agentic RAG, LangGraph is strictly superior (1.0, checkpointing, fault recovery, larger community)
+- See design-vektra-integration-6.md for full analysis

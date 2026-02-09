@@ -129,6 +129,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - Background tasks: arq with PostgreSQL job persistence
 - PDF extraction: pdfplumber (Phase 1), Unstructured (Phase 2) via DocumentExtractor Protocol
 - Content type detection: python-magic (magic bytes)
+- ORM: SQLAlchemy 2.0 async with asyncpg (ORM models internal to modules, Pydantic models as public API)
 
 **Protocol interfaces** (9 defined in vektra_shared):
 - LLMProvider: multi-provider LLM abstraction with graceful degradation
@@ -141,7 +142,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (57 total, 21 ADRs):
+**Key decisions** (58 total, 22 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
@@ -157,15 +158,16 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - [ADR-0019](decisions/ADR-0019-rag-evaluation-strategy.md): Three-tier RAG evaluation strategy
 - [ADR-0020](decisions/ADR-0020-prompt-template-architecture.md): Composable Jinja2 prompt templates
 - [ADR-0021](decisions/ADR-0021-retrieval-quality-controls.md): Retrieval quality controls in QueryPipeline
+- [ADR-0022](decisions/ADR-0022-orm-sqlalchemy-async.md): SQLAlchemy 2.0 async with asyncpg for ORM
 
 ## Open Questions
 
 - **Periodic indexing pattern**: n8n orchestrates ingestion, but the scheduling pattern (e.g., daily sync of Moodle materials) needs documentation as a reference workflow
-- **ORM layer**: SQLAlchemy 2.0 async (with asyncpg) vs SQLModel. Must be decided before implementation (OQ-017)
+- ~~**ORM layer**: SQLAlchemy 2.0 async (with asyncpg) vs SQLModel. Must be decided before implementation (OQ-017)~~ Resolved: ADR-0022
 - **learn-ui architecture**: is the chatbot widget a standalone npm package or served by the backend? (OQ-018)
 - **admin-ui architecture**: is admin a separate SPA or integrated? (OQ-018)
 - **Phase 2 hardware minimum**: Phase 2 full-featured estimated at ~3.4GB total. Recommend 8GB / 4 CPU target (OQ-019)
 
 ---
 
-*Last updated: 2026-02-07*
+*Last updated: 2026-02-09*

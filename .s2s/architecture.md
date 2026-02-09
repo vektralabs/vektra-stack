@@ -186,6 +186,7 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 | **pdfplumber** | Pure Python, ~5MB, no system dependencies | PyMuPDF (complex licensing), pdfminer (slower), Unstructured (Phase 2, heavy deps) |
 | **python-magic** | Magic bytes content type detection, ~2MB | Extension-only detection (unreliable for mislabeled files) |
 | **No LlamaIndex (Phase 1-2)** | RAG features implemented directly behind QueryPipeline Protocol. Standalone evaluation via RAGAS/DeepEval. Reassess for Phase 3+. | LlamaIndex (version instability, ~150-200 MB deps, abstraction mismatch with Protocol design) |
+| **SQLAlchemy 2.0 async + asyncpg** | Native PostgreSQL features (pgvector, JSONB/GIN, pgcrypto, RLS), async throughout, Alembic first-class. ORM models internal to modules, Pydantic models as public API contracts. | SQLModel (pre-1.0, `sa_column` fallback for every PG-specific feature, performance overhead on reads) |
 
 ### 4.2 Architectural approach
 
@@ -1081,6 +1082,7 @@ See ADRs in `.s2s/decisions/`:
 | [ADR-0019](decisions/ADR-0019-rag-evaluation-strategy.md) | Three-tier RAG evaluation strategy | accepted |
 | [ADR-0020](decisions/ADR-0020-prompt-template-architecture.md) | Composable Jinja2 prompt templates | accepted |
 | [ADR-0021](decisions/ADR-0021-retrieval-quality-controls.md) | Retrieval quality controls in QueryPipeline | accepted |
+| [ADR-0022](decisions/ADR-0022-orm-sqlalchemy-async.md) | SQLAlchemy 2.0 async with asyncpg for ORM | accepted |
 
 ---
 
@@ -1162,7 +1164,7 @@ See ADRs in `.s2s/decisions/`:
 | R-05 | arq job queue backpressure | Medium | Medium | Job limits, monitoring, operator alerts | DevOps |
 | R-06 | Embedding model change requires full reindex | Medium | Medium | index_version pattern (ARCH-045) enables zero-downtime reindex | Tech Lead |
 | R-07 | Phase 2 RAM budget tight at 4GB | High | Medium | Document 8GB Phase 2 target (OQ-019), lazy loading, external embedding API option | DevOps |
-| R-08 | ORM layer decision delayed | Medium | Low | OQ-017 must be resolved before implementation start | Tech Lead |
+| R-08 | ~~ORM layer decision delayed~~ | ~~Medium~~ | ~~Low~~ | Resolved: ADR-0022 (SQLAlchemy 2.0 async + asyncpg) | Tech Lead |
 | R-09 | Token budget calculation inaccurate for unknown models | Medium | Low | Conservative fallback estimate (4 chars/token), warning logged, configurable reserve (ARCH-055) | Tech Lead |
 
 ### 11.2 Accepted technical debt

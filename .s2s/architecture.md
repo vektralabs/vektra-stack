@@ -421,7 +421,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-003 - Module boundary enforcement**: Package structure with `__all__` exports + import-linter static analysis in CI.
 - **ARCH-004 - Shared package for cross-cutting types**: `vektra_shared` for config schemas, error types, Protocol interfaces.
 - **ARCH-005 - Background tasks with arq**: arq in-process mode with PostgreSQL job persistence. Jobs survive container restarts.
-- **ARCH-023 - API key lifecycle management**: argon2id hashing, scopes (read/ingest/admin), revocation support.
+- **ARCH-023 - API key lifecycle management**: argon2id hashing, scopes (admin/ingest/query per REQ-031, multiple per key), revocation support.
 - **ARCH-024 - LLM provider resilience**: Retry with exponential backoff, circuit breaker pattern, structured error responses.
 - **ARCH-025 - RLS binding deferred**: Application-level namespace filtering for Phase 1. RLS activates when multi-tenancy enabled.
 - **ARCH-026 - Memory budget allocation**: Container 3.5GB hard limit, internal advisory limits (INDEX=512MB, INGEST=256MB).
@@ -1076,7 +1076,9 @@ CREATE TABLE namespaces (
     config          JSONB           NOT NULL DEFAULT '{}',  -- per-namespace overrides
     retention_days  INTEGER         NULL,               -- GDPR, NULL = global default
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT now()
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    CONSTRAINT ck_namespaces_retention CHECK (retention_days IS NULL OR retention_days > 0)
 );
 
 -- "default" namespace pre-created via Alembic migration
@@ -1090,13 +1092,13 @@ CREATE TABLE api_keys (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     key_hash        VARCHAR(255)    NOT NULL,           -- argon2id hash
     label           VARCHAR(255)    NULL,               -- operator-assigned name
-    scope           VARCHAR(16)     NOT NULL DEFAULT 'admin',  -- admin | ingest | query
+    scopes          TEXT[]          NOT NULL DEFAULT '{admin}',  -- REQ-031: tokens may have multiple scopes
     rate_limit_rpm  INTEGER         NULL,               -- Phase 2: per-key rate limiting
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
     last_used_at    TIMESTAMPTZ     NULL,
     revoked_at      TIMESTAMPTZ     NULL,
 
-    CONSTRAINT ck_api_keys_scope CHECK (scope IN ('admin', 'ingest', 'query'))
+    CONSTRAINT ck_api_keys_scopes CHECK (scopes <@ ARRAY['admin', 'ingest', 'query']::text[])
 );
 
 -- FK from namespaces.owner_key_id (deferred to avoid circular dependency)
@@ -1161,6 +1163,7 @@ CREATE TABLE document_chunks (
     coordinates     JSONB           NULL,               -- Phase 2: BoundingBox {page, x0, y0, x1, y1}
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
 
+    CONSTRAINT ck_document_chunks_position CHECK (position >= 0),
     CONSTRAINT ck_document_chunks_element_type
         CHECK (element_type IN ('text', 'table', 'title', 'list',
                'image', 'header', 'footer', 'caption', 'page_break', 'formula')),
@@ -1182,6 +1185,10 @@ CREATE INDEX ix_document_chunks_metadata_gin
 -- Composite index for namespace-scoped search with index_version filter
 CREATE INDEX ix_document_chunks_ns_version
     ON document_chunks (namespace_id, index_version);
+
+-- Standalone index for index_version (REQ-064: cleanup of old versions)
+CREATE INDEX ix_document_chunks_index_version
+    ON document_chunks (index_version);
 
 -- FK lookups
 CREATE INDEX ix_document_chunks_document_id
@@ -1285,6 +1292,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 | arq job tables | Managed by arq library, not part of application schema | ARCH-005 |
 | RLS policies | Phase 2: raw SQL in dedicated Alembic migrations, not via ORM | ADR-0022, ARCH-025 |
 | ORM mapping | SQLAlchemy 2.0 `Mapped[]` declarative style. ORM models internal to each module | ADR-0022 |
+| Column naming | `DocumentChunk.text` maps to `document_chunks.content` (avoids SQL reserved word). ORM uses `mapped_column("content")` | ADR-0022 |
+| Multi-scope keys | `api_keys.scopes` is `TEXT[]` array, not single value. REQ-031: "Tokens may have multiple scopes". CHECK ensures only valid scope names | REQ-031, REQ-032 |
 
 #### Table ownership (per ADR-0005 module boundaries)
 

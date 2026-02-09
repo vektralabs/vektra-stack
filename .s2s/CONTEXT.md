@@ -46,7 +46,7 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 ## Cross-Cutting Concerns
 
 <!-- Populated by /s2s:design -->
-- **Authentication**: API key authentication with argon2id hashing, scoped permissions (read/ingest/admin). Single trust boundary at vektra-core gateway. Rate limiting slot in middleware (Phase 2 enforcement). See [ADR-0010](decisions/ADR-0010-authentication-gateway.md).
+- **Authentication**: API key authentication with argon2id hashing, scoped permissions (admin/ingest/query per REQ-031, multiple scopes per key). Single trust boundary at vektra-core gateway. Rate limiting slot in middleware (Phase 2 enforcement). See [ADR-0010](decisions/ADR-0010-authentication-gateway.md).
 - **Authorization**: Namespace isolation via PostgreSQL RLS policies. Application-level filtering for Phase 1, RLS binding via feature flag for multi-tenant activation. Namespace as first-class entity with metadata (ARCH-047). See [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md).
 - **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries. QueryTrace (ARCH-041) for RAG-specific observability, separate from audit log.
 - **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.

@@ -226,14 +226,14 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-023: API key table schema with scope support
 - **Priority**: must
-- **Description**: API key storage schema includes a scope field from Phase 1, supporting future expansion: id (UUID primary key), key_hash (argon2id hash of key value), label (operator-assigned name, optional), scope (string enum: 'admin' | 'ingest' | 'query', default 'admin'), created_at (timestamp), last_used_at (timestamp, nullable), revoked_at (timestamp, nullable). Phase 1 behavior: all keys created via admin get 'admin' scope by default, granting full access. The scope field exists but enforcement is permissive in Phase 1. Scope enum aligns with REQ-031 definitions.
+- **Description**: API key storage schema includes a scopes field from Phase 1, supporting multiple scopes per key (REQ-031). Schema: id (UUID primary key), key_hash (argon2id hash of key value), label (operator-assigned name, optional), scopes (array of: 'admin' | 'ingest' | 'query', default ['admin']), created_at (timestamp), last_used_at (timestamp, nullable), revoked_at (timestamp, nullable). Phase 1 behavior: all keys created via admin get ['admin'] scope by default, granting full access. The scopes field exists but enforcement is permissive in Phase 1. Scope values align with REQ-031 definitions.
 - **Acceptance Criteria**:
-  - [ ] Schema includes scope column with NOT NULL constraint
-  - [ ] Scope enum values are exactly: admin, ingest, query
-  - [ ] Default scope is 'admin' for keys created via POST /api-keys
-  - [ ] Scope value returned in GET /api-keys response
+  - [ ] Schema includes scopes column with NOT NULL constraint (array type)
+  - [ ] Scope values are exactly: admin, ingest, query (CHECK constraint rejects unknown values)
+  - [ ] Default scopes is ['admin'] for keys created via POST /api-keys
+  - [ ] Scopes value returned in GET /api-keys response
   - [ ] Key hash uses argon2id algorithm
-  - [ ] Schema validation rejects unknown scope values
+  - [ ] Tokens may have multiple scopes (REQ-031)
 
 ### REQ-024: Phase 1 scope enforcement
 - **Priority**: must

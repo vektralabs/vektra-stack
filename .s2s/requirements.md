@@ -594,13 +594,14 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-063: Chunk metadata filtering
 - **Priority**: should
-- **Description**: VectorStoreProvider.search() accepts optional filters parameter for metadata-based filtering. ChunkMetadata defines standard filterable fields: course_id, module_id, academic_year, content_type, language. Phase 1: filters applied as WHERE clause on JSONB metadata column with GIN index. Metadata fields populated optionally during ingest. Phase 2: vektra-learn populates metadata automatically, filtering used in course-scoped queries.
+- **Description**: VectorStoreProvider.search() accepts optional filters parameter for metadata-based filtering. ChunkMetadata defines generic filterable fields: content_type, language, plus arbitrary key-value pairs stored in JSONB. Phase 1: filters applied as WHERE clause on JSONB metadata column with GIN index. Metadata fields populated optionally during ingest via key-value pairs. Domain-specific fields (e.g., course_id, module_id, academic_year for vektra-learn) are defined by the vertical in Phase 2 and stored in the same JSONB column without requiring schema changes.
 - **Acceptance Criteria**:
   - [ ] search() accepts filters: SearchFilters | None parameter
-  - [ ] ChunkMetadata type defines standard filterable fields
+  - [ ] ChunkMetadata type defines generic filterable fields (content_type, language) plus arbitrary keys
   - [ ] GIN index created on document_chunks.metadata JSONB column
   - [ ] Filtering combined with vector similarity in single SQL query (not post-filtering)
   - [ ] None filters preserves current behavior (no additional filtering)
+  - [ ] Arbitrary metadata keys accepted during ingest without schema changes
 
 ### REQ-064: Zero-downtime reindex via index_version
 - **Priority**: should

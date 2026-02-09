@@ -435,7 +435,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-041 - Audit/analytics separation**: QueryTrace (per-step timing, chunk refs, model info) emitted separately from audit log. QueryTrace does not contain query text or response content (REQ-051 compliance). Phase 1: structlog emission. Phase 2: dedicated storage.
 - **ARCH-042 - Content type detection**: Magic bytes validation before DocumentExtractor dispatch. python-magic for MIME detection. Logs warning on mismatch with declared type.
 - **ARCH-043 - Graceful degradation**: Two degradation paths. LLM degradation: primary model timeout triggers fallback model; both fail triggers context-only response (chunks without LLM synthesis). Retrieval degradation (ARCH-056): when no chunk passes the relevance threshold, QueryResponse.no_relevant_context=True; system returns explicit "no relevant information" instead of synthesizing from irrelevant context. Client always receives value (relevant sources, or empty sources with explanation, at minimum).
-- **ARCH-044 - Chunk metadata filtering**: JSONB metadata column on chunks with GIN index. SearchFilters parameter in VectorStoreProvider.search(). Standard filterable fields defined for vektra-learn compatibility.
+- **ARCH-044 - Chunk metadata filtering**: JSONB metadata column on chunks with GIN index. SearchFilters parameter in VectorStoreProvider.search(). Generic filterable fields (content_type, language) plus arbitrary key-value pairs. Domain-specific fields (e.g., course_id for vektra-learn) defined by the vertical in Phase 2, stored in the same JSONB column.
 - **ARCH-045 - Zero-downtime reindex via index_version**: Integer version on chunks, configurable active version, search filtered by active version. Enables embedding model and chunking strategy changes without downtime.
 - **ARCH-046 - LlamaIndex deferral**: RAG pipeline features (hybrid search, reranking, query routing) implemented directly behind QueryPipeline Protocol for Phase 1-2. LlamaIndex not adopted due to version instability (v0.14 breaking changes), ~150-200 MB dependency footprint, debugging opacity, and abstraction mismatch with Protocol-based design. RAG quality evaluation addressed by standalone frameworks (RAGAS or DeepEval). Reassessment for Phase 3+ if sub-question decomposition or agentic RAG features are needed.
 - **ARCH-047 - Namespace as first-class entity**: Database table with owner, quota, config overrides, retention. Phase 1: "default" namespace pre-created, metadata fields unenforced.
@@ -621,11 +621,12 @@ class QueryEmbedding:
     sparse: SparseVector | None = None
 
 class SearchFilters(TypedDict, total=False):
-    course_id: str | list[str]
-    module_id: str | list[str]
-    academic_year: str | list[str]
-    content_type: str | list[str]
-    language: str | list[str]
+    content_type: str | list[str]       # MIME type or operator-defined category
+    language: str | list[str]           # ISO 639-1 code
+    # Arbitrary additional keys accepted at runtime (JSONB is schema-free).
+    # Domain-specific fields (e.g., course_id, module_id, academic_year)
+    # are defined by verticals (vektra-learn) in Phase 2 and passed as
+    # additional keys in the same SearchFilters dict.
 
 class VectorStoreProvider(Protocol):
     async def store(namespace: str, chunks: Sequence[ChunkEmbedding]) -> list[str]
@@ -892,12 +893,12 @@ class ChunkMetadata(TypedDict, total=False):
     page: int
     position: int
     source_file: str
-    # Standard filterable fields (optional, for vektra-learn)
-    course_id: str | None
-    module_id: str | None
-    academic_year: str | None
-    content_type: str | None        # "lecture" | "exercise" | "exam" | "notes"
-    language: str | None
+    # Generic filterable fields (optional)
+    content_type: str | None        # MIME type or operator-defined category
+    language: str | None            # ISO 639-1 code
+    # Arbitrary additional keys accepted (JSONB is schema-free)
+    # Domain-specific fields (e.g., course_id, module_id, academic_year)
+    # are defined by verticals (vektra-learn) in Phase 2
 ```
 
 #### ProviderRegistry (new - ARCH-039)
@@ -1264,7 +1265,7 @@ See ADRs in `.s2s/decisions/`:
 | **RLS** | Row-Level Security: PostgreSQL feature for row-based access control. Deferred to Phase 2 multi-tenancy. |
 | **RRF** | Reciprocal Rank Fusion: algorithm that combines results from multiple retrieval methods (dense + sparse) into a single ranked list. Used in SearchMode.HYBRID (Phase 2). |
 | **Safeguard hook** | Middleware extension points (pre_query, post_retrieval, pre_response) for content filtering, blocking, and modification (ARCH-049). SafeguardResult supports blocking, chunk filtering, and content modification via modified_content field. Phase 2: Presidio PII anonymization, Guardrails AI output validation. |
-| **SearchFilters** | Typed metadata filters for vector search (course_id, module_id, academic_year, content_type, language). Each VectorStoreProvider translates to provider-specific syntax (Phase 1 pgvector: JSONB WHERE clause with GIN index; Qdrant: payload filter). For advanced filters beyond SearchFilters fields, see raw_filters parameter. |
+| **SearchFilters** | Typed metadata filters for vector search. Generic fields: content_type, language. Accepts arbitrary additional keys at runtime (JSONB is schema-free). Domain-specific fields (e.g., course_id for vektra-learn) defined by verticals in Phase 2. Each VectorStoreProvider translates to provider-specific syntax (Phase 1 pgvector: JSONB WHERE clause with GIN index; Qdrant: payload filter). For advanced filters beyond SearchFilters fields, see raw_filters parameter. |
 | **SearchMode** | Enum controlling vector search strategy: DENSE (Phase 1), SPARSE, HYBRID (Phase 2 with RRF fusion). |
 | **SparseEmbeddingProvider** | Protocol abstracting sparse vector generation for hybrid search. Converts text to SparseVector (token indices + weights). Phase 1: not registered (None). Phase 2: FastEmbedBM25Provider, SPLADEProvider, or BM25sProvider. |
 | **SPLADE** | Sparse Lexical and Expansion Model: neural model that generates sparse vectors with term expansion. More powerful than BM25 (expands semantically related terms) but heavier (~500 MB). Phase 2 candidate for SparseEmbeddingProvider. |

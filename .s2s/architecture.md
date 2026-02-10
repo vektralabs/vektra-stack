@@ -473,7 +473,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 #### Components
 
 - **ARCH-019 - Component responsibilities**: vektra-core (RAG orchestration), vektra-ingest (document processing), vektra-index (vector storage), vektra-admin (system administration). Each has exclusive state ownership.
-- **ARCH-020 - Authentication gateway**: Single trust boundary at vektra-core. Internal components have no external REST endpoints.
+- **ARCH-020 - Authentication gateway**: Single trust boundary at vektra-core. All modules contribute routes to the main FastAPI app; auth middleware is centralized at the application gateway.
 - **ARCH-021 - Protocol interfaces**: CoreService, IngestService, IndexService, AdminService defined in vektra_shared.
 - **ARCH-022 - Hierarchical health endpoints**: GET /health (aggregated), GET /health/{component} for targeted debugging.
 - **ARCH-057 - Startup validation sequence**: Ordered validation phase before FastAPI accepts requests. 8 steps in fixed order: (1) config schema validation (Pydantic on all VEKTRA_* env vars), (2) database connectivity (asyncpg to PostgreSQL), (3) database schema (Alembic migration check/apply), (4) pgvector extension check, (5) provider registration (ProviderRegistry from config), (6) embedding model load (first inference with test text), (7) LLM connectivity (health_check, warning-only - not fatal), (8) template loading (Jinja2 templates from ARCH-054). Steps 1-6 and 8 are fatal: container exits with code 1 and structured plain-text error message including config variable, error detail, and remediation hint. Step 7 is warning-only (LLM provider may still be starting). Config: `VEKTRA_STARTUP_LLM_CHECK` (default true) to skip LLM check. Entire sequence must complete within NFR-004 (60s). Aligns with NFR-009 (error actionability) and REQ-005 (30-min MVP).
@@ -484,7 +484,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-016 - n8n integration**: Async job polling pattern. POST -> job_id -> poll status -> get result.
 - **ARCH-017 - n8n security**: Treat as untrusted caller. Scoped API keys, per-key rate limits, audit logging.
 - **ARCH-018 - API versioning**: URL prefixes (/api/v1/), 6-month deprecation window, CI schema validation.
-- **ARCH-059 - API contract specification**: Consolidated endpoint catalog with formal request/response types. All functional endpoints under /api/v1/ prefix (ARCH-018). Single FastAPI application with centralized auth middleware (ARCH-020). 16 Phase 1 endpoints, 8 Phase 2 additions. Endpoint-specific types defined in section 8.7.
+- **ARCH-059 - API contract specification**: Consolidated endpoint catalog with formal request/response types. All functional endpoints under /api/v1/ prefix (ARCH-018). Single FastAPI application with centralized auth middleware (ARCH-020). 16 Phase 1 endpoints (unique paths; GET /health serves both shallow and deep modes via query parameter), 8 Phase 2 additions, 19 API-specific types. Endpoint-specific types defined in section 8.7.
 - **ARCH-033 - Docker Compose specification**: Healthcheck-based startup ordering, ARCH-026 memory limits, profile-based Ollama.
 
 ### 8.2 Component details
@@ -520,7 +520,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - source_documents (with version, soft delete fields)
 
 **Interfaces**:
-- Provides: Internal Protocol only (callable via vektra-core)
+- Provides: REST routes via main FastAPI app (POST /ingest, GET /ingest/jobs/{id}/status) + internal Protocol (callable by vektra-core)
 - Requires: vektra-index (store chunks), EmbeddingProvider (shared instance), EventEmitter
 
 **Dependencies**: vektra-index, EmbeddingProvider (shared)
@@ -534,7 +534,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - embeddings
 
 **Interfaces**:
-- Provides: Internal Protocol only (callable via vektra-core)
+- Provides: REST routes via main FastAPI app (POST /search, POST /documents/{id}/chunks, DELETE /documents/{id}, GET /stats) + internal Protocol (callable by vektra-core)
 - Requires: VectorStoreProvider implementation (Phase 1: pgvector)
 
 **Dependencies**: VectorStoreProvider (Phase 1: PostgreSQL with pgvector extension, Phase 2 candidate: Qdrant)
@@ -1092,6 +1092,7 @@ CREATE TABLE namespaces (
 CREATE TABLE api_keys (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     key_hash        VARCHAR(255)    NOT NULL,           -- argon2id hash
+    key_preview     VARCHAR(4)      NOT NULL,           -- last 4 characters for API listing (REQ-020)
     label           VARCHAR(255)    NULL,               -- operator-assigned name
     scopes          TEXT[]          NOT NULL DEFAULT '{admin}',  -- REQ-031: tokens may have multiple scopes
     rate_limit_rpm  INTEGER         NULL,               -- Phase 2: per-key rate limiting
@@ -1205,18 +1206,24 @@ CREATE TABLE ingest_jobs (
     document_id     UUID            NULL REFERENCES source_documents(id),  -- set after doc creation
     namespace_id    VARCHAR(64)     NOT NULL REFERENCES namespaces(id),
     status          VARCHAR(16)     NOT NULL DEFAULT 'pending',  -- pending | processing | indexed | failed
+    phase           VARCHAR(16)     NULL,               -- extracting | chunking | embedding (NFR-010)
     filename        VARCHAR(1024)   NOT NULL,
     file_size_bytes BIGINT          NOT NULL,
     error_code      VARCHAR(32)     NULL,               -- ERR-INGEST-xxx
     error_message   TEXT            NULL,
     idempotency_key VARCHAR(255)    NULL,
     chunk_count     INTEGER         NULL,               -- set after indexing
+    percentage      INTEGER         NULL,               -- progress if determinable (NFR-010)
     started_at      TIMESTAMPTZ     NULL,
     completed_at    TIMESTAMPTZ     NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
 
     CONSTRAINT ck_ingest_jobs_status
-        CHECK (status IN ('pending', 'processing', 'indexed', 'failed'))
+        CHECK (status IN ('pending', 'processing', 'indexed', 'failed')),
+    CONSTRAINT ck_ingest_jobs_phase
+        CHECK (phase IS NULL OR phase IN ('extracting', 'chunking', 'embedding')),
+    CONSTRAINT ck_ingest_jobs_percentage
+        CHECK (percentage IS NULL OR (percentage >= 0 AND percentage <= 100))
 );
 
 CREATE UNIQUE INDEX uq_ingest_jobs_idempotency
@@ -1295,6 +1302,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 | ORM mapping | SQLAlchemy 2.0 `Mapped[]` declarative style. ORM models internal to each module | ADR-0022 |
 | Column naming | `DocumentChunk.text` maps to `document_chunks.content` (avoids SQL reserved word). ORM uses `mapped_column("content")` | ADR-0022 |
 | Multi-scope keys | `api_keys.scopes` is `TEXT[]` array, not single value. REQ-031: "Tokens may have multiple scopes". CHECK ensures only valid scope names | REQ-031, REQ-032 |
+| Key preview | `api_keys.key_preview` stores last 4 characters at creation time. Plaintext key is never stored; preview enables masked listing in GET /api-keys (REQ-020) | ARCH-059 |
+| Job phase tracking | `ingest_jobs.phase` and `percentage` persist sub-state for progress feedback (NFR-010). Phase is NULL when status is pending/indexed/failed. Percentage range 0-100 with CHECK constraint | NFR-010, BR-004 |
 
 #### Table ownership (per ADR-0005 module boundaries)
 
@@ -1352,7 +1361,7 @@ Bootstrap key (VEKTRA_ADMIN_BOOTSTRAP_KEY) has implicit admin scope for first ke
 
 #### Error envelope
 
-All error responses use the REQ-010 envelope:
+All error responses use the REQ-010 envelope. Serialized JSON wraps the error object: `{"error": <ErrorResponse>}`.
 
 ```python
 class ErrorResponse:
@@ -1365,7 +1374,7 @@ class ErrorResponse:
     details: dict = {}
 ```
 
-HTTP status mapping: TRANSIENT -> 503, PERMANENT -> 400/422, CONFIGURATION -> 500, UPSTREAM -> 502. Auth errors: 401 (ERR-AUTH-001/002) or 403 (ERR-AUTH-003).
+HTTP status mapping: TRANSIENT -> 503, PERMANENT -> 400/422, CONFIGURATION -> 500, UPSTREAM -> 502. Auth errors: 401 (ERR-AUTH-001/002) or 403 (ERR-AUTH-003). Reserved codes ERR-AUTH-004 (rate limited) and ERR-AUTH-005 (auth service unavailable) per REQ-041, not used in Phase 1. Configuration errors ERR-CONFIG-001/002 may appear as HTTP 500 during runtime if a provider becomes misconfigured.
 
 #### Endpoint catalog
 
@@ -1501,6 +1510,7 @@ class StoreChunksResponse:
 class DeleteDocumentResponse:
     document_id: UUID
     chunks_removed: int
+    deleted_at: datetime
     deletion_reason: str = "user_request"
 ```
 

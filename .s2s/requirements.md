@@ -192,7 +192,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 - **Priority**: must
 - **Description**: All Vektra components (core, index, ingest, admin) authenticate operator requests using API keys with Bearer token scheme. Keys are static credentials without expiration in Phase 1.
 - **Acceptance Criteria**:
-  - [ ] All API endpoints except /health require valid Bearer token
+  - [ ] All API endpoints except /health and /metrics require valid Bearer token
   - [ ] Invalid or missing token returns 401 with component name and remediation guidance
   - [ ] Valid token with insufficient scope returns 403
   - [ ] Token validation does not require external service calls
@@ -289,7 +289,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - [ ] Given: Document size < 10MB; When: POST /ingest; Then: Synchronous 200 response
   - [ ] Given: Document size = 10MB exactly; When: POST /ingest; Then: Synchronous 200 response (boundary inclusive)
   - [ ] Given: Document size > 10MB; When: POST /ingest; Then: 202 Accepted with job_id
-  - [ ] Polling endpoint: GET /ingest/jobs/{id}/status returns pending|processing|complete|failed
+  - [ ] Polling endpoint: GET /ingest/jobs/{id}/status returns pending|processing|indexed|failed (per BR-004)
   - [ ] Queryable within 60 seconds measured from 200/202 response
 
 ### REQ-030: Authentication error response contracts
@@ -307,9 +307,10 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 - **Priority**: must
 - **Description**: Three API scopes govern operation permissions. Scope names and permitted operations must be explicitly defined.
 - **Acceptance Criteria**:
-  - [ ] Scope 'admin': permits POST /api-keys, DELETE /api-keys/{id}, GET /api-keys
-  - [ ] Scope 'ingest': permits POST /ingest, GET /ingest/jobs/{id}/status
-  - [ ] Scope 'query': permits POST /query
+  - [ ] Scope 'admin': permits POST /api-keys, DELETE /api-keys/{id}, GET /api-keys, DELETE /documents/{id}
+  - [ ] Scope 'ingest': permits POST /ingest, GET /ingest/jobs/{id}/status, POST /documents/{id}/chunks
+  - [ ] Scope 'query': permits POST /query, POST /search, GET /providers
+  - [ ] Any valid scope: permits GET /stats, GET /health?detail=full, GET /health/{component}, GET /health/memory
   - [ ] Bootstrap key has implicit 'admin' scope for key creation only
   - [ ] Tokens may have multiple scopes
 
@@ -658,10 +659,10 @@ Phase 1 document status values:
 - **INDEXED**: All chunks stored, document queryable
 - **FAILED**: Ingestion failed, error code available
 
-Status is observable via GET /ingest/jobs/{id}/status (per REQ-040 path convention) but not via a list endpoint. Internal sub-states (extracting, chunking, embedding) are logged but not exposed in API. Atomic outcome: a document reaches INDEXED or FAILED, never a partial state.
+Status is observable via GET /ingest/jobs/{id}/status (per REQ-040 path convention) but not via a list endpoint. Sub-states (extracting, chunking, embedding) are exposed as the optional `phase` field in the status response (NFR-010 progress feedback) and persisted in the database. Atomic outcome: a document reaches INDEXED or FAILED, never a partial state.
 
 **Conditions**: Document status requested
-**Actions**: Status endpoint returns exactly one of four values. FAILED status includes error code and remediation. Processing sub-stages visible only in logs.
+**Actions**: Status endpoint returns exactly one of four values. FAILED status includes error code and remediation. Processing sub-stages exposed via optional `phase` field (NFR-010).
 
 ### BR-005: Content hash collision with different filename
 When ingested content produces identical SHA-256 hash but has a different filename:

@@ -1581,7 +1581,7 @@ class ProviderStatus:
     name: str                         # "openai", "anthropic", "ollama"
     status: str                       # "ok" | "unavailable"
     model: str                        # configured model name
-    is_fallback: bool = False         # True for fallback provider (ARCH-024)
+    is_fallback: bool = False         # True for fallback model (LLMConfig.fallback_model, ARCH-024)
 ```
 
 ##### Health and monitoring

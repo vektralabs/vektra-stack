@@ -810,6 +810,8 @@ class DocumentChunk:
 
 Phase 1: element_type always TEXT, content_format always "text", parent_id always None, coordinates always None, index_version always 1. Phase 2 with Unstructured: tables extracted as content_format="html" (`<table>...</table>`), element_type mapped to extended enum values.
 
+> **ID type convention**: Protocol and API types use `str` for entity identifiers (chunk_id, parent_id, document_id in SearchResult). DB uses UUID. Conversion is `str(uuid)` on read, `UUID(string)` on write. This enables future portability to vector stores that use non-UUID identifiers (e.g., Qdrant string IDs). See ARCH-051. Similarly, `SourceRef` uses short field names (`doc_id`, `snippet`) for brevity in query responses, while `SearchResult` uses explicit names (`document_id`, `text_snippet`). Both refer to the same underlying data.
+
 #### QueryResponse (extended)
 
 ```python
@@ -840,9 +842,17 @@ class SourceRef:
 ```python
 class SourceDocument:
     id: UUID
+    namespace_id: str                      # FK to namespaces (REQ-048)
     filename: str
     content_hash: str                      # SHA-256 of raw file bytes (REQ-034)
+    content_type: str                      # MIME type, auto-detected via python-magic (ARCH-042)
+    file_size_bytes: int                   # size in bytes from uploaded file
+    filename_aliases: list[str] = []       # alternative filenames for same content_hash (BR-005)
+    chunk_count: int | None = None         # set after indexing, None while processing
+    status: str = "pending"                # "pending" | "processing" | "indexed" | "failed"
     version: int = 1                       # document version (REQ-056)
+    index_version: int = 1                 # for zero-downtime reindex (ARCH-045)
+    metadata: dict | None = None           # operator-provided metadata from IngestRequest
     supersedes_id: UUID | None = None      # FK to previous version (REQ-056)
     deleted_at: datetime | None = None     # soft delete timestamp (REQ-057)
     deletion_reason: str | None = None     # "user_request" | "superseded" | "expired"
@@ -913,6 +923,23 @@ class ProviderRegistry:
 ```
 
 Phase 1: dict-based. Unified env var pattern: `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_SPARSE_EMBEDDING_PROVIDER` (optional, Phase 2), `VEKTRA_VECTOR_STORE_PROVIDER`, `VEKTRA_QUERY_PIPELINE`, `VEKTRA_CHUNKING_STRATEGY`, `VEKTRA_SAFEGUARD_MODE`, `VEKTRA_DOCUMENT_EXTRACTOR`.
+
+#### Configuration types
+
+Typed configuration classes loaded from environment variables at startup (ARCH-057 step 1). LLMConfig defined in section 8.3. Additional config types:
+
+```python
+class QueryPipelineConfig(BaseModel):
+    min_relevance_score: float = 0.3      # VEKTRA_MIN_RELEVANCE_SCORE (ARCH-056)
+    chunk_dedup_enabled: bool = True       # VEKTRA_CHUNK_DEDUP_ENABLED (ARCH-056)
+    response_token_reserve: int = 1024     # VEKTRA_RESPONSE_TOKEN_RESERVE (ARCH-055)
+    context_chunk_ratio: float = 0.6       # VEKTRA_CONTEXT_CHUNK_RATIO (ARCH-055)
+
+class IngestConfig(BaseModel):
+    chunk_size: int = 1000                 # VEKTRA_CHUNK_SIZE (REQ-016)
+    chunk_overlap: int = 200               # VEKTRA_CHUNK_OVERLAP (REQ-016)
+    max_file_size_mb: int = 50             # VEKTRA_MAX_FILE_SIZE_MB (REQ-016)
+```
 
 ### 8.4 Deployment
 
@@ -1146,6 +1173,11 @@ CREATE INDEX ix_source_documents_namespace
 CREATE INDEX ix_source_documents_content_hash
     ON source_documents (content_hash);
 
+-- Filename lookup for 409 Conflict detection (REQ-033)
+CREATE INDEX ix_source_documents_ns_filename
+    ON source_documents (namespace_id, filename)
+    WHERE deleted_at IS NULL;
+
 
 -- ============================================================
 -- 4. document_chunks (ARCH-044, ARCH-045, ARCH-051)
@@ -1294,7 +1326,9 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 | Embedding dimension | `vector(384)` for all-MiniLM-L6-v2. Model change requires migration + reindex via index_version | ARCH-045, REQ-064 |
 | HNSW parameters | m=16, ef_construction=64 (pgvector defaults, suitable for <100K vectors) | ADR-0022 |
 | Namespace FK denormalization | `document_chunks.namespace_id` duplicates `source_documents.namespace_id` for single-query vector search (avoid JOIN) | ARCH-051 |
-| Soft delete scope | `source_documents` only. Chunks cascade-deleted with parent document (re-generable artifacts) | ARCH-051 |
+| Soft delete scope | `source_documents` uses soft delete (SET deleted_at). On document soft-delete, application explicitly DELETEs all associated `document_chunks` rows in the same transaction. Chunk count captured via SELECT COUNT(*) before deletion and returned in `DeleteDocumentResponse.chunks_removed`. Chunks are re-generable artifacts and not subject to retention requirements | ARCH-051, REQ-057 |
+| Soft delete cross-cutting | All read endpoints (GET, list, search, stats) MUST filter `WHERE deleted_at IS NULL` on `source_documents`. This is a cross-cutting concern applied in the base query builder, not per-endpoint | REQ-057 |
+| content_type detection | `source_documents.content_type` auto-detected via python-magic (ARCH-042). If detection fails (corrupt file, unknown type), fallback to `"application/octet-stream"`. Never NULL | ARCH-042 |
 | Dedup uniqueness | Partial unique index on `(namespace_id, content_hash) WHERE deleted_at IS NULL` | REQ-033, REQ-057 |
 | Conversation tables | Not created in Phase 1 (in-memory storage, TD-01). Phase 2 Alembic migration adds encrypted conversation tables | REQ-049, ARCH-031 |
 | Bootstrap state | `system_state` table avoids coupling auth logic to audit_log | REQ-036 |
@@ -1410,6 +1444,8 @@ class IngestRequest:
     metadata: str | None = None       # JSON-encoded dict, merged with auto-generated chunk metadata
 ```
 
+> **IngestRequest notes**: `metadata` must be a valid JSON string if provided. Parsed to `dict` before DB insertion as JSONB. Invalid JSON returns ERR-INGEST-001 with remediation "metadata field must be valid JSON". `UploadFile.filename` is required: if the multipart header omits the filename, return ERR-INGEST-001 with remediation "filename required in multipart upload".
+
 **POST /ingest responses**:
 
 Sync (file <= 10MB, REQ-029): 200 OK
@@ -1420,6 +1456,8 @@ class IngestResponse:
     status: str                       # "indexed" | "exists"
     chunk_count: int | None = None    # number of chunks (None if status="exists")
     content_hash: str                 # SHA-256 of raw file bytes (REQ-034)
+    alias_added: bool = False         # True if filename was added as alias (BR-005)
+    alias_count: int | None = None    # total alias count when status="exists", None otherwise
 ```
 
 Async (file > 10MB, REQ-029): 202 Accepted
@@ -1451,7 +1489,9 @@ class IngestJobStatus:
     percentage: int | None = None     # progress if determinable (NFR-010)
 ```
 
-**Errors**: ERR-INGEST-001 (invalid file), ERR-INGEST-002 (file too large), ERR-INGEST-003 (scanned PDF), ERR-INGEST-004 (vector store write failed)
+**Errors**: ERR-INGEST-001 (invalid file: unsupported type, corrupt, missing filename, invalid metadata JSON, MIME detection failure), ERR-INGEST-002 (file too large), ERR-INGEST-003 (scanned PDF), ERR-INGEST-004 (vector store write failed)
+
+> **MIME detection fallback**: If python-magic cannot determine the MIME type but the file extension is valid (PDF/DOCX/PPTX), `content_type` defaults to `"application/octet-stream"` and ingestion proceeds. If both magic bytes and extension are unrecognized, return ERR-INGEST-001.
 
 ##### Search
 
@@ -1477,6 +1517,8 @@ class SearchResponse:
     results: list[SearchResult]       # section 8.3.1
     total_available: int              # matching chunks before top_k limit
 ```
+
+> **Phase 1**: `total_available` equals `len(results)` because pgvector ANN (HNSW) returns only the top_k nearest neighbors without a total count. Phase 2: exact count via separate query when required by pagination.
 
 **Errors**: ERR-QUERY-001 (no documents indexed), ERR-QUERY-004 (vector store read failed)
 
@@ -1515,6 +1557,8 @@ class DeleteDocumentResponse:
     deleted_at: datetime
     deletion_reason: str = "user_request"
 ```
+
+> **Implementation note**: Within a single transaction: (1) SELECT COUNT(*) FROM document_chunks WHERE document_id = :id, (2) DELETE FROM document_chunks WHERE document_id = :id, (3) UPDATE source_documents SET deleted_at = now(), deletion_reason = :reason WHERE id = :id. The count from step 1 populates `chunks_removed`. Chunks are re-generable artifacts; hard-delete is correct.
 
 ##### API key management
 
@@ -1558,6 +1602,8 @@ class ApiKeyListItem:
 
 **DELETE /api-keys/{id} response**: 200 OK with `{id, revoked_at}`
 
+> **GET /api-keys**: Returns all API keys including revoked ones (revoked keys have non-null `revoked_at`). Operators need visibility into key history. Phase 2: optional `?active=true` query parameter to filter revoked keys.
+
 ##### System information
 
 | Method | Path | Description | REQ |
@@ -1574,6 +1620,8 @@ class StatsResponse:
     chunk_count: int
     index_versions: list[int]         # active index versions
 ```
+
+> **GET /stats**: `document_count` and `chunk_count` exclude soft-deleted documents (cross-cutting `WHERE deleted_at IS NULL` filter). `index_versions` is a DISTINCT query on `document_chunks.index_version`; when `namespace` is provided, scoped via `ix_document_chunks_ns_version` index.
 
 **GET /providers**: 200 OK, list of:
 

@@ -124,7 +124,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-011: Phase 1 error code registry
 - **Priority**: must
-- **Description**: Normative error codes for Phase 1 (MUST be implemented): Ingest: ERR-INGEST-001 (Invalid PDF), ERR-INGEST-002 (PDF too large), ERR-INGEST-003 (Scanned PDF detected), ERR-INGEST-004 (Vector store write failed). Query: ERR-QUERY-001 (No documents indexed), ERR-QUERY-002 (LLM unavailable), ERR-QUERY-003 (Query too long), ERR-QUERY-004 (Vector store read failed). System: ERR-CONFIG-001 (Missing configuration), ERR-CONFIG-002 (Invalid provider config). Auth: ERR-AUTH-001 (Missing token), ERR-AUTH-002 (Invalid token), ERR-AUTH-003 (Insufficient scope). Additional error codes MAY be added following the ERR-{COMPONENT}-{NUMBER} pattern. Registry stored at docs/error-codes.md.
+- **Description**: Normative error codes for Phase 1 (MUST be implemented): Ingest: ERR-INGEST-001 (Invalid PDF), ERR-INGEST-002 (PDF too large), ERR-INGEST-003 (Scanned PDF detected), ERR-INGEST-004 (Vector store write failed). Query: ERR-QUERY-001 (No documents indexed), ERR-QUERY-002 (LLM unavailable), ERR-QUERY-003 (Query too long), ERR-QUERY-004 (Vector store read failed). System: ERR-CONFIG-001 (Missing configuration), ERR-CONFIG-002 (Invalid provider config). Auth: ERR-AUTH-001 (Invalid token - includes missing, malformed, unrecognized, revoked per REQ-041), ERR-AUTH-002 (Expired token - Phase 2 per REQ-041), ERR-AUTH-003 (Insufficient scope per REQ-041). Additional error codes MAY be added following the ERR-{COMPONENT}-{NUMBER} pattern. Registry stored at docs/error-codes.md.
 - **Acceptance Criteria**:
   - [ ] All 13 normative error codes implemented with remediation text
   - [ ] Error registry maintained at docs/error-codes.md
@@ -296,12 +296,12 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 - **Priority**: must
 - **Description**: API authentication chain must return structured error responses with specific codes for each failure mode.
 - **Acceptance Criteria**:
-  - [ ] Missing Authorization header: 401 with code AUTH_HEADER_MISSING
-  - [ ] Malformed token format: 401 with code INVALID_TOKEN_FORMAT
-  - [ ] Valid format but token not found: 401 with code TOKEN_NOT_FOUND
-  - [ ] Valid token but expired: 401 with code TOKEN_EXPIRED
-  - [ ] Valid token but insufficient scope: 403 with code INSUFFICIENT_SCOPE, body includes required_scope
-  - [ ] All error responses include human-readable message field
+  - [ ] Missing or malformed Authorization header: 401 with ERR-AUTH-001
+  - [ ] Valid format but token not found or revoked: 401 with ERR-AUTH-001
+  - [ ] Valid token but expired: 401 with ERR-AUTH-002 (Phase 2, reserved)
+  - [ ] Valid token but insufficient scope: 403 with ERR-AUTH-003, body includes required_scope
+  - [ ] All error responses use REQ-010 envelope with message and remediation
+  - [ ] Error codes per REQ-041 (authoritative source)
 
 ### REQ-031: API scope definitions
 - **Priority**: must

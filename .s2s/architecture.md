@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.6
+**Version**: 1.7
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-09 (ARCH-058: database schema specification - 7 tables, indexes, forward-compatible fields)
+**Updated**: 2026-02-09 (ARCH-059: API contract specification - endpoint catalog, request/response types, error alignment)
 
 ---
 
@@ -484,6 +484,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-016 - n8n integration**: Async job polling pattern. POST -> job_id -> poll status -> get result.
 - **ARCH-017 - n8n security**: Treat as untrusted caller. Scoped API keys, per-key rate limits, audit logging.
 - **ARCH-018 - API versioning**: URL prefixes (/api/v1/), 6-month deprecation window, CI schema validation.
+- **ARCH-059 - API contract specification**: Consolidated endpoint catalog with formal request/response types. All functional endpoints under /api/v1/ prefix (ARCH-018). Single FastAPI application with centralized auth middleware (ARCH-020). 16 Phase 1 endpoints, 8 Phase 2 additions. Endpoint-specific types defined in section 8.7.
 - **ARCH-033 - Docker Compose specification**: Healthcheck-based startup ordering, ARCH-026 memory limits, profile-based Ollama.
 
 ### 8.2 Component details
@@ -1316,6 +1317,316 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 | query_traces | Dedicated QueryTrace storage (Phase 1: structlog only) | ARCH-041 |
 | feedback | Response and citation feedback (response_id, citation_id) | REQ-055 |
 
+### 8.7 API contract
+
+#### ARCH-059 - API contract specification
+
+Consolidated external REST API surface for Phase 1. All routes served by a single FastAPI application (modular monolith). Authentication middleware centralized at the gateway (ARCH-020). Internal module communication uses direct Python calls (ARCH-015); the endpoint catalog below describes the external HTTP boundary only.
+
+#### URL conventions
+
+- **Versioned API**: all functional endpoints under `/api/v1/` prefix (ARCH-018)
+- **System endpoints**: `/health`, `/metrics`, `/admin` at root (not versioned, stable across API versions)
+- **Path patterns** (REQ-040): `/query`, `/ingest/...`, `/documents/...`, `/search`, `/stats`, `/providers`, `/api-keys/...`
+- **Content types**: request bodies use `application/json` except POST /ingest (`multipart/form-data`). Responses use `application/json` except POST /query with `Accept: text/event-stream` (SSE per REQ-042)
+
+#### Authentication summary
+
+Bearer token in `Authorization: Bearer <key>` header. Scope-based access per REQ-031. Error codes per REQ-041 (authoritative source).
+
+| Endpoint pattern | Auth | Minimum scope |
+|-----------------|------|---------------|
+| GET /health (no query params) | No | - |
+| GET /metrics | No | - |
+| GET /health?detail=full, /health/* | Yes | any |
+| POST /api/v1/query | Yes | query |
+| POST /api/v1/search | Yes | query |
+| GET /api/v1/providers | Yes | query |
+| POST /api/v1/ingest, GET .../status | Yes | ingest |
+| POST /api/v1/documents/{id}/chunks | Yes | ingest |
+| DELETE /api/v1/documents/{id} | Yes | admin |
+| GET /api/v1/stats | Yes | any |
+| POST/GET/DELETE /api/v1/api-keys* | Yes | admin |
+
+Bootstrap key (VEKTRA_ADMIN_BOOTSTRAP_KEY) has implicit admin scope for first key creation only (REQ-036).
+
+#### Error envelope
+
+All error responses use the REQ-010 envelope:
+
+```python
+class ErrorResponse:
+    category: str          # "TRANSIENT" | "PERMANENT" | "CONFIGURATION" | "UPSTREAM"
+    code: str              # ERR-{COMPONENT}-{NUMBER} per REQ-011
+    message: str           # diagnostic: what happened
+    remediation: str       # prescriptive: what to do next (never empty)
+    retry_after: int | None = None
+    request_id: UUID
+    details: dict = {}
+```
+
+HTTP status mapping: TRANSIENT -> 503, PERMANENT -> 400/422, CONFIGURATION -> 500, UPSTREAM -> 502. Auth errors: 401 (ERR-AUTH-001/002) or 403 (ERR-AUTH-003).
+
+#### Endpoint catalog
+
+##### Query
+
+| Method | Path | Description | REQ |
+|--------|------|-------------|-----|
+| POST | /api/v1/query | Execute RAG query | REQ-013 |
+
+**Request**: `QueryRequest` (section 8.3.1)
+
+**Response** (Accept: application/json): `QueryResponse` (section 8.3.1)
+
+**Response** (Accept: text/event-stream): SSE stream of `QueryChunk` events (REQ-042). Event types: token, sources, trace, error, done.
+
+**Errors**: ERR-QUERY-001 (no documents indexed), ERR-QUERY-002 (LLM unavailable), ERR-QUERY-003 (query too long), ERR-QUERY-004 (vector store read failed)
+
+##### Ingestion
+
+| Method | Path | Description | REQ |
+|--------|------|-------------|-----|
+| POST | /api/v1/ingest | Upload document for processing | REQ-014 |
+| GET | /api/v1/ingest/jobs/{id}/status | Poll async ingestion job | REQ-014 |
+
+**POST /ingest request**: `multipart/form-data`
+
+```python
+class IngestRequest:
+    file: UploadFile                  # PDF, DOCX, or PPTX (REQ-045, REQ-046)
+    namespace: str = "default"        # target namespace (REQ-048)
+    metadata: dict | None = None      # optional metadata to attach to chunks
+```
+
+**POST /ingest responses**:
+
+Sync (file <= 10MB, REQ-029): 200 OK
+
+```python
+class IngestResponse:
+    id: UUID                          # source_documents.id
+    status: str                       # "indexed" | "exists"
+    chunk_count: int | None = None    # number of chunks (None if status="exists")
+    content_hash: str                 # SHA-256 of raw file bytes (REQ-034)
+```
+
+Async (file > 10MB, REQ-029): 202 Accepted
+
+```python
+class IngestAcceptedResponse:
+    job_id: UUID                      # ingest_jobs.id for polling
+```
+
+Duplicate filename with different content (REQ-033): 409 Conflict
+
+```python
+class IngestConflictResponse:
+    existing_document_id: UUID
+    existing_hash: str
+    new_hash: str
+```
+
+**GET /ingest/jobs/{id}/status response**: 200 OK
+
+```python
+class IngestJobStatus:
+    id: UUID
+    status: str                       # "pending" | "processing" | "indexed" | "failed"
+    phase: str | None = None          # "extracting" | "chunking" | "embedding"
+    chunk_count: int | None = None
+    error_code: str | None = None     # ERR-INGEST-xxx on failure
+    error_message: str | None = None
+    percentage: int | None = None     # progress if determinable (NFR-010)
+```
+
+**Errors**: ERR-INGEST-001 (invalid file), ERR-INGEST-002 (file too large), ERR-INGEST-003 (scanned PDF), ERR-INGEST-004 (vector store write failed)
+
+##### Search
+
+| Method | Path | Description | REQ |
+|--------|------|-------------|-----|
+| POST | /api/v1/search | Semantic search (no LLM synthesis) | REQ-012 |
+
+**Request**:
+
+```python
+class SearchRequest:
+    query: str                        # search text (embedded via EmbeddingProvider)
+    namespace: str = "default"
+    top_k: int = 5
+    search_mode: SearchMode = SearchMode.DENSE
+    filters: SearchFilters | None = None
+```
+
+**Response**: 200 OK
+
+```python
+class SearchResponse:
+    results: list[SearchResult]       # section 8.3.1
+    total_available: int              # matching chunks before top_k limit
+```
+
+**Errors**: ERR-QUERY-001 (no documents indexed), ERR-QUERY-004 (vector store read failed)
+
+##### Documents
+
+| Method | Path | Description | REQ |
+|--------|------|-------------|-----|
+| POST | /api/v1/documents/{id}/chunks | Store pre-embedded chunks | REQ-012 |
+| DELETE | /api/v1/documents/{id} | Soft-delete document and chunks | REQ-012, REQ-057 |
+
+**POST /documents/{id}/chunks request**:
+
+```python
+class StoreChunksRequest:
+    namespace: str = "default"
+    chunks: list[ChunkEmbedding]      # section 8.3.1
+```
+
+**POST /documents/{id}/chunks response**: 201 Created
+
+```python
+class StoreChunksResponse:
+    document_id: UUID
+    chunk_count: int
+    index_version: int
+```
+
+**DELETE /documents/{id}**: query parameter `namespace` required (REQ-048)
+
+**DELETE response**: 200 OK
+
+```python
+class DeleteDocumentResponse:
+    document_id: UUID
+    chunks_removed: int
+    deletion_reason: str = "user_request"
+```
+
+##### API key management
+
+| Method | Path | Description | REQ |
+|--------|------|-------------|-----|
+| POST | /api/v1/api-keys | Create API key | REQ-020 |
+| GET | /api/v1/api-keys | List API keys (masked) | REQ-020 |
+| DELETE | /api/v1/api-keys/{id} | Revoke API key (soft delete) | REQ-020 |
+
+**POST /api-keys request**:
+
+```python
+class ApiKeyCreateRequest:
+    label: str | None = None
+    scopes: list[str] = ["admin"]     # subset of ["admin", "ingest", "query"]
+```
+
+**POST /api-keys response**: 201 Created
+
+```python
+class ApiKeyCreateResponse:
+    id: UUID
+    key: str                          # plaintext, shown exactly once (REQ-020)
+    label: str | None
+    scopes: list[str]
+    created_at: datetime
+```
+
+**GET /api-keys response**: 200 OK, list of:
+
+```python
+class ApiKeyListItem:
+    id: UUID
+    label: str | None
+    key_preview: str                  # last 4 characters only (REQ-020)
+    scopes: list[str]
+    created_at: datetime
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+```
+
+**DELETE /api-keys/{id} response**: 200 OK with `{id, revoked_at}`
+
+##### System information
+
+| Method | Path | Description | REQ |
+|--------|------|-------------|-----|
+| GET | /api/v1/stats | Document and chunk counts | REQ-012 |
+| GET | /api/v1/providers | LLM provider status | REQ-013 |
+
+**GET /stats**: optional query parameter `namespace`
+
+```python
+class StatsResponse:
+    namespace: str | None             # None = all namespaces
+    document_count: int
+    chunk_count: int
+    index_versions: list[int]         # active index versions
+```
+
+**GET /providers**: 200 OK, list of:
+
+```python
+class ProviderStatus:
+    name: str                         # "openai", "anthropic", "ollama"
+    status: str                       # "ok" | "unavailable"
+    model: str                        # configured model name
+    is_fallback: bool = False         # True for fallback provider (ARCH-024)
+```
+
+##### Health and monitoring
+
+| Method | Path | Auth | Description | REQ |
+|--------|------|------|-------------|-----|
+| GET | /health | No | Shallow health (load balancer) | REQ-025 |
+| GET | /health?detail=full | Yes (any) | Deep health with components | REQ-025 |
+| GET | /health/{component} | Yes (any) | Single component health | ARCH-022 |
+| GET | /health/memory | Yes (any) | Memory observability | ARCH-027 |
+| GET | /metrics | No | Prometheus metrics | ARCH-014 |
+| GET | /admin | Yes (admin) | Health dashboard UI | REQ-006 |
+
+**Shallow health** (unauthenticated): 200 (healthy/degraded) or 503 (unhealthy)
+
+```python
+class HealthResponse:
+    status: str                       # "healthy" | "degraded" | "unhealthy"
+    timestamp: datetime
+```
+
+**Deep health** (authenticated):
+
+```python
+class HealthDetailResponse:
+    status: str                       # "healthy" | "degraded" | "unhealthy"
+    timestamp: datetime
+    components: list[ComponentHealth]
+
+class ComponentHealth:
+    name: str                         # "core" | "ingest" | "index" | "database"
+    status: str                       # "ok" | "degraded" | "down"
+    latency_ms: int
+    version: str | None = None
+    remediation: str | None = None    # hint when status != "ok"
+```
+
+#### Phase 2 API additions
+
+| Endpoint | Purpose | Reference |
+|----------|---------|-----------|
+| POST /api/v1/namespaces | Create namespace | ARCH-047 |
+| GET /api/v1/namespaces | List namespaces | ARCH-047 |
+| PUT /api/v1/namespaces/{id} | Update config/quota | ARCH-047 |
+| DELETE /api/v1/namespaces/{id} | Delete namespace | ARCH-047 |
+| POST /api/v1/feedback/{response_id} | Submit response feedback | REQ-055 |
+| POST /api/v1/feedback/citation/{citation_id} | Submit citation feedback | REQ-055 |
+| GET /api/v1/conversations/{id} | Get conversation | REQ-049 |
+| DELETE /api/v1/conversations/{id} | Delete conversation | REQ-049 |
+
+Phase 1: namespace management not needed ("default" pre-created via migration). Feedback requires Phase 2 storage. Conversation management deferred (Phase 1: in-memory only).
+
+#### Pagination
+
+Phase 1: all list endpoints return complete results (expected data volumes are small for single-namespace operation). Phase 2: cursor-based pagination for GET /api-keys, GET /namespaces, and any new list endpoints.
+
 ---
 
 ## 9. Architectural decisions
@@ -1553,7 +1864,14 @@ See ADRs in `.s2s/decisions/`:
 | REQ-002 Document ingestion | ARCH-005 arq jobs, ARCH-009 payload design | Async processing with restart resilience |
 | REQ-003 RAG query | ARCH-028 litellm, ARCH-029 Protocols, ARCH-036 QueryPipeline, ARCH-056 Retrieval quality | Multi-provider LLM with pipeline abstraction, score threshold, no-relevant-context path |
 | REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033, ARCH-057 Startup validation | Minimal services, inline defaults, health ordering, clear startup errors |
+| REQ-010 Error envelope | ARCH-059 API contract | ErrorResponse type with HTTP status mapping |
+| REQ-012 vektra-index API | ARCH-059 API contract | SearchRequest, StoreChunksRequest, StatsResponse types |
+| REQ-013 vektra-core API | ARCH-036 QueryPipeline, ARCH-059 API contract | QueryRequest/Response via pipeline, ProviderStatus type |
+| REQ-014 vektra-ingest API | ARCH-005 arq, ARCH-059 API contract | IngestRequest/Response, IngestJobStatus types |
 | REQ-019 API key auth | ARCH-020 Auth gateway, ARCH-023 Key lifecycle | Single trust boundary, argon2id hashing |
+| REQ-020 API key management | ARCH-023 Key lifecycle, ARCH-059 API contract | ApiKeyCreate/Response/ListItem types |
+| REQ-025 Health endpoints | ARCH-022 Hierarchical health, ARCH-059 API contract | HealthResponse, HealthDetailResponse, ComponentHealth types |
+| REQ-040 Path conventions | ARCH-018 API versioning, ARCH-059 API contract | /api/v1/ prefix, consolidated endpoint catalog |
 | REQ-042 Streaming responses | ARCH-028 litellm async, ARCH-036 QueryPipeline | Native SSE via execute_stream() |
 | REQ-044 Safeguard hooks | ARCH-029 Protocols, ARCH-049 Content modification | Three trust boundary points, blocking + filtering + modification |
 | REQ-047 Multi-provider LLM | ARCH-028 litellm abstraction | Provider-agnostic via LLMProvider Protocol |
@@ -1623,6 +1941,7 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-056 Retrieval quality controls | vektra-core (retrieval filter in SimpleQueryPipeline), vektra_shared (QueryResponse.no_relevant_context) |
 | ARCH-057 Startup validation | All components (cross-cutting startup sequence) |
 | ARCH-058 Database schema | All components (7 tables with module ownership per ADR-0005) |
+| ARCH-059 API contract | All components (consolidated endpoint catalog in section 8.7) |
 
 ### A.3 Components to requirements
 
@@ -1645,3 +1964,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.4 - Hybrid search readiness: ARCH-053 (SparseEmbeddingProvider Protocol), Qdrant Docker Compose profile, BM25/SPLADE/fastembed as Phase 2 options, 9 Protocol interfaces, glossary expanded to 56 terms*
 *Version 1.5 - Pipeline quality and startup: ARCH-054 (prompt template architecture), ARCH-055 (token budget allocation), ARCH-056 (retrieval quality controls), ARCH-057 (startup validation sequence), ADR-0020/0021, QueryResponse.no_relevant_context field, ARCH-043 extended with retrieval degradation, glossary expanded to 61 terms*
 *Version 1.6 - Database schema: ARCH-058 (7 tables, indexes, forward-compatible fields, module ownership, Phase 2 schema roadmap)*
+*Version 1.7 - API contract: ARCH-059 (16 Phase 1 endpoints, formal request/response types, error envelope, auth summary, Phase 2 additions, REQ-011/REQ-030 error code alignment with REQ-041)*

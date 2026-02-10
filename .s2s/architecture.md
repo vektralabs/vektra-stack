@@ -264,7 +264,7 @@ See [section 3.1](#31-business-context) for system context diagram.
 | vektra-ingest | Document processing via DocumentExtractor + ChunkingStrategy, magic bytes detection, async jobs | ingest_jobs, source_documents | vektra-index, EmbeddingProvider (shared) |
 | vektra-index | Vector storage via VectorStoreProvider, semantic search with metadata filtering | document_chunks, embeddings | VectorStoreProvider (Phase 1: pgvector) |
 | vektra-admin | Health monitoring, API key management, namespace management | api_keys, audit_log, namespaces | All components |
-| vektra_shared | Protocol definitions (8), types, config schemas, error definitions, auth middleware, ProviderRegistry, EventEmitter | - | None |
+| vektra_shared | Protocol definitions (9), types, config schemas, error definitions, auth middleware, ProviderRegistry | - | None |
 
 ---
 
@@ -484,7 +484,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-016 - n8n integration**: Async job polling pattern. POST -> job_id -> poll status -> get result.
 - **ARCH-017 - n8n security**: Treat as untrusted caller. Scoped API keys, per-key rate limits, audit logging.
 - **ARCH-018 - API versioning**: URL prefixes (/api/v1/), 6-month deprecation window, CI schema validation.
-- **ARCH-059 - API contract specification**: Consolidated endpoint catalog with formal request/response types. All functional endpoints under /api/v1/ prefix (ARCH-018). Single FastAPI application with centralized auth middleware (ARCH-020). 16 Phase 1 endpoints (unique paths; GET /health serves both shallow and deep modes via query parameter), 8 Phase 2 additions, 19 API-specific types. Endpoint-specific types defined in section 8.7.
+- **ARCH-059 - API contract specification**: Consolidated endpoint catalog with formal request/response types. All functional endpoints under /api/v1/ prefix (ARCH-018). Single FastAPI application with centralized auth middleware (ARCH-020). 16 Phase 1 API endpoints (unique paths; GET /health serves both shallow and deep modes via query parameter) plus GET /admin HTML dashboard, 8 Phase 2 additions, 19 API-specific types. Endpoint-specific types defined in section 8.7.
 - **ARCH-033 - Docker Compose specification**: Healthcheck-based startup ordering, ARCH-026 memory limits, profile-based Ollama.
 
 ### 8.2 Component details
@@ -1356,6 +1356,7 @@ Bearer token in `Authorization: Bearer <key>` header. Scope-based access per REQ
 | DELETE /api/v1/documents/{id} | Yes | admin |
 | GET /api/v1/stats | Yes | any |
 | POST/GET/DELETE /api/v1/api-keys* | Yes | admin |
+| GET /admin | Yes | admin |
 
 Bootstrap key (VEKTRA_ADMIN_BOOTSTRAP_KEY) has implicit admin scope for first key creation only (REQ-036).
 
@@ -1405,7 +1406,7 @@ HTTP status mapping: TRANSIENT -> 503, PERMANENT -> 400/422, CONFIGURATION -> 50
 class IngestRequest:
     file: UploadFile                  # PDF, DOCX, or PPTX (REQ-045, REQ-046)
     namespace: str = "default"        # target namespace (REQ-048)
-    metadata: dict | None = None      # optional metadata to attach to chunks
+    metadata: str | None = None       # JSON-encoded dict, merged with auto-generated chunk metadata
 ```
 
 **POST /ingest responses**:

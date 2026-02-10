@@ -307,7 +307,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 - **Priority**: must
 - **Description**: Three API scopes govern operation permissions. Scope names and permitted operations must be explicitly defined.
 - **Acceptance Criteria**:
-  - [ ] Scope 'admin': permits POST /api-keys, DELETE /api-keys/{id}, GET /api-keys, DELETE /documents/{id}
+  - [ ] Scope 'admin': permits POST /api-keys, DELETE /api-keys/{id}, GET /api-keys, DELETE /documents/{id}, GET /admin
   - [ ] Scope 'ingest': permits POST /ingest, GET /ingest/jobs/{id}/status, POST /documents/{id}/chunks
   - [ ] Scope 'query': permits POST /query, POST /search, GET /providers
   - [ ] Any valid scope: permits GET /stats, GET /health?detail=full, GET /health/{component}, GET /health/memory
@@ -668,7 +668,7 @@ Status is observable via GET /ingest/jobs/{id}/status (per REQ-040 path conventi
 When ingested content produces identical SHA-256 hash but has a different filename:
 - Store as single content entry (deduplication)
 - Maintain filename alias list on the document record
-- Return HTTP 200 with status 'deduplicated' and alias count
+- Return HTTP 200 with status 'exists' (per REQ-033) and alias count
 - Query results reference the canonical (first) filename
 - Audit log records 'document_aliased' action with alias details
 
@@ -763,7 +763,7 @@ Actionability definition: An error is "actionable" if the response includes: (1)
 - **Measurement**: Status endpoint returns current phase (structured JSON)
 - **Classification**: TARGET (improves UX, not blocking)
 
-Progress feedback format: Async operations (>5s) return HTTP 202 Accepted with job_id. GET /ingest/jobs/{id}/status returns {status, phase, percentage_if_determinable}. Phase values: "pending", "processing", "extracting", "chunking", "embedding", "indexed", "failed".
+Progress feedback format: Async operations (>5s) return HTTP 202 Accepted with job_id. GET /ingest/jobs/{id}/status returns {status, phase, percentage_if_determinable}. Status values (BR-004): "pending", "processing", "indexed", "failed". Phase values (sub-state of "processing"): "extracting", "chunking", "embedding". Phase is NULL when status is not "processing".
 
 ### NFR-011: Concurrent query handling
 - **Category**: scalability

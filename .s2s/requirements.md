@@ -161,7 +161,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-016: Phase 1 input constraints
 - **Priority**: must
-- **Description**: Explicit input constraints for Phase 1 APIs: PDF file size: max 50MB (configurable via VEKTRA_MAX_PDF_SIZE), query text: max 4000 characters, supported PDF types: text-based PDFs (scanned/OCR deferred to Phase 2), encrypted PDFs: rejected with ERR-INGEST-001, chunk size: 1000 tokens (configurable via VEKTRA_CHUNK_SIZE), chunk overlap: 200 tokens (configurable via VEKTRA_CHUNK_OVERLAP). Scanned PDF detection: PDF classified as scanned if text extraction yields < 100 characters per page (average of first 5 pages). Detection occurs before chunking (fail fast). Rejected with ERR-INGEST-003.
+- **Description**: Explicit input constraints for Phase 1 APIs: file size: max 50MB (configurable via VEKTRA_MAX_FILE_SIZE_MB), query text: max 4000 characters, supported PDF types: text-based PDFs (scanned/OCR deferred to Phase 2), encrypted PDFs: rejected with ERR-INGEST-001, chunk size: 1000 tokens (configurable via VEKTRA_CHUNK_SIZE), chunk overlap: 200 tokens (configurable via VEKTRA_CHUNK_OVERLAP). Scanned PDF detection: PDF classified as scanned if text extraction yields < 100 characters per page (average of first 5 pages). Detection occurs before chunking (fail fast). Rejected with ERR-INGEST-003.
 - **Acceptance Criteria**:
   - [ ] Oversized PDF rejected with ERR-INGEST-002 and size limit in message
   - [ ] Long query rejected with ERR-QUERY-003 and limit in message

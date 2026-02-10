@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.7
+**Version**: 1.8
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-09 (ARCH-059: API contract specification - endpoint catalog, request/response types, error alignment)
+**Updated**: 2026-02-10 (ARCH-060: Configuration reference - consolidated env var catalog with defaults, types, startup validation mapping)
 
 ---
 
@@ -485,6 +485,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-017 - n8n security**: Treat as untrusted caller. Scoped API keys, per-key rate limits, audit logging.
 - **ARCH-018 - API versioning**: URL prefixes (/api/v1/), 6-month deprecation window, CI schema validation.
 - **ARCH-059 - API contract specification**: Consolidated endpoint catalog with formal request/response types. All functional endpoints under /api/v1/ prefix (ARCH-018). Single FastAPI application with centralized auth middleware (ARCH-020). 16 Phase 1 API endpoints (unique paths; GET /health serves both shallow and deep modes via query parameter) plus GET /admin HTML dashboard, 8 Phase 2 additions, 19 API-specific types. Endpoint-specific types defined in section 8.7.
+- **ARCH-060 - Configuration reference**: Consolidated catalog of all VEKTRA_* environment variables with types, defaults, required/optional status, and startup validation mapping. 37 variables total (35 VEKTRA_* + 2 external LLM API keys; 5 newly named, 1 renamed). Serves as single source of truth for operator documentation, .env.example generation, and ARCH-057 startup validation (step 1). Configuration reference in section 8.8.
 - **ARCH-033 - Docker Compose specification**: Healthcheck-based startup ordering, ARCH-026 memory limits, profile-based Ollama.
 
 ### 8.2 Component details
@@ -576,14 +577,14 @@ class LLMProvider(Protocol):
     def count_tokens(text: str, model: str) -> int
 ```
 
-Phase 1: LitellmProvider. Config extended with fallback (ARCH-043):
+Phase 1: LitellmProvider. Config extended with fallback (ARCH-043). All fields configurable via env vars (ARCH-060):
 
 ```python
 class LLMConfig:
-    primary_model: str                    # e.g., "ollama/llama3"
-    fallback_model: str | None = None     # e.g., "ollama/llama3:smaller"
-    fallback_timeout_ms: int = 30000
-    context_only_enabled: bool = True     # return chunks without LLM if both fail
+    primary_model: str                    # VEKTRA_LLM_PROVIDER, e.g., "ollama/llama3"
+    fallback_model: str | None = None     # VEKTRA_LLM_FALLBACK_MODEL
+    fallback_timeout_ms: int = 30000      # VEKTRA_LLM_FALLBACK_TIMEOUT_MS
+    context_only_enabled: bool = True     # VEKTRA_LLM_CONTEXT_ONLY_ENABLED
 ```
 
 #### EmbeddingProvider (new - ARCH-035)
@@ -1638,6 +1639,148 @@ Phase 1: namespace management not needed ("default" pre-created via migration). 
 
 Phase 1: all list endpoints return complete results (expected data volumes are small for single-namespace operation). Phase 2: cursor-based pagination for GET /api-keys, GET /namespaces, and any new list endpoints.
 
+### 8.8 Configuration reference
+
+#### ARCH-060 - Configuration reference
+
+Single source of truth for all environment variables. Used by: Pydantic config schema (ARCH-057 step 1), .env.example generation, operator documentation.
+
+Conventions:
+- All application variables use the `VEKTRA_` prefix
+- External variables (LLM API keys) follow the library convention (litellm reads `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` directly)
+- Boolean values: `true`/`false` (case-insensitive)
+- Duration values include unit in the variable name (`_MS` for milliseconds, `_DAYS` for days)
+
+##### Database
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_DATABASE_URL` | string | `postgresql+asyncpg://vektra:vektra@postgres:5432/vektra` | Yes | AsyncPG connection string. Docker Compose inline default points to the postgres service | ARCH-057 step 2, ADR-0012, ADR-0022 |
+
+##### LLM
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_LLM_PROVIDER` | string | _(none)_ | Yes | LLM model identifier in litellm format (e.g., `ollama/llama3`, `openai/gpt-4o`, `anthropic/claude-3-haiku`). Maps to LLMConfig.primary_model | REQ-013, REQ-047, ADR-0008 |
+| `VEKTRA_LLM_API_KEY` | string | _(none)_ | Conditional | API key for the selected LLM provider. Not needed for Ollama. Overrides provider-specific env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY) when set | REQ-013 |
+| `VEKTRA_LLM_FALLBACK_MODEL` | string | _(none)_ | No | Fallback model identifier (e.g., `ollama/llama3:smaller`). Used when primary model times out. Maps to LLMConfig.fallback_model | ARCH-043, REQ-059 |
+| `VEKTRA_LLM_FALLBACK_TIMEOUT_MS` | int | `30000` | No | Timeout in milliseconds before switching from primary to fallback model. Maps to LLMConfig.fallback_timeout_ms | ARCH-043, REQ-059 |
+| `VEKTRA_LLM_CONTEXT_ONLY_ENABLED` | bool | `true` | No | When both primary and fallback LLM fail, return chunks without LLM synthesis instead of an error. Maps to LLMConfig.context_only_enabled | ARCH-043, REQ-059 |
+| `OPENAI_API_KEY` | string | _(none)_ | Conditional | OpenAI API key. Read directly by litellm. Required when using OpenAI models | ADR-0008 |
+| `ANTHROPIC_API_KEY` | string | _(none)_ | Conditional | Anthropic API key. Read directly by litellm. Required when using Anthropic models | ADR-0008 |
+
+##### Embedding
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_EMBEDDING_PROVIDER` | string | `sentence-transformers` | No | EmbeddingProvider implementation. Phase 1: `sentence-transformers`. Phase 2: `tei` (Hugging Face Text Embeddings Inference) | ARCH-035, ARCH-039, ADR-0013 |
+| `VEKTRA_EMBEDDING_MODEL` | string | `all-MiniLM-L6-v2` | No | Embedding model name within the selected provider | ARCH-035, ADR-0013 |
+| `VEKTRA_SPARSE_EMBEDDING_PROVIDER` | string | _(none)_ | No | SparseEmbeddingProvider implementation. Phase 1: not registered. Phase 2: `fastembed-bm25`, `splade`, `bm25s` | ARCH-053, ARCH-039 |
+| `VEKTRA_SPARSE_EMBEDDING_MODEL` | string | _(none)_ | No | Sparse embedding model name. Phase 2 only | ARCH-053 |
+
+##### Vector store
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_VECTOR_STORE_PROVIDER` | string | `pgvector` | No | VectorStoreProvider implementation. Phase 2 option: `qdrant` | ARCH-039, ADR-0012 |
+| `VEKTRA_ACTIVE_INDEX_VERSION` | int | `1` | No | Active index version for search queries. Change to new version after re-embedding for zero-downtime reindex | ARCH-045, REQ-064 |
+
+##### Pipeline and query
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_QUERY_PIPELINE` | string | `simple` | No | QueryPipeline implementation. `simple` (Phase 1), `advanced` (Phase 2 with reranking) | ARCH-036, ARCH-039, ADR-0014 |
+| `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.3` | No | Minimum cosine similarity for chunk inclusion. Chunks below this threshold excluded from prompt | ARCH-056, ADR-0021 |
+| `VEKTRA_CHUNK_DEDUP_ENABLED` | bool | `true` | No | Enable overlap deduplication for adjacent chunks from the same document | ARCH-056, ADR-0021 |
+| `VEKTRA_RESPONSE_TOKEN_RESERVE` | int | `1024` | No | Tokens reserved for LLM response generation, deducted from model context window | ARCH-055 |
+| `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | No | Fraction of remaining context window allocated to retrieved chunks (after system prompt, question, and reserve) | ARCH-055 |
+
+##### Prompt templates
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_PROMPT_TEMPLATES_DIR` | string | _(built-in package defaults)_ | No | Directory to load Jinja2 templates (system.j2, context.j2, conversation.j2). Falls back to built-in defaults if files not found | ARCH-054, ADR-0020 |
+
+##### Ingestion
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_CHUNKING_STRATEGY` | string | `fixed` | No | ChunkingStrategy implementation. Phase 1: `fixed`. Phase 2: `dual` | ARCH-037, ARCH-039 |
+| `VEKTRA_CHUNK_SIZE` | int | `1000` | No | Token count per chunk for fixed-size chunking | REQ-016 |
+| `VEKTRA_CHUNK_OVERLAP` | int | `200` | No | Token overlap between adjacent chunks | REQ-016 |
+| `VEKTRA_MAX_FILE_SIZE_MB` | int | `50` | No | Maximum file size accepted for ingestion (megabytes) | REQ-016 |
+| `VEKTRA_DOCUMENT_EXTRACTOR` | string | `pdfplumber` | No | DocumentExtractor implementation. Phase 1: `pdfplumber`. Phase 2: `unstructured` | ARCH-039 |
+
+##### Conversation
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_MAX_CONVERSATION_TURNS` | int | `10` | No | Maximum conversation history turns retained per conversation | REQ-049 |
+| `VEKTRA_CONVERSATION_KEY` | string | _(none)_ | Phase 2 | Symmetric encryption key for pgcrypto column-level encryption of conversation content. Phase 1: conversations in-memory only | ARCH-031, ADR-0011 |
+
+##### Authentication
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_ADMIN_BOOTSTRAP_KEY` | string | _(none)_ | Yes (first run) | Single-use bootstrap credential for initial API key creation. Consumed after first successful key creation | REQ-030, REQ-036, ARCH-059 |
+
+##### Safeguards
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_SAFEGUARD_MODE` | string | `passthrough` | No | SafeguardHook implementation. Phase 1: `passthrough`. Phase 2: `presidio`, `guardrails-ai` | ARCH-039, REQ-044 |
+
+##### Operational
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_PORT` | int | `8000` | No | HTTP port for the FastAPI application | ADR-0012 |
+| `VEKTRA_ENV` | string | `development` | No | Environment mode. When `production`, rejects non-TLS connections (health endpoint exempt) | NFR-012 |
+| `VEKTRA_MULTI_TENANT` | bool | `false` | No | Activate PostgreSQL RLS binding via SET LOCAL. Phase 1: false (application-level filtering) | ARCH-025, ADR-0009 |
+| `VEKTRA_STARTUP_LLM_CHECK` | bool | `true` | No | Include LLM connectivity check in startup validation (ARCH-057 step 7). Set false if LLM provider starts slowly | ARCH-057 |
+| `VEKTRA_EVAL_MODE` | bool | `false` | No | Enable temporary text capture for batch RAG evaluation. Staging only, never in production | ARCH-050, ADR-0019 |
+
+##### Retention
+
+| Variable | Type | Default | Required | Description | Reference |
+|----------|------|---------|----------|-------------|-----------|
+| `VEKTRA_AUDIT_RETENTION_DAYS` | int | `90` | No | Audit log retention period. Phase 1: documented, operator manages rotation. Phase 2: arq cleanup job | NFR-008, REQ-057 |
+| `VEKTRA_RETENTION_DAYS` | int | _(none)_ | No | Soft-deleted record retention period. Phase 2: arq cleanup job removes records past this value | REQ-057 |
+| `VEKTRA_ANALYTICS_RETENTION_DAYS` | int | _(none)_ | No | QueryTrace storage retention. Phase 2 only (dedicated query_traces table) | ARCH-041, ADR-0017 |
+
+##### Startup validation mapping (ARCH-057)
+
+Step 1 of ARCH-057 validates all VEKTRA_* variables via Pydantic. The following table maps variables to subsequent startup steps that depend on them:
+
+| Startup step | Variables consumed |
+|--------------|-------------------|
+| 1. Config schema | All VEKTRA_* variables (Pydantic validation) |
+| 2. Database connectivity | `VEKTRA_DATABASE_URL` |
+| 3. Database schema | `VEKTRA_DATABASE_URL` (Alembic) |
+| 4. pgvector extension | `VEKTRA_DATABASE_URL` |
+| 5. Provider registration | `VEKTRA_EMBEDDING_PROVIDER`, `VEKTRA_VECTOR_STORE_PROVIDER`, `VEKTRA_QUERY_PIPELINE`, `VEKTRA_CHUNKING_STRATEGY`, `VEKTRA_SAFEGUARD_MODE`, `VEKTRA_DOCUMENT_EXTRACTOR`, `VEKTRA_SPARSE_EMBEDDING_PROVIDER` |
+| 6. Embedding model load | `VEKTRA_EMBEDDING_MODEL` |
+| 7. LLM connectivity | `VEKTRA_LLM_PROVIDER`, `VEKTRA_LLM_API_KEY`, `VEKTRA_STARTUP_LLM_CHECK` |
+| 8. Template loading | `VEKTRA_PROMPT_TEMPLATES_DIR` |
+
+##### .env.example generation
+
+Phase 1 minimal .env.example (sufficient for `docker compose up`):
+
+```env
+# Required
+VEKTRA_LLM_PROVIDER=ollama/llama3
+VEKTRA_ADMIN_BOOTSTRAP_KEY=change-me-on-first-run
+
+# Optional: uncomment for cloud LLM providers
+# VEKTRA_LLM_PROVIDER=openai/gpt-4o
+# OPENAI_API_KEY=sk-...
+# VEKTRA_LLM_PROVIDER=anthropic/claude-3-haiku-20240307
+# ANTHROPIC_API_KEY=sk-ant-...
+```
+
+All other variables have sensible defaults. The Docker Compose inline default for `VEKTRA_DATABASE_URL` points to the postgres service, requiring no operator configuration for the standard stack.
+
 ---
 
 ## 9. Architectural decisions
@@ -1874,7 +2017,7 @@ See ADRs in `.s2s/decisions/`:
 | REQ-001 Primary user: Operator | ARCH-001 Modular monolith | Single container simplifies operator deployment |
 | REQ-002 Document ingestion | ARCH-005 arq jobs, ARCH-009 payload design | Async processing with restart resilience |
 | REQ-003 RAG query | ARCH-028 litellm, ARCH-029 Protocols, ARCH-036 QueryPipeline, ARCH-056 Retrieval quality | Multi-provider LLM with pipeline abstraction, score threshold, no-relevant-context path |
-| REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033, ARCH-057 Startup validation | Minimal services, inline defaults, health ordering, clear startup errors |
+| REQ-005 30-min MVP | ARCH-001, ARCH-002, ARCH-033, ARCH-057 Startup validation, ARCH-060 Configuration reference | Minimal services, inline defaults, health ordering, clear startup errors, .env.example |
 | REQ-010 Error envelope | ARCH-059 API contract | ErrorResponse type with HTTP status mapping |
 | REQ-012 vektra-index API | ARCH-059 API contract | SearchRequest, StoreChunksRequest, StatsResponse types |
 | REQ-013 vektra-core API | ARCH-036 QueryPipeline, ARCH-059 API contract | QueryRequest/Response via pipeline, ProviderStatus type |
@@ -1907,7 +2050,7 @@ See ADRs in `.s2s/decisions/`:
 | REQ-065 Prompt versioning | ARCH-048 Prompt versioning, ARCH-054 Prompt template architecture | Composite hash in QueryTrace, per-template hashes in StepTrace |
 | NFR-001 Query latency | ARCH-011 Streaming, ARCH-026 Memory budget | Bounded resources, streaming responses |
 | NFR-004 Startup time | ARCH-057 Startup validation | 8-step validation within 60s constraint |
-| NFR-009 Error actionability | ARCH-057 Startup validation | Structured startup errors with remediation hints |
+| NFR-009 Error actionability | ARCH-057 Startup validation, ARCH-060 Configuration reference | Structured startup errors with remediation hints, variable catalog for error messages |
 | NFR-005 Data durability | ARCH-005 arq PostgreSQL, ARCH-034 DDL | Jobs and data persist across restarts |
 | NFR-006 Resource ceiling | ARCH-026 Memory allocation, ARCH-033 Docker limits | Phase 1: 4GB. Phase 2: 8GB recommended (OQ-019) |
 | NFR-007 Audit completeness | ARCH-008 Correlation ID, ARCH-013 Structured logs | Request tracing, JSON output |
@@ -1953,6 +2096,7 @@ See ADRs in `.s2s/decisions/`:
 | ARCH-057 Startup validation | All components (cross-cutting startup sequence) |
 | ARCH-058 Database schema | All components (7 tables with module ownership per ADR-0005) |
 | ARCH-059 API contract | All components (consolidated endpoint catalog in section 8.7) |
+| ARCH-060 Configuration reference | vektra_shared (Pydantic config schema), all components (env var consumers) |
 
 ### A.3 Components to requirements
 
@@ -1976,3 +2120,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.5 - Pipeline quality and startup: ARCH-054 (prompt template architecture), ARCH-055 (token budget allocation), ARCH-056 (retrieval quality controls), ARCH-057 (startup validation sequence), ADR-0020/0021, QueryResponse.no_relevant_context field, ARCH-043 extended with retrieval degradation, glossary expanded to 61 terms*
 *Version 1.6 - Database schema: ARCH-058 (7 tables, indexes, forward-compatible fields, module ownership, Phase 2 schema roadmap)*
 *Version 1.7 - API contract: ARCH-059 (16 Phase 1 endpoints, formal request/response types, error envelope, auth summary, Phase 2 additions, REQ-011/REQ-030 error code alignment with REQ-041)*
+*Version 1.8 - Configuration reference: ARCH-060 (37 env vars: 35 VEKTRA_* + 2 external, 5 newly named + VEKTRA_MAX_PDF_SIZE renamed to VEKTRA_MAX_FILE_SIZE_MB, startup validation mapping, .env.example)*

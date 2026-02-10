@@ -142,7 +142,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (59 total, 22 ADRs):
+**Key decisions** (60 total, 22 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
@@ -170,4 +170,4 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 ---
 
-*Last updated: 2026-02-09*
+*Last updated: 2026-02-10*

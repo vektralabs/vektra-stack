@@ -3,11 +3,11 @@
 # Architecture
 
 **Project**: Vektra
-**Version**: 1.8
+**Version**: 1.9
 **Date**: 2026-02-06
 **Session**: 20260202-design-vektra
 **Participants**: software-architect, security-champion, technical-lead, devops-engineer
-**Updated**: 2026-02-10 (ARCH-060: Configuration reference - consolidated env var catalog with defaults, types, startup validation mapping)
+**Updated**: 2026-02-10 (Section 10: Quality scenarios expanded - 18 QS entries with architecture-derived scenarios, validation cross-references)
 
 ---
 
@@ -1819,40 +1819,55 @@ See ADRs in `.s2s/decisions/`:
 ### 10.1 Quality tree
 
 ```
-                              ┌─────────────────────────────────────┐
-                              │          Quality Goals              │
-                              └─────────────────────────────────────┘
-                                              │
-          ┌───────────────────┬───────────────┼───────────────┬───────────────────┐
-          │                   │               │               │                   │
-          ▼                   ▼               ▼               ▼                   ▼
-    ┌───────────┐       ┌───────────┐   ┌───────────┐   ┌───────────┐       ┌───────────┐
-    │Performance│       │Reliability│   │ Security  │   │Operability│       │Maintainab.│
-    └─────┬─────┘       └─────┬─────┘   └─────┬─────┘   └─────┬─────┘       └─────┬─────┘
-          │                   │               │               │                   │
-    ┌─────┼─────┐       ┌─────┼─────┐   ┌─────┼─────┐   ┌─────┼─────┐       ┌─────┼─────┐
-    │     │     │       │     │     │   │     │     │   │     │     │       │     │     │
-    ▼     ▼     ▼       ▼     ▼     ▼   ▼     ▼     ▼   ▼     ▼     ▼       ▼     ▼     ▼
-  Query Search Ingest Startup Data  Job TLS  Encrypt Audit MVP  Error  Health Module Protocol
-  <10s  <500ms <30s   <60s   Loss  Persist 1.2+ AtRest Compl 30min Action Checks Bound Interface
+Quality goals
+├── Performance
+│   ├── Query latency: p95 <10s Ollama, <5s cloud (NFR-001)
+│   ├── Search latency: p95 <500ms over 10k chunks (NFR-002)
+│   ├── Ingest latency: <30s for 10-page PDF (NFR-003)
+│   └── Concurrent load: 10 queries, <2x degradation (NFR-011)
+├── Reliability
+│   ├── Startup time: healthy in <60s (NFR-004)
+│   ├── Data durability: zero loss on graceful restart (NFR-005)
+│   └── Graceful degradation: LLM failure -> fallback -> context-only (ARCH-043)
+├── Security
+│   ├── Transport: TLS 1.2+ at proxy layer (NFR-012)
+│   ├── Storage: conversations encrypted at rest (NFR-013)
+│   ├── Audit: 100% authenticated requests logged (NFR-007)
+│   └── Retention: configurable, default 90 days (NFR-008)
+├── Operability
+│   ├── Onboarding: git clone to query in <30 min (REQ-005)
+│   ├── Errors: actionable remediation in every response (NFR-009)
+│   ├── Progress: visible for >5s operations (NFR-010)
+│   ├── Startup: step-specific error on misconfiguration (ARCH-057)
+│   └── Resources: runs on 4GB RAM, 2 CPU (NFR-006)
+└── Maintainability
+    ├── Modularity: enforced package boundaries (ADR-0005)
+    ├── Extensibility: Protocol + registry, no core changes (ARCH-039)
+    └── Evolvability: forward-compatible schema, no breaking migrations (ARCH-040)
 ```
 
 ### 10.2 Quality scenarios
 
-| ID | Quality | Scenario | Response Measure | Reference |
-|----|---------|----------|------------------|-----------|
-| QS-01 | Performance | User executes query with Ollama | Response in <10s (p95) | NFR-001 |
-| QS-02 | Performance | Vector search over 10k chunks | Results in <500ms (p95) | NFR-002 |
-| QS-03 | Performance | Ingest 10-page PDF | Complete in <30s | NFR-003 |
-| QS-04 | Reliability | Container restarted gracefully | Zero data loss | NFR-005 |
-| QS-05 | Reliability | Container startup | Healthy in <60s | NFR-004 |
-| QS-06 | Security | All API requests | Logged with key_id | NFR-007 |
-| QS-07 | Security | Production deployment | TLS 1.2+ enforced | NFR-012 |
-| QS-08 | Security | Conversation data | Encrypted at rest | NFR-013 |
-| QS-09 | Operability | First-time deployment | MVP complete in <30min | REQ-005 |
-| QS-10 | Operability | API error occurs | Actionable remediation provided | NFR-009 |
-| QS-11 | Scalability | 10 concurrent queries | Latency <2x baseline | NFR-011 |
-| QS-12 | Scalability | Single-node deployment | Runs on 4GB RAM | NFR-006 |
+| ID | Quality | Scenario | Response measure | Source | Validation |
+|----|---------|----------|------------------|--------|------------|
+| QS-01 | Performance | User queries with local LLM (Ollama) | p95 <10s | NFR-001 | SC-B01, SC-B08 |
+| QS-02 | Performance | Vector search over 10k chunks | p95 <500ms | NFR-002 | SC-B01 |
+| QS-03 | Performance | 10-page PDF ingested | <30s end-to-end | NFR-003 | SC-A01 |
+| QS-04 | Performance | 10 concurrent queries sustained 60s | p95 <2x single-query baseline | NFR-011 | SC-B08 |
+| QS-05 | Reliability | Container restarted gracefully | Indexed documents queryable, zero data loss | NFR-005 | SC-F03 |
+| QS-06 | Reliability | Container startup | /health returns 200 within 60s | NFR-004 | SC-F01 |
+| QS-07 | Reliability | Primary and fallback LLM both fail | Context-only response with sources, no error | ARCH-043 | SC-F02 |
+| QS-08 | Security | Authenticated API request processed | Logged with key_id, endpoint, method, status_code | NFR-007 | SC-E05 |
+| QS-09 | Security | Production API traffic | TLS 1.2+ enforced at reverse proxy | NFR-012 | - |
+| QS-10 | Security | Conversation data stored | Encrypted at rest via pgcrypto | NFR-013 | SC-G03 |
+| QS-11 | Security | Audit log retention period set | Configurable via VEKTRA_AUDIT_RETENTION_DAYS, default 90 | NFR-008 | SC-G02 |
+| QS-12 | Operability | Operator deploys from git clone | Clone to first query in <30 minutes | REQ-005 | SC-H01 |
+| QS-13 | Operability | API error returned to client | Includes error code, message, and remediation | NFR-009 | SC-A08, SC-F01 |
+| QS-14 | Operability | Async ingestion >5s | Progress queryable via GET /ingest/jobs/{id}/status | NFR-010 | SC-A07 |
+| QS-15 | Operability | Startup detects misconfiguration | Step-specific error with variable name and remediation | ARCH-057 | SC-F01 |
+| QS-16 | Operability | Single-node deployment | Operates within 4GB RAM, 2 CPU | NFR-006 | - |
+| QS-17 | Maintainability | New LLM/embedding/vector store provider added | Implement Protocol, register in ProviderRegistry, no core changes | ARCH-039 | - |
+| QS-18 | Maintainability | Phase 2 features activated | Phase 2 columns present from Phase 1, no breaking migrations | ARCH-040 | - |
 
 ### 10.3 Classification
 
@@ -1876,6 +1891,21 @@ See ADRs in `.s2s/decisions/`:
 | NFR-011 Concurrent queries | TARGET |
 | NFR-012 TLS encryption | HARD |
 | NFR-013 Encryption at rest | HARD |
+
+Architecture-derived scenarios (QS-07, QS-15, QS-17, QS-18) are implicit HARD constraints: architectural invariants that must hold across all releases.
+
+### 10.4 Validation scenario cross-reference
+
+Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([validation-scenarios.md](validation-scenarios.md)) define end-to-end acceptance criteria in BDD format. The mapping:
+
+| Quality attribute | Primary validation categories | Key scenarios |
+|-------------------|-------------------------------|---------------|
+| Performance | B (Query lifecycle) | SC-B01, SC-B07, SC-B08 |
+| Reliability | F (Operational) | SC-F01, SC-F02, SC-F03 |
+| Security | E (Security), G (Compliance) | SC-E01-E05, SC-G01-G04 |
+| Operability | F (Operational), H (MVP) | SC-F01, SC-F04-F06, SC-H01-H02 |
+| Functional correctness | A (Ingest), B (Query), C (Pipeline) | SC-A01-A08, SC-B01-B06, SC-C01-C05 |
+| Maintainability | (verified at design review) | - |
 
 ---
 
@@ -2121,3 +2151,4 @@ See ADRs in `.s2s/decisions/`:
 *Version 1.6 - Database schema: ARCH-058 (7 tables, indexes, forward-compatible fields, module ownership, Phase 2 schema roadmap)*
 *Version 1.7 - API contract: ARCH-059 (16 Phase 1 endpoints, formal request/response types, error envelope, auth summary, Phase 2 additions, REQ-011/REQ-030 error code alignment with REQ-041)*
 *Version 1.8 - Configuration reference: ARCH-060 (37 env vars: 35 VEKTRA_* + 2 external, 5 newly named + VEKTRA_MAX_PDF_SIZE renamed to VEKTRA_MAX_FILE_SIZE_MB, startup validation mapping, .env.example)*
+*Version 1.9 - Quality scenarios: Section 10 expanded from 12 to 18 QS entries, quality tree restructured, 6 architecture-derived scenarios added (ARCH-043 degradation, ARCH-057 startup, ARCH-039 extensibility, ARCH-040 evolvability, NFR-008 retention, NFR-010 progress), validation scenario cross-reference (10.4)*

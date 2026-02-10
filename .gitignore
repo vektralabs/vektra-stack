@@ -57,6 +57,7 @@ temp/
 !.s2s/requirements.md
 !.s2s/architecture.md
 !.s2s/ideas.md
+!.s2s/validation-scenarios.md
 !.s2s/decisions/
 !.s2s/decisions/**
 !.s2s/plans/

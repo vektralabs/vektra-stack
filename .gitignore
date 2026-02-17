@@ -30,6 +30,15 @@ dist/
 build/
 out/
 
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
 # Dependencies (if we add any later)
 node_modules/
 vendor/

@@ -810,7 +810,7 @@ class DocumentChunk:
 
 Phase 1: element_type always TEXT, content_format always "text", parent_id always None, coordinates always None, index_version always 1. Phase 2 with Unstructured: tables extracted as content_format="html" (`<table>...</table>`), element_type mapped to extended enum values.
 
-> **ID type convention**: Protocol and API types use `str` for entity identifiers (chunk_id, parent_id, document_id in SearchResult). DB uses UUID. Conversion is `str(uuid)` on read, `UUID(string)` on write. This enables future portability to vector stores that use non-UUID identifiers (e.g., Qdrant string IDs). See ARCH-051. Similarly, `SourceRef` uses short field names (`doc_id`, `snippet`) for brevity in query responses, while `SearchResult` uses explicit names (`document_id`, `text_snippet`). Both refer to the same underlying data.
+> **ID type convention**: `chunk_id` and `parent_id` in Protocol and API types use `str` (not `UUID`). DB stores them as UUID. Conversion is `str(uuid)` on read, `UUID(string)` on write. This enables future portability to vector stores that use non-UUID identifiers (e.g., Qdrant string IDs). See ARCH-051. Document-level IDs (`SearchResult.document_id`, `SourceRef.doc_id`) remain `UUID`. Similarly, `SourceRef` uses short field names (`doc_id`, `snippet`) for brevity in query responses, while `SearchResult` uses explicit names (`document_id`, `text_snippet`). Both refer to the same underlying data.
 
 #### QueryResponse (extended)
 
@@ -849,16 +849,15 @@ class SourceDocument:
     file_size_bytes: int                   # size in bytes from uploaded file
     filename_aliases: list[str] = []       # alternative filenames for same content_hash (BR-005)
     chunk_count: int | None = None         # set after indexing, None while processing
-    status: str = "pending"                # "pending" | "processing" | "indexed" | "failed"
     version: int = 1                       # document version (REQ-056)
-    index_version: int = 1                 # for zero-downtime reindex (ARCH-045)
-    metadata: dict | None = None           # operator-provided metadata from IngestRequest
     supersedes_id: UUID | None = None      # FK to previous version (REQ-056)
     deleted_at: datetime | None = None     # soft delete timestamp (REQ-057)
     deletion_reason: str | None = None     # "user_request" | "superseded" | "expired"
     created_at: datetime
     updated_at: datetime
 ```
+
+> **SourceDocument notes**: `status` and `index_version` are NOT fields of this type - they belong to `ingest_jobs` and `document_chunks` respectively. Document processing state is tracked via `ingest_jobs` (linked by `ingest_jobs.document_id`). Chunk index version is a property of chunks, not of the parent document. Operator-provided `metadata` from `IngestRequest` is stored on `document_chunks.metadata` (merged with auto-generated chunk metadata), not on `source_documents`.
 
 #### QueryTrace and StepTrace (new - ARCH-041)
 

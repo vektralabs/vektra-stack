@@ -1,0 +1,2 @@
+[tool.uv.workspace]
+members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index"]

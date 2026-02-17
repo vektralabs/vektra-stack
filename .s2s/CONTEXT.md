@@ -170,4 +170,4 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 ---
 
-*Last updated: 2026-02-10*
+*Last updated: 2026-02-17*

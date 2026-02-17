@@ -506,7 +506,7 @@ Phase: 1 | 2
 - Given indexed documents, When POST /search, Then SearchResponse returned with results list (may be empty)
 - Given POST /search, Then no LLM call made (search path bypasses QueryPipeline)
 - Given POST /search, Then relevance threshold (VEKTRA_MIN_RELEVANCE_SCORE) not applied (returns raw top_k)
-- Given empty index, When POST /search, Then 503 with ERR-QUERY-001
+- Given empty index, When POST /search, Then 200 with empty results list (consistent with SC-B06: no documents indexed is not an error)
 - Given SearchFilters with language="en", When POST /search, Then results scoped to matching chunks
 - Given POST /search, Then total_available = len(results) in Phase 1 (ANN does not count total)
 
@@ -519,7 +519,7 @@ Phase: 1 | 2
 
 **Actor**: Downstream application
 **Trigger**: Client submits query with oversized question text
-**Preconditions**: Vektra stack running, documents indexed
+**Preconditions**: Vektra stack running (no documents needed: error occurs before any retrieval)
 
 **Flow**:
 1. Client calls POST /query with question text exceeding the configured maximum length
@@ -1539,6 +1539,10 @@ Phase: 1 | 2
 
 ---
 
+---
+
+> **Note on SC-I07 and SC-I08**: these are Phase 1 platform-level scenarios, not vektra-learn scenarios. They are numbered here to avoid renumbering existing IDs. Logically they belong in sections A (document lifecycle) and F (operational).
+
 ### SC-I07: Zero-downtime reindex via index version rotation
 
 **Actor**: Platform Operator
@@ -1572,11 +1576,11 @@ Phase: 1 | 2
 
 **Actor**: Downstream application with custom embedding pipeline
 **Trigger**: External system provides pre-computed embedding vectors for direct storage
-**Preconditions**: Source document record exists (created via prior POST /ingest or external process)
+**Preconditions**: Source document record exists via prior POST /ingest (Phase 1: the only way to create a source_documents row; chunks at index_version=1 already stored)
 
 **Flow**:
-1. External pipeline extracts and embeds document content using its own model
-2. Operator calls POST /documents/{id}/chunks with namespace and list of ChunkEmbedding objects
+1. External pipeline re-embeds the same document content using a custom model
+2. Operator calls POST /documents/{id}/chunks with namespace and list of ChunkEmbedding objects (index_version=2)
 3. Each ChunkEmbedding includes: chunk_id, text, embedding_vector, metadata, position
 4. System stores chunks directly in VectorStoreProvider without re-embedding
 5. System returns 201 with document_id, chunk_count, index_version

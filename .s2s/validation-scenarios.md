@@ -1,8 +1,8 @@
 # Validation scenarios
 
 **Project**: Vektra
-**Version**: 0.1 (draft)
-**Date**: 2026-02-09
+**Version**: 0.2
+**Date**: 2026-02-17
 **Status**: Draft, pending roundtable refinement (QA Lead + Business Analyst)
 
 ## Purpose
@@ -486,6 +486,62 @@ Phase: 1 | 2
 
 ---
 
+### SC-B09: Standalone semantic search without LLM synthesis
+
+**Actor**: Downstream application
+**Trigger**: Client retrieves relevant chunks by semantic similarity without LLM completion
+**Preconditions**: Documents indexed in the target namespace
+
+**Flow**:
+1. Client calls POST /search with query text and namespace="default"
+2. System validates API key (query scope)
+3. EmbeddingProvider.embed_query() generates query embedding
+4. VectorStoreProvider.search() retrieves top_k chunks by cosine similarity
+5. System returns SearchResponse with ranked results
+6. No LLM call made, no safeguard hooks invoked, no token budget applied
+
+**Expected outcome**: Fast search response with ranked chunks and scores. Total latency is embed + vector search only (NFR-002 target: p95 <500ms).
+
+**Acceptance criteria**:
+- Given indexed documents, When POST /search, Then SearchResponse returned with results list (may be empty)
+- Given POST /search, Then no LLM call made (search path bypasses QueryPipeline)
+- Given POST /search, Then relevance threshold (VEKTRA_MIN_RELEVANCE_SCORE) not applied (returns raw top_k)
+- Given empty index, When POST /search, Then 503 with ERR-QUERY-001
+- Given SearchFilters with language="en", When POST /search, Then results scoped to matching chunks
+- Given POST /search, Then total_available = len(results) in Phase 1 (ANN does not count total)
+
+**Traceability**: REQ-012, ARCH-044
+**Phase**: 1
+
+---
+
+### SC-B10: Query rejected when text exceeds maximum length
+
+**Actor**: Downstream application
+**Trigger**: Client submits query with oversized question text
+**Preconditions**: Vektra stack running, documents indexed
+
+**Flow**:
+1. Client calls POST /query with question text exceeding the configured maximum length
+2. System validates request before generating embeddings
+3. System returns 400 with ERR-QUERY-003
+4. Error details include max_length and actual_length
+5. No embedding generated, no LLM call made (fail fast)
+
+**Expected outcome**: Request rejected early. Clear remediation includes the maximum character count. No wasted compute.
+
+**Acceptance criteria**:
+- Given question text exceeding max length, When POST /query, Then 400 with ERR-QUERY-003
+- Given ERR-QUERY-003, Then remediation includes maximum character limit and actual character count
+- Given ERR-QUERY-003, Then category="PERMANENT" (not retryable)
+- Given question within max length, Then request proceeds normally
+- Given ERR-QUERY-003, Then no EmbeddingProvider or LLMProvider call made
+
+**Traceability**: REQ-013, ARCH-036
+**Phase**: 1
+
+---
+
 ## C. Pipeline quality controls
 
 ### SC-C01: Relevance threshold filtering
@@ -619,6 +675,36 @@ Phase: 1 | 2
 
 **Traceability**: REQ-065, ARCH-048, ARCH-054
 **Phase**: 1
+
+---
+
+### SC-C06: EventEmitter emission points execute (Phase 1 NoOp)
+
+**Actor**: (internal pipeline behavior)
+**Trigger**: Ingest, query, and delete operations complete
+**Preconditions**: Vektra stack running with NoOpEventEmitter (Phase 1 default)
+
+**Flow**:
+1. Operator ingests a document (POST /ingest)
+2. EventEmitter.emit("document.indexed", {document_id, namespace}) called (NoOp)
+3. Operator submits query (POST /query)
+4. EventEmitter.emit("query.completed", {response_id, namespace, duration_ms}) called (NoOp)
+5. Operator deletes document (DELETE /documents/{id})
+6. EventEmitter.emit("document.deleted", {document_id, namespace}) called (NoOp)
+7. All three calls complete without side effects
+
+**Expected outcome**: EventEmitter called at all three emission points with correct payloads. Phase 1 NoOp: no side effects. Emission points exist and are reachable - verified via debug log or test double.
+
+**Acceptance criteria**:
+- Given NoOpEventEmitter, When POST /ingest completes successfully, Then EventEmitter.emit called for "document.indexed" with document_id and namespace
+- Given NoOpEventEmitter, When POST /query completes successfully, Then EventEmitter.emit called for "query.completed" with response_id
+- Given NoOpEventEmitter, When DELETE /documents/{id} completes, Then EventEmitter.emit called for "document.deleted"
+- Given NoOpEventEmitter, Then emit() calls add <1ms overhead per call
+- Given failed ingest (ERR-INGEST-001), Then "document.indexed" event not emitted (only on success)
+- Given Phase 2 webhook config, Then same payloads delivered to configured webhook URL
+
+**Traceability**: REQ-061, ARCH-038
+**Phase**: 1 (NoOp), Phase 2 (webhook delivery)
 
 ---
 
@@ -858,6 +944,70 @@ Phase: 1 | 2
 
 ---
 
+### SC-E06: API key CRUD lifecycle with revocation timing
+
+**Actor**: Platform Operator
+**Trigger**: Operator creates, uses, and revokes an API key
+**Preconditions**: Admin API key available
+
+**Flow**:
+1. Operator calls POST /api-keys with label="ingest-worker" and scopes=["ingest"]
+2. System returns ApiKeyCreateResponse with plaintext key (shown once) and id
+3. Operator calls GET /api-keys
+4. Response lists the key with key_preview (last 4 chars only), scopes, created_at, revoked_at=null
+5. Plaintext key absent from listing
+6. Operator uses new key to call POST /ingest (succeeds)
+7. Operator calls DELETE /api-keys/{id} to revoke
+8. System returns {id, revoked_at}
+9. Within 60 seconds: operator uses revoked key to call POST /ingest
+10. System returns 401 with ERR-AUTH-001
+
+**Expected outcome**: Full key lifecycle from creation to rejection after revocation. Plaintext only on creation. Revoked keys rejected within 60s. Revoked keys remain visible in GET /api-keys listing.
+
+**Acceptance criteria**:
+- Given POST /api-keys, Then 201 with plaintext key (only returned once), id, label, scopes, created_at
+- Given GET /api-keys, Then response includes revoked keys (revoked_at non-null) - visibility required for history
+- Given GET /api-keys, Then key_preview contains last 4 characters only (never plaintext)
+- Given DELETE /api-keys/{id}, Then 200 with {id, revoked_at}
+- Given revoked key used within 60s of revocation, Then 401 with ERR-AUTH-001
+- Given key creation and revocation, Then audit log records both events with key_id and operator key_id
+
+**Traceability**: REQ-020, REQ-030, REQ-032
+**Phase**: 1
+
+---
+
+### SC-E07: LLM provider switch via configuration
+
+**Actor**: Platform Operator
+**Trigger**: Operator switches LLM provider from Ollama to OpenAI
+**Preconditions**: Vektra running with Ollama as primary LLM provider
+
+**Flow**:
+1. Operator calls POST /query - response comes from Ollama
+2. GET /providers shows ollama as primary with status "ok"
+3. Operator changes VEKTRA_LLM_PROVIDER to "openai/gpt-4o" and sets OPENAI_API_KEY
+4. Operator restarts container
+5. Startup validation step 7 verifies new LLM connectivity (warning-only, not fatal)
+6. GET /providers shows openai as primary
+7. Operator calls POST /query - response comes from OpenAI
+8. QueryTrace llm_call StepTrace metadata records new model identifier
+
+**Expected outcome**: Provider switch requires only config change + restart. No code change, no data migration. litellm handles provider-specific API format differences transparently.
+
+**Acceptance criteria**:
+- Given VEKTRA_LLM_PROVIDER changed and container restarted, Then GET /providers reflects new provider name
+- Given valid OpenAI API key, When POST /query after switch, Then response generated by OpenAI model (verifiable via model field in trace)
+- Given QueryTrace, Then llm_call StepTrace metadata includes model identifier matching VEKTRA_LLM_PROVIDER
+- Given invalid API key for new provider, Then startup step 7 logs warning (not fatal), container starts with provider status "unavailable"
+- Given Anthropic as provider, Then ANTHROPIC_API_KEY read by litellm directly (no VEKTRA_ prefix required)
+- Given Ollama provider, Then no API key required, VEKTRA_LLM_API_KEY ignored
+
+**Traceability**: REQ-047, REQ-013, ADR-0008
+**Phase**: 1
+
+---
+
 ## F. Operational
 
 ### SC-F01: Startup validation sequence
@@ -1022,6 +1172,92 @@ Phase: 1 | 2
 - Given GET /health/memory, Then per-component memory usage returned
 
 **Traceability**: ARCH-014, ARCH-027
+**Phase**: 1
+
+---
+
+### SC-F07: Vector store write failure during ingestion
+
+**Actor**: (system behavior under failure)
+**Trigger**: VectorStoreProvider.upsert() fails while storing chunks
+**Preconditions**: Document extraction and embedding completed successfully; vector store becomes unavailable
+
+**Flow**:
+1. Operator calls POST /ingest with valid PDF (sync path, <=10MB)
+2. System extracts, chunks, and embeds successfully
+3. VectorStoreProvider.upsert() throws (connection lost, disk full, timeout)
+4. System aborts the write transaction
+5. No partial record left in source_documents or document_chunks
+6. System returns 503 with ERR-INGEST-004
+
+**Expected outcome**: Atomic ingest failure. No orphaned records. Operator can retry safely.
+
+**Acceptance criteria**:
+- Given VectorStoreProvider.upsert() fails, When POST /ingest, Then 503 with ERR-INGEST-004
+- Given ERR-INGEST-004, Then category="TRANSIENT", retry_after set
+- Given ERR-INGEST-004, Then remediation instructs operator to retry POST /ingest
+- Given failure, Then source_documents contains no partial record for this ingest
+- Given failure, Then document_chunks contains no orphaned rows for this document_id
+- Given async ingest (>10MB), When VectorStoreProvider.upsert() fails, Then job status transitions to "failed" with error_code="ERR-INGEST-004"
+
+**Traceability**: ARCH-043, ARCH-052
+**Phase**: 1
+
+---
+
+### SC-F08: Vector store read failure during query
+
+**Actor**: Downstream application
+**Trigger**: VectorStoreProvider.search() fails during query execution
+**Preconditions**: Documents indexed; vector store becomes unavailable after indexing
+
+**Flow**:
+1. Client calls POST /query
+2. Pipeline reaches vector_search step
+3. VectorStoreProvider.search() throws (connection lost, timeout)
+4. Pipeline stops at vector_search step (cannot proceed without chunks)
+5. System returns 503 with ERR-QUERY-004
+
+**Expected outcome**: Pipeline aborts at search step. No LLM call attempted. TRANSIENT error with retry guidance.
+
+**Acceptance criteria**:
+- Given VectorStoreProvider.search() fails, When POST /query, Then 503 with ERR-QUERY-004
+- Given ERR-QUERY-004, Then category="TRANSIENT", retry_after set
+- Given failure at vector_search step, Then no LLM call made (pipeline stops)
+- Given ERR-QUERY-004, Then remediation instructs operator to retry or check vector store health
+- Given POST /search (not /query), When VectorStoreProvider.search() fails, Then same ERR-QUERY-004 returned
+
+**Traceability**: ARCH-043
+**Phase**: 1
+
+---
+
+### SC-F09: TLS enforcement in production mode
+
+**Actor**: Platform Operator
+**Trigger**: Operator deploys Vektra with VEKTRA_ENV=production behind a TLS-terminating reverse proxy
+**Preconditions**: Reverse proxy configured, VEKTRA_ENV=production set
+
+**Flow**:
+1. Operator sets VEKTRA_ENV=production
+2. Container starts, startup log includes TLS enforcement note
+3. External client attempts HTTP (non-TLS) connection to the reverse proxy
+4. Reverse proxy rejects or redirects the non-TLS request
+5. Vektra container receives only HTTPS-originated traffic from the proxy
+6. Infrastructure probe calls GET /health on Vektra's container port directly (internal, no proxy)
+7. GET /health returns 200 (health endpoint exempt from TLS enforcement)
+8. All data API endpoints reachable only via HTTPS through the proxy
+
+**Expected outcome**: No plaintext API traffic in production. Health endpoint available without TLS for infrastructure probes. Enforcement at reverse proxy layer (NFR-012: TLS termination is a proxy concern).
+
+**Acceptance criteria**:
+- Given VEKTRA_ENV=production, Then startup log includes message confirming production mode active
+- Given production mode, When API endpoint called over HTTP (bypassing proxy), Then connection refused or redirected by proxy
+- Given production mode, Then GET /health accessible without TLS (probe exemption)
+- Given VEKTRA_ENV=development, Then HTTP connections permitted with no enforcement
+- Given QS-09, Then TLS 1.2+ minimum version enforced at proxy layer (Vektra does not terminate TLS itself)
+
+**Traceability**: NFR-012, QS-09
 **Phase**: 1
 
 ---
@@ -1303,6 +1539,64 @@ Phase: 1 | 2
 
 ---
 
+### SC-I07: Zero-downtime reindex via index version rotation
+
+**Actor**: Platform Operator
+**Trigger**: Operator reindexes documents after updating the embedding model
+**Preconditions**: Documents indexed with index_version=1; new embedding model deployed
+
+**Flow**:
+1. GET /stats shows index_versions=[1], document_count=10
+2. Operator re-submits chunk embeddings via POST /documents/{id}/chunks for all documents with index_version=2
+3. GET /stats shows both versions present
+4. Operator changes VEKTRA_ACTIVE_INDEX_VERSION=2 and restarts container
+5. VectorStoreProvider.search() filters WHERE index_version=2
+6. POST /query returns only version-2 sourced chunks
+7. Version-1 chunks remain in database (manual cleanup optional)
+
+**Expected outcome**: New embedding model activated without downtime. Version rotation is a config change. Old chunks available for rollback by reverting VEKTRA_ACTIVE_INDEX_VERSION.
+
+**Acceptance criteria**:
+- Given chunks stored with index_version=2, When VEKTRA_ACTIVE_INDEX_VERSION=2, Then only version-2 chunks returned in POST /search and POST /query
+- Given VEKTRA_ACTIVE_INDEX_VERSION=1, Then GET /stats index_versions reflects [1] as active
+- Given chunks from two versions coexisting, When VEKTRA_ACTIVE_INDEX_VERSION=2, Then citations reference only version-2 document_chunk rows
+- Given index version change, Then no re-extraction required (text in source_documents unchanged)
+- Given VEKTRA_ACTIVE_INDEX_VERSION=1 restored, Then version-1 chunks resume serving queries
+
+**Traceability**: REQ-064, ARCH-045
+**Phase**: 1
+
+---
+
+### SC-I08: Low-level chunk storage via direct API (pre-embedded content)
+
+**Actor**: Downstream application with custom embedding pipeline
+**Trigger**: External system provides pre-computed embedding vectors for direct storage
+**Preconditions**: Source document record exists (created via prior POST /ingest or external process)
+
+**Flow**:
+1. External pipeline extracts and embeds document content using its own model
+2. Operator calls POST /documents/{id}/chunks with namespace and list of ChunkEmbedding objects
+3. Each ChunkEmbedding includes: chunk_id, text, embedding_vector, metadata, position
+4. System stores chunks directly in VectorStoreProvider without re-embedding
+5. System returns 201 with document_id, chunk_count, index_version
+6. Operator calls POST /search or POST /query
+7. Stored chunks appear in results with correct document_id
+
+**Expected outcome**: Custom embedding pipelines bypass Vektra's extraction and embedding steps. Only the vector store write and query path used.
+
+**Acceptance criteria**:
+- Given valid document_id and pre-embedded chunks, When POST /documents/{id}/chunks, Then 201 with chunk_count matching submitted count
+- Given stored chunks, When POST /query, Then chunks appear in sources with correct document_id
+- Given unknown document_id, When POST /documents/{id}/chunks, Then 404
+- Given embedding vector of wrong dimension, When POST /documents/{id}/chunks, Then 422 with remediation including expected dimension
+- Given POST /documents/{id}/chunks, Then ingest scope required (query scope returns 403)
+
+**Traceability**: REQ-012, ARCH-051
+**Phase**: 1
+
+---
+
 ## Requirements coverage analysis
 
 ### Gaps identified during scenario drafting
@@ -1322,5 +1616,5 @@ Phase: 1 | 2
 
 ---
 
-*Generated: 2026-02-09*
+*Generated: 2026-02-09. Updated: 2026-02-17 (v0.2 - added 10 coverage gap scenarios: SC-B09/B10, SC-C06, SC-E06/E07, SC-F07/F08/F09, SC-I07/I08)*
 *Pending: roundtable refinement with QA Lead and Business Analyst*

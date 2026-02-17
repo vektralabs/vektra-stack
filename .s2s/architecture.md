@@ -1905,7 +1905,7 @@ Quality goals
 | QS-06 | Reliability | Container startup | /health returns 200 within 60s | NFR-004 | SC-F01 |
 | QS-07 | Reliability | Primary and fallback LLM both fail | Context-only response with sources, no error | ARCH-043 | SC-F02 |
 | QS-08 | Security | Authenticated API request processed | Logged with key_id, endpoint, method, status_code | NFR-007 | SC-E05 |
-| QS-09 | Security | Production API traffic | TLS 1.2+ enforced at reverse proxy | NFR-012 | - |
+| QS-09 | Security | Production API traffic | TLS 1.2+ enforced at reverse proxy | NFR-012 | SC-F09 |
 | QS-10 | Security | Conversation data stored | Encrypted at rest via pgcrypto | NFR-013 | SC-G03 |
 | QS-11 | Security | Audit log retention period set | Configurable via VEKTRA_AUDIT_RETENTION_DAYS, default 90 | NFR-008 | SC-G02 |
 | QS-12 | Operability | Operator deploys from git clone | Clone to first query in <30 minutes | REQ-005 | SC-H01 |

@@ -1947,11 +1947,11 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 
 | Quality attribute | Primary validation categories | Key scenarios |
 |-------------------|-------------------------------|---------------|
-| Performance | B (Query lifecycle) | SC-B01, SC-B07, SC-B08 |
-| Reliability | F (Operational) | SC-F01, SC-F02, SC-F03 |
-| Security | E (Security), G (Compliance) | SC-E01-E05, SC-G01-G04 |
-| Operability | F (Operational), H (MVP) | SC-F01, SC-F04-F06, SC-H01-H02 |
-| Functional correctness | A (Ingest), B (Query), C (Pipeline) | SC-A01-A08, SC-B01-B06, SC-C01-C05 |
+| Performance | B (Query lifecycle) | SC-B01, SC-B07, SC-B08, SC-B09 |
+| Reliability | F (Operational) | SC-F01-F03, SC-F07, SC-F08 |
+| Security | E (Security), F (Operational), G (Compliance) | SC-E01-E06, SC-F09, SC-G01-G04 |
+| Operability | F (Operational), H (MVP) | SC-F01, SC-F04-F06, SC-F10, SC-F11, SC-H01-H02 |
+| Functional correctness | A (Ingest), B (Query), C (Pipeline) | SC-A01-A09, SC-B01-B10, SC-C01-C06 |
 | Maintainability | (verified at design review) | - |
 
 ---

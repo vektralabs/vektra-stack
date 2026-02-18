@@ -14,8 +14,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class LLMConfig(BaseSettings):
     """LLM provider configuration (ARCH-043, REQ-059)."""
 
-    model_config = SettingsConfigDict(env_prefix="VEKTRA_LLM_", extra="ignore")
-
     provider: str = Field(
         ...,
         alias="VEKTRA_LLM_PROVIDER",

@@ -103,17 +103,6 @@ class HealthResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helper to get providers from app state
-# ---------------------------------------------------------------------------
-
-
-def _get_pgvector(request):
-    from fastapi import Request
-    # Providers are registered on app.state.registry by startup code
-    pass
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 

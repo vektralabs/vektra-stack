@@ -30,10 +30,16 @@ logger = logging.getLogger(__name__)
 
 
 class PgvectorProvider:
-    """VectorStoreProvider backed by pgvector.
+    """PostgreSQL/pgvector implementation of the vector store backend.
 
-    Each method receives an AsyncSession (managed by the caller).
-    This keeps the provider stateless and testable with mock sessions.
+    NOTE: This class does NOT directly implement VectorStoreProvider Protocol.
+    Its methods take (session, ...) for explicit session management, which is
+    incompatible with the Protocol's session-free signatures. This is intentional:
+    - vektra-index exposes PgvectorProvider exclusively via its REST API
+    - vektra-core accesses vektra-index via HTTP (POST /api/v1/search, etc.)
+    - The VectorStoreProvider Protocol in vektra_shared is implemented by an
+      HTTP client in vektra-core (component-core plan, Wave 3)
+    - Session injection keeps PgvectorProvider unit-testable with mock sessions
     """
 
     def __init__(self, active_index_version: int = 1) -> None:

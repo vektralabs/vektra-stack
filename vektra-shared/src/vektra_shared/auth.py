@@ -124,6 +124,9 @@ def require_scope(required_scope: str) -> Callable[..., Coroutine[Any, Any, ApiK
                 detail=err.to_envelope(),
             )
 
+        # 5. Expose key_id on request.state for AuditMiddleware
+        request.state.key_id = info.key_id
+
         return info
 
     # Give the dependency a descriptive name for FastAPI's OpenAPI schema

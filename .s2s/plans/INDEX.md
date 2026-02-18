@@ -108,7 +108,7 @@ Plans to create when the time comes (currently blocked):
 |------|-------|------------|--------|
 | [20260217-component-ingest](20260217-component-ingest.md) | vektra-ingest: document processing pipeline and async jobs | large | pending |
 | [20260217-component-core](20260217-component-core.md) | vektra-core: QueryPipeline, LLM, streaming, conversations | large | pending |
-| [20260217-component-admin](20260217-component-admin.md) | vektra-admin: health, API key management, audit log | medium | pending |
+| [20260217-component-admin](20260217-component-admin.md) | vektra-admin: health, API key management, audit log | medium | completed |
 
 ---
 

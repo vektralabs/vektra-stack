@@ -8,7 +8,7 @@ provides_requires:
 # Implementation Plan: vektra-admin - Health, API key management, audit log, namespace bootstrap
 
 **ID**: 20260217-component-admin
-**Status**: in_progress
+**Status**: completed
 **Branch**: N/A
 **Created**: 2026-02-17T22:42:39Z
 **Updated**: 2026-02-17T22:42:39Z
@@ -90,7 +90,7 @@ Implements the administration layer: two-tier health endpoints, API key CRUD wit
 - [x] Implement `vektra_admin/middleware.py`: `AuditMiddleware(BaseHTTPMiddleware)` class that intercepts every request after auth completes, writes key_id + endpoint + method + status_code + request_id to audit_log via `vektra_shared.audit.log_event()`, skips /health and /metrics paths. Do NOT register this middleware on the FastAPI app here — export `AuditMiddleware` class only.
 - [x] Log startup warning if VEKTRA_ADMIN_BOOTSTRAP_KEY is set and VEKTRA_ENV=production (REQ-021) — `bootstrap.warn_if_bootstrap_in_production()`
 - [x] Write unit tests: key generation and hash verification (8), bootstrap key enforcement (7), health aggregation (8), audit fire-and-forget (2), scope validation — 30/30 PASS
-- [ ] Write integration tests: full API key lifecycle (create, list, use, revoke, verify rejected), bootstrap key consumed after first use, deep health check returns all components, GET /admin returns valid HTML
+- [x] Write integration tests: full API key lifecycle (create, list, use, revoke, verify rejected), bootstrap key consumed after first use, deep health check returns all components, GET /admin returns valid HTML — 11/11 PASS
 
 ## Acceptance Criteria
 

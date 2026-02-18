@@ -1,7 +1,7 @@
 """Audit middleware for vektra-admin (NFR-007, REQ-022).
 
-AuditMiddleware intercepts every request after auth completes and writes
-a fire-and-forget audit_log entry via vektra_shared.audit.log_event().
+AuditMiddleware intercepts every authenticated request after the response
+is generated and writes one audit_log row using its own managed AsyncSession.
 
 Registration: exported as a class; infra-app-entrypoint calls
     app.add_middleware(AuditMiddleware)
@@ -9,11 +9,16 @@ Registration: exported as a class; infra-app-entrypoint calls
 This module does NOT register the middleware on any FastAPI app. That is
 exclusively the responsibility of infra-app-entrypoint (Wave 4).
 
-Excluded paths: /health, /metrics (unauthenticated endpoints — no key_id).
+Excluded paths: /health, /metrics (unauthenticated — no key_id).
+
+Session lifecycle: the middleware creates a fresh AsyncSession per write
+rather than relying on request.state.session. This decouples the audit
+write from the request's main session and ensures the write completes even
+if the main session was already closed by the time the middleware runs.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Awaitable
+from typing import Callable, Awaitable
 from uuid import UUID
 
 import structlog
@@ -21,8 +26,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
-
-import vektra_shared.audit as _shared_audit
 
 log = structlog.get_logger(__name__)
 
@@ -32,8 +35,9 @@ _EXCLUDED_PREFIXES = ("/health", "/metrics")
 class AuditMiddleware(BaseHTTPMiddleware):
     """Writes one audit_log row per authenticated request (NFR-007).
 
-    Runs after auth middleware so request.state already has key_id resolved.
-    Skips /health and /metrics (no Bearer token expected on those paths).
+    Runs after auth middleware so request.state.key_id is already set
+    (vektra_shared.auth.require_scope sets it on successful validation).
+    Skips /health and /metrics (unauthenticated).
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -51,27 +55,64 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if any(path.startswith(prefix) for prefix in _EXCLUDED_PREFIXES):
             return response
 
-        # key_id must be present in request.state (set by auth middleware)
+        # key_id is set by require_scope() in vektra_shared.auth after validation
         key_id: UUID | None = getattr(request.state, "key_id", None)
         request_id: UUID | None = getattr(request.state, "request_id", None)
 
         if key_id is None or request_id is None:
-            # Auth middleware did not resolve a key (e.g. 401 path); skip audit
+            # Unauthenticated request (e.g. 401 response from auth dep) — skip
             return response
 
-        # Session must be available from request state
-        session = getattr(request.state, "session", None)
-        if session is None:
-            log.warning("audit_middleware_no_session", path=path)
-            return response
-
-        _shared_audit.log_event(
-            session=session,
-            key_id=key_id,
-            endpoint=path,
-            method=request.method,
-            status_code=response.status_code,
-            request_id=request_id,
+        # Write audit log with a dedicated session (independent of request lifecycle)
+        import asyncio
+        asyncio.get_running_loop().create_task(
+            _write_audit(
+                key_id=key_id,
+                endpoint=path,
+                method=request.method,
+                status_code=response.status_code,
+                request_id=request_id,
+            )
         )
 
         return response
+
+
+async def _write_audit(
+    *,
+    key_id: UUID,
+    endpoint: str,
+    method: str,
+    status_code: int,
+    request_id: UUID,
+) -> None:
+    """Write one audit_log row using an independent session.
+
+    Errors are logged as ERROR and swallowed (audit write must not
+    affect the API response — NFR-007 integrity principle).
+    """
+    from vektra_shared.db import _session_factory  # module-level factory
+    from vektra_admin.models import AuditLogOrm     # late import
+
+    if _session_factory is None:
+        log.warning("audit_middleware_no_session_factory")
+        return
+
+    try:
+        async with _session_factory() as session:
+            entry = AuditLogOrm(
+                key_id=key_id,
+                endpoint=endpoint,
+                method=method,
+                status_code=status_code,
+                request_id=request_id,
+            )
+            session.add(entry)
+            await session.commit()
+    except Exception:
+        log.error(
+            "audit_middleware_write_failed",
+            key_id=str(key_id),
+            endpoint=endpoint,
+            exc_info=True,
+        )

@@ -12,7 +12,7 @@ as authentication (once only) or a valid admin-scoped Bearer token.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -71,6 +71,9 @@ async def _require_any_token(
     if info is None:
         err = auth_invalid_token()
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    # Expose key_id for AuditMiddleware (same pattern as require_scope in auth.py)
+    request.state.key_id = info.key_id
 
     return info
 
@@ -277,12 +280,11 @@ async def create_api_key(
         except ValueError:
             pass  # key_store not yet registered (e.g. during tests)
 
-    # --- Audit log (fire-and-forget via background task) ---
+    # --- Audit log (async background task; log_event creates its own session) ---
     request_id = getattr(request.state, "request_id", None)
     if request_id and key_info:
         background_tasks.add_task(
             _audit.log_event,
-            session=session,
             key_id=key_info.key_id,
             endpoint="/api/v1/api-keys",
             method="POST",
@@ -349,7 +351,7 @@ async def revoke_api_key(
     if row.revoked_at is not None:
         raise HTTPException(status_code=409, detail={"error": {"message": "API key already revoked"}})
 
-    row.revoked_at = datetime.utcnow()
+    row.revoked_at = datetime.now(timezone.utc)
     await session.commit()
 
     # Update in-memory cache immediately (do not wait for TTL)
@@ -361,12 +363,11 @@ async def revoke_api_key(
         except ValueError:
             pass
 
-    # Audit log
+    # Audit log (async background task; log_event creates its own session)
     request_id = getattr(request.state, "request_id", None)
     if request_id:
         background_tasks.add_task(
             _audit.log_event,
-            session=session,
             key_id=key_info.key_id,
             endpoint=f"/api/v1/api-keys/{key_id}",
             method="DELETE",

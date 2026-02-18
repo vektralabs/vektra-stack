@@ -73,6 +73,7 @@ temp/
 !.s2s/plans/**
 !.s2s/traceability.yaml
 !.s2s/state-machines.yaml
+!.s2s/wave-boundary-checklist.md
 # Note: sessions/ and scripts/ intentionally NOT tracked - they are temporary/local tooling
 
 # All docs/ content is public - no exclusions

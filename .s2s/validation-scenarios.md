@@ -435,7 +435,7 @@ Phase: 1 | 2
 - Given no_relevant_context=True, Then sources array is empty
 - Given retrieval filter, Then StepTrace for retrieval_filter records chunks_before, chunks_after, threshold
 
-**Traceability**: REQ-003, ARCH-043, ARCH-056
+**Traceability**: REQ-003, REQ-066, ARCH-043, ARCH-056
 **Phase**: 1
 
 ---
@@ -1612,7 +1612,7 @@ Phase: 1 | 2
 | Scoped API key enforcement deferred | By design | Scope stored but not enforced | Phase 1: REQ-024 explicit deferral. Phase 2: full enforcement |
 | Batch document processing absent | By design | Single-document only | EX-005 explicit exclusion |
 | RAG quality evaluation absent | By design | QueryTrace only, no automated evaluation | ARCH-050 defines Phase 2 three-tier strategy |
-| No explicit REQ for no_relevant_context | Low | ARCH-056 defines behavior, no corresponding REQ | Consider adding REQ in next revision |
+| ~~No explicit REQ for no_relevant_context~~ | ~~Low~~ | ~~ARCH-056 defines behavior, no corresponding REQ~~ | Resolved: REQ-066 added (docs-008) |
 
 ---
 

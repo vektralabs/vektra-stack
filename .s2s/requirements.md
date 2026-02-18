@@ -3,10 +3,10 @@
 # Software Requirements Specification
 
 **Project**: Vektra
-**Version**: 1.4.1
-**Date**: 2026-02-06
+**Version**: 1.5.0
+**Date**: 2026-02-18
 **Sessions**: 20260129-specs-vektra (baseline), 20260201-specs-vektra-integration (merged)
-**Corrections**: Manual gap closure v1.2 (REQ-048/049), v1.3 (REQ-050/051, EX-009 to EX-012, path fixes), v1.4 (architectural review: REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019), v1.4.1 (consistency review: OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases, EX-014 ref)
+**Corrections**: Manual gap closure v1.2 (REQ-048/049), v1.3 (REQ-050/051, EX-009 to EX-012, path fixes), v1.4 (architectural review: REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019), v1.4.1 (consistency review: OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases, EX-014 ref), v1.5.0 (docs-008: REQ-066 no_relevant_context)
 
 ## 1. Introduction
 
@@ -622,6 +622,16 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - [ ] prompt_version included in QueryTrace
   - [ ] Template content change produces different prompt_version
   - [ ] Built-in default templates have documented prompt_version values
+
+### REQ-066: No relevant context response
+- **Priority**: should
+- **Description**: When all retrieved chunks score below the minimum relevance threshold (VEKTRA_MIN_RELEVANCE_SCORE), the system returns a graceful response with `no_relevant_context=true` instead of synthesizing an answer from irrelevant context. The response answer field explains that no relevant information was found and suggests ingesting additional documents. Sources array is empty. This is a distinct path from LLM degradation (REQ-059): retrieval succeeded but produced no usable results. Implemented in SimpleQueryPipeline (ARCH-056).
+- **Acceptance Criteria**:
+  - [ ] Given all retrieved chunks score below VEKTRA_MIN_RELEVANCE_SCORE, Then QueryResponse.no_relevant_context=True
+  - [ ] Given no_relevant_context=True, Then sources array is empty
+  - [ ] Given no_relevant_context=True, Then answer field contains a message explaining no relevant content was found (not null, not an error)
+  - [ ] Given no_relevant_context=True, Then retrieval_filter StepTrace records chunks_before, chunks_after=0, threshold value
+  - [ ] Given no_relevant_context=True, Then HTTP status is 200 (not an error response)
 
 ## 3. Business Rules
 

@@ -1,0 +1,15 @@
+[importlinter]
+root_packages =
+    vektra_shared
+include_external_packages = True
+
+[importlinter:contract:vektra-shared-isolation]
+name = vektra_shared must not import from other vektra components
+type = forbidden
+source_modules =
+    vektra_shared
+forbidden_modules =
+    vektra_core
+    vektra_ingest
+    vektra_index
+    vektra_admin

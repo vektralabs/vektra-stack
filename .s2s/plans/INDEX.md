@@ -74,9 +74,9 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-docs-008](20260217-docs-008.md) | Resolve `no_relevant_context` REQ gap | small | pending |
-| [20260217-infra-003](20260217-infra-003.md) | CODEOWNERS file | small | pending |
-| [20260217-component-shared](20260217-component-shared.md) | vektra_shared: Protocols, types, config, auth, ProviderRegistry | medium | pending |
+| [20260217-docs-008](20260217-docs-008.md) | Resolve `no_relevant_context` REQ gap | small | completed |
+| [20260217-infra-003](20260217-infra-003.md) | CODEOWNERS file | small | completed |
+| [20260217-component-shared](20260217-component-shared.md) | vektra_shared: Protocols, types, config, auth, ProviderRegistry | medium | completed |
 
 > **Note**: docs-008 must complete before Wave 3 (component-core uses the `QueryResponse.no_relevant_context` field decided here).
 
@@ -86,7 +86,7 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-infra-database](20260217-infra-database.md) | Database schema and Alembic migrations | medium | pending |
+| [20260217-infra-database](20260217-infra-database.md) | Database schema and Alembic migrations | medium | in_progress |
 
 > **Note**: infra-database codifies the BLOCKER resolutions from pre-implementation review (B-1/B-3: chunk deletion semantics + `chunks_removed` data source; B-2: `content_type` fallback to `application/octet-stream`).
 

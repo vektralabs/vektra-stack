@@ -1,6 +1,9 @@
 [importlinter]
 root_packages =
     vektra_shared
+    vektra_admin
+    vektra_core
+    vektra_ingest
 include_external_packages = True
 
 [importlinter:contract:vektra-shared-isolation]
@@ -13,3 +16,33 @@ forbidden_modules =
     vektra_ingest
     vektra_index
     vektra_admin
+
+[importlinter:contract:vektra-admin-isolation]
+name = vektra_admin must not import from other vektra components
+type = forbidden
+source_modules =
+    vektra_admin
+forbidden_modules =
+    vektra_core
+    vektra_ingest
+    vektra_index
+
+[importlinter:contract:vektra-core-isolation]
+name = vektra_core must not import from other vektra components
+type = forbidden
+source_modules =
+    vektra_core
+forbidden_modules =
+    vektra_admin
+    vektra_ingest
+    vektra_index
+
+[importlinter:contract:vektra-ingest-isolation]
+name = vektra_ingest must not import from other vektra components
+type = forbidden
+source_modules =
+    vektra_ingest
+forbidden_modules =
+    vektra_admin
+    vektra_core
+    vektra_index

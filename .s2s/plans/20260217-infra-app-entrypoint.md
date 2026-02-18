@@ -9,7 +9,7 @@ provides_requires:
     - "FastAPI.app:factory"
   requires:
     - "AuditMiddleware:class"
-    - "vektra_shared.audit.log_event:callable"
+    - "vektra_admin.audit.log_event:callable"
     - "LitellmProvider:class"
 ---
 # Implementation Plan: FastAPI application assembly and startup validation

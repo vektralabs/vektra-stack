@@ -1646,8 +1646,24 @@ dependencies = [
     { name = "vektra-shared" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "testcontainers" },
+]
+
 [package.metadata]
 requires-dist = [{ name = "vektra-shared", editable = "vektra-shared" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.8" },
+]
 
 [[package]]
 name = "vektra-core"
@@ -1657,8 +1673,24 @@ dependencies = [
     { name = "vektra-shared" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "testcontainers" },
+]
+
 [package.metadata]
 requires-dist = [{ name = "vektra-shared", editable = "vektra-shared" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.8" },
+]
 
 [[package]]
 name = "vektra-index"
@@ -1707,8 +1739,24 @@ dependencies = [
     { name = "vektra-shared" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "testcontainers" },
+]
+
 [package.metadata]
 requires-dist = [{ name = "vektra-shared", editable = "vektra-shared" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.8" },
+]
 
 [[package]]
 name = "vektra-shared"

@@ -3,8 +3,6 @@ provides_requires:
   provides:
     - "vektra_ingest.pipeline:module"
     - "arq.ingest_tasks:module"
-  requires:
-    - "vektra_shared.audit.log_event:callable"
 ---
 # Implementation Plan: vektra-ingest - Document processing pipeline and async jobs
 

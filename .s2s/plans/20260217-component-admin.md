@@ -2,7 +2,7 @@
 provides_requires:
   provides:
     - "vektra_admin.audit:module"
-    - "vektra_shared.audit.log_event:callable"
+    - "vektra_admin.audit.log_event:callable"
     - "AuditMiddleware:class"
 ---
 # Implementation Plan: vektra-admin - Health, API key management, audit log, namespace bootstrap
@@ -66,7 +66,7 @@ Implements the administration layer: two-tier health endpoints, API key CRUD wit
 - Audit log writes are fire-and-forget (do not block API response). Use FastAPI `BackgroundTasks` for async write. On audit log write failure, log a structured ERROR to application log (audit log integrity is NFR-007 HARD gate).
 - Health dashboard at GET /admin: returns minimal HTML page showing /health?detail=full JSON response rendered in a table. No JavaScript framework - plain HTML with inline CSS. Requires any valid Bearer token.
 - Prometheus metrics: starlette-prometheus middleware registered at application level, exposes GET /metrics. No authentication on /metrics (standard pattern for Prometheus scraping).
-- Audit function re-export: `vektra_admin/audit.py` implements `log_event()`. vektra_shared re-exports it as `vektra_shared.audit.log_event()` so that other components (vektra_ingest, vektra_core) can call it without importing vektra_admin directly (ADR-0005). The re-export is a thin import alias — no logic duplication.
+- Audit function injection (D3 fix): `vektra_shared/audit.py` already defines the interface (`log_event`, `set_log_fn`) — do NOT import vektra_admin from vektra_shared (violates import-linter contract). Instead, `vektra_admin/audit.py` implements the actual `log_event(**kwargs)` writer (SQLAlchemy insert into audit_log). At startup, infra-app-entrypoint calls `vektra_shared.audit.set_log_fn(vektra_admin.audit.log_event)` to inject the implementation. Other components call `vektra_shared.audit.log_event()` which delegates to the injected function (no-op before injection).
 - Middleware ownership: vektra_admin exports `AuditMiddleware` class; infra-app-entrypoint registers it. This pattern separates the implementation (here) from assembly (there), consistent with the modular monolith approach.
 
 ## Tasks

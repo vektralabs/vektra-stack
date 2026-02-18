@@ -52,8 +52,8 @@ No plan imports from a sibling component at the module level (ADR-0005).
 | # | Question | Answer | Note |
 |---|----------|--------|------|
 | D1 | Do all cross-component calls go through `vektra_shared` protocols or ProviderRegistry? | YES | component-ingest and component-core use ProviderRegistry for EmbeddingProvider and VectorStoreProvider. Audit log via vektra_shared.audit.log_event(), not direct vektra_admin import. |
-| D2 | Is import-linter configured to enforce component boundaries for all packages in this wave? | NO | Wave 3 plans don't include a task to add vektra-admin, vektra-core, vektra-ingest to import-linter root_packages. Must be added as first task in component-admin. |
-| D3 | Are there no new circular import paths introduced by this wave? | NO | DESIGN RISK: vektra_shared/audit.py described as "thin import alias" (from vektra_admin.audit import log_event). If implemented as a module-level alias, this creates a circular import: vektra_admin imports vektra_shared → vektra_shared.audit imports vektra_admin. Must use lazy import pattern instead (see required actions). |
+| D2 | Is import-linter configured to enforce component boundaries for all packages in this wave? | YES | RESOLVED: .importlinter updated with 4 contracts (vektra_shared, vektra_admin, vektra_core, vektra_ingest). All 4 contracts KEPT (27 files, 35 deps analyzed). |
+| D3 | Are there no new circular import paths introduced by this wave? | YES | RESOLVED: vektra_shared/audit.py created with set_log_fn() injection pattern. vektra_shared never imports vektra_admin. Implementation injected at startup by infra-app-entrypoint. import-linter contract vektra-shared-isolation enforces this boundary. |
 
 ## E — Decision closure
 
@@ -93,7 +93,7 @@ Test infrastructure for all Wave N plans is in place.
 
 | # | Question | Answer | Note |
 |---|----------|--------|------|
-| H1 | Do all async test files have `asyncio_mode = "auto"` in their pytest config? | NO | Wave 3 plans (component-admin, component-core, component-ingest) don't include a task to configure asyncio_mode = "auto". Must be added as first task in each component plan. |
+| H1 | Do all async test files have `asyncio_mode = "auto"` in their pytest config? | YES | RESOLVED: asyncio_mode = "auto" added to pyproject.toml of vektra-admin, vektra-core, vektra-ingest (same pattern as vektra-index). |
 | H2 | Do integration tests requiring PostgreSQL use testcontainers (not a shared external DB)? | YES | All three plans explicitly mention "testcontainers PostgreSQL". |
 | H3 | Do session fixtures create a per-test async engine (no asyncpg event-loop contamination)? | YES | Pattern established in Wave 2 (component-index). All Wave 3 plans inherit this convention. |
 | H4 | Is there at least one test per acceptance criterion for each Wave N plan? | YES | All three plans include explicit unit and integration test tasks covering each acceptance criterion. |
@@ -124,7 +124,7 @@ Run: `uv run python .s2s/scripts/verify_provides_requires.py`
 
 | # | Question | Answer | Note |
 |---|----------|--------|------|
-| K1 | Script exits 0 (PASS — no GAP, CONFLICT, or ORDER violations)? | YES | PASS: 5 plans with provides/requires, 15 tokens provided, 5 requires -- all satisfied. |
+| K1 | Script exits 0 (PASS — no GAP, CONFLICT, or ORDER violations)? | YES | PASS: 5 plans with provides/requires, 15 tokens provided, 4 requires -- all satisfied. |
 | K2 | All Wave N plans that produce shared artifacts have provides_requires front-matter? | YES | component-admin, component-core, component-ingest all have provides_requires front-matter. |
 
 ## L — State machine completeness (automated)
@@ -146,36 +146,30 @@ Run: `uv run python .s2s/scripts/verify_state_machines.py`
 | A Ownership | 4 | 4 | 0 | 0 |
 | B Assembly | 3 | 3 | 0 | 0 |
 | C Background | 3 | 3 | 0 | 0 |
-| D Import boundary | 3 | 1 | 2 | 0 |
+| D Import boundary | 3 | 3 | 0 | 0 |
 | E Decision closure | 3 | 3 | 0 | 0 |
 | F Cache writes | 3 | 3 | 0 | 0 |
 | G Protocol contracts | 5 | 4 | 0 | 1 |
-| H Test infrastructure | 4 | 3 | 1 | 0 |
+| H Test infrastructure | 4 | 4 | 0 | 0 |
 | I NFR measurement | 4 | 2 | 0 | 2 |
 | J RTM | 2 | 2 | 0 | 0 |
 | K Provides/requires | 2 | 2 | 0 | 0 |
 | L State machines | 3 | 3 | 0 | 0 |
-| **Total** | **39** | **33** | **3** | **3** |
+| **Total** | **39** | **36** | **0** | **3** |
 
 ## Required actions before proceeding
 
-- [ ] **D2**: Add vektra-admin, vektra-core, vektra-ingest to import-linter `root_packages` and boundary contracts. First task of component-admin implementation.
-- [ ] **D3**: Implement `vektra_shared/audit.py` re-export as **lazy import** (not module-level alias) to avoid circular dependency. `vektra_admin` imports `vektra_shared`; a module-level `from vektra_admin.audit import log_event` in `vektra_shared/audit.py` would be circular. Correct pattern:
-  ```python
-  # vektra_shared/audit.py
-  def log_event(*args, **kwargs):
-      from vektra_admin.audit import log_event as _impl
-      return _impl(*args, **kwargs)
-  ```
-  This must be documented as a constraint in component-admin before coding starts.
-- [ ] **H1**: Add `asyncio_mode = "auto"` to pytest config for vektra-admin, vektra-core, vektra-ingest. First task of each component plan.
+None.
 
 ## Status
 
-**BLOCKED**
+**READY TO PROCEED**
 
-Blocking items: D2, D3, H1
+Blocking items: none
 
 ---
 
-*Note: D3 is the most critical item — it's a design constraint that must be clarified before writing component-admin code. D2 and H1 can be resolved as the literal first tasks of each component's implementation session.*
+*Blocchi D2, D3, H1 risolti prima dell'implementazione:*
+- *D3: vektra_shared/audit.py creato con set_log_fn() injection pattern (no circular import, import-linter safe)*
+- *D2: .importlinter aggiornato con 4 contratti, tutti KEPT*
+- *H1: asyncio_mode = "auto" aggiunto a vektra-admin, vektra-core, vektra-ingest pyproject.toml*

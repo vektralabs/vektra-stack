@@ -96,7 +96,7 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-component-index](20260217-component-index.md) | vektra-index: vector store, semantic search, metadata filtering | large | pending |
+| [20260217-component-index](20260217-component-index.md) | vektra-index: vector store, semantic search, metadata filtering | large | in_progress |
 
 > **Note**: component-index loads the shared EmbeddingProvider (SentenceTransformersProvider). Both vektra-ingest and vektra-core use this shared instance via ProviderRegistry - no double model loading.
 

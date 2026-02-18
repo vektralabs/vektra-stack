@@ -1,10 +1,10 @@
 # Implementation Plan: vektra-index - Vector store, semantic search, metadata filtering
 
 **ID**: 20260217-component-index
-**Status**: active
+**Status**: in_progress
 **Branch**: N/A
 **Created**: 2026-02-17T22:42:39Z
-**Updated**: 2026-02-17T22:42:39Z
+**Updated**: 2026-02-18T00:00:00Z
 
 ## Traceability
 
@@ -56,25 +56,23 @@ Implements the vector storage and retrieval module. PgvectorProvider implements 
 
 ## Tasks
 
-- [ ] Create `vektra_index/models.py` with SQLAlchemy ORM models for `document_chunks` and `source_documents` (namespace-scoped, matching infra-database schema)
-- [ ] Implement `vektra_index/providers/sentence_transformers.py` as SentenceTransformersProvider implementing EmbeddingProvider Protocol: `embed_documents(texts)` using "passage: " prefix awareness, `embed_query(text)` using "query: " prefix awareness, `dimensions()` returns 384 for all-MiniLM-L6-v2, `health_check()` returns ok/unavailable; model loaded once at module import (singleton pattern)
-- [ ] Implement `vektra_index/providers/pgvector.py` as PgvectorProvider implementing VectorStoreProvider Protocol:
-  - `store(namespace_id, document_id, chunks: list[ChunkEmbedding])`: bulk INSERT into document_chunks within a transaction; on partial failure, DELETE all inserted chunks (ARCH-052 compensating delete for atomicity)
-  - `search(namespace_id, query: QueryEmbedding, mode: SearchMode, top_k, filters: SearchFilters | None, raw_filters, index_version)`: cosine similarity search with pgvector `<=>` operator, combined with JSONB metadata filtering and index_version WHERE clause in a single SQL; returns list[SearchResult] with chunk_id, document_id, score, text_snippet
-  - `delete(namespace_id, document_id)`: transaction: SELECT COUNT chunks, DELETE chunks, return count; soft-delete source_document
-  - `health_check()`: simple SELECT 1 FROM document_chunks LIMIT 1
-- [ ] Implement ARCH-051 full-store operations: namespace chunk count, document count (for GET /stats)
-- [ ] Create `vektra_index/api.py` with FastAPI router mounting at `/api/v1`:
-  - `POST /documents/{id}/chunks`: accept ChunkEmbedding list, namespace parameter, call store(); require `ingest` or `admin` scope
-  - `POST /search`: accept QueryRequest with question, namespace, top_k, filters; call embed_query() then search(); require `query` or `admin` scope
-  - `DELETE /documents/{id}`: require `admin` scope; call delete(); return {document_id, chunks_removed}
-  - `GET /stats`: accept optional namespace filter; return {document_count, chunk_count, namespace}; require any valid scope
-  - `GET /health`: component health check (unauthenticated shallow, passes through to VectorStoreProvider.health_check())
-- [ ] Register SentenceTransformersProvider and PgvectorProvider in startup via ProviderRegistry
-- [ ] Write startup validation steps (ARCH-057 steps 5+6): provider registration check, embedding model warm-up (embed one sentence and verify dimensionality)
-- [ ] Write unit tests for PgvectorProvider: mock AsyncSession, verify SQL structure (index_version filter present, JSONB filter combined, transaction behavior on partial failure)
-- [ ] Write integration tests (requires PostgreSQL + pgvector): store 100 chunks, search returns top-k with correct ordering, DELETE removes all chunks and soft-deletes document, stats returns accurate counts, namespace isolation (search in namespace A does not return namespace B results)
-- [ ] Benchmark search latency: 10,000 chunks indexed, 100 queries, verify p95 < 500ms (NFR-002)
+- [x] Create `vektra_index/models.py` with SQLAlchemy ORM models for `document_chunks` and `source_documents` (NOTE: use `chunk_metadata = mapped_column("metadata", ...)` - 'metadata' is reserved by DeclarativeBase)
+- [x] Implement `vektra_index/providers/sentence_transformers.py` as SentenceTransformersProvider implementing EmbeddingProvider Protocol
+- [x] Implement `vektra_index/providers/pgvector.py` as PgvectorProvider implementing VectorStoreProvider Protocol (store, search, delete, health_check, namespace_stats)
+- [x] Implement ARCH-051 full-store operations: namespace chunk count, document count (for GET /stats)
+- [x] Create `vektra_index/api.py` with FastAPI router mounting at `/api/v1` (store/search/delete/stats/health)
+- [ ] Register SentenceTransformersProvider and PgvectorProvider in startup via ProviderRegistry (deferred to infra-app-entrypoint plan which creates the app factory)
+- [x] Write startup validation steps (ARCH-057 steps 5+6): `vektra_index/startup.py` implemented
+- [x] Write unit tests for PgvectorProvider: 8 unit tests passing (test_pgvector_unit.py)
+- [ ] Write integration tests (requires PostgreSQL + pgvector): test_integration.py written, skipped without Docker - VERIFY when Docker available
+- [ ] Benchmark search latency: 10,000 chunks indexed, 100 queries, verify p95 < 500ms (NFR-002) - NOT YET DONE
+
+## Notes (2026-02-18)
+
+Session stopped here to compact context. Resume from first unchecked task:
+- Provider registration in ProviderRegistry is intentionally deferred to infra-app-entrypoint.
+- Next: verify integration tests with Docker, then write benchmark test.
+- SentenceTransformersProvider test_embedding_provider.py is written but not yet run (uses real model, ~1GB download on first run).
 
 ## Acceptance Criteria
 

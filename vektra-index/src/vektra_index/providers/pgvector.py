@@ -54,8 +54,9 @@ class PgvectorProvider:
     ) -> list[str]:
         """Bulk-insert chunks into document_chunks.
 
-        On partial failure, compensating DELETE removes all chunks for this
-        document_id in the same transaction (ARCH-052).
+        All objects are added and flushed in a single batch. If flush fails,
+        no rows have been written; the caller's transaction rollback handles
+        cleanup (single-batch atomicity makes a compensating DELETE redundant).
 
         Returns list of inserted chunk IDs (str, not UUID per ARCH-051).
         """
@@ -65,32 +66,21 @@ class PgvectorProvider:
         from vektra_index.models import DocumentChunkOrm
 
         inserted_ids: list[str] = []
-        try:
-            for position, chunk in enumerate(chunks):
-                chunk_id = uuid4()
-                orm_obj = DocumentChunkOrm(
-                    id=chunk_id,
-                    document_id=document_id,
-                    namespace_id=namespace,
-                    content=chunk.text,
-                    embedding=chunk.dense,
-                    chunk_metadata=chunk.metadata,
-                    position=chunk.metadata.get("position", position),
-                    index_version=self._active_index_version,
-                )
-                session.add(orm_obj)
-                inserted_ids.append(str(chunk_id))
-            await session.flush()
-        except Exception:
-            # Compensating delete: remove any chunks already flushed for this document
-            await session.execute(
-                delete(DocumentChunkOrm).where(
-                    DocumentChunkOrm.document_id == document_id,
-                    DocumentChunkOrm.namespace_id == namespace,
-                )
+        for position, chunk in enumerate(chunks):
+            chunk_id = uuid4()
+            orm_obj = DocumentChunkOrm(
+                id=chunk_id,
+                document_id=document_id,
+                namespace_id=namespace,
+                content=chunk.text,
+                embedding=chunk.dense,
+                chunk_metadata=chunk.metadata,
+                position=chunk.metadata.get("position", position),
+                index_version=self._active_index_version,
             )
-            await session.flush()
-            raise
+            session.add(orm_obj)
+            inserted_ids.append(str(chunk_id))
+        await session.flush()
 
         return inserted_ids
 

@@ -36,6 +36,20 @@ class Base(DeclarativeBase):
     pass
 
 
+class NamespaceOrm(Base):
+    """ORM mapping for the namespaces table (ARCH-047).
+
+    Required by SQLAlchemy's FK resolution: DocumentChunkOrm and
+    SourceDocumentOrm both reference namespaces.id; without this model
+    the ORM cannot determine flush ordering and raises NoReferencedTableError.
+    """
+
+    __tablename__ = "namespaces"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class DocumentChunkOrm(Base):
     """ORM mapping for document_chunks table (ARCH-044, ARCH-051)."""
 

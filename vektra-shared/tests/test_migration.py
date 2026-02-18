@@ -55,7 +55,7 @@ def migrated_db(postgres_url):
     env = os.environ.copy()
     env["VEKTRA_DATABASE_URL"] = postgres_url
 
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     result = subprocess.run(
         ["uv", "run", "alembic", "upgrade", "head"],
         capture_output=True,
@@ -199,7 +199,7 @@ async def test_migration_idempotent(migrated_db):
     env = os.environ.copy()
     env["VEKTRA_DATABASE_URL"] = migrated_db
 
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     result = subprocess.run(
         ["uv", "run", "alembic", "upgrade", "head"],
         capture_output=True,

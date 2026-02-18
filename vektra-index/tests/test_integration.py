@@ -45,7 +45,7 @@ def db_url():
         # Apply migrations
         env = os.environ.copy()
         env["VEKTRA_DATABASE_URL"] = async_url
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         result = subprocess.run(
             ["uv", "run", "alembic", "upgrade", "head"],
             capture_output=True, text=True, cwd=project_root, env=env
@@ -73,10 +73,21 @@ def embedding_provider():
 
 @pytest.fixture
 async def session(db_url):
-    from vektra_shared.db import get_session
-    async for s in get_session():
-        yield s
-        await s.rollback()
+    """Create a fresh engine per test to avoid asyncpg connections leaking across event loops.
+
+    Each test function gets its own event loop (asyncio_mode=auto default).
+    Re-using a shared pool would leave connections bound to the previous
+    test's (now-closed) event loop, causing RuntimeError on teardown.
+    A per-test engine is disposed at the end, so next test starts clean.
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+    engine = create_async_engine(db_url, pool_size=2, max_overflow=0)
+    try:
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with factory() as s:
+            yield s
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

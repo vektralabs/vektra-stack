@@ -86,7 +86,7 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-infra-database](20260217-infra-database.md) | Database schema and Alembic migrations | medium | in_progress |
+| [20260217-infra-database](20260217-infra-database.md) | Database schema and Alembic migrations | medium | completed |
 
 > **Note**: infra-database codifies the BLOCKER resolutions from pre-implementation review (B-1/B-3: chunk deletion semantics + `chunks_removed` data source; B-2: `content_type` fallback to `application/octet-stream`).
 

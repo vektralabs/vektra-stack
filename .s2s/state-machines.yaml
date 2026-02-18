@@ -1,0 +1,413 @@
+# State Machine Specification — SPV Level 4
+# Generated: 2026-02-18
+#
+# Coverage rule: for every (state, event) pair, there must be either a
+# transition OR an implicitly_ignored entry. The verification script checks
+# the Cartesian product of states × events for each component.
+version: "1.0"
+
+stateful_components:
+
+  # ---------------------------------------------------------------------------
+  - id: ingest_job
+    description: "Lifecycle of an arq background ingestion job from submission to terminal outcome."
+    references:
+      - "BR-004"
+      - "REQ-002"
+      - "REQ-014"
+      - "REQ-029"
+      - "NFR-005"
+      - "NFR-010"
+      - "ARCH-005"
+      - "ARCH-009"
+    states:
+      - PENDING      # job record created, not yet picked up by arq worker
+      - EXTRACTING   # worker dequeued job, DocumentExtractor running (sub-phase of PROCESSING)
+      - CHUNKING     # chunking step in progress (sub-phase of PROCESSING)
+      - EMBEDDING    # embedding generation in progress (sub-phase of PROCESSING)
+      - INDEXING     # storing chunks into VectorStoreProvider (sub-phase of PROCESSING)
+      - INDEXED      # all chunks stored, document is queryable — terminal success
+      - FAILED       # pipeline error; error_code available — terminal failure
+      - CANCELLED    # job cancelled before worker picked it up — terminal cancellation
+    events:
+      - enqueue       # arq worker picks up the job record
+      - start_extract # extraction step begins
+      - start_chunk   # chunking step begins
+      - start_embed   # embedding step begins
+      - start_index   # storage step begins
+      - complete      # all chunks stored successfully
+      - fail          # any step raises an unrecoverable error
+      - cancel        # operator cancels a pending job via API (Phase 1: not exposed, reserved)
+    transitions:
+      - from: PENDING
+        event: enqueue
+        to: EXTRACTING
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "arq worker dequeues job and begins extraction."
+      - from: PENDING
+        event: fail
+        to: FAILED
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Worker fails to start (e.g., document record missing)."
+      - from: PENDING
+        event: cancel
+        to: CANCELLED
+        handler: "vektra_ingest/api.py"
+        description: "Operator cancels a job while it is still queued."
+      - from: EXTRACTING
+        event: start_chunk
+        to: CHUNKING
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Extraction complete, chunking begins."
+      - from: EXTRACTING
+        event: fail
+        to: FAILED
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Extraction error (e.g., scanned PDF detected, unsupported format)."
+      - from: CHUNKING
+        event: start_embed
+        to: EMBEDDING
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Chunking complete, embedding generation begins."
+      - from: CHUNKING
+        event: fail
+        to: FAILED
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Chunking error (e.g., token counting failure)."
+      - from: EMBEDDING
+        event: start_index
+        to: INDEXING
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Embeddings generated, chunk storage begins."
+      - from: EMBEDDING
+        event: fail
+        to: FAILED
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Embedding provider error."
+      - from: INDEXING
+        event: complete
+        to: INDEXED
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "All chunks stored atomically; source_document.chunk_count updated."
+      - from: INDEXING
+        event: fail
+        to: FAILED
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Storage failure; compensating delete removes partial chunks (BR-003, ARCH-052)."
+    implicitly_ignored:
+      - state: INDEXED
+        events: [enqueue, start_extract, start_chunk, start_embed, start_index, complete, fail, cancel]
+        reason: "Terminal success state — job is immutable; all events are no-ops."
+      - state: FAILED
+        events: [enqueue, start_extract, start_chunk, start_embed, start_index, complete, fail, cancel]
+        reason: "Terminal failure state — job is immutable; retry would create a new job record."
+      - state: CANCELLED
+        events: [enqueue, start_extract, start_chunk, start_embed, start_index, complete, fail, cancel]
+        reason: "Terminal cancellation state — job is immutable."
+      - state: EXTRACTING
+        events: [enqueue, start_extract, start_embed, start_index, complete, cancel]
+        reason: "enqueue/start_extract already consumed; start_embed/start_index are phase-skipping (impossible); complete requires intermediate steps first; cancel not supported mid-processing in Phase 1."
+      - state: CHUNKING
+        events: [enqueue, start_extract, start_chunk, start_index, complete, cancel]
+        reason: "Earlier events already consumed; start_index is phase-skipping (embedding must precede indexing); complete requires embedding and indexing first; cancel not supported mid-processing in Phase 1."
+      - state: EMBEDDING
+        events: [enqueue, start_extract, start_chunk, start_embed, complete, cancel]
+        reason: "Earlier events already consumed; complete requires indexing first; cancel not supported mid-processing in Phase 1."
+      - state: INDEXING
+        events: [enqueue, start_extract, start_chunk, start_embed, start_index, cancel]
+        reason: "Earlier events already consumed; cancel not supported mid-processing in Phase 1."
+      - state: PENDING
+        events: [start_extract, start_chunk, start_embed, start_index, complete]
+        reason: "Processing sub-steps cannot occur before enqueue picks up the job."
+
+  # ---------------------------------------------------------------------------
+  - id: api_key
+    description: "Lifecycle of an API key from creation to permanent revocation."
+    references:
+      - "REQ-019"
+      - "REQ-020"
+      - "REQ-022"
+      - "REQ-023"
+      - "REQ-031"
+      - "REQ-036"
+      - "ARCH-023"
+      - "ADR-0010"
+    states:
+      - ACTIVE    # key is valid and can authenticate requests
+      - REVOKED   # key has been soft-deleted (revoked_at set); authentication rejected — terminal
+    events:
+      - create    # POST /api/v1/api-keys: key generated, hashed, inserted into api_keys table
+      - use       # any authenticated request: key verified against hash, last_used_at updated
+      - revoke    # DELETE /api/v1/api-keys/{id}: revoked_at set, cache updated immediately
+    transitions:
+      - from: ACTIVE
+        event: use
+        to: ACTIVE
+        handler: "vektra_shared/auth.py"
+        description: "Key verified; last_used_at updated; key remains ACTIVE."
+      - from: ACTIVE
+        event: revoke
+        to: REVOKED
+        handler: "vektra_admin/api.py:delete_api_key"
+        description: "Soft-delete sets revoked_at; LRU cache invalidated immediately (ARCH-023)."
+    implicitly_ignored:
+      - state: ACTIVE
+        events: [create]
+        reason: "create is a constructor event — no valid ACTIVE-to-ACTIVE create transition exists; each key creation produces a new independent entity."
+      - state: REVOKED
+        events: [create, use, revoke]
+        reason: "Terminal state — revoked keys are immutable; authentication with a revoked key is rejected at middleware, not treated as a state transition."
+
+  # ---------------------------------------------------------------------------
+  - id: source_document
+    description: "Lifecycle of an ingested source document including deduplication and GDPR-compliant soft delete."
+    references:
+      - "REQ-033"
+      - "REQ-034"
+      - "REQ-035"
+      - "REQ-057"
+      - "REQ-056"
+      - "BR-003"
+      - "BR-005"
+      - "ARCH-032"
+      - "ARCH-040"
+      - "ARCH-051"
+    states:
+      - PENDING    # record inserted, ingest_job not yet complete
+      - INDEXED    # all chunks stored, document is queryable
+      - FAILED     # associated ingest_job failed; document record retained for audit
+      - DELETED    # soft-deleted (deleted_at set, deletion_reason recorded) — terminal
+    events:
+      - create            # POST /ingest: source_document row created with SHA-256 hash
+      - mark_indexed      # ingest_job reaches INDEXED; source_document.chunk_count updated
+      - mark_failed       # ingest_job reaches FAILED; source_document retained with error context
+      - soft_delete       # DELETE /documents/{id}: sets deleted_at and deletion_reason (REQ-057)
+      - alias_added       # same content hash, different filename: filename_aliases updated (BR-005)
+      - reindex_requested # content hash change triggers delete-then-reindex (ARCH-032; Phase 2)
+    transitions:
+      - from: PENDING
+        event: mark_indexed
+        to: INDEXED
+        handler: "vektra_ingest/pipeline.py:IngestPipeline.process"
+        description: "Job completes successfully; document is now queryable."
+      - from: PENDING
+        event: mark_failed
+        to: FAILED
+        handler: "vektra_ingest/jobs.py:ingest_document_task"
+        description: "Job fails; document record kept for audit; no chunks queryable (BR-003)."
+      - from: PENDING
+        event: soft_delete
+        to: DELETED
+        handler: "vektra_index/api.py:delete_document"
+        description: "Operator deletes document before indexing completes."
+      - from: INDEXED
+        event: soft_delete
+        to: DELETED
+        handler: "vektra_index/api.py:delete_document"
+        description: "Soft-delete sets deleted_at; document excluded from all queries and dedup checks."
+      - from: INDEXED
+        event: alias_added
+        to: INDEXED
+        handler: "vektra_ingest/pipeline.py:IngestPipeline.process"
+        description: "Identical content re-uploaded with different filename; filename_aliases updated (BR-005)."
+      - from: INDEXED
+        event: reindex_requested
+        to: PENDING
+        handler: "vektra_ingest/pipeline.py:IngestPipeline.process"
+        description: "Content change triggers delete-then-reindex; new PENDING record created for new index_version."
+      - from: FAILED
+        event: soft_delete
+        to: DELETED
+        handler: "vektra_index/api.py:delete_document"
+        description: "Operator cleans up a failed document record."
+    implicitly_ignored:
+      - state: DELETED
+        events: [create, mark_indexed, mark_failed, soft_delete, alias_added, reindex_requested]
+        reason: "Terminal state — soft-deleted documents are excluded from all operations; the row is retained for audit only."
+      - state: PENDING
+        events: [create, alias_added, reindex_requested]
+        reason: "create is the constructor event and produces a new row; alias and reindex are only meaningful for INDEXED documents."
+      - state: INDEXED
+        events: [create, mark_indexed, mark_failed]
+        reason: "create produces a new row; mark_indexed and mark_failed are ingest-job events consumed before INDEXED is reached."
+      - state: FAILED
+        events: [create, mark_indexed, mark_failed, alias_added, reindex_requested]
+        reason: "create produces a new row; indexing events are inapplicable to a failed document; alias/reindex require a valid INDEXED document."
+
+  # ---------------------------------------------------------------------------
+  - id: conversation
+    description: "Lifecycle of a multi-turn conversation context stored in memory for the duration of the process."
+    references:
+      - "REQ-049"
+      - "REQ-051"
+      - "ARCH-031"
+      - "ARCH-055"
+    states:
+      - ACTIVE    # conversation exists in memory; turns can be appended
+      - PRUNED    # oldest turns have been dropped to stay within VEKTRA_MAX_CONVERSATION_TURNS; conversation still ACTIVE
+      - EXPIRED   # process restarted; in-memory conversation lost (documented Phase 1 behavior)
+    events:
+      - create        # first query references no conversation_id; new UUID allocated
+      - add_turn      # POST /query with conversation_id: question+answer appended
+      - prune         # max_turns exceeded; oldest turns removed (ARCH-055 sliding window)
+      - process_restart  # container restarts; in-memory store cleared
+    transitions:
+      - from: ACTIVE
+        event: add_turn
+        to: ACTIVE
+        handler: "vektra_core/conversation.py:ConversationStore.add_turn"
+        description: "New turn appended; history available for next query."
+      - from: ACTIVE
+        event: prune
+        to: PRUNED
+        handler: "vektra_core/conversation.py:ConversationStore.prune"
+        description: "Turn count exceeds VEKTRA_MAX_CONVERSATION_TURNS; oldest turns removed."
+      - from: ACTIVE
+        event: process_restart
+        to: EXPIRED
+        handler: "vektra_core/conversation.py:ConversationStore.__init__"
+        description: "In-memory dict cleared on process restart; conversation lost (Phase 1 design)."
+      - from: PRUNED
+        event: add_turn
+        to: PRUNED
+        handler: "vektra_core/conversation.py:ConversationStore.add_turn"
+        description: "Turn appended to a pruned conversation; may trigger further pruning."
+      - from: PRUNED
+        event: prune
+        to: PRUNED
+        handler: "vektra_core/conversation.py:ConversationStore.prune"
+        description: "Pruning applied again when a new add_turn pushes over the limit."
+      - from: PRUNED
+        event: process_restart
+        to: EXPIRED
+        handler: "vektra_core/conversation.py:ConversationStore.__init__"
+        description: "In-memory dict cleared on process restart."
+    implicitly_ignored:
+      - state: ACTIVE
+        events: [create]
+        reason: "create is the constructor event; calling it again would produce a new conversation, not modify the existing one."
+      - state: PRUNED
+        events: [create]
+        reason: "Same as ACTIVE — create produces a new entity."
+      - state: EXPIRED
+        events: [create, add_turn, prune, process_restart]
+        reason: "Terminal state for a conversation instance — expired conversations cannot be resumed in Phase 1; a new conversation_id must be issued."
+
+  # ---------------------------------------------------------------------------
+  - id: provider_health
+    description: "Observed health state of a registered Protocol provider (LLM, embedding, vector store) as reported by periodic health_check() calls."
+    references:
+      - "ARCH-022"
+      - "ARCH-027"
+      - "ARCH-039"
+      - "ARCH-043"
+      - "ARCH-057"
+      - "REQ-004"
+      - "REQ-025"
+    states:
+      - UNKNOWN      # provider registered but not yet checked (before first health_check())
+      - OK           # last health_check() succeeded within latency threshold
+      - DEGRADED     # health_check() succeeded but latency above threshold or partial failure
+      - DOWN         # health_check() failed or timed out
+    events:
+      - register         # provider added to ProviderRegistry (ARCH-057 step 5)
+      - check_ok         # health_check() returns success within latency threshold
+      - check_degraded   # health_check() returns success but latency is elevated
+      - check_failed     # health_check() raises exception or times out
+      - health_requested # GET /health or GET /health/{component} triggers a check
+    transitions:
+      - from: UNKNOWN
+        event: register
+        to: UNKNOWN
+        handler: "vektra_index/adapters.py:VectorStoreServiceAdapter / vektra_core/providers/litellm_provider.py:LitellmProvider"
+        description: "Provider instance created and registered; initial state is UNKNOWN until first check."
+      - from: UNKNOWN
+        event: check_ok
+        to: OK
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "First health_check() succeeds; provider transitions to OK."
+      - from: UNKNOWN
+        event: check_degraded
+        to: DEGRADED
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "First health_check() returns elevated latency."
+      - from: UNKNOWN
+        event: check_failed
+        to: DOWN
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "First health_check() fails; startup step 7 (LLM) is warning-only, steps 2-6 are fatal (ARCH-057)."
+      - from: UNKNOWN
+        event: health_requested
+        to: UNKNOWN
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Health endpoint triggers a check cycle; state update depends on outcome (check_ok / check_degraded / check_failed follows)."
+      - from: OK
+        event: check_ok
+        to: OK
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Repeated successful check; state unchanged."
+      - from: OK
+        event: check_degraded
+        to: DEGRADED
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Provider response time elevated; marked DEGRADED."
+      - from: OK
+        event: check_failed
+        to: DOWN
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Provider unreachable; marked DOWN. Graceful degradation path activates (ARCH-043)."
+      - from: OK
+        event: health_requested
+        to: OK
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Health endpoint triggers synchronous check; result reflected in response."
+      - from: DEGRADED
+        event: check_ok
+        to: OK
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Provider recovers; latency back within threshold."
+      - from: DEGRADED
+        event: check_degraded
+        to: DEGRADED
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Continues degraded; no state change."
+      - from: DEGRADED
+        event: check_failed
+        to: DOWN
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Provider fully unreachable after degraded period."
+      - from: DEGRADED
+        event: health_requested
+        to: DEGRADED
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Health endpoint triggers check; current DEGRADED state returned."
+      - from: DOWN
+        event: check_ok
+        to: OK
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Provider recovers; transitions directly to OK."
+      - from: DOWN
+        event: check_degraded
+        to: DEGRADED
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Provider partially recovers; elevated latency detected."
+      - from: DOWN
+        event: check_failed
+        to: DOWN
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Provider still unreachable; state unchanged."
+      - from: DOWN
+        event: health_requested
+        to: DOWN
+        handler: "vektra_admin/health.py:HealthAggregator.aggregate"
+        description: "Health endpoint returns DOWN status; GET /health returns 503 if all critical providers are DOWN."
+    implicitly_ignored:
+      - state: OK
+        events: [register]
+        reason: "register is a one-time constructor event; a provider cannot be registered again while already in a known health state."
+      - state: DEGRADED
+        events: [register]
+        reason: "Same as OK — register only applies at initial ProviderRegistry population."
+      - state: DOWN
+        events: [register]
+        reason: "Same as OK — register only applies at initial ProviderRegistry population."

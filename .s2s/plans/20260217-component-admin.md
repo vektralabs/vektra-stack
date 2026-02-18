@@ -1,3 +1,10 @@
+---
+provides_requires:
+  provides:
+    - "vektra_admin.audit:module"
+    - "vektra_shared.audit.log_event:callable"
+    - "AuditMiddleware:class"
+---
 # Implementation Plan: vektra-admin - Health, API key management, audit log, namespace bootstrap
 
 **ID**: 20260217-component-admin

@@ -15,6 +15,7 @@ dev = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.8" },
 ]
 

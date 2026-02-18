@@ -1,3 +1,11 @@
+---
+provides_requires:
+  provides:
+    - "docker.compose:stack"
+    - "vektra-worker:service"
+  requires:
+    - "FastAPI.app:factory"
+---
 # Implementation Plan: Docker Compose stack, Dockerfile, and deployment configs
 
 **ID**: 20260217-infra-docker

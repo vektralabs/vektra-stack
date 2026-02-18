@@ -1,3 +1,9 @@
+---
+provides_requires:
+  provides:
+    - "LitellmProvider:class"
+    - "SimpleQueryPipeline:class"
+---
 # Implementation Plan: vektra-core - QueryPipeline, LLM abstraction, streaming, conversations
 
 **ID**: 20260217-component-core

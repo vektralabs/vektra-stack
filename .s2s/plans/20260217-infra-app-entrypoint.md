@@ -1,3 +1,17 @@
+---
+provides_requires:
+  provides:
+    - "VectorStoreServiceAdapter:class"
+    - "ProviderRegistry[LLMProvider]:registered"
+    - "ProviderRegistry[EmbeddingProvider]:registered"
+    - "ProviderRegistry[VectorStoreProvider]:registered"
+    - "AuditMiddleware:registered"
+    - "FastAPI.app:factory"
+  requires:
+    - "AuditMiddleware:class"
+    - "vektra_shared.audit.log_event:callable"
+    - "LitellmProvider:class"
+---
 # Implementation Plan: FastAPI application assembly and startup validation
 
 **ID**: 20260217-infra-app-entrypoint

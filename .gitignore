@@ -71,7 +71,9 @@ temp/
 !.s2s/decisions/**
 !.s2s/plans/
 !.s2s/plans/**
-# Note: sessions/ intentionally NOT tracked - they are temporary working artifacts
+!.s2s/traceability.yaml
+!.s2s/state-machines.yaml
+# Note: sessions/ and scripts/ intentionally NOT tracked - they are temporary/local tooling
 
 # All docs/ content is public - no exclusions
 

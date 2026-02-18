@@ -58,6 +58,10 @@ Implements the document processing pipeline: magic bytes detection, text extract
 
 **BLOCKER B-2 resolution**: `document_chunks.content_type` is populated with the MIME type detected by python-magic. If detection fails or returns an unknown type, falls back to `'application/octet-stream'` (never NULL, never empty). This behavior is implemented in the magic bytes detection layer before DocumentExtractor dispatch.
 
+**VectorStoreProvider access pattern**: vektra-ingest does NOT call vektra-index via HTTP, and does NOT import vektra-index code directly (ADR-0005). Instead, infra-app-entrypoint registers a `VectorStoreServiceAdapter` into ProviderRegistry. The adapter wraps `PgvectorProvider` with an internally-managed session, implementing the session-free `VectorStoreProvider` Protocol. vektra-ingest retrieves this adapter from ProviderRegistry via `registry.get(VectorStoreProvider)`. The adapter's `store()` method opens a session internally, calls `PgvectorProvider.store(session, ...)`, and commits. The implementation of `VectorStoreServiceAdapter` lives in `vektra_index/adapters.py` and is created and registered by `infra-app-entrypoint`.
+
+**Audit log boundary**: all ingest audit writes must go through `vektra_shared.audit.log_event()`. This function is implemented in vektra_admin but re-exported from vektra_shared so that other components can call it without importing vektra_admin directly. Direct import of `vektra_admin.audit` from vektra_ingest would violate ADR-0005.
+
 - python-magic requires libmagic on Linux (documented in Dockerfile and getting-started guide).
 - Scanned PDF detection: text extraction yields < 100 characters per page (average of first 5 pages). Detection occurs before chunking (fail fast per REQ-016). Rejected with ERR-INGEST-003.
 - For > 10MB files, the POST /ingest endpoint creates an ingest_job record, returns 202 with job_id, and enqueues an arq task. Job status survives container restarts because it's persisted in PostgreSQL (ADR-0006).
@@ -72,13 +76,13 @@ Implements the document processing pipeline: magic bytes detection, text extract
 - [ ] Implement `vektra_ingest/extractors/word.py` as WordExtractor implementing DocumentExtractor Protocol: extracts paragraphs and headings via python-docx, logs warnings on tables/images/embedded objects, returns `AsyncIterator[DocumentChunk]`
 - [ ] Implement `vektra_ingest/extractors/powerpoint.py` as PowerPointExtractor implementing DocumentExtractor Protocol: extracts slide titles, text boxes, speaker notes in slide order via python-pptx, logs warnings on charts/SmartArt/embedded media
 - [ ] Implement `vektra_ingest/chunking.py` as FixedSizeChunking implementing ChunkingStrategy Protocol: tokenizes with tiktoken, splits at VEKTRA_CHUNK_SIZE with VEKTRA_CHUNK_OVERLAP overlap, preserves chunk_index and token_count, returns `AsyncIterator[DocumentChunk]`
-- [ ] Implement `vektra_ingest/pipeline.py` as the core ingestion function: compute SHA-256 → check duplicate (REQ-033) → detect content_type → dispatch to DocumentExtractor → FixedSizeChunking → embed via shared EmbeddingProvider → store via VectorStoreProvider (POST /documents/{id}/chunks) → update source_document.chunk_count → emit EventEmitter events
+- [ ] Implement `vektra_ingest/pipeline.py` as the core ingestion function: compute SHA-256 → check duplicate (REQ-033) → detect content_type → dispatch to DocumentExtractor → FixedSizeChunking → embed via shared EmbeddingProvider (from ProviderRegistry) → store via VectorStoreProvider (from ProviderRegistry, session-managed; see Design Notes for access pattern) → update source_document.chunk_count → emit EventEmitter events
 - [ ] Implement deduplication logic: if content_hash exists and not soft-deleted → return 200 with existing document_id and status='exists'; if same content_hash but different filename → update filename_aliases, return 200 with alias count (BR-005); if same filename but different content_hash → return 409 Conflict (REQ-033)
 - [ ] Implement `vektra_ingest/jobs.py`: arq task `ingest_document_task(job_id, document_id, file_bytes, namespace_id)` that updates job status/phase throughout execution, handles errors by updating job to FAILED with error_code; configure arq worker with PostgreSQL job store
 - [ ] Create `vektra_ingest/api.py` with FastAPI router:
   - `POST /api/v1/ingest`: multipart/form-data with file upload; validate file size (ERR-INGEST-002 if > VEKTRA_MAX_FILE_SIZE_MB); sync path for <= 10MB (returns 200), async path for > 10MB (creates job, returns 202 with job_id); require `ingest` or `admin` scope
   - `GET /api/v1/ingest/jobs/{id}/status`: returns {status, phase, document_id, error_code, error_message}; require `ingest` or `admin` scope
-- [ ] Write audit log entries for: every ingest attempt (success, failure, dedup, alias)
+- [ ] Write audit log entries for every ingest attempt (success, failure, dedup, alias): call `vektra_shared.audit.log_event()` — do NOT import `vektra_admin.audit` directly (ADR-0005 boundary violation; vektra_shared re-exports the audit helper so all components can call it without cross-component imports)
 - [ ] Benchmark ingestion of a 10-page text-extractable PDF (< 500KB); verify completion within 30s (NFR-003)
 - [ ] Write unit tests: scanned PDF detection threshold, deduplication logic (existing, alias, conflict), content_type fallback, chunk boundary calculation, job status transitions
 - [ ] Write integration tests: full ingest flow with real PDF → verify chunk count in index, verify job reaches INDEXED status, verify duplicate returns 200 with status='exists', verify > 10MB returns 202 and can be polled to completion
@@ -100,4 +104,8 @@ Unit tests for each extractor (PDF, Word, PPT), chunking logic, and dedup logic 
 
 ## Integration Notes
 
-vektra-ingest depends on vektra-index to store chunks after embedding. The shared EmbeddingProvider (SentenceTransformersProvider registered by vektra-index at startup) is accessed via ProviderRegistry — do not instantiate a second model in this component. vektra-ingest writes to the audit_log table (owned by vektra-admin module) via direct SQLAlchemy calls, not via HTTP.
+vektra-ingest depends on vektra-index to store chunks after embedding. The shared EmbeddingProvider (SentenceTransformersProvider) and VectorStoreProvider (VectorStoreServiceAdapter wrapping PgvectorProvider) are both accessed via ProviderRegistry — do not instantiate a second model or a direct PgvectorProvider in this component. Both are registered by infra-app-entrypoint at startup.
+
+Audit log writes use `vektra_shared.audit.log_event()` — not `vektra_admin.audit` (boundary violation) and not direct SQLAlchemy writes to the audit_log table (fragile, bypasses fire-and-forget logic).
+
+vektra-ingest does NOT communicate with vektra-index via HTTP. It uses the in-process ProviderRegistry. The VectorStoreServiceAdapter manages sessions internally, so vektra-ingest never sees an AsyncSession for vector store operations.

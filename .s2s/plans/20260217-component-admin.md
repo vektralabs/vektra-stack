@@ -59,6 +59,8 @@ Implements the administration layer: two-tier health endpoints, API key CRUD wit
 - Audit log writes are fire-and-forget (do not block API response). Use FastAPI `BackgroundTasks` for async write. On audit log write failure, log a structured ERROR to application log (audit log integrity is NFR-007 HARD gate).
 - Health dashboard at GET /admin: returns minimal HTML page showing /health?detail=full JSON response rendered in a table. No JavaScript framework - plain HTML with inline CSS. Requires any valid Bearer token.
 - Prometheus metrics: starlette-prometheus middleware registered at application level, exposes GET /metrics. No authentication on /metrics (standard pattern for Prometheus scraping).
+- Audit function re-export: `vektra_admin/audit.py` implements `log_event()`. vektra_shared re-exports it as `vektra_shared.audit.log_event()` so that other components (vektra_ingest, vektra_core) can call it without importing vektra_admin directly (ADR-0005). The re-export is a thin import alias — no logic duplication.
+- Middleware ownership: vektra_admin exports `AuditMiddleware` class; infra-app-entrypoint registers it. This pattern separates the implementation (here) from assembly (there), consistent with the modular monolith approach.
 
 ## Tasks
 
@@ -66,7 +68,7 @@ Implements the administration layer: two-tier health endpoints, API key CRUD wit
 - [ ] Implement `vektra_admin/keys.py`: key generation (32-byte random → URL-safe base64), argon2id hashing via `argon2-cffi`, key_preview extraction (last 4 chars), LRU cache for recently verified hashes
 - [ ] Implement `vektra_admin/bootstrap.py`: startup check and enforcement of VEKTRA_ADMIN_BOOTSTRAP_KEY; loads current bootstrap_key_consumed state from system_state table; exposes `is_bootstrap_key(token)` and `consume_bootstrap_key()` used by POST /api-keys handler
 - [ ] Implement `vektra_admin/audit.py`: `log_request(key_id, endpoint, method, status_code, request_id, action=None)` writes to audit_log table; used as FastAPI middleware and from named event callsites; structured ERROR log on write failure (not exception propagation)
-- [ ] Implement `vektra_admin/health.py`: health check aggregator calling each registered component's health_check() method (via ProviderRegistry or direct module call); returns ComponentHealth(name, status, latency_ms, remediation_hint?); assembles shallow response {status, timestamp} and deep response {components: [...], version}
+- [ ] Implement `vektra_admin/health.py`: health check aggregator calling each component's health_check callable registered in ProviderRegistry under the `"health"` category key (e.g., `"health/embedding"`, `"health/llm"`, `"health/vector_store"`). Do NOT call component modules directly (ADR-0005 violation). Components register their health_check at startup in infra-app-entrypoint. Returns ComponentHealth(name, status, latency_ms, remediation_hint?) per registered check; assembles shallow response {status, timestamp} and deep response {components: [...], version}.
 - [ ] Create `vektra_admin/api.py` with FastAPI router:
   - `GET /health`: unauthenticated shallow; returns {status: healthy|degraded|unhealthy, timestamp}; HTTP 200 for healthy/degraded, 503 for unhealthy
   - `GET /health?detail=full`: requires any valid Bearer token; returns full component breakdown
@@ -77,8 +79,8 @@ Implements the administration layer: two-tier health endpoints, API key CRUD wit
   - `DELETE /api/v1/api-keys/{id}`: soft-delete (set revoked_at); requires admin scope; emits audit log 'apikey_revoked'; revoked keys rejected within 60 seconds (LRU cache TTL)
   - `GET /admin`: minimal HTML health dashboard; requires any valid Bearer token
   - `GET /metrics`: Prometheus metrics; unauthenticated
-- [ ] Populate ProviderRegistry key store at startup: load all non-revoked api_keys from database into in-memory cache (key_hash → {id, scopes, revoked_at}); invalidation on revocation via cache TTL (60s per REQ-006)
-- [ ] Wire audit log middleware as FastAPI middleware: intercepts every request after auth, writes key_id + endpoint + method + status_code + request_id to audit_log; skips /health and /metrics unauthenticated paths
+- [ ] Populate ProviderRegistry key store at startup: load all non-revoked api_keys from database into in-memory cache (key_hash → {id, scopes, revoked_at}). Runtime cache maintenance: when POST /api-keys creates a key, add it to the cache immediately; when DELETE /api-keys/{id} revokes a key, mark it revoked in the cache immediately (do not wait for TTL). Cache TTL (60s) is a fallback for external revocation only, not the primary invalidation mechanism for operations performed via this service.
+- [ ] Implement `vektra_admin/middleware.py`: `AuditMiddleware(BaseHTTPMiddleware)` class that intercepts every request after auth completes, writes key_id + endpoint + method + status_code + request_id to audit_log via `audit.log_event()`, skips /health and /metrics paths. Do NOT register this middleware on the FastAPI app here — export `AuditMiddleware` class only. infra-app-entrypoint is responsible for calling `app.add_middleware(AuditMiddleware)`.
 - [ ] Log startup warning if VEKTRA_ADMIN_BOOTSTRAP_KEY is set and VEKTRA_ENV=production (REQ-021)
 - [ ] Write unit tests: key generation and hash verification, bootstrap key single-use enforcement, scope validation, audit log fire-and-forget (verify background task called), health aggregation with mocked component checks
 - [ ] Write integration tests: full API key lifecycle (create, list, use, revoke, verify rejected), bootstrap key consumed after first use, deep health check returns all components, GET /admin returns valid HTML
@@ -100,4 +102,10 @@ Unit tests for key management (argon2id hash/verify) and bootstrap enforcement (
 
 ## Integration Notes
 
-vektra_shared's auth middleware depends on the key store populated by vektra_admin. At startup, admin module loads keys and registers them; auth middleware reads from this shared in-memory cache. All other components write audit log entries by calling `vektra_admin.audit.log_request()` directly (not via HTTP). Health aggregator calls `health_check()` on each registered component provider.
+vektra_shared's auth middleware depends on the key store populated by vektra_admin. At startup, admin module loads keys and registers them into ProviderRegistry (key cache); auth middleware reads from this shared in-memory store. The cache is also updated at runtime when keys are created or revoked via this component's own API endpoints.
+
+Other components write audit log entries via `vektra_shared.audit.log_event()` — not by importing `vektra_admin.audit` directly. `vektra_shared.audit` re-exports the function from `vektra_admin.audit`.
+
+Health aggregator reads health-check callables from ProviderRegistry (category `"health"`), not from direct module imports. Components register their health checks in infra-app-entrypoint.
+
+`AuditMiddleware` is exported from `vektra_admin.middleware`; infra-app-entrypoint registers it on the FastAPI app.

@@ -16,9 +16,10 @@ rather than relying on request.state.session. This decouples the audit
 write from the request's main session and ensures the write completes even
 if the main session was already closed by the time the middleware runs.
 """
+
 from __future__ import annotations
 
-from typing import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 import structlog
@@ -65,6 +66,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
         # Write audit log with a dedicated session (independent of request lifecycle)
         import asyncio
+
         asyncio.get_running_loop().create_task(
             _write_audit(
                 key_id=key_id,
@@ -91,8 +93,8 @@ async def _write_audit(
     Errors are logged as ERROR and swallowed (audit write must not
     affect the API response — NFR-007 integrity principle).
     """
+    from vektra_admin.models import AuditLogOrm  # late import
     from vektra_shared.db import _session_factory  # module-level factory
-    from vektra_admin.models import AuditLogOrm     # late import
 
     if _session_factory is None:
         log.warning("audit_middleware_no_session_factory")

@@ -8,6 +8,7 @@ DB/index performance, not embedding quality.
 
 Run with -s to see intermediate timing output.
 """
+
 from __future__ import annotations
 
 import os
@@ -15,13 +16,15 @@ import random
 import statistics
 import subprocess
 import time
-import pytest
 from uuid import uuid4
+
+import pytest
 
 
 def _docker_available() -> bool:
     try:
         import docker
+
         client = docker.from_env()
         client.ping()
         return True
@@ -63,7 +66,10 @@ def bench_db_url():
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         result = subprocess.run(
             ["uv", "run", "alembic", "upgrade", "head"],
-            capture_output=True, text=True, cwd=project_root, env=env,
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            env=env,
         )
         if result.returncode != 0:
             pytest.fail(f"Migration failed: {result.stderr}")
@@ -74,15 +80,23 @@ def bench_db_url():
 @pytest.fixture(scope="module")
 def bench_provider():
     from vektra_index.providers.pgvector import PgvectorProvider
+
     return PgvectorProvider(active_index_version=1)
 
 
 @pytest.fixture
 async def bench_session(bench_db_url):
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import (
+        AsyncSession,
+        async_sessionmaker,
+        create_async_engine,
+    )
+
     engine = create_async_engine(bench_db_url, pool_size=4, max_overflow=0)
     try:
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
         async with factory() as s:
             yield s
     finally:
@@ -90,9 +104,12 @@ async def bench_session(bench_db_url):
 
 
 @pytest.mark.asyncio
-async def test_nfr002_p95_search_under_500ms(bench_db_url, bench_provider, bench_session):
+async def test_nfr002_p95_search_under_500ms(
+    bench_db_url, bench_provider, bench_session
+):
     """NFR-002: p95 search latency < 500ms with 10k chunks in the index."""
     from sqlalchemy import text
+
     from vektra_shared.types import ChunkEmbedding, QueryEmbedding
 
     namespace = f"bench-{uuid4().hex[:8]}"
@@ -130,9 +147,16 @@ async def test_nfr002_p95_search_under_500ms(bench_db_url, bench_provider, bench
         ]
 
         # Create a fresh engine/session for each batch (avoids memory buildup)
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+
         batch_engine = create_async_engine(bench_db_url, pool_size=1)
-        batch_factory = async_sessionmaker(batch_engine, class_=AsyncSession, expire_on_commit=False)
+        batch_factory = async_sessionmaker(
+            batch_engine, class_=AsyncSession, expire_on_commit=False
+        )
         async with batch_factory() as batch_sess:
             async with batch_sess.begin():
                 await bench_provider.store(batch_sess, namespace, doc_id, chunks)

@@ -6,6 +6,7 @@ Creates the async engine from VEKTRA_DATABASE_URL and exposes
 ORM models (DeclarativeBase subclasses) live in each component's
 models file, not here. This module provides only the connection layer.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
@@ -39,10 +40,10 @@ def init_db(database_url: str, **engine_kwargs: object) -> None:
     global _engine, _session_factory
     _engine = create_async_engine(
         database_url,
-        pool_size=engine_kwargs.pop("pool_size", 10),       # type: ignore[arg-type]
+        pool_size=engine_kwargs.pop("pool_size", 10),  # type: ignore[arg-type]
         max_overflow=engine_kwargs.pop("max_overflow", 20),  # type: ignore[arg-type]
         pool_pre_ping=engine_kwargs.pop("pool_pre_ping", True),  # type: ignore[arg-type]
-        echo=engine_kwargs.pop("echo", False),               # type: ignore[arg-type]
+        echo=engine_kwargs.pop("echo", False),  # type: ignore[arg-type]
         **engine_kwargs,
     )
     _session_factory = async_sessionmaker(

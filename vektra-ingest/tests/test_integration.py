@@ -12,18 +12,17 @@ Coverage:
 Uses a stub EmbeddingProvider (deterministic random embeddings) instead of
 the real sentence-transformers model to keep tests fast.
 """
+
 from __future__ import annotations
 
 import os
 import subprocess
-import uuid
 from uuid import uuid4
 
 import pytest
 
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.types import HealthStatus
-
 
 # ---------------------------------------------------------------------------
 # Docker availability guard
@@ -93,10 +92,8 @@ def db_url():
 
     with PostgresContainer("pgvector/pgvector:pg16") as postgres:
         raw_url = postgres.get_connection_url()
-        async_url = (
-            raw_url.replace("postgresql://", "postgresql+asyncpg://").replace(
-                "psycopg2", "asyncpg"
-            )
+        async_url = raw_url.replace("postgresql://", "postgresql+asyncpg://").replace(
+            "psycopg2", "asyncpg"
         )
 
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -119,8 +116,13 @@ def db_url():
 @pytest.fixture
 async def fresh_engine(db_url):
     """Per-test engine bound to the test's event loop."""
+    from sqlalchemy.ext.asyncio import (
+        AsyncSession,
+        async_sessionmaker,
+        create_async_engine,
+    )
+
     import vektra_shared.db as db_mod
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
     engine = create_async_engine(db_url, pool_size=2, max_overflow=0)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -150,7 +152,9 @@ def registry(fresh_engine):
 
     reg = ProviderRegistry()
     reg.register("embedding", "default", StubEmbeddingProvider())
-    reg.register("vector_store", "default", VectorStoreServiceAdapter(active_index_version=1))
+    reg.register(
+        "vector_store", "default", VectorStoreServiceAdapter(active_index_version=1)
+    )
     return reg
 
 
@@ -213,8 +217,9 @@ def _make_real_pdf() -> bytes:
 
 async def test_full_ingest_returns_indexed(session, registry):
     """Full PDF ingest stores chunks and returns status='indexed'."""
-    from vektra_ingest.pipeline import run_ingest
     from sqlalchemy import text
+
+    from vektra_ingest.pipeline import run_ingest
 
     namespace = f"ns-{uuid4().hex[:8]}"
 
@@ -254,8 +259,9 @@ async def test_full_ingest_returns_indexed(session, registry):
 
 async def test_duplicate_detection_exact_match(session, registry):
     """Uploading the same file twice returns status='exists' on second upload."""
-    from vektra_ingest.pipeline import run_ingest
     from sqlalchemy import text
+
+    from vektra_ingest.pipeline import run_ingest
 
     namespace = f"ns-{uuid4().hex[:8]}"
     await session.execute(
@@ -293,8 +299,9 @@ async def test_duplicate_detection_exact_match(session, registry):
 
 async def test_alias_same_content_different_filename(session, registry):
     """Same content, different filename → alias added, status='alias'."""
-    from vektra_ingest.pipeline import run_ingest
     from sqlalchemy import text
+
+    from vektra_ingest.pipeline import run_ingest
 
     namespace = f"ns-{uuid4().hex[:8]}"
     await session.execute(
@@ -331,9 +338,10 @@ async def test_alias_same_content_different_filename(session, registry):
 
 async def test_filename_conflict_raises_error(session, registry):
     """Different content + same filename → IngestConflictError (→ 409)."""
+    from sqlalchemy import text
+
     from vektra_ingest.exceptions import IngestConflictError
     from vektra_ingest.pipeline import run_ingest
-    from sqlalchemy import text
 
     namespace = f"ns-{uuid4().hex[:8]}"
     await session.execute(

@@ -3,16 +3,15 @@
 Uses mocked SQLAlchemy sessions, EmbeddingProvider, and VectorStoreProvider
 so tests run without a database or ML model.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4, UUID
+from uuid import uuid4
 
 import pytest
 
 from vektra_shared.types import DocumentChunk, ElementType
-
 
 # ---------------------------------------------------------------------------
 # Mock helpers
@@ -286,9 +285,15 @@ async def test_successful_ingest_returns_indexed():
     # Mock the whole extraction + chunking chain
     async def _fake_extract(req):
         async def _gen():
-            yield DocumentChunk(text="chunk one content here", element_type=ElementType.TEXT)
-            yield DocumentChunk(text="chunk two content here", element_type=ElementType.TEXT)
-            yield DocumentChunk(text="chunk three content here", element_type=ElementType.TEXT)
+            yield DocumentChunk(
+                text="chunk one content here", element_type=ElementType.TEXT
+            )
+            yield DocumentChunk(
+                text="chunk two content here", element_type=ElementType.TEXT
+            )
+            yield DocumentChunk(
+                text="chunk three content here", element_type=ElementType.TEXT
+            )
 
         return _gen()
 
@@ -304,8 +309,12 @@ async def test_successful_ingest_returns_indexed():
     mock_extractor.extract = _fake_extract
     mock_extractor.supported_types.return_value = {"application/pdf"}
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch(
                 "vektra_ingest.pipeline.FixedSizeChunking"
             ) as mock_chunker_class:
@@ -382,8 +391,12 @@ async def test_storage_failure_triggers_cleanup():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk

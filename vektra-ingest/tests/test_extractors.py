@@ -1,13 +1,13 @@
 """Unit tests for DocumentExtractor implementations (ARCH-009, REQ-016, REQ-045, REQ-046)."""
+
 from __future__ import annotations
 
 import io
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vektra_shared.types import ElementType, ExtractionRequest
-
 
 # ---------------------------------------------------------------------------
 # Helpers: build minimal in-memory documents
@@ -53,7 +53,7 @@ def _make_docx_bytes(paragraphs: list[str]) -> bytes:
 def _make_pptx_bytes(slides: list[str]) -> bytes:
     """Create a minimal PPTX with one text box per slide."""
     from pptx import Presentation  # type: ignore[import-untyped]
-    from pptx.util import Inches, Pt
+    from pptx.util import Inches
 
     prs = Presentation()
     blank_layout = prs.slide_layouts[6]  # blank layout
@@ -70,7 +70,9 @@ def _make_pptx_bytes(slides: list[str]) -> bytes:
 
 
 async def _collect_chunks(extractor, content: bytes, filename: str, content_type: str):
-    req = ExtractionRequest(content=content, content_type=content_type, filename=filename)
+    req = ExtractionRequest(
+        content=content, content_type=content_type, filename=filename
+    )
     it = await extractor.extract(req)
     chunks = []
     async for chunk in it:
@@ -114,7 +116,9 @@ class TestPdfplumberExtractor:
         """Each extracted chunk carries 'page' metadata with 1-based page number."""
         from vektra_ingest.extractors.pdf import PdfplumberExtractor
 
-        long_text = "Page content with more than one hundred characters of text here. " * 3
+        long_text = (
+            "Page content with more than one hundred characters of text here. " * 3
+        )
 
         mock_page = MagicMock()
         mock_page.extract_text.return_value = long_text
@@ -153,7 +157,7 @@ class TestPdfplumberExtractor:
         with patch("pdfplumber.open", return_value=mock_pdf):
             extractor = PdfplumberExtractor()
             with pytest.raises(IngestError) as exc_info:
-                chunks = await _collect_chunks(
+                await _collect_chunks(
                     extractor, b"fake pdf bytes", "scanned.pdf", "application/pdf"
                 )
                 async for _ in await extractor.extract(
@@ -288,7 +292,10 @@ class TestWordExtractor:
 
         extractor = WordExtractor()
         types = extractor.supported_types()
-        assert "application/vnd.openxmlformats-officedocument.wordprocessingml.document" in types
+        assert (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            in types
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +308,9 @@ class TestPowerPointExtractor:
     async def test_extracts_slide_text(self):
         from vektra_ingest.extractors.powerpoint import PowerPointExtractor
 
-        pptx_bytes = _make_pptx_bytes(["Introduction slide content.", "Data analysis results."])
+        pptx_bytes = _make_pptx_bytes(
+            ["Introduction slide content.", "Data analysis results."]
+        )
         extractor = PowerPointExtractor()
         chunks = await _collect_chunks(
             extractor,

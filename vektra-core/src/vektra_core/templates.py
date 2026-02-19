@@ -12,6 +12,7 @@ Template directory priority (ARCH-054):
 prompt_version = SHA-256(concatenated template sources)[:8] (ARCH-048).
 Computed on load; validated in ARCH-057 step 8.
 """
+
 from __future__ import annotations
 
 import hashlib

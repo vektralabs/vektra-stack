@@ -20,6 +20,7 @@ factory. This means:
 
 Never write query text, response content, or conversation data (REQ-051).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -57,8 +58,8 @@ async def log_event(
         action: Optional named event (e.g. 'apikey_created', 'apikey_revoked').
         log_metadata: Optional extra JSONB payload (never contains PII).
     """
+    from vektra_admin.models import AuditLogOrm  # late import
     from vektra_shared.db import _session_factory  # module-level factory
-    from vektra_admin.models import AuditLogOrm     # late import
 
     if _session_factory is None:
         log.warning("audit_log_no_session_factory", endpoint=endpoint)

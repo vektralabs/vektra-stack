@@ -6,6 +6,7 @@ Steps 2 and 3 of the startup validation sequence:
 
 Steps 1, 4-8 are implemented in each component's startup logic.
 """
+
 from __future__ import annotations
 
 
@@ -38,8 +39,8 @@ async def check_database_connectivity(database_url: str) -> None:
     StartupValidationError if the connection fails.
     """
     try:
-        from sqlalchemy.ext.asyncio import create_async_engine
         from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
 
         engine = create_async_engine(database_url, pool_pre_ping=False)
         async with engine.connect() as conn:
@@ -56,7 +57,9 @@ async def check_database_connectivity(database_url: str) -> None:
         ) from exc
 
 
-async def check_database_schema(database_url: str, migrations_path: str = "migrations") -> None:
+async def check_database_schema(
+    database_url: str, migrations_path: str = "migrations"
+) -> None:
     """ARCH-057 step 3: verify Alembic schema is at current head.
 
     Raises StartupValidationError if the deployed schema is behind the
@@ -75,7 +78,7 @@ async def check_database_schema(database_url: str, migrations_path: str = "migra
 
         engine = create_async_engine(database_url)
 
-        def _get_current(conn) -> set[str]:  # noqa: ANN001
+        def _get_current(conn) -> set[str]:
             mc = MigrationContext.configure(conn)
             return set(mc.get_current_heads())
 

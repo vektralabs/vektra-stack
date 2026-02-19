@@ -4,6 +4,7 @@ Uses python-magic (libmagic binding) to detect MIME type from file bytes.
 Falls back to extension-based detection when libmagic is unavailable, then
 to 'application/octet-stream' (BLOCKER B-2: content_type is never NULL).
 """
+
 from __future__ import annotations
 
 import os

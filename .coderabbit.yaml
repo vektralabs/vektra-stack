@@ -1,0 +1,61 @@
+# CodeRabbit configuration for Vektra
+# Docs: https://docs.coderabbit.ai/
+
+language: "en"
+
+reviews:
+  # Review all PRs automatically
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # Path-specific review instructions
+  path_instructions:
+    - path: "vektra-shared/**"
+      instructions: |
+        This is the shared foundation used by all other components.
+        Check for: protocol violations (the 9 Protocol interfaces must not be broken),
+        backward compatibility of types and config, no imports from other vektra_* packages.
+
+    - path: "vektra-core/**"
+      instructions: |
+        RAG engine component. Check for: async correctness (all DB and LLM calls must be async),
+        streaming response handling, SafeguardHook integration, QueryTrace completeness,
+        SQLAlchemy 2.0 patterns (mapped_column, Mapped[], AsyncSession).
+
+    - path: "vektra-ingest/**"
+      instructions: |
+        Document ingestion pipeline. Check for: proper content-type detection fallback,
+        idempotent re-ingestion (REQ-033 conflict detection), arq job state transitions
+        (pending → processing → indexed/failed), session lifetime in async context.
+
+    - path: "vektra-index/**"
+      instructions: |
+        Vector store and embedding component. Check for: pgvector query correctness,
+        namespace isolation in all queries, embedding model sharing (single instance
+        via ProviderRegistry, not loaded per-request).
+
+    - path: "vektra-admin/**"
+      instructions: |
+        Admin API component. Check for: argon2id hashing on all key storage,
+        audit log completeness (all authenticated requests must be logged),
+        health check returning correct status format.
+
+    - path: "tests/**"
+      instructions: |
+        Check that tests are genuinely testing behavior, not just mocking everything.
+        Prefer real objects over mocks. Check that SQLAlchemy ORM classes are never
+        mocked (use session.add intercept pattern instead).
+
+  # Do not review generated files or documentation
+  path_filters:
+    - "!**/*.lock"
+    - "!**/migrations/**"
+    - "!**/*.sql"
+    - "!.s2s/**"
+
+  # Avoid noisy reviews on trivial changes
+  collapse_walkthrough: true
+
+chat:
+  auto_reply: true

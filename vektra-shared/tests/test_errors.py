@@ -1,5 +1,5 @@
 """Tests for error types and envelope serialization (REQ-010, REQ-011)."""
-import pytest
+
 from uuid import UUID, uuid4
 
 from vektra_shared.errors import (
@@ -107,10 +107,19 @@ class TestAllNormativeErrorCodes:
 
     def test_total_normative_count(self):
         all_codes = [
-            ERR_INGEST_001, ERR_INGEST_002, ERR_INGEST_003, ERR_INGEST_004,
-            ERR_QUERY_001, ERR_QUERY_002, ERR_QUERY_003, ERR_QUERY_004,
-            ERR_CONFIG_001, ERR_CONFIG_002,
-            ERR_AUTH_001, ERR_AUTH_002, ERR_AUTH_003,
+            ERR_INGEST_001,
+            ERR_INGEST_002,
+            ERR_INGEST_003,
+            ERR_INGEST_004,
+            ERR_QUERY_001,
+            ERR_QUERY_002,
+            ERR_QUERY_003,
+            ERR_QUERY_004,
+            ERR_CONFIG_001,
+            ERR_CONFIG_002,
+            ERR_AUTH_001,
+            ERR_AUTH_002,
+            ERR_AUTH_003,
         ]
         assert len(all_codes) == 13
 

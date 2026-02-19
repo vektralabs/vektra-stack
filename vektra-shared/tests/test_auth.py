@@ -1,14 +1,13 @@
 """Tests for auth middleware (REQ-019, REQ-030, REQ-031, REQ-041)."""
-import pytest
-from uuid import uuid4
-from unittest.mock import AsyncMock
 
-from fastapi import FastAPI, Depends
+from uuid import uuid4
+
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
-from vektra_shared.registry import ProviderRegistry
 from vektra_shared.errors import ERR_AUTH_001, ERR_AUTH_003
+from vektra_shared.registry import ProviderRegistry
 
 
 def _make_app(key_store=None, register_store: bool = True) -> FastAPI:
@@ -43,9 +42,13 @@ class MockKeyStore:
 class TestRequireScope:
     def test_valid_admin_token_passes(self):
         key_id = uuid4()
-        store = MockKeyStore({"valid-token": ApiKeyInfo(key_id=key_id, scopes=["admin", "query"])})
+        store = MockKeyStore(
+            {"valid-token": ApiKeyInfo(key_id=key_id, scopes=["admin", "query"])}
+        )
         client = TestClient(_make_app(store))
-        response = client.get("/admin-only", headers={"Authorization": "Bearer valid-token"})
+        response = client.get(
+            "/admin-only", headers={"Authorization": "Bearer valid-token"}
+        )
         assert response.status_code == 200
         assert response.json()["key_id"] == str(key_id)
 
@@ -61,7 +64,9 @@ class TestRequireScope:
     def test_invalid_token_returns_401(self):
         store = MockKeyStore({})
         client = TestClient(_make_app(store))
-        response = client.get("/admin-only", headers={"Authorization": "Bearer bad-token"})
+        response = client.get(
+            "/admin-only", headers={"Authorization": "Bearer bad-token"}
+        )
         assert response.status_code == 401
         body = response.json()
         assert body["detail"]["error"]["code"] == ERR_AUTH_001
@@ -70,14 +75,20 @@ class TestRequireScope:
         # A revoked token would not be in the key store, same as invalid
         store = MockKeyStore({})
         client = TestClient(_make_app(store))
-        response = client.get("/admin-only", headers={"Authorization": "Bearer revoked"})
+        response = client.get(
+            "/admin-only", headers={"Authorization": "Bearer revoked"}
+        )
         assert response.status_code == 401
 
     def test_wrong_scope_returns_403(self):
         # Token is valid but only has "query" scope, not "admin"
-        store = MockKeyStore({"query-token": ApiKeyInfo(key_id=uuid4(), scopes=["query"])})
+        store = MockKeyStore(
+            {"query-token": ApiKeyInfo(key_id=uuid4(), scopes=["query"])}
+        )
         client = TestClient(_make_app(store))
-        response = client.get("/admin-only", headers={"Authorization": "Bearer query-token"})
+        response = client.get(
+            "/admin-only", headers={"Authorization": "Bearer query-token"}
+        )
         assert response.status_code == 403
         body = response.json()
         assert body["detail"]["error"]["code"] == ERR_AUTH_003
@@ -86,17 +97,33 @@ class TestRequireScope:
     def test_correct_scope_on_query_endpoint(self):
         store = MockKeyStore({"q-token": ApiKeyInfo(key_id=uuid4(), scopes=["query"])})
         client = TestClient(_make_app(store))
-        response = client.get("/query-only", headers={"Authorization": "Bearer q-token"})
+        response = client.get(
+            "/query-only", headers={"Authorization": "Bearer q-token"}
+        )
         assert response.status_code == 200
 
     def test_multi_scope_key_can_access_both_endpoints(self):
         key_id = uuid4()
-        store = MockKeyStore({
-            "full-token": ApiKeyInfo(key_id=key_id, scopes=["admin", "ingest", "query"])
-        })
+        store = MockKeyStore(
+            {
+                "full-token": ApiKeyInfo(
+                    key_id=key_id, scopes=["admin", "ingest", "query"]
+                )
+            }
+        )
         client = TestClient(_make_app(store))
-        assert client.get("/admin-only", headers={"Authorization": "Bearer full-token"}).status_code == 200
-        assert client.get("/query-only", headers={"Authorization": "Bearer full-token"}).status_code == 200
+        assert (
+            client.get(
+                "/admin-only", headers={"Authorization": "Bearer full-token"}
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                "/query-only", headers={"Authorization": "Bearer full-token"}
+            ).status_code
+            == 200
+        )
 
     def test_no_registry_on_app_state_returns_500(self):
         app = FastAPI()
@@ -107,5 +134,7 @@ class TestRequireScope:
             return {}
 
         client = TestClient(app)
-        response = client.get("/protected", headers={"Authorization": "Bearer anything"})
+        response = client.get(
+            "/protected", headers={"Authorization": "Bearer anything"}
+        )
         assert response.status_code == 500

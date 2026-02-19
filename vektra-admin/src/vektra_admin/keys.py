@@ -7,6 +7,7 @@ Key lifecycle:
 - Verification: argon2id verify on every authenticated request; LRU cache avoids
   per-request hashing overhead for recently seen keys.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -14,7 +15,7 @@ from base64 import urlsafe_b64encode
 from functools import lru_cache
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 # Single PasswordHasher instance (argon2id, default time_cost=3, memory_cost=65536)
 _ph = PasswordHasher()

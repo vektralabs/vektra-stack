@@ -1,0 +1,130 @@
+name: Unit tests
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+jobs:
+  # Detect which components have changed to skip unaffected test jobs.
+  # Changes to vektra-shared trigger all components (it is a shared dependency).
+  detect-changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      shared: ${{ steps.filter.outputs.shared }}
+      core:   ${{ steps.filter.outputs.core }}
+      ingest: ${{ steps.filter.outputs.ingest }}
+      index:  ${{ steps.filter.outputs.index }}
+      admin:  ${{ steps.filter.outputs.admin }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'vektra-shared/**'
+            core:
+              - 'vektra-core/**'
+              - 'vektra-shared/**'
+            ingest:
+              - 'vektra-ingest/**'
+              - 'vektra-shared/**'
+            index:
+              - 'vektra-index/**'
+              - 'vektra-shared/**'
+            admin:
+              - 'vektra-admin/**'
+              - 'vektra-shared/**'
+
+  test-shared:
+    name: Test vektra-shared
+    needs: detect-changes
+    if: needs.detect-changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-caching: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen
+      - name: Run unit tests
+        run: uv run pytest vektra-shared/tests/ -v --tb=short -m "not integration"
+
+  test-core:
+    name: Test vektra-core
+    needs: detect-changes
+    if: needs.detect-changes.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-caching: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen
+      - name: Run unit tests
+        run: uv run pytest vektra-core/tests/ -v --tb=short -m "not integration"
+
+  test-ingest:
+    name: Test vektra-ingest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ingest == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-caching: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen
+      - name: Run unit tests
+        run: uv run pytest vektra-ingest/tests/ -v --tb=short -m "not integration"
+
+  test-index:
+    name: Test vektra-index
+    needs: detect-changes
+    if: needs.detect-changes.outputs.index == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-caching: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen
+      - name: Run unit tests
+        run: uv run pytest vektra-index/tests/ -v --tb=short -m "not integration"
+
+  test-admin:
+    name: Test vektra-admin
+    needs: detect-changes
+    if: needs.detect-changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-caching: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen
+      - name: Run unit tests
+        run: uv run pytest vektra-admin/tests/ -v --tb=short -m "not integration"
+
+  # Aggregator job used as the single required status check in branch protection.
+  # Passes if no upstream job failed (skipped jobs are treated as passing).
+  ci-gate:
+    name: CI gate
+    needs: [test-shared, test-core, test-ingest, test-index, test-admin]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all tests passed or were skipped
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more test jobs failed."
+            exit 1
+          fi
+          echo "All tests passed or were skipped (no relevant changes detected)."

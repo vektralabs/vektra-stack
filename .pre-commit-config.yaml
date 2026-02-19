@@ -1,0 +1,59 @@
+# Pre-commit hooks for Vektra
+# All hooks use `language: system` + `uv run` to avoid version drift:
+# tool versions are defined once in pyproject.toml / uv.lock.
+#
+# Install:   uv tool install pre-commit --with pre-commit-uv --force-reinstall
+#            uv run pre-commit install
+# Run once:  uv run pre-commit run --all-files
+
+repos:
+  # Keep uv.lock in sync when pyproject.toml changes
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.6.3
+    hooks:
+      - id: uv-lock
+
+  # Generic file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: debug-statements
+
+  # Ruff: lint and format (replaces flake8, isort, black)
+  # Uses workspace version via uv run — no separate rev pin needed.
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run ruff format
+        language: system
+        types: [python]
+
+      - id: ruff-check
+        name: ruff (lint)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: mypy (type check)
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        args:
+          - vektra_shared
+          - vektra_admin
+          - vektra_core
+          - vektra_ingest
+          - vektra_index
+
+      - id: import-linter
+        name: import-linter (boundary check)
+        entry: uv run lint-imports
+        language: system
+        pass_filenames: false

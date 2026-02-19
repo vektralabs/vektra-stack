@@ -6,6 +6,7 @@ pass through unchanged with <5ms overhead. No content is blocked or modified.
 Phase 2: Presidio-based PII anonymization (modified_content), Guardrails AI
 for output validation.
 """
+
 from __future__ import annotations
 
 from vektra_shared.types import SafeguardContext, SafeguardResult, SearchResult

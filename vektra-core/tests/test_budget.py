@@ -1,5 +1,5 @@
 """Unit tests for token budget allocator (ARCH-055)."""
-import pytest
+
 from vektra_core.budget import allocate_token_budget
 
 

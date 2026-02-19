@@ -6,21 +6,26 @@ Scanned PDF detection: if the average extracted text across the first 5 pages
 is < 100 characters, the file is treated as scanned (no text layer) and
 IngestError(ERR-INGEST-003) is raised before any chunking (fail fast).
 """
+
 from __future__ import annotations
 
 import io
-from typing import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 import structlog
 
-from vektra_shared.errors import ERR_INGEST_003
-from vektra_shared.types import DocumentChunk, ElementType, ExtractionRequest, HealthStatus
-
 from vektra_ingest.exceptions import IngestError
+from vektra_shared.errors import ERR_INGEST_003
+from vektra_shared.types import (
+    DocumentChunk,
+    ElementType,
+    ExtractionRequest,
+    HealthStatus,
+)
 
 log = structlog.get_logger(__name__)
 
-_SCAN_THRESHOLD = 100   # avg chars/page below which we call it scanned
+_SCAN_THRESHOLD = 100  # avg chars/page below which we call it scanned
 _SCAN_SAMPLE_PAGES = 5  # pages to sample for scanned detection
 
 
@@ -82,6 +87,7 @@ class PdfplumberExtractor:
     async def health_check(self) -> HealthStatus:
         try:
             import pdfplumber  # noqa: F401  type: ignore[import-untyped]
+
             return HealthStatus(status="healthy")
         except ImportError as exc:
             return HealthStatus(status="unhealthy", message=str(exc))

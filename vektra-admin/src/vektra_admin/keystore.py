@@ -12,12 +12,12 @@ Lookup strategy (argon2id does not allow direct hash lookup):
 For Phase 1 deployments with few keys this is fast; the LRU cache in
 vektra_admin.keys eliminates repeated argon2 calls for active tokens.
 """
+
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
@@ -107,14 +107,14 @@ class InMemoryKeyStore:
         async with self._lock:
             entry = self._by_hash.get(key_hash)
             if entry is not None:
-                entry.revoked_at = datetime.now(timezone.utc)
+                entry.revoked_at = datetime.now(UTC)
 
     async def revoke_key_by_id(self, key_id: UUID) -> None:
         """Mark a key revoked by its UUID (used when we don't have the hash)."""
         async with self._lock:
             for entry in self._by_hash.values():
                 if entry.key_id == key_id:
-                    entry.revoked_at = datetime.now(timezone.utc)
+                    entry.revoked_at = datetime.now(UTC)
                     return
 
     # ------------------------------------------------------------------
@@ -128,6 +128,7 @@ class InMemoryKeyStore:
         the first request is served (ARCH-057 step 5).
         """
         from sqlalchemy import select
+
         from vektra_admin.models import ApiKeyOrm  # late import
 
         result = await session.execute(

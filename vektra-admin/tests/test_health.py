@@ -1,12 +1,8 @@
 """Unit tests: health check aggregation (REQ-004, ARCH-022, ARCH-027)."""
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
-import pytest
+from unittest.mock import MagicMock
 
-from vektra_shared.types import HealthStatus
 from vektra_admin.health import (
-    ComponentHealth,
     DeepHealthResponse,
     ShallowHealthResponse,
     _aggregate_status,
@@ -14,7 +10,7 @@ from vektra_admin.health import (
     check_component,
     check_memory,
 )
-
+from vektra_shared.types import HealthStatus
 
 # --- _aggregate_status ---
 

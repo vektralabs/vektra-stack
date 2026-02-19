@@ -1,22 +1,22 @@
 """Unit tests for SimpleQueryPipeline (ADR-0014, ARCH-036, ARCH-056)."""
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
-import pytest
+from vektra_core.conversation import ConversationStore
+from vektra_core.pipeline import (
+    SimpleQueryPipeline,
+    _apply_retrieval_filter,
+    _token_overlap_ratio,
+)
+from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.types import (
     CompletionResponse,
-    HealthStatus,
-    QueryEmbedding,
     QueryRequest,
     SafeguardResult,
     SearchResult,
 )
-from vektra_core.conversation import ConversationStore
-from vektra_core.pipeline import SimpleQueryPipeline, _apply_retrieval_filter, _token_overlap_ratio
-from vektra_core.templates import TemplateRenderer
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,7 +43,9 @@ def _make_pipeline_config(**overrides) -> QueryPipelineConfig:
     return QueryPipelineConfig.model_validate(defaults)
 
 
-def _make_search_result(score: float, text: str = "some text", doc_id: UUID | None = None) -> SearchResult:
+def _make_search_result(
+    score: float, text: str = "some text", doc_id: UUID | None = None
+) -> SearchResult:
     return SearchResult(
         chunk_id=str(uuid4()),
         score=score,
@@ -73,8 +75,11 @@ def _make_pipeline(
     if llm is None:
         llm = MagicMock()
         completion = CompletionResponse(
-            content="The answer.", model="ollama/llama3",
-            prompt_tokens=10, completion_tokens=20, total_tokens=30,
+            content="The answer.",
+            model="ollama/llama3",
+            prompt_tokens=10,
+            completion_tokens=20,
+            total_tokens=30,
         )
         llm.complete = AsyncMock(return_value=completion)
         llm.count_tokens = MagicMock(return_value=10)
@@ -113,7 +118,7 @@ def test_token_overlap_no_overlap():
 def test_token_overlap_partial():
     ratio = _token_overlap_ratio("hello world foo", "hello world bar")
     # intersection={hello, world}, min_size=3 → 2/3
-    assert abs(ratio - 2/3) < 0.01
+    assert abs(ratio - 2 / 3) < 0.01
 
 
 def test_retrieval_filter_removes_low_score():
@@ -188,7 +193,7 @@ async def test_execute_no_relevant_context():
         pipeline_config=_make_pipeline_config(**{"VEKTRA_MIN_RELEVANCE_SCORE": 0.5}),
     )
     query = QueryRequest(question="Something specific")
-    response, trace = await pipeline.execute(query)
+    response, _trace = await pipeline.execute(query)
 
     assert response.no_relevant_context is True
     assert response.answer is None
@@ -202,7 +207,7 @@ async def test_execute_empty_vector_results():
 
     pipeline = _make_pipeline(vector_store=vector_store)
     query = QueryRequest(question="Who?")
-    response, trace = await pipeline.execute(query)
+    response, _trace = await pipeline.execute(query)
 
     # Empty index: no results retrieved at all → no_relevant_context=False but sources=[]
     assert response.no_relevant_context is False
@@ -217,7 +222,7 @@ async def test_execute_graceful_degradation_timeout():
     vector_store.search = AsyncMock(return_value=results)
 
     llm = MagicMock()
-    llm.complete = AsyncMock(side_effect=asyncio.TimeoutError())
+    llm.complete = AsyncMock(side_effect=TimeoutError())
     llm.count_tokens = MagicMock(return_value=10)
 
     pipeline = _make_pipeline(
@@ -226,7 +231,7 @@ async def test_execute_graceful_degradation_timeout():
         llm_config=_make_llm_config(**{"VEKTRA_LLM_FALLBACK_TIMEOUT_MS": 1}),
     )
     query = QueryRequest(question="Explain RAG")
-    response, trace = await pipeline.execute(query)
+    response, _trace = await pipeline.execute(query)
 
     assert response.context_only is True
     assert response.answer is None
@@ -246,8 +251,11 @@ async def test_execute_graceful_degradation_fallback_succeeds():
         if model == "ollama/llama3":
             raise ConnectionError("Primary down")
         return CompletionResponse(
-            content="Fallback answer", model="ollama/llama3-mini",
-            prompt_tokens=5, completion_tokens=10, total_tokens=15,
+            content="Fallback answer",
+            model="ollama/llama3-mini",
+            prompt_tokens=5,
+            completion_tokens=10,
+            total_tokens=15,
         )
 
     llm = MagicMock()
@@ -262,7 +270,7 @@ async def test_execute_graceful_degradation_fallback_succeeds():
         ),
     )
     query = QueryRequest(question="Explain RAG")
-    response, trace = await pipeline.execute(query)
+    response, _trace = await pipeline.execute(query)
 
     assert response.answer == "Fallback answer"
     assert call_count == 2  # primary + fallback
@@ -275,11 +283,13 @@ async def test_execute_safeguard_blocks_response():
     vector_store.search = AsyncMock(return_value=results)
 
     safeguard = AsyncMock()
-    safeguard.pre_response = AsyncMock(return_value=SafeguardResult(allowed=False, reason="Content policy"))
+    safeguard.pre_response = AsyncMock(
+        return_value=SafeguardResult(allowed=False, reason="Content policy")
+    )
 
     pipeline = _make_pipeline(vector_store=vector_store, safeguard=safeguard)
     query = QueryRequest(question="Sensitive question")
-    response, trace = await pipeline.execute(query)
+    response, _trace = await pipeline.execute(query)
 
     assert response.answer is None
 
@@ -287,6 +297,7 @@ async def test_execute_safeguard_blocks_response():
 async def test_query_trace_contains_no_pii():
     """QueryTrace must NOT contain question text or response text (REQ-051)."""
     import dataclasses
+
     results = [_make_search_result(0.8, "some context")]
     vector_store = AsyncMock()
     vector_store.search = AsyncMock(return_value=results)
@@ -296,15 +307,20 @@ async def test_query_trace_contains_no_pii():
     answer_text = "The-very-secret-answer-ABC"
 
     llm = MagicMock()
-    llm.complete = AsyncMock(return_value=CompletionResponse(
-        content=answer_text, model="ollama/llama3",
-        prompt_tokens=5, completion_tokens=10, total_tokens=15,
-    ))
+    llm.complete = AsyncMock(
+        return_value=CompletionResponse(
+            content=answer_text,
+            model="ollama/llama3",
+            prompt_tokens=5,
+            completion_tokens=10,
+            total_tokens=15,
+        )
+    )
     llm.count_tokens = MagicMock(return_value=5)
     pipeline._llm = llm
 
     query = QueryRequest(question=question)
-    response, trace = await pipeline.execute(query)
+    _response, trace = await pipeline.execute(query)
 
     trace_dict = dataclasses.asdict(trace)
     trace_str = str(trace_dict)
@@ -324,7 +340,7 @@ async def test_execute_saves_conversation_turn():
 
     cid = uuid4()
     query = QueryRequest(question="Q1?", conversation_id=cid)
-    response, _ = await pipeline.execute(query)
+    _response, _ = await pipeline.execute(query)
 
     history = await conv_store.get_history(cid)
     assert len(history) == 1

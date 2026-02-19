@@ -3,17 +3,24 @@
 Supports OpenAI, Anthropic, and Ollama via litellm model strings.
 Implements LLMProvider Protocol (vektra_shared.protocols).
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import Any
 
 import litellm
 import structlog
 
 from vektra_shared.config import LLMConfig
-from vektra_shared.types import CompletionChunk, CompletionResponse, HealthStatus, Message
+from vektra_shared.types import (
+    CompletionChunk,
+    CompletionResponse,
+    HealthStatus,
+    Message,
+)
 
 # Suppress litellm's verbose startup output
 litellm.suppress_debug_info = True
@@ -109,7 +116,9 @@ class LitellmProvider:
             latency_ms = int((time.monotonic() - start) * 1000)
             return HealthStatus(status="healthy", latency_ms=latency_ms)
         except Exception as exc:
-            log.warning("llm_health_check_failed", model=self._config.provider, error=str(exc))
+            log.warning(
+                "llm_health_check_failed", model=self._config.provider, error=str(exc)
+            )
             return HealthStatus(status="unhealthy", message=str(exc))
 
     def count_tokens(self, text: str, model: str) -> int:

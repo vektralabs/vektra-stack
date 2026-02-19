@@ -1,4 +1,5 @@
 """Tests for ProviderRegistry (ARCH-039)."""
+
 import pytest
 
 from vektra_shared.registry import ProviderRegistry

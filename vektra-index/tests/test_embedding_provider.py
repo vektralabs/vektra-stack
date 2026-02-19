@@ -1,4 +1,5 @@
 """Tests for SentenceTransformersProvider."""
+
 import pytest
 
 from vektra_index.providers.sentence_transformers import SentenceTransformersProvider
@@ -36,7 +37,6 @@ class TestSentenceTransformersProvider:
 
     def test_singleton_model_reuse(self):
         """Two providers with same model_name share the model singleton."""
-        from vektra_index.providers.sentence_transformers import _model as module_model
         p1 = SentenceTransformersProvider("all-MiniLM-L6-v2")
         p2 = SentenceTransformersProvider("all-MiniLM-L6-v2")
         # Both should return the same model object

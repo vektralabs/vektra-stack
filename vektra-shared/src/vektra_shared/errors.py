@@ -4,11 +4,11 @@ REQ-010: ErrorResponse envelope - all API errors use {"error": <ErrorResponse>}.
 REQ-011: Phase 1 normative error code registry (13 codes).
 BR-001: Four-category error taxonomy.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
-
 
 # ---------------------------------------------------------------------------
 # Error category (BR-001)
@@ -17,10 +17,11 @@ from uuid import UUID, uuid4
 
 class ErrorCategory:
     """Four-category error taxonomy (BR-001)."""
-    TRANSIENT = "TRANSIENT"         # HTTP 503 - retry may succeed
-    PERMANENT = "PERMANENT"         # HTTP 400/422 - request needs modification
-    CONFIGURATION = "CONFIGURATION" # HTTP 500 - system misconfiguration
-    UPSTREAM = "UPSTREAM"           # HTTP 502 - external dependency failure
+
+    TRANSIENT = "TRANSIENT"  # HTTP 503 - retry may succeed
+    PERMANENT = "PERMANENT"  # HTTP 400/422 - request needs modification
+    CONFIGURATION = "CONFIGURATION"  # HTTP 500 - system misconfiguration
+    UPSTREAM = "UPSTREAM"  # HTTP 502 - external dependency failure
 
 
 # ---------------------------------------------------------------------------
@@ -35,10 +36,11 @@ class ErrorResponse:
     REQ-010: every error response uses this exact shape.
     remediation is never empty (REQ-009).
     """
-    category: str             # ErrorCategory constant
-    code: str                 # ERR-{COMPONENT}-{NUMBER}
-    message: str              # diagnostic: what happened
-    remediation: str          # prescriptive: what to do next
+
+    category: str  # ErrorCategory constant
+    code: str  # ERR-{COMPONENT}-{NUMBER}
+    message: str  # diagnostic: what happened
+    remediation: str  # prescriptive: what to do next
     request_id: UUID = field(default_factory=uuid4)
     retry_after: int | None = None
     details: dict = field(default_factory=dict)
@@ -70,25 +72,29 @@ class ErrorResponse:
 # ---------------------------------------------------------------------------
 
 # Ingest errors
-ERR_INGEST_001 = "ERR-INGEST-001"   # Invalid file (unsupported type, corrupt, unrecognized MIME)
-ERR_INGEST_002 = "ERR-INGEST-002"   # File too large
-ERR_INGEST_003 = "ERR-INGEST-003"   # Scanned PDF detected (no text layer)
-ERR_INGEST_004 = "ERR-INGEST-004"   # Vector store write failed
+ERR_INGEST_001 = (
+    "ERR-INGEST-001"  # Invalid file (unsupported type, corrupt, unrecognized MIME)
+)
+ERR_INGEST_002 = "ERR-INGEST-002"  # File too large
+ERR_INGEST_003 = "ERR-INGEST-003"  # Scanned PDF detected (no text layer)
+ERR_INGEST_004 = "ERR-INGEST-004"  # Vector store write failed
 
 # Query errors
-ERR_QUERY_001 = "ERR-QUERY-001"     # No documents indexed in namespace
-ERR_QUERY_002 = "ERR-QUERY-002"     # LLM unavailable (both primary and fallback failed)
-ERR_QUERY_003 = "ERR-QUERY-003"     # Query too long (exceeds token limit)
-ERR_QUERY_004 = "ERR-QUERY-004"     # Vector store read failed
+ERR_QUERY_001 = "ERR-QUERY-001"  # No documents indexed in namespace
+ERR_QUERY_002 = "ERR-QUERY-002"  # LLM unavailable (both primary and fallback failed)
+ERR_QUERY_003 = "ERR-QUERY-003"  # Query too long (exceeds token limit)
+ERR_QUERY_004 = "ERR-QUERY-004"  # Vector store read failed
 
 # Configuration errors
-ERR_CONFIG_001 = "ERR-CONFIG-001"   # Missing required configuration variable
-ERR_CONFIG_002 = "ERR-CONFIG-002"   # Invalid provider configuration
+ERR_CONFIG_001 = "ERR-CONFIG-001"  # Missing required configuration variable
+ERR_CONFIG_002 = "ERR-CONFIG-002"  # Invalid provider configuration
 
 # Auth errors (REQ-041)
-ERR_AUTH_001 = "ERR-AUTH-001"       # Invalid token (missing, malformed, unrecognized, revoked)
-ERR_AUTH_002 = "ERR-AUTH-002"       # Expired token (Phase 2)
-ERR_AUTH_003 = "ERR-AUTH-003"       # Insufficient scope
+ERR_AUTH_001 = (
+    "ERR-AUTH-001"  # Invalid token (missing, malformed, unrecognized, revoked)
+)
+ERR_AUTH_002 = "ERR-AUTH-002"  # Expired token (Phase 2)
+ERR_AUTH_003 = "ERR-AUTH-003"  # Insufficient scope
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +142,9 @@ def auth_invalid_token(request_id: UUID | None = None) -> ErrorResponse:
     )
 
 
-def auth_insufficient_scope(required_scope: str, request_id: UUID | None = None) -> ErrorResponse:
+def auth_insufficient_scope(
+    required_scope: str, request_id: UUID | None = None
+) -> ErrorResponse:
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_AUTH_003,

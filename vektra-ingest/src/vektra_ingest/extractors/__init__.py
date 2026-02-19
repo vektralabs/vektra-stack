@@ -5,4 +5,5 @@ Phase 1 extractors:
 - WordExtractor: DOCX paragraph/heading extraction
 - PowerPointExtractor: PPTX slide text and speaker notes extraction
 """
+
 from __future__ import annotations

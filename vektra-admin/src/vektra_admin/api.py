@@ -9,21 +9,32 @@ Mounts at application root (/ prefix). Provides:
 Bootstrap auth (REQ-021, REQ-036): POST /api-keys accepts the bootstrap env-var key
 as authentication (once only) or a valid admin-scoped Bearer token.
 """
+
 from __future__ import annotations
 
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+)
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vektra_admin import audit as _audit
+from vektra_admin import bootstrap as _bootstrap
+from vektra_admin import health as _health
+from vektra_admin.keys import generate_key
 from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
@@ -32,11 +43,6 @@ from vektra_shared.errors import (
     auth_invalid_token,
     http_status_for,
 )
-
-from vektra_admin import audit as _audit
-from vektra_admin import bootstrap as _bootstrap
-from vektra_admin import health as _health
-from vektra_admin.keys import generate_key
 
 log = structlog.get_logger(__name__)
 
@@ -90,7 +96,7 @@ class CreateKeyRequest(BaseModel):
 
 class CreateKeyResponse(BaseModel):
     id: UUID
-    key: str          # plaintext - returned ONCE
+    key: str  # plaintext - returned ONCE
     key_preview: str
     label: str | None
     scopes: list[str]
@@ -134,7 +140,9 @@ async def health(
         # Require any valid Bearer token for deep view
         if credentials is None:
             err = auth_invalid_token()
-            raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
         # Validate token (best-effort; use same registry pattern)
         if registry is not None:
             try:
@@ -142,7 +150,9 @@ async def health(
                 info = await key_store.lookup_by_token(credentials.credentials)
                 if info is None:
                     err = auth_invalid_token()
-                    raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+                    raise HTTPException(
+                        status_code=http_status_for(err), detail=err.to_envelope()
+                    )
             except ValueError:
                 pass  # key_store not yet registered during startup probe
 
@@ -215,12 +225,16 @@ async def create_api_key(
         consumed = await _bootstrap.is_bootstrap_consumed(session)
         if consumed:
             err = auth_invalid_token()
-            raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
         # Bootstrap key will be consumed after successful DB write (below)
     else:
         # Must be a valid admin-scoped key
         if registry is None:
-            raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
+            raise HTTPException(
+                status_code=500, detail="ProviderRegistry not initialized"
+            )
         try:
             key_store = registry.get("key_store", "default")
             key_info = await key_store.lookup_by_token(token)
@@ -229,7 +243,9 @@ async def create_api_key(
 
         if key_info is None:
             err = auth_invalid_token()
-            raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
 
         if "admin" not in key_info.scopes:
             err = ErrorResponse(
@@ -247,7 +263,12 @@ async def create_api_key(
     if invalid:
         raise HTTPException(
             status_code=422,
-            detail={"error": {"code": "ERR-ADMIN-001", "message": f"Invalid scopes: {sorted(invalid)}"}},
+            detail={
+                "error": {
+                    "code": "ERR-ADMIN-001",
+                    "message": f"Invalid scopes: {sorted(invalid)}",
+                }
+            },
         )
 
     # --- Generate and persist key ---
@@ -339,19 +360,20 @@ async def revoke_api_key(
     key_info: ApiKeyInfo = Depends(require_scope("admin")),
 ) -> None:
     """Soft-delete (revoke) an API key. Requires admin scope."""
-    from sqlalchemy import update as sa_update
     from vektra_admin.models import ApiKeyOrm  # late import
 
-    result = await session.execute(
-        select(ApiKeyOrm).where(ApiKeyOrm.id == key_id)
-    )
+    result = await session.execute(select(ApiKeyOrm).where(ApiKeyOrm.id == key_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail={"error": {"message": "API key not found"}})
+        raise HTTPException(
+            status_code=404, detail={"error": {"message": "API key not found"}}
+        )
     if row.revoked_at is not None:
-        raise HTTPException(status_code=409, detail={"error": {"message": "API key already revoked"}})
+        raise HTTPException(
+            status_code=409, detail={"error": {"message": "API key already revoked"}}
+        )
 
-    row.revoked_at = datetime.now(timezone.utc)
+    row.revoked_at = datetime.now(UTC)
     await session.commit()
 
     # Update in-memory cache immediately (do not wait for TTL)

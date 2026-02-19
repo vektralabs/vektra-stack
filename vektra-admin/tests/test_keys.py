@@ -1,7 +1,6 @@
 """Unit tests: API key generation and hash verification (REQ-023, ARCH-023)."""
-import pytest
 
-from vektra_admin.keys import generate_key, verify_key, needs_rehash
+from vektra_admin.keys import generate_key, needs_rehash, verify_key
 
 
 def test_generate_key_returns_three_tuple():

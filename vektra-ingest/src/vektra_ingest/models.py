@@ -9,10 +9,10 @@ vektra_* packages (ADR-0005).
 
 NOTE: 'metadata' is reserved by SQLAlchemy DeclarativeBase.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
@@ -26,7 +26,8 @@ from sqlalchemy import (
     String,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -69,7 +70,9 @@ class SourceDocumentOrm(Base):
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BIGINT, nullable=False)
     chunk_count: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
-    version: Mapped[int] = mapped_column(INTEGER, nullable=False, server_default=text("1"))
+    version: Mapped[int] = mapped_column(
+        INTEGER, nullable=False, server_default=text("1")
+    )
     supersedes_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("source_documents.id"),

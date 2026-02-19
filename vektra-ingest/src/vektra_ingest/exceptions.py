@@ -1,4 +1,5 @@
 """Exceptions for vektra-ingest pipeline errors."""
+
 from __future__ import annotations
 
 

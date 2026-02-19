@@ -17,6 +17,7 @@ Categories used by Vektra (ARCH-039, ARCH-057 step 5):
     "event_emitter"     - EventEmitter implementations
     "key_store"         - KeyStoreProvider (for auth middleware)
 """
+
 from __future__ import annotations
 
 from typing import Any

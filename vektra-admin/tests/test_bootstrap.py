@@ -1,14 +1,11 @@
 """Unit tests: bootstrap key enforcement (REQ-036, ARCH-025)."""
-import os
-from unittest.mock import AsyncMock, MagicMock
 
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from vektra_admin.bootstrap import (
     get_bootstrap_key,
-    is_bootstrap_key,
     is_bootstrap_consumed,
-    consume_bootstrap_key,
+    is_bootstrap_key,
     warn_if_bootstrap_in_production,
 )
 
@@ -81,6 +78,7 @@ def test_warn_if_bootstrap_in_production_logs(monkeypatch):
     monkeypatch.setenv("VEKTRA_ADMIN_BOOTSTRAP_KEY", "secret")
     monkeypatch.setenv("VEKTRA_ENV", "production")
     import structlog.testing
+
     with structlog.testing.capture_logs() as captured:
         warn_if_bootstrap_in_production()
     assert any("bootstrap_key_set_in_production" in str(e) for e in captured)
@@ -90,6 +88,7 @@ def test_warn_if_bootstrap_not_production_no_warn(monkeypatch):
     monkeypatch.setenv("VEKTRA_ADMIN_BOOTSTRAP_KEY", "secret")
     monkeypatch.setenv("VEKTRA_ENV", "development")
     import structlog.testing
+
     with structlog.testing.capture_logs() as captured:
         warn_if_bootstrap_in_production()
     assert not any("bootstrap_key_set_in_production" in str(e) for e in captured)

@@ -3,13 +3,15 @@
 Tests verify SQL structure, transaction behavior, and BLOCKER B-1/B-3
 resolution without requiring a live PostgreSQL instance.
 """
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
-from vektra_shared.types import ChunkEmbedding, QueryEmbedding, SearchMode
+import pytest
+
+from vektra_shared.types import ChunkEmbedding
 
 
 class FakeScalarResult:
@@ -34,7 +36,9 @@ class TestPgvectorProvider:
 
     def _make_session(self):
         session = AsyncMock()
-        session.begin = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()))
+        session.begin = MagicMock(
+            return_value=AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())
+        )
         session.flush = AsyncMock()
         session.execute = AsyncMock()
         session.add = MagicMock()

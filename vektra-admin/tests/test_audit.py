@@ -3,11 +3,9 @@
 log_event is async and creates its own session via vektra_shared.db._session_factory.
 Tests patch the factory at its source module (vektra_shared.db).
 """
-import asyncio
+
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-
-import pytest
 
 import vektra_admin.audit as audit_mod
 

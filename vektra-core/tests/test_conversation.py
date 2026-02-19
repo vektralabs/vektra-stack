@@ -1,8 +1,8 @@
 """Unit tests for ConversationStore (REQ-049)."""
+
 import asyncio
 from uuid import uuid4
 
-import pytest
 from vektra_core.conversation import ConversationStore
 
 
@@ -72,7 +72,7 @@ async def test_concurrent_add_is_safe():
 
     async def add_turns(start: int) -> None:
         for i in range(5):
-            await store.add_turn(cid, f"Q{start+i}", f"A{start+i}")
+            await store.add_turn(cid, f"Q{start + i}", f"A{start + i}")
 
     await asyncio.gather(add_turns(0), add_turns(10), add_turns(20))
     history = await store.get_history(cid)

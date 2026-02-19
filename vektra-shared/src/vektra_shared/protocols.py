@@ -14,9 +14,11 @@ Phase 1 implementations live in their respective component packages:
 - SafeguardHook: vektra_shared (PassthroughSafeguard - Phase 1 default)
 - EventEmitter: vektra_shared (NoOpEventEmitter - Phase 1 default)
 """
+
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Protocol, Sequence, runtime_checkable
+from collections.abc import AsyncIterator, Sequence
+from typing import Any, Protocol, runtime_checkable
 
 from vektra_shared.types import (
     ChunkEmbedding,

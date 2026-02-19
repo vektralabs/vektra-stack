@@ -12,6 +12,7 @@ Emission points:
 
 Phase 2: WebhookEventEmitter with HMAC-SHA256 signatures.
 """
+
 from __future__ import annotations
 
 from typing import Any

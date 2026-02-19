@@ -1,9 +1,10 @@
 """Unit tests for TemplateRenderer (ARCH-054, ARCH-048)."""
-import hashlib
+
 from pathlib import Path
 
 import pytest
-from vektra_core.templates import TemplateRenderer, _BUILTIN_DIR
+
+from vektra_core.templates import TemplateRenderer
 
 
 def test_loads_builtin_templates():
@@ -65,7 +66,10 @@ def test_render_conversation_empty():
 def test_render_conversation_with_history():
     renderer = TemplateRenderer()
     history = [
-        {"question": "What is RAG?", "answer": "RAG stands for retrieval-augmented generation."},
+        {
+            "question": "What is RAG?",
+            "answer": "RAG stands for retrieval-augmented generation.",
+        },
         {"question": "Who invented it?", "answer": "Various researchers."},
     ]
     result = renderer.render_conversation(history)
@@ -82,7 +86,8 @@ def test_render_conversation_none_answer():
 
 
 def test_missing_template_raises():
-    import tempfile, os
+    import tempfile
+
     with tempfile.TemporaryDirectory() as d:
         p = Path(d)
         # Create only two of the three required templates

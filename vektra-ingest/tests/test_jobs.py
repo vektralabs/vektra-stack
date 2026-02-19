@@ -1,4 +1,5 @@
 """Unit tests for arq task job status transitions (ADR-0006, NFR-005)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,7 +8,6 @@ from uuid import uuid4
 import pytest
 
 from vektra_ingest.pipeline import IngestResult
-
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -67,6 +67,7 @@ async def test_task_marks_job_processing_then_indexed():
                         pass
 
                 import vektra_shared.db as db_mod
+
                 original = db_mod._session_factory
                 db_mod._session_factory = FakeFactory()
                 try:
@@ -115,6 +116,7 @@ async def test_task_marks_job_failed_on_ingest_error():
                     pass
 
             import vektra_shared.db as db_mod
+
             original = db_mod._session_factory
             db_mod._session_factory = FakeFactory()
             try:
@@ -160,6 +162,7 @@ async def test_task_marks_job_failed_on_conflict():
                     pass
 
             import vektra_shared.db as db_mod
+
             original = db_mod._session_factory
             db_mod._session_factory = FakeFactory()
             try:
@@ -189,12 +192,11 @@ async def test_task_no_session_factory_marks_failed():
 
     with patch("vektra_ingest.jobs._update_job", side_effect=_mock_update):
         import vektra_shared.db as db_mod
+
         original = db_mod._session_factory
         db_mod._session_factory = None
         try:
-            await ingest_document_task(
-                ctx, job_id, "default", "test.pdf", b"content"
-            )
+            await ingest_document_task(ctx, job_id, "default", "test.pdf", b"content")
         finally:
             db_mod._session_factory = original
 

@@ -7,10 +7,12 @@ Routes:
 Auth: `query` or `admin` scope required for both endpoints.
 SSE streaming: set Accept: text/event-stream header or body.stream=true.
 """
+
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -20,7 +22,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from vektra_shared.auth import ApiKeyInfo
-from vektra_shared.errors import auth_insufficient_scope, auth_invalid_token, http_status_for
+from vektra_shared.errors import (
+    auth_insufficient_scope,
+    auth_invalid_token,
+    http_status_for,
+)
 from vektra_shared.types import QueryChunk, QueryRequest, SafeguardContext
 
 log = structlog.get_logger(__name__)
@@ -162,7 +168,12 @@ async def query(
         if not sg_result.allowed:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": "ERR-SAFEGUARD-001", "message": sg_result.reason or "Query blocked"}},
+                detail={
+                    "error": {
+                        "code": "ERR-SAFEGUARD-001",
+                        "message": sg_result.reason or "Query blocked",
+                    }
+                },
             )
     except ValueError:
         pass  # safeguard not registered (optional in tests/dev)

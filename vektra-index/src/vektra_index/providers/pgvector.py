@@ -7,11 +7,14 @@ Phase 1 implementation. SearchMode.DENSE only (ARCH-010).
 - Full-store contract: text stored with embedding, search returns text_snippet
   without secondary lookup (ARCH-051).
 """
+
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from datetime import UTC
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select, text, update
@@ -106,7 +109,9 @@ class PgvectorProvider:
         # Build the base query
         # Use pgvector's cosine distance operator: <=>
         # Score is 1 - distance (cosine similarity)
-        distance_expr = DocumentChunkOrm.embedding.cosine_distance(query_embedding.dense)
+        distance_expr = DocumentChunkOrm.embedding.cosine_distance(
+            query_embedding.dense
+        )
         score_expr = (1 - distance_expr).label("score")
 
         stmt = (
@@ -139,12 +144,14 @@ class PgvectorProvider:
                     )
 
         # Join with source_documents to get document_version and exclude soft-deleted
-        stmt = stmt.join(
-            SourceDocumentOrm,
-            DocumentChunkOrm.document_id == SourceDocumentOrm.id,
-        ).where(
-            SourceDocumentOrm.deleted_at.is_(None)
-        ).add_columns(SourceDocumentOrm.version.label("document_version"))
+        stmt = (
+            stmt.join(
+                SourceDocumentOrm,
+                DocumentChunkOrm.document_id == SourceDocumentOrm.id,
+            )
+            .where(SourceDocumentOrm.deleted_at.is_(None))
+            .add_columns(SourceDocumentOrm.version.label("document_version"))
+        )
 
         result = await session.execute(stmt)
         rows = result.all()
@@ -172,8 +179,9 @@ class PgvectorProvider:
         Returns chunks_removed count. Both operations in one transaction
         per BLOCKER B-1/B-3 resolution (ARCH-058 schema notes).
         """
+        from datetime import datetime
+
         from vektra_index.models import DocumentChunkOrm, SourceDocumentOrm
-        from datetime import datetime, timezone
 
         # 1. Count chunks before deletion (BLOCKER B-3: chunks_removed data source)
         count_result = await session.execute(
@@ -201,7 +209,7 @@ class PgvectorProvider:
                 SourceDocumentOrm.deleted_at.is_(None),
             )
             .values(
-                deleted_at=datetime.now(timezone.utc),
+                deleted_at=datetime.now(UTC),
                 deletion_reason="user_request",
             )
         )
@@ -230,11 +238,15 @@ class PgvectorProvider:
         """
         from vektra_index.models import DocumentChunkOrm, SourceDocumentOrm
 
-        doc_stmt = select(func.count()).select_from(SourceDocumentOrm).where(
-            SourceDocumentOrm.deleted_at.is_(None)
+        doc_stmt = (
+            select(func.count())
+            .select_from(SourceDocumentOrm)
+            .where(SourceDocumentOrm.deleted_at.is_(None))
         )
-        chunk_stmt = select(func.count()).select_from(DocumentChunkOrm).where(
-            DocumentChunkOrm.index_version == self._active_index_version
+        chunk_stmt = (
+            select(func.count())
+            .select_from(DocumentChunkOrm)
+            .where(DocumentChunkOrm.index_version == self._active_index_version)
         )
 
         if namespace:

@@ -7,10 +7,12 @@ must be registered under category="key_store", name="default" at startup.
 Scope values (REQ-031): "admin", "ingest", "query".
 Error codes (REQ-041): ERR-AUTH-001 (invalid/revoked token), ERR-AUTH-003 (wrong scope).
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from fastapi import HTTPException, Request, Security
@@ -33,6 +35,7 @@ _bearer = HTTPBearer(auto_error=False)
 @dataclass
 class ApiKeyInfo:
     """Metadata about a validated API key."""
+
     key_id: UUID
     scopes: list[str]
     namespace_id: str | None = None
@@ -64,7 +67,9 @@ class KeyStoreProvider(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def require_scope(required_scope: str) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
+def require_scope(
+    required_scope: str,
+) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
     """Return a FastAPI dependency that enforces the given API key scope.
 
     Usage:
@@ -96,7 +101,11 @@ def require_scope(required_scope: str) -> Callable[..., Coroutine[Any, Any, ApiK
         if registry is None:
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"message": "ProviderRegistry not initialized on app state"}},
+                detail={
+                    "error": {
+                        "message": "ProviderRegistry not initialized on app state"
+                    }
+                },
             )
 
         try:

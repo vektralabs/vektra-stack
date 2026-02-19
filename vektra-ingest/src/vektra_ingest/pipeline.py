@@ -14,21 +14,18 @@ Handles:
 Audit logging is the caller's responsibility (API layer writes audit entries
 so it can include key_id and request_id from the request context).
 """
+
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from vektra_shared.config import IngestConfig
-from vektra_shared.errors import ERR_INGEST_001, ERR_INGEST_004
-from vektra_shared.types import ChunkEmbedding, ExtractionRequest
 
 from vektra_ingest.chunking import FixedSizeChunking
 from vektra_ingest.detection import detect_content_type
@@ -37,6 +34,9 @@ from vektra_ingest.extractors.pdf import PdfplumberExtractor
 from vektra_ingest.extractors.powerpoint import PowerPointExtractor
 from vektra_ingest.extractors.word import WordExtractor
 from vektra_ingest.models import SourceDocumentOrm
+from vektra_shared.config import IngestConfig
+from vektra_shared.errors import ERR_INGEST_001, ERR_INGEST_004
+from vektra_shared.types import ChunkEmbedding, ExtractionRequest
 
 log = structlog.get_logger(__name__)
 
@@ -155,7 +155,7 @@ async def run_ingest(
             await session.execute(
                 update(SourceDocumentOrm)
                 .where(SourceDocumentOrm.id == existing.id)
-                .values(filename_aliases=aliases, updated_at=datetime.now(timezone.utc))
+                .values(filename_aliases=aliases, updated_at=datetime.now(UTC))
             )
             await session.commit()
         log.info(
@@ -219,7 +219,7 @@ async def run_ingest(
     await session.commit()
 
     # ------------------------------------------------------------------
-    # Steps 6–7: Extract → Chunk → Embed → Store
+    # Steps 6-7: Extract → Chunk → Embed → Store
     # ------------------------------------------------------------------
     try:
         extraction_req = ExtractionRequest(
@@ -297,7 +297,7 @@ async def run_ingest(
         await session.execute(
             update(SourceDocumentOrm)
             .where(SourceDocumentOrm.id == doc_id)
-            .values(chunk_count=len(chunk_ids), updated_at=datetime.now(timezone.utc))
+            .values(chunk_count=len(chunk_ids), updated_at=datetime.now(UTC))
         )
         await session.commit()
     except Exception as exc:
@@ -357,7 +357,7 @@ async def _cleanup_document(doc_id: UUID) -> None:
                 update(SourceDocumentOrm)
                 .where(SourceDocumentOrm.id == doc_id)
                 .values(
-                    deleted_at=datetime.now(timezone.utc),
+                    deleted_at=datetime.now(UTC),
                     deletion_reason="user_request",
                 )
             )

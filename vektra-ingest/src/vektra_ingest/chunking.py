@@ -11,9 +11,10 @@ for Phase 1 document sizes (<= 50MB). Large documents produce ~50K tokens at
 most (a 50MB text file is ~12.5M chars / 4 = ~3M tokens, but realistically
 PDFs yield much less usable text).
 """
+
 from __future__ import annotations
 
-from typing import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 import structlog
 
@@ -78,7 +79,9 @@ class FixedSizeChunking:
             try:
                 chunk_text = enc.decode(chunk_tokens)
             except Exception as exc:
-                log.warning("chunk_decode_failed", chunk_index=chunk_index, error=str(exc))
+                log.warning(
+                    "chunk_decode_failed", chunk_index=chunk_index, error=str(exc)
+                )
                 start += step
                 chunk_index += 1
                 continue

@@ -1,7 +1,7 @@
 """Unit tests for vektra-ingest API endpoints (REQ-014, REQ-029, REQ-033, REQ-040)."""
+
 from __future__ import annotations
 
-import io
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -12,7 +12,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.registry import ProviderRegistry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -65,7 +64,9 @@ def _make_pdf_file(size_bytes: int = 1024) -> bytes:
 @pytest.fixture
 async def client():
     app = _make_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         yield c, app
 
 
@@ -77,7 +78,9 @@ async def client():
 @pytest.mark.asyncio
 async def test_ingest_no_token_returns_401():
     app = _make_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         resp = await c.post("/api/v1/ingest", files={"file": ("test.pdf", b"data")})
     assert resp.status_code == 401
     assert resp.json()["detail"]["error"]["code"] == "ERR-AUTH-001"
@@ -88,7 +91,9 @@ async def test_ingest_query_scope_returns_403():
     """query scope is not sufficient for ingest endpoint."""
     key_store = _make_key_store("test", scopes=["query"])
     app = _make_app(key_store=key_store)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         resp = await c.post(
             "/api/v1/ingest",
             files={"file": ("test.pdf", b"data")},
@@ -138,7 +143,9 @@ async def test_file_too_large_returns_413():
     app = _make_app()
     big_file = b"x" * (2 * 1024 * 1024)  # 2MB > 1MB limit
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         resp = await c.post(
             "/api/v1/ingest",
             files={"file": ("big.pdf", big_file)},

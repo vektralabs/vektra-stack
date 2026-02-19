@@ -7,6 +7,7 @@ add persistent storage with encryption (ARCH-031).
 Max turns per conversation is enforced on write; oldest turns are pruned.
 All methods are asyncio-safe via an asyncio.Lock.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -48,9 +49,13 @@ class ConversationStore:
         async with self._lock:
             if conversation_id not in self._store:
                 self._store[conversation_id] = []
-            self._store[conversation_id].append(ConversationTurn(question=question, answer=answer))
+            self._store[conversation_id].append(
+                ConversationTurn(question=question, answer=answer)
+            )
             if len(self._store[conversation_id]) > self._max_turns:
-                self._store[conversation_id] = self._store[conversation_id][-self._max_turns:]
+                self._store[conversation_id] = self._store[conversation_id][
+                    -self._max_turns :
+                ]
 
     async def clear(self, conversation_id: UUID) -> None:
         """Remove all turns for a conversation."""

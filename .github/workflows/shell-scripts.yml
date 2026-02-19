@@ -1,0 +1,40 @@
+name: Shell scripts
+
+# Validates shell scripts in scripts/ directory.
+# Requires infra-makefile (Wave 6) to be complete before there are scripts to test.
+
+on:
+  pull_request:
+
+jobs:
+  shell-scripts:
+    name: Validate shell scripts
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell scripts exist
+        id: check
+        run: |
+          if [ -d scripts ] && [ -n "$(ls scripts/*.sh 2>/dev/null)" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No shell scripts found in scripts/ — skipping validation."
+          fi
+
+      - name: Lint with shellcheck
+        if: steps.check.outputs.found == 'true'
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh
+
+      # TODO (Wave 6 - infra-makefile): add dry-run tests for each script
+      # - name: Test scripts with --dry-run
+      #   if: steps.check.outputs.found == 'true'
+      #   run: |
+      #     for script in scripts/*.sh; do
+      #       echo "Testing $script..."
+      #       bash "$script" --dry-run
+      #     done

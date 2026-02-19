@@ -7,6 +7,7 @@ successful use and stored permanently in system_state table.
 After consumption, any request bearing the bootstrap key returns 401.
 Consumed state survives container restarts (stored in PostgreSQL, not memory).
 """
+
 from __future__ import annotations
 
 import os
@@ -32,6 +33,7 @@ def is_bootstrap_key(token: str) -> bool:
         return False
     # Constant-time comparison to prevent timing attacks
     import hmac
+
     return hmac.compare_digest(token, key)
 
 
@@ -40,12 +42,12 @@ async def is_bootstrap_consumed(session: AsyncSession) -> bool:
 
     Reads from system_state; returns True if the key was already used.
     """
-    from vektra_admin.models import SystemStateOrm  # late import: avoids circular ORM load
+    from vektra_admin.models import (
+        SystemStateOrm,  # late import: avoids circular ORM load
+    )
 
     result = await session.execute(
-        select(SystemStateOrm).where(
-            SystemStateOrm.key == _BOOTSTRAP_KEY_STATE_ROW
-        )
+        select(SystemStateOrm).where(SystemStateOrm.key == _BOOTSTRAP_KEY_STATE_ROW)
     )
     row = result.scalar_one_or_none()
     if row is None:
@@ -61,6 +63,7 @@ def warn_if_bootstrap_in_production() -> None:
     Call this once at startup (infra-app-entrypoint step 5) before serving requests.
     """
     import structlog as _sl
+
     _log = _sl.get_logger(__name__)
     key = get_bootstrap_key()
     env = os.environ.get("VEKTRA_ENV", "development")

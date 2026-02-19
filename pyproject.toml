@@ -8,4 +8,146 @@ dev = [
     "testcontainers[postgres]>=4.8",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.15",
+    "mypy>=1.13",
+    "import-linter>=2.7",
 ]
+
+# ---------------------------------------------------------------------------
+# Ruff: linter and formatter (replaces flake8, isort, black)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade (modernize syntax)
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",   # line length enforced by formatter, not linter
+    "B008",   # FastAPI requires Depends()/Security() in function signature defaults
+    "B904",   # raise-without-from-inside-except: pre-existing pattern, intentional for HTTP errors
+    "B905",   # zip-without-explicit-strict: pre-existing pattern
+    "UP042",  # StrEnum migration deferred (may affect serialization behavior)
+    "RUF012", # ClassVar annotation not required for arq/pytest class-level config attrs
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "vektra_shared",
+    "vektra_core",
+    "vektra_ingest",
+    "vektra_index",
+    "vektra_admin",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# mypy: type checking with SQLAlchemy 2.0 plugin
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["sqlalchemy.ext.mypy.plugin"]
+
+# Third-party libraries without complete stubs
+[[tool.mypy.overrides]]
+module = [
+    "litellm.*",
+    "pdfplumber.*",
+    "magic.*",
+    "sentence_transformers.*",
+    "pgvector.*",
+    "arq.*",
+    "pptx.*",
+    "docx.*",
+    "testcontainers.*",
+]
+ignore_missing_imports = true
+
+# Tests: relax strictness (no type annotations required)
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# ---------------------------------------------------------------------------
+# import-linter: module boundary enforcement (replaces .importlinter)
+# ---------------------------------------------------------------------------
+
+[tool.importlinter]
+root_packages = [
+    "vektra_shared",
+    "vektra_admin",
+    "vektra_core",
+    "vektra_ingest",
+    "vektra_index",
+]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "vektra_shared must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_shared"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin"]
+
+[[tool.importlinter.contracts]]
+name = "vektra_admin must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_admin"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index"]
+
+[[tool.importlinter.contracts]]
+name = "vektra_core must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_core"]
+forbidden_modules = ["vektra_admin", "vektra_ingest", "vektra_index"]
+
+[[tool.importlinter.contracts]]
+name = "vektra_ingest must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_ingest"]
+forbidden_modules = ["vektra_admin", "vektra_core", "vektra_index"]
+
+[[tool.importlinter.contracts]]
+name = "vektra_index must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_index"]
+forbidden_modules = ["vektra_admin", "vektra_core", "vektra_ingest"]
+
+# ---------------------------------------------------------------------------
+# pytest coverage (workspace-level config; each component overrides testpaths)
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+# importlib mode required when running pytest from the workspace root
+# (avoids ModuleNotFoundError for packages in src/ layout with uv workspaces)
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
+
+[tool.coverage.run]
+source = [
+    "vektra_shared",
+    "vektra_admin",
+    "vektra_core",
+    "vektra_ingest",
+    "vektra_index",
+]
+omit = ["tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

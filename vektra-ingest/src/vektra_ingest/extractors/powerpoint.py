@@ -6,13 +6,19 @@ Extracts slide titles, text boxes, and speaker notes in slide order.
 Charts, SmartArt, tables, and embedded media are not extracted but generate
 warnings.
 """
+
 from __future__ import annotations
 
-from typing import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 import structlog
 
-from vektra_shared.types import DocumentChunk, ElementType, ExtractionRequest, HealthStatus
+from vektra_shared.types import (
+    DocumentChunk,
+    ElementType,
+    ExtractionRequest,
+    HealthStatus,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -67,7 +73,9 @@ class PowerPointExtractor:
                     continue
 
                 text_parts = [
-                    para.text for para in shape.text_frame.paragraphs if para.text.strip()
+                    para.text
+                    for para in shape.text_frame.paragraphs
+                    if para.text.strip()
                 ]
                 text = "\n".join(text_parts).strip()
                 if not text:
@@ -96,7 +104,9 @@ class PowerPointExtractor:
                 try:
                     notes_frame = slide.notes_slide.notes_text_frame
                     notes_parts = [
-                        para.text for para in notes_frame.paragraphs if para.text.strip()
+                        para.text
+                        for para in notes_frame.paragraphs
+                        if para.text.strip()
                     ]
                     notes_text = "\n".join(notes_parts).strip()
                     if notes_text:
@@ -120,6 +130,7 @@ class PowerPointExtractor:
     async def health_check(self) -> HealthStatus:
         try:
             from pptx import Presentation  # noqa: F401  type: ignore[import-untyped]
+
             return HealthStatus(status="healthy")
         except ImportError as exc:
             return HealthStatus(status="unhealthy", message=str(exc))

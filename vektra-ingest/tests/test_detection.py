@@ -1,4 +1,5 @@
 """Unit tests for content type detection (ARCH-042, ARCH-011, REQ-058)."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch

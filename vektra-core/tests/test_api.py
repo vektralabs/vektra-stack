@@ -3,31 +3,26 @@
 Uses a real FastAPI test client with mocked ProviderRegistry + pipeline.
 No real LLM or database required.
 """
+
 from __future__ import annotations
 
-import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from vektra_core.api import router
 from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.types import (
     QueryChunk,
     QueryResponse,
     QueryTrace,
-    SearchResult,
     SourceRef,
     StepTrace,
 )
-from vektra_core.api import router
-from datetime import datetime, timezone
-from uuid import uuid4 as _uuid4
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -53,7 +48,8 @@ def _make_registry(api_key: str = "test-key-xxxx") -> ProviderRegistry:
     response_id = uuid4()
 
     async def _execute(query_req):
-        from vektra_shared.types import QueryResponse, QueryTrace, SourceRef, StepTrace, ChunkRef
+        from vektra_shared.types import ChunkRef
+
         response = QueryResponse(
             response_id=response_id,
             answer="Test answer.",
@@ -75,7 +71,7 @@ def _make_registry(api_key: str = "test-key-xxxx") -> ProviderRegistry:
             chunks_retrieved=[ChunkRef(chunk_id="chunk-1", score=0.9)],
             llm_model="mock",
             prompt_version="deadbeef",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         return response, trace
 
@@ -87,6 +83,7 @@ def _make_registry(api_key: str = "test-key-xxxx") -> ProviderRegistry:
             yield QueryChunk(type="token", data="world")
             yield QueryChunk(type="sources", data=[])
             yield QueryChunk(type="done", data="")
+
         return _gen()
 
     pipeline.execute_stream = AsyncMock(side_effect=_execute_stream)
@@ -95,6 +92,7 @@ def _make_registry(api_key: str = "test-key-xxxx") -> ProviderRegistry:
     # Mock safeguard
     safeguard = MagicMock()
     from vektra_shared.types import SafeguardResult
+
     safeguard.pre_query = AsyncMock(return_value=SafeguardResult(allowed=True))
     reg.register("safeguard", "default", safeguard)
 
@@ -119,7 +117,9 @@ TEST_KEY = "test-key-xxxx"
 async def test_query_json_returns_response():
     reg = _make_registry(TEST_KEY)
     app = _make_app(reg)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/api/v1/query",
             json={"question": "What is RAG?"},
@@ -137,7 +137,9 @@ async def test_query_json_returns_response():
 async def test_query_requires_auth():
     reg = _make_registry(TEST_KEY)
     app = _make_app(reg)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/api/v1/query",
             json={"question": "What is RAG?"},
@@ -150,7 +152,9 @@ async def test_query_requires_auth():
 async def test_query_wrong_key_returns_401():
     reg = _make_registry(TEST_KEY)
     app = _make_app(reg)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/api/v1/query",
             json={"question": "What is RAG?"},
@@ -162,7 +166,9 @@ async def test_query_wrong_key_returns_401():
 async def test_query_sse_returns_stream():
     reg = _make_registry(TEST_KEY)
     app = _make_app(reg)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/api/v1/query",
             json={"question": "Stream this", "stream": True},
@@ -186,11 +192,16 @@ async def test_providers_returns_list():
     llm = MagicMock()
     llm.model_name = "ollama/llama3"
     from vektra_shared.types import HealthStatus
-    llm.health_check = AsyncMock(return_value=HealthStatus(status="healthy", latency_ms=42))
+
+    llm.health_check = AsyncMock(
+        return_value=HealthStatus(status="healthy", latency_ms=42)
+    )
     reg.register("llm", "default", llm)
 
     app = _make_app(reg)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(
             "/api/v1/providers",
             headers={"Authorization": f"Bearer {TEST_KEY}"},
@@ -211,7 +222,6 @@ async def test_query_no_relevant_context_flag():
     pipeline = reg.get("query_pipeline", "default")
 
     async def _execute_no_context(query_req):
-        from vektra_shared.types import QueryResponse, QueryTrace, StepTrace
         response = QueryResponse(
             response_id=uuid4(),
             answer=None,
@@ -226,14 +236,16 @@ async def test_query_no_relevant_context_flag():
             chunks_retrieved=[],
             llm_model="mock",
             prompt_version="deadbeef",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         return response, trace
 
     pipeline.execute = AsyncMock(side_effect=_execute_no_context)
 
     app = _make_app(reg)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/api/v1/query",
             json={"question": "Unknown topic"},

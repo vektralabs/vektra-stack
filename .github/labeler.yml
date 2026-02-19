@@ -1,0 +1,44 @@
+# Automatic PR labels based on changed files.
+# Requires the actions/labeler action in a workflow.
+# Labels must be created in GitHub first (Settings → Labels).
+
+"component:shared":
+  - changed-files:
+    - any-glob-to-any-file: "vektra-shared/**"
+
+"component:core":
+  - changed-files:
+    - any-glob-to-any-file: "vektra-core/**"
+
+"component:ingest":
+  - changed-files:
+    - any-glob-to-any-file: "vektra-ingest/**"
+
+"component:index":
+  - changed-files:
+    - any-glob-to-any-file: "vektra-index/**"
+
+"component:admin":
+  - changed-files:
+    - any-glob-to-any-file: "vektra-admin/**"
+
+"docs":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.rst"
+
+"ci":
+  - changed-files:
+    - any-glob-to-any-file:
+      - ".github/**"
+      - ".pre-commit-config.yaml"
+      - "pyproject.toml"
+
+"infra":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "Dockerfile*"
+      - "docker-compose*.yml"
+      - "deploy/**"

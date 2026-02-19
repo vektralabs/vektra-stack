@@ -13,9 +13,10 @@ by the worker startup before tasks run (NFR-005 durability: PostgreSQL-backed jo
 
 Worker settings (get_worker_settings) are used by the vektra-worker entrypoint.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -66,9 +67,9 @@ async def _update_job(
         values["percentage"] = percentage
 
     if status == "processing":
-        values["started_at"] = datetime.now(timezone.utc)
+        values["started_at"] = datetime.now(UTC)
     elif status in ("indexed", "failed"):
-        values["completed_at"] = datetime.now(timezone.utc)
+        values["completed_at"] = datetime.now(UTC)
 
     try:
         async with _shared_db._session_factory() as session:

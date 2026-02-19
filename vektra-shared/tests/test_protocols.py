@@ -1,7 +1,8 @@
 """Tests that Protocol interfaces are importable and have correct structure."""
-import inspect
+
 import pytest
 
+from vektra_shared.events import NoOpEventEmitter
 from vektra_shared.protocols import (
     ChunkingStrategy,
     DocumentExtractor,
@@ -13,7 +14,6 @@ from vektra_shared.protocols import (
     SparseEmbeddingProvider,
     VectorStoreProvider,
 )
-from vektra_shared.events import NoOpEventEmitter
 from vektra_shared.safeguards import PassthroughSafeguard
 
 
@@ -85,6 +85,7 @@ class TestNoOpEventEmitter:
     @pytest.mark.asyncio
     async def test_emit_is_fast(self):
         import time
+
         emitter = NoOpEventEmitter()
         start = time.monotonic()
         for _ in range(100):
@@ -102,6 +103,7 @@ class TestPassthroughSafeguard:
     @pytest.mark.asyncio
     async def test_pre_query_allows(self):
         from vektra_shared.types import SafeguardContext
+
         safeguard = PassthroughSafeguard()
         result = await safeguard.pre_query("ref-1", SafeguardContext())
         assert result.allowed is True
@@ -111,6 +113,7 @@ class TestPassthroughSafeguard:
     @pytest.mark.asyncio
     async def test_post_retrieval_allows(self):
         from vektra_shared.types import SafeguardContext
+
         safeguard = PassthroughSafeguard()
         result = await safeguard.post_retrieval("ref-1", [], SafeguardContext())
         assert result.allowed is True
@@ -118,6 +121,7 @@ class TestPassthroughSafeguard:
     @pytest.mark.asyncio
     async def test_pre_response_allows(self):
         from vektra_shared.types import SafeguardContext
+
         safeguard = PassthroughSafeguard()
         result = await safeguard.pre_response("ref-1", SafeguardContext())
         assert result.allowed is True

@@ -7,6 +7,7 @@ to the value in alembic.ini.
 ORM models are NOT imported here. The initial migration uses raw SQL
 to avoid coupling migration history to internal module boundaries (ADR-0005).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,7 +50,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection) -> None:  # noqa: ANN001
+def do_run_migrations(connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

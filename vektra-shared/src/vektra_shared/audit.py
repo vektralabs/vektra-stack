@@ -13,7 +13,8 @@ Injection at startup (infra-app-entrypoint lifespan):
     vektra_shared.audit.set_log_fn(_impl)
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 _log_fn: Callable[..., None] | None = None
 

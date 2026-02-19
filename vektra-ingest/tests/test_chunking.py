@@ -1,4 +1,5 @@
 """Unit tests for FixedSizeChunking (ARCH-037, REQ-002)."""
+
 from __future__ import annotations
 
 import pytest

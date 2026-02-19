@@ -17,12 +17,12 @@ Event loop strategy:
   Solution: each test creates a *fresh* AsyncEngine (per-test), matching the
   pattern used in vektra-index integration tests.
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import subprocess
-import uuid
 from uuid import uuid4
 
 import pytest
@@ -34,7 +34,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from vektra_shared.registry import ProviderRegistry
 
-
 # ---------------------------------------------------------------------------
 # Docker availability guard
 # ---------------------------------------------------------------------------
@@ -43,6 +42,7 @@ from vektra_shared.registry import ProviderRegistry
 def _docker_available() -> bool:
     try:
         import docker
+
         client = docker.from_env()
         client.ping()
         return True
@@ -75,15 +75,11 @@ def db_url():
 
     with PostgresContainer("pgvector/pgvector:pg16") as postgres:
         raw_url = postgres.get_connection_url()
-        async_url = (
-            raw_url
-            .replace("postgresql://", "postgresql+asyncpg://")
-            .replace("psycopg2", "asyncpg")
+        async_url = raw_url.replace("postgresql://", "postgresql+asyncpg://").replace(
+            "psycopg2", "asyncpg"
         )
 
-        project_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(__file__))
-        )
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         env = os.environ.copy()
         env["VEKTRA_DATABASE_URL"] = async_url
 

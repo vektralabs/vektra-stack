@@ -12,16 +12,19 @@ Verifies:
 - Chunk deletion semantics documented (CASCADE on FK as safety net)
 - content_type NOT NULL with default 'application/octet-stream'
 """
+
 from __future__ import annotations
 
 import os
-import pytest
 import subprocess
+
+import pytest
 
 
 def _docker_available() -> bool:
     try:
         import docker
+
         client = docker.from_env()
         client.ping()
         return True
@@ -64,39 +67,52 @@ def migrated_db(postgres_url):
         env=env,
     )
     if result.returncode != 0:
-        pytest.fail(f"Alembic upgrade failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+        pytest.fail(
+            f"Alembic upgrade failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
 
     return postgres_url
 
 
 @pytest.mark.asyncio
 async def test_all_tables_exist(migrated_db):
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
     expected_tables = {
-        "namespaces", "api_keys", "source_documents", "document_chunks",
-        "ingest_jobs", "audit_log", "system_state",
+        "namespaces",
+        "api_keys",
+        "source_documents",
+        "document_chunks",
+        "ingest_jobs",
+        "audit_log",
+        "system_state",
     }
     async with engine.connect() as conn:
-        result = await conn.execute(text(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
-        ))
+        result = await conn.execute(
+            text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+            )
+        )
         tables = {row[0] for row in result}
     await engine.dispose()
-    assert expected_tables.issubset(tables), f"Missing tables: {expected_tables - tables}"
+    assert expected_tables.issubset(tables), (
+        f"Missing tables: {expected_tables - tables}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_default_namespace_seeded(migrated_db):
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
     async with engine.connect() as conn:
-        result = await conn.execute(text("SELECT id, display_name FROM namespaces WHERE id = 'default'"))
+        result = await conn.execute(
+            text("SELECT id, display_name FROM namespaces WHERE id = 'default'")
+        )
         row = result.fetchone()
     await engine.dispose()
     assert row is not None, "'default' namespace not seeded"
@@ -105,8 +121,8 @@ async def test_default_namespace_seeded(migrated_db):
 
 @pytest.mark.asyncio
 async def test_bootstrap_consumed_seeded(migrated_db):
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
     async with engine.connect() as conn:
@@ -121,15 +137,17 @@ async def test_bootstrap_consumed_seeded(migrated_db):
 
 @pytest.mark.asyncio
 async def test_document_chunks_hnsw_index_exists(migrated_db):
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
     async with engine.connect() as conn:
-        result = await conn.execute(text(
-            "SELECT indexname FROM pg_indexes "
-            "WHERE tablename = 'document_chunks' AND indexname = 'ix_document_chunks_embedding_hnsw'"
-        ))
+        result = await conn.execute(
+            text(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename = 'document_chunks' AND indexname = 'ix_document_chunks_embedding_hnsw'"
+            )
+        )
         row = result.fetchone()
     await engine.dispose()
     assert row is not None, "HNSW index on document_chunks.embedding not found"
@@ -137,15 +155,17 @@ async def test_document_chunks_hnsw_index_exists(migrated_db):
 
 @pytest.mark.asyncio
 async def test_document_chunks_metadata_gin_index_exists(migrated_db):
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
     async with engine.connect() as conn:
-        result = await conn.execute(text(
-            "SELECT indexname FROM pg_indexes "
-            "WHERE tablename = 'document_chunks' AND indexname = 'ix_document_chunks_metadata_gin'"
-        ))
+        result = await conn.execute(
+            text(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename = 'document_chunks' AND indexname = 'ix_document_chunks_metadata_gin'"
+            )
+        )
         row = result.fetchone()
     await engine.dispose()
     assert row is not None, "GIN index on document_chunks.metadata not found"
@@ -154,16 +174,18 @@ async def test_document_chunks_metadata_gin_index_exists(migrated_db):
 @pytest.mark.asyncio
 async def test_document_chunks_content_type_not_null(migrated_db):
     """BLOCKER B-2: content_type must be NOT NULL with a default."""
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
     async with engine.connect() as conn:
-        result = await conn.execute(text(
-            "SELECT is_nullable, column_default "
-            "FROM information_schema.columns "
-            "WHERE table_name = 'document_chunks' AND column_name = 'content'"
-        ))
+        result = await conn.execute(
+            text(
+                "SELECT is_nullable, column_default "
+                "FROM information_schema.columns "
+                "WHERE table_name = 'document_chunks' AND column_name = 'content'"
+            )
+        )
         row = result.fetchone()
     await engine.dispose()
     assert row is not None
@@ -173,24 +195,27 @@ async def test_document_chunks_content_type_not_null(migrated_db):
 @pytest.mark.asyncio
 async def test_api_keys_scopes_check_constraint(migrated_db):
     """api_keys.scopes must only accept valid scope names."""
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text
-    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
     raised = False
     try:
         async with engine.begin() as conn:
-            await conn.execute(text(
-                "INSERT INTO api_keys (key_hash, key_preview, scopes) "
-                "VALUES ('hash', 'prev', ARRAY['invalid_scope'])"
-            ))
+            await conn.execute(
+                text(
+                    "INSERT INTO api_keys (key_hash, key_preview, scopes) "
+                    "VALUES ('hash', 'prev', ARRAY['invalid_scope'])"
+                )
+            )
     except Exception:
         raised = True
     finally:
         await engine.dispose()
 
-    assert raised, "CHECK constraint on api_keys.scopes should have rejected 'invalid_scope'"
+    assert raised, (
+        "CHECK constraint on api_keys.scopes should have rejected 'invalid_scope'"
+    )
 
 
 @pytest.mark.asyncio

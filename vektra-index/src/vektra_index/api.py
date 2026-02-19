@@ -7,6 +7,7 @@ Phase 1 endpoints:
   GET  /api/v1/stats                  - document/chunk counts (any scope)
   GET  /api/v1/health                 - component health (unauthenticated)
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -30,8 +31,6 @@ from vektra_shared.types import (
     QueryEmbedding,
     SearchFilters,
     SearchMode,
-    SearchResult,
-    SparseVector,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["index"])
@@ -44,13 +43,15 @@ router = APIRouter(prefix="/api/v1", tags=["index"])
 
 class StoreChunksRequest(BaseModel):
     """Request body for POST /documents/{id}/chunks."""
+
     chunks: list[ChunkEmbeddingPayload]
     namespace: str = "default"
 
 
 class ChunkEmbeddingPayload(BaseModel):
     """A single chunk with its dense embedding (from the ingest pipeline)."""
-    chunk_id: str | None = None   # optional; server generates UUID if absent
+
+    chunk_id: str | None = None  # optional; server generates UUID if absent
     text: str
     dense: list[float]
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -64,6 +65,7 @@ class StoreChunksResponse(BaseModel):
 
 class SearchRequest(BaseModel):
     """Request body for POST /search."""
+
     query: str
     namespace: str = "default"
     top_k: int = Field(5, ge=1, le=100)
@@ -152,7 +154,9 @@ async def store_chunks(
                 "Run GET /health for component status."
             ),
         )
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope()) from exc
+        raise HTTPException(
+            status_code=http_status_for(err), detail=err.to_envelope()
+        ) from exc
 
     return StoreChunksResponse(
         document_id=str(document_id),
@@ -173,7 +177,9 @@ async def search(
     JSONB metadata filtering. Returns ranked chunks.
     """
     from vektra_index.providers.pgvector import PgvectorProvider
-    from vektra_index.providers.sentence_transformers import SentenceTransformersProvider
+    from vektra_index.providers.sentence_transformers import (
+        SentenceTransformersProvider,
+    )
 
     embedding_provider = SentenceTransformersProvider()
     pgvector_provider = PgvectorProvider()
@@ -182,7 +188,9 @@ async def search(
     try:
         dense_vector = await embedding_provider.embed_query(body.query)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail={"error": {"message": f"Embedding failed: {exc}"}}) from exc
+        raise HTTPException(
+            status_code=500, detail={"error": {"message": f"Embedding failed: {exc}"}}
+        ) from exc
 
     query_embedding = QueryEmbedding(dense=dense_vector)
 
@@ -206,7 +214,9 @@ async def search(
             message=f"Vector store read failed: {exc}",
             remediation="Check PostgreSQL connectivity and pgvector extension status.",
         )
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope()) from exc
+        raise HTTPException(
+            status_code=http_status_for(err), detail=err.to_envelope()
+        ) from exc
 
     return SearchResponse(
         results=[

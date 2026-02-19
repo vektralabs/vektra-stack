@@ -5,6 +5,7 @@ source of truth for operator documentation and startup validation (ARCH-057 step
 
 37 variables total: 35 VEKTRA_* + 2 external (OPENAI_API_KEY, ANTHROPIC_API_KEY).
 """
+
 from __future__ import annotations
 
 from pydantic import Field, field_validator
@@ -40,7 +41,9 @@ class LLMConfig(BaseSettings):
         description="Return chunks without LLM synthesis when both models fail.",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class EmbeddingConfig(BaseSettings):
@@ -69,7 +72,9 @@ class EmbeddingConfig(BaseSettings):
         description="Sparse embedding model name. Phase 2 only.",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class VectorStoreConfig(BaseSettings):
@@ -86,7 +91,9 @@ class VectorStoreConfig(BaseSettings):
         description="Active index version for search queries. Change after re-embedding for zero-downtime reindex.",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class QueryPipelineConfig(BaseSettings):
@@ -123,7 +130,9 @@ class QueryPipelineConfig(BaseSettings):
         description="Directory for Jinja2 templates (system.j2, context.j2, conversation.j2). Falls back to built-in defaults.",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class IngestConfig(BaseSettings):
@@ -155,7 +164,9 @@ class IngestConfig(BaseSettings):
         description="DocumentExtractor implementation: 'pdfplumber' (Phase 1), 'unstructured' (Phase 2).",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class SecurityConfig(BaseSettings):
@@ -187,7 +198,9 @@ class SecurityConfig(BaseSettings):
         description="Symmetric encryption key for conversation content. Phase 2 only.",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class ObservabilityConfig(BaseSettings):
@@ -219,7 +232,9 @@ class ObservabilityConfig(BaseSettings):
         description="Enable temporary text capture for batch RAG evaluation. Staging only.",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class ServerConfig(BaseSettings):
@@ -236,7 +251,9 @@ class ServerConfig(BaseSettings):
         description="Include LLM connectivity check in startup validation (ARCH-057 step 7).",
     )
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class ExternalApiKeys(BaseSettings):
@@ -245,7 +262,9 @@ class ExternalApiKeys(BaseSettings):
     openai_api_key: str | None = Field(None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(None, alias="ANTHROPIC_API_KEY")
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
 
 
 class VektraSettings(BaseSettings):
@@ -272,13 +291,21 @@ class VektraSettings(BaseSettings):
     llm_api_key: str | None = Field(None, alias="VEKTRA_LLM_API_KEY")
     llm_fallback_model: str | None = Field(None, alias="VEKTRA_LLM_FALLBACK_MODEL")
     llm_fallback_timeout_ms: int = Field(30000, alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS")
-    llm_context_only_enabled: bool = Field(True, alias="VEKTRA_LLM_CONTEXT_ONLY_ENABLED")
+    llm_context_only_enabled: bool = Field(
+        True, alias="VEKTRA_LLM_CONTEXT_ONLY_ENABLED"
+    )
 
     # Embedding
-    embedding_provider: str = Field("sentence-transformers", alias="VEKTRA_EMBEDDING_PROVIDER")
+    embedding_provider: str = Field(
+        "sentence-transformers", alias="VEKTRA_EMBEDDING_PROVIDER"
+    )
     embedding_model: str = Field("all-MiniLM-L6-v2", alias="VEKTRA_EMBEDDING_MODEL")
-    sparse_embedding_provider: str | None = Field(None, alias="VEKTRA_SPARSE_EMBEDDING_PROVIDER")
-    sparse_embedding_model: str | None = Field(None, alias="VEKTRA_SPARSE_EMBEDDING_MODEL")
+    sparse_embedding_provider: str | None = Field(
+        None, alias="VEKTRA_SPARSE_EMBEDDING_PROVIDER"
+    )
+    sparse_embedding_model: str | None = Field(
+        None, alias="VEKTRA_SPARSE_EMBEDDING_MODEL"
+    )
 
     # Vector store
     vector_store_provider: str = Field("pgvector", alias="VEKTRA_VECTOR_STORE_PROVIDER")
@@ -316,7 +343,9 @@ class VektraSettings(BaseSettings):
     # Observability / retention
     audit_retention_days: int = Field(90, alias="VEKTRA_AUDIT_RETENTION_DAYS")
     retention_days: int | None = Field(None, alias="VEKTRA_RETENTION_DAYS")
-    analytics_retention_days: int | None = Field(None, alias="VEKTRA_ANALYTICS_RETENTION_DAYS")
+    analytics_retention_days: int | None = Field(
+        None, alias="VEKTRA_ANALYTICS_RETENTION_DAYS"
+    )
     eval_mode: bool = Field(False, alias="VEKTRA_EVAL_MODE")
 
     # External API keys (no VEKTRA_ prefix)
@@ -345,10 +374,12 @@ class VektraSettings(BaseSettings):
 
     def as_llm_config(self) -> LLMConfig:
         """Extract LLM-specific sub-config."""
-        return LLMConfig.model_validate({
-            "VEKTRA_LLM_PROVIDER": self.llm_provider,
-            "VEKTRA_LLM_API_KEY": self.llm_api_key,
-            "VEKTRA_LLM_FALLBACK_MODEL": self.llm_fallback_model,
-            "VEKTRA_LLM_FALLBACK_TIMEOUT_MS": self.llm_fallback_timeout_ms,
-            "VEKTRA_LLM_CONTEXT_ONLY_ENABLED": self.llm_context_only_enabled,
-        })
+        return LLMConfig.model_validate(
+            {
+                "VEKTRA_LLM_PROVIDER": self.llm_provider,
+                "VEKTRA_LLM_API_KEY": self.llm_api_key,
+                "VEKTRA_LLM_FALLBACK_MODEL": self.llm_fallback_model,
+                "VEKTRA_LLM_FALLBACK_TIMEOUT_MS": self.llm_fallback_timeout_ms,
+                "VEKTRA_LLM_CONTEXT_ONLY_ENABLED": self.llm_context_only_enabled,
+            }
+        )

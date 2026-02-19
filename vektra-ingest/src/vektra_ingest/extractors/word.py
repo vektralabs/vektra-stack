@@ -5,14 +5,20 @@ Phase 1 implementation of the DocumentExtractor Protocol using python-docx.
 Extracts paragraphs and headings. Tables, images, and embedded objects are
 not extracted but generate warnings. Heading paragraphs use ElementType.TITLE.
 """
+
 from __future__ import annotations
 
 import io
-from typing import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 import structlog
 
-from vektra_shared.types import DocumentChunk, ElementType, ExtractionRequest, HealthStatus
+from vektra_shared.types import (
+    DocumentChunk,
+    ElementType,
+    ExtractionRequest,
+    HealthStatus,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -79,6 +85,7 @@ class WordExtractor:
     async def health_check(self) -> HealthStatus:
         try:
             import docx  # noqa: F401  type: ignore[import-untyped]
+
             return HealthStatus(status="healthy")
         except ImportError as exc:
             return HealthStatus(status="unhealthy", message=str(exc))

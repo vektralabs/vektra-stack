@@ -10,20 +10,29 @@ Sync/async threshold: files <= 10MB are processed synchronously (returns 200).
 Files > 10MB are enqueued as arq jobs (returns 202 with job_id).
 Files > VEKTRA_MAX_FILE_SIZE_MB are rejected with ERR-INGEST-002.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vektra_ingest.exceptions import IngestConflictError, IngestError
+from vektra_ingest.pipeline import run_ingest
 from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.config import IngestConfig
 from vektra_shared.db import get_session
@@ -35,10 +44,6 @@ from vektra_shared.errors import (
     auth_invalid_token,
     http_status_for,
 )
-from vektra_shared.types import IngestJobStatus
-
-from vektra_ingest.exceptions import IngestConflictError, IngestError
-from vektra_ingest.pipeline import run_ingest
 
 log = structlog.get_logger(__name__)
 
@@ -254,7 +259,9 @@ async def get_job_status(
     )
     job = result.scalar_one_or_none()
     if job is None:
-        raise HTTPException(status_code=404, detail={"error": {"message": "Job not found"}})
+        raise HTTPException(
+            status_code=404, detail={"error": {"message": "Job not found"}}
+        )
 
     return JobStatusResponse(
         id=job.id,
@@ -285,8 +292,8 @@ async def _enqueue_ingest_job(
 ) -> AsyncIngestResponse:
     """Create an IngestJobOrm and enqueue an arq task. Returns 202."""
     from arq import ArqRedis  # type: ignore[import-untyped]
+
     from vektra_ingest.models import IngestJobOrm
-    from vektra_ingest.jobs import ingest_document_task
 
     job = IngestJobOrm(
         namespace_id=namespace,

@@ -1,11 +1,10 @@
 """Unit tests for LitellmProvider (ADR-0008)."""
-import asyncio
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-from vektra_shared.config import LLMConfig
-from vektra_shared.types import CompletionChunk, CompletionResponse, Message
 from vektra_core.providers.litellm_provider import LitellmProvider
+from vektra_shared.config import LLMConfig
+from vektra_shared.types import CompletionResponse, Message
 
 
 def _make_config(**kwargs) -> LLMConfig:
@@ -41,7 +40,10 @@ async def test_complete_returns_completion_response():
 
     mock_resp = _mock_completion_response("Hello from LLM!")
 
-    with patch("vektra_core.providers.litellm_provider.litellm.acompletion", new=AsyncMock(return_value=mock_resp)):
+    with patch(
+        "vektra_core.providers.litellm_provider.litellm.acompletion",
+        new=AsyncMock(return_value=mock_resp),
+    ):
         result = await provider.complete(messages, model="ollama/llama3")
 
     assert isinstance(result, CompletionResponse)
@@ -85,7 +87,10 @@ async def test_health_check_healthy():
     provider = LitellmProvider(config)
     mock_resp = _mock_completion_response("ok")
 
-    with patch("vektra_core.providers.litellm_provider.litellm.acompletion", new=AsyncMock(return_value=mock_resp)):
+    with patch(
+        "vektra_core.providers.litellm_provider.litellm.acompletion",
+        new=AsyncMock(return_value=mock_resp),
+    ):
         status = await provider.health_check()
 
     assert status.status == "healthy"
@@ -111,7 +116,9 @@ def test_count_tokens_returns_int():
     config = _make_config()
     provider = LitellmProvider(config)
 
-    with patch("vektra_core.providers.litellm_provider.litellm.token_counter", return_value=42):
+    with patch(
+        "vektra_core.providers.litellm_provider.litellm.token_counter", return_value=42
+    ):
         result = provider.count_tokens("hello world", model="ollama/llama3")
 
     assert result == 42

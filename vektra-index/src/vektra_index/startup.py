@@ -4,6 +4,7 @@ Step 5: Provider registration - verify EmbeddingProvider and VectorStoreProvider
         are registered in the ProviderRegistry.
 Step 6: Embedding model warm-up - embed a test sentence and verify dimensionality.
 """
+
 from __future__ import annotations
 
 import logging
@@ -13,7 +14,7 @@ from vektra_shared.startup import StartupValidationError
 logger = logging.getLogger(__name__)
 
 
-async def check_provider_registration(registry) -> None:  # noqa: ANN001
+async def check_provider_registration(registry) -> None:
     """ARCH-057 step 5: verify required providers are registered."""
     required = [
         ("embedding", "sentence-transformers"),
@@ -32,7 +33,7 @@ async def check_provider_registration(registry) -> None:  # noqa: ANN001
             )
 
 
-async def check_embedding_model(registry) -> None:  # noqa: ANN001
+async def check_embedding_model(registry) -> None:
     """ARCH-057 step 6: warm up the embedding model and verify dimensionality."""
     try:
         embedding_provider = registry.get("embedding", "sentence-transformers")

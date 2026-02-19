@@ -9,10 +9,12 @@ ChunkEmbedding's metadata dict. The adapter reads this to pass to PgvectorProvid
 
 Search and delete callers (vektra_core, management) do not need to set metadata.
 """
+
 from __future__ import annotations
 
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -42,10 +44,12 @@ class VectorStoreServiceAdapter:
 
     def _get_pgvector(self):  # type: ignore[return]
         from vektra_index.providers.pgvector import PgvectorProvider
+
         return PgvectorProvider(active_index_version=self._active_index_version)
 
     def _get_session_factory(self):
         from vektra_shared.db import _session_factory
+
         if _session_factory is None:
             raise RuntimeError("Database not initialized. Call init_db() first.")
         return _session_factory

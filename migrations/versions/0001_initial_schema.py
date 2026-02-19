@@ -13,6 +13,7 @@ Resolves pre-implementation review BLOCKERs:
     magic bytes detection (ARCH-042) populates the actual MIME type;
     if detection fails, fallback is 'application/octet-stream', never NULL.
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -121,8 +122,12 @@ def upgrade() -> None:
             ON source_documents (namespace_id, content_hash)
             WHERE deleted_at IS NULL
     """)
-    op.execute("CREATE INDEX ix_source_documents_namespace ON source_documents (namespace_id)")
-    op.execute("CREATE INDEX ix_source_documents_content_hash ON source_documents (content_hash)")
+    op.execute(
+        "CREATE INDEX ix_source_documents_namespace ON source_documents (namespace_id)"
+    )
+    op.execute(
+        "CREATE INDEX ix_source_documents_content_hash ON source_documents (content_hash)"
+    )
     op.execute("""
         CREATE INDEX ix_source_documents_ns_filename
             ON source_documents (namespace_id, filename)
@@ -285,7 +290,9 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS document_chunks CASCADE")
     op.execute("DROP TABLE IF EXISTS source_documents CASCADE")
     op.execute("DROP CONSTRAINT IF EXISTS fk_namespaces_owner_key")
-    op.execute("ALTER TABLE namespaces DROP CONSTRAINT IF EXISTS fk_namespaces_owner_key")
+    op.execute(
+        "ALTER TABLE namespaces DROP CONSTRAINT IF EXISTS fk_namespaces_owner_key"
+    )
     op.execute("DROP TABLE IF EXISTS api_keys CASCADE")
     op.execute("DROP TABLE IF EXISTS namespaces CASCADE")
     # Note: extensions not dropped (shared with other users)

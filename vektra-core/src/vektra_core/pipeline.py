@@ -11,17 +11,22 @@ Pipeline steps:
 QueryTrace is emitted via structlog after each execute() call (ARCH-041).
 QueryTrace never contains query text or response text (REQ-051 / ADR-0017).
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, AsyncIterator
-from uuid import UUID, uuid4
+from collections.abc import AsyncGenerator, AsyncIterator
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
 
 import litellm
 import structlog
 
+from vektra_core.budget import allocate_token_budget
+from vektra_core.conversation import ConversationStore
+from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.protocols import (
     EmbeddingProvider,
@@ -42,10 +47,6 @@ from vektra_shared.types import (
     SourceRef,
     StepTrace,
 )
-
-from vektra_core.budget import allocate_token_budget
-from vektra_core.conversation import ConversationStore
-from vektra_core.templates import TemplateRenderer
 
 log = structlog.get_logger(__name__)
 
@@ -142,7 +143,10 @@ class SimpleQueryPipeline:
 
     def _context_window(self) -> int:
         try:
-            return litellm.get_max_tokens(self._llm_config.provider) or _DEFAULT_CONTEXT_WINDOW
+            return (
+                litellm.get_max_tokens(self._llm_config.provider)
+                or _DEFAULT_CONTEXT_WINDOW
+            )
         except Exception:
             return _DEFAULT_CONTEXT_WINDOW
 
@@ -213,11 +217,13 @@ class SimpleQueryPipeline:
             search_mode=query.search_mode,
             filters=query.filters,
         )
-        steps.append(StepTrace(
-            name="vector_search",
-            duration_ms=_elapsed_ms(t0),
-            metadata={"retrieved": len(results)},
-        ))
+        steps.append(
+            StepTrace(
+                name="vector_search",
+                duration_ms=_elapsed_ms(t0),
+                metadata={"retrieved": len(results)},
+            )
+        )
 
         # Step 3: Retrieval filter
         t0 = time.monotonic()
@@ -227,15 +233,17 @@ class SimpleQueryPipeline:
             dedup_enabled=self._config.chunk_dedup_enabled,
         )
         no_relevant_context = len(results) > 0 and len(filtered) == 0
-        steps.append(StepTrace(
-            name="retrieval_filter",
-            duration_ms=_elapsed_ms(t0),
-            metadata={
-                "before": len(results),
-                "after": len(filtered),
-                "no_relevant_context": no_relevant_context,
-            },
-        ))
+        steps.append(
+            StepTrace(
+                name="retrieval_filter",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "before": len(results),
+                    "after": len(filtered),
+                    "no_relevant_context": no_relevant_context,
+                },
+            )
+        )
 
         # Sources from filtered results (each gets a unique citation_id)
         sources = [
@@ -259,7 +267,7 @@ class SimpleQueryPipeline:
                 chunks_retrieved=[],
                 llm_model=self._llm_config.provider,
                 prompt_version=self._renderer.prompt_version,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             log.info(
                 "query_no_relevant_context",
@@ -310,30 +318,38 @@ class SimpleQueryPipeline:
 
         messages: list[Message] = [Message(role="system", content=system_text)]
         if conv_text.strip():
-            messages.append(Message(role="user", content=f"Previous conversation:\n{conv_text}"))
-        messages.append(Message(
-            role="user",
-            content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
-        ))
+            messages.append(
+                Message(role="user", content=f"Previous conversation:\n{conv_text}")
+            )
+        messages.append(
+            Message(
+                role="user",
+                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
+            )
+        )
 
-        steps.append(StepTrace(
-            name="build_prompt",
-            duration_ms=_elapsed_ms(t0),
-            metadata={
-                "prompt_version": self._renderer.prompt_version,
-                "chunks_in_prompt": len(selected_chunks),
-                "history_turns_in_prompt": len(selected_history),
-            },
-        ))
+        steps.append(
+            StepTrace(
+                name="build_prompt",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "prompt_version": self._renderer.prompt_version,
+                    "chunks_in_prompt": len(selected_chunks),
+                    "history_turns_in_prompt": len(selected_history),
+                },
+            )
+        )
 
         # Step 5: LLM call with graceful degradation
         t0 = time.monotonic()
         answer, llm_model = await self._call_llm_with_fallback(messages)
-        steps.append(StepTrace(
-            name="llm_call",
-            duration_ms=_elapsed_ms(t0),
-            metadata={"model": llm_model, "context_only": answer is None},
-        ))
+        steps.append(
+            StepTrace(
+                name="llm_call",
+                duration_ms=_elapsed_ms(t0),
+                metadata={"model": llm_model, "context_only": answer is None},
+            )
+        )
 
         # Step 6: Safeguard pre_response
         t0 = time.monotonic()
@@ -346,11 +362,13 @@ class SimpleQueryPipeline:
             answer = None
         elif sg_result.modified_content is not None:
             answer = sg_result.modified_content
-        steps.append(StepTrace(
-            name="safeguard",
-            duration_ms=_elapsed_ms(t0),
-            metadata={"allowed": sg_result.allowed},
-        ))
+        steps.append(
+            StepTrace(
+                name="safeguard",
+                duration_ms=_elapsed_ms(t0),
+                metadata={"allowed": sg_result.allowed},
+            )
+        )
 
         # Save conversation turn
         if query.conversation_id is not None:
@@ -363,10 +381,12 @@ class SimpleQueryPipeline:
             response_id=response_id,
             steps=steps,
             total_duration_ms=total_ms,
-            chunks_retrieved=[ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered],
+            chunks_retrieved=[
+                ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
+            ],
             llm_model=llm_model,
             prompt_version=self._renderer.prompt_version,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         log.info(
@@ -429,11 +449,15 @@ class SimpleQueryPipeline:
 
         messages: list[Message] = [Message(role="system", content=system_text)]
         if conv_text.strip():
-            messages.append(Message(role="user", content=f"Previous conversation:\n{conv_text}"))
-        messages.append(Message(
-            role="user",
-            content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
-        ))
+            messages.append(
+                Message(role="user", content=f"Previous conversation:\n{conv_text}")
+            )
+        messages.append(
+            Message(
+                role="user",
+                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
+            )
+        )
 
         # Step 5: Safeguard pre_response (before streaming)
         sg_ctx = SafeguardContext(
@@ -448,7 +472,9 @@ class SimpleQueryPipeline:
         # Step 6: Stream LLM tokens
         full_answer_parts: list[str] = []
         try:
-            token_stream = await self._llm.stream(messages, model=self._llm_config.provider)
+            token_stream = await self._llm.stream(
+                messages, model=self._llm_config.provider
+            )
             async for chunk in token_stream:
                 if chunk.content:
                     full_answer_parts.append(chunk.content)

@@ -8,6 +8,7 @@ Asymmetric model support: embed_query() is reserved for query-time embedding
 (supports "query: " prefix for models like e5-large). embed_documents() is
 for indexing. For all-MiniLM-L6-v2, both paths use the same encoding (symmetric).
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,10 +30,15 @@ def _get_model(model_name: str) -> Any:
     global _model, _model_name
     if _model is None or _model_name != model_name:
         from sentence_transformers import SentenceTransformer
+
         logger.info("Loading embedding model: %s", model_name)
         _model = SentenceTransformer(model_name)
         _model_name = model_name
-        logger.info("Embedding model loaded: %s (%d dims)", model_name, _model.get_sentence_embedding_dimension())
+        logger.info(
+            "Embedding model loaded: %s (%d dims)",
+            model_name,
+            _model.get_sentence_embedding_dimension(),
+        )
     return _model
 
 
@@ -46,7 +52,7 @@ class SentenceTransformersProvider:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         self._model_name = model_name
 
-    def _model(self):  # noqa: ANN201
+    def _model(self):
         return _get_model(self._model_name)
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:

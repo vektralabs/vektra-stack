@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-17
+**Updated**: 2026-02-19
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -21,6 +21,118 @@
 ---
 
 ## Planned
+
+### DEBT-001: `_stream()` skips token budget allocation
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Blocked by**: Phase 2 (acceptable for Phase 1 with PassthroughSafeguard and small top_k)
+
+**Context**: `SimpleQueryPipeline._stream()` (`vektra_core/pipeline.py`) builds the prompt with all filtered chunks without applying `allocate_token_budget`. The non-streaming `execute()` path correctly applies budget allocation. With many chunks or large snippets, streaming may exceed the model's context window and cause a litellm error mid-stream.
+
+**Traceability**: ARCH-055 (token budget allocation), vektra_core/pipeline.py `_stream()`
+
+**Acceptance Criteria**:
+- [ ] `_stream()` applies the same `allocate_token_budget` logic as `execute()` before building the prompt
+- [ ] Streaming test covers budget-constrained scenario (many chunks, tight context window)
+
+---
+
+### DEBT-002: `_stream()` emits no QueryTrace
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Blocked by**: Phase 2
+
+**Context**: `SimpleQueryPipeline._stream()` does not collect `StepTrace` entries and does not emit a `QueryTrace` via structlog. Streaming requests are therefore invisible to ARCH-041 (per-step timing observability). The non-streaming `execute()` path emits a full `QueryTrace`.
+
+**Traceability**: ARCH-041 (QueryTrace structure), REQ-060, vektra_core/pipeline.py `_stream()`
+
+**Acceptance Criteria**:
+- [ ] `_stream()` collects step timing (embed, search, filter, build_prompt, llm_call) after stream completes
+- [ ] QueryTrace emitted via structlog after full stream is consumed
+- [ ] QueryTrace for streaming queries appears in structured log output
+
+---
+
+### DEBT-003: `post_retrieval` safeguard trust boundary not called
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Blocked by**: Phase 2 (PassthroughSafeguard covers Phase 1)
+
+**Context**: ARCH-049 defines 3 SafeguardHook trust boundary points: `pre_query` (called in `api.py`), `post_retrieval` (not called anywhere), `pre_response` (called in `pipeline.execute()` and `pipeline._stream()`). The middle boundary - triggered after chunks are retrieved and before the prompt is built - is entirely absent. This means chunk-level PII filtering or namespace isolation checks are not enforced.
+
+**Traceability**: ARCH-049 (safeguard content modification), REQ-044, vektra_shared/protocols.py SafeguardHook
+
+**Acceptance Criteria**:
+- [ ] `pipeline.execute()` calls `safeguard.post_retrieval(chunk_ids, sg_ctx)` after retrieval filter, before build_prompt
+- [ ] `pipeline._stream()` calls the same boundary
+- [ ] SafeguardHook Protocol documents the expected signature for `post_retrieval`
+- [ ] PassthroughSafeguard implements `post_retrieval` as a no-op
+
+---
+
+### DEBT-004: Budget allocator input ordering unenforced
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Blocked by**: Phase 2 (pgvector returns score-descending results, so convention holds in Phase 1)
+
+**Context**: `allocate_token_budget` docstring states that `chunks` must be passed in score-descending order ("sorted by score descending"). In `pipeline.execute()`, `chunk_inputs` is built from `filtered`, which is in original retrieval position order (not score order). This works in Phase 1 because PgvectorProvider returns results score-descending, but the VectorStoreProvider Protocol does not guarantee ordering. If a Phase 2 provider (e.g., Qdrant) returns results in a different order, the budget allocator may skip high-scoring chunks and include low-scoring ones.
+
+**Traceability**: ARCH-055, vektra_core/budget.py, vektra_core/pipeline.py:287, VectorStoreProvider Protocol
+
+**Acceptance Criteria**:
+- [ ] Either: `pipeline.execute()` sorts `filtered` by score descending before constructing `chunk_inputs` and remaps indices correctly
+- [ ] Or: VectorStoreProvider Protocol documents that `search()` results must be score-descending, and all implementations enforce it
+- [ ] `test_budget.py` covers unsorted-input scenario to verify behavior
+
+---
+
+### DEBT-005: Client disconnect doesn't explicitly cancel LLM coroutine
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Blocked by**: Phase 2
+
+**Context**: The plan acceptance criterion states "Client disconnect cancels LLM request (no orphan async task)". The current `_sse_generator()` in `api.py` relies entirely on Starlette/uvicorn to propagate client disconnects as generator cancellation. There is no explicit `asyncio.CancelledError` handling or `request.is_disconnected()` polling inside the streaming path. In practice uvicorn does cancel the generator on disconnect, but this is not guaranteed across all ASGI servers or under all conditions (e.g., slow clients, buffered responses).
+
+**Traceability**: REQ-042 (streaming), vektra_core/api.py `_sse_generator()`
+
+**Acceptance Criteria**:
+- [ ] `_sse_generator()` or `_stream()` polls `request.is_disconnected()` periodically during token streaming
+- [ ] On disconnect detected, the LLM stream iterator is explicitly closed (`aclose()`)
+- [ ] Test verifies no orphan task after simulated client disconnect
+
+---
+
+### DEBT-006: Ingest job phase never advances beyond 'extracting'
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Blocked by**: Phase 2 (monitoring gap acceptable for Phase 1)
+
+**Context**: `ingest_document_task` sets `phase='extracting'` once at the start and never updates it to `'chunking'` or `'embedding'` during execution. The acceptance criterion in the component-ingest plan says "Job status endpoint returns phase field ('extracting', 'chunking', 'embedding') during processing." `run_ingest()` is a monolithic call with no progress callback, so the phase cannot be updated mid-execution without restructuring the pipeline.
+
+**Traceability**: REQ-014 (job status), vektra_ingest/jobs.py `ingest_document_task`, NFR-010
+
+**Acceptance Criteria**:
+- [ ] `run_ingest()` accepts an optional progress callback or is split into phases
+- [ ] `ingest_document_task` updates phase to `'chunking'` after extraction and `'embedding'` after chunking
+- [ ] Test verifies phase sequence: processing/extracting → processing/chunking → processing/embedding → indexed
+
+---
+
+### DEBT-007: Audit log not written for ingest failure responses (409, 422)
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Blocked by**: Needs investigation of BackgroundTasks behavior with HTTPException
+
+**Context**: `_write_audit_log` is called only on successful ingest (200) and async enqueue (202) paths. When `IngestConflictError` → 409 or `IngestError` → 422, no audit entry is written. The plan requires audit for all ingest outcomes. Note: `BackgroundTasks` added before an `HTTPException` is raised may not execute (FastAPI creates a new Response for error handlers). Fixing this requires either awaiting `log_event` directly in error paths or restructuring the exception handling.
+
+**Traceability**: REQ-038 (audit log), NFR-007, vektra_ingest/api.py `ingest()`
+
+**Acceptance Criteria**:
+- [ ] `log_event` is called for 409 (conflict) and 422 (extraction error) responses
+- [ ] Test verifies audit entries are written for all ingest outcomes
+- [ ] Solution handles BackgroundTasks + HTTPException correctly (direct await or try/finally pattern)
+
+---
 
 ### DOCS-004: Complete traceability tables A.1, A.2, A.3 in architecture.md
 
@@ -330,3 +442,8 @@ Key Phase 2 topics for the roundtable:
 | TECH-001 (uv workspace) | Before coding | Dev environment setup |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
 | TECH-003 (Phase 2 design roundtable) | After Phase 1 stable + DOCS-007 | Full /s2s:design for Phase 2 |
+| DEBT-001 (stream budget) | Phase 2 | Low risk with small top_k |
+| DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |
+| DEBT-003 (post_retrieval hook) | Phase 2 | PassthroughSafeguard covers Phase 1 |
+| DEBT-004 (budget ordering) | Phase 2 | Pgvector returns score-desc in practice |
+| DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |

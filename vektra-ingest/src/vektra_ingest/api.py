@@ -201,9 +201,8 @@ async def ingest(
             },
         )
     except IngestError as exc:
-        status_code = 422 if exc.error_code == "ERR-INGEST-003" else 422
         raise HTTPException(
-            status_code=status_code,
+            status_code=422,
             detail={
                 "error": {
                     "code": exc.error_code,

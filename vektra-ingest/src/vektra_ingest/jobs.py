@@ -190,18 +190,13 @@ def get_worker_settings(registry: Any) -> Any:
     The worker process (CMD_TARGET=worker in the same Docker image) calls this
     after init_db() and provider registration.
     """
-    from arq import cron  # type: ignore[import-untyped]
+
+    async def on_startup(ctx: dict[str, Any]) -> None:
+        ctx["registry"] = registry
 
     class WorkerSettings:
         functions = [ingest_document_task]
-        on_startup = _make_startup(registry)
+        on_startup = on_startup
         redis_settings = None  # uses REDIS_URL env var via arq default
 
-    async def _make_startup(reg: Any):
-        async def on_startup(ctx: dict[str, Any]) -> None:
-            ctx["registry"] = reg
-
-        return on_startup
-
-    WorkerSettings.on_startup = _make_startup(registry)
     return WorkerSettings

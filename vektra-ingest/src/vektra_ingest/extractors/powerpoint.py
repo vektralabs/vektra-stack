@@ -41,7 +41,6 @@ class PowerPointExtractor:
         import io
 
         from pptx import Presentation  # type: ignore[import-untyped]
-        from pptx.util import Emu  # noqa: F401
 
         prs = Presentation(io.BytesIO(request.content))
 
@@ -74,10 +73,9 @@ class PowerPointExtractor:
                 if not text:
                     continue
 
-                # Identify title placeholders (placeholder type 1=CENTER_TITLE, 13=TITLE)
+                # Identify title placeholders by index (0=title, 1=body/center-title)
                 is_title = False
                 try:
-                    from pptx.enum.text import PP_ALIGN  # noqa: F401
                     ph = shape.placeholder_format
                     if ph is not None and ph.idx in (0, 1):
                         is_title = True

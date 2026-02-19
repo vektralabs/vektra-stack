@@ -90,7 +90,7 @@ class LitellmProvider:
         )
         async for chunk in response:
             delta = chunk.choices[0].delta
-            content = delta.content or "" if delta else ""
+            content = (delta.content or "") if delta else ""
             finish = chunk.choices[0].finish_reason
             yield CompletionChunk(content=content, done=finish is not None)
 

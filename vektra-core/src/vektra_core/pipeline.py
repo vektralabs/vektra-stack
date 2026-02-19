@@ -14,7 +14,6 @@ QueryTrace never contains query text or response text (REQ-051 / ADR-0017).
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, AsyncIterator
@@ -26,12 +25,12 @@ import structlog
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.protocols import (
     EmbeddingProvider,
+    LLMProvider,
     SafeguardHook,
     VectorStoreProvider,
 )
 from vektra_shared.types import (
     ChunkRef,
-    CompletionChunk,
     Message,
     QueryChunk,
     QueryEmbedding,
@@ -46,7 +45,6 @@ from vektra_shared.types import (
 
 from vektra_core.budget import allocate_token_budget
 from vektra_core.conversation import ConversationStore
-from vektra_core.providers.litellm_provider import LitellmProvider
 from vektra_core.templates import TemplateRenderer
 
 log = structlog.get_logger(__name__)
@@ -120,7 +118,7 @@ class SimpleQueryPipeline:
         *,
         embedding: EmbeddingProvider,
         vector_store: VectorStoreProvider,
-        llm: LitellmProvider,
+        llm: LLMProvider,
         llm_config: LLMConfig,
         safeguard: SafeguardHook,
         conversation_store: ConversationStore,

@@ -9,7 +9,6 @@ SSE streaming: set Accept: text/event-stream header or body.stream=true.
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 from typing import Any, AsyncGenerator
 from uuid import UUID
@@ -21,8 +20,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from vektra_shared.auth import ApiKeyInfo
-from vektra_shared.errors import auth_invalid_token, http_status_for
-from vektra_shared.types import QueryChunk, QueryRequest
+from vektra_shared.errors import auth_insufficient_scope, auth_invalid_token, http_status_for
+from vektra_shared.types import QueryChunk, QueryRequest, SafeguardContext
 
 log = structlog.get_logger(__name__)
 
@@ -60,7 +59,6 @@ async def _require_query_scope(
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     if not (info.has_scope("query") or info.has_scope("admin")):
-        from vektra_shared.errors import auth_insufficient_scope
         err = auth_insufficient_scope("query")
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
@@ -152,10 +150,22 @@ async def query(
     except ValueError:
         raise HTTPException(status_code=503, detail="Query pipeline not configured")
 
+    # Safeguard pre_query (input validation trust boundary, REQ-044)
     try:
         safeguard = registry.get("safeguard", "default")
+        sg_ctx = SafeguardContext(
+            namespace=body.namespace,
+            conversation_id=body.conversation_id,
+            key_scope=_key.scopes[0] if _key.scopes else "query",
+        )
+        sg_result = await safeguard.pre_query(body.question, sg_ctx)
+        if not sg_result.allowed:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "ERR-SAFEGUARD-001", "message": sg_result.reason or "Query blocked"}},
+            )
     except ValueError:
-        safeguard = None
+        pass  # safeguard not registered (optional in tests/dev)
 
     # Determine streaming mode
     accept = request.headers.get("accept", "")

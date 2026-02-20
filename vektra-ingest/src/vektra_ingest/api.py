@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_ingest.exceptions import IngestConflictError, IngestError
 from vektra_ingest.pipeline import run_ingest
-from vektra_shared.auth import ApiKeyInfo
+from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider
 from vektra_shared.config import IngestConfig
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
@@ -74,7 +74,7 @@ async def _require_ingest_scope(
         raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
 
     try:
-        key_store = registry.get("key_store", "default")
+        key_store: KeyStoreProvider = registry.get("key_store", "default")
     except ValueError:
         raise HTTPException(status_code=500, detail="Key store not configured")
 
@@ -238,6 +238,7 @@ async def ingest(
         namespace=namespace,
     )
 
+    assert result.document_id is not None, "Sync ingest must produce a document_id"
     return IngestResponse(
         document_id=result.document_id,
         chunk_count=result.chunk_count,
@@ -291,7 +292,7 @@ async def _enqueue_ingest_job(
     request: Request,
 ) -> AsyncIngestResponse:
     """Create an IngestJobOrm and enqueue an arq task. Returns 202."""
-    from arq import ArqRedis  # type: ignore[import-untyped]
+    from arq import ArqRedis
 
     from vektra_ingest.models import IngestJobOrm
 
@@ -378,7 +379,7 @@ def _write_audit_log(
     request: Request,
     status_code: int,
     action: str,
-    log_metadata: dict,
+    log_metadata: dict[str, Any],
 ) -> None:
     """Fire-and-forget audit log write via background task."""
     from vektra_shared.audit import log_event

@@ -22,7 +22,7 @@
   - changed-files:
     - any-glob-to-any-file: "vektra-admin/**"
 
-"docs":
+"documentation":
   - changed-files:
     - any-glob-to-any-file:
       - "docs/**"

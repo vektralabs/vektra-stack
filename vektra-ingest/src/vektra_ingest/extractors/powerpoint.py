@@ -46,7 +46,7 @@ class PowerPointExtractor:
     ) -> AsyncGenerator[DocumentChunk, None]:
         import io
 
-        from pptx import Presentation  # type: ignore[import-untyped]
+        from pptx import Presentation
 
         prs = Presentation(io.BytesIO(request.content))
 

@@ -45,7 +45,7 @@ class PdfplumberExtractor:
     async def _extract_impl(
         self, request: ExtractionRequest
     ) -> AsyncGenerator[DocumentChunk, None]:
-        import pdfplumber  # type: ignore[import-untyped]
+        import pdfplumber
 
         with pdfplumber.open(io.BytesIO(request.content)) as pdf:
             pages = pdf.pages
@@ -86,7 +86,7 @@ class PdfplumberExtractor:
 
     async def health_check(self) -> HealthStatus:
         try:
-            import pdfplumber  # noqa: F401  type: ignore[import-untyped]
+            import pdfplumber  # noqa: F401
 
             return HealthStatus(status="healthy")
         except ImportError as exc:

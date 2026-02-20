@@ -60,7 +60,7 @@ indent-style = "space"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-plugins = ["sqlalchemy.ext.mypy.plugin"]
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
 
 # Third-party libraries without complete stubs
 [[tool.mypy.overrides]]
@@ -74,6 +74,7 @@ module = [
     "pptx.*",
     "docx.*",
     "testcontainers.*",
+    "psutil.*",
 ]
 ignore_missing_imports = true
 

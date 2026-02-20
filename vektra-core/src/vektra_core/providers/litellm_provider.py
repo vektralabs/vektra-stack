@@ -124,6 +124,6 @@ class LitellmProvider:
     def count_tokens(self, text: str, model: str) -> int:
         """Approximate token count using litellm's tokenizer (falls back to len//4)."""
         try:
-            return litellm.token_counter(model=model, text=text)
+            return int(litellm.token_counter(model=model, text=text))
         except Exception:
             return max(1, len(text) // 4)

@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from vektra_shared.auth import ApiKeyInfo
+from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider
 from vektra_shared.errors import (
     auth_insufficient_scope,
     auth_invalid_token,
@@ -55,7 +55,7 @@ async def _require_query_scope(
         raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
 
     try:
-        key_store = registry.get("key_store", "default")
+        key_store: KeyStoreProvider = registry.get("key_store", "default")
     except ValueError:
         raise HTTPException(status_code=500, detail="Key store not configured")
 

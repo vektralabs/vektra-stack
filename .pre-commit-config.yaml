@@ -46,11 +46,11 @@ repos:
         language: system
         pass_filenames: false
         args:
-          - vektra_shared
-          - vektra_admin
-          - vektra_core
-          - vektra_ingest
-          - vektra_index
+          - vektra-shared/src/vektra_shared
+          - vektra-admin/src/vektra_admin
+          - vektra-core/src/vektra_core
+          - vektra-ingest/src/vektra_ingest
+          - vektra-index/src/vektra_index
 
       - id: import-linter
         name: import-linter (boundary check)

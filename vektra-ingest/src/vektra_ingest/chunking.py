@@ -15,6 +15,7 @@ PDFs yield much less usable text).
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator
+from typing import Any
 
 import structlog
 
@@ -57,7 +58,7 @@ class FixedSizeChunking:
 
         # Accumulate all tokens + carry forward the first element's metadata
         all_tokens: list[int] = []
-        first_metadata: dict = {}
+        first_metadata: dict[str, Any] = {}
 
         async for element in elements:
             tokens = enc.encode(element.text)

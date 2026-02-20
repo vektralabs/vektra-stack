@@ -292,7 +292,7 @@ class QueryChunk:
     """SSE streaming chunk from QueryPipeline.execute_stream()."""
 
     type: str  # "token" | "sources" | "trace" | "error" | "done"
-    data: str | dict[str, Any] = field(default_factory=str)
+    data: str | dict[str, Any] | list[Any] = field(default_factory=str)
 
 
 # ---------------------------------------------------------------------------

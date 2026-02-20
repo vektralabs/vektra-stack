@@ -8,6 +8,7 @@ BR-001: Four-category error taxonomy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 # ---------------------------------------------------------------------------
@@ -43,11 +44,11 @@ class ErrorResponse:
     remediation: str  # prescriptive: what to do next
     request_id: UUID = field(default_factory=uuid4)
     retry_after: int | None = None
-    details: dict = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
-    def to_envelope(self) -> dict:
+    def to_envelope(self) -> dict[str, Any]:
         """Serialize to the {"error": {...}} envelope shape."""
-        data: dict = {
+        data: dict[str, Any] = {
             "category": self.category,
             "code": self.code,
             "message": self.message,

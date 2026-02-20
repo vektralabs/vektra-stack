@@ -14,8 +14,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from vektra_index.providers.pgvector import PgvectorProvider
 
 import structlog
 
@@ -42,12 +47,12 @@ class VectorStoreServiceAdapter:
     def __init__(self, active_index_version: int = 1) -> None:
         self._active_index_version = active_index_version
 
-    def _get_pgvector(self):  # type: ignore[return]
+    def _get_pgvector(self) -> PgvectorProvider:
         from vektra_index.providers.pgvector import PgvectorProvider
 
         return PgvectorProvider(active_index_version=self._active_index_version)
 
-    def _get_session_factory(self):
+    def _get_session_factory(self) -> async_sessionmaker[AsyncSession]:
         from vektra_shared.db import _session_factory
 
         if _session_factory is None:

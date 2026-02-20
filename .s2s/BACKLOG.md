@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-19
+**Updated**: 2026-02-20
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -22,17 +22,17 @@
 
 ## Planned
 
-### DEBT-001: `_stream()` skips token budget allocation
+### DEBT-001: ~~`_stream()` skips token budget allocation~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-19
-**Blocked by**: Phase 2 (acceptable for Phase 1 with PassthroughSafeguard and small top_k)
+**Status**: completed | **Priority**: low | **Created**: 2026-02-19 | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit e527ce1
 
-**Context**: `SimpleQueryPipeline._stream()` (`vektra_core/pipeline.py`) builds the prompt with all filtered chunks without applying `allocate_token_budget`. The non-streaming `execute()` path correctly applies budget allocation. With many chunks or large snippets, streaming may exceed the model's context window and cause a litellm error mid-stream.
+**Context**: `SimpleQueryPipeline._stream()` (`vektra_core/pipeline.py`) built the prompt with all filtered chunks without applying `allocate_token_budget`. Fixed: `_stream()` now applies the same budget allocation logic as `execute()`.
 
 **Traceability**: ARCH-055 (token budget allocation), vektra_core/pipeline.py `_stream()`
 
 **Acceptance Criteria**:
-- [ ] `_stream()` applies the same `allocate_token_budget` logic as `execute()` before building the prompt
+- [x] `_stream()` applies the same `allocate_token_budget` logic as `execute()` before building the prompt
 - [ ] Streaming test covers budget-constrained scenario (many chunks, tight context window)
 
 ---
@@ -41,6 +41,7 @@
 
 **Status**: planned | **Priority**: low | **Created**: 2026-02-19
 **Blocked by**: Phase 2
+**PR #2 review**: Confirmed as deferred. Fixing requires collecting step timings across the async generator lifecycle, which is a structural change. Comments 2833984647, nitpick pipeline.py:414-437.
 
 **Context**: `SimpleQueryPipeline._stream()` does not collect `StepTrace` entries and does not emit a `QueryTrace` via structlog. Streaming requests are therefore invisible to ARCH-041 (per-step timing observability). The non-streaming `execute()` path emits a full `QueryTrace`.
 
@@ -57,6 +58,7 @@
 
 **Status**: planned | **Priority**: low | **Created**: 2026-02-19
 **Blocked by**: Phase 2 (PassthroughSafeguard covers Phase 1)
+**PR #2 review**: Confirmed as deferred. Adding the boundary requires calling `post_retrieval` in both `execute()` and `_stream()` after retrieval filter, plus implementing chunk filtering via `SafeguardResult.filtered_ids`. Acceptable for Phase 1 with PassthroughSafeguard. Comment 2833984647.
 
 **Context**: ARCH-049 defines 3 SafeguardHook trust boundary points: `pre_query` (called in `api.py`), `post_retrieval` (not called anywhere), `pre_response` (called in `pipeline.execute()` and `pipeline._stream()`). The middle boundary - triggered after chunks are retrieved and before the prompt is built - is entirely absent. This means chunk-level PII filtering or namespace isolation checks are not enforced.
 
@@ -394,6 +396,50 @@ Key Phase 2 topics for the roundtable:
 
 ## Completed
 
+### BUG-001: `pre_response` safeguard receives UUID instead of answer text
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit e527ce1
+
+**Context**: `pipeline.execute()` passed `str(response_id)` (a UUID) to `SafeguardHook.pre_response()`, making PII anonymization impossible (ADR-0018, ARCH-049). The Protocol parameter `response_ref: str` was ambiguous, but `pre_query` already passes actual query text. Fixed: now passes `answer or ""`.
+
+**Traceability**: ADR-0018, ARCH-049, PR #2 comment 2833984639
+
+---
+
+### BUG-002: TOCTOU race in bootstrap key consumption
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit 1e1cfde
+
+**Context**: `is_bootstrap_consumed()` in `vektra_admin/bootstrap.py` performed a SELECT without `FOR UPDATE`, allowing two concurrent bootstrap requests to both see the key as unconsumed. Fixed: added `.with_for_update()` to the SELECT, matching the docstring's documented behavior.
+
+**Traceability**: REQ-036, PR #2 comment 2834065162
+
+---
+
+### BUG-003: Audit-log gap for bootstrap key usage
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit 1de0930
+
+**Context**: Bootstrap key creates the first admin API key, but no audit log entry was written for this operation because `key_info` is None during bootstrap (no pre-existing key). Fixed: uses `UUID(int=0)` sentinel as `key_id` and `"apikey_created_bootstrap"` as action. AuditLogOrm.key_id is not a FK, so the sentinel is safe.
+
+**Traceability**: NFR-007, REQ-038, PR #2 comments 2834065155, 2833984674
+
+---
+
+### BUG-004: Error responses not using ErrorResponse envelopes (admin)
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit 1de0930
+
+**Context**: Three error paths in `vektra_admin/api.py` returned raw dicts instead of `ErrorResponse.to_envelope()` format (REQ-010). Fixed: invalid scopes (ERR-ADMIN-001, 422), key not found (ERR-ADMIN-002, 404), and key already revoked (ERR-ADMIN-003, 409) now use structured ErrorResponse envelopes.
+
+**Traceability**: REQ-010, PR #2 comment 2833984683
+
+---
+
 ### INFRA-001: Create LICENSE file
 
 **Status**: completed | **Completed**: 2026-01-29
@@ -442,7 +488,7 @@ Key Phase 2 topics for the roundtable:
 | TECH-001 (uv workspace) | Before coding | Dev environment setup |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
 | TECH-003 (Phase 2 design roundtable) | After Phase 1 stable + DOCS-007 | Full /s2s:design for Phase 2 |
-| DEBT-001 (stream budget) | Phase 2 | Low risk with small top_k |
+| ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
 | DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |
 | DEBT-003 (post_retrieval hook) | Phase 2 | PassthroughSafeguard covers Phase 1 |
 | DEBT-004 (budget ordering) | Phase 2 | Pgvector returns score-desc in practice |

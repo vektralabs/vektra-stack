@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from vektra_shared.types import HealthStatus
 
@@ -73,11 +73,17 @@ class SentenceTransformersProvider:
         """
         model = self._model()
         embedding = model.encode(query, convert_to_numpy=True)
-        return list(embedding.tolist())
+        return cast(list[float], embedding.tolist())
 
     def dimensions(self) -> int:
         """Return the embedding dimensionality."""
-        return int(self._model().get_sentence_embedding_dimension())
+        dim = self._model().get_sentence_embedding_dimension()
+        if dim is None:
+            raise ValueError(
+                f"Model '{self._model_name}' has no embedding dimension. "
+                "Ensure the model has a pooling layer."
+            )
+        return int(dim)
 
     async def health_check(self) -> HealthStatus:
         """Verify the model is loaded and can produce an embedding."""

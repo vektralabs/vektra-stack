@@ -24,12 +24,11 @@ log = structlog.get_logger(__name__)
 
 _SUPPORTED = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/msword",
 }
 
 
 class WordExtractor:
-    """DocumentExtractor for DOCX/DOC files using python-docx."""
+    """DocumentExtractor for DOCX files using python-docx."""
 
     def supported_types(self) -> set[str]:
         return _SUPPORTED

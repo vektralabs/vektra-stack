@@ -51,10 +51,16 @@ class PdfplumberExtractor:
             pages = pdf.pages
 
             # Scanned PDF detection: sample first _SCAN_SAMPLE_PAGES pages
-            sample = pages[:_SCAN_SAMPLE_PAGES]
-            if sample:
-                total_chars = sum(len(p.extract_text() or "") for p in sample)
-                avg_chars = total_chars / len(sample)
+            # Cache sampled text to avoid re-extracting in the page loop below
+            sample_count = min(len(pages), _SCAN_SAMPLE_PAGES)
+            sampled_texts: dict[int, str] = {}
+            if sample_count > 0:
+                total_chars = 0
+                for i in range(sample_count):
+                    text = (pages[i].extract_text() or "").strip()
+                    sampled_texts[i] = text
+                    total_chars += len(text)
+                avg_chars = total_chars / sample_count
                 if avg_chars < _SCAN_THRESHOLD:
                     log.info(
                         "scanned_pdf_detected",
@@ -65,15 +71,18 @@ class PdfplumberExtractor:
                         error_code=ERR_INGEST_003,
                         message=(
                             f"PDF appears to be scanned (avg {avg_chars:.1f} chars/page "
-                            f"across first {len(sample)} pages). "
+                            f"across first {sample_count} pages). "
                             "A text layer is required for ingestion."
                         ),
                     )
 
-            # Extract text page by page
+            # Extract text page by page (reuse cached text for sampled pages)
             for page_num, page in enumerate(pages, 1):
-                text = page.extract_text() or ""
-                text = text.strip()
+                page_idx = page_num - 1
+                if page_idx in sampled_texts:
+                    text = sampled_texts[page_idx]
+                else:
+                    text = (page.extract_text() or "").strip()
                 if text:
                     yield DocumentChunk(
                         text=text,

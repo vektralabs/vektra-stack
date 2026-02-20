@@ -70,6 +70,8 @@ async def _update_job(
         values["started_at"] = datetime.now(UTC)
     elif status in ("indexed", "failed"):
         values["completed_at"] = datetime.now(UTC)
+        if "phase" not in values:
+            values["phase"] = None  # clear stale phase on terminal status
 
     try:
         async with _shared_db._session_factory() as session:

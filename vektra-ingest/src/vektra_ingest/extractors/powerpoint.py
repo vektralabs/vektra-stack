@@ -24,7 +24,6 @@ log = structlog.get_logger(__name__)
 
 _SUPPORTED = {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/vnd.ms-powerpoint",
 }
 
 # python-pptx MSO_SHAPE_TYPE constants

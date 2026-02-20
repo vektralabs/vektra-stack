@@ -4,10 +4,13 @@
 language: "en"
 
 reviews:
-  # Review all PRs automatically
+  # Review all PRs automatically, including those targeting develop
   auto_review:
     enabled: true
     drafts: false
+    base_branches:
+      - "main"
+      - "develop"
 
   # Path-specific review instructions
   path_instructions:

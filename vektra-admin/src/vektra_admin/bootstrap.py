@@ -47,7 +47,9 @@ async def is_bootstrap_consumed(session: AsyncSession) -> bool:
     )
 
     result = await session.execute(
-        select(SystemStateOrm).where(SystemStateOrm.key == _BOOTSTRAP_KEY_STATE_ROW)
+        select(SystemStateOrm)
+        .where(SystemStateOrm.key == _BOOTSTRAP_KEY_STATE_ROW)
+        .with_for_update()
     )
     row = result.scalar_one_or_none()
     if row is None:
@@ -62,13 +64,10 @@ def warn_if_bootstrap_in_production() -> None:
 
     Call this once at startup (infra-app-entrypoint step 5) before serving requests.
     """
-    import structlog as _sl
-
-    _log = _sl.get_logger(__name__)
     key = get_bootstrap_key()
     env = os.environ.get("VEKTRA_ENV", "development")
     if key and env == "production":
-        _log.warning(
+        log.warning(
             "bootstrap_key_set_in_production",
             message=(
                 "VEKTRA_ADMIN_BOOTSTRAP_KEY is set in production. "

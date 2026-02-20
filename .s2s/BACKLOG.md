@@ -440,6 +440,28 @@ Key Phase 2 topics for the roundtable:
 
 ---
 
+### BUG-005: model.encode() blocks event loop in embedding provider
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit 3213337
+
+**Context**: `SentenceTransformersProvider.embed_documents()` and `embed_query()` called `model.encode()` synchronously inside `async def` methods. This CPU-intensive operation blocked the event loop for all concurrent requests. Fixed: both methods now use `asyncio.to_thread()` to offload inference to the default thread pool.
+
+**Traceability**: ADR-0013, PR #2 comments 2833984653, 2833984670, 2834065193
+
+---
+
+### BUG-006: document_id consistency not validated across chunks in store()
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit 4e01c52
+
+**Context**: `VectorStoreServiceAdapter.store()` only validated `chunks[0].metadata["document_id"]` but did not check that all chunks carried the same document_id. If mixed document_ids were passed, the mismatch would be silently ignored. Fixed: all chunks are now validated to share the same document_id before write.
+
+**Traceability**: ARCH-052, PR #2 comment 2834065173
+
+---
+
 ### INFRA-001: Create LICENSE file
 
 **Status**: completed | **Completed**: 2026-01-29

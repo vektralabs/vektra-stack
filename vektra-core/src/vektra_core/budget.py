@@ -22,6 +22,8 @@ def allocate_token_budget(
     reserve: int = 1024,
     chunk_ratio: float = 0.6,
 ) -> tuple[list[int], list[int]]:
+    if not 0.0 <= chunk_ratio <= 1.0:
+        raise ValueError(f"chunk_ratio must be between 0.0 and 1.0, got {chunk_ratio}")
     """Select which chunks and history turns fit within the token budget.
 
     Args:
@@ -61,7 +63,8 @@ def allocate_token_budget(
     for i in range(len(history_turns) - 1, -1, -1):
         tokens = history_turns[i]
         if used_history + tokens <= history_budget:
-            selected_history.insert(0, i)
+            selected_history.append(i)
             used_history += tokens
+    selected_history.reverse()
 
     return selected_chunks, selected_history

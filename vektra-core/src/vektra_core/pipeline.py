@@ -357,7 +357,7 @@ class SimpleQueryPipeline:
             namespace=query.namespace,
             conversation_id=query.conversation_id,
         )
-        sg_result = await self._safeguard.pre_response(str(response_id), sg_ctx)
+        sg_result = await self._safeguard.pre_response(answer or "", sg_ctx)
         if not sg_result.allowed:
             answer = None
         elif sg_result.modified_content is not None:
@@ -436,16 +436,37 @@ class SimpleQueryPipeline:
             yield QueryChunk(type="done", data="")
             return
 
-        # Step 4: Build prompt
+        # Step 4: Build prompt (with token budget allocation, ARCH-055)
         history: list[dict[str, Any]] = []
         if query.conversation_id is not None:
             history = await self._conversation_store.get_history(query.conversation_id)
 
         system_text = self._renderer.render_system(namespace=query.namespace)
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in filtered]
+        system_tokens = self._count_tokens(system_text)
+        question_tokens = self._count_tokens(query.question)
+        chunk_inputs = [(r.score, self._count_tokens(r.text_snippet)) for r in filtered]
+        history_tokens = [
+            self._count_tokens((t["question"] or "") + " " + (t["answer"] or ""))
+            for t in history
+        ]
+
+        selected_chunk_idx, selected_history_idx = allocate_token_budget(
+            context_window=self._context_window(),
+            system_tokens=system_tokens,
+            question_tokens=question_tokens,
+            chunks=chunk_inputs,
+            history_turns=history_tokens,
+            reserve=self._config.response_token_reserve,
+            chunk_ratio=self._config.context_chunk_ratio,
         )
-        conv_text = self._renderer.render_conversation(history)
+
+        selected_chunks = [filtered[i] for i in selected_chunk_idx]
+        selected_history = [history[i] for i in selected_history_idx]
+
+        context_text = self._renderer.render_context(
+            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+        )
+        conv_text = self._renderer.render_conversation(selected_history)
 
         messages: list[Message] = [Message(role="system", content=system_text)]
         if conv_text.strip():

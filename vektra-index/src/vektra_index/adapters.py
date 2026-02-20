@@ -78,6 +78,13 @@ class VectorStoreServiceAdapter:
                 "VectorStoreServiceAdapter.store() requires 'document_id' in "
                 "chunk metadata. Set chunk.metadata['document_id'] = str(doc_uuid)."
             )
+        for i, ch in enumerate(chunks[1:], start=1):
+            cid = ch.metadata.get("document_id")
+            if cid != doc_id_str:
+                raise ValueError(
+                    f"All chunks must share the same document_id. "
+                    f"Chunk 0 has '{doc_id_str}', chunk {i} has '{cid}'."
+                )
         document_id = UUID(doc_id_str)
 
         factory = self._get_session_factory()

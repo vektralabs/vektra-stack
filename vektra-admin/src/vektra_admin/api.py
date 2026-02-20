@@ -261,15 +261,13 @@ async def create_api_key(
     requested_scopes = body.scopes if body.scopes is not None else ["admin"]
     invalid = set(requested_scopes) - valid_scopes
     if invalid:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": {
-                    "code": "ERR-ADMIN-001",
-                    "message": f"Invalid scopes: {sorted(invalid)}",
-                }
-            },
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-001",
+            message=f"Invalid scopes: {sorted(invalid)}",
+            remediation=f"Use only valid scopes: {sorted(valid_scopes)}.",
         )
+        raise HTTPException(status_code=422, detail=err.to_envelope())
 
     # --- Generate and persist key ---
     plaintext, key_hash, key_preview = generate_key()
@@ -302,16 +300,20 @@ async def create_api_key(
             pass  # key_store not yet registered (e.g. during tests)
 
     # --- Audit log (async background task; log_event creates its own session) ---
+    # NFR-007: log ALL authenticated requests, including bootstrap key usage.
+    # AuditLogOrm.key_id is NOT a FK, so UUID(int=0) is safe as sentinel.
+    _BOOTSTRAP_SENTINEL = UUID(int=0)
     request_id = getattr(request.state, "request_id", None)
-    if request_id and key_info:
+    if request_id:
+        is_bootstrap = _bootstrap.is_bootstrap_key(token)
         background_tasks.add_task(
             _audit.log_event,
-            key_id=key_info.key_id,
+            key_id=key_info.key_id if key_info else _BOOTSTRAP_SENTINEL,
             endpoint="/api/v1/api-keys",
             method="POST",
             status_code=201,
             request_id=request_id,
-            action="apikey_created",
+            action="apikey_created_bootstrap" if is_bootstrap else "apikey_created",
             log_metadata={"new_key_id": str(new_key.id)},
         )
 
@@ -365,13 +367,21 @@ async def revoke_api_key(
     result = await session.execute(select(ApiKeyOrm).where(ApiKeyOrm.id == key_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(
-            status_code=404, detail={"error": {"message": "API key not found"}}
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-002",
+            message="API key not found.",
+            remediation="Verify the key ID and try again.",
         )
+        raise HTTPException(status_code=404, detail=err.to_envelope())
     if row.revoked_at is not None:
-        raise HTTPException(
-            status_code=409, detail={"error": {"message": "API key already revoked"}}
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-003",
+            message="API key already revoked.",
+            remediation="No action needed; the key is already inactive.",
         )
+        raise HTTPException(status_code=409, detail=err.to_envelope())
 
     row.revoked_at = datetime.now(UTC)
     await session.commit()

@@ -37,6 +37,7 @@ from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider
 from vektra_shared.config import IngestConfig
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
+    ERR_INGEST_001,
     ERR_INGEST_002,
     ErrorCategory,
     ErrorResponse,
@@ -196,24 +197,22 @@ async def ingest(
             registry=registry,
         )
     except IngestConflictError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": {
-                    "code": "ERR-INGEST-001",
-                    "message": str(exc),
-                }
-            },
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_INGEST_001,
+            message=str(exc),
+            remediation="Delete the existing document or use a different filename.",
         )
+        raise HTTPException(status_code=409, detail=err.to_envelope())
     except IngestError as exc:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=exc.error_code,
+            message=exc.message,
+            remediation="Fix the document or use a supported format, then retry.",
+        )
         raise HTTPException(
-            status_code=422,
-            detail={
-                "error": {
-                    "code": exc.error_code,
-                    "message": exc.message,
-                }
-            },
+            status_code=http_status_for(err), detail=err.to_envelope()
         )
 
     # Audit log (fire-and-forget, requires AuditMiddleware or explicit call)
@@ -316,13 +315,26 @@ async def _enqueue_ingest_job(
             pass
 
     if arq_pool is not None:
-        await arq_pool.enqueue_job(
-            "ingest_document_task",
-            str(job.id),
-            namespace,
-            filename,
-            file_content,
-        )
+        try:
+            await arq_pool.enqueue_job(
+                "ingest_document_task",
+                str(job.id),
+                namespace,
+                filename,
+                file_content,
+            )
+        except Exception as exc:
+            log.error("enqueue_failed", job_id=str(job.id), error=str(exc))
+            from vektra_ingest.jobs import _update_job
+
+            await _update_job(
+                job.id, status="failed", error_code="ERR-INGEST-004",
+                error_message=f"Failed to enqueue job: {exc}",
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"message": "Failed to enqueue ingest job"}},
+            ) from exc
     else:
         # Fallback: run in background (no arq in test/dev)
         background_tasks.add_task(

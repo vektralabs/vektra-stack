@@ -19,7 +19,7 @@ Two-tier model (REQ-025):
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -85,7 +85,9 @@ def _aggregate_status(component_statuses: list[str]) -> str:
     return "healthy"
 
 
-async def _call_health_check(name: str, checker: Callable[[], Any]) -> ComponentHealth:
+async def _call_health_check(
+    name: str, checker: Callable[[], Awaitable[HealthStatus]]
+) -> ComponentHealth:
     """Call a single health_check() callable, timing it and catching exceptions."""
     start = time.monotonic()
     try:

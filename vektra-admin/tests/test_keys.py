@@ -47,4 +47,5 @@ def test_lru_cache_hit_on_second_verify():
     plaintext, key_hash, _ = generate_key()
     result1 = verify_key(plaintext, key_hash)
     result2 = verify_key(plaintext, key_hash)
-    assert result1 == result2 is True
+    assert result1 is True
+    assert result2 is True

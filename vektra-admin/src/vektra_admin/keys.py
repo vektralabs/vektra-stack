@@ -60,7 +60,8 @@ def verify_key(plaintext: str, key_hash: str) -> bool:
 def _cached_verify(key_hash: str, plaintext: str) -> bool:
     """Internal cached verification. Keyed by (hash, plaintext)."""
     try:
-        return _ph.verify(key_hash, plaintext)
+        _ph.verify(key_hash, plaintext)
+        return True
     except (VerifyMismatchError, VerificationError, InvalidHashError):
         return False
 

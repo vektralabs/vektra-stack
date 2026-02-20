@@ -19,6 +19,7 @@ if the main session was already closed by the time the middleware runs.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
@@ -31,6 +32,9 @@ from starlette.types import ASGIApp
 log = structlog.get_logger(__name__)
 
 _EXCLUDED_PREFIXES = ("/health", "/metrics")
+
+# Strong references to prevent GC of pending audit tasks
+_audit_tasks: set[asyncio.Task[None]] = set()
 
 
 class AuditMiddleware(BaseHTTPMiddleware):
@@ -65,9 +69,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             return response
 
         # Write audit log with a dedicated session (independent of request lifecycle)
-        import asyncio
-
-        asyncio.get_running_loop().create_task(
+        task = asyncio.create_task(
             _write_audit(
                 key_id=key_id,
                 endpoint=path,
@@ -76,6 +78,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 request_id=request_id,
             )
         )
+        _audit_tasks.add(task)
+        task.add_done_callback(_audit_tasks.discard)
 
         return response
 

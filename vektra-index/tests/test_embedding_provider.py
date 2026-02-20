@@ -36,10 +36,13 @@ class TestSentenceTransformersProvider:
         assert status.latency_ms is not None
 
     def test_singleton_model_reuse(self):
-        """Two providers with same model_name share the model singleton."""
+        """Two providers with same model_name share the model singleton.
+
+        Accesses private _model() to verify the module-level singleton
+        behavior (two instances sharing one SentenceTransformer object).
+        """
         p1 = SentenceTransformersProvider("all-MiniLM-L6-v2")
         p2 = SentenceTransformersProvider("all-MiniLM-L6-v2")
-        # Both should return the same model object
         m1 = p1._model()
         m2 = p2._model()
         assert m1 is m2

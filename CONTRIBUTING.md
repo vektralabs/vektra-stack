@@ -43,7 +43,7 @@ There are no separate `.flake8`, `.mypy.ini`, or `.importlinter` files.
 
 We use a simplified GitFlow:
 
-```
+```text
 main ────────────────────────────────────────────── (production-ready, protected)
   │                                                 ↑
   └─── develop ───────────────────────────────────── (integration, protected)
@@ -60,7 +60,7 @@ main ─────────────────────────
 
 ### Branch naming
 
-```
+```text
 feat/<component>-<short-description>    # new feature
 fix/<component>-<short-description>     # bug fix
 docs/<short-description>                # documentation only
@@ -71,7 +71,7 @@ chore/<short-description>               # tooling, dependencies, CI
 
 We use [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<scope>): <subject>
 
 [optional body]
@@ -85,7 +85,7 @@ Signed-off-by: Your Name <your.email@example.com>
 **Scopes**: `core`, `ingest`, `index`, `admin`, `shared`, `ci`, `docs`
 
 **Examples**:
-```
+```text
 feat(ingest): add PDF text extraction with pdfplumber
 fix(core): handle empty conversation history in streaming
 docs(readme): update installation instructions
@@ -149,7 +149,7 @@ Two AI reviewers comment on PRs automatically:
 The five components are strictly isolated. Cross-component imports are enforced by
 import-linter and will fail CI:
 
-```
+```text
 vektra_shared  ←  everything may import this
 vektra_core    ←  no imports from admin/ingest/index
 vektra_ingest  ←  no imports from admin/core/index

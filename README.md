@@ -16,7 +16,7 @@ Unlike RAG toolkits (LangChain, LlamaIndex, Haystack), Vektra ships as a **deplo
 
 | Aspect | Toolkits | Vektra |
 |--------|----------|--------|
-| Deployment | Build your own | `docker-compose up` |
+| Deployment | Build your own | `docker compose up` |
 | Configuration | Code changes | YAML/environment |
 | On-premises | DIY | First-class support |
 | GDPR compliance | DIY | Built-in (retention, audit logs) |
@@ -27,7 +27,7 @@ Unlike RAG toolkits (LangChain, LlamaIndex, Haystack), Vektra ships as a **deplo
 ```bash
 git clone https://github.com/vektralabs/vektra-stack.git
 cd vektra-stack
-docker-compose up
+docker compose up
 ```
 
 Target: from clone to first RAG query in under 30 minutes.
@@ -36,7 +36,7 @@ Target: from clone to first RAG query in under 30 minutes.
 
 Vektra uses a hybrid monorepo approach ([ADR-0001](.s2s/decisions/ADR-0001-hybrid-monorepo-strategy.md)):
 
-```
+```text
 vektra-stack/              # This repository (monorepo)
 ├── vektra-core/           # RAG engine, LLM abstraction
 ├── vektra-ingest/         # Document processing (PDF, OCR, PPT, Word)
@@ -55,7 +55,7 @@ vektra-sdk-js/             # JavaScript SDK (published to npm)
 
 ## Platform architecture
 
-```
+```text
 ┌───────────────────────────────────────────────────────────────────┐
 │  VERTICALS           Domain solutions (vektra-learn for e-learning)│
 ├───────────────────────────────────────────────────────────────────┤

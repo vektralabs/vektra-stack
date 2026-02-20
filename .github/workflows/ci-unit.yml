@@ -123,8 +123,11 @@ jobs:
     steps:
       - name: Check all tests passed or were skipped
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "One or more test jobs failed."
-            exit 1
-          fi
+          RESULTS="${{ join(needs.*.result, ' ') }}"
+          for r in $RESULTS; do
+            if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
+              echo "One or more test jobs failed or were cancelled."
+              exit 1
+            fi
+          done
           echo "All tests passed or were skipped (no relevant changes detected)."

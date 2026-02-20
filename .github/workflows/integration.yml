@@ -19,13 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-caching: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Install dev dependencies
-        run: uv sync --dev --frozen
+      # TODO (Wave 5): restore uv setup + sync when uncommenting test steps
+      # - uses: astral-sh/setup-uv@v6
+      #   with:
+      #     enable-caching: true
+      #     cache-dependency-glob: "uv.lock"
+      # - name: Install dev dependencies
+      #   run: uv sync --dev --frozen
 
       # TODO (Wave 5 - infra-docker): uncomment when Dockerfile + docker-compose.yml exist
       # - name: Start full stack

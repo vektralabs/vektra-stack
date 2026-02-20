@@ -36,6 +36,8 @@ else
 fi
 
 # Helper: extract value from flat JSON using grep/sed (fallback when no jq)
+# Limitation: only handles flat, top-level string keys. Nested objects,
+# arrays, and values containing escaped quotes are not supported.
 # Usage: json_extract "key" "$json_string"
 json_extract() {
     local key="$1"

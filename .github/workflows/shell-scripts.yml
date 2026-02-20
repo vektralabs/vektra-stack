@@ -27,6 +27,7 @@ jobs:
       - name: Lint with shellcheck
         if: steps.check.outputs.found == 'true'
         run: |
+          sudo apt-get update -qq
           sudo apt-get install -y shellcheck
           shellcheck scripts/*.sh
 

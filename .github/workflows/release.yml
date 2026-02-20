@@ -18,6 +18,7 @@ permissions:
 jobs:
   release:
     name: Semantic release
+    if: false  # TODO: enable when python-semantic-release is configured
     runs-on: ubuntu-latest
 
     steps:

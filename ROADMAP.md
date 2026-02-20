@@ -16,6 +16,7 @@ This metric guides all decisions about developer experience, documentation, and 
 
 | Component | Scope |
 |-----------|-------|
+| vektra-shared | Shared types, configuration, Protocol interfaces |
 | vektra-core | RAG engine, LLM abstraction (OpenAI, Anthropic, Ollama), conversation management |
 | vektra-ingest | Document processing (PDF only) |
 | vektra-index | Vector store abstraction (pgvector only), embedding, semantic search |
@@ -30,7 +31,7 @@ This metric guides all decisions about developer experience, documentation, and 
 ### Exit Criteria
 
 - [ ] Clone repo
-- [ ] Run `docker-compose up`
+- [ ] Run `docker compose up`
 - [ ] Ingest a PDF document
 - [ ] Query via API and receive cited response
 - [ ] Total time under 30 minutes

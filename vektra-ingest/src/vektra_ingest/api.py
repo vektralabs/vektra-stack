@@ -211,9 +211,7 @@ async def ingest(
             message=exc.message,
             remediation="Fix the document or use a supported format, then retry.",
         )
-        raise HTTPException(
-            status_code=http_status_for(err), detail=err.to_envelope()
-        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     # Audit log (fire-and-forget, requires AuditMiddleware or explicit call)
     _write_audit_log(
@@ -328,7 +326,9 @@ async def _enqueue_ingest_job(
             from vektra_ingest.jobs import _update_job
 
             await _update_job(
-                job.id, status="failed", error_code="ERR-INGEST-004",
+                job.id,
+                status="failed",
+                error_code="ERR-INGEST-004",
                 error_message=f"Failed to enqueue job: {exc}",
             )
             raise HTTPException(

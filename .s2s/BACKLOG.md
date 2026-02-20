@@ -396,6 +396,28 @@ Key Phase 2 topics for the roundtable:
 
 ## Completed
 
+### BUG-007: Ingest error responses not using ErrorResponse envelopes
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit baa7d18
+
+**Context**: `IngestConflictError` (409) and `IngestError` (422) handlers in `vektra_ingest/api.py` returned raw dicts instead of `ErrorResponse.to_envelope()` format (REQ-010). Same pattern as BUG-004 in vektra-admin. Fixed: both now use structured ErrorResponse envelopes with category, code, message, and remediation. Conflict uses hardcoded 409 since `ERR_INGEST_001` is shared with unsupported type (422).
+
+**Traceability**: REQ-010, PR #2 comment 2834065198
+
+---
+
+### BUG-008: Embedding count not validated against chunk count before storage
+
+**Status**: completed | **Completed**: 2026-02-20
+**Resolved in**: PR #2 review, commit 4985eb5
+
+**Context**: `run_ingest()` in `vektra_ingest/pipeline.py` used `zip(all_chunks, embeddings)` to build `ChunkEmbedding` objects. If the embedding provider returned fewer embeddings than chunks, `zip` would silently truncate - a data loss risk. Added explicit length check before the zip.
+
+**Traceability**: ARCH-009, PR #2 comment 2834065217
+
+---
+
 ### BUG-001: `pre_response` safeguard receives UUID instead of answer text
 
 **Status**: completed | **Completed**: 2026-02-20

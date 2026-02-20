@@ -257,6 +257,15 @@ async def run_ingest(
         texts = [c.text for c in all_chunks]
         embeddings = await embedding_provider.embed_documents(texts)
 
+        if len(embeddings) != len(all_chunks):
+            raise IngestError(
+                error_code=ERR_INGEST_004,
+                message=(
+                    f"Embedding count mismatch: got {len(embeddings)} embeddings "
+                    f"for {len(all_chunks)} chunks."
+                ),
+            )
+
         # Build ChunkEmbedding objects with document_id in metadata
         chunk_embeddings = [
             ChunkEmbedding(

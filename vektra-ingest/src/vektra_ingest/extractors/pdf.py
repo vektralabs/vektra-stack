@@ -86,7 +86,7 @@ class PdfplumberExtractor:
 
     async def health_check(self) -> HealthStatus:
         try:
-            import pdfplumber  # noqa: F401  type: ignore[import-untyped]
+            import pdfplumber  # noqa: F401
 
             return HealthStatus(status="healthy")
         except ImportError as exc:

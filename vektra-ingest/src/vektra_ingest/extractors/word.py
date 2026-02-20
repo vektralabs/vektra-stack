@@ -84,7 +84,7 @@ class WordExtractor:
 
     async def health_check(self) -> HealthStatus:
         try:
-            import docx  # noqa: F401  type: ignore[import-untyped]
+            import docx  # noqa: F401
 
             return HealthStatus(status="healthy")
         except ImportError as exc:

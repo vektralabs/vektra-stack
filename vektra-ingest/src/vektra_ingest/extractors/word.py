@@ -40,7 +40,7 @@ class WordExtractor:
     async def _extract_impl(
         self, request: ExtractionRequest
     ) -> AsyncGenerator[DocumentChunk, None]:
-        import docx  # type: ignore[import-untyped]
+        import docx
 
         doc = docx.Document(io.BytesIO(request.content))
 

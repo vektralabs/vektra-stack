@@ -72,7 +72,12 @@ class IngestResult:
 def _build_extractor_registry() -> dict[str, Any]:
     """Build content_type → extractor mapping for all supported types."""
     registry: dict[str, Any] = {}
-    for extractor in [PdfplumberExtractor(), WordExtractor(), PowerPointExtractor()]:
+    extractors: list[Any] = [
+        PdfplumberExtractor(),
+        WordExtractor(),
+        PowerPointExtractor(),
+    ]
+    for extractor in extractors:
         for mime_type in extractor.supported_types():
             registry[mime_type] = extractor
     return registry

@@ -52,7 +52,7 @@ class SentenceTransformersProvider:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         self._model_name = model_name
 
-    def _model(self):
+    def _model(self) -> Any:
         return _get_model(self._model_name)
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -73,11 +73,11 @@ class SentenceTransformersProvider:
         """
         model = self._model()
         embedding = model.encode(query, convert_to_numpy=True)
-        return embedding.tolist()
+        return list(embedding.tolist())
 
     def dimensions(self) -> int:
         """Return the embedding dimensionality."""
-        return self._model().get_sentence_embedding_dimension()
+        return int(self._model().get_sentence_embedding_dimension())
 
     async def health_check(self) -> HealthStatus:
         """Verify the model is loaded and can produce an embedding."""

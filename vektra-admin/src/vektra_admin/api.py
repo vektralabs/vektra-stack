@@ -35,7 +35,7 @@ from vektra_admin import audit as _audit
 from vektra_admin import bootstrap as _bootstrap
 from vektra_admin import health as _health
 from vektra_admin.keys import generate_key
-from vektra_shared.auth import ApiKeyInfo, require_scope
+from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider, require_scope
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ErrorCategory,
@@ -69,7 +69,7 @@ async def _require_any_token(
         raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
 
     try:
-        key_store = registry.get("key_store", "default")
+        key_store: KeyStoreProvider = registry.get("key_store", "default")
     except ValueError:
         raise HTTPException(status_code=500, detail="Key store not configured")
 

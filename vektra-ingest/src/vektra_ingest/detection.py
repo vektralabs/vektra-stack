@@ -40,7 +40,7 @@ def detect_content_type(content: bytes, filename: str = "") -> str:
         MIME type string, never None or empty.
     """
     try:
-        import magic  # type: ignore[import-untyped]
+        import magic
 
         # Use first 8KB for detection (matches libmagic default)
         sample = content[:8192]

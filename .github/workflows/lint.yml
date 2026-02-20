@@ -14,7 +14,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
         with:
-          enable-caching: true
+          enable-cache: true
           cache-dependency-glob: "uv.lock"
 
       - name: Install dev dependencies
@@ -29,11 +29,11 @@ jobs:
       - name: mypy
         run: |
           uv run mypy \
-            vektra_shared \
-            vektra_admin \
-            vektra_core \
-            vektra_ingest \
-            vektra_index
+            vektra-shared/src/vektra_shared \
+            vektra-admin/src/vektra_admin \
+            vektra-core/src/vektra_core \
+            vektra-ingest/src/vektra_ingest \
+            vektra-index/src/vektra_index
 
       - name: import-linter (boundary check)
         run: uv run lint-imports

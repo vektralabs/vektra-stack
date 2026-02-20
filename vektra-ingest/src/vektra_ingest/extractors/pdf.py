@@ -45,7 +45,7 @@ class PdfplumberExtractor:
     async def _extract_impl(
         self, request: ExtractionRequest
     ) -> AsyncGenerator[DocumentChunk, None]:
-        import pdfplumber  # type: ignore[import-untyped]
+        import pdfplumber
 
         with pdfplumber.open(io.BytesIO(request.content)) as pdf:
             pages = pdf.pages

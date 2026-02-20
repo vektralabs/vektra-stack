@@ -9,6 +9,8 @@ Steps 1, 4-8 are implemented in each component's startup logic.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class StartupValidationError(Exception):
     """Raised when a startup validation step fails.
@@ -78,7 +80,7 @@ async def check_database_schema(
 
         engine = create_async_engine(database_url)
 
-        def _get_current(conn) -> set[str]:
+        def _get_current(conn: Any) -> set[str]:
             mc = MigrationContext.configure(conn)
             return set(mc.get_current_heads())
 

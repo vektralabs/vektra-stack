@@ -11,6 +11,7 @@ for indexing. For all-MiniLM-L6-v2, both paths use the same encoding (symmetric)
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, cast
@@ -62,7 +63,7 @@ class SentenceTransformersProvider:
         without the query prefix. Supports asymmetric models in Phase 2.
         """
         model = self._model()
-        embeddings = model.encode(texts, convert_to_numpy=True)
+        embeddings = await asyncio.to_thread(model.encode, texts, convert_to_numpy=True)
         return [emb.tolist() for emb in embeddings]
 
     async def embed_query(self, query: str) -> list[float]:
@@ -72,7 +73,7 @@ class SentenceTransformersProvider:
         For all-MiniLM-L6-v2, no prefix needed.
         """
         model = self._model()
-        embedding = model.encode(query, convert_to_numpy=True)
+        embedding = await asyncio.to_thread(model.encode, query, convert_to_numpy=True)
         return cast(list[float], embedding.tolist())
 
     def dimensions(self) -> int:

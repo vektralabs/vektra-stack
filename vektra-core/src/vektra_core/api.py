@@ -23,6 +23,10 @@ from pydantic import BaseModel
 
 from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider
 from vektra_shared.errors import (
+    ERR_QUERY_002,
+    ERR_QUERY_003,
+    ErrorCategory,
+    ErrorResponse,
     auth_insufficient_scope,
     auth_invalid_token,
     http_status_for,
@@ -147,6 +151,17 @@ async def query(
     Returns SSE stream (text/event-stream) when Accept header contains
     'text/event-stream' or body.stream=true.
     """
+    # Query length validation (ERR-QUERY-003)
+    _MAX_QUERY_CHARS = 10_000
+    if len(body.question) > _MAX_QUERY_CHARS:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_QUERY_003,
+            message=f"Query length {len(body.question)} characters exceeds the maximum of {_MAX_QUERY_CHARS}.",
+            remediation="Shorten your query or split it into multiple smaller queries.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
     registry = getattr(request.app.state, "registry", None)
     if registry is None:
         raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
@@ -199,7 +214,23 @@ async def query(
         )
 
     # Non-streaming: full response
-    response, trace = await pipeline.execute(query_req)
+    try:
+        response, trace = await pipeline.execute(query_req)
+    except Exception as exc:
+        log.warning("query_pipeline_failed", error=str(exc))
+        err = ErrorResponse(
+            category=ErrorCategory.UPSTREAM,
+            code=ERR_QUERY_002,
+            message="LLM is unavailable. The query could not be completed.",
+            remediation=(
+                "Check that the LLM provider is running and accessible. "
+                "Verify VEKTRA_LLM_PROVIDER is configured correctly. "
+                "Retry the query in a few seconds."
+            ),
+        )
+        raise HTTPException(
+            status_code=http_status_for(err), detail=err.to_envelope()
+        ) from exc
 
     log.info(
         "query_trace",

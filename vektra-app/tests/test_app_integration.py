@@ -52,9 +52,9 @@ def db_url():
 
     with PostgresContainer("pgvector/pgvector:pg16") as postgres:
         raw_url = postgres.get_connection_url()
-        async_url = raw_url.replace("postgresql://", "postgresql+asyncpg://").replace(
-            "psycopg2", "asyncpg"
-        )
+        from sqlalchemy.engine import make_url
+
+        async_url = str(make_url(raw_url).set(drivername="postgresql+asyncpg"))
 
         env = os.environ.copy()
         env["VEKTRA_DATABASE_URL"] = async_url
@@ -65,6 +65,7 @@ def db_url():
             text=True,
             cwd=PROJECT_ROOT,
             env=env,
+            timeout=120,
         )
         if result.returncode != 0:
             pytest.fail(f"Alembic migration failed:\n{result.stderr}\n{result.stdout}")

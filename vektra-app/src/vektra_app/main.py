@@ -25,6 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
+from vektra_app import __version__
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
 from vektra_shared.errors import ERR_CONFIG_001, ErrorCategory, ErrorResponse
@@ -78,29 +79,27 @@ def configure_structlog() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _step_4_pgvector_check(database_url: str) -> None:
+async def _step_4_pgvector_check() -> None:
     """ARCH-057 step 4: verify pgvector extension is installed."""
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
 
-    engine = create_async_engine(database_url)
-    try:
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+    from vektra_shared.db import get_engine
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            raise StartupValidationError(
+                step="pgvector_extension",
+                detail="pgvector extension is not installed in the database.",
+                remediation=(
+                    "Install pgvector: CREATE EXTENSION IF NOT EXISTS vector; "
+                    "Or use the official pgvector Docker image."
+                ),
             )
-            row = result.scalar_one_or_none()
-            if row is None:
-                raise StartupValidationError(
-                    step="pgvector_extension",
-                    detail="pgvector extension is not installed in the database.",
-                    remediation=(
-                        "Install pgvector: CREATE EXTENSION IF NOT EXISTS vector; "
-                        "Or use the official pgvector Docker image."
-                    ),
-                )
-    finally:
-        await engine.dispose()
 
 
 async def _step_5_register_providers(
@@ -289,7 +288,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             lambda: check_database_connectivity(settings.database_url),
         ),
         ("database_schema", lambda: check_database_schema(settings.database_url)),
-        ("pgvector_extension", lambda: _step_4_pgvector_check(settings.database_url)),
+        ("pgvector_extension", lambda: _step_4_pgvector_check()),
         (
             "provider_registration",
             lambda: _step_5_register_providers(settings, registry),
@@ -316,7 +315,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("startup_complete", total_duration_ms=total_ms)
 
     app.state.registry = registry
-    app.state.version = "0.1.0"
+    app.state.version = __version__
 
     yield
 
@@ -372,7 +371,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Vektra",
         description="Modular RAG platform",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url=None,

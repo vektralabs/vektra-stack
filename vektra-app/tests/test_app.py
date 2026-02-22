@@ -94,11 +94,10 @@ class TestPiiRedactor:
 
 
 class TestCorsOrigins:
-    def test_default_origins(self) -> None:
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("VEKTRA_CORS_ORIGINS", None)
-            origins = _get_cors_origins()
-            assert origins == ["http://localhost:3000"]
+    def test_default_origins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VEKTRA_CORS_ORIGINS", raising=False)
+        origins = _get_cors_origins()
+        assert origins == ["http://localhost:3000"]
 
     def test_custom_origins(self) -> None:
         with patch.dict(

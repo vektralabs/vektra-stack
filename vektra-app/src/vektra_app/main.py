@@ -148,12 +148,11 @@ async def _step_5_register_providers(
 
     # --- Key store ---
     from vektra_admin.keystore import InMemoryKeyStore
-    from vektra_shared.db import _session_factory
+    from vektra_shared.db import get_session_factory
 
     key_store = InMemoryKeyStore()
-    if _session_factory is not None:
-        async with _session_factory() as session:
-            await key_store.load_from_db(session)
+    async with get_session_factory()() as session:
+        await key_store.load_from_db(session)
     registry.register("key_store", "default", key_store)
 
     # --- Query pipeline ---

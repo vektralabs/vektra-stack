@@ -98,14 +98,16 @@ async def _write_audit(
     affect the API response — NFR-007 integrity principle).
     """
     from vektra_admin.models import AuditLogOrm  # late import
-    from vektra_shared.db import _session_factory  # module-level factory
+    from vektra_shared.db import get_session_factory
 
-    if _session_factory is None:
+    try:
+        session_factory = get_session_factory()
+    except RuntimeError:
         log.warning("audit_middleware_no_session_factory")
         return
 
     try:
-        async with _session_factory() as session:
+        async with session_factory() as session:
             entry = AuditLogOrm(
                 key_id=key_id,
                 endpoint=endpoint,

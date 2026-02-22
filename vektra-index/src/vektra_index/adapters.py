@@ -53,11 +53,9 @@ class VectorStoreServiceAdapter:
         return PgvectorProvider(active_index_version=self._active_index_version)
 
     def _get_session_factory(self) -> async_sessionmaker[AsyncSession]:
-        from vektra_shared.db import _session_factory
+        from vektra_shared.db import get_session_factory
 
-        if _session_factory is None:
-            raise RuntimeError("Database not initialized. Call init_db() first.")
-        return _session_factory
+        return get_session_factory()
 
     async def store(
         self,

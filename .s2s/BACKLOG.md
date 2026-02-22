@@ -230,17 +230,18 @@ Specific items to address at the roundtable:
 
 ---
 
-### DOCS-008: Evaluate adding REQ for no_relevant_context behavior
+### DOCS-008: ~~Evaluate adding REQ for no_relevant_context behavior~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-17
+**Status**: completed | **Priority**: low | **Created**: 2026-02-17 | **Completed**: 2026-02-19
+**Resolved in**: SRS v1.5.0 (requirements.md update)
 
-**Context**: The `no_relevant_context: bool` field in QueryResponse and the behavior "when all chunks score below VEKTRA_MIN_RELEVANCE_SCORE, return graceful no-context response" is defined in ARCH-056 and ADR-0021, but has no corresponding functional requirement in requirements.md. This was flagged in the validation scenarios gaps table (validation-scenarios.md). SC-B05 covers the behavior as a validation scenario, but traceability to a REQ is missing. The omission was noticed during pre-implementation review.
+**Context**: REQ-066 (no_relevant_context graceful fallback) was added to requirements.md during SRS v1.5.0. Traceability updated in traceability.yaml.
 
-**Traceability**: ARCH-056, ADR-0021, SC-B05, validation-scenarios.md gaps table
+**Traceability**: ARCH-056, ADR-0021, SC-B05, REQ-066
 
 **Acceptance Criteria**:
-- [ ] Decision made: either add REQ-066 (no_relevant_context graceful fallback) to requirements.md, or explicitly note in ARCH-056 that this is architecture-derived behavior without a corresponding functional REQ
-- [ ] If REQ added: traceability tables updated (ties to DOCS-004)
+- [x] Decision made: REQ-066 added to requirements.md
+- [x] If REQ added: traceability tables updated (ties to DOCS-004)
 - [ ] Gaps table row in validation-scenarios.md updated to reflect resolution
 
 ---
@@ -271,6 +272,23 @@ Key Phase 2 topics for the roundtable:
 
 ---
 
+### TECH-004: Add unique indexes for idempotent ingest (TOCTOU mitigation)
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-02-20
+**Blocked by**: infra-database (Alembic migration setup)
+**Origin**: PR #2 review, comment 2834065202 (CodeRabbit)
+
+**Context**: `run_ingest()` checks for duplicate filename+namespace via SELECT before INSERT. Without a unique partial index (`WHERE deleted_at IS NULL`), concurrent requests can both pass the check and insert duplicate documents (TOCTOU window). The fix requires a partial unique index on `(namespace_id, filename) WHERE deleted_at IS NULL` plus `IntegrityError` handling as a fallback. Deferred because it requires an Alembic migration (infra-database plan, Wave 5).
+
+**Traceability**: REQ-033, ARCH-052, PR #2 comment 2834065202
+
+**Acceptance Criteria**:
+- [ ] Alembic migration adds `CREATE UNIQUE INDEX ... ON source_documents (namespace_id, filename) WHERE deleted_at IS NULL`
+- [ ] `run_ingest()` catches `IntegrityError` from duplicate insert and raises `IngestConflictError`
+- [ ] Integration test verifies concurrent duplicate ingest returns 409
+
+---
+
 ### INFRA-003: Create CODEOWNERS file
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-01-29
@@ -287,20 +305,21 @@ Key Phase 2 topics for the roundtable:
 
 ---
 
-### INFRA-004: Create component directories
+### INFRA-004: ~~Create component directories~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-01-29
+**Status**: completed | **Priority**: high | **Created**: 2026-01-29 | **Completed**: 2026-02-19
+**Resolved in**: Wave 0 (commit 4d6d375)
 
-**Context**: Monorepo component folders don't exist yet. Need basic structure before coding starts.
+**Context**: All component directories created with full package structure during Wave 0.
 
 **Traceability**:
 - **Implements**: ADR-0001
 
 **Acceptance Criteria**:
-- [ ] vektra-core/ with README.md and pyproject.toml stub
-- [ ] vektra-ingest/ with README.md and pyproject.toml stub
-- [ ] vektra-index/ with README.md and pyproject.toml stub
-- [ ] vektra-admin/ with README.md stub
+- [x] vektra-core/ with README.md and pyproject.toml stub
+- [x] vektra-ingest/ with README.md and pyproject.toml stub
+- [x] vektra-index/ with README.md and pyproject.toml stub
+- [x] vektra-admin/ with README.md stub
 
 ---
 
@@ -357,17 +376,18 @@ Key Phase 2 topics for the roundtable:
 
 ---
 
-### TECH-001: Setup uv workspace for monorepo
+### TECH-001: ~~Setup uv workspace for monorepo~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-01-29
+**Status**: completed | **Priority**: high | **Created**: 2026-01-29 | **Completed**: 2026-02-19
+**Resolved in**: Wave 0 (CI/CD setup, commit cdec18b)
 
-**Context**: Python monorepo needs uv workspace configuration for dependency management.
+**Context**: uv workspace configured in root pyproject.toml. All components are workspace members. Cross-component imports work via shared vektra_shared package.
 
 **Acceptance Criteria**:
-- [ ] Root pyproject.toml with [tool.uv.workspace]
-- [ ] Each component is a workspace member
-- [ ] `uv sync` works from root
-- [ ] Cross-component imports work
+- [x] Root pyproject.toml with [tool.uv.workspace]
+- [x] Each component is a workspace member
+- [x] `uv sync` works from root
+- [x] Cross-component imports work
 
 ---
 
@@ -521,17 +541,18 @@ Key Phase 2 topics for the roundtable:
 | ~~INFRA-001 (LICENSE)~~ | ~~Before /s2s:specs~~ | Done |
 | ~~INFRA-002 (CoC)~~ | ~~Before /s2s:specs~~ | Done |
 | INFRA-003 (CODEOWNERS) | After component structure | Needs paths to exist |
-| INFRA-004 (component dirs) | Before /s2s:plan | Need structure for planning |
+| ~~INFRA-004 (component dirs)~~ | ~~Before /s2s:plan~~ | Done (Wave 0) |
 | DOCS-001 (docs structure) | Before Phase 1 complete | Part of MVP deliverable |
 | DOCS-002, DOCS-003 | After tech stack | Depends on language/framework |
 | DOCS-004 (traceability tables) | After first Phase 1 milestone | Accuracy requires real code |
 | DOCS-005 (roundtable QA+BA) | After first sprint | Need tests to compare against |
 | DOCS-006 (n8n workflow) | Anytime during Phase 1 | Independent of code, low effort |
 | DOCS-007 (Phase 2 OQs) | Before Phase 2 design | OQ-018 + OQ-019 unresolved |
-| DOCS-008 (no_relevant_context REQ) | Before Phase 1 SRS close | Small scope, low risk |
-| TECH-001 (uv workspace) | Before coding | Dev environment setup |
+| ~~DOCS-008 (no_relevant_context REQ)~~ | ~~Before Phase 1 SRS close~~ | Done (REQ-066 in SRS v1.5.0) |
+| ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
 | TECH-003 (Phase 2 design roundtable) | After Phase 1 stable + DOCS-007 | Full /s2s:design for Phase 2 |
+| TECH-004 (unique indexes) | Wave 5 (infra-database) | Requires Alembic migration |
 | ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
 | DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |
 | DEBT-003 (post_retrieval hook) | Phase 2 | PassthroughSafeguard covers Phase 1 |

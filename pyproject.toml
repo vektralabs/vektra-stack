@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin"]
+members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-app"]
 
 [dependency-groups]
 dev = [
@@ -47,6 +47,7 @@ known-first-party = [
     "vektra_ingest",
     "vektra_index",
     "vektra_admin",
+    "vektra_app",
 ]
 
 [tool.ruff.format]
@@ -75,6 +76,8 @@ module = [
     "docx.*",
     "testcontainers.*",
     "psutil.*",
+    "starlette_prometheus.*",
+    "uvicorn.*",
 ]
 ignore_missing_imports = true
 
@@ -95,6 +98,7 @@ root_packages = [
     "vektra_core",
     "vektra_ingest",
     "vektra_index",
+    "vektra_app",
 ]
 include_external_packages = true
 
@@ -128,6 +132,12 @@ type = "forbidden"
 source_modules = ["vektra_index"]
 forbidden_modules = ["vektra_admin", "vektra_core", "vektra_ingest"]
 
+[[tool.importlinter.contracts]]
+name = "No component shall import the app entrypoint"
+type = "forbidden"
+source_modules = ["vektra_shared", "vektra_admin", "vektra_core", "vektra_ingest", "vektra_index"]
+forbidden_modules = ["vektra_app"]
+
 # ---------------------------------------------------------------------------
 # pytest coverage (workspace-level config; each component overrides testpaths)
 # ---------------------------------------------------------------------------
@@ -146,6 +156,7 @@ source = [
     "vektra_core",
     "vektra_ingest",
     "vektra_index",
+    "vektra_app",
 ]
 omit = ["tests/*", "*/migrations/*"]
 

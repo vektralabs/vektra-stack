@@ -116,7 +116,7 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-infra-app-entrypoint](20260217-infra-app-entrypoint.md) | FastAPI assembly and startup validation (ARCH-057) | medium | pending |
+| [20260217-infra-app-entrypoint](20260217-infra-app-entrypoint.md) | FastAPI assembly and startup validation (ARCH-057) | medium | completed |
 | [20260217-feature-error-codes](20260217-feature-error-codes.md) | Error code registry and actionability enforcement | small | pending |
 
 ---

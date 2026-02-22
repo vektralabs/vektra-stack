@@ -35,6 +35,8 @@ from vektra_shared.types import QueryChunk, QueryRequest, SafeguardContext
 
 log = structlog.get_logger(__name__)
 
+_MAX_QUERY_CHARS = 10_000
+
 router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
 
@@ -152,7 +154,6 @@ async def query(
     'text/event-stream' or body.stream=true.
     """
     # Query length validation (ERR-QUERY-003)
-    _MAX_QUERY_CHARS = 10_000
     if len(body.question) > _MAX_QUERY_CHARS:
         err = ErrorResponse(
             category=ErrorCategory.PERMANENT,
@@ -216,8 +217,10 @@ async def query(
     # Non-streaming: full response
     try:
         response, trace = await pipeline.execute(query_req)
+    except HTTPException:
+        raise
     except Exception as exc:
-        log.warning("query_pipeline_failed", error=str(exc))
+        log.warning("query_pipeline_failed", error=str(exc), exc_info=True)
         err = ErrorResponse(
             category=ErrorCategory.UPSTREAM,
             code=ERR_QUERY_002,

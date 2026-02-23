@@ -76,7 +76,7 @@ ORM models live inside each component's module directory (not in vektra_shared),
 
 ## Testing Approach
 
-Integration test using a real PostgreSQL instance (testcontainers or docker-compose `test` profile). Apply migration, then assert table structure via `information_schema` queries. Test idempotency: applying migration twice should be a no-op. Teardown drops all tables.
+Integration test using a real PostgreSQL instance (testcontainers or Docker Compose `test` profile). Apply migration, then assert table structure via `information_schema` queries. Test idempotency: applying migration twice should be a no-op. Teardown drops all tables.
 
 ## Integration Notes
 

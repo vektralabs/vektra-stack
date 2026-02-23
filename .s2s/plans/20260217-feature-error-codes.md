@@ -72,7 +72,7 @@ A focused deliverable: implement all 13 normative error codes from REQ-011, docu
 
 ## Testing Approach
 
-Integration test with a running application (testcontainers or docker-compose test profile). Each test case: set up the triggering condition, make HTTP request, assert response schema and non-empty remediation. ERR-AUTH-002 (expired token) is reserved for Phase 2 - test can assert the code exists as a constant but no triggering test needed.
+Integration test with a running application (testcontainers or Docker Compose test profile). Each test case: set up the triggering condition, make HTTP request, assert response schema and non-empty remediation. ERR-AUTH-002 (expired token) is reserved for Phase 2 - test can assert the code exists as a constant but no triggering test needed.
 
 ## Integration Notes
 

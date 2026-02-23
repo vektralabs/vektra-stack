@@ -70,7 +70,7 @@ ollama:
 
 ### Positive
 
-- Single command deployment: `docker-compose up`
+- Single command deployment: `docker compose up`
 - REQ-005 30-minute MVP target achievable
 - Memory limits enforced at container level
 - Ollama optional via profiles (no resource waste if unused)

@@ -119,7 +119,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 **Architectural style**: Modular monolith for Phase 1. Single deployable container with internal package boundaries. See [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md).
 
-**Deployment**: Docker-compose stack: vektra + postgres (always), ollama (profile: local-llm), qdrant (profile: qdrant, Phase 2). See [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md), [ADR-0012](decisions/ADR-0012-docker-compose-spec.md).
+**Deployment**: Docker Compose stack: vektra + postgres (always), ollama (profile: local-llm), qdrant (profile: qdrant, Phase 2). See [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md), [ADR-0012](decisions/ADR-0012-docker-compose-spec.md).
 
 **Key technology choices**:
 - Web framework: FastAPI 0.115+ with Pydantic v2

@@ -50,7 +50,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-002: WF-INGEST-001: Document Ingestion workflow
 - **Priority**: must
-- **Description**: User: Platform Operator. Goal: Ingest a PDF document into the vector store for RAG queries. Entry conditions: Vektra stack running (docker-compose up successful), PDF file accessible to ingest service, target collection/namespace exists or will be auto-created. Happy path: (1) Operator calls ingest API with PDF file or URL, (2) System validates PDF, (3) System extracts text content, (4) System chunks text, (5) System generates embeddings, (6) System stores vectors in index with metadata, (7) System returns success with document ID and chunk count. Exit conditions: Document indexed and queryable, ingestion metadata logged for audit.
+- **Description**: User: Platform Operator. Goal: Ingest a PDF document into the vector store for RAG queries. Entry conditions: Vektra stack running (docker compose up successful), PDF file accessible to ingest service, target collection/namespace exists or will be auto-created. Happy path: (1) Operator calls ingest API with PDF file or URL, (2) System validates PDF, (3) System extracts text content, (4) System chunks text, (5) System generates embeddings, (6) System stores vectors in index with metadata, (7) System returns success with document ID and chunk count. Exit conditions: Document indexed and queryable, ingestion metadata logged for audit.
 - **Acceptance Criteria**:
   - [ ] Single API call initiates ingestion
   - [ ] Synchronous response for small documents (<10MB)
@@ -75,7 +75,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-005: WF-INT-001: End-to-End MVP Validation workflow
 - **Priority**: must
-- **Description**: User: Platform Operator (first-time setup). Goal: Verify complete Vektra installation by ingesting a sample document and querying it. Entry conditions: Fresh clone of vektra-stack repository, Docker and docker-compose installed, sample PDF available (included in repo). Happy path: (1) git clone vektra-stack, (2) docker-compose up -d, (3) Wait for health check to pass, (4) Call ingest API with sample PDF, (5) Call query API with sample question about the PDF, (6) Verify answer references the sample document. Exit conditions: Query returns relevant answer from ingested document, total time from step 1 to step 6: under 30 minutes.
+- **Description**: User: Platform Operator (first-time setup). Goal: Verify complete Vektra installation by ingesting a sample document and querying it. Entry conditions: Fresh clone of vektra-stack repository, Docker installed, sample PDF available (included in repo). Happy path: (1) git clone vektra-stack, (2) docker compose up -d, (3) Wait for health check to pass, (4) Call ingest API with sample PDF, (5) Call query API with sample question about the PDF, (6) Verify answer references the sample document. Exit conditions: Query returns relevant answer from ingested document, total time from step 1 to step 6: under 30 minutes.
 - **Acceptance Criteria**:
   - [ ] Scripted end-to-end test exists and passes
   - [ ] No manual configuration required beyond docker-compose.yml
@@ -175,7 +175,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 - **Acceptance Criteria**:
   - [ ] Response times measured and logged
   - [ ] Slow responses include timing breakdown in debug logs
-  - [ ] docker-compose includes resource limits to ensure consistent performance
+  - [ ] Docker Compose includes resource limits to ensure consistent performance
   - [ ] p95 exceeding target by >20% triggers CI warning
   - [ ] p95 exceeding target by >50% blocks merge
 
@@ -267,7 +267,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 - **Priority**: must
 - **Description**: The 30-minute exit criteria for MVP demonstration must be decomposed into discrete measurable checkpoints. Docker image pull time is excluded from the 30-minute clock.
 - **Acceptance Criteria**:
-  - [ ] T+0:30 - docker-compose up completes without error
+  - [ ] T+0:30 - docker compose up completes without error
   - [ ] T+2:00 - health endpoint returns 200
   - [ ] T+5:00 - sample document ingestion completes and is queryable
   - [ ] T+6:00 - query returns relevant response with source attribution
@@ -716,7 +716,7 @@ Reference document: 10-page text-extractable PDF, maximum 500KB file size, no em
 - **Category**: reliability
 - **Target**: <60 seconds to healthy
 - **Minimum**: <60 seconds
-- **Measurement**: Time from docker-compose up to /health 200
+- **Measurement**: Time from docker compose up to /health 200
 - **Classification**: HARD (blocks release)
 
 ### NFR-005: Data durability on graceful restart

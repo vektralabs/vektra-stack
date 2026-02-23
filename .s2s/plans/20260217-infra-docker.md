@@ -46,7 +46,7 @@ provides_requires:
 
 ## Overview
 
-Author the container build and deployment configurations. Includes a multi-stage Dockerfile, the docker-compose.yml with service definitions and optional profiles, a .env.example, and example TLS reverse proxy configurations. The goal is a `docker-compose up -d` experience that reaches a healthy state within 60 seconds without any manual configuration.
+Author the container build and deployment configurations. Includes a multi-stage Dockerfile, the docker-compose.yml with service definitions and optional profiles, a .env.example, and example TLS reverse proxy configurations. The goal is a `docker compose up -d` experience that reaches a healthy state within 60 seconds without any manual configuration.
 
 ## Design Notes
 
@@ -68,28 +68,28 @@ Author the container build and deployment configurations. Includes a multi-stage
 - [x] Write `deploy/nginx/vektra.conf.example`: TLS termination config, proxy_pass to vektra:8000, headers (X-Request-ID, X-Forwarded-For), TLS 1.2+ ciphers, SSE streaming support, HSTS header.
 - [x] Write `deploy/traefik/docker-compose.traefik.yml.example`: Traefik v3, Let's Encrypt ACME, HTTP-to-HTTPS redirect, SSE streaming flush.
 - [x] Write `deploy/postgres/encryption.md`: PostgreSQL TDE documentation and verification checklist (NFR-013). Covers pgcrypto, LUKS, Docker encrypted volumes, and cloud-managed encryption.
-- [ ] Verify `docker-compose up -d` reaches healthy state within 60 seconds on a clean machine with the required env vars set (NFR-004 manual verification)
-- [ ] Verify data durability: ingest a document, `docker-compose restart vektra`, verify document still queryable (NFR-005)
+- [ ] Verify `docker compose up -d` reaches healthy state within 60 seconds on a clean machine with the required env vars set (NFR-004 manual verification)
+- [ ] Verify data durability: ingest a document, `docker compose restart vektra`, verify document still queryable (NFR-005)
 - [ ] Verify resource ceiling: `make demo` completes on 4GB/2-core system without OOM (NFR-006, documented, not enforced in CI)
 
 ## Acceptance Criteria
 
-- [ ] `docker-compose up -d` starts postgres and vektra; both reach healthy/running state in < 60 seconds (NFR-004)
-- [ ] `docker-compose --profile local-llm up -d` starts Ollama in addition
+- [ ] `docker compose up -d` starts postgres and vektra; both reach healthy/running state in < 60 seconds (NFR-004)
+- [ ] `docker compose --profile local-llm up -d` starts Ollama in addition
 - [ ] Async ingestion works in-process via BackgroundTasks (ADR-0006 Phase 1 mode)
 - [ ] Vektra container runs as non-root user
 - [ ] `.env.example` contains all required variables with comments explaining each
 - [ ] TLS example configs provided for both nginx and Traefik in deploy/
-- [ ] Data survives container restart (NFR-005): indexed documents queryable after `docker-compose restart vektra`
+- [ ] Data survives container restart (NFR-005): indexed documents queryable after `docker compose restart vektra`
 - [ ] PostgreSQL encryption at rest documented in deploy/postgres/encryption.md (NFR-013)
 
 ## Testing Approach
 
-Manual testing of the docker-compose stack on the developer machine and in CI (see infra-ci plan). The CI integration test pipeline spins up the stack and validates the full ingest-query flow.
+Manual testing of the Docker Compose stack on the developer machine and in CI (see infra-ci plan). The CI integration test pipeline spins up the stack and validates the full ingest-query flow.
 
 ## Integration Notes
 
-This plan depends on infra-app-entrypoint being complete (the container must have something to run). CI plan (infra-ci) depends on this plan (uses the docker-compose stack for integration tests). Makefile plan (infra-makefile) also depends on this.
+This plan depends on infra-app-entrypoint being complete (the container must have something to run). CI plan (infra-ci) depends on this plan (uses the Docker Compose stack for integration tests). Makefile plan (infra-makefile) also depends on this.
 
 ## Notes
 

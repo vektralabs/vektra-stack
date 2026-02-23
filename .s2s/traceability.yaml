@@ -396,7 +396,7 @@ matrix:
       tool: pytest (unit) + integration test in infra-ci
       dataset: each of the 13 normative error codes triggered via crafted HTTP request
       pass_condition: every error response body contains error.category as exactly one of TRANSIENT | PERMANENT | CONFIGURATION | UPSTREAM; HTTP status code matches the category mapping defined in BR-001
-      environment: full docker-compose stack (infra-docker) with PostgreSQL + vektra; executed in integration.yml CI workflow
+      environment: full Docker Compose stack (infra-docker) with PostgreSQL + vektra; executed in integration.yml CI workflow
 
   - req: BR-002
     title: "Phase 1 error handling scope"
@@ -455,7 +455,7 @@ matrix:
       tool: pytest-benchmark (non-blocking CI measurement per EX-004)
       dataset: 1000 queries against a corpus of 10,000 indexed chunks; 5 concurrent clients; warm state (embedding model and LLM already loaded); baseline hardware 4 CPU / 16GB RAM
       pass_condition: p95 query latency < 10s with Ollama (local), < 5s with OpenAI; >20% above target generates CI job summary warning; >50% above target generates CI job summary annotation (not a merge block per EX-004)
-      environment: docker-compose stack with vektra + postgres + ollama (local-llm profile); measured in integration.yml CI workflow after stack reaches healthy state; query latency measured from HTTP request start to full response received
+      environment: Docker Compose stack with vektra + postgres + ollama (local-llm profile); measured in integration.yml CI workflow after stack reaches healthy state; query latency measured from HTTP request start to full response received
 
   - req: NFR-002
     title: "Search latency target"
@@ -477,7 +477,7 @@ matrix:
       tool: pytest-benchmark (non-blocking per NFR-003 TARGET classification)
       dataset: standard 10-page test PDF; text-extractable (no OCR); maximum 500KB; approximately 5000 words; cold ingest (no cached extraction result)
       pass_condition: total ingestion time from POST /ingest to status=INDEXED < 30 seconds; violation is logged as warning in CI job summary; does not block merge
-      environment: docker-compose stack with full vektra + postgres; real sentence-transformers embedding model loaded; synchronous path (< 10MB); measured end-to-end via HTTP client timing
+      environment: Docker Compose stack with full vektra + postgres; real sentence-transformers embedding model loaded; synchronous path (< 10MB); measured end-to-end via HTTP client timing
 
   - req: NFR-004
     title: "Container startup time"
@@ -486,9 +486,9 @@ matrix:
     test: ""
     nfr_operationalization: |
       tool: shell timer in integration.yml CI workflow
-      dataset: fresh docker-compose up with cold container images already pulled (image pull time excluded); PostgreSQL reaches healthy before vektra starts
-      pass_condition: time from `docker-compose up -d` to GET /health returning HTTP 200 < 60 seconds; measured by polling /health every 2 seconds with a 90-second total timeout; hard CI gate - exceeding threshold blocks merge in infra-ci integration.yml
-      environment: GitHub Actions runner; docker-compose stack (postgres + vektra); all images pre-pulled; ARCH-057 8-step startup sequence must complete including embedding model warm-up
+      dataset: fresh docker compose up with cold container images already pulled (image pull time excluded); PostgreSQL reaches healthy before vektra starts
+      pass_condition: time from `docker compose up -d` to GET /health returning HTTP 200 < 60 seconds; measured by polling /health every 2 seconds with a 90-second total timeout; hard CI gate - exceeding threshold blocks merge in infra-ci integration.yml
+      environment: GitHub Actions runner; Docker Compose stack (postgres + vektra); all images pre-pulled; ARCH-057 8-step startup sequence must complete including embedding model warm-up
 
   - req: NFR-005
     title: "Data durability on graceful restart"
@@ -497,9 +497,9 @@ matrix:
     test: ""
     nfr_operationalization: |
       tool: manual integration test in infra-docker plan; automated verification in integration.yml
-      dataset: one document ingested and confirmed INDEXED; then `docker-compose restart vektra` executed (graceful SIGTERM); then POST /query with a question about the ingested document
+      dataset: one document ingested and confirmed INDEXED; then `docker compose restart vektra` executed (graceful SIGTERM); then POST /query with a question about the ingested document
       pass_condition: query after restart returns non-empty sources array referencing the pre-restart document_id; response answer is non-empty (LLM synthesizes from indexed chunks); hard CI gate
-      environment: docker-compose stack with named postgres volume (vektra_pgdata); vektra container restarted without postgres restart to verify persistence is in PostgreSQL, not in-memory
+      environment: Docker Compose stack with named postgres volume (vektra_pgdata); vektra container restarted without postgres restart to verify persistence is in PostgreSQL, not in-memory
 
   - req: NFR-006
     title: "Resource ceiling (4GB RAM, 2 CPU cores)"
@@ -510,7 +510,7 @@ matrix:
       tool: docker stats observation during make demo execution (manual, TARGET classification)
       dataset: make demo complete workflow (compose up, ingest sample PDF, run query) on a system with 4GB RAM / 2 CPU cores available to Docker
       pass_condition: make demo completes end-to-end without OOM kill (docker stats shows no container exit code 137); peak memory of vektra API container stays below 2GB (includes ~500MB sentence-transformers model); violation is documented but does not block release (TARGET classification)
-      environment: developer workstation or CI runner with 4GB RAM configured as Docker memory limit; postgres + vektra containers only (no ollama); memory limits enforced via docker-compose mem_limit config per ARCH-026
+      environment: developer workstation or CI runner with 4GB RAM configured as Docker memory limit; postgres + vektra containers only (no ollama); memory limits enforced via Docker Compose mem_limit config per ARCH-026
 
   - req: NFR-007
     title: "Audit log completeness (100%)"
@@ -521,7 +521,7 @@ matrix:
       tool: pytest integration test in tests/test_nfr_hard.py
       dataset: 50 authenticated HTTP requests against all API endpoint categories (ingest, query, admin, index); each request uses a valid API key with admin scope
       pass_condition: SELECT COUNT(*) FROM audit_log WHERE created_at >= test_start_time = 50; no authenticated request missing from audit_log; count discrepancy of even 1 fails the test; hard CI gate that blocks merge in infra-ci integration.yml
-      environment: full docker-compose stack; real PostgreSQL audit_log table; AuditMiddleware registered on FastAPI app via infra-app-entrypoint; /health and /metrics excluded from audit log per design
+      environment: full Docker Compose stack; real PostgreSQL audit_log table; AuditMiddleware registered on FastAPI app via infra-app-entrypoint; /health and /metrics excluded from audit log per design
 
   - req: NFR-008
     title: "Configurable audit log retention"
@@ -532,7 +532,7 @@ matrix:
       tool: startup log inspection
       dataset: application started with VEKTRA_AUDIT_RETENTION_DAYS=30 (non-default value)
       pass_condition: startup log contains structured INFO event with field audit_retention_days=30; configuration reference docs/reference/configuration.md documents VEKTRA_AUDIT_RETENTION_DAYS with default of 90; Phase 1 log rotation is operator responsibility (documented); hard CI gate based on config documentation completeness, not runtime enforcement
-      environment: docker-compose stack with VEKTRA_AUDIT_RETENTION_DAYS env var set; startup log captured and inspected via docker-compose logs
+      environment: Docker Compose stack with VEKTRA_AUDIT_RETENTION_DAYS env var set; startup log captured and inspected via docker compose logs
 
   - req: NFR-009
     title: "Error actionability (100%)"
@@ -543,7 +543,7 @@ matrix:
       tool: pytest integration test in tests/test_error_codes.py
       dataset: all 13 normative error codes from REQ-011 triggered via crafted HTTP requests (e.g., oversized file for ERR-INGEST-002, missing auth header for ERR-AUTH-001, invalid provider config for ERR-CONFIG-002)
       pass_condition: every triggered error response has error.remediation non-empty (len > 0); error.code matches ERR-{COMPONENT}-{NUMBER} pattern; error.message non-empty and contains no Python class names or stack traces; error.request_id present matching X-Request-ID header; 100% of tested codes pass; hard CI gate that blocks merge
-      environment: full docker-compose stack; real HTTP requests via httpx; ERR-AUTH-002 (expired token) tested as constant existence only (Phase 2 behavior, not triggerable)
+      environment: full Docker Compose stack; real HTTP requests via httpx; ERR-AUTH-002 (expired token) tested as constant existence only (Phase 2 behavior, not triggerable)
 
   - req: NFR-010
     title: "Long operation progress feedback"
@@ -565,7 +565,7 @@ matrix:
       tool: pytest-benchmark with concurrent load via asyncio.gather
       dataset: 10 concurrent POST /query requests sustained for 60 seconds against a corpus of 10,000 indexed chunks; queries use pre-generated embeddings (not re-embedded per request) to isolate pipeline concurrency
       pass_condition: no container crash or unhandled exception during 60s sustained load; p95 latency at 10 concurrent < 2x p95 at 1 concurrent (measured from same test run); TARGET classification - violation documented in CI job summary, does not block merge
-      environment: docker-compose stack with vektra + postgres + mock LLM (litellm mock to isolate from LLM provider variability); asyncio-based concurrent HTTP client via httpx
+      environment: Docker Compose stack with vektra + postgres + mock LLM (litellm mock to isolate from LLM provider variability); asyncio-based concurrent HTTP client via httpx
 
   - req: NFR-012
     title: "TLS encryption in transit"

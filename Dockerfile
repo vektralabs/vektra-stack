@@ -1,7 +1,7 @@
 # ==========================================================================
 # Vektra platform - multi-stage Docker build
 # ==========================================================================
-# Single image, two roles: CMD_TARGET=server (default) or CMD_TARGET=worker.
+# Single image: CMD_TARGET=server (default) or CMD_TARGET=migrate.
 # See docker/entrypoint.sh for command dispatch.
 # ==========================================================================
 

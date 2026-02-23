@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "starlette-prometheus>=0.10",
     "structlog>=24.0",
+    "alembic>=1.13",
 ]
 
 [build-system]

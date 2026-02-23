@@ -1,0 +1,50 @@
+# ==========================================================================
+# Traefik reverse proxy with Let's Encrypt for Vektra (NFR-012)
+#
+# Usage:
+#   1. Copy to docker-compose.traefik.yml
+#   2. Replace YOUR_DOMAIN and YOUR_EMAIL
+#   3. docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+#
+# This file extends the main docker-compose.yml. It adds Traefik as
+# the TLS termination layer with automatic certificate renewal.
+# ==========================================================================
+
+services:
+  traefik:
+    image: traefik:v3
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entryPoints.web.address=:80"
+      - "--entryPoints.websecure.address=:443"
+      - "--entryPoints.web.http.redirections.entryPoint.to=websecure"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=YOUR_EMAIL"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_acme:/acme
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  vektra:
+    # Remove direct port exposure (Traefik handles it)
+    ports: !reset []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vektra.rule=Host(`YOUR_DOMAIN`)"
+      - "traefik.http.routers.vektra.entrypoints=websecure"
+      - "traefik.http.routers.vektra.tls.certresolver=letsencrypt"
+      - "traefik.http.services.vektra.loadbalancer.server.port=8000"
+      # Streaming support (SSE for query responses)
+      - "traefik.http.services.vektra.loadbalancer.responseforwarding.flushinterval=1ms"
+
+volumes:
+  traefik_acme:

@@ -1,0 +1,50 @@
+# Version control
+.git
+.gitignore
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+
+# Local development
+.env
+.env.local
+.env.*.local
+CLAUDE.local.md
+.claude/
+
+# S2S planning artifacts
+.s2s/
+
+# Documentation and CI (not needed in image)
+.github/
+docs/
+*.md
+!alembic.ini
+
+# Archive
+.archive/
+
+# OS files
+.DS_Store
+Thumbs.db

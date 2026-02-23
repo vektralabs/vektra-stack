@@ -74,9 +74,9 @@ Author the container build and deployment configurations. Includes a multi-stage
 
 ## Acceptance Criteria
 
-- [ ] `docker-compose up -d` starts postgres, vektra, and vektra-worker; all reach healthy/running state in < 60 seconds
+- [ ] `docker-compose up -d` starts postgres and vektra; both reach healthy/running state in < 60 seconds (NFR-004)
 - [ ] `docker-compose --profile local-llm up -d` starts Ollama in addition
-- [ ] vektra-worker service connects to PostgreSQL and processes an arq job to completion (verified via ingest integration test)
+- [ ] Async ingestion works in-process via BackgroundTasks (ADR-0006 Phase 1 mode)
 - [ ] Vektra container runs as non-root user
 - [ ] `.env.example` contains all required variables with comments explaining each
 - [ ] TLS example configs provided for both nginx and Traefik in deploy/

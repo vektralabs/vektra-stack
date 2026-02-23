@@ -28,6 +28,14 @@ COPY vektra-app/pyproject.toml vektra-app/pyproject.toml
 # Cached as long as manifests stay the same.
 RUN uv sync --frozen --no-install-workspace --no-dev
 
+# Copy README.md files (required by hatchling for wheel metadata)
+COPY vektra-shared/README.md vektra-shared/README.md
+COPY vektra-admin/README.md vektra-admin/README.md
+COPY vektra-core/README.md vektra-core/README.md
+COPY vektra-ingest/README.md vektra-ingest/README.md
+COPY vektra-index/README.md vektra-index/README.md
+COPY vektra-app/README.md vektra-app/README.md
+
 # Copy all workspace source code
 COPY vektra-shared/src vektra-shared/src
 COPY vektra-admin/src vektra-admin/src
@@ -64,7 +72,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY alembic.ini /app/alembic.ini
 COPY migrations/ /app/migrations/
 
-# Entrypoint script (dispatches server / worker / migrate)
+# Entrypoint script (dispatches server / migrate)
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
@@ -76,11 +84,14 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8000
 
-# The 30s start_period covers the sentence-transformers embedding model
-# warm-up. Without this Docker marks the container unhealthy during
-# normal startup before the model finishes loading.
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -sf http://localhost:8000/health || exit 1
+# Liveness probe: check that the HTTP server is responding. Uses -so
+# (silent, discard body) WITHOUT --fail so HTTP 503 (LLM unavailable
+# when Ollama is not running) still counts as alive.  Connection refused
+# (exit 7) correctly signals the process is down.
+# The 45s start_period covers alembic migrations + sentence-transformers
+# embedding model warm-up (~35s observed).
+HEALTHCHECK --interval=10s --timeout=5s --start-period=45s --retries=3 \
+    CMD curl -so /dev/null http://localhost:8000/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["server"]

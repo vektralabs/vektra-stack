@@ -40,6 +40,7 @@ CLAUDE.local.md
 .github/
 docs/
 *.md
+!vektra-*/README.md
 !alembic.ini
 
 # Archive

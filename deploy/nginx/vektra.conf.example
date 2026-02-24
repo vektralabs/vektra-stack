@@ -64,11 +64,13 @@ server {
         access_log off;
     }
 
-    # Prometheus metrics (restrict to internal network)
+    # Prometheus metrics (restricted to internal network)
     location /metrics {
         proxy_pass http://vektra_backend/metrics;
-        # allow 10.0.0.0/8;
-        # deny all;
+        allow 10.0.0.0/8;
+        allow 172.16.0.0/12;
+        allow 192.168.0.0/16;
+        deny all;
         access_log off;
     }
 }

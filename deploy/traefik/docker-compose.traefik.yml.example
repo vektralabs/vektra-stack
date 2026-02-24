@@ -8,11 +8,15 @@
 #
 # This file extends the main docker-compose.yml. It adds Traefik as
 # the TLS termination layer with automatic certificate renewal.
+#
+# Note: Traefik requires acme.json to have mode 600. On first run it
+# creates the file correctly. If restoring from backup, ensure
+# chmod 600 on the acme.json file before starting.
 # ==========================================================================
 
 services:
   traefik:
-    image: traefik:v3
+    image: traefik:v3.6.9
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"

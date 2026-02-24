@@ -41,6 +41,7 @@ CLAUDE.local.md
 docs/
 *.md
 !vektra-*/README.md
+# Defensive: keep alembic.ini in context if a future *.ini glob is added
 !alembic.ini
 
 # Archive

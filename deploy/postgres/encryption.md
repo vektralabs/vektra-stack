@@ -24,7 +24,8 @@ Encrypt the Docker volume's backing storage:
 cryptsetup luksFormat /dev/sdX
 cryptsetup open /dev/sdX vektra-data
 mkfs.ext4 /dev/mapper/vektra-data
-mount /dev/mapper/vektra-data /var/lib/docker/volumes/vektra-stack_vektra_pgdata
+# Adjust project name if COMPOSE_PROJECT_NAME differs from directory name
+mount /dev/mapper/vektra-data /var/lib/docker/volumes/<COMPOSE_PROJECT_NAME>_vektra_pgdata
 
 # Docker will write postgres data to the encrypted volume
 docker compose up -d
@@ -40,6 +41,7 @@ volumes:
     driver: local
     driver_opts:
       type: ext4
+      o: defaults
       device: /dev/mapper/vektra-data
 ```
 

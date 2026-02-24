@@ -60,7 +60,7 @@ services:
   # Ollama - local LLM inference (optional, activated via profile)
   # --------------------------------------------------------------------------
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:0.17.0
     profiles:
       - local-llm
     volumes:
@@ -82,7 +82,7 @@ services:
   # Qdrant - Phase 2 vector store alternative (placeholder)
   # --------------------------------------------------------------------------
   qdrant:
-    image: qdrant/qdrant
+    image: qdrant/qdrant:v1.17.0
     profiles:
       - qdrant
     volumes:

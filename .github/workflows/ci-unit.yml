@@ -50,8 +50,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --dev --frozen
-      - name: Run unit tests
-        run: uv run pytest vektra-shared/tests/ -v --tb=short -m "not integration"
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-shared/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_shared --cov-report=term-missing --cov-fail-under=80
 
   test-core:
     name: Test vektra-core
@@ -65,8 +67,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --dev --frozen
-      - name: Run unit tests
-        run: uv run pytest vektra-core/tests/ -v --tb=short -m "not integration"
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-core/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_core --cov-report=term-missing --cov-fail-under=80
 
   test-ingest:
     name: Test vektra-ingest
@@ -80,8 +84,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --dev --frozen
-      - name: Run unit tests
-        run: uv run pytest vektra-ingest/tests/ -v --tb=short -m "not integration"
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-ingest/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_ingest --cov-report=term-missing --cov-fail-under=80
 
   test-index:
     name: Test vektra-index
@@ -95,8 +101,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --dev --frozen
-      - name: Run unit tests
-        run: uv run pytest vektra-index/tests/ -v --tb=short -m "not integration"
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-index/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_index --cov-report=term-missing --cov-fail-under=80
 
   test-admin:
     name: Test vektra-admin
@@ -110,8 +118,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --dev --frozen
-      - name: Run unit tests
-        run: uv run pytest vektra-admin/tests/ -v --tb=short -m "not integration"
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-admin/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_admin --cov-report=term-missing --cov-fail-under=80
 
   # Aggregator job used as the single required status check in branch protection.
   # Passes if no upstream job failed (skipped jobs are treated as passing).

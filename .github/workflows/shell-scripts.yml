@@ -1,7 +1,8 @@
 name: Shell scripts
 
 # Validates shell scripts in scripts/ directory.
-# Requires infra-makefile (Wave 6) to be complete before there are scripts to test.
+# Steps are guarded by a check for scripts/*.sh existence, so this workflow
+# is a no-op until infra-makefile (Wave 6) creates the scripts.
 
 on:
   pull_request:
@@ -21,7 +22,7 @@ jobs:
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "No shell scripts found in scripts/ — skipping validation."
+            echo "No shell scripts found in scripts/ -- skipping validation."
           fi
 
       - name: Lint with shellcheck
@@ -31,11 +32,32 @@ jobs:
           sudo apt-get install -y shellcheck
           shellcheck scripts/*.sh
 
-      # TODO (Wave 6 - infra-makefile): add dry-run tests for each script
-      # - name: Test scripts with --dry-run
-      #   if: steps.check.outputs.found == 'true'
-      #   run: |
-      #     for script in scripts/*.sh; do
-      #       echo "Testing $script..."
-      #       bash "$script" --dry-run
-      #     done
+      - name: Test scripts with --dry-run (valid input)
+        if: steps.check.outputs.found == 'true'
+        run: |
+          failed=0
+          for script in scripts/*.sh; do
+            echo "--- Testing $script --dry-run ---"
+            if bash "$script" --dry-run; then
+              echo "PASS: $script"
+            else
+              echo "FAIL: $script exited with $?"
+              failed=1
+            fi
+          done
+          exit $failed
+
+      - name: Test scripts reject invalid input
+        if: steps.check.outputs.found == 'true'
+        run: |
+          failed=0
+          for script in scripts/*.sh; do
+            echo "--- Testing $script with invalid input ---"
+            if bash "$script" --invalid-flag-that-should-fail 2>/dev/null; then
+              echo "FAIL: $script accepted invalid input (should have exited non-zero)"
+              failed=1
+            else
+              echo "PASS: $script rejected invalid input (exit $?)"
+            fi
+          done
+          exit $failed

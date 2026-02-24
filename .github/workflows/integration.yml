@@ -79,6 +79,10 @@ jobs:
           VEKTRA_API_URL: http://localhost:8000
           VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
 
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
       - name: Tear down
         if: always()
         run: docker compose down -v --remove-orphans

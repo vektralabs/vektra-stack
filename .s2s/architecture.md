@@ -192,7 +192,7 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 
 | Goal | Approach | Reference |
 |------|----------|-----------|
-| Deployment simplicity | Single container, docker-compose, inline defaults | ARCH-001, ARCH-002 |
+| Deployment simplicity | Single container, Docker Compose, inline defaults | ARCH-001, ARCH-002 |
 | Extensibility | 9 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039, ARCH-053 |
 | Security | Single trust boundary, encrypted conversations, soft delete for compliance | ARCH-020, ARCH-031, ARCH-040 |
 | Observability | Structured logging, Prometheus metrics, correlation IDs, RAG-specific QueryTrace | ARCH-008, ARCH-013, ARCH-014, ARCH-041 |
@@ -417,7 +417,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 #### High-level architecture
 
 - **ARCH-001 - Modular monolith for Phase 1**: Single deployable container with internal package boundaries (vektra-core, vektra-ingest, vektra-index). Satisfies 30-minute MVP target, 4GB RAM constraint, and on-premises deployment simplicity.
-- **ARCH-002 - Minimal docker-compose stack**: Three services maximum: vektra (application), postgres (with pgvector), and optionally ollama.
+- **ARCH-002 - Minimal Docker Compose stack**: Three services maximum: vektra (application), postgres (with pgvector), and optionally ollama.
 - **ARCH-003 - Module boundary enforcement**: Package structure with `__all__` exports + import-linter static analysis in CI.
 - **ARCH-004 - Shared package for cross-cutting types**: `vektra_shared` for config schemas, error types, Protocol interfaces.
 - **ARCH-005 - Background tasks with arq**: arq in-process mode with PostgreSQL job persistence. Jobs survive container restarts.
@@ -1020,7 +1020,7 @@ Phase 2: when `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, activate with `docker compo
 | ollama | 3072 MB | 1024 MB | local-llm |
 | qdrant | 1024 MB | 512 MB | qdrant (Phase 2) |
 
-**Phase 2 hardware note**: Phase 2 full-featured deployment (e5-large embeddings ~1.2GB, cross-encoder reranking ~200MB, Presidio safeguards ~300MB) is estimated at ~2.9GB application RAM. Recommended Phase 2 target: 8GB RAM / 4 CPU. Phase 2 with only hybrid search + reranking (without e5-large) can stay within 4GB. Mitigations: lazy model loading, external embedding API via EmbeddingProvider swap, profile-based docker-compose. See OQ-019.
+**Phase 2 hardware note**: Phase 2 full-featured deployment (e5-large embeddings ~1.2GB, cross-encoder reranking ~200MB, Presidio safeguards ~300MB) is estimated at ~2.9GB application RAM. Recommended Phase 2 target: 8GB RAM / 4 CPU. Phase 2 with only hybrid search + reranking (without e5-large) can stay within 4GB. Mitigations: lazy model loading, external embedding API via EmbeddingProvider swap, profile-based Docker Compose. See OQ-019.
 
 #### Startup validation sequence (ARCH-057)
 
@@ -1839,7 +1839,7 @@ See ADRs in `.s2s/decisions/`:
 | [ADR-0001](decisions/ADR-0001-hybrid-monorepo-strategy.md) | Hybrid monorepo strategy | accepted |
 | [ADR-0002](decisions/ADR-0002-repo-split-criteria.md) | Repository split criteria | accepted |
 | [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md) | Modular monolith for Phase 1 | accepted |
-| [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md) | Minimal docker-compose stack | accepted |
+| [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md) | Minimal Docker Compose stack | accepted |
 | [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md) | Module boundary enforcement | accepted |
 | [ADR-0006](decisions/ADR-0006-background-tasks-arq.md) | Background tasks with arq | accepted |
 | [ADR-0007](decisions/ADR-0007-tech-stack.md) | Technology stack selection | accepted |

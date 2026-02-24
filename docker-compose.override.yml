@@ -1,0 +1,13 @@
+# ==========================================================================
+# Local development overrides
+#
+# Automatically loaded by docker compose alongside docker-compose.yml.
+# Sets debug-friendly defaults. For live code editing, run the app
+# outside Docker with: uv run uvicorn vektra_app.main:app --reload
+# ==========================================================================
+
+services:
+  vektra:
+    environment:
+      VEKTRA_ENV: development
+      VEKTRA_STARTUP_LLM_CHECK: "false"

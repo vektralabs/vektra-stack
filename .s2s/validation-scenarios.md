@@ -1077,7 +1077,7 @@ Phase: 1 | 2
 
 **Flow**:
 1. Operator ingests document, verifies queryable
-2. Operator runs docker-compose restart vektra
+2. Operator runs docker compose restart vektra
 3. Container restarts, startup validation runs
 4. Operator calls POST /query about previously indexed document
 5. Document is still queryable with same results
@@ -1426,11 +1426,11 @@ Phase: 1 | 2
 
 **Actor**: Platform Operator (first-time setup)
 **Trigger**: Operator clones repository and follows quickstart
-**Preconditions**: Docker and docker-compose installed, internet access for image pull
+**Preconditions**: Docker installed, internet access for image pull
 
 **Flow**:
 1. T+0:00 - git clone vektra-stack && cd vektra-stack
-2. T+0:30 - docker-compose up -d completes without error
+2. T+0:30 - docker compose up -d completes without error
 3. T+2:00 - GET /health returns 200
 4. T+5:00 - make ingest FILE=samples/sample.pdf completes
 5. T+6:00 - make query Q="What is this document about?" returns relevant response
@@ -1439,7 +1439,7 @@ Phase: 1 | 2
 **Expected outcome**: Complete MVP workflow in under 10 minutes active time. No manual configuration required.
 
 **Acceptance criteria**:
-- Given fresh clone, Then docker-compose up requires no manual configuration
+- Given fresh clone, Then docker compose up requires no manual configuration
 - Given compose-up, Then health endpoint returns 200 within 2 minutes
 - Given sample PDF, Then ingestion completes within 5 minutes
 - Given ingested document, Then query returns relevant response with citations within 6 minutes

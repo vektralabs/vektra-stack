@@ -3308,6 +3308,7 @@ name = "vektra-app"
 version = "0.1.0"
 source = { editable = "vektra-app" }
 dependencies = [
+    { name = "alembic" },
     { name = "starlette-prometheus" },
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
@@ -3328,6 +3329,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.13" },
     { name = "starlette-prometheus", specifier = ">=0.10" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },

@@ -125,7 +125,7 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-infra-docker](20260217-infra-docker.md) | Docker Compose stack, Dockerfile, TLS configs | medium | pending |
+| [20260217-infra-docker](20260217-infra-docker.md) | Docker Compose stack, Dockerfile, TLS configs | medium | completed |
 
 ---
 

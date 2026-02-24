@@ -39,7 +39,7 @@ This architecture satisfies the 30-minute MVP target, 4GB RAM constraint, and on
 ### Modular monolith
 
 **Pros**:
-- Single container deployment via docker-compose
+- Single container deployment via Docker Compose
 - Memory efficient (no per-container overhead)
 - Simple debugging (single log stream, single process)
 - Reduced attack surface (no inter-service network)
@@ -52,7 +52,7 @@ This architecture satisfies the 30-minute MVP target, 4GB RAM constraint, and on
 
 ### Positive
 
-- Meets 30-minute MVP target with single `docker-compose up`
+- Meets 30-minute MVP target with single `docker compose up`
 - Fits 4GB RAM constraint comfortably
 - Simplifies on-premises deployment for university IT
 - Reduces security attack surface

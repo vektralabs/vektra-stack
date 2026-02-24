@@ -74,7 +74,7 @@ jobs:
         continue-on-error: true
         run: |
           uv run pytest tests/nfr/test_performance.py \
-            -v --tb=short --junitxml=test-results/performance.xml || true
+            -v --tb=short --junitxml=test-results/performance.xml
         env:
           VEKTRA_API_URL: http://localhost:8000
           VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key

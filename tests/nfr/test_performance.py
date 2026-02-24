@@ -12,40 +12,17 @@ Requires:
 from __future__ import annotations
 
 import math
-import os
 import time
 
 import httpx
 import pytest
 
-API_URL = os.environ.get("VEKTRA_API_URL", "http://localhost:8000")
-BOOTSTRAP_KEY = os.environ.get("VEKTRA_BOOTSTRAP_KEY", "")
-
 # NFR-001 target: query latency (not a hard gate in Phase 1 per EX-004)
 _QUERY_LATENCY_TARGET_MS = 2000
-_WARN_THRESHOLD = 1.2  # 20% above target -> warn
-_NOTE_THRESHOLD = 1.5  # 50% above target -> note
+_NOTE_THRESHOLD = 1.2  # 20% above target -> note
+_WARN_THRESHOLD = 1.5  # 50% above target -> warn
 
 _NUM_QUERIES = 100
-
-
-@pytest.fixture(scope="module")
-def api():
-    """HTTP client pointed at the running Vektra stack."""
-    with httpx.Client(base_url=API_URL, timeout=60.0) as client:
-        yield client
-
-
-@pytest.fixture(scope="module")
-def admin_key(api: httpx.Client) -> str:
-    """Create an admin-scoped API key via bootstrap."""
-    resp = api.post(
-        "/api/v1/api-keys",
-        json={"label": "perf-test-admin", "scopes": ["admin"]},
-        headers={"Authorization": f"Bearer {BOOTSTRAP_KEY}"},
-    )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["key"]
 
 
 def test_query_latency_measurement(api: httpx.Client, admin_key: str) -> None:
@@ -83,11 +60,11 @@ def test_query_latency_measurement(api: httpx.Client, admin_key: str) -> None:
 
     target = _QUERY_LATENCY_TARGET_MS
 
-    # Determine annotation level
-    if p95 > target * _NOTE_THRESHOLD:
-        annotation = f"NOTE: p95 is >{int(_NOTE_THRESHOLD * 100 - 100)}% above target"
-    elif p95 > target * _WARN_THRESHOLD:
+    # Determine annotation level (check worst threshold first)
+    if p95 > target * _WARN_THRESHOLD:
         annotation = f"WARN: p95 is >{int(_WARN_THRESHOLD * 100 - 100)}% above target"
+    elif p95 > target * _NOTE_THRESHOLD:
+        annotation = f"NOTE: p95 is >{int(_NOTE_THRESHOLD * 100 - 100)}% above target"
     else:
         annotation = "PASS"
 

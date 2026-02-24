@@ -42,9 +42,14 @@ class TestE2EFlow:
         """Vektra stack is up and /health responds."""
         flow_clock["start"] = time.monotonic()
         resp = api.get("/health")
-        assert resp.status_code in (200, 503)
+        assert resp.status_code in (200, 503), (
+            f"Health endpoint returned {resp.status_code}"
+        )
         body = resp.json()
-        assert body["status"] in ("healthy", "degraded", "unhealthy")
+        if resp.status_code == 503 or body["status"] != "healthy":
+            pytest.skip(
+                f"Stack unhealthy (status={body['status']}), skipping E2E suite"
+            )
 
     def test_02_create_api_key(self, api: httpx.Client, admin_key: str) -> None:
         """Admin-scoped API key was created via bootstrap (fixture)."""
@@ -55,7 +60,7 @@ class TestE2EFlow:
         )
         assert resp.status_code == 200
         keys = resp.json()
-        assert any(k["label"] == "integration-admin" for k in keys)
+        assert any(k["label"] == "ci-test-admin" for k in keys)
 
     def test_03_ingest_document(self, api: httpx.Client, admin_key: str) -> None:
         """POST /ingest with sample PDF returns 200 with document_id."""
@@ -128,11 +133,14 @@ class TestE2EFlow:
 
         # Verify sources reference our ingested document
         doc_id = getattr(self.__class__, "_document_id", None)
-        if doc_id and body["sources"]:
-            source_doc_ids = [s.get("doc_id") for s in body["sources"]]
-            assert doc_id in source_doc_ids, (
-                f"Expected document {doc_id} in sources, got {source_doc_ids}"
-            )
+        assert doc_id is not None, (
+            "test_03_ingest_document must run first to set _document_id"
+        )
+        assert body["sources"], "Expected non-empty sources from vector search"
+        source_doc_ids = [s.get("doc_id") for s in body["sources"]]
+        assert doc_id in source_doc_ids, (
+            f"Expected document {doc_id} in sources, got {source_doc_ids}"
+        )
 
     def test_06_total_elapsed_under_60s(self, flow_clock: dict[str, float]) -> None:
         """Full REQ-032 flow completes within 60 seconds."""

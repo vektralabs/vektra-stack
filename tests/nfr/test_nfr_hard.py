@@ -24,34 +24,6 @@ import time
 import httpx
 import pytest
 
-API_URL = os.environ.get("VEKTRA_API_URL", "http://localhost:8000")
-BOOTSTRAP_KEY = os.environ.get("VEKTRA_BOOTSTRAP_KEY", "")
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def api():
-    """HTTP client pointed at the running Vektra stack."""
-    with httpx.Client(base_url=API_URL, timeout=30.0) as client:
-        yield client
-
-
-@pytest.fixture(scope="module")
-def admin_key(api: httpx.Client) -> str:
-    """Create an admin-scoped API key via bootstrap."""
-    resp = api.post(
-        "/api/v1/api-keys",
-        json={"label": "nfr-test-admin", "scopes": ["admin"]},
-        headers={"Authorization": f"Bearer {BOOTSTRAP_KEY}"},
-    )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["key"]
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -114,10 +86,15 @@ def test_nfr_007_audit_completeness(api: httpx.Client, admin_key: str) -> None:
             headers={"Authorization": f"Bearer {admin_key}"},
         )
 
-    # Audit writes are async fire-and-forget tasks; give them time to flush
-    time.sleep(3)
+    # Poll for audit rows (async writes may lag under CI load)
+    deadline = time.monotonic() + 10
+    count_after = count_before
+    while time.monotonic() < deadline:
+        count_after = int(_psql("SELECT COUNT(*) FROM audit_log"))
+        if count_after - count_before >= n_requests:
+            break
+        time.sleep(1)
 
-    count_after = int(_psql("SELECT COUNT(*) FROM audit_log"))
     new_rows = count_after - count_before
 
     assert new_rows >= n_requests, (
@@ -232,6 +209,8 @@ def _seed_benchmark_chunks() -> int:
         f"'nfr002benchhash', 'text/plain', 1024) "
         f"ON CONFLICT (id) DO NOTHING"
     )
+
+    _psql(f"DELETE FROM document_chunks WHERE document_id = '{_SEED_DOC_ID}'::uuid")
 
     _psql(
         f"INSERT INTO document_chunks "

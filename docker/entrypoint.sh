@@ -8,7 +8,10 @@
 # ==========================================================================
 set -e
 
-CMD_TARGET="${CMD_TARGET:-server}"
+# Prefer positional arg ($1 from CMD), then env var, then default.
+# This allows both: docker run image migrate
+#              and: CMD_TARGET=migrate docker run image
+CMD_TARGET="${1:-${CMD_TARGET:-server}}"
 
 case "$CMD_TARGET" in
   server)

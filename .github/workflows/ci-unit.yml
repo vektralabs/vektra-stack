@@ -49,7 +49,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-      - run: uv sync --dev --frozen
+      - run: uv sync --dev --frozen --package vektra-shared
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-shared/tests/ -v --tb=short -m "not integration"
@@ -66,7 +66,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-      - run: uv sync --dev --frozen
+      - run: uv sync --dev --frozen --package vektra-core
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-core/tests/ -v --tb=short -m "not integration"
@@ -83,7 +83,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-      - run: uv sync --dev --frozen
+      - run: uv sync --dev --frozen --package vektra-ingest
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-ingest/tests/ -v --tb=short -m "not integration"
@@ -100,7 +100,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-      - run: uv sync --dev --frozen
+      - run: uv sync --dev --frozen --package vektra-index
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-index/tests/ -v --tb=short -m "not integration"
@@ -117,7 +117,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-      - run: uv sync --dev --frozen
+      - run: uv sync --dev --frozen --package vektra-admin
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-admin/tests/ -v --tb=short -m "not integration"

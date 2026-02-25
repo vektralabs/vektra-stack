@@ -1,6 +1,13 @@
 [tool.uv.workspace]
 members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-app"]
 
+# PyTorch CPU-only index for CI and development (no NVIDIA CUDA packages).
+# Only used by packages with an explicit source override (explicit = true).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [dependency-groups]
 dev = [
     "alembic>=1.13",

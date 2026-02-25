@@ -3268,7 +3268,7 @@ requires-dist = [
     { name = "pgvector", specifier = ">=0.3" },
     { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
-    { name = "torch", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", specifier = ">=2.2.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "vektra-shared", editable = "vektra-shared" },
 ]
 

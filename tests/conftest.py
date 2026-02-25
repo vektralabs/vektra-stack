@@ -36,17 +36,25 @@ def admin_key(api: httpx.Client) -> str:
     """
     # Try cached key from a prior step
     if _KEY_CACHE.exists():
-        cached = json.loads(_KEY_CACHE.read_text())
-        key = cached["key"]
-        # Validate it still works (container may have been recycled)
-        resp = api.get(
-            "/api/v1/api-keys",
-            headers={"Authorization": f"Bearer {key}"},
-        )
-        if resp.status_code == 200:
-            return key
+        try:
+            cached = json.loads(_KEY_CACHE.read_text())
+            key = cached["key"]
+        except (json.JSONDecodeError, KeyError):
+            _KEY_CACHE.unlink(missing_ok=True)
+            key = None
+        else:
+            # Validate it still works (container may have been recycled)
+            resp = api.get(
+                "/api/v1/api-keys",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if resp.status_code == 200:
+                return key
 
     # Create via bootstrap (first invocation only)
+    assert BOOTSTRAP_KEY, (
+        "VEKTRA_BOOTSTRAP_KEY must be set (and key cache is missing/invalid)"
+    )
     resp = api.post(
         "/api/v1/api-keys",
         json={"label": "ci-test-admin", "scopes": ["admin", "ingest", "query"]},
@@ -57,6 +65,7 @@ def admin_key(api: httpx.Client) -> str:
     )
     key = resp.json()["key"]
 
-    # Cache for subsequent pytest processes
+    # Cache for subsequent pytest processes (owner-only permissions)
     _KEY_CACHE.write_text(json.dumps({"key": key}))
+    os.chmod(_KEY_CACHE, 0o600)
     return key

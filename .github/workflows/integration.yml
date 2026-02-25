@@ -23,6 +23,9 @@ jobs:
       - name: Install dev dependencies
         run: uv sync --dev --frozen
 
+      - name: Prepare test results directory
+        run: mkdir -p test-results
+
       - name: Create CI environment file
         run: |
           {

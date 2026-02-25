@@ -80,10 +80,13 @@ def test_nfr_007_audit_completeness(api: httpx.Client, admin_key: str) -> None:
     count_before = int(_psql("SELECT COUNT(*) FROM audit_log"))
 
     n_requests = 50
-    for _ in range(n_requests):
-        api.get(
+    for i in range(n_requests):
+        resp = api.get(
             "/api/v1/providers",
             headers={"Authorization": f"Bearer {admin_key}"},
+        )
+        assert resp.status_code == 200, (
+            f"Audit probe request {i} failed: {resp.status_code} {resp.text}"
         )
 
     # Poll for audit rows (async writes may lag under CI load)

@@ -82,15 +82,19 @@ USER vektra
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
+# Pre-cache the default embedding model so container startup doesn't
+# download ~80MB from Hugging Face Hub on first run.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 EXPOSE 8000
 
 # Liveness probe: check that the HTTP server is responding. Uses -so
 # (silent, discard body) WITHOUT --fail so HTTP 503 (LLM unavailable
 # when Ollama is not running) still counts as alive.  Connection refused
 # (exit 7) correctly signals the process is down.
-# The 45s start_period covers alembic migrations + sentence-transformers
-# embedding model warm-up (~35s observed).
-HEALTHCHECK --interval=10s --timeout=5s --start-period=45s --retries=3 \
+# The 30s start_period covers alembic migrations + embedding model loading
+# from the pre-cached weights above (~15s observed with cached model).
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -so /dev/null http://localhost:8000/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

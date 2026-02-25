@@ -2,7 +2,6 @@
 provides_requires:
   provides:
     - "docker.compose:stack"
-    - "vektra-worker:service"
   requires:
     - "FastAPI.app:factory"
 ---

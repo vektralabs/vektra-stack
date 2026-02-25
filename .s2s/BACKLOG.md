@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-20
+**Updated**: 2026-02-24
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -275,7 +275,7 @@ Key Phase 2 topics for the roundtable:
 ### TECH-004: Add unique indexes for idempotent ingest (TOCTOU mitigation)
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-02-20
-**Blocked by**: infra-database (Alembic migration setup)
+**Blocked by**: None (infra-database completed, Alembic available)
 **Origin**: PR #2 review, comment 2834065202 (CodeRabbit)
 
 **Context**: `run_ingest()` checks for duplicate filename+namespace via SELECT before INSERT. Without a unique partial index (`WHERE deleted_at IS NULL`), concurrent requests can both pass the check and insert duplicate documents (TOCTOU window). The fix requires a partial unique index on `(namespace_id, filename) WHERE deleted_at IS NULL` plus `IntegrityError` handling as a fallback. Deferred because it requires an Alembic migration (infra-database plan, Wave 5).
@@ -289,9 +289,10 @@ Key Phase 2 topics for the roundtable:
 
 ---
 
-### INFRA-003: Create CODEOWNERS file
+### INFRA-003: ~~Create CODEOWNERS file~~
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-01-29
+**Status**: completed | **Priority**: medium | **Created**: 2026-01-29 | **Completed**: 2026-02-19
+**Resolved in**: Wave 0, plan 20260217-infra-003
 
 **Context**: Maps components to maintainers for automatic PR review assignment.
 
@@ -299,9 +300,9 @@ Key Phase 2 topics for the roundtable:
 - **Implements**: REQ-016, REQ-018
 
 **Acceptance Criteria**:
-- [ ] CODEOWNERS file at repo root
-- [ ] Each component has owner defined
-- [ ] Docs ownership follows component ownership
+- [x] CODEOWNERS file at repo root
+- [x] Each component has owner defined
+- [x] Docs ownership follows component ownership
 
 ---
 
@@ -540,7 +541,7 @@ Key Phase 2 topics for the roundtable:
 |------|------|--------|
 | ~~INFRA-001 (LICENSE)~~ | ~~Before /s2s:specs~~ | Done |
 | ~~INFRA-002 (CoC)~~ | ~~Before /s2s:specs~~ | Done |
-| INFRA-003 (CODEOWNERS) | After component structure | Needs paths to exist |
+| ~~INFRA-003 (CODEOWNERS)~~ | ~~After component structure~~ | Done (Wave 0) |
 | ~~INFRA-004 (component dirs)~~ | ~~Before /s2s:plan~~ | Done (Wave 0) |
 | DOCS-001 (docs structure) | Before Phase 1 complete | Part of MVP deliverable |
 | DOCS-002, DOCS-003 | After tech stack | Depends on language/framework |
@@ -552,7 +553,7 @@ Key Phase 2 topics for the roundtable:
 | ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
 | TECH-003 (Phase 2 design roundtable) | After Phase 1 stable + DOCS-007 | Full /s2s:design for Phase 2 |
-| TECH-004 (unique indexes) | Wave 5 (infra-database) | Requires Alembic migration |
+| TECH-004 (unique indexes) | Anytime (infra-database done) | Alembic migration ready |
 | ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
 | DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |
 | DEBT-003 (post_retrieval hook) | Phase 2 | PassthroughSafeguard covers Phase 1 |

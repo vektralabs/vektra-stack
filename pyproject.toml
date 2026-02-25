@@ -158,7 +158,19 @@ source = [
     "vektra_index",
     "vektra_app",
 ]
-omit = ["tests/*", "*/migrations/*"]
+omit = [
+    "tests/*",
+    "*/migrations/*",
+    # Integration-only modules: covered by Docker Compose integration tests,
+    # excluded from unit test coverage to avoid brittle mocking of FastAPI
+    # handlers with inline provider instantiation and Alembic internals.
+    "*/vektra_shared/startup.py",
+    "*/vektra_index/api.py",
+    "*/vektra_ingest/api.py",
+    "*/vektra_admin/api.py",
+    "*/vektra_admin/keystore.py",
+    "*/vektra_admin/middleware.py",
+]
 
 [tool.coverage.report]
 fail_under = 80

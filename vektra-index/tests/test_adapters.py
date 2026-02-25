@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -43,20 +43,17 @@ class TestVectorStoreServiceAdapter:
 
         return VectorStoreServiceAdapter(active_index_version=1)
 
-    @pytest.mark.asyncio
     async def test_store_empty_chunks_returns_empty(self) -> None:
         adapter = self._make_adapter()
         result = await adapter.store("default", [])
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_store_missing_document_id_raises(self) -> None:
         adapter = self._make_adapter()
         chunk = ChunkEmbedding(chunk_id="c1", text="x", dense=[0.1], metadata={})
         with pytest.raises(ValueError, match="document_id"):
             await adapter.store("default", [chunk])
 
-    @pytest.mark.asyncio
     async def test_store_mismatched_document_ids_raises(self) -> None:
         adapter = self._make_adapter()
         c1 = _make_chunk(str(uuid4()))
@@ -64,7 +61,6 @@ class TestVectorStoreServiceAdapter:
         with pytest.raises(ValueError, match="same document_id"):
             await adapter.store("default", [c1, c2])
 
-    @pytest.mark.asyncio
     async def test_store_delegates_to_pgvector(self) -> None:
         adapter = self._make_adapter()
         doc_id = str(uuid4())
@@ -82,9 +78,11 @@ class TestVectorStoreServiceAdapter:
 
         assert ids == ["chunk-1"]
         mock_pgvector.store.assert_called_once()
+        call_args = mock_pgvector.store.call_args[0]
+        assert call_args[1] == "default"  # namespace forwarded
+        assert call_args[3] is chunks  # chunks forwarded
         fake_session.session.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_search_delegates_to_pgvector(self) -> None:
         adapter = self._make_adapter()
         qe = QueryEmbedding(dense=[0.1, 0.2])
@@ -101,8 +99,11 @@ class TestVectorStoreServiceAdapter:
 
         assert results == []
         mock_pgvector.search.assert_called_once()
+        call_args = mock_pgvector.search.call_args[0]
+        assert call_args[1] == "default"  # namespace forwarded
+        assert call_args[2] is qe  # query embedding forwarded
+        assert call_args[3] == 5  # top_k forwarded
 
-    @pytest.mark.asyncio
     async def test_delete_delegates_to_pgvector(self) -> None:
         adapter = self._make_adapter()
         doc_id = str(uuid4())
@@ -118,9 +119,12 @@ class TestVectorStoreServiceAdapter:
             total = await adapter.delete("default", [doc_id])
 
         assert total == 3
+        mock_pgvector.delete.assert_called_once()
+        call_args = mock_pgvector.delete.call_args[0]
+        assert call_args[1] == "default"  # namespace forwarded
+        assert call_args[2] == UUID(doc_id)  # document_id as UUID
         fake_session.session.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_health_check_returns_status(self) -> None:
         adapter = self._make_adapter()
 
@@ -139,7 +143,6 @@ class TestVectorStoreServiceAdapter:
         assert status.status == "healthy"
         assert status.latency_ms is not None
 
-    @pytest.mark.asyncio
     async def test_health_check_returns_unhealthy_on_exception(self) -> None:
         adapter = self._make_adapter()
 
@@ -156,7 +159,6 @@ class TestVectorStoreServiceAdapter:
         assert status.status == "unhealthy"
         assert "no db" in status.message
 
-    @pytest.mark.asyncio
     async def test_store_rollback_on_exception(self) -> None:
         adapter = self._make_adapter()
         doc_id = str(uuid4())

@@ -39,17 +39,16 @@ class TestE2EFlow:
     def test_01_health_reachable(
         self, api: httpx.Client, flow_clock: dict[str, float]
     ) -> None:
-        """Vektra stack is up and /health responds."""
+        """Vektra stack is up and /health responds.
+
+        Accepts 503 because the LLM (Ollama) is not available in CI.
+        The rest of the suite operates in context-only mode.
+        """
         flow_clock["start"] = time.monotonic()
         resp = api.get("/health")
         assert resp.status_code in (200, 503), (
             f"Health endpoint returned {resp.status_code}"
         )
-        body = resp.json()
-        if resp.status_code == 503 or body["status"] != "healthy":
-            pytest.skip(
-                f"Stack unhealthy (status={body['status']}), skipping E2E suite"
-            )
 
     def test_02_create_api_key(self, api: httpx.Client, admin_key: str) -> None:
         """Admin-scoped API key was created via bootstrap (fixture)."""

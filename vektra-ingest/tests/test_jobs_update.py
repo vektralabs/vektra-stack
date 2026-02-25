@@ -5,8 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
-import pytest
-
 import vektra_shared.db as db_mod
 
 
@@ -33,7 +31,6 @@ class TestUpdateJob:
     def teardown_method(self) -> None:
         db_mod._session_factory = self._orig
 
-    @pytest.mark.asyncio
     async def test_noop_when_no_session_factory(self) -> None:
         """_update_job returns silently when _session_factory is None."""
         from vektra_ingest.jobs import _update_job
@@ -41,7 +38,6 @@ class TestUpdateJob:
         db_mod._session_factory = None
         await _update_job(uuid4(), status="processing")  # should not raise
 
-    @pytest.mark.asyncio
     async def test_sets_started_at_on_processing(self) -> None:
         from vektra_ingest.jobs import _update_job
 
@@ -53,7 +49,6 @@ class TestUpdateJob:
         session.execute.assert_called_once()
         session.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_sets_completed_at_on_indexed(self) -> None:
         from vektra_ingest.jobs import _update_job
 
@@ -65,7 +60,6 @@ class TestUpdateJob:
         session.execute.assert_called_once()
         session.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_clears_phase_on_terminal_status(self) -> None:
         from vektra_ingest.jobs import _update_job
 
@@ -77,7 +71,6 @@ class TestUpdateJob:
         session.execute.assert_called_once()
         session.commit.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_truncates_long_error_message(self) -> None:
         from vektra_ingest.jobs import _update_job
 
@@ -87,10 +80,14 @@ class TestUpdateJob:
         long_msg = "x" * 5000
         await _update_job(uuid4(), status="failed", error_message=long_msg)
 
-        # Verify execute was called (the SQL statement contains truncated message)
         session.execute.assert_called_once()
+        # Verify the truncation contract: bound params should have <= 2000 chars
+        stmt = session.execute.call_args[0][0]
+        params = stmt.compile().params
+        err_vals = [v for k, v in params.items() if "error_message" in k]
+        assert err_vals, "error_message not found in bound parameters"
+        assert len(err_vals[0]) <= 2000
 
-    @pytest.mark.asyncio
     async def test_logs_error_on_db_exception(self) -> None:
         from vektra_ingest.jobs import _update_job
 

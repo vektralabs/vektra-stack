@@ -36,7 +36,6 @@ def _make_registry(
     return registry
 
 
-@pytest.mark.asyncio
 async def test_check_provider_registration_happy_path() -> None:
     from vektra_index.startup import check_provider_registration
 
@@ -44,7 +43,6 @@ async def test_check_provider_registration_happy_path() -> None:
     await check_provider_registration(registry)  # should not raise
 
 
-@pytest.mark.asyncio
 async def test_check_provider_registration_missing_embedding() -> None:
     from vektra_index.startup import check_provider_registration
 
@@ -53,26 +51,14 @@ async def test_check_provider_registration_missing_embedding() -> None:
         await check_provider_registration(registry)
 
 
-@pytest.mark.asyncio
 async def test_check_provider_registration_missing_vector_store() -> None:
     from vektra_index.startup import check_provider_registration
 
-    registry = _make_registry(has_vector_store=True, has_embedding=True)
-    # Override just vector_store
-    original_has = registry.has.side_effect
-
-    def _has_no_vs(cat: str, name: str) -> bool:
-        if cat == "vector_store":
-            return False
-        return original_has(cat, name)
-
-    registry.has.side_effect = _has_no_vs
-
+    registry = _make_registry(has_vector_store=False)
     with pytest.raises(StartupValidationError, match="vector_store"):
         await check_provider_registration(registry)
 
 
-@pytest.mark.asyncio
 async def test_check_embedding_model_happy_path() -> None:
     from vektra_index.startup import check_embedding_model
 
@@ -80,7 +66,6 @@ async def test_check_embedding_model_happy_path() -> None:
     await check_embedding_model(registry)  # should not raise
 
 
-@pytest.mark.asyncio
 async def test_check_embedding_model_dimension_mismatch() -> None:
     from vektra_index.startup import check_embedding_model
 
@@ -89,7 +74,6 @@ async def test_check_embedding_model_dimension_mismatch() -> None:
         await check_embedding_model(registry)
 
 
-@pytest.mark.asyncio
 async def test_check_embedding_model_embed_failure() -> None:
     from vektra_index.startup import check_embedding_model
 

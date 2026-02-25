@@ -34,7 +34,13 @@ class TestLLMConfig:
 
 class TestQueryPipelineConfig:
     def test_defaults(self) -> None:
-        cfg = QueryPipelineConfig()
+        cfg = QueryPipelineConfig(
+            VEKTRA_QUERY_PIPELINE="simple",
+            VEKTRA_MIN_RELEVANCE_SCORE=0.3,
+            VEKTRA_CONTEXT_CHUNK_RATIO=0.6,
+            VEKTRA_CHUNK_DEDUP_ENABLED=True,
+            VEKTRA_RESPONSE_TOKEN_RESERVE=1024,
+        )
         assert cfg.query_pipeline == "simple"
         assert cfg.min_relevance_score == 0.3
         assert cfg.context_chunk_ratio == 0.6

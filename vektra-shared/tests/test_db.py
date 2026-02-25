@@ -67,7 +67,6 @@ class TestDbModule:
         assert call_kwargs["max_overflow"] == 10
         assert call_kwargs["echo"] is True
 
-    @pytest.mark.asyncio
     async def test_get_session_raises_before_init(self) -> None:
         with pytest.raises(RuntimeError, match="Database not initialized"):
             async for _ in db_mod.get_session():

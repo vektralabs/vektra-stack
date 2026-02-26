@@ -27,10 +27,13 @@ Unlike RAG toolkits (LangChain, LlamaIndex, Haystack), Vektra ships as a **deplo
 ```bash
 git clone https://github.com/vektralabs/vektra-stack.git
 cd vektra-stack
-docker compose up
+cp .env.example .env
+# Edit .env: set VEKTRA_LLM_PROVIDER and your LLM API key
+docker compose up -d
+make demo
 ```
 
-Target: from clone to first RAG query in under 30 minutes.
+See [docs/getting-started/](docs/getting-started/index.md) for the full walkthrough. Target: from clone to first RAG query in under 30 minutes.
 
 ## Repository structure
 
@@ -81,6 +84,7 @@ See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
 ## Documentation
 
+- **[docs/](docs/)** - Full documentation (quick start, API reference, configuration, error codes)
 - [ROADMAP.md](ROADMAP.md) - Development phases and milestones
 - [GOVERNANCE.md](GOVERNANCE.md) - Project governance and contributor ladder
 - [CONTRIBUTING.md](CONTRIBUTING.md) - How to contribute

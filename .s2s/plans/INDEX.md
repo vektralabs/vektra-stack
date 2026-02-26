@@ -133,8 +133,8 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-infra-ci](20260217-infra-ci.md) | CI pipeline: GitHub Actions, integration tests, NFR gates | medium | in_progress |
-| [20260217-infra-makefile](20260217-infra-makefile.md) | Makefile targets and operator shell scripts | small | pending |
+| [20260217-infra-ci](20260217-infra-ci.md) | CI pipeline: GitHub Actions, integration tests, NFR gates | medium | completed |
+| [20260217-infra-makefile](20260217-infra-makefile.md) | Makefile targets and operator shell scripts | small | completed |
 
 ---
 

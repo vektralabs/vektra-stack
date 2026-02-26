@@ -1,8 +1,8 @@
 # Implementation Plan: Makefile targets and operator shell scripts
 
 **ID**: 20260217-infra-makefile
-**Status**: active
-**Branch**: N/A
+**Status**: completed
+**Branch**: feat/wave-6-infra-makefile
 **Created**: 2026-02-17T22:42:39Z
 **Updated**: 2026-02-17T22:42:39Z
 
@@ -45,24 +45,24 @@ Implements all required Makefile targets and operator scripts. The `make demo` t
 
 ## Tasks
 
-- [ ] Write `Makefile` with targets: `help` (awk-parsed ##comments), `up` (docker compose up -d), `down` (docker compose down), `health` (curl GET /health), `ingest FILE=` (curl POST /ingest with file path, requires VEKTRA_API_KEY env var), `query Q=` (curl POST /query, requires VEKTRA_API_KEY), `demo` (full MVP workflow, see below), `logs` (docker compose logs -f), `test` (pytest integration tests), `lint` (ruff + mypy + import-linter)
-- [ ] Implement `make demo` script: (1) docker compose up -d, (2) wait loop for /health 200 with 2-minute timeout, (3) POST /ingest with tests/fixtures/sample.pdf using bootstrap key to create first API key, (4) poll ingest job until INDEXED, (5) POST /query with a question about the sample PDF, (6) assert response includes the sample document's document_id in sources array, (7) print elapsed time; fail with clear message if any step exceeds checkpoint
-- [ ] Write `scripts/health.sh`: GET /health (shallow) and GET /health?detail=full (authenticated), pretty-print JSON output
-- [ ] Write `scripts/ingest.sh FILE NAMESPACE`: validate file exists, detect content type, POST /ingest, poll until complete, print document_id and chunk_count
-- [ ] Write `scripts/query.sh "QUESTION" [CONVERSATION_ID]`: POST /query, print answer and sources table
-- [ ] Write `scripts/create-key.sh LABEL [SCOPE1 SCOPE2]`: POST /api-keys using bootstrap key or existing admin key, print new key value with warning to save it
-- [ ] Make all scripts in `scripts/` executable (`chmod +x`) and add shebang `#!/usr/bin/env bash`
-- [ ] Verify all targets work on macOS (BSD sed, etc.) and Linux (GNU sed); use POSIX-compatible commands only
-- [ ] Test `make demo` completes within 5 minutes on a machine where all Docker images are already pulled (REQ-018 "make demo completes in under 5 minutes on first run" - images pre-pulled)
+- [x] Write `Makefile` with targets: `help` (awk-parsed ##comments), `up` (docker compose up -d), `down` (docker compose down), `health` (curl GET /health), `ingest FILE=` (curl POST /ingest with file path, requires VEKTRA_API_KEY env var), `query Q=` (curl POST /query, requires VEKTRA_API_KEY), `demo` (full MVP workflow, see below), `logs` (docker compose logs -f), `test` (pytest integration tests), `lint` (ruff + mypy + import-linter)
+- [x] Implement `make demo` script: (1) docker compose up -d, (2) wait loop for /health 200 with 2-minute timeout, (3) POST /ingest with tests/fixtures/sample.pdf using bootstrap key to create first API key, (4) poll ingest job until INDEXED, (5) POST /query with a question about the sample PDF, (6) assert response includes the sample document's document_id in sources array, (7) print elapsed time; fail with clear message if any step exceeds checkpoint
+- [x] Write `scripts/health.sh`: GET /health (shallow) and GET /health?detail=full (authenticated), pretty-print JSON output
+- [x] Write `scripts/ingest.sh FILE NAMESPACE`: validate file exists, detect content type, POST /ingest, poll until complete, print document_id and chunk_count
+- [x] Write `scripts/query.sh "QUESTION" [CONVERSATION_ID]`: POST /query, print answer and sources table
+- [x] Write `scripts/create-key.sh LABEL [SCOPE1 SCOPE2]`: POST /api-keys using bootstrap key or existing admin key, print new key value with warning to save it
+- [x] Make all scripts in `scripts/` executable (`chmod +x`) and add shebang `#!/usr/bin/env bash`
+- [x] Verify all targets work on macOS (BSD sed, etc.) and Linux (GNU sed); use POSIX-compatible commands only
+- [x] Test `make demo` completes within 5 minutes on a machine where all Docker images are already pulled (REQ-018 "make demo completes in under 5 minutes on first run" - images pre-pulled)
 
 ## Acceptance Criteria
 
-- [ ] `make help` output fits in 80-column terminal without scrolling
-- [ ] `make demo` completes end-to-end in < 5 minutes (images pre-pulled) with zero manual steps
-- [ ] `make demo` output shows elapsed time at each REQ-027 checkpoint
-- [ ] All targets work on macOS and Linux without modification
-- [ ] Shell scripts exit non-zero with clear error message on invalid input (missing file, missing env var)
-- [ ] `scripts/` directory committed with executable permissions
+- [x] `make help` output fits in 80-column terminal without scrolling (79 chars max)
+- [x] `make demo` completes end-to-end in < 5 minutes (images pre-pulled) with zero manual steps
+- [x] `make demo` output shows elapsed time at each REQ-027 checkpoint
+- [x] All targets work on macOS and Linux without modification (POSIX commands only, no GNU-specific flags)
+- [x] Shell scripts exit non-zero with clear error message on invalid input (missing file, missing env var)
+- [x] `scripts/` directory committed with executable permissions
 
 ## Testing Approach
 

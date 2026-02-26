@@ -163,7 +163,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 ## Open Questions
 
-- **Periodic indexing pattern**: n8n orchestrates ingestion, but the scheduling pattern (e.g., daily sync of Moodle materials) needs documentation as a reference workflow
+- ~~**Periodic indexing pattern**: n8n orchestrates ingestion, but the scheduling pattern needs documentation as a reference workflow~~ Resolved: reference n8n workflow at `docs/workflows/periodic-ingest.json`
 - ~~**ORM layer**: SQLAlchemy 2.0 async (with asyncpg) vs SQLModel. Must be decided before implementation (OQ-017)~~ Resolved: ADR-0022
 - **learn-ui architecture**: is the chatbot widget a standalone npm package or served by the backend? (OQ-018)
 - **admin-ui architecture**: is admin a separate SPA or integrated? (OQ-018)

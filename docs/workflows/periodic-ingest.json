@@ -1,0 +1,335 @@
+{
+  "name": "Vektra Periodic Document Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "list",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "={{ $json.path }}"
+        }
+      },
+      "id": "list-files",
+      "name": "List Source Files",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "notes": "Replace with your file source. Options:\n- Read files from a local directory\n- HTTP Request to fetch from a remote API\n- Google Drive, S3, or other cloud storage nodes"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const binary = item.binary?.data;\n  if (!binary) {\n    results.push({ json: { ...item.json, skip: true, reason: 'no binary data' } });\n    continue;\n  }\n\n  const buffer = await this.helpers.getBinaryDataBuffer(item, 'data');\n  const hash = crypto.createHash('sha256').update(buffer).digest('hex');\n\n  results.push({\n    json: {\n      ...item.json,\n      file_hash: hash,\n      file_name: item.json.fileName || binary.fileName || 'unknown'\n    },\n    binary: item.binary\n  });\n}\n\nreturn results;"
+      },
+      "id": "compute-hash",
+      "name": "Compute SHA-256",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/stats",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "namespace",
+              "value": "={{ $env.VEKTRA_NAMESPACE || 'default' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "check-existing",
+      "name": "Check Existing Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "vektra-api-key",
+          "name": "Vektra API Key"
+        }
+      },
+      "notes": "Checks index stats. The IF node below compares file hash to decide whether to skip."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-new",
+      "name": "Is New Document?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 0],
+      "notes": "Routes new documents to ingestion, skips already-indexed ones."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/ingest",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "namespace",
+              "value": "={{ $env.VEKTRA_NAMESPACE || 'default' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "ingest",
+      "name": "POST /ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, -100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "vektra-api-key",
+          "name": "Vektra API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-async",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 202,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-async",
+      "name": "Is Async Job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1320, -100]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "wait",
+      "name": "Wait 5s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1540, -200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/ingest/jobs/{{ $json.body.job_id }}/status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "poll-status",
+      "name": "Poll Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, -200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "vektra-api-key",
+          "name": "Vektra API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "still-processing",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "processing",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-processing",
+      "name": "Still Processing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1980, -200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const fileName = item.json.file_name || 'unknown';\n\n  results.push({\n    json: {\n      message: `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`,\n      document_id: docId,\n      chunk_count: chunks,\n      status: status,\n      file_name: fileName\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "success-summary",
+      "name": "Success Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const error = item.json.error_message || item.json.body?.error?.message || 'Unknown error';\n  const fileName = item.json.file_name || 'unknown';\n\n  results.push({\n    json: {\n      message: `FAILED: ${fileName} - ${error}`,\n      file_name: fileName,\n      error: error\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "failure-summary",
+      "name": "Failure Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 100]
+    }
+  ],
+  "connections": {
+    "Daily Schedule": {
+      "main": [
+        [{ "node": "List Source Files", "type": "main", "index": 0 }]
+      ]
+    },
+    "List Source Files": {
+      "main": [
+        [{ "node": "Compute SHA-256", "type": "main", "index": 0 }]
+      ]
+    },
+    "Compute SHA-256": {
+      "main": [
+        [{ "node": "Check Existing Documents", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Existing Documents": {
+      "main": [
+        [{ "node": "Is New Document?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is New Document?": {
+      "main": [
+        [{ "node": "POST /ingest", "type": "main", "index": 0 }],
+        [{ "node": "Success Summary", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /ingest": {
+      "main": [
+        [{ "node": "Is Async Job?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Async Job?": {
+      "main": [
+        [{ "node": "Wait 5s", "type": "main", "index": 0 }],
+        [{ "node": "Success Summary", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 5s": {
+      "main": [
+        [{ "node": "Poll Job Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Poll Job Status": {
+      "main": [
+        [{ "node": "Still Processing?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Still Processing?": {
+      "main": [
+        [{ "node": "Wait 5s", "type": "main", "index": 0 }],
+        [{ "node": "Success Summary", "type": "main", "index": 0 }]
+      ]
+    },
+    "Success Summary": {
+      "main": []
+    },
+    "Failure Summary": {
+      "main": []
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "versionId": "1"
+}

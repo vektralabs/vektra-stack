@@ -111,3 +111,17 @@ Templates stored in PostgreSQL, editable via admin API.
 
 - Three files increases the configuration surface (mitigated by built-in defaults)
 - Fixed composition order prevents reordering sections (acceptable for Phase 1, AdvancedQueryPipeline can override in Phase 2)
+
+## Addendum: prompt hardening for grounded responses (2026-02-26)
+
+Phase 1 testing revealed that the default system.j2 instruction ("Do not make up information that is not present in the context") is insufficient to prevent the LLM from using intrinsic knowledge. When retrieved chunks mention a topic (e.g., "volpe" in Aesop's fables) without specific details, the LLM fills in correct but unsourced facts from its training data.
+
+The default system.j2 should be strengthened to prioritize strict grounding over flexible answering. Operators who prefer a more permissive LLM can relax the instructions via custom templates in `VEKTRA_PROMPT_TEMPLATES_DIR`.
+
+Recommended default system.j2 phrasing:
+- "Answer based ONLY on the context passages provided below"
+- "Do not add facts, examples, or details from your own knowledge"
+- "If the context does not contain enough information, say so explicitly"
+- "Reference passage numbers when citing information"
+
+This is a template content change deployable in Phase 1 without architecture changes. Phase 2 adds `rewrite.j2` for conversational query rewriting (ARCH-061, ADR-0023).

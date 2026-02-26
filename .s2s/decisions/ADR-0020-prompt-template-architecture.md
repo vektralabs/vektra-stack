@@ -122,6 +122,6 @@ Recommended default system.j2 phrasing:
 - "Answer based ONLY on the context passages provided below"
 - "Do not add facts, examples, or details from your own knowledge"
 - "If the context does not contain enough information, say so explicitly"
-- "Reference passage numbers when citing information"
+- "Reference passage numbers when citing information" (context.j2 already formats chunks as `[1]`, `[2]`, etc. via `loop.index`, so passage numbers are available in the prompt)
 
 This is a template content change deployable in Phase 1 without architecture changes. Phase 2 adds `rewrite.j2` for conversational query rewriting (ARCH-061, ADR-0023).

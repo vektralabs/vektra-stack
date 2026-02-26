@@ -24,7 +24,9 @@ Add a **query rewriting step** (ARCH-061) as step 0 of the AdvancedQueryPipeline
 
 ```
 Step 0: query_rewrite (new)
-  - Input:  question + last N conversation turns
+  - Input:  question + all available conversation turns from ConversationStore
+            (already bounded by VEKTRA_MAX_CONVERSATION_TURNS, default 10;
+             token budget acts as secondary limit for the rewrite prompt)
   - Action: LLM call with rewrite.j2 template
   - Output: rewritten self-contained query
   - Skip:   when conversation_id is None or history is empty

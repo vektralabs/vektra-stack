@@ -50,8 +50,14 @@ if [ -z "${VEKTRA_API_KEY:-}" ]; then
 fi
 
 # ---- build JSON body ----
-if [ -n "$CONVERSATION_ID" ]; then
-  JSON_BODY=$(python3 -c "
+# The server echoes conversation_id back (does not generate one).
+# If the caller didn't provide one, generate a new UUID so the
+# conversation can be continued in follow-up calls.
+if [ -z "$CONVERSATION_ID" ]; then
+  CONVERSATION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+fi
+
+JSON_BODY=$(python3 -c "
 import json, sys
 print(json.dumps({
     'question': sys.argv[1],
@@ -60,16 +66,6 @@ print(json.dumps({
     'top_k': 5
 }))
 " "$QUESTION" "$CONVERSATION_ID")
-else
-  JSON_BODY=$(python3 -c "
-import json, sys
-print(json.dumps({
-    'question': sys.argv[1],
-    'namespace': 'default',
-    'top_k': 5
-}))
-" "$QUESTION")
-fi
 
 # ---- query ----
 echo "Querying: ${QUESTION}"

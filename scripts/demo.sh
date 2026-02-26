@@ -178,7 +178,7 @@ import json, sys
 data = json.load(sys.stdin)
 sources = data.get('sources', [])
 doc_ids = [s.get('doc_id') for s in sources]
-doc_id = '${DOC_ID}'
+doc_id = sys.argv[1]
 
 if not sources:
     print('WARNING: no sources returned (LLM may be unavailable)')
@@ -196,7 +196,7 @@ if answer:
     print(f'  Answer: {preview}...' if len(answer) > 80 else f'  Answer: {preview}')
 elif data.get('context_only'):
     print('  (context-only mode: no LLM, sources available)')
-" <<< "$QUERY_RESP"
+" "$DOC_ID" <<< "$QUERY_RESP"
 
 checkpoint "Query complete"
 

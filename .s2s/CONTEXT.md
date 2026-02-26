@@ -138,11 +138,11 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning, raw_filters escape hatch, full-store contract (ARCH-051), provider-specific atomicity (ARCH-052). Phase 2 candidate: Qdrant
 - DocumentExtractor: PDF, Word, PowerPoint extraction with extended element classification (10 ElementType values)
 - ChunkingStrategy: pluggable chunking (fixed-size Phase 1, dual-strategy Phase 2)
-- QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace, rerankers library recommended for Phase 2
+- QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace. Phase 2: AdvancedQueryPipeline with query rewriting (ARCH-061), reranking, hybrid search
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (60 total, 22 ADRs):
+**Key decisions** (61 total, 23 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
@@ -159,6 +159,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - [ADR-0020](decisions/ADR-0020-prompt-template-architecture.md): Composable Jinja2 prompt templates
 - [ADR-0021](decisions/ADR-0021-retrieval-quality-controls.md): Retrieval quality controls in QueryPipeline
 - [ADR-0022](decisions/ADR-0022-orm-sqlalchemy-async.md): SQLAlchemy 2.0 async with asyncpg for ORM
+- [ADR-0023](decisions/ADR-0023-conversational-query-rewriting.md): Conversational query rewriting (Phase 2)
 
 ## Open Questions
 
@@ -170,4 +171,4 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 ---
 
-*Last updated: 2026-02-17*
+*Last updated: 2026-02-26*

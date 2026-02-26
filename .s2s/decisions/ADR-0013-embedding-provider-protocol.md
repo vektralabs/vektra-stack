@@ -37,6 +37,16 @@ class EmbeddingProvider(Protocol):
 - `ExternalEmbeddingProvider` calling OpenAI/TEI API (frees ~1.2GB RAM)
 - `CachedEmbeddingProvider` decorator (LRU in-memory or Redis-backed)
 
+**Multilingual note** (added 2026-02-26): Phase 1 testing with Italian documents showed that all-MiniLM-L6-v2 produces low-discrimination cosine similarity scores (0.50-0.58 range) for queries that should have high affinity. For non-English deployments, the Phase 2 model should be multilingual. Candidates:
+
+| Model | Dimensions | Size | Notes |
+|-------|-----------|------|-------|
+| multilingual-e5-large | 1024 | ~1.2GB | Best quality for multilingual, asymmetric |
+| multilingual-e5-base | 768 | ~450MB | Compromise size/quality |
+| bge-m3 | 1024 | ~2.2GB | Produces both dense and sparse embeddings from a single model, could simplify SparseEmbeddingProvider (ARCH-053) |
+
+bge-m3 is particularly interesting: it generates dense and sparse vectors in one pass, which would allow a single model to serve both EmbeddingProvider and SparseEmbeddingProvider roles for hybrid search, reducing memory and operational complexity.
+
 **Critical note**: changing embedding model changes vector dimensions. Existing chunks (384-dim) are incompatible with new queries (1024-dim). Model change requires full reindex via the `index_version` pattern (ARCH-045, REQ-064).
 
 ## Options Considered

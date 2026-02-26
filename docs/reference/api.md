@@ -250,9 +250,11 @@ Response:
     "sources": [
         {
             "doc_id": "550e8400-...",
-            "citation_id": 1,
+            "chunk_id": "c1a2b3...",
             "score": 0.912,
-            "snippet": "..."
+            "snippet": "...",
+            "citation_id": "d4e5f6-...",
+            "document_version": 1
         }
     ],
     "conversation_id": null,
@@ -299,9 +301,9 @@ curl -s \
 
 ### POST /api/v1/search
 
-Semantic search over indexed chunks (vector store only, no LLM). Requires `query` or `admin` scope.
+Semantic search over indexed chunks (vector store only, no LLM). Requires `query` scope.
 
-**Scopes**: `query`, `admin`
+**Scopes**: `query`
 
 ```bash
 curl -s \
@@ -345,9 +347,9 @@ Response:
 
 ### POST /api/v1/documents/{document_id}/chunks
 
-Store embeddings for document chunks (used by ingestion pipeline). Requires `ingest` or `admin` scope.
+Store embeddings for document chunks (used by ingestion pipeline). Requires `ingest` scope.
 
-**Scopes**: `ingest`, `admin`
+**Scopes**: `ingest`
 
 ```bash
 curl -s \
@@ -388,9 +390,9 @@ curl -s -X DELETE \
 
 ### GET /api/v1/stats
 
-Document and chunk counts. Requires `query` or `admin` scope.
+Document and chunk counts. Requires `query` scope.
 
-**Scopes**: `query`, `admin`
+**Scopes**: `query`
 
 ```bash
 curl -s \

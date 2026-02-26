@@ -75,15 +75,19 @@ scripts/query.sh "Summarize the main findings"
     "sources": [
         {
             "doc_id": "a1b2c3d4-...",
-            "citation_id": 1,
+            "chunk_id": "c1a2b3...",
             "score": 0.912,
-            "snippet": "Finding 1: The study reveals that..."
+            "snippet": "Finding 1: The study reveals that...",
+            "citation_id": "e5f6a7-...",
+            "document_version": 1
         },
         {
             "doc_id": "a1b2c3d4-...",
-            "citation_id": 2,
+            "chunk_id": "d4e5f6...",
             "score": 0.847,
-            "snippet": "Finding 2: In contrast to previous work..."
+            "snippet": "Finding 2: In contrast to previous work...",
+            "citation_id": "b8c9d0-...",
+            "document_version": 1
         }
     ],
     "conversation_id": null,
@@ -98,7 +102,9 @@ scripts/query.sh "Summarize the main findings"
 | `answer` | LLM-generated answer grounded in the retrieved sources |
 | `sources` | Ranked list of document chunks used to build the answer |
 | `sources[].doc_id` | Document that contains this chunk |
-| `sources[].citation_id` | Numeric citation reference within the answer |
+| `sources[].chunk_id` | Unique identifier of the retrieved chunk |
+| `sources[].citation_id` | UUID citation reference for traceability |
+| `sources[].document_version` | Index version of the chunk |
 | `sources[].score` | Cosine similarity score (0.0 - 1.0, higher is more relevant) |
 | `sources[].snippet` | Text excerpt from the chunk |
 | `conversation_id` | Echoed back if provided in the request (see below) |

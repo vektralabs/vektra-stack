@@ -131,8 +131,11 @@ The response includes the answer and source citations:
     "sources": [
         {
             "doc_id": "550e8400-...",
+            "chunk_id": "c1a2b3...",
             "score": 0.847,
-            "snippet": "RAG combines retrieval..."
+            "snippet": "RAG combines retrieval...",
+            "citation_id": "d4e5f6-...",
+            "document_version": 1
         }
     ],
     "conversation_id": null,

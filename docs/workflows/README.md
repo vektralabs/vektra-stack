@@ -10,11 +10,10 @@ Automatically ingests new documents on a schedule. The workflow:
 
 1. Runs on a daily schedule (configurable)
 2. Lists files from a source directory or API
-3. Computes SHA-256 hash and checks against workflow static data to skip already-processed files
+3. Computes SHA-256 hash, checks workflow static data, and optimistically stores new hashes before ingestion
 4. Uploads new files via `POST /api/v1/ingest`
-5. Polls async job status until completion
-6. Stores successful hashes in static data for future deduplication
-7. Produces a summary of ingested and skipped files
+5. Polls async job status until completion (with a 5-minute timeout)
+6. Produces a summary of ingested, skipped, and timed-out files
 
 ### Import into n8n
 
@@ -62,7 +61,7 @@ Schedule Trigger
     |
 List Source Files
     |
-Hash & Dedup Check (SHA-256 + static data lookup)
+Hash & Dedup Check (SHA-256 + optimistic store)
     |
 Is New Document?
     |           \
@@ -74,13 +73,15 @@ Is Async Job? (HTTP 202?)
     |           \
     | (yes)      (no, HTTP 200) -> Ingestion Summary
     |
-Wait 5s -> Poll Job Status -> Still Processing?
-                                |           \
-                                | (yes)      (no) -> Ingestion Summary
-                                |
-                            (loop back to Wait 5s)
+Wait 5s -> Poll Job Status -> Track Poll Count -> Still Processing?
+                                                    |           \
+                                                    | (yes)      (no) -> Ingestion Summary
+                                                    |
+                                                (loop back to Wait 5s)
 ```
 
-The deduplication state is persisted in n8n's [workflow static data](https://docs.n8n.io/code/cookbook/builtin/get-workflow-static-data/). Hashes survive across executions but are lost if the workflow is deleted and re-imported. For durable deduplication, replace the static data lookup with an external store (database, Redis, or a dedicated Vektra endpoint).
+Hashes are stored **optimistically** in n8n's [workflow static data](https://docs.n8n.io/code/cookbook/builtin/get-workflow-static-data/) before the HTTP request is made. This ensures dedup works even though the HTTP Request node (`fullResponse: true`) replaces item data downstream. Tradeoff: if ingestion fails, the file is skipped on subsequent runs. Clear `staticData.processedHashes` in the workflow editor to force re-processing.
 
-The async job polling loop has no retry limit. If a job stays in `processing` indefinitely, the loop will not terminate. Add a counter in the "Hash & Dedup Check" node or a timeout mechanism if this is a concern in your environment.
+Static data survives across executions but is lost if the workflow is deleted and re-imported. For durable deduplication, replace the static data lookup with an external store (database, Redis, or a dedicated Vektra endpoint).
+
+The async job polling loop is limited to 60 iterations (5 minutes at 5-second intervals). After timeout, the item is routed to "Ingestion Summary" with status `timeout`. Adjust `MAX_POLLS` in the "Track Poll Count" node to change this limit.

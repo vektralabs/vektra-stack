@@ -35,14 +35,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.processedHashes) {\n  staticData.processedHashes = {};\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const binary = item.binary?.data;\n  if (!binary) {\n    results.push({ json: { ...item.json, skip: true, reason: 'no binary data' } });\n    continue;\n  }\n\n  const buffer = await this.helpers.getBinaryDataBuffer(item, 'data');\n  const hash = crypto.createHash('sha256').update(buffer).digest('hex');\n  const fileName = item.json.fileName || binary.fileName || 'unknown';\n\n  if (staticData.processedHashes[hash]) {\n    results.push({\n      json: { ...item.json, file_hash: hash, file_name: fileName, skip: true, reason: 'already processed' }\n    });\n    continue;\n  }\n\n  results.push({\n    json: { ...item.json, file_hash: hash, file_name: fileName },\n    binary: item.binary\n  });\n}\n\nreturn results;"
+        "jsCode": "const crypto = require('crypto');\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.processedHashes) {\n  staticData.processedHashes = {};\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const binary = item.binary?.data;\n  if (!binary) {\n    results.push({ json: { ...item.json, skip: true, reason: 'no binary data' } });\n    continue;\n  }\n\n  const buffer = await this.helpers.getBinaryDataBuffer(item, 'data');\n  const hash = crypto.createHash('sha256').update(buffer).digest('hex');\n  const fileName = item.json.fileName || binary.fileName || 'unknown';\n\n  if (staticData.processedHashes[hash]) {\n    results.push({\n      json: { ...item.json, file_hash: hash, file_name: fileName, skip: true, reason: 'already processed' }\n    });\n    continue;\n  }\n\n  // Optimistic store: persist hash before ingestion so dedup survives\n  // even if downstream HTTP nodes discard item fields (fullResponse).\n  // If ingestion fails, the file is skipped on next run. Clear\n  // staticData.processedHashes to force re-processing.\n  staticData.processedHashes[hash] = new Date().toISOString();\n\n  results.push({\n    json: { ...item.json, file_hash: hash, file_name: fileName },\n    binary: item.binary\n  });\n}\n\nreturn results;"
       },
       "id": "hash-and-dedup",
       "name": "Hash & Dedup Check",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [440, 0],
-      "notes": "Computes SHA-256 hash and checks against workflow static data to skip already-processed files."
+      "notes": "Computes SHA-256 hash, checks workflow static data, and optimistically stores new hashes before ingestion."
     },
     {
       "parameters": {
@@ -181,6 +181,17 @@
     },
     {
       "parameters": {
+        "jsCode": "const MAX_POLLS = 60; // 5 minutes at 5-second intervals\nconst staticData = $getWorkflowStaticData('node');\nstaticData.pollCount = (staticData.pollCount || 0) + 1;\n\nconst items = $input.all();\n\nif (staticData.pollCount > MAX_POLLS) {\n  staticData.pollCount = 0;\n  return items.map(item => ({\n    json: {\n      ...item.json,\n      status: 'timeout',\n      error_message: `Poll timeout after ${MAX_POLLS * 5}s`\n    }\n  }));\n}\n\n// Reset counter when job finishes (status != processing)\nif (items[0]?.json?.status !== 'processing') {\n  staticData.pollCount = 0;\n}\n\nreturn items;"
+      },
+      "id": "track-poll-count",
+      "name": "Track Poll Count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, -200],
+      "notes": "Limits polling to 60 iterations (5 minutes). Changes status to 'timeout' when exceeded."
+    },
+    {
+      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -205,17 +216,17 @@
       "name": "Still Processing?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1760, -200]
+      "position": [1860, -200]
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nif (!staticData.processedHashes) {\n  staticData.processedHashes = {};\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || item.json.body?.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const fileName = item.json.file_name || 'unknown';\n  const error = item.json.error_message || item.json.body?.error?.message || null;\n  const fileHash = item.json.file_hash;\n\n  if (status !== 'failed' && fileHash) {\n    staticData.processedHashes[fileHash] = new Date().toISOString();\n  }\n\n  const message = (status === 'failed')\n    ? `FAILED: ${fileName} - ${error || 'Unknown error'}`\n    : `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`;\n\n  results.push({\n    json: {\n      message,\n      document_id: docId,\n      chunk_count: chunks,\n      status,\n      file_name: fileName,\n      error\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || item.json.body?.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const fileName = item.json.file_name || 'unknown';\n  const error = item.json.error_message || item.json.body?.error?.message || null;\n\n  const message = (status === 'failed' || status === 'timeout')\n    ? `FAILED: ${fileName} - ${error || 'Unknown error'}`\n    : `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`;\n\n  results.push({\n    json: {\n      message,\n      document_id: docId,\n      chunk_count: chunks,\n      status,\n      file_name: fileName,\n      error\n    }\n  });\n}\n\nreturn results;"
       },
       "id": "ingestion-summary",
       "name": "Ingestion Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1980, -100]
+      "position": [2080, -100]
     }
   ],
   "connections": {
@@ -258,6 +269,11 @@
     },
     "Poll Job Status": {
       "main": [
+        [{ "node": "Track Poll Count", "type": "main", "index": 0 }]
+      ]
+    },
+    "Track Poll Count": {
+      "main": [
         [{ "node": "Still Processing?", "type": "main", "index": 0 }]
       ]
     },
@@ -282,5 +298,5 @@
   },
   "tags": [],
   "triggerCount": 1,
-  "versionId": "2"
+  "versionId": "3"
 }

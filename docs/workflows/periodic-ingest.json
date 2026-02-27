@@ -244,23 +244,13 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const fileName = item.json.file_name || 'unknown';\n\n  results.push({\n    json: {\n      message: `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`,\n      document_id: docId,\n      chunk_count: chunks,\n      status: status,\n      file_name: fileName\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || item.json.body?.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const fileName = item.json.file_name || 'unknown';\n  const error = item.json.error_message || item.json.body?.error?.message || null;\n\n  const message = (status === 'failed')\n    ? `FAILED: ${fileName} - ${error || 'Unknown error'}`\n    : `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`;\n\n  results.push({\n    json: {\n      message,\n      document_id: docId,\n      chunk_count: chunks,\n      status,\n      file_name: fileName,\n      error\n    }\n  });\n}\n\nreturn results;"
       },
-      "id": "success-summary",
-      "name": "Success Summary",
+      "id": "ingestion-summary",
+      "name": "Ingestion Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2200, -100]
-    },
-    {
-      "parameters": {
-        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const error = item.json.error_message || item.json.body?.error?.message || 'Unknown error';\n  const fileName = item.json.file_name || 'unknown';\n\n  results.push({\n    json: {\n      message: `FAILED: ${fileName} - ${error}`,\n      file_name: fileName,\n      error: error\n    }\n  });\n}\n\nreturn results;"
-      },
-      "id": "failure-summary",
-      "name": "Failure Summary",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2200, 100]
     }
   ],
   "connections": {
@@ -287,7 +277,7 @@
     "Is New Document?": {
       "main": [
         [{ "node": "POST /ingest", "type": "main", "index": 0 }],
-        [{ "node": "Success Summary", "type": "main", "index": 0 }]
+        [{ "node": "Ingestion Summary", "type": "main", "index": 0 }]
       ]
     },
     "POST /ingest": {
@@ -298,7 +288,7 @@
     "Is Async Job?": {
       "main": [
         [{ "node": "Wait 5s", "type": "main", "index": 0 }],
-        [{ "node": "Success Summary", "type": "main", "index": 0 }]
+        [{ "node": "Ingestion Summary", "type": "main", "index": 0 }]
       ]
     },
     "Wait 5s": {
@@ -314,13 +304,10 @@
     "Still Processing?": {
       "main": [
         [{ "node": "Wait 5s", "type": "main", "index": 0 }],
-        [{ "node": "Success Summary", "type": "main", "index": 0 }]
+        [{ "node": "Ingestion Summary", "type": "main", "index": 0 }]
       ]
     },
-    "Success Summary": {
-      "main": []
-    },
-    "Failure Summary": {
+    "Ingestion Summary": {
       "main": []
     }
   },

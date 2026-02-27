@@ -196,10 +196,10 @@ Specific items to address at the roundtable:
 **Traceability**: requirements.md OQ (periodic indexing), SC-A02, REQ-005 (onboarding)
 
 **Acceptance Criteria**:
-- [ ] Reference n8n workflow (JSON export) included in repository under docs/workflows/ or similar
-- [ ] Workflow performs: poll source -> compute SHA-256 -> skip if exists -> POST /ingest -> poll job status
-- [ ] README or guide explains how to import and configure the workflow
-- [ ] OQ closed in requirements.md with pointer to the reference workflow
+- [x] Reference n8n workflow (JSON export) included in repository under docs/workflows/
+- [x] Workflow performs: poll source -> compute SHA-256 -> skip if exists -> POST /ingest -> poll job status
+- [x] README or guide explains how to import and configure the workflow
+- [x] OQ closed in CONTEXT.md with pointer to the reference workflow
 
 ---
 
@@ -334,12 +334,12 @@ Key Phase 2 topics for the roundtable:
 - **Implements**: REQ-007, REQ-008, REQ-009, REQ-010
 
 **Acceptance Criteria**:
-- [ ] docs/getting-started/ exists with index
-- [ ] docs/guides/integrators/ exists
-- [ ] docs/guides/elearning/ exists
-- [ ] docs/guides/contributors/ exists
-- [ ] docs/reference/ exists (can be empty initially)
-- [ ] docs/architecture/ exists with link to .s2s/decisions/
+- [x] docs/getting-started/ exists with index
+- [x] docs/guides/integrators/ exists
+- [ ] docs/guides/elearning/ exists (Phase 2)
+- [x] docs/guides/contributors/ exists
+- [x] docs/reference/ exists
+- [x] docs/architecture/ exists with link to .s2s/decisions/
 
 ---
 

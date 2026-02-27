@@ -123,8 +123,10 @@ These are standard provider environment variables recognized by litellm. `VEKTRA
 
 | Category | Count |
 |----------|-------|
-| VEKTRA_* variables | 35 |
-| External API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY) | 2 |
-| **Total** | **37** |
+| VEKTRA_* variables (ARCH-060 registry) | 35 |
+| VEKTRA_* infrastructure (`VEKTRA_CORS_ORIGINS`) | 1 |
+| External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
+| Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
+| **Total documented** | **40** |
 
-Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`, `VEKTRA_CORS_ORIGINS`) are used by Docker Compose or the application factory and are not part of the formal ARCH-060 registry.
+The ARCH-060 registry covers the 35 VEKTRA_* variables managed by `VektraSettings`. Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`, `VEKTRA_CORS_ORIGINS`) are used by Docker Compose or the application factory and are listed here for completeness.

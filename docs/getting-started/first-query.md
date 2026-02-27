@@ -116,14 +116,14 @@ scripts/query.sh "Summarize the main findings"
 Provide a `conversation_id` to maintain context across queries:
 
 ```bash
-# First query - include a conversation_id
+# First query - include a conversation_id (must be a valid UUID)
 curl -s \
   -H "Authorization: Bearer $VEKTRA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What methodology was used?",
     "namespace": "default",
-    "conversation_id": "my-session-001"
+    "conversation_id": "550e8400-e29b-41d4-a716-446655440001"
   }' \
   http://localhost:8000/api/v1/query | python3 -m json.tool
 
@@ -134,12 +134,12 @@ curl -s \
   -d '{
     "question": "How does that compare to the control group?",
     "namespace": "default",
-    "conversation_id": "my-session-001"
+    "conversation_id": "550e8400-e29b-41d4-a716-446655440001"
   }' \
   http://localhost:8000/api/v1/query | python3 -m json.tool
 ```
 
-The server retains the last 10 conversation turns (configurable via `VEKTRA_MAX_CONVERSATION_TURNS`). The conversation ID is client-managed: provide a UUID or any unique string.
+The server retains the last 10 conversation turns (configurable via `VEKTRA_MAX_CONVERSATION_TURNS`). The conversation ID is client-managed: provide any valid UUID.
 
 Using the shell script, a UUID is auto-generated for new conversations:
 

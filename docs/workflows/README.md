@@ -53,7 +53,7 @@ Set these in your n8n instance (Settings > Variables) or via environment:
 
 **Schedule**: Edit the "Daily Schedule" trigger node to change the interval (e.g., every 6 hours, weekly).
 
-**Notifications**: Connect the "Success Summary" and "Failure Summary" nodes to a notification service (Slack, email, webhook) to receive alerts on ingestion results.
+**Notifications**: Connect the "Ingestion Summary" node to a notification service (Slack, email, webhook) to receive alerts on ingestion results.
 
 ### Workflow diagram
 
@@ -74,11 +74,11 @@ POST /ingest
     |
 Is Async Job? (HTTP 202?)
     |           \
-    | (yes)      (no, HTTP 200) -> Success Summary
+    | (yes)      (no, HTTP 200) -> Ingestion Summary
     |
 Wait 5s -> Poll Job Status -> Still Processing?
                                 |           \
-                                | (yes)      (no) -> Success Summary
+                                | (yes)      (no) -> Ingestion Summary
                                 |
                             (loop back to Wait 5s)
 ```

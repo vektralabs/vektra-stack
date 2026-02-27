@@ -8,7 +8,7 @@
 ## Reference
 
 - [API reference](reference/api.md) - all endpoints with curl examples
-- [Configuration](reference/configuration.md) - 37 environment variables with defaults
+- [Configuration](reference/configuration.md) - 40 environment variables with defaults
 - [Error codes](reference/error-codes.md) - error response codes and remediation
 
 ## Architecture

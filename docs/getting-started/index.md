@@ -5,6 +5,7 @@ Get Vektra running and execute your first RAG query. Total time: under 30 minute
 ## Prerequisites
 
 - Docker Engine 24+ with Docker Compose v2
+- GNU Make (for `make health`, `make demo`, etc.) or run the equivalent commands directly
 - 4 GB free RAM (embedding model loads at startup)
 - An LLM provider: either [Ollama](https://ollama.com) running locally, or an OpenAI / Anthropic API key
 

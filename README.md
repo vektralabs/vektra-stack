@@ -1,7 +1,7 @@
 # Vektra
 
-[![CI](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml/badge.svg?branch=develop)](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml)
-[![Lint](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml/badge.svg?branch=develop)](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml)
+[![CI](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml/badge.svg?branch=main)](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml)
+[![Lint](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/downloads/)
 

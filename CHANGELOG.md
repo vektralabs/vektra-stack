@@ -10,7 +10,7 @@ Phase 1 MVP: from `git clone` to first RAG query in under 30 minutes.
 
 ### Added
 
-- **vektra-shared**: 9 Protocol interfaces, configuration (37 env vars), API key auth with argon2id, ProviderRegistry, startup validation
+- **vektra-shared**: 9 Protocol interfaces, configuration (40 env vars), API key auth with argon2id, ProviderRegistry, startup validation
 - **vektra-core**: RAG query pipeline (embed, search, filter, prompt, LLM), multi-turn conversations, streaming SSE, LLM graceful degradation (primary + fallback), token budget allocation
 - **vektra-ingest**: PDF extraction via pdfplumber, fixed-size chunking, async jobs for large files (>10 MB), duplicate detection (SHA-256), content type validation via python-magic
 - **vektra-index**: pgvector-backed semantic search, embedding generation (all-MiniLM-L6-v2), namespace isolation, relevance threshold filtering, overlap deduplication

@@ -40,7 +40,7 @@ During **Phase 1** (MVP development), Vektra follows a Benevolent Dictator For L
 
 ## Code Ownership
 
-Component ownership is defined in [CODEOWNERS](CODEOWNERS). Component maintainers:
+Component ownership is defined in [CODEOWNERS](.github/CODEOWNERS). Component maintainers:
 - Are automatically assigned as reviewers for PRs in their area
 - Own the documentation for their component
 - Guide technical direction within their component
@@ -62,7 +62,7 @@ Before public announcement, the project will ensure:
 - [ ] Single-command dev setup verified on clean machine
 - [ ] Full contribution workflow tested end-to-end
 - [ ] Documentation reviewed for completeness
-- [ ] Code of Conduct in place
+- [x] Code of Conduct in place
 
 ## Conflict Resolution
 

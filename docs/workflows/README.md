@@ -57,7 +57,7 @@ Set these in your n8n instance (Settings > Variables) or via environment:
 
 ### Workflow diagram
 
-```
+```text
 Schedule Trigger
     |
 List Source Files

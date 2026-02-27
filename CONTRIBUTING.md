@@ -181,5 +181,5 @@ By participating in this project you agree to abide by our [Code of Conduct](COD
 
 ---
 
-*Last updated: 2026-02-19. Contribution guidelines derived from roundtable session
+*Last updated: 2026-02-27. Contribution guidelines derived from roundtable session
 20260128-roundtable-vektra (REQ-016, REQ-011) and CI/CD setup discussion 20260219.*

@@ -4,7 +4,7 @@ Vektra is a modular monolith: a single deployable container with internal packag
 
 ## Components
 
-```
+```text
 vektra-app          Application entrypoint, startup validation, middleware
   vektra-core       RAG query pipeline, LLM abstraction, conversations
   vektra-ingest     Document processing (PDF, DOCX, PPTX), chunking, async jobs

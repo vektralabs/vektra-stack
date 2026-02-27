@@ -10,7 +10,7 @@ Interactive API documentation is available at `/docs` (Swagger UI).
 
 All endpoints except `GET /health` (shallow) require a Bearer token:
 
-```
+```text
 Authorization: Bearer <api-key>
 ```
 

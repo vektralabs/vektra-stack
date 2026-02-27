@@ -1,5 +1,10 @@
 # Vektra
 
+[![CI](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml/badge.svg?branch=develop)](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml)
+[![Lint](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml/badge.svg?branch=develop)](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/downloads/)
+
 **Modular, open-source RAG infrastructure you deploy on your own terms.**
 
 Plug in any LLM provider, vector store, or pipeline, keep data on-premises, and extend with vertical modules like e-learning, all through configuration rather than code forks.
@@ -78,16 +83,18 @@ See [ROADMAP.md](ROADMAP.md) for the full development plan.
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| Phase 1 | MVP (core + ingest + index + minimal admin) | In progress |
+| Phase 1 | MVP (core + ingest + index + minimal admin) | Complete |
 | Phase 2 | Verticals (learn + moodle + analytics) | Planned |
 | Phase 3 | Ecosystem (SDKs, plugins) | Planned |
 
 ## Documentation
 
 - **[docs/](docs/)** - Full documentation (quick start, API reference, configuration, error codes)
+- [CHANGELOG.md](CHANGELOG.md) - Release history
 - [ROADMAP.md](ROADMAP.md) - Development phases and milestones
 - [GOVERNANCE.md](GOVERNANCE.md) - Project governance and contributor ladder
 - [CONTRIBUTING.md](CONTRIBUTING.md) - How to contribute
+- [SECURITY.md](SECURITY.md) - Vulnerability reporting policy
 - [.s2s/decisions/](.s2s/decisions/) - Architecture Decision Records
 
 ## Contributing

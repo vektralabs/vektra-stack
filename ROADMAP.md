@@ -30,11 +30,11 @@ This metric guides all decisions about developer experience, documentation, and 
 
 ### Exit Criteria
 
-- [ ] Clone repo
-- [ ] Run `docker compose up`
-- [ ] Ingest a PDF document
-- [ ] Query via API and receive cited response
-- [ ] Total time under 30 minutes
+- [x] Clone repo
+- [x] Run `docker compose up`
+- [x] Ingest a PDF document
+- [x] Query via API and receive cited response
+- [x] Total time under 30 minutes
 
 ### Exclusions
 

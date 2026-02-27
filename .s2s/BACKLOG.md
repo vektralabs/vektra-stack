@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-24
+**Updated**: 2026-02-27
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -189,7 +189,7 @@ Specific items to address at the roundtable:
 
 ### DOCS-006: Document n8n periodic indexing reference workflow
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-17
+**Status**: completed | **Priority**: low | **Created**: 2026-02-17
 
 **Context**: n8n is the external pipeline orchestrator for Vektra (configuration over fork, no scheduling logic inside Vektra). The periodic indexing pattern - e.g., daily sync of course materials from an LMS - is an open question in requirements.md (OQ: "Periodic indexing pattern: n8n orchestrates ingestion, but the scheduling pattern needs documentation as a reference workflow"). SC-A02 describes the ingestion side but not the n8n workflow definition. This is needed for the MVP operator experience (SC-H01 target: 30 minutes to first working query, which implies n8n integration should be documentable).
 
@@ -326,7 +326,7 @@ Key Phase 2 topics for the roundtable:
 
 ### DOCS-001: Create documentation structure
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-01-29
+**Status**: completed | **Priority**: medium | **Created**: 2026-01-29
 
 **Context**: Diataxis-based docs structure per REQ-007, REQ-010.
 

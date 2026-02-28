@@ -1,0 +1,99 @@
+name: Integration tests
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+jobs:
+  integration:
+    name: Integration tests + NFR gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: Prepare test results directory
+        run: mkdir -p test-results
+
+      - name: Create CI environment file
+        run: |
+          {
+            echo 'VEKTRA_LLM_PROVIDER=ollama/llama3'
+            echo 'VEKTRA_STARTUP_LLM_CHECK=false'
+            echo 'VEKTRA_LLM_CONTEXT_ONLY_ENABLED=true'
+            echo 'VEKTRA_ADMIN_BOOTSTRAP_KEY=ci-bootstrap-key'
+          } > .env
+
+      - name: Build Docker image
+        run: docker compose build
+
+      - name: Start stack and measure startup (NFR-004)
+        id: startup
+        run: |
+          START_NS=$(date +%s%N)
+          docker compose up -d
+          timeout 90 bash -c '
+            until curl -so /dev/null http://localhost:8000/health 2>/dev/null; do
+              sleep 2
+            done
+          '
+          END_NS=$(date +%s%N)
+          ELAPSED_MS=$(( (END_NS - START_NS) / 1000000 ))
+          echo "startup_ms=$ELAPSED_MS" >> "$GITHUB_OUTPUT"
+          echo "::notice::Container startup: ${ELAPSED_MS}ms (NFR-004 limit: 60000ms)"
+
+      - name: Run integration tests (REQ-032)
+        id: integration
+        run: |
+          uv run pytest tests/integration/ \
+            -v --tb=short --junitxml=test-results/integration.xml
+        timeout-minutes: 10
+        env:
+          VEKTRA_API_URL: http://localhost:8000
+          VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
+
+      - name: NFR hard gates (NFR-002/004/007/009)
+        run: |
+          uv run pytest tests/nfr/test_nfr_hard.py \
+            -v --tb=short --junitxml=test-results/nfr-hard.xml
+        env:
+          VEKTRA_API_URL: http://localhost:8000
+          VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
+          STARTUP_MS: ${{ steps.startup.outputs.startup_ms }}
+
+      - name: Query latency measurement (warn only)
+        if: always() && !cancelled()
+        continue-on-error: true
+        run: |
+          uv run pytest tests/nfr/test_performance.py \
+            -v --tb=short --junitxml=test-results/performance.xml
+        env:
+          VEKTRA_API_URL: http://localhost:8000
+          VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: test-results/
+          retention-days: 14

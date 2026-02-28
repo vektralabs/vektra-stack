@@ -1,0 +1,21 @@
+# Gemini Code Assist configuration
+# Docs: https://developers.google.com/gemini-code-assist/docs/customize-gemini-behavior-github
+
+code_review:
+  # Threshold: only surface Medium severity and above
+  comment_severity_threshold: MEDIUM
+
+  # Exclude non-code paths from review
+  exclude_patterns:
+    - "**/*.lock"
+    - "**/migrations/**"
+    - "**/*.sql"
+    - ".s2s/**"
+    - "docs/**"
+    - "**/*.md"
+    - "**/*.yml"
+    - "**/*.yaml"
+    - "!.github/workflows/**"
+
+  # Maximum inline comments per review to avoid noise
+  max_review_comments: 20

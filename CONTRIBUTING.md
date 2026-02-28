@@ -1,97 +1,185 @@
 # Contributing to Vektra
 
-Thank you for your interest in contributing to Vektra. This document provides guidelines for contributing to any repository within the Vektra ecosystem.
+## Quick start
 
-## Before You Start
+```bash
+# Clone and install dev environment
+git clone https://github.com/vektralabs/vektra-stack.git
+cd vektra-stack
 
-1. **Read the documentation** — Familiarize yourself with [README.md](./README.md) and [ARCHITECTURE.md](./ARCHITECTURE.md)
-2. **Check existing issues** — Your idea may already be under discussion
-3. **Understand the scope** — Each repository has specific responsibilities; ensure your contribution is in the right place
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-## Ways to Contribute
+# Install all workspace dependencies
+uv sync --dev
 
-### Reporting Issues
+# Install pre-commit hooks
+uv tool install pre-commit --with pre-commit-uv --force-reinstall
+uv run pre-commit install
 
-- Use the issue tracker of the relevant repository
-- Search existing issues before creating a new one
-- Provide clear, minimal reproduction steps for bugs
-- For security issues, contact maintainers directly (do not open public issues)
-
-### Suggesting Features
-
-- Open an issue with the `enhancement` label
-- Explain the use case, not just the solution
-- Be prepared to discuss trade-offs
-
-### Contributing Code
-
-1. **Fork the repository**
-2. **Create a feature branch** from `main`
-   ```
-   git checkout -b feature/your-feature-name
-   ```
-3. **Make your changes**
-4. **Write or update tests** as appropriate
-5. **Ensure all tests pass**
-6. **Submit a pull request**
-
-### Documentation
-
-Documentation improvements are always welcome:
-
-- Fix typos or unclear explanations
-- Add examples
-- Improve API documentation
-
-## Code Standards
-
-### General
-
-- Write clear, readable code
-- Follow the existing style of the codebase
-- Keep changes focused; one PR per feature/fix
-- Write meaningful commit messages
-
-### Commit Messages
-
-Use clear, descriptive commit messages:
-
-```
-Add vector store abstraction for Qdrant
-
-- Implement QdrantAdapter class
-- Add configuration options for connection
-- Include integration tests
+# Run all unit tests
+uv run pytest vektra-shared/tests/ vektra-core/tests/ vektra-ingest/tests/ \
+              vektra-index/tests/ vektra-admin/tests/ -v -m "not integration"
 ```
 
-Avoid:
-- `fix stuff`
-- `WIP`
-- `updates`
+## Development tools
 
-### Pull Request Guidelines
+All tools are version-pinned in `pyproject.toml` and `uv.lock`. No separate installation needed
+after `uv sync --dev`.
 
-- Provide a clear description of what the PR does
-- Reference related issues
-- Keep PRs reasonably sized (prefer smaller, focused PRs)
-- Respond to review feedback promptly
+| Tool | Purpose | Run |
+|------|---------|-----|
+| **Ruff** | Linting + formatting (replaces flake8, isort, black) | `uv run ruff check .` / `uv run ruff format .` |
+| **mypy** | Type checking with SQLAlchemy 2.0 plugin | `uv run mypy vektra_shared vektra_core ...` |
+| **import-linter** | Enforce module boundary contracts | `uv run lint-imports` |
+| **pytest** | Test runner | `uv run pytest <path>` |
+| **pytest-cov** | Coverage reporting | `uv run pytest --cov` |
+| **pre-commit** | Run all checks before each commit | automatic on `git commit` |
 
-## Repository-Specific Guidelines
+All tool configuration lives in the root `pyproject.toml` under `[tool.*]` sections.
+There are no separate `.flake8`, `.mypy.ini`, or `.importlinter` files.
 
-Each repository may have additional guidelines. Check the `CONTRIBUTING.md` in the specific repository you're contributing to.
+## Branch strategy
+
+We use a simplified GitFlow:
+
+```text
+main ────────────────────────────────────────────── (production-ready, protected)
+  │                                                 ↑
+  └─── develop ───────────────────────────────────── (integration, protected)
+           │                                         ↑
+           ├─── feature/core-streaming ──────────────┘
+           ├─── fix/ingest-conflict-409 ─────────────┘
+           └─── docs/update-contributing ─────────────┘
+```
+
+- All work happens on `feature/*`, `fix/*`, or `docs/*` branches off `develop`.
+- Merge to `develop` via PR (requires CI to pass).
+- Merge `develop → main` for releases (requires CI + review).
+- Direct pushes to `main` and `develop` are not permitted.
+
+### Branch naming
+
+```text
+feat/<component>-<short-description>    # new feature
+fix/<component>-<short-description>     # bug fix
+docs/<short-description>                # documentation only
+chore/<short-description>               # tooling, dependencies, CI
+```
+
+## Commit message format
+
+We use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```text
+<type>(<scope>): <subject>
+
+[optional body]
+
+[optional footer]
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+**Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+
+**Scopes**: `core`, `ingest`, `index`, `admin`, `shared`, `ci`, `docs`
+
+**Examples**:
+```text
+feat(ingest): add PDF text extraction with pdfplumber
+fix(core): handle empty conversation history in streaming
+docs(readme): update installation instructions
+chore(ci): add path filtering to unit test workflow
+```
+
+All commits must be signed off with a DCO (`git commit -s`). This certifies you have the
+right to submit the code under the project's license.
+
+## PR workflow
+
+1. Create a branch: `git checkout -b feat/core-streaming`
+2. Make changes and write tests
+3. Run checks locally: `uv run pre-commit run --all-files`
+4. Open PR targeting `develop`
+5. Wait for CI (lint + unit tests) and AI reviews (CodeRabbit, Gemini)
+6. Address review comments
+7. PR is merged when CI passes and at least one reviewer approves
+
+### Cross-component changes
+
+If your change affects multiple components (e.g., a new shared protocol interface), open a
+single PR that covers all affected packages. Document the cross-component impact in the PR
+description.
+
+## PR checklist
+
+Before opening a PR:
+
+- [ ] `uv run pre-commit run --all-files` passes locally (ruff, mypy, import-linter)
+- [ ] Unit tests pass: `uv run pytest <component>/tests/ -m "not integration"`
+- [ ] New behavior has test coverage
+- [ ] Commit messages follow Conventional Commits with `-s` sign-off
+- [ ] PR description explains the change and motivation
+
+## CI pipeline
+
+Every PR runs two workflows automatically:
+
+| Workflow | Trigger | Checks |
+|----------|---------|--------|
+| **Lint** | Every push and PR | ruff lint, ruff format, mypy, import-linter |
+| **Unit tests** | Every PR (path-filtered) | pytest unit tests for changed components |
+
+The `ci-gate` job aggregates all unit test results and is the single required status check
+for branch protection. A job being skipped (component not changed) does not block the gate.
+
+An **integration workflow** (using Docker Compose + real PostgreSQL) runs on PRs to `develop`
+and `main`. It enforces hard performance gates:
+- NFR-002: search p95 < 500ms
+- NFR-004: container startup < 60s
+- NFR-007: 100% audit log completeness
+- NFR-009: 100% error code actionability
+
+Two AI reviewers comment on PRs automatically:
+- **CodeRabbit** (line-by-line, 40+ linters, component-specific instructions)
+- **Gemini Code Assist** (wide context, 1M token window)
+
+## Module boundaries
+
+The five components are strictly isolated. Cross-component imports are enforced by
+import-linter and will fail CI:
+
+```text
+vektra_shared  ←  everything may import this
+vektra_core    ←  no imports from admin/ingest/index
+vektra_ingest  ←  no imports from admin/core/index
+vektra_index   ←  no imports from admin/core/ingest
+vektra_admin   ←  no imports from core/ingest/index
+```
+
+If a component needs functionality from another, it should go through a Protocol interface
+in `vektra_shared`.
+
+## Documentation standards
+
+Follow [Diataxis](https://diataxis.fr/): identify whether your doc is a tutorial, how-to
+guide, reference, or explanation before writing.
+
+- Cross-cutting docs: `docs/`
+- Component-specific: component's `README.md`
+- Architecture decisions: `.s2s/decisions/ADR-*.md`
+
+## Getting help
+
+- **Questions**: Open a GitHub Discussion
+- **Bugs**: Open a GitHub Issue with reproduction steps
+- **Ideas**: Open a GitHub Discussion in the Ideas category
 
 ## Code of Conduct
 
-- Be respectful and constructive
-- Focus on the work, not the person
-- Assume good intent
-- Welcome newcomers
-
-## Questions?
-
-- Open an issue for project-related questions
-- Use discussions for broader topics
+By participating in this project you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ---
 
-We appreciate your contributions to making Vektra better.
+*Last updated: 2026-02-27. Contribution guidelines derived from roundtable session
+20260128-roundtable-vektra (REQ-016, REQ-011) and CI/CD setup discussion 20260219.*

@@ -1,0 +1,161 @@
+# Spec2Ship Workspace Configuration
+# Updated after roundtable 20260128 - hybrid monorepo strategy
+# See ADR-0001 for rationale
+
+name: "Vektra"
+version: "0.1.0"
+
+# === REPOSITORY STRUCTURE ===
+# Hybrid: monorepo for Python components, separate repos for incompatible stacks
+# - Monorepo components: vektra-core, vektra-ingest, vektra-index, vektra-analytics, vektra-learn, vektra-admin
+# - Separate repos (Phase 2+): vektra-moodle (PHP), vektra-sdk-py, vektra-sdk-js
+structure: "hybrid"
+
+# === COMPONENT REGISTRY ===
+# Components listed with has_own_git to indicate repo strategy
+# TODO: Create folders for components not yet existing
+components:
+  # --- PHASE 1 COMPONENTS (monorepo) ---
+  - id: "vektra-core"
+    name: "RAG Engine"
+    path: "./vektra-core"
+    type: "service"
+    has_own_git: false
+    depends_on: []
+    # TODO: mkdir vektra-core
+
+  - id: "vektra-ingest"
+    name: "Ingestion Pipeline"
+    path: "./vektra-ingest"
+    type: "service"
+    has_own_git: false
+    depends_on:
+      - "vektra-core"
+    # TODO: mkdir vektra-ingest
+
+  - id: "vektra-index"
+    name: "Vector Store"
+    path: "./vektra-index"
+    type: "service"
+    has_own_git: false
+    depends_on:
+      - "vektra-core"
+    # TODO: mkdir vektra-index
+
+  - id: "vektra-admin"
+    name: "System Administration"
+    path: "./vektra-admin"
+    type: "application"
+    has_own_git: false
+    depends_on:
+      - "vektra-analytics"
+    # TODO: mkdir vektra-admin (minimal in Phase 1)
+
+  # --- PHASE 2 COMPONENTS ---
+  - id: "vektra-analytics"
+    name: "Analytics"
+    path: "./vektra-analytics"
+    type: "service"
+    has_own_git: false
+    depends_on:
+      - "vektra-core"
+    # TODO: mkdir vektra-analytics (Phase 2)
+
+  - id: "vektra-learn"
+    name: "E-Learning Vertical"
+    path: "./vektra-learn"
+    type: "application"
+    has_own_git: false
+    depends_on:
+      - "vektra-core"
+      - "vektra-analytics"
+    # TODO: mkdir vektra-learn (Phase 2)
+    # Note: LMS-agnostic backend. Exposes APIs for enrollment, ingestion trigger, dashboard tokens.
+
+  - id: "vektra-moodle"
+    name: "Moodle LMS Adapter"
+    path: "../vektra-moodle"
+    type: "service"
+    has_own_git: true
+    depends_on:
+      - "vektra-learn"
+    # TODO: Create separate repo vektralabs/vektra-moodle (Phase 2)
+    # Note: PHP plugin deployed into Moodle. Published via Moodle Plugin Directory.
+
+  # --- PHASE 3 COMPONENTS ---
+  - id: "vektra-sdk-py"
+    name: "Python SDK"
+    path: "../vektra-sdk-py"
+    type: "library"
+    has_own_git: true
+    depends_on:
+      - "vektra-core"
+    # TODO: Create separate repo vektralabs/vektra-sdk-py (Phase 3)
+    # Note: Published to PyPI. Independent versioning.
+
+  - id: "vektra-sdk-js"
+    name: "JavaScript/TypeScript SDK"
+    path: "../vektra-sdk-js"
+    type: "library"
+    has_own_git: true
+    depends_on:
+      - "vektra-core"
+    # TODO: Create separate repo vektralabs/vektra-sdk-js (Phase 3)
+    # Note: Published to npm. Independent versioning.
+
+# === CROSS-CUTTING CONCERNS ===
+# Decisions that affect multiple components
+# Updated when workspace-level roundtables produce decisions
+cross_cutting:
+  - id: "repository-strategy"
+    decision: "ADR-0001"
+    affects: ["vektra-core", "vektra-ingest", "vektra-index", "vektra-analytics", "vektra-learn", "vektra-admin", "vektra-moodle", "vektra-sdk-py", "vektra-sdk-js"]
+
+# === ROUNDTABLE SCOPE ===
+# Guides facilitator on appropriate discussion levels
+roundtable_scope:
+  workspace_level:
+    decision_principle: |
+      Workspace discussions focus on decisions that AFFECT MULTIPLE components.
+      Key question: "Does this decision require coordination between teams?"
+      If yes -> workspace level. If no -> component level.
+
+    indicators:
+      - "cross-component"
+      - "shared"
+      - "interface"
+      - "contract"
+      - "system-wide"
+      - "platform"
+      - "authentication"
+      - "authorization"
+      - "API versioning"
+      - "security policy"
+
+    defer_indicators:
+      - "internal"
+      - "implementation detail"
+      - "refactoring"
+      - "UI specific"
+      - "only affects"
+      - "database schema"
+
+    context_note: |
+      Component CONTEXT.md files inherit workspace context via @ cascade.
+      Workspace context is always in memory when running from components.
+      For cross-component discussions, facilitator loads specific siblings on-demand.
+      Decisions made here may generate backlog items in components.
+
+  component_level:
+    inherits_context_from: "workspace"
+
+    decision_principle: |
+      Component discussions focus on decisions INTERNAL to this component.
+      Key question: "Does this affect only this component's implementation?"
+      If yes -> component level. If no -> escalate to workspace.
+
+    escalate_indicators:
+      - "affects other components"
+      - "changes interface"
+      - "new shared requirement"
+      - "cross-component dependency"

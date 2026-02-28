@@ -1,0 +1,45 @@
+name: Release
+
+# Triggered on merge to main.
+# Creates a version tag and GitHub Release using python-semantic-release.
+# Requires: commits following Conventional Commits format.
+#
+# python-semantic-release is not yet configured. Phase 1 releases are
+# tagged manually. Automated releases will be enabled in Phase 2.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Semantic release
+    if: false  # enable when python-semantic-release is configured (Phase 2)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-caching: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      # uncomment when python-semantic-release is configured (Phase 2)
+      # - name: Run semantic release
+      #   run: uv run semantic-release version --no-vcs-release
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Placeholder (configure python-semantic-release)
+        run: echo "Release workflow pending configuration. See CONTRIBUTING.md."

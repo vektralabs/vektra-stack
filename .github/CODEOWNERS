@@ -1,0 +1,30 @@
+# CODEOWNERS - automatic PR review assignment
+# See docs/guides/contributors/index.md for conventions
+# Update when additional maintainers join the project
+
+# Catch-all: any file not matched below
+* @fvadicamo
+
+# Shared protocol library - all components depend on this
+vektra-shared/ @fvadicamo
+
+# Core RAG engine and query pipeline
+vektra-core/ @fvadicamo
+
+# Document ingestion pipeline
+vektra-ingest/ @fvadicamo
+
+# Vector store and embedding layer
+vektra-index/ @fvadicamo
+
+# Administration interface
+vektra-admin/ @fvadicamo
+
+# Specifications and architecture docs
+.s2s/ @fvadicamo
+
+# Documentation
+docs/ @fvadicamo
+
+# Deployment and infrastructure
+deploy/ @fvadicamo

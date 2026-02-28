@@ -1,0 +1,39 @@
+name: Lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: ruff (lint)
+        run: uv run ruff check .
+
+      - name: ruff (format check)
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: |
+          uv run mypy \
+            vektra-shared/src/vektra_shared \
+            vektra-admin/src/vektra_admin \
+            vektra-core/src/vektra_core \
+            vektra-ingest/src/vektra_ingest \
+            vektra-index/src/vektra_index
+
+      - name: import-linter (boundary check)
+        run: uv run lint-imports

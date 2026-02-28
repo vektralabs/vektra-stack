@@ -1,0 +1,590 @@
+# Requirements Traceability Matrix (RTM) - SPV Level 2
+# Generated: 2026-02-18
+# Source documents:
+#   requirements.md v1.5.0 (61 REQs, 13 NFRs, 5 BRs)
+#   architecture.md v1.9 (60 ARCH decisions, 22 ADRs)
+#   plans/INDEX.md + 15 plan files (Wave 0-7)
+# Wave completion:
+#   Wave 0: completed (docs-008, infra-003, component-shared)
+#   Wave 1: completed (infra-database)
+#   Wave 2: completed (component-index)
+#   Wave 3-7: pending
+version: "1.0"
+
+matrix:
+
+  # ============================================================
+  # FUNCTIONAL REQUIREMENTS
+  # ============================================================
+
+  - req: REQ-001
+    title: "Primary user persona: Platform Operator"
+    arch: "ARCH-001; ARCH-019"
+    plan_task: "20260217-docs-001:getting-started-index"
+    test: ""
+
+  - req: REQ-002
+    title: "WF-INGEST-001: Document ingestion workflow"
+    arch: "ARCH-005; ARCH-006; ARCH-009; ARCH-010; ARCH-011"
+    plan_task: "20260217-component-ingest:pipeline"
+    test: ""
+
+  - req: REQ-003
+    title: "WF-QUERY-001: RAG query workflow"
+    arch: "ARCH-036; ARCH-041; ARCH-043; ARCH-055; ARCH-056"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+
+  - req: REQ-004
+    title: "WF-ADMIN-001: System health check workflow"
+    arch: "ARCH-022; ARCH-027"
+    plan_task: "20260217-component-admin:health"
+    test: ""
+
+  - req: REQ-005
+    title: "WF-INT-001: End-to-end MVP validation workflow"
+    arch: "ARCH-001; ARCH-002"
+    plan_task: "20260217-infra-makefile:demo"
+    test: ""
+
+  - req: REQ-006
+    title: "Phase 1 admin capabilities (consolidated)"
+    arch: "ARCH-020; ARCH-022; ARCH-023"
+    plan_task: "20260217-component-admin:api"
+    test: ""
+
+  - req: REQ-007
+    title: "Phase 1 interaction mode: API + shell scripts"
+    arch: "ARCH-015; ARCH-018"
+    plan_task: "20260217-infra-makefile:scripts"
+    test: ""
+
+  - req: REQ-009
+    title: "API error responses include remediation guidance"
+    arch: "ARCH-020"
+    plan_task: "20260217-component-shared:errors"
+    test: "vektra-shared/tests/test_errors.py"
+
+  - req: REQ-010
+    title: "Error response envelope schema"
+    arch: "ARCH-020"
+    plan_task: "20260217-component-shared:errors"
+    test: "vektra-shared/tests/test_errors.py"
+
+  - req: REQ-011
+    title: "Phase 1 error code registry"
+    arch: "ARCH-020"
+    plan_task: "20260217-feature-error-codes:error-codes-doc"
+    test: ""
+
+  - req: REQ-012
+    title: "vektra-index Phase 1 API surface"
+    arch: "ARCH-019; ARCH-051"
+    plan_task: "20260217-component-index:api"
+    test: "vektra-index/tests/test_pgvector_unit.py"
+
+  - req: REQ-013
+    title: "vektra-core Phase 1 API surface"
+    arch: "ARCH-019; ARCH-028; ARCH-036"
+    plan_task: "20260217-component-core:api"
+    test: ""
+
+  - req: REQ-014
+    title: "vektra-ingest Phase 1 API surface"
+    arch: "ARCH-005; ARCH-019"
+    plan_task: "20260217-component-ingest:api"
+    test: ""
+
+  - req: REQ-016
+    title: "Phase 1 input constraints"
+    arch: "ARCH-037; ARCH-042"
+    plan_task: "20260217-component-ingest:chunking"
+    test: ""
+
+  - req: REQ-017
+    title: "Phase 1 time budget per operation"
+    arch: "ARCH-036; ARCH-055"
+    plan_task: "20260217-infra-ci:nfr-hard-gates"
+    test: ""
+
+  - req: REQ-018
+    title: "Makefile targets for MVP workflow"
+    arch: "N/A"
+    plan_task: "20260217-infra-makefile:makefile-targets"
+    test: ""
+
+  - req: REQ-019
+    title: "API key authentication for all components"
+    arch: "ARCH-020; ARCH-023"
+    plan_task: "20260217-component-shared:auth"
+    test: "vektra-shared/tests/test_auth.py"
+
+  - req: REQ-020
+    title: "API key management via admin component"
+    arch: "ARCH-023"
+    plan_task: "20260217-component-admin:keys"
+    test: ""
+
+  - req: REQ-021
+    title: "Admin bootstrap authentication"
+    arch: "ARCH-023; ARCH-025"
+    plan_task: "20260217-component-admin:bootstrap"
+    test: ""
+
+  - req: REQ-022
+    title: "API key audit logging"
+    arch: "ARCH-041"
+    plan_task: "20260217-component-admin:audit"
+    test: ""
+
+  - req: REQ-023
+    title: "API key table schema with scope support"
+    arch: "ARCH-023; ARCH-058"
+    plan_task: "20260217-infra-database:api-keys-table"
+    test: "vektra-shared/tests/test_migration.py"
+
+  - req: REQ-024
+    title: "Phase 1 scope enforcement"
+    arch: "ARCH-020; ARCH-023"
+    plan_task: "20260217-component-shared:auth"
+    test: "vektra-shared/tests/test_auth.py"
+
+  - req: REQ-025
+    title: "Health endpoint authentication: two-tier model"
+    arch: "ARCH-022"
+    plan_task: "20260217-component-admin:health"
+    test: ""
+
+  - req: REQ-026
+    title: "Acceptance criteria structure standard"
+    arch: "N/A"
+    plan_task: "20260217-docs-001:documentation-standards"
+    test: ""
+
+  - req: REQ-027
+    title: "REQ-005 checkpoint decomposition"
+    arch: "ARCH-001"
+    plan_task: "20260217-infra-makefile:demo"
+    test: ""
+
+  - req: REQ-028
+    title: "REQ-003 empty index response specification"
+    arch: "ARCH-043; ARCH-056"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+
+  - req: REQ-029
+    title: "REQ-002 boundary behavior specification (10MB threshold)"
+    arch: "ARCH-005; ARCH-006"
+    plan_task: "20260217-component-ingest:api"
+    test: ""
+
+  - req: REQ-030
+    title: "Authentication error response contracts"
+    arch: "ARCH-020; ARCH-023"
+    plan_task: "20260217-component-shared:auth"
+    test: "vektra-shared/tests/test_auth.py"
+
+  - req: REQ-031
+    title: "API scope definitions"
+    arch: "ARCH-023"
+    plan_task: "20260217-component-shared:auth"
+    test: "vektra-shared/tests/test_auth.py"
+
+  - req: REQ-032
+    title: "Integration acceptance test: full auth-ingest-query flow"
+    arch: "N/A"
+    plan_task: "20260217-infra-ci:integration-test"
+    test: ""
+
+  - req: REQ-033
+    title: "Duplicate document handling"
+    arch: "ARCH-032"
+    plan_task: "20260217-component-ingest:deduplication"
+    test: ""
+
+  - req: REQ-034
+    title: "Content hash algorithm specification"
+    arch: "ARCH-032; ARCH-058"
+    plan_task: "20260217-component-ingest:pipeline"
+    test: ""
+
+  - req: REQ-035
+    title: "Audit logging for deduplication events"
+    arch: "ARCH-041"
+    plan_task: "20260217-component-ingest:audit-log"
+    test: ""
+
+  - req: REQ-036
+    title: "Bootstrap key single-use enforcement"
+    arch: "ARCH-023; ARCH-025"
+    plan_task: "20260217-component-admin:bootstrap"
+    test: ""
+
+  - req: REQ-040
+    title: "API endpoint path conventions"
+    arch: "ARCH-018; ARCH-059"
+    plan_task: "20260217-component-ingest:api"
+    test: ""
+
+  - req: REQ-041
+    title: "Unified authentication error codes"
+    arch: "ARCH-020"
+    plan_task: "20260217-component-shared:errors"
+    test: "vektra-shared/tests/test_errors.py"
+
+  - req: REQ-042
+    title: "Streaming query responses"
+    arch: "ARCH-036"
+    plan_task: "20260217-component-core:api"
+    test: ""
+
+  - req: REQ-043
+    title: "Configurable prompt templates"
+    arch: "ARCH-048; ARCH-054"
+    plan_task: "20260217-component-core:templates"
+    test: ""
+
+  - req: REQ-044
+    title: "Safeguard hook interface"
+    arch: "ARCH-029; ARCH-049"
+    plan_task: "20260217-component-shared:safeguards"
+    test: "vektra-shared/tests/test_protocols.py"
+
+  - req: REQ-045
+    title: "Word document text extraction"
+    arch: "ARCH-029"
+    plan_task: "20260217-component-ingest:extractors-word"
+    test: ""
+
+  - req: REQ-046
+    title: "PowerPoint presentation text extraction"
+    arch: "ARCH-029"
+    plan_task: "20260217-component-ingest:extractors-powerpoint"
+    test: ""
+
+  - req: REQ-047
+    title: "Multi-provider LLM support (amends REQ-013)"
+    arch: "ARCH-028; ARCH-029"
+    plan_task: "20260217-component-core:litellm-provider"
+    test: ""
+
+  - req: REQ-048
+    title: "Namespace support for document isolation"
+    arch: "ARCH-007; ARCH-047; ARCH-058"
+    plan_task: "20260217-infra-database:namespaces-table"
+    test: "vektra-index/tests/test_integration.py"
+
+  - req: REQ-049
+    title: "Multi-turn conversation context"
+    arch: "ARCH-031"
+    plan_task: "20260217-component-core:conversation"
+    test: ""
+
+  - req: REQ-050
+    title: "Pluggable vector store backend"
+    arch: "ARCH-029; ARCH-035; ARCH-051; ARCH-052; ARCH-053"
+    plan_task: "20260217-component-shared:protocols"
+    test: "vektra-shared/tests/test_protocols.py"
+
+  - req: REQ-051
+    title: "Operator privacy: no conversation content access"
+    arch: "ARCH-031; ARCH-041"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+
+  - req: REQ-052
+    title: "EmbeddingProvider Protocol"
+    arch: "ARCH-035"
+    plan_task: "20260217-component-shared:protocols"
+    test: "vektra-index/tests/test_embedding_provider.py"
+
+  - req: REQ-053
+    title: "QueryPipeline Protocol"
+    arch: "ARCH-036"
+    plan_task: "20260217-component-shared:protocols"
+    test: "vektra-shared/tests/test_protocols.py"
+
+  - req: REQ-054
+    title: "ChunkingStrategy Protocol"
+    arch: "ARCH-037"
+    plan_task: "20260217-component-shared:protocols"
+    test: "vektra-shared/tests/test_protocols.py"
+
+  - req: REQ-055
+    title: "Response and citation traceability"
+    arch: "ARCH-040; ARCH-041"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+
+  - req: REQ-056
+    title: "Document versioning in data model"
+    arch: "ARCH-040; ARCH-058"
+    plan_task: "20260217-infra-database:source-documents-table"
+    test: "vektra-shared/tests/test_migration.py"
+
+  - req: REQ-057
+    title: "Soft delete for documents"
+    arch: "ARCH-040; ARCH-058"
+    plan_task: "20260217-infra-database:source-documents-table"
+    test: "vektra-shared/tests/test_migration.py"
+
+  - req: REQ-058
+    title: "Content type detection via magic bytes"
+    arch: "ARCH-042"
+    plan_task: "20260217-component-ingest:detection"
+    test: ""
+
+  - req: REQ-059
+    title: "LLM graceful degradation"
+    arch: "ARCH-024; ARCH-043"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+
+  - req: REQ-060
+    title: "QueryTrace for RAG observability"
+    arch: "ARCH-041"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+
+  - req: REQ-061
+    title: "EventEmitter interface"
+    arch: "ARCH-038"
+    plan_task: "20260217-component-shared:events"
+    test: "vektra-shared/tests/test_protocols.py"
+
+  - req: REQ-062
+    title: "ProviderRegistry pattern"
+    arch: "ARCH-039"
+    plan_task: "20260217-component-shared:registry"
+    test: "vektra-shared/tests/test_registry.py"
+
+  - req: REQ-063
+    title: "Chunk metadata filtering"
+    arch: "ARCH-044"
+    plan_task: "20260217-component-index:pgvector-provider"
+    test: "vektra-index/tests/test_pgvector_unit.py"
+
+  - req: REQ-064
+    title: "Zero-downtime reindex via index_version"
+    arch: "ARCH-045; ARCH-058"
+    plan_task: "20260217-component-index:pgvector-provider"
+    test: "vektra-index/tests/test_pgvector_unit.py"
+
+  - req: REQ-065
+    title: "Prompt versioning"
+    arch: "ARCH-048; ARCH-054"
+    plan_task: "20260217-component-core:templates"
+    test: ""
+
+  - req: REQ-066
+    title: "No relevant context response"
+    arch: "ARCH-043; ARCH-056"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+
+  # ============================================================
+  # BUSINESS RULES
+  # ============================================================
+
+  - req: BR-001
+    title: "Error taxonomy: four categories"
+    arch: "ARCH-020"
+    plan_task: "20260217-component-shared:errors"
+    test: "vektra-shared/tests/test_errors.py"
+    nfr_operationalization: |
+      tool: pytest (unit) + integration test in infra-ci
+      dataset: each of the 13 normative error codes triggered via crafted HTTP request
+      pass_condition: every error response body contains error.category as exactly one of TRANSIENT | PERMANENT | CONFIGURATION | UPSTREAM; HTTP status code matches the category mapping defined in BR-001
+      environment: full Docker Compose stack (infra-docker) with PostgreSQL + vektra; executed in integration.yml CI workflow
+
+  - req: BR-002
+    title: "Phase 1 error handling scope"
+    arch: "ARCH-020"
+    plan_task: "20260217-feature-error-codes:error-codes-doc"
+    test: ""
+    nfr_operationalization: |
+      tool: code review + integration test in infra-ci
+      dataset: error scenarios covered by tests/test_error_codes.py
+      pass_condition: no automatic retry logic present in component source (static analysis); all error paths return structured envelope with no retry headers; failing operations return complete error codes without 207 partial-success responses
+      environment: linting pass (ruff/mypy) in lint.yml CI workflow; integration test confirms no retry behavior on simulated upstream failures
+
+  - req: BR-003
+    title: "Atomic ingestion in Phase 1"
+    arch: "ARCH-010; ARCH-052"
+    plan_task: "20260217-component-ingest:pipeline"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest integration test
+      dataset: simulated ingestion failure injected at chunk storage step using mock PgvectorProvider that raises on store()
+      pass_condition: after simulated failure, SELECT COUNT(*) FROM document_chunks WHERE document_id = :id returns 0; source_documents row is soft-deleted (deleted_at IS NOT NULL); ingest_jobs.status = 'failed'; no subsequent query returns results from partial document
+      environment: testcontainers PostgreSQL + pgvector; in-process arq execution (no separate worker process needed)
+
+  - req: BR-004
+    title: "Document ingestion status model"
+    arch: "ARCH-005; ARCH-006"
+    plan_task: "20260217-component-ingest:jobs"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest integration test
+      dataset: real PDF ingestion through the full pipeline (sync path for files <= 10MB, async path for files > 10MB)
+      pass_condition: GET /ingest/jobs/{id}/status returns exactly one of pending | processing | indexed | failed at each observable point; status never transitions backward; processing status includes a non-null phase field (extracting | chunking | embedding); failed status includes error_code from REQ-011 registry
+      environment: testcontainers PostgreSQL + pgvector; in-process arq for async path
+
+  - req: BR-005
+    title: "Content hash collision with different filename"
+    arch: "ARCH-032; ARCH-058"
+    plan_task: "20260217-component-ingest:deduplication"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest unit + integration test
+      dataset: two POST /ingest requests with identical file bytes but different filenames (e.g., document_a.pdf and document_b.pdf)
+      pass_condition: second POST returns HTTP 200 with status='exists' and alias_count=1; source_documents.filename_aliases JSONB array contains both filenames; audit_log records document_aliased action with both filenames; only one row in source_documents (not two)
+      environment: testcontainers PostgreSQL + pgvector; full ingest pipeline with real SHA-256 computation
+
+  # ============================================================
+  # NON-FUNCTIONAL REQUIREMENTS
+  # ============================================================
+
+  - req: NFR-001
+    title: "Query latency targets"
+    arch: "ARCH-036; ARCH-055"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest-benchmark (non-blocking CI measurement per EX-004)
+      dataset: 1000 queries against a corpus of 10,000 indexed chunks; 5 concurrent clients; warm state (embedding model and LLM already loaded); baseline hardware 4 CPU / 16GB RAM
+      pass_condition: p95 query latency < 10s with Ollama (local), < 5s with OpenAI; >20% above target generates CI job summary warning; >50% above target generates CI job summary annotation (not a merge block per EX-004)
+      environment: Docker Compose stack with vektra + postgres + ollama (local-llm profile); measured in integration.yml CI workflow after stack reaches healthy state; query latency measured from HTTP request start to full response received
+
+  - req: NFR-002
+    title: "Search latency target"
+    arch: "ARCH-010; ARCH-044; ARCH-045"
+    plan_task: "20260217-component-index:benchmark-search-latency"
+    test: "vektra-index/tests/test_benchmark.py"
+    nfr_operationalization: |
+      tool: pytest-benchmark
+      dataset: 10,000 document chunks indexed in pgvector (all-MiniLM-L6-v2 embeddings, 384 dimensions); 100 single-threaded search queries using randomly generated query embeddings; HNSW index pre-built
+      pass_condition: p95 search latency < 500ms; actual measured result: p95 = 8.6ms (Wave 2 completion, commit 5faa71b); hard CI gate - exceeding threshold blocks merge in infra-ci integration.yml
+      environment: PostgreSQL 16 + pgvector; testcontainers (real pgvector, not mocked); single-threaded baseline per NFR-002 measurement conditions; benchmark runs on GitHub Actions standard runner (2-core)
+
+  - req: NFR-003
+    title: "Ingest latency target"
+    arch: "ARCH-005; ARCH-011; ARCH-037"
+    plan_task: "20260217-component-ingest:benchmark-ingest-latency"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest-benchmark (non-blocking per NFR-003 TARGET classification)
+      dataset: standard 10-page test PDF; text-extractable (no OCR); maximum 500KB; approximately 5000 words; cold ingest (no cached extraction result)
+      pass_condition: total ingestion time from POST /ingest to status=INDEXED < 30 seconds; violation is logged as warning in CI job summary; does not block merge
+      environment: Docker Compose stack with full vektra + postgres; real sentence-transformers embedding model loaded; synchronous path (< 10MB); measured end-to-end via HTTP client timing
+
+  - req: NFR-004
+    title: "Container startup time"
+    arch: "ARCH-057"
+    plan_task: "20260217-infra-app-entrypoint:startup-time"
+    test: ""
+    nfr_operationalization: |
+      tool: shell timer in integration.yml CI workflow
+      dataset: fresh docker compose up with cold container images already pulled (image pull time excluded); PostgreSQL reaches healthy before vektra starts
+      pass_condition: time from `docker compose up -d` to GET /health returning HTTP 200 < 60 seconds; measured by polling /health every 2 seconds with a 90-second total timeout; hard CI gate - exceeding threshold blocks merge in infra-ci integration.yml
+      environment: GitHub Actions runner; Docker Compose stack (postgres + vektra); all images pre-pulled; ARCH-057 8-step startup sequence must complete including embedding model warm-up
+
+  - req: NFR-005
+    title: "Data durability on graceful restart"
+    arch: "ARCH-005; ARCH-010"
+    plan_task: "20260217-infra-docker:data-durability"
+    test: ""
+    nfr_operationalization: |
+      tool: manual integration test in infra-docker plan; automated verification in integration.yml
+      dataset: one document ingested and confirmed INDEXED; then `docker compose restart vektra` executed (graceful SIGTERM); then POST /query with a question about the ingested document
+      pass_condition: query after restart returns non-empty sources array referencing the pre-restart document_id; response answer is non-empty (LLM synthesizes from indexed chunks); hard CI gate
+      environment: Docker Compose stack with named postgres volume (vektra_pgdata); vektra container restarted without postgres restart to verify persistence is in PostgreSQL, not in-memory
+
+  - req: NFR-006
+    title: "Resource ceiling (4GB RAM, 2 CPU cores)"
+    arch: "ARCH-001; ARCH-002; ARCH-026"
+    plan_task: "20260217-infra-docker:resource-limits"
+    test: ""
+    nfr_operationalization: |
+      tool: docker stats observation during make demo execution (manual, TARGET classification)
+      dataset: make demo complete workflow (compose up, ingest sample PDF, run query) on a system with 4GB RAM / 2 CPU cores available to Docker
+      pass_condition: make demo completes end-to-end without OOM kill (docker stats shows no container exit code 137); peak memory of vektra API container stays below 2GB (includes ~500MB sentence-transformers model); violation is documented but does not block release (TARGET classification)
+      environment: developer workstation or CI runner with 4GB RAM configured as Docker memory limit; postgres + vektra containers only (no ollama); memory limits enforced via Docker Compose mem_limit config per ARCH-026
+
+  - req: NFR-007
+    title: "Audit log completeness (100%)"
+    arch: "ARCH-041"
+    plan_task: "20260217-component-admin:audit"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest integration test in tests/test_nfr_hard.py
+      dataset: 50 authenticated HTTP requests against all API endpoint categories (ingest, query, admin, index); each request uses a valid API key with admin scope
+      pass_condition: SELECT COUNT(*) FROM audit_log WHERE created_at >= test_start_time = 50; no authenticated request missing from audit_log; count discrepancy of even 1 fails the test; hard CI gate that blocks merge in infra-ci integration.yml
+      environment: full Docker Compose stack; real PostgreSQL audit_log table; AuditMiddleware registered on FastAPI app via infra-app-entrypoint; /health and /metrics excluded from audit log per design
+
+  - req: NFR-008
+    title: "Configurable audit log retention"
+    arch: "ARCH-041"
+    plan_task: "20260217-component-admin:audit"
+    test: ""
+    nfr_operationalization: |
+      tool: startup log inspection
+      dataset: application started with VEKTRA_AUDIT_RETENTION_DAYS=30 (non-default value)
+      pass_condition: startup log contains structured INFO event with field audit_retention_days=30; configuration reference docs/reference/configuration.md documents VEKTRA_AUDIT_RETENTION_DAYS with default of 90; Phase 1 log rotation is operator responsibility (documented); hard CI gate based on config documentation completeness, not runtime enforcement
+      environment: Docker Compose stack with VEKTRA_AUDIT_RETENTION_DAYS env var set; startup log captured and inspected via docker compose logs
+
+  - req: NFR-009
+    title: "Error actionability (100%)"
+    arch: "ARCH-020"
+    plan_task: "20260217-feature-error-codes:actionability-test"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest integration test in tests/test_error_codes.py
+      dataset: all 13 normative error codes from REQ-011 triggered via crafted HTTP requests (e.g., oversized file for ERR-INGEST-002, missing auth header for ERR-AUTH-001, invalid provider config for ERR-CONFIG-002)
+      pass_condition: every triggered error response has error.remediation non-empty (len > 0); error.code matches ERR-{COMPONENT}-{NUMBER} pattern; error.message non-empty and contains no Python class names or stack traces; error.request_id present matching X-Request-ID header; 100% of tested codes pass; hard CI gate that blocks merge
+      environment: full Docker Compose stack; real HTTP requests via httpx; ERR-AUTH-002 (expired token) tested as constant existence only (Phase 2 behavior, not triggerable)
+
+  - req: NFR-010
+    title: "Long operation progress feedback"
+    arch: "ARCH-005; ARCH-006"
+    plan_task: "20260217-component-ingest:jobs"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest integration test
+      dataset: ingestion of a file > 10MB (async path); polling GET /ingest/jobs/{id}/status at 1-second intervals during processing
+      pass_condition: at least one status response during processing has phase field set to one of extracting | chunking | embedding (not null); final response has status=indexed and phase=null; TARGET classification - violation generates CI warning, does not block merge
+      environment: testcontainers PostgreSQL + pgvector; in-process arq worker; test file artificially padded to > 10MB to force async path
+
+  - req: NFR-011
+    title: "Concurrent query handling"
+    arch: "ARCH-036"
+    plan_task: "20260217-component-core:pipeline"
+    test: ""
+    nfr_operationalization: |
+      tool: pytest-benchmark with concurrent load via asyncio.gather
+      dataset: 10 concurrent POST /query requests sustained for 60 seconds against a corpus of 10,000 indexed chunks; queries use pre-generated embeddings (not re-embedded per request) to isolate pipeline concurrency
+      pass_condition: no container crash or unhandled exception during 60s sustained load; p95 latency at 10 concurrent < 2x p95 at 1 concurrent (measured from same test run); TARGET classification - violation documented in CI job summary, does not block merge
+      environment: Docker Compose stack with vektra + postgres + mock LLM (litellm mock to isolate from LLM provider variability); asyncio-based concurrent HTTP client via httpx
+
+  - req: NFR-012
+    title: "TLS encryption in transit"
+    arch: "ARCH-020"
+    plan_task: "20260217-infra-docker:tls-configs"
+    test: ""
+    nfr_operationalization: |
+      tool: SSL Labs scan (external) + manual TLS verification
+      dataset: production deployment with VEKTRA_ENV=production and nginx or Traefik reverse proxy configured with provided example config
+      pass_condition: SSL Labs score A or higher; TLS 1.2+ minimum enforced; HTTP connections rejected by application when VEKTRA_ENV=production (application returns 400 for non-TLS in production mode); example configs for nginx and Traefik present in deploy/; hard CI gate - config presence validated in lint step
+      environment: production deployment with configured reverse proxy; example configs validated via syntax check in CI; runtime TLS rejection tested with curl --http1.1 against production endpoint
+
+  - req: NFR-013
+    title: "Database encryption at rest"
+    arch: "ARCH-031"
+    plan_task: "20260217-infra-docker:encryption-at-rest"
+    test: ""
+    nfr_operationalization: |
+      tool: deployment documentation review + configuration checklist
+      dataset: deploy/postgres/encryption.md operator documentation; pgcrypto extension enabled in database (verified via SELECT * FROM pg_extension WHERE extname='pgcrypto')
+      pass_condition: deploy/postgres/encryption.md present with PostgreSQL TDE configuration instructions and disk-level encryption options; pgcrypto extension enabled as part of initial migration (verified in migration test); security checklist in encryption.md includes database encryption verification step; hard CI gate - documentation presence and pgcrypto extension validated in migration integration test
+      environment: migration test (testcontainers PostgreSQL); documentation review in CI via markdown-link-check or file existence assertion

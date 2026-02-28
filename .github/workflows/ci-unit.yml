@@ -1,0 +1,143 @@
+name: Unit tests
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+jobs:
+  # Detect which components have changed to skip unaffected test jobs.
+  # Changes to vektra-shared trigger all components (it is a shared dependency).
+  detect-changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      shared: ${{ steps.filter.outputs.shared }}
+      core:   ${{ steps.filter.outputs.core }}
+      ingest: ${{ steps.filter.outputs.ingest }}
+      index:  ${{ steps.filter.outputs.index }}
+      admin:  ${{ steps.filter.outputs.admin }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'vektra-shared/**'
+            core:
+              - 'vektra-core/**'
+              - 'vektra-shared/**'
+            ingest:
+              - 'vektra-ingest/**'
+              - 'vektra-shared/**'
+            index:
+              - 'vektra-index/**'
+              - 'vektra-shared/**'
+            admin:
+              - 'vektra-admin/**'
+              - 'vektra-shared/**'
+
+  test-shared:
+    name: Test vektra-shared
+    needs: detect-changes
+    if: needs.detect-changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-shared
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-shared/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_shared --cov-report=term-missing --cov-fail-under=80
+
+  test-core:
+    name: Test vektra-core
+    needs: detect-changes
+    if: needs.detect-changes.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-core
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-core/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_core --cov-report=term-missing --cov-fail-under=80
+
+  test-ingest:
+    name: Test vektra-ingest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ingest == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-ingest
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-ingest/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_ingest --cov-report=term-missing --cov-fail-under=80
+
+  test-index:
+    name: Test vektra-index
+    needs: detect-changes
+    if: needs.detect-changes.outputs.index == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-index
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-index/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_index --cov-report=term-missing --cov-fail-under=80
+
+  test-admin:
+    name: Test vektra-admin
+    needs: detect-changes
+    if: needs.detect-changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-admin
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-admin/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_admin --cov-report=term-missing --cov-fail-under=80
+
+  # Aggregator job used as the single required status check in branch protection.
+  # Passes if no upstream job failed (skipped jobs are treated as passing).
+  ci-gate:
+    name: CI gate
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all tests passed or were skipped
+        run: |
+          RESULTS="${{ join(needs.*.result, ' ') }}"
+          for r in $RESULTS; do
+            if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
+              echo "One or more test jobs failed or were cancelled."
+              exit 1
+            fi
+          done
+          echo "All tests passed or were skipped (no relevant changes detected)."

@@ -142,8 +142,8 @@ Plans to create when the time comes (currently blocked):
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
-| [20260217-docs-001](20260217-docs-001.md) | Diataxis documentation structure | small | pending |
-| [20260217-docs-006](20260217-docs-006.md) | n8n periodic indexing reference workflow | small | pending |
+| [20260217-docs-001](20260217-docs-001.md) | Diataxis documentation structure | small | completed |
+| [20260217-docs-006](20260217-docs-006.md) | n8n periodic indexing reference workflow | small | completed |
 
 ---
 

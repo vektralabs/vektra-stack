@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a bug in Vektra
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill out the sections below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue.
+      placeholder: |
+        1. Start Vektra with `docker compose up -d`
+        2. Run `curl ...`
+        3. See error ...
+    validations:
+      required: true
+
+  - type: input
+    id: error-code
+    attributes:
+      label: Error code
+      description: If the API returned an error code (e.g., ERR-INGEST-001), include it here.
+      placeholder: ERR-XXXX-NNN
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component is affected?
+      options:
+        - vektra-core
+        - vektra-ingest
+        - vektra-index
+        - vektra-admin
+        - vektra-shared
+        - Docker / deployment
+        - Documentation
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Deployment details.
+      value: |
+        - Vektra version:
+        - Docker version:
+        - OS:
+        - LLM provider:
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log output from `docker compose logs vektra`.
+      render: text

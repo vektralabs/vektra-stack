@@ -1,0 +1,398 @@
+{
+  "name": "Vektra Periodic Document Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "daily-schedule",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -4816,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/files/*.pdf",
+        "options": {}
+      },
+      "id": "list-source-files",
+      "name": "List Source Files",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -4592,
+        1056
+      ],
+      "notes": "Reads all PDFs from /files. Change the glob pattern or replace with HTTP Request, Google Drive, S3, etc."
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.processedHashes) {\n  staticData.processedHashes = {};\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const binaryKey = (item.binary && typeof item.binary === 'object') ? Object.keys(item.binary)[0] : null;\n  if (!binaryKey) {\n    results.push({ json: { ...item.json, skip: true, reason: 'no binary data' } });\n    continue;\n  }\n\n  const binary = item.binary[binaryKey];\n  const buffer = await this.helpers.getBinaryDataBuffer(i, binaryKey);\n  const hash = crypto.createHash('sha256').update(buffer).digest('hex');\n  const fileName = item.json.fileName || binary.fileName || 'unknown';\n\n  if (staticData.processedHashes[hash]) {\n    results.push({\n      json: { ...item.json, file_hash: hash, file_name: fileName, skip: true, reason: 'already processed' }\n    });\n    continue;\n  }\n\n  // Optimistic store: persist hash before ingestion so dedup survives\n  // even if downstream HTTP nodes discard item fields (fullResponse).\n  // If ingestion fails, the file is skipped on next run. Clear\n  // staticData.processedHashes to force re-processing.\n  staticData.processedHashes[hash] = new Date().toISOString();\n\n  results.push({\n    json: { ...item.json, file_hash: hash, file_name: fileName },\n    binary: item.binary\n  });\n}\n\nreturn results;"
+      },
+      "id": "hash-dedup-check",
+      "name": "Hash & Dedup Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4368,
+        1056
+      ],
+      "notes": "Computes SHA-256 hash, dedup via workflow static data. Requires NODE_FUNCTION_ALLOW_BUILTIN=crypto and N8N_RUNNERS_ENABLED=false in n8n config."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-skipped",
+      "name": "Is Skipped?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4144,
+        1056
+      ],
+      "notes": "True = already processed (skip to summary). False = new document (send to ingest)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/ingest",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "namespace",
+              "value": "={{ $env.VEKTRA_NAMESPACE || 'default' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "post-ingest",
+      "name": "POST /ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3920,
+        1296
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-async",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 202,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-async-job",
+      "name": "Is Async Job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3616,
+        1296
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "wait-5s",
+      "name": "Wait 5s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -3296,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/ingest/jobs/{{ $('POST /ingest').item.json.body.job_id }}/status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "poll-job-status",
+      "name": "Poll Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3104,
+        1472
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_POLLS = 60; // 5 minutes at 5-second intervals\nconst staticData = $getWorkflowStaticData('node');\nstaticData.pollCount = (staticData.pollCount || 0) + 1;\n\nconst items = $input.all();\n\nif (staticData.pollCount > MAX_POLLS) {\n  staticData.pollCount = 0;\n  return items.map(item => ({\n    json: {\n      ...item.json,\n      status: 'timeout',\n      error_message: `Poll timeout after ${MAX_POLLS * 5}s`\n    }\n  }));\n}\n\n// Reset counter when job finishes (status != processing)\nif (items[0]?.json?.status !== 'processing') {\n  staticData.pollCount = 0;\n}\n\nreturn items;"
+      },
+      "id": "track-poll-count",
+      "name": "Track Poll Count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2912,
+        1472
+      ],
+      "notes": "Limits polling to 60 iterations (5 minutes). Changes status to 'timeout' when exceeded."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "still-processing",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "processing",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "still-processing",
+      "name": "Still Processing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2704,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || item.json.body?.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const error = item.json.error_message || item.json.body?.error?.message || null;\n\n  // file_name may be lost after HTTP nodes (fullResponse overwrites json),\n  // so fall back to Hash & Dedup Check node output.\n  let fileName = item.json.file_name;\n  if (!fileName) {\n    try { fileName = $('Hash & Dedup Check').item.json.file_name; } catch (e) {}\n  }\n  fileName = fileName || 'unknown';\n\n  const message = (status === 'failed' || status === 'timeout')\n    ? `FAILED: ${fileName} - ${error || 'Unknown error'}`\n    : `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`;\n\n  results.push({\n    json: {\n      message,\n      document_id: docId,\n      chunk_count: chunks,\n      status,\n      file_name: fileName,\n      error\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "ingestion-summary",
+      "name": "Ingestion Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2416,
+        1104
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "List Source Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Source Files": {
+      "main": [
+        [
+          {
+            "node": "Hash & Dedup Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash & Dedup Check": {
+      "main": [
+        [
+          {
+            "node": "Is Skipped?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Skipped?": {
+      "main": [
+        [
+          {
+            "node": "Ingestion Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "POST /ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /ingest": {
+      "main": [
+        [
+          {
+            "node": "Is Async Job?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Async Job?": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ingestion Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5s": {
+      "main": [
+        [
+          {
+            "node": "Poll Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Job Status": {
+      "main": [
+        [
+          {
+            "node": "Track Poll Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Track Poll Count": {
+      "main": [
+        [
+          {
+            "node": "Still Processing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Processing?": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ingestion Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

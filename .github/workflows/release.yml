@@ -4,8 +4,8 @@ name: Release
 # Creates a version tag and GitHub Release using python-semantic-release.
 # Requires: commits following Conventional Commits format.
 #
-# TODO: configure python-semantic-release fully once we reach a stable
-# release milestone (after Wave 4+ is complete and versioning is needed).
+# python-semantic-release is not yet configured. Phase 1 releases are
+# tagged manually. Automated releases will be enabled in Phase 2.
 
 on:
   push:
@@ -18,7 +18,7 @@ permissions:
 jobs:
   release:
     name: Semantic release
-    if: false  # TODO: enable when python-semantic-release is configured
+    if: false  # enable when python-semantic-release is configured (Phase 2)
     runs-on: ubuntu-latest
 
     steps:
@@ -35,7 +35,7 @@ jobs:
       - name: Install dev dependencies
         run: uv sync --dev --frozen
 
-      # TODO: uncomment when python-semantic-release is configured
+      # uncomment when python-semantic-release is configured (Phase 2)
       # - name: Run semantic release
       #   run: uv run semantic-release version --no-vcs-release
       #   env:

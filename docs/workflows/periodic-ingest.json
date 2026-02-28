@@ -177,7 +177,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/ingest/jobs/{{ $json.body.job_id }}/status",
+        "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/ingest/jobs/{{ $('POST /ingest').item.json.body.job_id }}/status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {}

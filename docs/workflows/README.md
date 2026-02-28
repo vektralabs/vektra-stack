@@ -26,11 +26,11 @@ Automatically ingests new documents on a schedule. The workflow:
 
 Create an **HTTP Header Auth** credential in n8n:
 
-- **Name**: `Vektra API Key`
+- **Name**: `Header Auth account` (or any name you prefer)
 - **Header Name**: `Authorization`
 - **Header Value**: `Bearer <your-vektra-api-key>`
 
-The credential ID `vektra-api-key` is referenced by all HTTP Request nodes in the workflow. After importing, n8n will prompt you to map it to your actual credential.
+After importing, n8n will prompt you to assign the credential to the HTTP Request nodes (`POST /ingest` and `Poll Job Status`).
 
 ### Environment variables
 
@@ -43,7 +43,7 @@ Set these in your n8n instance (Settings > Variables) or via environment:
 
 ### Customization
 
-**File source**: The "List Source Files" node is a placeholder. Replace it with your actual source:
+**File source**: The "List Source Files" node reads PDFs from `/files`. Replace it with your actual source:
 
 - **Local directory**: use the "Read/Write Files from Disk" node
 - **S3 bucket**: use the "AWS S3" node
@@ -51,6 +51,8 @@ Set these in your n8n instance (Settings > Variables) or via environment:
 - **HTTP API**: use the "HTTP Request" node to fetch a file listing
 
 **Schedule**: Edit the "Daily Schedule" trigger node to change the interval (e.g., every 6 hours, weekly).
+
+**Binary key**: The `POST /ingest` node expects binary data under the key `"data"` (the default for `readWriteFile`). If you replace the source node with S3, Google Drive, or another connector, ensure its binary output key matches `"data"`, or add a Set node before `POST /ingest` to rename it.
 
 **Notifications**: Connect the "Ingestion Summary" node to a notification service (Slack, email, webhook) to receive alerts on ingestion results.
 
@@ -63,9 +65,9 @@ List Source Files
     |
 Hash & Dedup Check (SHA-256 + optimistic store)
     |
-Is New Document?
+Is Skipped?
     |           \
-    | (yes)      (no) -> Ingestion Summary (skip)
+    | (no)       (yes) -> Ingestion Summary (skip)
     |
 POST /ingest
     |

@@ -127,7 +127,7 @@ jobs:
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [test-shared, test-core, test-ingest, test-index, test-admin]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin]
     runs-on: ubuntu-latest
     if: always()
     steps:

@@ -30,8 +30,8 @@ case "$CMD_TARGET" in
     ;;
 
   *)
-    echo "Unknown CMD_TARGET: $CMD_TARGET"
-    echo "Valid targets: server, migrate"
+    echo "Unknown CMD_TARGET: $CMD_TARGET" >&2
+    echo "Valid targets: server, migrate" >&2
     exit 1
     ;;
 esac

@@ -18,15 +18,15 @@ That's all that's needed. The plan file contains the full context for that compo
 
 ## Plan generation approach
 
-Phase 2 plans follow a three-phase generation process (lesson learned from Phase 1, documented in `.s2s/prompts/s2s-plan-phased-generation.md`):
+Phase 2 plans follow a three-phase generation process (lesson learned from Phase 1, where dependency gaps between plans were only discovered during implementation):
 
 1. **Scoping plan**: map Phase 2 features to work groups, identify dependency chains, define wave structure with explicit provides/requires contracts
 2. **Dependency validation**: run SPV L1 (topology) and L3 (provides/requires) checks before generating detailed plans
 3. **Detailed plans**: generate per-component plans with provides/requires YAML front-matter from the start
 
-Existing validation checks apply to all generated plans:
-- Intra-plan: CHK-DEP-*, CHK-PROTO-1, CHK-TEST-1, CHK-NFR-1, CHK-COMM-1, CHK-STARTUP-1 (see `prompts/s2s-plan-integration-readiness.md`)
-- Cross-plan: CHK-COORD-1 through CHK-COORD-6 (see `prompts/s2s-plan-crossplan-coordination.md`)
+After generation, all plans are validated against:
+- Intra-plan checks: CHK-DEP-*, CHK-PROTO-1, CHK-TEST-1, CHK-NFR-1, CHK-COMM-1, CHK-STARTUP-1
+- Cross-plan checks: CHK-COORD-1 through CHK-COORD-6
 
 ---
 

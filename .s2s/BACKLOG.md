@@ -274,7 +274,7 @@ Specific items to address at the roundtable:
 
 DOCS-007 must be resolved first (OQ-018 learn-ui/admin-ui architecture and OQ-019 hardware minimum feed component planning).
 
-Plan generation follows the three-phase approach documented in `.s2s/prompts/s2s-plan-phased-generation.md`:
+Plan generation follows a three-phase approach (lesson learned from Phase 1):
 1. Scoping plan: map features to work groups, define wave structure with provides/requires
 2. Dependency validation: SPV L1 + L3 checks before detailed plans
 3. Detailed plans: per-component plans with provides/requires from the start

@@ -52,8 +52,8 @@ if [ -n "${VEKTRA_API_KEY:-}" ]; then
   DETAIL=$(curl -sf \
     -H "Authorization: Bearer ${VEKTRA_API_KEY}" \
     "${BASE_URL}/health?detail=full" 2>&1) || {
-    echo "Warning: detailed health check failed" >&2
-    exit 0
+    echo "Error: detailed health check failed" >&2
+    exit 1
   }
   if command -v python3 >/dev/null 2>&1; then
     echo "$DETAIL" | python3 -m json.tool 2>/dev/null || echo "$DETAIL"

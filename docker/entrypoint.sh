@@ -21,7 +21,7 @@ case "$CMD_TARGET" in
     echo "Starting Vektra API server..."
     exec uvicorn vektra_app.main:app \
       --host 0.0.0.0 \
-      --port "${VEKTRA_PORT:-8000}"
+      --port 8000
     ;;
 
   migrate)

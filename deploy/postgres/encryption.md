@@ -25,15 +25,15 @@ cryptsetup luksFormat /dev/sdX
 cryptsetup open /dev/sdX vektra-data
 mkfs.ext4 /dev/mapper/vektra-data
 # Adjust project name if COMPOSE_PROJECT_NAME differs from directory name
-mount /dev/mapper/vektra-data /var/lib/docker/volumes/<COMPOSE_PROJECT_NAME>_vektra_pgdata
+mount /dev/mapper/vektra-data /var/lib/docker/volumes/<COMPOSE_PROJECT_NAME>_vektra_pgdata/_data
 
 # Docker will write postgres data to the encrypted volume
 docker compose up -d
 ```
 
-### Option B: Docker volume with encrypted driver
+### Option B: Docker volume on encrypted block device
 
-Use a Docker volume plugin that supports encryption:
+Mount a pre-encrypted block device (e.g. LUKS) as a Docker volume:
 
 ```yaml
 volumes:

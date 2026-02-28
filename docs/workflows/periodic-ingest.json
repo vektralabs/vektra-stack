@@ -12,37 +12,43 @@
           ]
         }
       },
-      "id": "schedule-trigger",
+      "id": "daily-schedule",
       "name": "Daily Schedule",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0]
+      "position": [
+        -4816,
+        1056
+      ]
     },
     {
       "parameters": {
-        "mode": "list",
-        "binaryPropertyName": "data",
-        "options": {
-          "fileName": "={{ $json.path }}"
-        }
+        "fileSelector": "/files/*.pdf",
+        "options": {}
       },
-      "id": "list-files",
+      "id": "list-source-files",
       "name": "List Source Files",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [220, 0],
-      "notes": "Replace with your file source. Options:\n- Read files from a local directory\n- HTTP Request to fetch from a remote API\n- Google Drive, S3, or other cloud storage nodes"
+      "position": [
+        -4592,
+        1056
+      ],
+      "notes": "Reads all PDFs from /files. Change the glob pattern or replace with HTTP Request, Google Drive, S3, etc."
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.processedHashes) {\n  staticData.processedHashes = {};\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const binary = item.binary?.data;\n  if (!binary) {\n    results.push({ json: { ...item.json, skip: true, reason: 'no binary data' } });\n    continue;\n  }\n\n  const buffer = await this.helpers.getBinaryDataBuffer(item, 'data');\n  const hash = crypto.createHash('sha256').update(buffer).digest('hex');\n  const fileName = item.json.fileName || binary.fileName || 'unknown';\n\n  if (staticData.processedHashes[hash]) {\n    results.push({\n      json: { ...item.json, file_hash: hash, file_name: fileName, skip: true, reason: 'already processed' }\n    });\n    continue;\n  }\n\n  // Optimistic store: persist hash before ingestion so dedup survives\n  // even if downstream HTTP nodes discard item fields (fullResponse).\n  // If ingestion fails, the file is skipped on next run. Clear\n  // staticData.processedHashes to force re-processing.\n  staticData.processedHashes[hash] = new Date().toISOString();\n\n  results.push({\n    json: { ...item.json, file_hash: hash, file_name: fileName },\n    binary: item.binary\n  });\n}\n\nreturn results;"
+        "jsCode": "const crypto = require('crypto');\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.processedHashes) {\n  staticData.processedHashes = {};\n}\n\nconst items = $input.all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const binaryKey = (item.binary && typeof item.binary === 'object') ? Object.keys(item.binary)[0] : null;\n  if (!binaryKey) {\n    results.push({ json: { ...item.json, skip: true, reason: 'no binary data' } });\n    continue;\n  }\n\n  const binary = item.binary[binaryKey];\n  const buffer = await this.helpers.getBinaryDataBuffer(i, binaryKey);\n  const hash = crypto.createHash('sha256').update(buffer).digest('hex');\n  const fileName = item.json.fileName || binary.fileName || 'unknown';\n\n  if (staticData.processedHashes[hash]) {\n    results.push({\n      json: { ...item.json, file_hash: hash, file_name: fileName, skip: true, reason: 'already processed' }\n    });\n    continue;\n  }\n\n  // Optimistic store: persist hash before ingestion so dedup survives\n  // even if downstream HTTP nodes discard item fields (fullResponse).\n  // If ingestion fails, the file is skipped on next run. Clear\n  // staticData.processedHashes to force re-processing.\n  staticData.processedHashes[hash] = new Date().toISOString();\n\n  results.push({\n    json: { ...item.json, file_hash: hash, file_name: fileName },\n    binary: item.binary\n  });\n}\n\nreturn results;"
       },
-      "id": "hash-and-dedup",
+      "id": "hash-dedup-check",
       "name": "Hash & Dedup Check",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 0],
-      "notes": "Computes SHA-256 hash, checks workflow static data, and optimistically stores new hashes before ingestion."
+      "position": [
+        -4368,
+        1056
+      ],
+      "notes": "Computes SHA-256 hash, dedup via workflow static data. Requires NODE_FUNCTION_ALLOW_BUILTIN=crypto and N8N_RUNNERS_ENABLED=false in n8n config."
     },
     {
       "parameters": {
@@ -50,7 +56,7 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "loose"
           },
           "conditions": [
             {
@@ -59,19 +65,23 @@
               "rightValue": true,
               "operator": {
                 "type": "boolean",
-                "operation": "notEqual"
+                "operation": "equals"
               }
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
-      "id": "if-new",
-      "name": "Is New Document?",
+      "id": "is-skipped",
+      "name": "Is Skipped?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [660, 0],
-      "notes": "Routes new documents to ingestion, skips already-processed ones."
+      "position": [
+        -4144,
+        1056
+      ],
+      "notes": "True = already processed (skip to summary). False = new document (send to ingest)."
     },
     {
       "parameters": {
@@ -102,21 +112,23 @@
         "options": {
           "response": {
             "response": {
-              "neverError": true,
-              "fullResponse": true
+              "fullResponse": true,
+              "neverError": true
             }
           }
         }
       },
-      "id": "ingest",
+      "id": "post-ingest",
       "name": "POST /ingest",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, -100],
+      "position": [
+        -3920,
+        1296
+      ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "vektra-api-key",
-          "name": "Vektra API Key"
+          "name": "Header Auth account"
         }
       }
     },
@@ -140,42 +152,47 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
-      "id": "if-async",
+      "id": "is-async-job",
       "name": "Is Async Job?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1100, -100]
+      "position": [
+        -3616,
+        1296
+      ]
     },
     {
-      "parameters": {
-        "amount": 5,
-        "unit": "seconds"
-      },
-      "id": "wait",
+      "parameters": {},
+      "id": "wait-5s",
       "name": "Wait 5s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1320, -200]
+      "position": [
+        -3296,
+        1552
+      ]
     },
     {
       "parameters": {
-        "method": "GET",
         "url": "={{ $env.VEKTRA_BASE_URL }}/api/v1/ingest/jobs/{{ $json.body.job_id }}/status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
-      "id": "poll-status",
+      "id": "poll-job-status",
       "name": "Poll Job Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1540, -200],
+      "position": [
+        -3104,
+        1472
+      ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "vektra-api-key",
-          "name": "Vektra API Key"
+          "name": "Header Auth account"
         }
       }
     },
@@ -187,7 +204,10 @@
       "name": "Track Poll Count",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1650, -200],
+      "position": [
+        -2912,
+        1472
+      ],
       "notes": "Limits polling to 60 iterations (5 minutes). Changes status to 'timeout' when exceeded."
     },
     {
@@ -210,93 +230,169 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
-      "id": "if-processing",
+      "id": "still-processing",
       "name": "Still Processing?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1860, -200]
+      "position": [
+        -2704,
+        1552
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || item.json.body?.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const fileName = item.json.file_name || 'unknown';\n  const error = item.json.error_message || item.json.body?.error?.message || null;\n\n  const message = (status === 'failed' || status === 'timeout')\n    ? `FAILED: ${fileName} - ${error || 'Unknown error'}`\n    : `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`;\n\n  results.push({\n    json: {\n      message,\n      document_id: docId,\n      chunk_count: chunks,\n      status,\n      file_name: fileName,\n      error\n    }\n  });\n}\n\nreturn results;"
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const status = item.json.status || item.json.body?.status || 'unknown';\n  const docId = item.json.document_id || item.json.body?.document_id || 'unknown';\n  const chunks = item.json.chunk_count || item.json.body?.chunk_count || 0;\n  const error = item.json.error_message || item.json.body?.error?.message || null;\n\n  // file_name may be lost after HTTP nodes (fullResponse overwrites json),\n  // so fall back to Hash & Dedup Check node output.\n  let fileName = item.json.file_name;\n  if (!fileName) {\n    try { fileName = $('Hash & Dedup Check').item.json.file_name; } catch (e) {}\n  }\n  fileName = fileName || 'unknown';\n\n  const message = (status === 'failed' || status === 'timeout')\n    ? `FAILED: ${fileName} - ${error || 'Unknown error'}`\n    : `Ingested: ${fileName} (${docId}), ${chunks} chunks, status: ${status}`;\n\n  results.push({\n    json: {\n      message,\n      document_id: docId,\n      chunk_count: chunks,\n      status,\n      file_name: fileName,\n      error\n    }\n  });\n}\n\nreturn results;"
       },
       "id": "ingestion-summary",
       "name": "Ingestion Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2080, -100]
+      "position": [
+        -2416,
+        1104
+      ]
     }
   ],
+  "pinData": {},
   "connections": {
     "Daily Schedule": {
       "main": [
-        [{ "node": "List Source Files", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "List Source Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "List Source Files": {
       "main": [
-        [{ "node": "Hash & Dedup Check", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Hash & Dedup Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Hash & Dedup Check": {
       "main": [
-        [{ "node": "Is New Document?", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Is Skipped?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Is New Document?": {
+    "Is Skipped?": {
       "main": [
-        [{ "node": "POST /ingest", "type": "main", "index": 0 }],
-        [{ "node": "Ingestion Summary", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Ingestion Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "POST /ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "POST /ingest": {
       "main": [
-        [{ "node": "Is Async Job?", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Is Async Job?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Is Async Job?": {
       "main": [
-        [{ "node": "Wait 5s", "type": "main", "index": 0 }],
-        [{ "node": "Ingestion Summary", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ingestion Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Wait 5s": {
       "main": [
-        [{ "node": "Poll Job Status", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Poll Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Poll Job Status": {
       "main": [
-        [{ "node": "Track Poll Count", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Track Poll Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Track Poll Count": {
       "main": [
-        [{ "node": "Still Processing?", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Still Processing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Still Processing?": {
       "main": [
-        [{ "node": "Wait 5s", "type": "main", "index": 0 }],
-        [{ "node": "Ingestion Summary", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ingestion Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
-    },
-    "Ingestion Summary": {
-      "main": []
     }
   },
-  "pinData": {},
+  "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "staticData": {
-    "global": {
-      "processedHashes": {}
-    }
-  },
-  "tags": [],
-  "triggerCount": 1,
-  "versionId": "3"
+  "tags": []
 }

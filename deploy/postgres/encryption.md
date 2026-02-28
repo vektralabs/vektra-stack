@@ -24,6 +24,8 @@ Encrypt the Docker volume's backing storage:
 cryptsetup luksFormat /dev/sdX
 cryptsetup open /dev/sdX vektra-data
 mkfs.ext4 /dev/mapper/vektra-data
+# Create mount point (Docker creates this on first volume use, but mount needs it upfront)
+mkdir -p /var/lib/docker/volumes/<COMPOSE_PROJECT_NAME>_vektra_pgdata/_data
 # Adjust project name if COMPOSE_PROJECT_NAME differs from directory name
 mount /dev/mapper/vektra-data /var/lib/docker/volumes/<COMPOSE_PROJECT_NAME>_vektra_pgdata/_data
 

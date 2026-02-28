@@ -265,29 +265,28 @@ Specific items to address at the roundtable:
 
 ---
 
-### TECH-003: Phase 2 design roundtable (/s2s:design Phase 2)
+### TECH-003: Phase 2 implementation plans
 
-**Status**: planned | **Priority**: low (now) → high (after Phase 1 stable) | **Created**: 2026-02-17
-**Blocked by**: Phase 1 completion, DOCS-007
+**Status**: planned | **Priority**: high | **Created**: 2026-02-17 | **Updated**: 2026-02-28
+**Blocked by**: DOCS-007
 
-**Context**: Phase 1 uses a modular monolith design. Phase 2 introduces: vektra-analytics, vektra-learn, vektra-admin (full), hybrid search, persistent conversation storage, full scope enforcement, OAuth/OIDC, Qdrant as optional vector store. A full /s2s:design roundtable is needed before any Phase 2 implementation begins. DOCS-007 must be resolved first (UI architecture decisions feed the Phase 2 component design).
+**Context**: Phase 2 requirements and architecture are already formalized in the existing documents: requirements.md contains 44 Phase 2 references (EX-xxx exclusions, Phase 2 deferrals), architecture.md contains 115 Phase 2 references (ARCH decisions with Phase 2 annotations, ADR-0014 AdvancedQueryPipeline, ADR-0023 query rewriting, etc.). A full `/s2s:design` roundtable is NOT needed. Only implementation plans via `/s2s:plan` are required.
 
-Key Phase 2 topics for the roundtable:
-- vektra-learn component structure and LMS adapter interface
-- vektra-analytics: QueryTrace storage, reporting API, alerting triggers
-- Hybrid search: BM25/SPLADE via SparseEmbeddingProvider, Qdrant as VectorStoreProvider
-- Persistent conversation storage with pgcrypto encryption (ADR-0011)
-- Full API key scope enforcement (REQ-024 Phase 2)
-- RLS binding activation (ADR-0009 feature flag)
-- Phase 2 hardware profile: 8GB / 4CPU minimum
+DOCS-007 must be resolved first (OQ-018 learn-ui/admin-ui architecture and OQ-019 hardware minimum feed component planning).
 
-**Traceability**: architecture.md section 11.3, requirements.md EX-xxx items, ADR-0009, ADR-0011
+Plan generation follows a three-phase approach (lesson learned from Phase 1):
+1. Scoping plan: map features to work groups, define wave structure with provides/requires
+2. Dependency validation: SPV L1 + L3 checks before detailed plans
+3. Detailed plans: per-component plans with provides/requires from the start
+
+**Traceability**: architecture.md section 11.3, requirements.md EX-xxx items, ADR-0009, ADR-0011, plans/INDEX-PHASE2.md
 
 **Acceptance Criteria**:
-- [ ] Phase 2 architecture document updated (or new architecture.md v2.0)
-- [ ] New ADRs for Phase 2 decisions (target: ADR-0024+, ADR-0023 already exists)
-- [ ] Phase 2 requirements reviewed and promoted from EX-xxx to REQ-xxx
-- [ ] Phase 2 validation scenarios drafted (new /s2s:specs + /s2s:design cycle)
+- [ ] DOCS-007 resolved (OQ-018, OQ-019)
+- [ ] Scoping plan generated and validated (SPV L1 + L3 pass)
+- [ ] Detailed plans generated with provides/requires YAML front-matter
+- [ ] INDEX-PHASE2.md populated with wave structure and dependency graph
+- [ ] New ADRs created as needed during planning (ADR-0024+)
 
 ---
 
@@ -572,7 +571,7 @@ Key Phase 2 topics for the roundtable:
 | ~~DOCS-008 (no_relevant_context REQ)~~ | ~~Before Phase 1 SRS close~~ | Done (REQ-066 in SRS v1.5.0) |
 | ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
-| TECH-003 (Phase 2 design roundtable) | After Phase 1 stable + DOCS-007 | Full /s2s:design for Phase 2 |
+| TECH-003 (Phase 2 plans) | After DOCS-007 | /s2s:plan with phased generation |
 | TECH-004 (unique indexes) | Anytime (infra-database done) | Alembic migration ready |
 | ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
 | DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |

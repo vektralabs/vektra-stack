@@ -3,7 +3,7 @@
 # Source documents:
 #   requirements.md v1.5.0 (61 REQs, 13 NFRs, 5 BRs)
 #   architecture.md v1.9 (60 ARCH decisions, 22 ADRs)
-#   plans/INDEX.md + 15 plan files (Wave 0-7)
+#   plans/INDEX-PHASE1.md + 15 plan files (Wave 0-7)
 # Wave completion:
 #   Wave 0: completed (docs-008, infra-003, component-shared)
 #   Wave 1: completed (infra-database)

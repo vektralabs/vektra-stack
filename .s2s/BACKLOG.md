@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-27
+**Updated**: 2026-02-28
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -136,6 +136,25 @@
 
 ---
 
+### DEBT-008: LRU cache stores plaintext API keys in memory
+
+**Status**: planned | **Priority**: low | **Created**: 2026-02-28
+**Blocked by**: Phase 2
+**Origin**: PR #2 review, CodeRabbit comment 2867565397
+
+**Context**: `verify_key()` in `vektra_admin/keys.py` uses `functools.lru_cache(maxsize=512)` keyed by `(key_hash, plaintext)`. The plaintext API key remains in the Python heap for the entire process lifetime (or until LRU eviction). `functools.lru_cache` is size-bounded only, not TTL-bounded. While the plaintext is already in memory during each request (Authorization header), the cache extends exposure from request-scoped to process-scoped. Replace with `cachetools.TTLCache` (e.g. TTL=300s, maxsize=512) to limit temporal exposure.
+
+**Traceability**: REQ-023, ARCH-023, PR #2 comment 2867565397
+
+**Acceptance Criteria**:
+- [ ] Replace `functools.lru_cache` with `cachetools.TTLCache` in `_cached_verify`
+- [ ] TTL configured via constant (default 300s)
+- [ ] Cache key uses `(key_hash, plaintext)` as before (or hash-based fingerprint)
+- [ ] Unit test verifies cache expiration after TTL
+- [ ] `cachetools` added to vektra-admin dependencies
+
+---
+
 ### DOCS-004: Complete traceability tables A.1, A.2, A.3 in architecture.md
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-02-17
@@ -242,7 +261,7 @@ Specific items to address at the roundtable:
 **Acceptance Criteria**:
 - [x] Decision made: REQ-066 added to requirements.md
 - [x] If REQ added: traceability tables updated (ties to DOCS-004)
-- [ ] Gaps table row in validation-scenarios.md updated to reflect resolution
+- [x] Gaps table row in validation-scenarios.md updated to reflect resolution
 
 ---
 
@@ -266,7 +285,7 @@ Key Phase 2 topics for the roundtable:
 
 **Acceptance Criteria**:
 - [ ] Phase 2 architecture document updated (or new architecture.md v2.0)
-- [ ] New ADRs for Phase 2 decisions (target: ADR-0023+)
+- [ ] New ADRs for Phase 2 decisions (target: ADR-0024+, ADR-0023 already exists)
 - [ ] Phase 2 requirements reviewed and promoted from EX-xxx to REQ-xxx
 - [ ] Phase 2 validation scenarios drafted (new /s2s:specs + /s2s:design cycle)
 
@@ -324,9 +343,10 @@ Key Phase 2 topics for the roundtable:
 
 ---
 
-### DOCS-001: Create documentation structure
+### DOCS-001: ~~Create documentation structure~~
 
-**Status**: completed | **Priority**: medium | **Created**: 2026-01-29
+**Status**: completed | **Priority**: medium | **Created**: 2026-01-29 | **Completed**: 2026-02-27
+**Resolved in**: Wave 7, PR #10
 
 **Context**: Diataxis-based docs structure per REQ-007, REQ-010.
 
@@ -395,7 +415,7 @@ Key Phase 2 topics for the roundtable:
 ### TECH-002: Create good-first-issue items
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-01-29
-**Blocked by**: Initial code exists
+**Blocked by**: Before public announcement
 
 **Context**: 5-10 good-first-issue items needed before public announcement.
 
@@ -543,11 +563,11 @@ Key Phase 2 topics for the roundtable:
 | ~~INFRA-002 (CoC)~~ | ~~Before /s2s:specs~~ | Done |
 | ~~INFRA-003 (CODEOWNERS)~~ | ~~After component structure~~ | Done (Wave 0) |
 | ~~INFRA-004 (component dirs)~~ | ~~Before /s2s:plan~~ | Done (Wave 0) |
-| DOCS-001 (docs structure) | Before Phase 1 complete | Part of MVP deliverable |
+| ~~DOCS-001 (docs structure)~~ | ~~Before Phase 1 complete~~ | Done (Wave 7, PR #10) |
 | DOCS-002, DOCS-003 | After tech stack | Depends on language/framework |
 | DOCS-004 (traceability tables) | After first Phase 1 milestone | Accuracy requires real code |
 | DOCS-005 (roundtable QA+BA) | After first sprint | Need tests to compare against |
-| DOCS-006 (n8n workflow) | Anytime during Phase 1 | Independent of code, low effort |
+| ~~DOCS-006 (n8n workflow)~~ | ~~Anytime during Phase 1~~ | Done (Wave 7, PR #10) |
 | DOCS-007 (Phase 2 OQs) | Before Phase 2 design | OQ-018 + OQ-019 unresolved |
 | ~~DOCS-008 (no_relevant_context REQ)~~ | ~~Before Phase 1 SRS close~~ | Done (REQ-066 in SRS v1.5.0) |
 | ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
@@ -559,3 +579,4 @@ Key Phase 2 topics for the roundtable:
 | DEBT-003 (post_retrieval hook) | Phase 2 | PassthroughSafeguard covers Phase 1 |
 | DEBT-004 (budget ordering) | Phase 2 | Pgvector returns score-desc in practice |
 | DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |
+| DEBT-008 (LRU plaintext cache) | Phase 2 | Replace lru_cache with TTLCache |

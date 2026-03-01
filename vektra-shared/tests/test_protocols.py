@@ -75,21 +75,6 @@ class TestProtocolsImportable:
     def test_event_emitter_has_required_methods(self):
         assert hasattr(EventEmitter, "emit")
 
-    def test_protocol_count_is_nine(self):
-        """Phase 2 adds no new Protocols. AdvancedQueryPipeline is a concrete class."""
-        protocols = [
-            LLMProvider,
-            EmbeddingProvider,
-            SparseEmbeddingProvider,
-            VectorStoreProvider,
-            DocumentExtractor,
-            ChunkingStrategy,
-            QueryPipeline,
-            SafeguardHook,
-            EventEmitter,
-        ]
-        assert len(protocols) == 9
-
     def test_query_pipeline_signatures_unchanged(self):
         """QueryPipeline Protocol must keep execute and execute_stream only."""
         import inspect

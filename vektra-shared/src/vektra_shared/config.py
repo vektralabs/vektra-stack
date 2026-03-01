@@ -134,6 +134,7 @@ class RerankConfig(BaseSettings):
     )
     top_k: int = Field(
         5,
+        ge=1,
         alias="VEKTRA_RERANK_TOP_K",
         description="Final top-k results after reranking.",
     )
@@ -202,6 +203,7 @@ class WebhookConfig(BaseSettings):
     )
     timeout_seconds: float = Field(
         5.0,
+        gt=0,
         alias="VEKTRA_WEBHOOK_TIMEOUT",
         description="HTTP timeout in seconds for webhook delivery.",
     )
@@ -246,8 +248,9 @@ class IngestConfig(BaseSettings):
     )
     parent_child_levels: int = Field(
         0,
+        ge=0,
         alias="VEKTRA_PARENT_CHILD_LEVELS",
-        description="Parent-child hierarchy depth. 0=disabled, 2=Phase 2 default.",
+        description="Parent-child hierarchy depth. 0=disabled.",
     )
 
     model_config = SettingsConfigDict(
@@ -362,11 +365,12 @@ class ExternalApiKeys(BaseSettings):
 
 
 class VektraSettings(BaseSettings):
-    """Root settings: aggregates all VEKTRA_* env vars plus external keys.
+    """Root settings: Phase 1 flat aggregation of VEKTRA_* env vars.
 
-    All 37 variables (35 VEKTRA_* + 2 external) are represented here.
-    Sub-configs provide logical grouping with defaults; this class is the
-    single entry point for ARCH-057 step 1 validation.
+    Contains 37 variables (35 VEKTRA_* + 2 external) from Phase 1.
+    Phase 2 additions (RewriteConfig, RerankConfig, WebhookConfig,
+    IngestConfig extensions) are validated by their respective sub-configs
+    when the consuming component instantiates them.
     """
 
     # Database

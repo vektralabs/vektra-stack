@@ -291,7 +291,7 @@ async def test_uq_source_documents_filename_exists(migrated_db):
     async with engine.connect() as conn:
         result = await conn.execute(
             text(
-                "SELECT indexname FROM pg_indexes "
+                "SELECT indexdef FROM pg_indexes "
                 "WHERE tablename = 'source_documents' "
                 "AND indexname = 'uq_source_documents_filename'"
             )
@@ -299,6 +299,10 @@ async def test_uq_source_documents_filename_exists(migrated_db):
         row = result.fetchone()
     await engine.dispose()
     assert row is not None, "uq_source_documents_filename index not found"
+    indexdef = row[0]
+    assert "UNIQUE INDEX" in indexdef
+    assert "(namespace_id, filename)" in indexdef
+    assert "deleted_at IS NULL" in indexdef
 
 
 @pytest.mark.asyncio
@@ -467,13 +471,13 @@ async def test_pgcrypto_encryption_roundtrip(migrated_db):
 
 
 @pytest.mark.asyncio
-async def test_downgrade_removes_phase2_tables(postgres_url):
+async def test_downgrade_removes_phase2_tables(migrated_db):
     """Downgrade to 0001 must remove Phase 2 tables while keeping Phase 1 tables."""
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
     env = os.environ.copy()
-    env["VEKTRA_DATABASE_URL"] = postgres_url
+    env["VEKTRA_DATABASE_URL"] = migrated_db
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
     # Downgrade to 0001
@@ -487,7 +491,7 @@ async def test_downgrade_removes_phase2_tables(postgres_url):
     assert result.returncode == 0, f"Downgrade failed: {result.stderr}"
 
     # Verify Phase 2 tables are gone, Phase 1 tables remain
-    engine = create_async_engine(postgres_url)
+    engine = create_async_engine(migrated_db)
     async with engine.connect() as conn:
         res = await conn.execute(
             text(

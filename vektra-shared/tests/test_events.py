@@ -102,6 +102,24 @@ class TestEmit:
         assert req.headers["x-vektra-signature-256"] == f"sha256={expected_sig}"
 
     @pytest.mark.asyncio
+    async def test_emit_no_signature_header_when_secret_is_none(self) -> None:
+        captured: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200)
+
+        config = _make_config(VEKTRA_WEBHOOK_SECRET=None)
+        emitter = WebhookEventEmitter(config)
+        emitter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        await emitter.emit("test.event", {})
+
+        req = captured[0]
+        assert "x-vektra-signature-256" not in req.headers
+        assert req.headers["content-type"] == "application/json"
+
+    @pytest.mark.asyncio
     async def test_emit_does_not_raise_on_http_error(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, text="Internal Server Error")
@@ -132,8 +150,23 @@ class TestEmit:
             VEKTRA_WEBHOOK_SECRET="s",
         )
         emitter = WebhookEventEmitter(config)
-        # Should return immediately without error (no HTTP client call)
+        assert emitter._client is None
+        # Should return immediately without error (no HTTP client created)
         await emitter.emit("test.event", {})
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_client(self) -> None:
+        config = _make_config()
+        emitter = WebhookEventEmitter(config)
+        assert emitter._client is not None
+        await emitter.aclose()
+
+    @pytest.mark.asyncio
+    async def test_aclose_noop_when_no_client(self) -> None:
+        config = WebhookConfig(VEKTRA_WEBHOOK_URL=None)
+        emitter = WebhookEventEmitter(config)
+        assert emitter._client is None
+        await emitter.aclose()  # Should not raise
 
 
 class TestProtocolCompliance:

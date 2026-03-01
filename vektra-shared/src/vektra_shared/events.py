@@ -44,25 +44,34 @@ class NoOpEventEmitter:
 class WebhookEventEmitter:
     """EventEmitter that sends HMAC-SHA256 signed HTTP POST to a webhook URL.
 
-    Fire-and-forget: HTTP failures are logged but never raised to the caller.
-    No retries in Phase 2 (retry queue deferred to Phase 3).
+    HTTP failures are logged but never raised to the caller. The ``emit``
+    method awaits the HTTP call (bounded by ``timeout_seconds``), so callers
+    should account for network latency. No retries in Phase 2 (retry queue
+    deferred to Phase 3).
     """
 
     def __init__(self, config: WebhookConfig) -> None:
         self._config = config
-        self._client = httpx.AsyncClient(timeout=config.timeout_seconds)
+        self._client: httpx.AsyncClient | None = (
+            httpx.AsyncClient(timeout=config.timeout_seconds) if config.url else None
+        )
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
+        if self._client is not None:
+            await self._client.aclose()
 
     def _sign(self, body: bytes) -> str:
         """Compute HMAC-SHA256 hex digest of the request body."""
         return hmac.new(
-            self._config.secret.encode() if self._config.secret else b"",
+            self._config.secret.encode(),
             body,
             hashlib.sha256,
         ).hexdigest()
 
     async def emit(self, event_type: str, payload: dict[str, Any]) -> None:
-        """Send event as signed HTTP POST. Failures are logged, never raised."""
-        if not self._config.url:
+        """Send event as HTTP POST. Failures are logged, never raised."""
+        if self._client is None:
             return
 
         body_dict = {
@@ -71,16 +80,16 @@ class WebhookEventEmitter:
             "payload": payload,
         }
         body = json.dumps(body_dict, default=str).encode()
-        signature = self._sign(body)
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._config.secret:
+            headers["X-Vektra-Signature-256"] = f"sha256={self._sign(body)}"
 
         try:
             response = await self._client.post(
                 self._config.url,
                 content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Vektra-Signature-256": f"sha256={signature}",
-                },
+                headers=headers,
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

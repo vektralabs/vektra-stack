@@ -54,7 +54,7 @@ When Phase 3 introduces a SPA:
 
 ### Option 1: Server-side rendering (HTMX + Jinja2) - chosen
 
-- Pro: zero JS build pipeline, deploy unico, coerente con "configuration over fork", HTMX covers all CRUD use cases, minimal footprint (~14KB HTMX + templates)
+- Pro: zero JS build pipeline, unified deployment, consistent with "configuration over fork", HTMX covers all CRUD use cases, minimal footprint (~14KB HTMX + templates)
 - Pro: Phase 1 precedent exists (`GET /admin`)
 - Con: less fluid UX for complex interactions (drag-and-drop, real-time charts)
 - Con: fewer frontend developers familiar with HTMX vs React

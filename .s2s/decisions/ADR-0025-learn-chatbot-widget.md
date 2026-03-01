@@ -67,7 +67,7 @@ This integration pattern is identical in Phase 2 (script tag from backend) and P
 
 ### Option 1: JS bundle served by backend - chosen for Phase 2
 
-- Pro: deploy unico, no extra repo, no npm publish, versioning aligned with backend
+- Pro: unified deployment, no extra repo, no npm publish, versioning aligned with backend
 - Pro: sufficient for vektra-moodle (PHP plugin includes script tag)
 - Pro: no dependency on vektra-sdk-js (which does not exist yet in Phase 2)
 - Con: not distributable as independent package

@@ -1,7 +1,7 @@
 # Implementation Plan: Phase 2 Protocol additions and import boundaries
 
 **ID**: 20260301-shared-protocols-phase2
-**Status**: pending
+**Status**: completed
 **Branch**: N/A
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
@@ -101,28 +101,28 @@ class ChunkingConfig(BaseSettings):
 
 ## Tasks
 
-- [ ] Add `RewriteConfig` and `RerankConfig` Pydantic settings to `vektra-shared/src/vektra_shared/config.py` with env var aliases `VEKTRA_QUERY_REWRITE_ENABLED`, `VEKTRA_RERANK_ENABLED`, `VEKTRA_RERANK_PROVIDER`, `VEKTRA_RERANK_MODEL`, `VEKTRA_RERANK_TOP_K`. Extend `QueryPipelineConfig` with `rewrite: RewriteConfig` and `rerank: RerankConfig` nested fields.
+- [x] Add `RewriteConfig` and `RerankConfig` Pydantic settings to `vektra-shared/src/vektra_shared/config.py` with env var aliases `VEKTRA_QUERY_REWRITE_ENABLED`, `VEKTRA_RERANK_ENABLED`, `VEKTRA_RERANK_PROVIDER`, `VEKTRA_RERANK_MODEL`, `VEKTRA_RERANK_TOP_K`. Extend `QueryPipelineConfig` with `rewrite: RewriteConfig` and `rerank: RerankConfig` nested fields.
 
-- [ ] Add `WebhookConfig` Pydantic settings to `vektra-shared/src/vektra_shared/config.py` with env var aliases `VEKTRA_WEBHOOK_URL`, `VEKTRA_WEBHOOK_SECRET`, `VEKTRA_WEBHOOK_TIMEOUT`. All three fields optional (webhook disabled when URL is None).
+- [x] Add `WebhookConfig` Pydantic settings to `vektra-shared/src/vektra_shared/config.py` with env var aliases `VEKTRA_WEBHOOK_URL`, `VEKTRA_WEBHOOK_SECRET`, `VEKTRA_WEBHOOK_TIMEOUT`. All three fields optional (webhook disabled when URL is None).
 
-- [ ] Extend chunking fields in `IngestConfig` (in `vektra-shared/src/vektra_shared/config.py`) with Phase 2 dual-strategy fields: `table_split: bool = False`, `parent_child_levels: int = 0`. Add validator: when `strategy == "dual"`, `parent_child_levels` must be >= 1. Note: chunking fields are currently inline in `IngestConfig`, not a separate `ChunkingConfig` class. Either extract a nested `ChunkingConfig` model or add fields directly to `IngestConfig`.
+- [x] Extend chunking fields in `IngestConfig` (in `vektra-shared/src/vektra_shared/config.py`) with Phase 2 dual-strategy fields: `table_split: bool = False`, `parent_child_levels: int = 0`. Add validator: when `strategy == "dual"`, `parent_child_levels` must be >= 1. Note: chunking fields are currently inline in `IngestConfig`, not a separate `ChunkingConfig` class. Either extract a nested `ChunkingConfig` model or add fields directly to `IngestConfig`.
 
-- [ ] Add `quota_bytes: int | None = None` field to the `Namespace` dataclass in `vektra-shared/src/vektra_shared/types.py`. This field exists as nullable in the database (ARCH-040 forward-compatible) and will be enforced in admin-enforcement plan.
+- [x] Add `quota_bytes: int | None = None` field to the `Namespace` dataclass in `vektra-shared/src/vektra_shared/types.py`. This field exists as nullable in the database (ARCH-040 forward-compatible) and will be enforced in admin-enforcement plan.
 
-- [ ] Implement `WebhookEventEmitter` in `vektra-shared/src/vektra_shared/events.py`: class with `__init__(self, config: WebhookConfig)`, `async def emit(self, event_type: str, payload: dict[str, Any]) -> None`, and `def _sign(self, body: bytes) -> str`. Implementation: serialize payload to JSON with `event_type` and `timestamp` fields, compute HMAC-SHA256 with `config.secret` as key, POST to `config.url` with `Content-Type: application/json` and `X-Vektra-Signature-256: sha256={hex_digest}` header. Use `httpx.AsyncClient` with `config.timeout_seconds` timeout. Log errors via `structlog` (no exceptions raised to caller, fire-and-forget). Create client once in `__init__` (reuse across calls).
+- [x] Implement `WebhookEventEmitter` in `vektra-shared/src/vektra_shared/events.py`: class with `__init__(self, config: WebhookConfig)`, `async def emit(self, event_type: str, payload: dict[str, Any]) -> None`, and `def _sign(self, body: bytes) -> str`. Implementation: serialize payload to JSON with `event_type` and `timestamp` fields, compute HMAC-SHA256 with `config.secret` as key, POST to `config.url` with `Content-Type: application/json` and `X-Vektra-Signature-256: sha256={hex_digest}` header. Use `httpx.AsyncClient` with `config.timeout_seconds` timeout. Log errors via `structlog` (no exceptions raised to caller, fire-and-forget). Create client once in `__init__` (reuse across calls).
 
-- [ ] Verify `WebhookEventEmitter` satisfies the `EventEmitter` Protocol via `isinstance()` check (runtime_checkable). Add `__all__` export in `events.py` for both `NoOpEventEmitter` and `WebhookEventEmitter`.
+- [x] Verify `WebhookEventEmitter` satisfies the `EventEmitter` Protocol via `isinstance()` check (runtime_checkable). Add `__all__` export in `events.py` for both `NoOpEventEmitter` and `WebhookEventEmitter`.
 
-- [ ] Add `httpx` to `vektra-shared/pyproject.toml` dependencies (already a dev dependency, now needed at runtime for WebhookEventEmitter). Verify structlog is available (already transitive via FastAPI/uvicorn, but add explicit dependency if needed).
+- [x] Add `httpx` to `vektra-shared/pyproject.toml` dependencies (already a dev dependency, now needed at runtime for WebhookEventEmitter). Verify structlog is available (already transitive via FastAPI/uvicorn, but add explicit dependency if needed).
 
-- [ ] Add import-linter contracts for the two new components in `pyproject.toml`. Add `"vektra_analytics"` and `"vektra_learn"` to the `root_packages` list. Add two new `[[tool.importlinter.contracts]]` entries following the existing pattern:
+- [x] Add import-linter contracts for the two new components in `pyproject.toml`. Add `"vektra_analytics"` and `"vektra_learn"` to the `root_packages` list. Add two new `[[tool.importlinter.contracts]]` entries following the existing pattern:
   - `vektra_analytics must not import from other vektra components except vektra_shared` (forbidden: vektra_core, vektra_ingest, vektra_index, vektra_admin, vektra_learn)
   - `vektra_learn must not import from other vektra components except vektra_shared` (forbidden: vektra_core, vektra_ingest, vektra_index, vektra_admin, vektra_analytics)
   - Update existing contract "No component shall import the app entrypoint" to include vektra_analytics, vektra_learn in source_modules.
   - Add `"vektra_analytics"` and `"vektra_learn"` to `[tool.ruff.lint.isort] known-first-party`.
   - Add `"vektra_analytics"` and `"vektra_learn"` to `[tool.coverage.run] source`.
 
-- [ ] Write unit tests for `WebhookEventEmitter` in `vektra-shared/tests/test_events.py`:
+- [x] Write unit tests for `WebhookEventEmitter` in `vektra-shared/tests/test_events.py`:
   - Test `_sign()` produces correct HMAC-SHA256 hex digest for known input.
   - Test `emit()` sends POST with correct headers (`Content-Type`, `X-Vektra-Signature-256`), body contains `event_type` and `timestamp`.
   - Test `emit()` does not raise on HTTP error (fire-and-forget, logs warning).
@@ -130,27 +130,27 @@ class ChunkingConfig(BaseSettings):
   - Test `isinstance(WebhookEventEmitter(...), EventEmitter)` passes.
   - Use `httpx` mock or `respx` library for HTTP mocking.
 
-- [ ] Write unit tests for new config types in `vektra-shared/tests/test_config.py`:
+- [x] Write unit tests for new config types in `vektra-shared/tests/test_config.py`:
   - Test `RewriteConfig` defaults (enabled=True, model=None).
   - Test `RerankConfig` defaults and env var loading.
   - Test `WebhookConfig` with all fields set.
   - Test `ChunkingConfig` validator: strategy="dual" with parent_child_levels=0 raises ValidationError.
   - Test `ChunkingConfig` validator: strategy="fixed" with parent_child_levels=0 passes.
 
-- [ ] Update `vektra-shared/tests/test_protocols.py` to verify the Protocol count is still 9 (no new Protocols added, AdvancedQueryPipeline is a concrete class not a Protocol). Add assertion that `QueryPipeline` Protocol signatures are unchanged.
+- [x] Update `vektra-shared/tests/test_protocols.py` to verify the Protocol count is still 9 (no new Protocols added, AdvancedQueryPipeline is a concrete class not a Protocol). Add assertion that `QueryPipeline` Protocol signatures are unchanged.
 
 ## Acceptance Criteria
 
-- [ ] `WebhookEventEmitter` implements `EventEmitter` Protocol (passes `isinstance` check at runtime)
-- [ ] `WebhookEventEmitter.emit()` sends HMAC-SHA256 signed POST requests to configured URL
-- [ ] `WebhookEventEmitter.emit()` is fire-and-forget: HTTP failures logged but never raised
-- [ ] `RewriteConfig`, `RerankConfig`, `WebhookConfig` load from environment variables
-- [ ] `ChunkingConfig` validates that `strategy="dual"` requires `parent_child_levels >= 1`
-- [ ] `Namespace` dataclass has `quota_bytes` field (nullable)
-- [ ] import-linter contracts exist for `vektra_analytics` and `vektra_learn`
-- [ ] All 9 existing Protocol interfaces remain unchanged (backward compatible)
-- [ ] All existing tests pass without modification
-- [ ] New tests cover WebhookEventEmitter (signing, HTTP calls, error handling) and config types
+- [x] `WebhookEventEmitter` implements `EventEmitter` Protocol (passes `isinstance` check at runtime)
+- [x] `WebhookEventEmitter.emit()` sends HMAC-SHA256 signed POST requests to configured URL
+- [x] `WebhookEventEmitter.emit()` is fire-and-forget: HTTP failures logged but never raised
+- [x] `RewriteConfig`, `RerankConfig`, `WebhookConfig` load from environment variables
+- [x] `ChunkingConfig` validates that `strategy="dual"` requires `parent_child_levels >= 1`
+- [x] `Namespace` dataclass has `quota_bytes` field (nullable)
+- [x] import-linter contracts exist for `vektra_analytics` and `vektra_learn`
+- [x] All 9 existing Protocol interfaces remain unchanged (backward compatible)
+- [x] All existing tests pass without modification
+- [x] New tests cover WebhookEventEmitter (signing, HTTP calls, error handling) and config types
 
 ## Testing Approach
 

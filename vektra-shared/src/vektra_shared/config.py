@@ -3,12 +3,13 @@
 All VEKTRA_* environment variables are declared here. This is the single
 source of truth for operator documentation and startup validation (ARCH-057 step 1).
 
-37 variables total: 35 VEKTRA_* + 2 external (OPENAI_API_KEY, ANTHROPIC_API_KEY).
+48 variables total: 46 VEKTRA_* + 2 external (OPENAI_API_KEY, ANTHROPIC_API_KEY).
+Phase 2 additions: RewriteConfig (2), RerankConfig (4), WebhookConfig (3), IngestConfig (+2).
 """
 
 from __future__ import annotations
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -96,6 +97,54 @@ class VectorStoreConfig(BaseSettings):
     )
 
 
+class RewriteConfig(BaseSettings):
+    """Conversational query rewriting configuration (ADR-0023, ARCH-061)."""
+
+    enabled: bool = Field(
+        True,
+        alias="VEKTRA_QUERY_REWRITE_ENABLED",
+        description="Enable conversational query rewriting in AdvancedQueryPipeline.",
+    )
+    model: str | None = Field(
+        None,
+        alias="VEKTRA_QUERY_REWRITE_MODEL",
+        description="Override LLM model for the rewrite step. Falls back to primary model.",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
+
+
+class RerankConfig(BaseSettings):
+    """Reranking configuration for AdvancedQueryPipeline (ARCH-061)."""
+
+    enabled: bool = Field(
+        True,
+        alias="VEKTRA_RERANK_ENABLED",
+        description="Enable reranking in AdvancedQueryPipeline.",
+    )
+    provider: str = Field(
+        "flashrank",
+        alias="VEKTRA_RERANK_PROVIDER",
+        description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere'.",
+    )
+    model: str | None = Field(
+        None,
+        alias="VEKTRA_RERANK_MODEL",
+        description="Provider-specific reranking model name.",
+    )
+    top_k: int = Field(
+        5,
+        alias="VEKTRA_RERANK_TOP_K",
+        description="Final top-k results after reranking.",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
+
+
 class QueryPipelineConfig(BaseSettings):
     """Query pipeline configuration (ARCH-055, ARCH-056, ADR-0021)."""
 
@@ -128,6 +177,35 @@ class QueryPipelineConfig(BaseSettings):
         None,
         alias="VEKTRA_PROMPT_TEMPLATES_DIR",
         description="Directory for Jinja2 templates (system.j2, context.j2, conversation.j2). Falls back to built-in defaults.",
+    )
+    rewrite: RewriteConfig = Field(default_factory=RewriteConfig)
+    rerank: RerankConfig = Field(default_factory=RerankConfig)
+
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
+
+
+class WebhookConfig(BaseSettings):
+    """Webhook event emitter configuration (ARCH-038).
+
+    All fields optional: webhook disabled when url is None.
+    """
+
+    url: str | None = Field(
+        None,
+        alias="VEKTRA_WEBHOOK_URL",
+        description="Webhook endpoint URL for event delivery.",
+    )
+    secret: str | None = Field(
+        None,
+        alias="VEKTRA_WEBHOOK_SECRET",
+        description="HMAC-SHA256 signing secret for webhook payloads.",
+    )
+    timeout_seconds: float = Field(
+        5.0,
+        alias="VEKTRA_WEBHOOK_TIMEOUT",
+        description="HTTP timeout in seconds for webhook delivery.",
     )
 
     model_config = SettingsConfigDict(
@@ -163,10 +241,28 @@ class IngestConfig(BaseSettings):
         alias="VEKTRA_DOCUMENT_EXTRACTOR",
         description="DocumentExtractor implementation: 'pdfplumber' (Phase 1), 'unstructured' (Phase 2).",
     )
+    table_split: bool = Field(
+        False,
+        alias="VEKTRA_TABLE_SPLIT",
+        description="Allow splitting table elements across chunks. Phase 2 dual-strategy.",
+    )
+    parent_child_levels: int = Field(
+        0,
+        alias="VEKTRA_PARENT_CHILD_LEVELS",
+        description="Parent-child hierarchy depth. 0=disabled, 2=Phase 2 default.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
     )
+
+    @model_validator(mode="after")
+    def validate_dual_strategy(self) -> IngestConfig:
+        if self.chunking_strategy == "dual" and self.parent_child_levels < 1:
+            raise ValueError(
+                "parent_child_levels must be >= 1 when chunking_strategy is 'dual'"
+            )
+        return self
 
 
 class SecurityConfig(BaseSettings):

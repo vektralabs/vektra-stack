@@ -1,7 +1,7 @@
 # Implementation Plan: Phase 2 database schema and Alembic migrations
 
 **ID**: 20260301-database-phase2
-**Status**: pending
+**Status**: completed
 **Branch**: N/A
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
@@ -90,9 +90,9 @@ SET LOCAL vektra.conversation_key = :key;
 
 ## Tasks
 
-- [ ] Create migration file `migrations/versions/0002_phase2_tables.py` with `revision = "0002"`, `down_revision = "0001"`. Add module docstring explaining: Phase 2 schema additions (4 new tables, 1 index, quota constraints). Follow the same structure as 0001 (op.execute with raw SQL, numbered sections with ARCH references).
+- [x] Create migration file `migrations/versions/0002_phase2_tables.py` with `revision = "0002"`, `down_revision = "0001"`. Add module docstring explaining: Phase 2 schema additions (4 new tables, 1 index, quota constraints). Follow the same structure as 0001 (op.execute with raw SQL, numbered sections with ARCH references).
 
-- [ ] Add `conversations` table via `op.execute()`:
+- [x] Add `conversations` table via `op.execute()`:
   ```sql
   CREATE TABLE conversations (
       id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,7 +108,7 @@ SET LOCAL vektra.conversation_key = :key;
   ```
   Add indexes: `ix_conversations_namespace` on `(namespace_id)`, `ix_conversations_key_id` on `(key_id)`, partial index `ix_conversations_active` on `(namespace_id, updated_at) WHERE deleted_at IS NULL`.
 
-- [ ] Add `conversation_turns` table via `op.execute()`:
+- [x] Add `conversation_turns` table via `op.execute()`:
   ```sql
   CREATE TABLE conversation_turns (
       id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -127,7 +127,7 @@ SET LOCAL vektra.conversation_key = :key;
   ```
   Add indexes: `ix_conversation_turns_conversation` on `(conversation_id)`, `ix_conversation_turns_response` on `(response_id) WHERE response_id IS NOT NULL`.
 
-- [ ] Add `query_traces` table via `op.execute()`:
+- [x] Add `query_traces` table via `op.execute()`:
   ```sql
   CREATE TABLE query_traces (
       id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -144,7 +144,7 @@ SET LOCAL vektra.conversation_key = :key;
   ```
   Add indexes: `ix_query_traces_namespace` on `(namespace_id)`, `ix_query_traces_created` on `(created_at)`, GIN index `ix_query_traces_steps_gin` on `(steps)` for step-level queries.
 
-- [ ] Add `feedback` table via `op.execute()`:
+- [x] Add `feedback` table via `op.execute()`:
   ```sql
   CREATE TABLE feedback (
       id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -160,7 +160,7 @@ SET LOCAL vektra.conversation_key = :key;
   ```
   Add indexes: `ix_feedback_response` on `(response_id)`, `ix_feedback_namespace` on `(namespace_id)`, `ix_feedback_created` on `(created_at)`.
 
-- [ ] Add TOCTOU-mitigating unique partial index on `source_documents`:
+- [x] Add TOCTOU-mitigating unique partial index on `source_documents`:
   ```sql
   CREATE UNIQUE INDEX uq_source_documents_filename
       ON source_documents (namespace_id, filename)
@@ -168,7 +168,7 @@ SET LOCAL vektra.conversation_key = :key;
   ```
   This resolves TECH-004. The existing `ix_source_documents_ns_filename` non-unique index (created in 0001) is retained since PostgreSQL can use either index depending on the query plan. The unique index adds write-time constraint enforcement; the non-unique index may still be preferred for range scans.
 
-- [ ] Add `expires_at` column to `api_keys` table for token expiration (REQ-041):
+- [x] Add `expires_at` column to `api_keys` table for token expiration (REQ-041):
   ```sql
   ALTER TABLE api_keys
       ADD COLUMN expires_at TIMESTAMPTZ NULL;
@@ -179,7 +179,7 @@ SET LOCAL vektra.conversation_key = :key;
   ```
   NULL means the key never expires (backward compatible with all Phase 1 keys). The partial index supports efficient lookup of keys approaching expiration. Enforcement logic belongs to admin-enforcement plan.
 
-- [ ] Add namespace quota constraints and `quota_bytes` column:
+- [x] Add namespace quota constraints and `quota_bytes` column:
   ```sql
   ALTER TABLE namespaces
       ADD COLUMN quota_bytes BIGINT NULL;
@@ -198,9 +198,9 @@ SET LOCAL vektra.conversation_key = :key;
   ```
   The `quota_chunks` and `quota_documents` columns already exist (created in 0001 as nullable). This adds CHECK constraints to prevent invalid values (zero or negative) and adds the `quota_bytes` column for storage-based quotas.
 
-- [ ] Implement the `downgrade()` function in 0002: drop tables in reverse dependency order (feedback, query_traces, conversation_turns, conversations), drop the unique index `uq_source_documents_filename` on source_documents, drop `ix_api_keys_expires` index and `expires_at` column from api_keys, drop the quota constraints (`ck_namespaces_quota_chunks`, `ck_namespaces_quota_documents`, `ck_namespaces_quota_bytes`) and `quota_bytes` column from namespaces.
+- [x] Implement the `downgrade()` function in 0002: drop tables in reverse dependency order (feedback, query_traces, conversation_turns, conversations), drop the unique index `uq_source_documents_filename` on source_documents, drop `ix_api_keys_expires` index and `expires_at` column from api_keys, drop the quota constraints (`ck_namespaces_quota_chunks`, `ck_namespaces_quota_documents`, `ck_namespaces_quota_bytes`) and `quota_bytes` column from namespaces.
 
-- [ ] Write a migration test in `vektra-shared/tests/test_migration.py` (extend the existing test file): apply migration 0002 to a test PostgreSQL instance (after 0001), verify:
+- [x] Write a migration test in `vektra-shared/tests/test_migration.py` (extend the existing test file): apply migration 0002 to a test PostgreSQL instance (after 0001), verify:
   - All 4 new tables exist with correct columns and types
   - `conversation_turns.question` and `conversation_turns.answer` are BYTEA type
   - `uq_source_documents_filename` unique index exists
@@ -209,22 +209,22 @@ SET LOCAL vektra.conversation_key = :key;
   - Downgrade removes all Phase 2 additions without affecting Phase 1 tables
   - Use testcontainers (auto-skip when Docker unavailable)
 
-- [ ] Verify pgcrypto round-trip in test: INSERT a row into `conversation_turns` using `pgp_sym_encrypt()`, SELECT it back with `pgp_sym_decrypt()`, verify the plaintext matches. This validates that the BYTEA columns work correctly with pgcrypto functions and that the `SET LOCAL vektra.conversation_key` pattern works.
+- [x] Verify pgcrypto round-trip in test: INSERT a row into `conversation_turns` using `pgp_sym_encrypt()`, SELECT it back with `pgp_sym_decrypt()`, verify the plaintext matches. This validates that the BYTEA columns work correctly with pgcrypto functions and that the `SET LOCAL vektra.conversation_key` pattern works.
 
 ## Acceptance Criteria
 
-- [ ] `alembic upgrade head` applies both 0001 and 0002 on a fresh PostgreSQL instance without error
-- [ ] `conversations` table created with soft delete support and namespace FK
-- [ ] `conversation_turns` table created with BYTEA columns for encrypted content, unique constraint on (conversation_id, turn_number)
-- [ ] `query_traces` table created with JSONB columns for steps and chunks_retrieved, UNIQUE on response_id
-- [ ] `feedback` table created with rating CHECK constraint (1-5), response_id and optional citation_id
-- [ ] `uq_source_documents_filename` unique partial index prevents concurrent duplicate filename inserts (TECH-004)
-- [ ] `api_keys.expires_at` column exists as nullable TIMESTAMPTZ with partial index
-- [ ] Namespace quota CHECK constraints reject zero and negative values
-- [ ] `quota_bytes` column added to namespaces table
-- [ ] pgcrypto encryption round-trip verified in integration test
-- [ ] `alembic downgrade 0001` removes all Phase 2 additions cleanly
-- [ ] All Phase 1 tables and data remain intact after 0002 upgrade
+- [x] `alembic upgrade head` applies both 0001 and 0002 on a fresh PostgreSQL instance without error
+- [x] `conversations` table created with soft delete support and namespace FK
+- [x] `conversation_turns` table created with BYTEA columns for encrypted content, unique constraint on (conversation_id, turn_number)
+- [x] `query_traces` table created with JSONB columns for steps and chunks_retrieved, UNIQUE on response_id
+- [x] `feedback` table created with rating CHECK constraint (1-5), response_id and optional citation_id
+- [x] `uq_source_documents_filename` unique partial index prevents concurrent duplicate filename inserts (TECH-004)
+- [x] `api_keys.expires_at` column exists as nullable TIMESTAMPTZ with partial index
+- [x] Namespace quota CHECK constraints reject zero and negative values
+- [x] `quota_bytes` column added to namespaces table
+- [x] pgcrypto encryption round-trip verified in integration test
+- [x] `alembic downgrade 0001` removes all Phase 2 additions cleanly
+- [x] All Phase 1 tables and data remain intact after 0002 upgrade
 
 ## Testing Approach
 

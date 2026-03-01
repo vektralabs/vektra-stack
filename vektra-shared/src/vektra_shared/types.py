@@ -362,6 +362,7 @@ class Namespace:
     owner_key_id: UUID | None = None
     quota_chunks: int | None = None
     quota_documents: int | None = None
+    quota_bytes: int | None = None
     config: dict[str, Any] = field(default_factory=dict)
     retention_days: int | None = None
 

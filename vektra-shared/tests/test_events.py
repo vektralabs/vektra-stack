@@ -32,9 +32,7 @@ class TestSign:
 
         result = emitter._sign(body)
 
-        expected = hmac.new(
-            b"test-secret", body, hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
         assert result == expected
 
     def test_sign_different_secrets_produce_different_digests(self) -> None:
@@ -100,9 +98,7 @@ class TestEmit:
 
         req = captured[0]
         body_bytes = req.content
-        expected_sig = hmac.new(
-            b"test-secret", body_bytes, hashlib.sha256
-        ).hexdigest()
+        expected_sig = hmac.new(b"test-secret", body_bytes, hashlib.sha256).hexdigest()
         assert req.headers["x-vektra-signature-256"] == f"sha256={expected_sig}"
 
     @pytest.mark.asyncio

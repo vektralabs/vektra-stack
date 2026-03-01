@@ -314,9 +314,7 @@ async def test_namespace_quota_check_constraints(migrated_db):
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text(
-                    "UPDATE namespaces SET quota_chunks = 0 WHERE id = 'default'"
-                )
+                text("UPDATE namespaces SET quota_chunks = 0 WHERE id = 'default'")
             )
     except Exception:
         raised = True
@@ -436,9 +434,7 @@ async def test_pgcrypto_encryption_roundtrip(migrated_db):
         # Set encryption key for this transaction.
         # SET LOCAL does not support bind parameters in asyncpg,
         # so the key is embedded directly (test-only, known value).
-        await conn.execute(
-            text(f"SET LOCAL vektra.conversation_key = '{test_key}'")
-        )
+        await conn.execute(text(f"SET LOCAL vektra.conversation_key = '{test_key}'"))
 
         # Insert encrypted turn
         await conn.execute(
@@ -503,11 +499,19 @@ async def test_downgrade_removes_phase2_tables(postgres_url):
     await engine.dispose()
 
     phase1_tables = {
-        "namespaces", "api_keys", "source_documents",
-        "document_chunks", "ingest_jobs", "audit_log", "system_state",
+        "namespaces",
+        "api_keys",
+        "source_documents",
+        "document_chunks",
+        "ingest_jobs",
+        "audit_log",
+        "system_state",
     }
     phase2_tables = {
-        "conversations", "conversation_turns", "query_traces", "feedback",
+        "conversations",
+        "conversation_turns",
+        "query_traces",
+        "feedback",
     }
 
     assert phase1_tables.issubset(tables), (

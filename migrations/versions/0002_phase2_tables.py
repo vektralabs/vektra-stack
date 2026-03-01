@@ -110,12 +110,8 @@ def upgrade() -> None:
         )
     """)
 
-    op.execute(
-        "CREATE INDEX ix_query_traces_namespace ON query_traces (namespace_id)"
-    )
-    op.execute(
-        "CREATE INDEX ix_query_traces_created ON query_traces (created_at)"
-    )
+    op.execute("CREATE INDEX ix_query_traces_namespace ON query_traces (namespace_id)")
+    op.execute("CREATE INDEX ix_query_traces_created ON query_traces (created_at)")
     op.execute("""
         CREATE INDEX ix_query_traces_steps_gin
             ON query_traces

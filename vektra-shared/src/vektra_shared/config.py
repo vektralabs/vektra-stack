@@ -50,8 +50,6 @@ class LLMConfig(BaseSettings):
 class EmbeddingConfig(BaseSettings):
     """Embedding provider configuration (ARCH-035, ADR-0013)."""
 
-    model_config = SettingsConfigDict(env_prefix="VEKTRA_", extra="ignore")
-
     embedding_provider: str = Field(
         "sentence-transformers",
         alias="VEKTRA_EMBEDDING_PROVIDER",

@@ -96,7 +96,9 @@ class TestProtocolsImportable:
 
         members = {
             name
-            for name, _ in inspect.getmembers(QueryPipeline, predicate=inspect.isfunction)
+            for name, _ in inspect.getmembers(
+                QueryPipeline, predicate=inspect.isfunction
+            )
             if not name.startswith("_")
         }
         assert members == {"execute", "execute_stream"}

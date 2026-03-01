@@ -55,6 +55,8 @@ known-first-party = [
     "vektra_index",
     "vektra_admin",
     "vektra_app",
+    "vektra_analytics",
+    "vektra_learn",
 ]
 
 [tool.ruff.format]
@@ -106,6 +108,8 @@ root_packages = [
     "vektra_ingest",
     "vektra_index",
     "vektra_app",
+    # vektra_analytics and vektra_learn added when their packages are created
+    # (component-analytics Wave 3, component-learn Wave 4)
 ]
 include_external_packages = true
 
@@ -113,31 +117,36 @@ include_external_packages = true
 name = "vektra_shared must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_shared"]
-forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_admin must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_admin"]
-forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_core must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_core"]
-forbidden_modules = ["vektra_admin", "vektra_ingest", "vektra_index"]
+forbidden_modules = ["vektra_admin", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_ingest must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_ingest"]
-forbidden_modules = ["vektra_admin", "vektra_core", "vektra_index"]
+forbidden_modules = ["vektra_admin", "vektra_core", "vektra_index", "vektra_analytics", "vektra_learn"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_index must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_index"]
-forbidden_modules = ["vektra_admin", "vektra_core", "vektra_ingest"]
+forbidden_modules = ["vektra_admin", "vektra_core", "vektra_ingest", "vektra_analytics", "vektra_learn"]
+
+# Contracts for vektra_analytics and vektra_learn are added when their
+# packages are created (component-analytics Wave 3, component-learn Wave 4).
+# The forbidden_modules entries in existing contracts already prevent
+# other components from importing them.
 
 [[tool.importlinter.contracts]]
 name = "No component shall import the app entrypoint"
@@ -164,6 +173,8 @@ source = [
     "vektra_ingest",
     "vektra_index",
     "vektra_app",
+    "vektra_analytics",
+    "vektra_learn",
 ]
 omit = [
     "tests/*",

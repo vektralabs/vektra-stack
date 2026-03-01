@@ -89,8 +89,8 @@ Before generating Phase 2 plans:
 
 | # | Plan | Title | Tasks | Status |
 |---|------|-------|-------|--------|
-| 1 | [shared-protocols-phase2](20260301-shared-protocols-phase2.md) | Protocol additions and import boundaries | 11 | pending |
-| 2 | [database-phase2](20260301-database-phase2.md) | New tables, migrations, TOCTOU fix | 11 | pending |
+| 1 | [shared-protocols-phase2](20260301-shared-protocols-phase2.md) | Protocol additions and import boundaries | 11 | completed |
+| 2 | [database-phase2](20260301-database-phase2.md) | New tables, migrations, TOCTOU fix | 11 | completed |
 
 ---
 

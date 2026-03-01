@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
-from vektra_core.conversation import ConversationStore
+from vektra_core.conversation import InMemoryConversationStore
 from vektra_core.pipeline import (
     SimpleQueryPipeline,
     _apply_retrieval_filter,
@@ -95,7 +95,7 @@ def _make_pipeline(
         llm=llm,
         llm_config=llm_config or _make_llm_config(),
         safeguard=safeguard,
-        conversation_store=ConversationStore(max_turns=10),
+        conversation_store=InMemoryConversationStore(max_turns=10),
         renderer=TemplateRenderer(),
         pipeline_config=pipeline_config or _make_pipeline_config(),
     )
@@ -334,7 +334,7 @@ async def test_execute_saves_conversation_turn():
     vector_store = AsyncMock()
     vector_store.search = AsyncMock(return_value=results)
 
-    conv_store = ConversationStore()
+    conv_store = InMemoryConversationStore()
     pipeline = _make_pipeline(vector_store=vector_store)
     pipeline._conversation_store = conv_store
 

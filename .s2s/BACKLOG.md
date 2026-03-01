@@ -265,8 +265,9 @@ Specific items to address at the roundtable:
 
 ### TECH-003: Phase 2 implementation plans
 
-**Status**: planned | **Priority**: high | **Created**: 2026-02-17 | **Updated**: 2026-03-01
+**Status**: done | **Priority**: high | **Created**: 2026-02-17 | **Updated**: 2026-03-01
 **Blocked by**: none (DOCS-007 resolved)
+**Completed**: PR #21 (scoping plan), PR #22 (11 detailed plans, 168 tasks, codebase-validated)
 
 **Context**: Phase 2 requirements and architecture are already formalized in the existing documents: requirements.md contains 44 Phase 2 references (EX-xxx exclusions, Phase 2 deferrals), architecture.md contains 115+ Phase 2 references (ARCH decisions with Phase 2 annotations, ADR-0014 AdvancedQueryPipeline, ADR-0023 query rewriting, ADR-0024/0025 UI decisions, etc.). A full `/s2s:design` roundtable is NOT needed. Only implementation plans via `/s2s:plan` are required.
 
@@ -279,10 +280,10 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 **Acceptance Criteria**:
 - [x] DOCS-007 resolved (OQ-018, OQ-019)
-- [ ] Scoping plan generated and validated (SPV L1 + L3 pass)
-- [ ] Detailed plans generated with provides/requires YAML front-matter
-- [ ] INDEX-PHASE2.md populated with wave structure and dependency graph
-- [ ] New ADRs created as needed during planning (ADR-0024+)
+- [x] Scoping plan generated and validated (SPV L1 + L3 pass)
+- [x] Detailed plans generated with provides/requires YAML front-matter
+- [x] INDEX-PHASE2.md populated with wave structure and dependency graph
+- [x] New ADRs created as needed during planning (ADR-0024, ADR-0025)
 
 ---
 
@@ -567,7 +568,7 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 | ~~DOCS-008 (no_relevant_context REQ)~~ | ~~Before Phase 1 SRS close~~ | Done (REQ-066 in SRS v1.5.0) |
 | ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
-| TECH-003 (Phase 2 plans) | After DOCS-007 | /s2s:plan with phased generation |
+| ~~TECH-003 (Phase 2 plans)~~ | ~~After DOCS-007~~ | Done (PR #21 + PR #22, 11 plans, 168 tasks) |
 | TECH-004 (unique indexes) | Anytime (infra-database done) | Alembic migration ready |
 | ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
 | DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |

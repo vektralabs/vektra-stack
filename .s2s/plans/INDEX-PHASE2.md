@@ -1,7 +1,7 @@
 # Phase 2 implementation plan index
 
 **Generated**: 2026-02-28
-**Total plans**: TBD
+**Total plans**: 11 (scoping plan complete, detailed plans pending)
 **Status legend**: `pending` | `in_progress` | `completed`
 
 ---
@@ -75,28 +75,91 @@ If during implementation you discover sub-tasks not in the plan: **add them to t
 Before generating Phase 2 plans:
 
 - [x] Phase 1 released (v0.1.0)
-- [ ] DOCS-007 resolved (OQ-018 learn-ui/admin-ui architecture, OQ-019 hardware minimum)
-- [ ] Scoping plan generated and validated (phase 1 of the three-phase approach)
+- [x] DOCS-007 resolved (ADR-0024, ADR-0025, ARCH-062/063/064)
+- [x] Scoping plan generated ([phase2-scoping-plan.md](phase2-scoping-plan.md))
+- [x] Dependency validation (SPV L1 + L3 checks)
+- [ ] Detailed plans generated with provides/requires YAML
 
 ---
 
 ## Execution order
 
-<!-- Populated by /s2s:plan after scoping phase -->
+<!-- Wave structure from scoping plan. Plan filenames TBD when detailed plans are generated. -->
 
-### Wave 0 - TBD
+### Wave 0 - Foundation
+
+| # | Plan | Title | Complexity | Status |
+|---|------|-------|------------|--------|
+| 1 | shared-protocols-phase2 | Protocol additions and import boundaries | medium | pending |
+| 2 | database-phase2 | New tables, migrations, TOCTOU fix | medium | pending |
+
+---
+
+### Wave 1 - Component enhancements
+
+| # | Plan | Title | Complexity | Status |
+|---|------|-------|------------|--------|
+| 3 | core-conversations | Persistent conversations, feedback | medium | pending |
+| 4 | admin-enforcement | RLS, scope enforcement, rate limiting | medium | pending |
+| 5 | index-hybrid | Hybrid search, Qdrant, reindex API | large | pending |
+| 6 | ingest-phase2 | OCR, dual chunking, versioning, batch ops | large | pending |
+
+---
+
+### Wave 2 - Advanced features
+
+| # | Plan | Title | Complexity | Status |
+|---|------|-------|------------|--------|
+| 7 | core-pipeline-v2 | Advanced pipeline, safeguards, streaming trace | large | pending |
+| 8 | admin-ui | HTMX + Jinja2 admin dashboard | medium | pending |
+
+---
+
+### Wave 3 - Analytics
 
 | Plan | Title | Complexity | Status |
 |------|-------|------------|--------|
+| component-analytics | QueryTrace storage, metrics, reporting API | medium | pending |
+
+---
+
+### Wave 4 - E-learning vertical
+
+| Plan | Title | Complexity | Status |
+|------|-------|------------|--------|
+| component-learn | LMS-agnostic API, chatbot widget | large | pending |
+
+---
+
+### Wave 5 - Integration
+
+| Plan | Title | Complexity | Status |
+|------|-------|------------|--------|
+| infra-phase2 | App entrypoint, Docker, CI | medium | pending |
 
 ---
 
 ## Dependency graph (compact)
 
-<!-- Populated after scoping plan defines wave structure -->
-
 ```
-TBD
+shared-protocols-phase2 ──┬──► index-hybrid ─────────────┐
+                          ├──► admin-enforcement ──► admin-ui
+                          └──► ingest-phase2        │     │
+                                                    │     │
+database-phase2 ──────────┬──► core-conversations ──┤     │
+                          ├──► admin-enforcement     │     │
+                          └──► ingest-phase2         │     │
+                                                     ▼     │
+                              core-pipeline-v2 ◄─────┘     │
+                                    │                       │
+                                    ▼                       │
+                             component-analytics            │
+                                    │                       │
+                                    ▼                       │
+                             component-learn                │
+                                    │                       │
+                                    ▼                       │
+                              infra-phase2 ◄────────────────┘
 ```
 
 ---

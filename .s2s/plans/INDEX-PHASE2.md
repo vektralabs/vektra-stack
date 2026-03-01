@@ -86,32 +86,32 @@ Before generating Phase 2 plans:
 
 <!-- Wave structure from scoping plan. Plan filenames TBD when detailed plans are generated. -->
 
-### Wave 0 - Foundation (parallel)
+### Wave 0 - Foundation
 
-| Plan | Title | Complexity | Status |
-|------|-------|------------|--------|
-| shared-protocols-phase2 | Protocol additions and import boundaries | medium | pending |
-| database-phase2 | New tables, migrations, TOCTOU fix | medium | pending |
-
----
-
-### Wave 1 - Component enhancements (parallel)
-
-| Plan | Title | Complexity | Status |
-|------|-------|------------|--------|
-| index-hybrid | Hybrid search, Qdrant, reindex API | large | pending |
-| admin-enforcement | RLS, scope enforcement, rate limiting | medium | pending |
-| core-conversations | Persistent conversations, feedback | medium | pending |
-| ingest-phase2 | OCR, dual chunking, versioning, batch ops | large | pending |
+| # | Plan | Title | Complexity | Status |
+|---|------|-------|------------|--------|
+| 1 | shared-protocols-phase2 | Protocol additions and import boundaries | medium | pending |
+| 2 | database-phase2 | New tables, migrations, TOCTOU fix | medium | pending |
 
 ---
 
-### Wave 2 - Advanced features (parallel)
+### Wave 1 - Component enhancements
 
-| Plan | Title | Complexity | Status |
-|------|-------|------------|--------|
-| core-pipeline-v2 | Advanced pipeline, safeguards, streaming trace | large | pending |
-| admin-ui | HTMX + Jinja2 admin dashboard | medium | pending |
+| # | Plan | Title | Complexity | Status |
+|---|------|-------|------------|--------|
+| 3 | core-conversations | Persistent conversations, feedback | medium | pending |
+| 4 | admin-enforcement | RLS, scope enforcement, rate limiting | medium | pending |
+| 5 | index-hybrid | Hybrid search, Qdrant, reindex API | large | pending |
+| 6 | ingest-phase2 | OCR, dual chunking, versioning, batch ops | large | pending |
+
+---
+
+### Wave 2 - Advanced features
+
+| # | Plan | Title | Complexity | Status |
+|---|------|-------|------------|--------|
+| 7 | core-pipeline-v2 | Advanced pipeline, safeguards, streaming trace | large | pending |
+| 8 | admin-ui | HTMX + Jinja2 admin dashboard | medium | pending |
 
 ---
 

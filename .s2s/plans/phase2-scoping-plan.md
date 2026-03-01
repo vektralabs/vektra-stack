@@ -18,7 +18,7 @@ Phase 2 builds on the v0.1.0 foundation to deliver:
 - Chatbot widget for LMS integration (ADR-0025)
 - Technical debt resolution (DEBT-002..008)
 
-**Out of scope (Phase 3)**: SDKs (vektra-sdk-py, vektra-sdk-js), separate SPA admin frontend, npm chat widget package, CLI tool (EX-001), LlamaIndex/LangGraph adoption.
+**Out of scope (Phase 3)**: SDKs (vektra-sdk-py, vektra-sdk-js), separate SPA admin frontend, npm chat widget package, CLI tool (EX-001), LlamaIndex/LangGraph adoption, entry_points plugin discovery (ARCH-039, REQ-062).
 
 ---
 
@@ -39,7 +39,8 @@ New and extended Protocol definitions required by all Phase 2 components.
 | Extended Namespace type (quota enforcement fields) | ARCH-047 |
 | DualStrategyChunking Protocol additions | ARCH-037, REQ-054 |
 | import-linter rules for vektra-analytics, vektra-learn | ADR-0005 |
-| entry_points plugin discovery for ProviderRegistry | ARCH-039, REQ-062 |
+
+**Deferred to Phase 3**: entry_points plugin discovery (ARCH-039, REQ-062). ProviderRegistry works with explicit registration in the lifespan. Third-party plugins are not needed before SDKs exist.
 
 **Provides**: all new Protocol interfaces, import boundary rules for new components
 **Requires**: nothing
@@ -254,7 +255,7 @@ Integration layer: app entrypoint, Docker, CI updates.
 | Docker Compose: Qdrant service (profile: qdrant) | ADR-0004, ARCH-051 |
 | Docker Compose: TEI service option (profile: tei) | ARCH-035, ARCH-064 |
 | Updated Dockerfile (new dependencies: Unstructured, fastembed) | ARCH-064 |
-| CI performance baselines (latency regression detection) | EX-004 |
+| CI performance baselines (latency regression detection) - optional | EX-004 |
 | Updated Makefile targets for Phase 2 workflows | - |
 | Workspace members: add vektra-analytics, vektra-learn | ADR-0001 |
 
@@ -265,67 +266,62 @@ Integration layer: app entrypoint, Docker, CI updates.
 
 ## Wave structure
 
-### Wave 0 - Foundation (parallel)
+Waves define execution order for correctness, not for parallelism. Within each wave, plans are listed in recommended sequence: each completed plan enriches the codebase context for the next one. The LLM implementing plan N benefits from patterns established in plan N-1.
 
-| Plan | Title | Complexity |
-|------|-------|------------|
-| shared-protocols-phase2 | Protocol additions and import boundaries | medium |
-| database-phase2 | New tables, migrations, TOCTOU fix | medium |
+### Wave 0 - Foundation
 
----
-
-### Wave 1 - Component enhancements (parallel)
-
-| Plan | Title | Complexity |
-|------|-------|------------|
-| index-hybrid | Hybrid search, Qdrant, reindex API | large |
-| admin-enforcement | RLS, scope enforcement, rate limiting | medium |
-| core-conversations | Persistent conversations, feedback | medium |
-| ingest-phase2 | OCR, dual chunking, versioning, batch ops | large |
-
-All require Wave 0 completion. No inter-dependencies within Wave 1.
+| # | Plan | Title | Complexity | Rationale for order |
+|---|------|-------|------------|---------------------|
+| 1 | shared-protocols-phase2 | Protocol additions and import boundaries | medium | Protocols must exist before any implementation |
+| 2 | database-phase2 | New tables, migrations, TOCTOU fix | medium | Tables must exist before any ORM code |
 
 ---
 
-### Wave 2 - Advanced features (parallel)
+### Wave 1 - Component enhancements
 
-| Plan | Title | Complexity |
-|------|-------|------------|
-| core-pipeline-v2 | Advanced pipeline, safeguards, streaming trace | large |
-| admin-ui | HTMX + Jinja2 admin dashboard | medium |
+All require Wave 0 completion. No inter-dependencies within Wave 1. Order optimizes LLM context buildup.
 
-- core-pipeline-v2 requires: index-hybrid + core-conversations (Wave 1)
-- admin-ui requires: admin-enforcement (Wave 1)
+| # | Plan | Title | Complexity | Rationale for order |
+|---|------|-------|------------|---------------------|
+| 3 | core-conversations | Persistent conversations, feedback | medium | DB-heavy CRUD: establishes pgcrypto and ORM patterns reused later |
+| 4 | admin-enforcement | RLS, scope enforcement, rate limiting | medium | Middleware patterns, auth hardening: builds on existing admin code |
+| 5 | index-hybrid | Hybrid search, Qdrant, reindex API | large | New provider type: pattern for implementing against Protocol |
+| 6 | ingest-phase2 | OCR, dual chunking, versioning, batch ops | large | Largest plan, benefits from all prior patterns (DB, middleware, provider) |
+
+> **Note on ingest-phase2**: 10 features in one plan. If the detailed plan exceeds ~30 tasks, split into ingest-processing (OCR, chunking, versioning) and ingest-integration (batch ops, webhooks, cleanup jobs). Evaluate during detailed plan generation.
+
+---
+
+### Wave 2 - Advanced features
+
+| # | Plan | Title | Complexity | Rationale for order |
+|---|------|-------|------------|---------------------|
+| 7 | core-pipeline-v2 | Advanced pipeline, safeguards, streaming trace | large | Requires index-hybrid (hybrid search) + core-conversations (context). Central plan, provides QueryTrace for analytics. |
+| 8 | admin-ui | HTMX + Jinja2 admin dashboard | medium | Requires admin-enforcement (endpoints to render). Separate concern from pipeline, can follow immediately. |
 
 ---
 
 ### Wave 3 - Analytics
 
-| Plan | Title | Complexity |
-|------|-------|------------|
-| component-analytics | QueryTrace storage, metrics, reporting API | medium |
-
-Requires: core-pipeline-v2 (Wave 2)
+| # | Plan | Title | Complexity | Rationale for order |
+|---|------|-------|------------|---------------------|
+| 9 | component-analytics | QueryTrace storage, metrics, reporting API | medium | Requires core-pipeline-v2 (QueryTrace emission). New component, benefits from all existing patterns. |
 
 ---
 
 ### Wave 4 - E-learning vertical
 
-| Plan | Title | Complexity |
-|------|-------|------------|
-| component-learn | LMS-agnostic API, chatbot widget | large |
-
-Requires: component-analytics (Wave 3)
+| # | Plan | Title | Complexity | Rationale for order |
+|---|------|-------|------------|---------------------|
+| 10 | component-learn | LMS-agnostic API, chatbot widget | large | Requires core-pipeline-v2 + component-analytics. First JS artifact in the project (chatbot widget). |
 
 ---
 
 ### Wave 5 - Integration
 
-| Plan | Title | Complexity |
-|------|-------|------------|
-| infra-phase2 | App entrypoint, Docker, CI | medium |
-
-Requires: all plans completed
+| # | Plan | Title | Complexity | Rationale for order |
+|---|------|-------|------------|---------------------|
+| 11 | infra-phase2 | App entrypoint, Docker, CI | medium | Requires all plans. Registers all new providers, updates deployment stack. |
 
 ---
 
@@ -371,15 +367,19 @@ database-phase2 ──────────┘  core-pipeline-v2 ◄───
 
 ## Risk areas
 
-1. **core-pipeline-v2 is the bottleneck**: 3 dependencies (shared-protocols, index-hybrid, core-conversations) and 2 dependents (analytics, learn). Any delay cascades.
+Risks below are about correctness and context, not time or complexity.
 
-2. **Qdrant integration complexity**: first non-PostgreSQL provider. Docker Compose profiles, CI matrix expansion, integration test isolation.
+1. **core-pipeline-v2 has the most dependencies**: 3 inputs (shared-protocols, index-hybrid, core-conversations), 2 consumers (analytics, learn). The detailed plan must be precise about which interfaces it consumes and what QueryTrace contract it provides.
 
-3. **OCR dependency size**: Unstructured library adds significant container weight. Impacts ARCH-064 (8GB target).
+2. **Qdrant is the first non-PostgreSQL provider**: different transactional semantics (no SQL transactions). The LLM needs clear guidance on compensating delete patterns (ARCH-052) and integration test isolation (Docker Compose profiles).
 
-4. **Chatbot widget build pipeline**: first JS artifact in a Python-only project. Needs esbuild or similar, CI integration for JS build.
+3. **OCR dependency size**: Unstructured library adds significant container weight. Impacts ARCH-064 (8GB target). The detailed plan must specify whether Unstructured is a hard dependency or an optional install.
 
-5. **RLS activation is a breaking change**: application-level filtering must coexist with RLS during migration. Feature flag controls activation.
+4. **Chatbot widget is the first JS artifact**: a Python-only project gains a JS build step (esbuild). The LLM needs explicit instructions on build tooling, output path, and CI integration. Risk of over-engineering (React/Preact vs vanilla JS).
+
+5. **RLS activation is a migration**: application-level filtering must coexist with RLS during rollout. Feature flag controls activation. The detailed plan must specify the migration sequence and rollback path.
+
+6. **ingest-phase2 context exhaustion**: 10 features may produce 30+ tasks. If the LLM runs out of context mid-plan, it loses track of what was implemented. Mitigate by splitting if needed (see Wave 1 note).
 
 ---
 
@@ -425,7 +425,6 @@ database-phase2 ──────────┘  core-pipeline-v2 ◄───
 | REQ-057 (soft delete cleanup) | ingest-phase2 |
 | REQ-060 (QueryTrace storage) | component-analytics |
 | REQ-061 (WebhookEventEmitter) | shared-protocols-phase2 |
-| REQ-062 (plugin discovery) | shared-protocols-phase2 |
 | REQ-064 (reindex API) | index-hybrid |
 | EX-002 (OCR) | ingest-phase2 |
 | EX-005 (batch ops) | ingest-phase2 |

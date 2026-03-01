@@ -14,7 +14,7 @@ See [LICENSE](LICENSE) for the full text.
 
 ## Governance Model: BDFL-transitional
 
-During **Phase 1-2** (core development), Vektra follows a Benevolent Dictator For Life (BDFL) model:
+During **Phases 1 and 2** (core development), Vektra follows a Benevolent Dictator For Life (BDFL) model:
 - Final decision authority rests with the project founder
 - Decisions are made transparently with community input via GitHub Discussions
 - This model enables rapid iteration without governance overhead

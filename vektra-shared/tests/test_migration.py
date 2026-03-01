@@ -314,16 +314,25 @@ async def test_namespace_quota_check_constraints(migrated_db):
     engine = create_async_engine(migrated_db)
 
     # quota_chunks = 0 should fail
-    raised = False
     try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text("UPDATE namespaces SET quota_chunks = 0 WHERE id = 'default'")
-            )
-    except Exception:
-        raised = True
-    await engine.dispose()
-    assert raised, "ck_namespaces_quota_chunks should reject 0"
+        with pytest.raises(Exception, match="ck_namespaces_quota_chunks"):
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE namespaces SET quota_chunks = 0 WHERE id = 'default'")
+                )
+    finally:
+        await engine.dispose()
+
+    # quota_bytes = 0 should fail
+    engine = create_async_engine(migrated_db)
+    try:
+        with pytest.raises(Exception, match="ck_namespaces_quota_bytes"):
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE namespaces SET quota_bytes = 0 WHERE id = 'default'")
+                )
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -399,19 +408,17 @@ async def test_feedback_rating_check_constraint(migrated_db):
     from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(migrated_db)
-    raised = False
     try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO feedback (response_id, namespace_id, key_id, rating) "
-                    "VALUES (gen_random_uuid(), 'default', gen_random_uuid(), 0)"
+        with pytest.raises(Exception, match="ck_feedback_rating"):
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO feedback (response_id, namespace_id, key_id, rating) "
+                        "VALUES (gen_random_uuid(), 'default', gen_random_uuid(), 0)"
+                    )
                 )
-            )
-    except Exception:
-        raised = True
-    await engine.dispose()
-    assert raised, "ck_feedback_rating should reject rating = 0"
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

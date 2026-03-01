@@ -2,7 +2,7 @@
 
 **Created**: 2026-03-01
 **Purpose**: Phase 1 of three-phase plan generation (scoping -> validation -> detailed plans)
-**Status**: draft
+**Status**: validated
 
 ---
 
@@ -105,7 +105,7 @@ Multi-tenancy enforcement and security hardening.
 | TTLCache for API key verification | DEBT-008 |
 
 **Provides**: enforced multi-tenancy, scope checking, rate limiting
-**Requires**: database-phase2 (namespace quota columns)
+**Requires**: shared-protocols-phase2 (extended Namespace type), database-phase2 (namespace quota columns)
 
 ---
 
@@ -330,19 +330,22 @@ All require Wave 0 completion. No inter-dependencies within Wave 1. Order optimi
 ```
 shared-protocols-phase2 ──┬──► index-hybrid ─────────────┐
                           ├──► admin-enforcement ──► admin-ui
-                          ├──► core-conversations ──┐     │
                           └──► ingest-phase2        │     │
-                                                    ▼     │
-database-phase2 ──────────┘  core-pipeline-v2 ◄────┘     │
-                                    │                     │
-                                    ▼                     │
-                             component-analytics          │
-                                    │                     │
-                                    ▼                     │
-                             component-learn              │
-                                    │                     │
-                                    ▼                     │
-                              infra-phase2 ◄──────────────┘
+                                                    │     │
+database-phase2 ──────────┬──► core-conversations ──┤     │
+                          ├──► admin-enforcement     │     │
+                          └──► ingest-phase2         │     │
+                                                     ▼     │
+                              core-pipeline-v2 ◄─────┘     │
+                                    │                       │
+                                    ▼                       │
+                             component-analytics            │
+                                    │                       │
+                                    ▼                       │
+                             component-learn                │
+                                    │                       │
+                                    ▼                       │
+                              infra-phase2 ◄────────────────┘
 ```
 
 ---
@@ -354,7 +357,7 @@ database-phase2 ──────────┘  core-pipeline-v2 ◄───
 | shared-protocols-phase2 | Protocol interfaces, import rules | - |
 | database-phase2 | Tables, migrations | - |
 | index-hybrid | Hybrid search, Qdrant, reindex | shared-protocols-phase2 |
-| admin-enforcement | RLS, scopes, rate limiting | database-phase2 |
+| admin-enforcement | RLS, scopes, rate limiting | shared-protocols-phase2, database-phase2 |
 | core-conversations | Conversation CRUD, feedback API | database-phase2 |
 | ingest-phase2 | OCR, dual chunking, versioning | shared-protocols-phase2, database-phase2 |
 | core-pipeline-v2 | Advanced pipeline, safeguards, trace | shared-protocols-phase2, index-hybrid, core-conversations |

@@ -77,7 +77,7 @@ Before generating Phase 2 plans:
 - [x] Phase 1 released (v0.1.0)
 - [x] DOCS-007 resolved (ADR-0024, ADR-0025, ARCH-062/063/064)
 - [x] Scoping plan generated ([phase2-scoping-plan.md](phase2-scoping-plan.md))
-- [ ] Dependency validation (SPV L1 + L3 checks)
+- [x] Dependency validation (SPV L1 + L3 checks)
 - [ ] Detailed plans generated with provides/requires YAML
 
 ---
@@ -144,19 +144,22 @@ Before generating Phase 2 plans:
 ```
 shared-protocols-phase2 ──┬──► index-hybrid ─────────────┐
                           ├──► admin-enforcement ──► admin-ui
-                          ├──► core-conversations ──┐     │
                           └──► ingest-phase2        │     │
-                                                    ▼     │
-database-phase2 ──────────┘  core-pipeline-v2 ◄────┘     │
-                                    │                     │
-                                    ▼                     │
-                             component-analytics          │
-                                    │                     │
-                                    ▼                     │
-                             component-learn              │
-                                    │                     │
-                                    ▼                     │
-                              infra-phase2 ◄──────────────┘
+                                                    │     │
+database-phase2 ──────────┬──► core-conversations ──┤     │
+                          ├──► admin-enforcement     │     │
+                          └──► ingest-phase2         │     │
+                                                     ▼     │
+                              core-pipeline-v2 ◄─────┘     │
+                                    │                       │
+                                    ▼                       │
+                             component-analytics            │
+                                    │                       │
+                                    ▼                       │
+                             component-learn                │
+                                    │                       │
+                                    ▼                       │
+                              infra-phase2 ◄────────────────┘
 ```
 
 ---

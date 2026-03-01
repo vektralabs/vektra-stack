@@ -30,7 +30,7 @@ class TestSign:
         emitter = WebhookEventEmitter(config)
         body = b'{"event_type":"test","payload":{}}'
 
-        result = emitter._sign(body)
+        result = emitter._sign(body, "test-secret")
 
         expected = hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
         assert result == expected
@@ -39,7 +39,7 @@ class TestSign:
         body = b"same-body"
         e1 = WebhookEventEmitter(_make_config(VEKTRA_WEBHOOK_SECRET="secret-a"))
         e2 = WebhookEventEmitter(_make_config(VEKTRA_WEBHOOK_SECRET="secret-b"))
-        assert e1._sign(body) != e2._sign(body)
+        assert e1._sign(body, "secret-a") != e2._sign(body, "secret-b")
 
 
 class TestEmit:

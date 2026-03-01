@@ -61,17 +61,18 @@ class WebhookEventEmitter:
         if self._client is not None:
             await self._client.aclose()
 
-    def _sign(self, body: bytes) -> str:
+    def _sign(self, body: bytes, secret: str) -> str:
         """Compute HMAC-SHA256 hex digest of the request body."""
         return hmac.new(
-            self._config.secret.encode(),
+            secret.encode(),
             body,
             hashlib.sha256,
         ).hexdigest()
 
     async def emit(self, event_type: str, payload: dict[str, Any]) -> None:
         """Send event as HTTP POST. Failures are logged, never raised."""
-        if self._client is None:
+        url = self._config.url
+        if self._client is None or url is None:
             return
 
         body_dict = {
@@ -82,12 +83,13 @@ class WebhookEventEmitter:
         body = json.dumps(body_dict, default=str).encode()
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self._config.secret:
-            headers["X-Vektra-Signature-256"] = f"sha256={self._sign(body)}"
+        secret = self._config.secret
+        if secret:
+            headers["X-Vektra-Signature-256"] = f"sha256={self._sign(body, secret)}"
 
         try:
             response = await self._client.post(
-                self._config.url,
+                url,
                 content=body,
                 headers=headers,
             )

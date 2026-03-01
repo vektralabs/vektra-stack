@@ -142,7 +142,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
 - EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
 
-**Key decisions** (61 total, 23 ADRs):
+**Key decisions** (64 total, 25 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
 - [ADR-0005](decisions/ADR-0005-module-boundary-enforcement.md): Module boundary enforcement
 - [ADR-0006](decisions/ADR-0006-background-tasks-arq.md): Background tasks with arq
@@ -160,15 +160,17 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - [ADR-0021](decisions/ADR-0021-retrieval-quality-controls.md): Retrieval quality controls in QueryPipeline
 - [ADR-0022](decisions/ADR-0022-orm-sqlalchemy-async.md): SQLAlchemy 2.0 async with asyncpg for ORM
 - [ADR-0023](decisions/ADR-0023-conversational-query-rewriting.md): Conversational query rewriting (Phase 2)
+- [ADR-0024](decisions/ADR-0024-admin-ui-server-side.md): Admin UI with server-side rendering (HTMX + Jinja2)
+- [ADR-0025](decisions/ADR-0025-learn-chatbot-widget.md): Learn chatbot widget as backend-served JS bundle
 
 ## Open Questions
 
 - ~~**Periodic indexing pattern**: n8n orchestrates ingestion, but the scheduling pattern needs documentation as a reference workflow~~ Resolved: reference n8n workflow at `docs/workflows/periodic-ingest.json`
 - ~~**ORM layer**: SQLAlchemy 2.0 async (with asyncpg) vs SQLModel. Must be decided before implementation (OQ-017)~~ Resolved: ADR-0022
-- **learn-ui architecture**: is the chatbot widget a standalone npm package or served by the backend? (OQ-018)
-- **admin-ui architecture**: is admin a separate SPA or integrated? (OQ-018)
-- **Phase 2 hardware minimum**: Phase 2 full-featured estimated at ~3.4GB total. Recommend 8GB / 4 CPU target (OQ-019)
+- ~~**learn-ui architecture**: is the chatbot widget a standalone npm package or served by the backend? (OQ-018)~~ Resolved: ADR-0025 (Phase 2: backend-served JS bundle, Phase 3: npm package)
+- ~~**admin-ui architecture**: is admin a separate SPA or integrated? (OQ-018)~~ Resolved: ADR-0024 (Phase 2: HTMX + Jinja2 server-side, Phase 3: separate SPA)
+- ~~**Phase 2 hardware minimum**: Phase 2 full-featured estimated at ~3.4GB total. Recommend 8GB / 4 CPU target (OQ-019)~~ Resolved: ARCH-064 (8GB RAM / 4 CPU formalized as Phase 2 minimum)
 
 ---
 
-*Last updated: 2026-02-26*
+*Last updated: 2026-03-01*

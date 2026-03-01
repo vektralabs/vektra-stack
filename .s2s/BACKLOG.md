@@ -222,30 +222,28 @@ Specific items to address at the roundtable:
 
 ---
 
-### DOCS-007: Resolve Phase 2 open questions before /s2s:design Phase 2
+### DOCS-007: ~~Resolve Phase 2 open questions~~
 
-**Status**: planned | **Priority**: low (now) → high (before Phase 2 design) | **Created**: 2026-02-17
-**Blocked by**: Phase 1 completion
+**Status**: completed | **Priority**: high | **Created**: 2026-02-17 | **Completed**: 2026-03-01
+**Resolved in**: ADR-0024, ADR-0025, ARCH-062/063/064
 
-**Context**: Two open questions from requirements.md are deferred to Phase 2 design but need resolution before the Phase 2 design roundtable can run:
+**Context**: Two open questions from requirements.md resolved before Phase 2 planning.
 
 **OQ-018** (learn-ui + admin-ui architecture):
-- Is the chatbot widget a standalone npm package or served by the backend?
-- Is admin a separate SPA or integrated into vektra-core?
-- Decision affects vektra-learn component structure and deployment model
+- Admin UI: HTMX + Jinja2 server-side rendering (ADR-0024, ARCH-062). Phase 3: migrate to separate SPA.
+- Chatbot widget: self-contained JS bundle served by vektra-learn (ADR-0025, ARCH-063). Phase 3: extract to npm package.
+- Design constraints documented for Phase 3 migration (no business logic in templates, REST API only, self-contained widget).
 
 **OQ-019** (Phase 2 hardware minimum):
-- Recommendation already exists (8GB RAM / 4 CPU, OQ-019 in architecture.md)
-- Needs formal sign-off and propagation into Phase 2 NFRs
-- Decision affects vektra-learn and vektra-analytics RAM allocation planning
+- 8GB RAM / 4 CPU formalized as Phase 2 minimum (ARCH-064). Requirements.md is closed; formalization in architecture.md instead of NFR-014.
 
-**Traceability**: requirements.md OQ-018, OQ-019, architecture.md CONTEXT.md
+**Traceability**: requirements.md OQ-018/OQ-019, architecture.md v1.10, CONTEXT.md, ADR-0024, ADR-0025
 
 **Acceptance Criteria**:
-- [ ] OQ-018: architecture decision recorded (ADR or ARCH entry) for widget deployment model
-- [ ] OQ-018: architecture decision recorded for admin-ui deployment model
-- [ ] OQ-019: Phase 2 hardware NFR formally added to requirements.md (NFR-014 or similar)
-- [ ] Both OQs marked as resolved in requirements.md and CONTEXT.md updated
+- [x] OQ-018: architecture decision recorded (ADR-0025, ARCH-063) for widget deployment model
+- [x] OQ-018: architecture decision recorded (ADR-0024, ARCH-062) for admin-ui deployment model
+- [x] OQ-019: Phase 2 hardware target formalized in architecture.md (ARCH-064)
+- [x] Both OQs marked as resolved in CONTEXT.md
 
 ---
 
@@ -267,22 +265,20 @@ Specific items to address at the roundtable:
 
 ### TECH-003: Phase 2 implementation plans
 
-**Status**: planned | **Priority**: high | **Created**: 2026-02-17 | **Updated**: 2026-02-28
-**Blocked by**: DOCS-007
+**Status**: planned | **Priority**: high | **Created**: 2026-02-17 | **Updated**: 2026-03-01
+**Blocked by**: none (DOCS-007 resolved)
 
-**Context**: Phase 2 requirements and architecture are already formalized in the existing documents: requirements.md contains 44 Phase 2 references (EX-xxx exclusions, Phase 2 deferrals), architecture.md contains 115 Phase 2 references (ARCH decisions with Phase 2 annotations, ADR-0014 AdvancedQueryPipeline, ADR-0023 query rewriting, etc.). A full `/s2s:design` roundtable is NOT needed. Only implementation plans via `/s2s:plan` are required.
-
-DOCS-007 must be resolved first (OQ-018 learn-ui/admin-ui architecture and OQ-019 hardware minimum feed component planning).
+**Context**: Phase 2 requirements and architecture are already formalized in the existing documents: requirements.md contains 44 Phase 2 references (EX-xxx exclusions, Phase 2 deferrals), architecture.md contains 115+ Phase 2 references (ARCH decisions with Phase 2 annotations, ADR-0014 AdvancedQueryPipeline, ADR-0023 query rewriting, ADR-0024/0025 UI decisions, etc.). A full `/s2s:design` roundtable is NOT needed. Only implementation plans via `/s2s:plan` are required.
 
 Plan generation follows a three-phase approach (lesson learned from Phase 1):
 1. Scoping plan: map features to work groups, define wave structure with provides/requires
 2. Dependency validation: SPV L1 + L3 checks before detailed plans
 3. Detailed plans: per-component plans with provides/requires from the start
 
-**Traceability**: architecture.md section 11.3, requirements.md EX-xxx items, ADR-0009, ADR-0011, plans/INDEX-PHASE2.md
+**Traceability**: architecture.md section 11.3, requirements.md EX-xxx items, ADR-0009, ADR-0011, ADR-0024, ADR-0025, plans/INDEX-PHASE2.md
 
 **Acceptance Criteria**:
-- [ ] DOCS-007 resolved (OQ-018, OQ-019)
+- [x] DOCS-007 resolved (OQ-018, OQ-019)
 - [ ] Scoping plan generated and validated (SPV L1 + L3 pass)
 - [ ] Detailed plans generated with provides/requires YAML front-matter
 - [ ] INDEX-PHASE2.md populated with wave structure and dependency graph
@@ -567,7 +563,7 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 | DOCS-004 (traceability tables) | After first Phase 1 milestone | Accuracy requires real code |
 | DOCS-005 (roundtable QA+BA) | After first sprint | Need tests to compare against |
 | ~~DOCS-006 (n8n workflow)~~ | ~~Anytime during Phase 1~~ | Done (Wave 7, PR #10) |
-| DOCS-007 (Phase 2 OQs) | Before Phase 2 design | OQ-018 + OQ-019 unresolved |
+| ~~DOCS-007 (Phase 2 OQs)~~ | ~~Before Phase 2 design~~ | Done (ADR-0024, ADR-0025, ARCH-064) |
 | ~~DOCS-008 (no_relevant_context REQ)~~ | ~~Before Phase 1 SRS close~~ | Done (REQ-066 in SRS v1.5.0) |
 | ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |

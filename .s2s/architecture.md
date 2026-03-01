@@ -487,6 +487,9 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-059 - API contract specification**: Consolidated endpoint catalog with formal request/response types. All functional endpoints under /api/v1/ prefix (ARCH-018). Single FastAPI application with centralized auth middleware (ARCH-020). 16 Phase 1 API endpoints (unique paths; GET /health serves both shallow and deep modes via query parameter) plus GET /admin HTML dashboard, 8 Phase 2 additions, 19 API-specific types. Endpoint-specific types defined in section 8.7.
 - **ARCH-060 - Configuration reference**: Consolidated catalog of all VEKTRA_* environment variables with types, defaults, required/optional status, and startup validation mapping. 37 variables total (35 VEKTRA_* + 2 external LLM API keys; 5 newly named, 1 renamed). Serves as single source of truth for operator documentation, .env.example generation, and ARCH-057 startup validation (step 1). Configuration reference in section 8.8.
 - **ARCH-061 - Conversational query rewriting**: Pre-retrieval step in AdvancedQueryPipeline (Phase 2) that resolves anaphoric references, pronouns, and ellipsis in multi-turn conversations. Single LLM call rewrites the user's query into a self-contained form using conversation history before embedding and vector search. New template `rewrite.j2` (ARCH-054). Emits StepTrace with original and rewritten queries. Configurable via `VEKTRA_QUERY_REWRITE_ENABLED` (default: true). Skipped when conversation_id is None or history is empty. Not available in SimpleQueryPipeline (Phase 1 behavior preserved). See ADR-0023.
+- **ARCH-062 - Admin UI server-side rendering**: Phase 2 admin UI uses HTMX + Jinja2 server-side rendering. Admin pages call existing REST API endpoints and render responses as HTML. No business logic in templates. Every admin operation available via REST API ensures Phase 3 migration to a separate SPA requires only removing Jinja2 routes with zero backend changes. See ADR-0024.
+- **ARCH-063 - Learn chatbot widget**: Phase 2 chatbot served as a self-contained JS bundle from vektra-learn (`/static/vektra-chat.js`). Configured via `data-*` attributes (api-url, course-id, token), communicates with backend exclusively via REST API. No server-side coupling (no cookies, no injected globals, no Jinja2 dependencies). Phase 3: extracted to `@vektra/chat-widget` npm package with vektra-sdk-js dependency. Integration pattern (script tag) stable across phases. See ADR-0025.
+- **ARCH-064 - Phase 2 hardware target**: Formalized 8GB RAM / 4 CPU as Phase 2 deployment minimum. Phase 2 full-featured (multilingual-e5-large ~1.2GB, cross-encoder reranking ~200MB, Presidio safeguards ~300MB) estimated at ~2.9GB application RAM + ~512MB PostgreSQL = ~3.4GB total. Mitigations: lazy model loading, external embedding API via EmbeddingProvider swap, profile-based Docker Compose services. Phase 1 remains at 4GB / 2 CPU (NFR-006). Resolves OQ-019.
 - **ARCH-033 - Docker Compose specification**: Healthcheck-based startup ordering, ARCH-026 memory limits, profile-based Ollama.
 
 ### 8.2 Component details
@@ -2017,6 +2020,9 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 | Sparse embedding generation | SparseEmbeddingProvider Protocol defined (ARCH-053), implementation deferred. BM25 vs SPLADE trade-off: BM25 lightweight (tokenization + TF, Qdrant IDF server-side), SPLADE heavier (~500 MB) but richer (neural term expansion). fastembed recommended for both | ARCH-053 |
 | Conversational query rewriting | Pre-retrieval LLM call in AdvancedQueryPipeline resolves anaphoric references, pronouns, and ellipsis using conversation history. New template rewrite.j2 | ARCH-061, ADR-0023 |
 | Multilingual embedding model | Phase 1 MiniLM is English-primary; non-English deployments need multilingual model (multilingual-e5-large, bge-m3). bge-m3 produces dense + sparse in one model | ADR-0013 |
+| Admin UI (full) | Server-side rendering with HTMX + Jinja2. Pages call REST API, render as HTML. No business logic in templates. Phase 3: migrate to separate SPA | ARCH-062, ADR-0024 |
+| Learn chatbot widget | Self-contained JS bundle served by vektra-learn. Configured via data-* attributes, REST API only. Phase 3: extract to npm package | ARCH-063, ADR-0025 |
+| Phase 2 hardware target | 8GB RAM / 4 CPU minimum. Full-featured ~3.4GB total. Mitigations: lazy loading, external embedding API, profile-based Docker Compose | ARCH-064 |
 
 ---
 
@@ -2045,6 +2051,7 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 | **fastembed** | Lightweight embedding library by Qdrant. Supports dense models and sparse models (BM25 tokenization via `Qdrant/bm25`, SPLADE via `Splade_PP_en_v1`). Recommended for Phase 2 SparseEmbeddingProvider implementations. |
 | **Full-store contract** | VectorStoreProvider design principle (ARCH-051): each provider owns chunk text, metadata, and embeddings as a self-contained unit. Avoids dual-query patterns and enables clean provider swaps via reindex. |
 | **Guardrails AI** | Open-source framework for LLM input/output validation. Supports PII detection (via Presidio), toxicity, hallucination detection, format validation. Integrates with litellm. Candidate for Phase 2 SafeguardHook implementation alongside Presidio. |
+| **HTMX** | Lightweight JS library (~14KB) for server-driven interactivity. Used in Phase 2 admin UI (ARCH-062) for partial page updates, form submissions, and status polling without full page reloads. |
 | **Index version** | Integer tag on chunks enabling zero-downtime reindex: new chunks created with incremented version, atomic switch via config, old version cleaned up. |
 | **litellm** | Python library abstracting LLM provider APIs (OpenAI, Anthropic, Ollama) behind unified interface. |
 | **LLMProvider** | Protocol abstracting LLM provider interactions. Phase 1: LitellmProvider wrapping litellm. Includes graceful degradation with fallback model and context-only response (ARCH-043). |
@@ -2179,6 +2186,9 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 | ARCH-059 API contract | All components (consolidated endpoint catalog in section 8.7) |
 | ARCH-060 Configuration reference | vektra_shared (Pydantic config schema), all components (env var consumers) |
 | ARCH-061 Conversational query rewriting | vektra-core (AdvancedQueryPipeline pre-retrieval step, rewrite.j2 template) |
+| ARCH-062 Admin UI server-side rendering | vektra-admin (HTMX + Jinja2 templates calling REST API) |
+| ARCH-063 Learn chatbot widget | vektra-learn (self-contained JS bundle, REST API only, data-* config) |
+| ARCH-064 Phase 2 hardware target | Cross-cutting (8GB RAM / 4 CPU deployment minimum) |
 
 ### A.3 Components to requirements
 
@@ -2205,3 +2215,4 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 *Version 1.8 - Configuration reference: ARCH-060 (37 env vars: 35 VEKTRA_* + 2 external, 5 newly named + VEKTRA_MAX_PDF_SIZE renamed to VEKTRA_MAX_FILE_SIZE_MB, startup validation mapping, .env.example)*
 *Version 1.9 - Quality scenarios: Section 10 expanded from 12 to 18 QS entries, quality tree restructured, 6 architecture-derived scenarios added (ARCH-043 degradation, ARCH-057 startup, ARCH-039 extensibility, ARCH-040 evolvability, NFR-008 retention, NFR-010 progress), validation scenario cross-reference (10.4)*
 *Version 1.9.1 - Conversational query rewriting: ARCH-061 (pre-retrieval query rewriting in AdvancedQueryPipeline), ADR-0023, rewrite.j2 template added to ARCH-054, ARCH-036 Phase 2 updated. Multilingual embedding note added to ADR-0013.*
+*Version 1.10 - OQ-018/OQ-019 resolution: ARCH-062 (admin UI server-side rendering, ADR-0024), ARCH-063 (learn chatbot widget, ADR-0025), ARCH-064 (Phase 2 hardware target 8GB/4CPU). Glossary: HTMX added. Deferred table: 3 entries added.*

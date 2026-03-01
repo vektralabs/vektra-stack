@@ -64,10 +64,13 @@ class RateLimiter:
         else:
             reset_at = now + _WINDOW_SECONDS
 
+        # Convert monotonic reset_at to a Unix timestamp for the header.
+        reset_unix = int(time.time() + (reset_at - now))
+
         headers = {
             "X-RateLimit-Limit": str(rpm_limit),
             "X-RateLimit-Remaining": str(remaining),
-            "X-RateLimit-Reset": str(int(reset_at)),
+            "X-RateLimit-Reset": str(reset_unix),
         }
 
         if current_count >= rpm_limit:

@@ -47,9 +47,6 @@ class RLSMiddleware(BaseHTTPMiddleware):
         # Resolve namespace from request body
         namespace = await _resolve_namespace(request)
         if namespace:
-            request.state.rls_namespace = namespace
-
-            # Set the PostgreSQL session variable via the session dependency
             # The actual SET LOCAL is executed by the session factory hook
             # registered in infra-phase2 app lifespan.
             request.state.rls_namespace = namespace

@@ -26,14 +26,13 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_ingest.exceptions import IngestConflictError, IngestError
 from vektra_ingest.pipeline import run_ingest
-from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider
+from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.config import IngestConfig
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
@@ -41,55 +40,18 @@ from vektra_shared.errors import (
     ERR_INGEST_002,
     ErrorCategory,
     ErrorResponse,
-    auth_insufficient_scope,
-    auth_invalid_token,
     http_status_for,
 )
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter()
-_bearer = HTTPBearer(auto_error=False)
 
 # Sync/async file size threshold (REQ-029)
 _SYNC_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10 MB
 
-
-# ---------------------------------------------------------------------------
-# Auth dependency: ingest OR admin scope
-# ---------------------------------------------------------------------------
-
-
-async def _require_ingest_scope(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> ApiKeyInfo:
-    """Dependency: accepts keys with 'ingest' or 'admin' scope."""
-    if credentials is None:
-        err = auth_invalid_token()
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-
-    token = credentials.credentials
-    registry = getattr(request.app.state, "registry", None)
-    if registry is None:
-        raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
-
-    try:
-        key_store: KeyStoreProvider = registry.get("key_store", "default")
-    except ValueError:
-        raise HTTPException(status_code=500, detail="Key store not configured")
-
-    info = await key_store.lookup_by_token(token)
-    if info is None:
-        err = auth_invalid_token()
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-
-    if not (info.has_scope("ingest") or info.has_scope("admin")):
-        err = auth_insufficient_scope("ingest")
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-
-    request.state.key_id = info.key_id
-    return info
+# Auth: require_scope("ingest") accepts ingest and admin keys (ARCH-059
+# admin-as-superscope), and includes rate limiting integration.
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +93,7 @@ async def ingest(
     file: UploadFile,
     namespace: str = "default",
     session: AsyncSession = Depends(get_session),
-    key_info: ApiKeyInfo = Depends(_require_ingest_scope),
+    key_info: ApiKeyInfo = Depends(require_scope("ingest")),
 ) -> Any:
     """Ingest a document.
 
@@ -247,7 +209,7 @@ async def ingest(
 async def get_job_status(
     job_id: UUID,
     session: AsyncSession = Depends(get_session),
-    _key: ApiKeyInfo = Depends(_require_ingest_scope),
+    _key: ApiKeyInfo = Depends(require_scope("ingest")),
 ) -> JobStatusResponse:
     """Return current status of an async ingest job (REQ-014, NFR-010)."""
     from vektra_ingest.models import IngestJobOrm

@@ -176,9 +176,12 @@ class PersistentConversationStore:
     ) -> None:
         """Encrypt and insert a turn, then prune oldest if exceeding max_turns."""
         async with self._session_factory() as session:
-            # Get current turn_count to determine turn_number
-            count_stmt = select(ConversationOrm.turn_count).where(
-                ConversationOrm.id == conversation_id
+            # Lock the conversation row to serialize concurrent add_turn calls
+            # and prevent duplicate turn_numbers (uq_conversation_turns_order).
+            count_stmt = (
+                select(ConversationOrm.turn_count)
+                .where(ConversationOrm.id == conversation_id)
+                .with_for_update()
             )
             count_result = await session.execute(count_stmt)
             current_count = count_result.scalar_one_or_none()

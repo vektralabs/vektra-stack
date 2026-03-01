@@ -21,6 +21,7 @@ Tables with RLS enabled:
   - conversations (namespace_id)
   - conversation_turns (via conversations FK, no direct RLS needed)
   - feedback (namespace_id)
+  - query_traces (namespace_id)
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ _RLS_TABLES = [
     "ingest_jobs",
     "conversations",
     "feedback",
+    "query_traces",
 ]
 
 
@@ -51,17 +53,27 @@ def upgrade() -> None:
         # Force RLS for table owner too (important for superuser connections)
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
 
-        # Permissive SELECT/UPDATE/DELETE policy
+        # Permissive SELECT/UPDATE/DELETE policy.
+        # When app.current_namespace is unset (empty string), all rows are
+        # visible -- this preserves Phase 1 single-tenant behavior even with
+        # FORCE ROW LEVEL SECURITY enabled.
         op.execute(f"""
             CREATE POLICY {table}_namespace_isolation ON {table}
-                USING (namespace_id = current_setting('app.current_namespace', true))
+                USING (
+                    current_setting('app.current_namespace', true) = ''
+                    OR namespace_id = current_setting('app.current_namespace', true)
+                )
         """)
 
-        # WITH CHECK for INSERT (validates new rows match current namespace)
+        # WITH CHECK for INSERT (validates new rows match current namespace).
+        # When unset (single-tenant), any namespace_id is accepted.
         op.execute(f"""
             CREATE POLICY {table}_namespace_insert ON {table}
                 FOR INSERT
-                WITH CHECK (namespace_id = current_setting('app.current_namespace', true))
+                WITH CHECK (
+                    current_setting('app.current_namespace', true) = ''
+                    OR namespace_id = current_setting('app.current_namespace', true)
+                )
         """)
 
 

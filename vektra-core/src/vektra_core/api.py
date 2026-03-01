@@ -23,22 +23,19 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_core.conversation import PersistentConversationStore
 from vektra_core.models import FeedbackOrm
-from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider
+from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ERR_QUERY_002,
     ERR_QUERY_003,
     ErrorCategory,
     ErrorResponse,
-    auth_insufficient_scope,
-    auth_invalid_token,
     http_status_for,
 )
 from vektra_shared.types import QueryChunk, QueryRequest, SafeguardContext
@@ -48,44 +45,9 @@ log = structlog.get_logger(__name__)
 _MAX_QUERY_CHARS = 10_000
 
 router = APIRouter()
-_bearer = HTTPBearer(auto_error=False)
 
-
-# ---------------------------------------------------------------------------
-# Auth dependency: query OR admin scope
-# ---------------------------------------------------------------------------
-
-
-async def _require_query_scope(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> ApiKeyInfo:
-    """Dependency: accepts keys with 'query' or 'admin' scope."""
-    if credentials is None:
-        err = auth_invalid_token()
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-
-    token = credentials.credentials
-    registry = getattr(request.app.state, "registry", None)
-    if registry is None:
-        raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
-
-    try:
-        key_store: KeyStoreProvider = registry.get("key_store", "default")
-    except ValueError:
-        raise HTTPException(status_code=500, detail="Key store not configured")
-
-    info = await key_store.lookup_by_token(token)
-    if info is None:
-        err = auth_invalid_token()
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-
-    if not (info.has_scope("query") or info.has_scope("admin")):
-        err = auth_insufficient_scope("query")
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-
-    request.state.key_id = info.key_id
-    return info
+# Auth: require_scope("query") accepts query and admin keys (ARCH-059
+# admin-as-superscope), and includes rate limiting integration.
 
 
 # ---------------------------------------------------------------------------
@@ -138,12 +100,14 @@ class ConversationMetadata(BaseModel):
 class FeedbackBody(BaseModel):
     rating: int = Field(..., ge=1, le=5)
     comment: str | None = None
+    namespace: str = "default"
 
 
 class CitationFeedbackBody(BaseModel):
     response_id: UUID
     rating: int = Field(..., ge=1, le=5)
     comment: str | None = None
+    namespace: str = "default"
 
 
 class FeedbackCreated(BaseModel):
@@ -191,7 +155,7 @@ async def _sse_generator(
 async def query(
     body: QueryBody,
     request: Request,
-    _key: ApiKeyInfo = Depends(_require_query_scope),
+    _key: ApiKeyInfo = Depends(require_scope("query")),
 ) -> Any:
     """Run a RAG query.
 
@@ -314,7 +278,7 @@ async def query(
 @router.get("/api/v1/providers", response_model=list[ProviderInfo])
 async def list_providers(
     request: Request,
-    _key: ApiKeyInfo = Depends(_require_query_scope),
+    _key: ApiKeyInfo = Depends(require_scope("query")),
 ) -> list[ProviderInfo]:
     """List registered LLM providers with current health status."""
     registry = getattr(request.app.state, "registry", None)
@@ -375,7 +339,7 @@ def _get_conversation_store(request: Request) -> PersistentConversationStore:
 async def get_conversation(
     conversation_id: UUID,
     request: Request,
-    _key: ApiKeyInfo = Depends(_require_query_scope),
+    _key: ApiKeyInfo = Depends(require_scope("query")),
 ) -> ConversationMetadata:
     """Return conversation metadata. Never returns content (REQ-051)."""
     store = _get_conversation_store(request)
@@ -400,7 +364,7 @@ async def get_conversation(
 async def delete_conversation(
     conversation_id: UUID,
     request: Request,
-    _key: ApiKeyInfo = Depends(_require_query_scope),
+    _key: ApiKeyInfo = Depends(require_scope("query")),
 ) -> Response:
     """Soft-delete a conversation and all its turns."""
     store = _get_conversation_store(request)
@@ -430,11 +394,11 @@ async def submit_feedback(
     response_id: UUID,
     body: FeedbackBody,
     request: Request,
-    _key: ApiKeyInfo = Depends(_require_query_scope),
+    _key: ApiKeyInfo = Depends(require_scope("query")),
     session: AsyncSession = Depends(get_session),
 ) -> FeedbackCreated:
     """Submit response-level feedback (rating 1-5 with optional comment)."""
-    namespace = getattr(request.state, "namespace", "default")
+    namespace = body.namespace
     stmt = (
         insert(FeedbackOrm)
         .values(
@@ -469,11 +433,11 @@ async def submit_citation_feedback(
     citation_id: UUID,
     body: CitationFeedbackBody,
     request: Request,
-    _key: ApiKeyInfo = Depends(_require_query_scope),
+    _key: ApiKeyInfo = Depends(require_scope("query")),
     session: AsyncSession = Depends(get_session),
 ) -> FeedbackCreated:
     """Submit citation-level feedback (rating 1-5 with optional comment)."""
-    namespace = getattr(request.state, "namespace", "default")
+    namespace = body.namespace
     stmt = (
         insert(FeedbackOrm)
         .values(

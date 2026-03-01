@@ -36,6 +36,8 @@ class _KeyEntry:
     key_preview: str
     scopes: list[str]
     revoked_at: datetime | None
+    expires_at: datetime | None = None
+    rate_limit_rpm: int | None = None
 
 
 class InMemoryKeyStore:
@@ -75,7 +77,14 @@ class InMemoryKeyStore:
             if entry.revoked_at is not None:
                 log.info("auth_rejected_revoked_key", key_id=str(entry.key_id))
                 return None
-            return ApiKeyInfo(key_id=entry.key_id, scopes=entry.scopes)
+            if entry.expires_at is not None and entry.expires_at < datetime.now(UTC):
+                log.info("auth_rejected_expired_key", key_id=str(entry.key_id))
+                return None
+            return ApiKeyInfo(
+                key_id=entry.key_id,
+                scopes=entry.scopes,
+                rate_limit_rpm=entry.rate_limit_rpm,
+            )
 
         return None
 
@@ -89,6 +98,7 @@ class InMemoryKeyStore:
         key_hash: str,
         key_preview: str,
         scopes: list[str],
+        expires_at: datetime | None = None,
     ) -> None:
         """Add a newly created key to the cache immediately."""
         entry = _KeyEntry(
@@ -97,6 +107,7 @@ class InMemoryKeyStore:
             key_preview=key_preview,
             scopes=scopes,
             revoked_at=None,
+            expires_at=expires_at,
         )
         async with self._lock:
             self._by_hash[key_hash] = entry
@@ -127,12 +138,19 @@ class InMemoryKeyStore:
         Returns the number of keys loaded. Called once at startup before
         the first request is served (ARCH-057 step 5).
         """
-        from sqlalchemy import select
+        from sqlalchemy import or_, select
+        from sqlalchemy.sql import func
 
         from vektra_admin.models import ApiKeyOrm  # late import
 
         result = await session.execute(
-            select(ApiKeyOrm).where(ApiKeyOrm.revoked_at.is_(None))
+            select(ApiKeyOrm).where(
+                ApiKeyOrm.revoked_at.is_(None),
+                or_(
+                    ApiKeyOrm.expires_at.is_(None),
+                    ApiKeyOrm.expires_at > func.now(),
+                ),
+            )
         )
         rows = result.scalars().all()
 
@@ -144,6 +162,8 @@ class InMemoryKeyStore:
                     key_preview=row.key_preview,
                     scopes=row.scopes,
                     revoked_at=None,
+                    expires_at=row.expires_at,
+                    rate_limit_rpm=row.rate_limit_rpm,
                 )
                 self._by_hash[row.key_hash] = entry
                 self._by_preview.setdefault(row.key_preview, set()).add(row.key_hash)

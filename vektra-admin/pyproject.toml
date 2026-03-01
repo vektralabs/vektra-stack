@@ -12,6 +12,7 @@ dependencies = [
     "argon2-cffi>=23.1",
     "structlog>=24.0",
     "psutil>=5.9",
+    "cachetools>=5.3",
 ]
 
 [build-system]

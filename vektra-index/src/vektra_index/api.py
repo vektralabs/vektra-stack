@@ -266,10 +266,13 @@ async def delete_document(
 @router.get("/stats", response_model=StatsResponse)
 async def stats(
     namespace: str | None = Query(None),
-    key: ApiKeyInfo = Depends(require_scope("query")),
+    key: ApiKeyInfo = Depends(require_scope(None)),
     session: AsyncSession = Depends(get_session),
 ) -> StatsResponse:
-    """Return document and chunk counts (optionally scoped to a namespace)."""
+    """Return document and chunk counts (optionally scoped to a namespace).
+
+    Accepts any valid API key scope (ARCH-059).
+    """
     from vektra_index.providers.pgvector import PgvectorProvider
 
     provider = PgvectorProvider()

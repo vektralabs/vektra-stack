@@ -98,8 +98,8 @@ Before generating Phase 2 plans:
 
 | # | Plan | Title | Tasks | Status |
 |---|------|-------|-------|--------|
-| 3 | [core-conversations](20260301-core-conversations.md) | Persistent conversations, feedback | 12 | pending |
-| 4 | [admin-enforcement](20260301-admin-enforcement.md) | RLS, scope enforcement, rate limiting | 14 | pending |
+| 3 | [core-conversations](20260301-core-conversations.md) | Persistent conversations, feedback | 12 | completed |
+| 4 | [admin-enforcement](20260301-admin-enforcement.md) | RLS, scope enforcement, rate limiting | 14 | in_progress |
 | 5 | [index-hybrid](20260301-index-hybrid.md) | Hybrid search, Qdrant, reindex API | 19 | pending |
 | 6 | [ingest-phase2](20260301-ingest-phase2.md) | OCR, dual chunking, versioning, batch ops | 32 | pending |
 

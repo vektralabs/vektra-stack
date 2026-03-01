@@ -92,6 +92,7 @@ async def _require_any_token(
 class CreateKeyRequest(BaseModel):
     label: str | None = None
     scopes: list[str] | None = None  # defaults to ["admin"] if not provided
+    expires_at: datetime | None = None
 
 
 class CreateKeyResponse(BaseModel):
@@ -111,6 +112,7 @@ class KeyListItem(BaseModel):
     created_at: datetime
     last_used_at: datetime | None
     revoked: bool
+    expires_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +279,7 @@ async def create_api_key(
         key_preview=key_preview,
         label=body.label,
         scopes=requested_scopes,
+        expires_at=body.expires_at,
     )
     session.add(new_key)
 
@@ -295,6 +298,7 @@ async def create_api_key(
                 key_hash=key_hash,
                 key_preview=key_preview,
                 scopes=requested_scopes,
+                expires_at=body.expires_at,
             )
         except ValueError:
             pass  # key_store not yet registered (e.g. during tests)
@@ -348,6 +352,7 @@ async def list_api_keys(
             created_at=row.created_at,
             last_used_at=row.last_used_at,
             revoked=row.revoked_at is not None,
+            expires_at=row.expires_at,
         )
         for row in rows
     ]
@@ -420,9 +425,9 @@ async def revoke_api_key(
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(
     request: Request,
-    _key: ApiKeyInfo = Depends(_require_any_token),
+    _key: ApiKeyInfo = Depends(require_scope("admin")),
 ) -> HTMLResponse:
-    """Minimal HTML dashboard showing current health status. Requires any Bearer token."""
+    """Minimal HTML dashboard showing current health status. Requires admin scope."""
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 

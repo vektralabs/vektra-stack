@@ -1,7 +1,8 @@
 # Phase 2 implementation plan index
 
 **Generated**: 2026-02-28
-**Total plans**: 11 (scoping plan complete, detailed plans pending)
+**Updated**: 2026-03-01
+**Total plans**: 11 (167 tasks total)
 **Status legend**: `pending` | `in_progress` | `completed`
 
 ---
@@ -78,64 +79,62 @@ Before generating Phase 2 plans:
 - [x] DOCS-007 resolved (ADR-0024, ADR-0025, ARCH-062/063/064)
 - [x] Scoping plan generated ([phase2-scoping-plan.md](phase2-scoping-plan.md))
 - [x] Dependency validation (SPV L1 + L3 checks)
-- [ ] Detailed plans generated with provides/requires YAML
+- [x] Detailed plans generated with provides/requires (11 plans, 166 tasks, validated CHK-*/CHK-COORD-*)
 
 ---
 
 ## Execution order
 
-<!-- Wave structure from scoping plan. Plan filenames TBD when detailed plans are generated. -->
-
 ### Wave 0 - Foundation
 
-| # | Plan | Title | Complexity | Status |
-|---|------|-------|------------|--------|
-| 1 | shared-protocols-phase2 | Protocol additions and import boundaries | medium | pending |
-| 2 | database-phase2 | New tables, migrations, TOCTOU fix | medium | pending |
+| # | Plan | Title | Tasks | Status |
+|---|------|-------|-------|--------|
+| 1 | [shared-protocols-phase2](20260301-shared-protocols-phase2.md) | Protocol additions and import boundaries | 11 | pending |
+| 2 | [database-phase2](20260301-database-phase2.md) | New tables, migrations, TOCTOU fix | 11 | pending |
 
 ---
 
 ### Wave 1 - Component enhancements
 
-| # | Plan | Title | Complexity | Status |
-|---|------|-------|------------|--------|
-| 3 | core-conversations | Persistent conversations, feedback | medium | pending |
-| 4 | admin-enforcement | RLS, scope enforcement, rate limiting | medium | pending |
-| 5 | index-hybrid | Hybrid search, Qdrant, reindex API | large | pending |
-| 6 | ingest-phase2 | OCR, dual chunking, versioning, batch ops | large | pending |
+| # | Plan | Title | Tasks | Status |
+|---|------|-------|-------|--------|
+| 3 | [core-conversations](20260301-core-conversations.md) | Persistent conversations, feedback | 12 | pending |
+| 4 | [admin-enforcement](20260301-admin-enforcement.md) | RLS, scope enforcement, rate limiting | 13 | pending |
+| 5 | [index-hybrid](20260301-index-hybrid.md) | Hybrid search, Qdrant, reindex API | 19 | pending |
+| 6 | [ingest-phase2](20260301-ingest-phase2.md) | OCR, dual chunking, versioning, batch ops | 32 | pending |
 
 ---
 
 ### Wave 2 - Advanced features
 
-| # | Plan | Title | Complexity | Status |
-|---|------|-------|------------|--------|
-| 7 | core-pipeline-v2 | Advanced pipeline, safeguards, streaming trace | large | pending |
-| 8 | admin-ui | HTMX + Jinja2 admin dashboard | medium | pending |
+| # | Plan | Title | Tasks | Status |
+|---|------|-------|-------|--------|
+| 7 | [core-pipeline-v2](20260301-core-pipeline-v2.md) | Advanced pipeline, safeguards, streaming trace | 15 | pending |
+| 8 | [admin-ui](20260301-admin-ui.md) | HTMX + Jinja2 admin dashboard | 12 | pending |
 
 ---
 
 ### Wave 3 - Analytics
 
-| Plan | Title | Complexity | Status |
-|------|-------|------------|--------|
-| component-analytics | QueryTrace storage, metrics, reporting API | medium | pending |
+| # | Plan | Title | Tasks | Status |
+|---|------|-------|-------|--------|
+| 9 | [component-analytics](20260301-component-analytics.md) | QueryTrace storage, metrics, reporting API | 12 | pending |
 
 ---
 
 ### Wave 4 - E-learning vertical
 
-| Plan | Title | Complexity | Status |
-|------|-------|------------|--------|
-| component-learn | LMS-agnostic API, chatbot widget | large | pending |
+| # | Plan | Title | Tasks | Status |
+|---|------|-------|-------|--------|
+| 10 | [component-learn](20260301-component-learn.md) | LMS-agnostic API, chatbot widget | 18 | pending |
 
 ---
 
 ### Wave 5 - Integration
 
-| Plan | Title | Complexity | Status |
-|------|-------|------------|--------|
-| infra-phase2 | App entrypoint, Docker, CI | medium | pending |
+| # | Plan | Title | Tasks | Status |
+|---|------|-------|-------|--------|
+| 11 | [infra-phase2](20260301-infra-phase2.md) | App entrypoint, Docker, CI | 12 | pending |
 
 ---
 

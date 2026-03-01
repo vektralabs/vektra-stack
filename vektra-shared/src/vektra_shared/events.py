@@ -99,12 +99,12 @@ class WebhookEventEmitter:
                 "webhook_delivery_failed",
                 event_type=event_type,
                 status_code=exc.response.status_code,
-                url=self._config.url,
+                url=url,
             )
         except httpx.HTTPError as exc:
             logger.warning(
                 "webhook_delivery_error",
                 event_type=event_type,
                 error=str(exc),
-                url=self._config.url,
+                url=url,
             )

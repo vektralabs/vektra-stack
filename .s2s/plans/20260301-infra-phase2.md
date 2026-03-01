@@ -77,13 +77,13 @@ Extend `_step_5_register_providers()` with:
 
 ```python
 # --- Sparse embedding (Phase 2, conditional) ---
-if settings.sparse_embedding_enabled:
-    from vektra_index.providers.sparse import BM25SparseProvider
-    sparse_provider = BM25SparseProvider()
+if settings.sparse_embedding_provider:
+    from vektra_index.providers.fastembed_bm25 import FastEmbedBM25Provider
+    sparse_provider = FastEmbedBM25Provider()
     registry.register("sparse_embedding", "default", sparse_provider)
 
 # --- Qdrant vector store (Phase 2, conditional) ---
-if settings.vector_store_backend == "qdrant":
+if settings.vector_store_provider == "qdrant":
     from vektra_index.providers.qdrant import QdrantVectorStoreProvider
     qdrant_provider = QdrantVectorStoreProvider(url=settings.qdrant_url)
     registry.register("vector_store", "default", qdrant_provider)
@@ -112,9 +112,15 @@ pipeline = AdvancedQueryPipeline(
     conversation_store=conversation_store,
     renderer=renderer,
     pipeline_config=pipeline_config,
-    analytics_service=analytics_service,
 )
 registry.register("query_pipeline", "default", pipeline)
+
+# --- QueryTrace storage (wired at HTTP layer, not pipeline constructor) ---
+# analytics_service is NOT injected into the pipeline (import boundary: vektra_core
+# cannot import vektra_analytics per ADR-0005). Instead, the query endpoint handler
+# in vektra_core/api.py calls analytics_service.store_trace() after pipeline.execute()
+# returns. For streaming, the SSE handler captures QueryChunk(type="trace") and stores it.
+# The analytics_service is passed to the query router via FastAPI dependency injection.
 ```
 
 ### Router registration

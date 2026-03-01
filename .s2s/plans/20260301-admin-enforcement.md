@@ -115,7 +115,7 @@ Additionally, namespace quota enforcement (ARCH-047) rejects ingest operations w
 ## Tasks
 
 - [ ] Add `cachetools` to `vektra-admin/pyproject.toml` dependencies
-- [ ] Replace `functools.lru_cache` with `cachetools.TTLCache` in `vektra_admin/keys.py`: create a `TTLCache(maxsize=512, ttl=300)` instance, replace `_cached_verify` with a manual cache lookup/store pattern. Verify thread safety (TTLCache is not thread-safe; use a threading.Lock for the cache access) (DEBT-008)
+- [ ] Replace `functools.lru_cache` with `cachetools.TTLCache` in `vektra_admin/keys.py`: create a `TTLCache(maxsize=512, ttl=300)` instance, replace `_cached_verify` with a manual cache lookup/store pattern. Use `asyncio.Lock` for cache access (the entire auth call chain runs on the event loop thread with no threadpool dispatch; `asyncio.Lock` matches the pattern already used in `InMemoryKeyStore`) (DEBT-008)
 - [ ] Add `expires_at: Mapped[datetime | None]` to `ApiKeyOrm` in `vektra_admin/models.py`. Update `CreateKeyRequest` and `KeyListItem` in `api.py` to include `expires_at`
 - [ ] Update `_KeyEntry` dataclass in `keystore.py` to include `expires_at: datetime | None`. Update `load_from_db()` to filter expired keys. Update `lookup_by_token()` to check expiration before returning `ApiKeyInfo`
 - [ ] Update `add_key()` in `InMemoryKeyStore` to accept and store `expires_at`. Update the `create_api_key` endpoint in `api.py` to pass `expires_at` through to ORM and keystore

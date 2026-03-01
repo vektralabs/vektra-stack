@@ -52,7 +52,7 @@ none
 
 This plan creates the Phase 2 database tables and indexes via a new Alembic migration (0002). Phase 1 shipped 7 tables in migration 0001. Phase 2 adds 4 new tables (conversations, conversation_turns, query_traces, feedback) and modifies the existing source_documents table with a TOCTOU-mitigating unique partial index.
 
-The conversations and conversation_turns tables use pgcrypto for column-level encryption of user-generated content (question and answer text). The pgcrypto extension was already enabled in migration 0001. Encryption uses `pgp_sym_encrypt()` / `pgp_sym_decrypt()` with a symmetric key provided at query time via a PostgreSQL session variable (`SET LOCAL vektra.encryption_key = ...`). The encryption key is separate from the database credentials and loaded from `VEKTRA_ENCRYPTION_KEY` env var.
+The conversations and conversation_turns tables use pgcrypto for column-level encryption of user-generated content (question and answer text). The pgcrypto extension was already enabled in migration 0001. Encryption uses `pgp_sym_encrypt()` / `pgp_sym_decrypt()` with a symmetric key provided at query time via a PostgreSQL session variable (`SET LOCAL vektra.conversation_key = ...`). The encryption key is separate from the database credentials and loaded from `VEKTRA_CONVERSATION_KEY` env var.
 
 The query_traces table stores QueryTrace data (StepTrace list, ChunkRef list) as JSONB columns, since the nested structure maps naturally to JSON and avoids the overhead of normalized child tables for write-heavy, read-occasionally data.
 
@@ -65,18 +65,18 @@ The feedback table stores both response-level and citation-level feedback, using
 ```sql
 -- Write (application layer wraps this in ORM):
 INSERT INTO conversation_turns (conversation_id, turn_number, question, answer)
-VALUES (:conv_id, :turn, pgp_sym_encrypt(:question, current_setting('vektra.encryption_key')),
-        pgp_sym_encrypt(:answer, current_setting('vektra.encryption_key')));
+VALUES (:conv_id, :turn, pgp_sym_encrypt(:question, current_setting('vektra.conversation_key')),
+        pgp_sym_encrypt(:answer, current_setting('vektra.conversation_key')));
 
 -- Read:
-SELECT pgp_sym_decrypt(question, current_setting('vektra.encryption_key')) AS question,
-       pgp_sym_decrypt(answer, current_setting('vektra.encryption_key')) AS answer
+SELECT pgp_sym_decrypt(question, current_setting('vektra.conversation_key')) AS question,
+       pgp_sym_decrypt(answer, current_setting('vektra.conversation_key')) AS answer
 FROM conversation_turns WHERE conversation_id = :conv_id;
 ```
 
 The application sets the session variable before each transaction:
 ```sql
-SET LOCAL vektra.encryption_key = :key;
+SET LOCAL vektra.conversation_key = :key;
 ```
 `SET LOCAL` scopes the variable to the current transaction only, so the key is never visible to other connections or after the transaction ends.
 
@@ -198,7 +198,7 @@ SET LOCAL vektra.encryption_key = :key;
   ```
   The `quota_chunks` and `quota_documents` columns already exist (created in 0001 as nullable). This adds CHECK constraints to prevent invalid values (zero or negative) and adds the `quota_bytes` column for storage-based quotas.
 
-- [ ] Implement the `downgrade()` function in 0002: drop tables in reverse dependency order (feedback, query_traces, conversation_turns, conversations), drop the unique index on source_documents, drop the quota constraints and quota_bytes column.
+- [ ] Implement the `downgrade()` function in 0002: drop tables in reverse dependency order (feedback, query_traces, conversation_turns, conversations), drop the unique index `uq_source_documents_filename` on source_documents, drop `ix_api_keys_expires` index and `expires_at` column from api_keys, drop the quota constraints (`ck_namespaces_quota_chunks`, `ck_namespaces_quota_documents`, `ck_namespaces_quota_bytes`) and `quota_bytes` column from namespaces.
 
 - [ ] Write a migration test in `vektra-shared/tests/test_migration.py` (extend the existing test file): apply migration 0002 to a test PostgreSQL instance (after 0001), verify:
   - All 4 new tables exist with correct columns and types
@@ -209,7 +209,7 @@ SET LOCAL vektra.encryption_key = :key;
   - Downgrade removes all Phase 2 additions without affecting Phase 1 tables
   - Use testcontainers (auto-skip when Docker unavailable)
 
-- [ ] Verify pgcrypto round-trip in test: INSERT a row into `conversation_turns` using `pgp_sym_encrypt()`, SELECT it back with `pgp_sym_decrypt()`, verify the plaintext matches. This validates that the BYTEA columns work correctly with pgcrypto functions and that the `SET LOCAL vektra.encryption_key` pattern works.
+- [ ] Verify pgcrypto round-trip in test: INSERT a row into `conversation_turns` using `pgp_sym_encrypt()`, SELECT it back with `pgp_sym_decrypt()`, verify the plaintext matches. This validates that the BYTEA columns work correctly with pgcrypto functions and that the `SET LOCAL vektra.conversation_key` pattern works.
 
 ## Acceptance Criteria
 
@@ -241,7 +241,7 @@ The ORM models for the new tables will be defined in their respective owning com
 | query_traces | vektra-analytics | component-analytics |
 | feedback | vektra-core | core-conversations |
 
-The pgcrypto encryption key (`VEKTRA_ENCRYPTION_KEY`) will be added to `VektraSettings` in the config plan (shared-protocols-phase2 or core-conversations, depending on implementation order). The `SET LOCAL` session variable pattern will be encapsulated in a SQLAlchemy session event hook in the core-conversations plan.
+The pgcrypto encryption key (`VEKTRA_CONVERSATION_KEY`) will be added to `VektraSettings` in the config plan (shared-protocols-phase2 or core-conversations, depending on implementation order). The `SET LOCAL` session variable pattern will be encapsulated in a SQLAlchemy session event hook in the core-conversations plan.
 
 The `uq_source_documents_filename` index enables the TOCTOU fix, but the application-level `IntegrityError` handling belongs to ingest-phase2. This plan only creates the index.
 

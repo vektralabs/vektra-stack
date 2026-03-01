@@ -126,7 +126,7 @@ The existing SearchRequest model already accepts `search_mode: SearchMode`. No A
 
 ### Hybrid search in PgvectorProvider
 
-- [ ] **T3**: Add Alembic migration: `ALTER TABLE document_chunks ADD COLUMN sparse_vector JSONB DEFAULT NULL`. Update DocumentChunkOrm in `vektra-index/src/vektra_index/models.py` with the new column mapping.
+- [ ] **T3**: Create Alembic migration `0003_hybrid_search.py` with `revision = "0003"`, `down_revision = "0002"`. Add `ALTER TABLE document_chunks ADD COLUMN sparse_vector JSONB DEFAULT NULL`. This migration also contains the `reindex_jobs` table (T14). Update DocumentChunkOrm in `vektra-index/src/vektra_index/models.py` with the new column mapping.
 - [ ] **T4**: Update PgvectorProvider.store() to persist `chunk.sparse` as JSONB `{"indices": [...], "values": [...]}` in the `sparse_vector` column when present. Existing chunks with no sparse data keep NULL.
 - [ ] **T5**: Implement PgvectorProvider.search() for SearchMode.SPARSE: compute sparse dot-product similarity via SQL (sum of value products where indices match), filter by namespace and index_version, order by sparse score descending.
 - [ ] **T6**: Implement PgvectorProvider.search() for SearchMode.HYBRID: run dense and sparse subqueries, combine via RRF (`1/(60 + rank_dense) + 1/(60 + rank_sparse)`), return top_k by combined score. If a chunk has no sparse_vector, its sparse rank is set to top_k + 1 (lowest priority).
@@ -143,7 +143,7 @@ The existing SearchRequest model already accepts `search_mode: SearchMode`. No A
 
 ### Reindex API
 
-- [ ] **T14**: Add reindex_jobs tracking table: Alembic migration creating `reindex_jobs` with columns (id UUID PK, namespace_id, source_index_version INT, target_index_version INT, status VARCHAR(16), total_documents INT, processed_documents INT, current_document_id UUID NULL, error_message TEXT NULL, created_at, completed_at). Add ReindexJobOrm in models.py.
+- [ ] **T14**: Add `reindex_jobs` table to migration 0003 (same file as T3 sparse_vector column): columns (id UUID PK, namespace_id, source_index_version INT, target_index_version INT, status VARCHAR(16), total_documents INT, processed_documents INT, current_document_id UUID NULL, error_message TEXT NULL, created_at, completed_at). Add ReindexJobOrm in models.py.
 - [ ] **T15**: Implement reindex background job in `vektra-index/src/vektra_index/reindex.py`: function `run_reindex(namespace, source_version, target_version, job_id, registry)` that iterates source_documents, re-extracts, re-chunks, re-embeds, stores with target_version. Updates reindex_jobs progress after each document. Add API endpoints: `POST /api/v1/reindex` (202 + job_id) and `GET /api/v1/reindex/{job_id}/status`. Both require admin scope.
 - [ ] **T16**: Write tests for reindex: job creation, progress tracking, completion status update.
 

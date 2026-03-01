@@ -101,7 +101,7 @@ if settings.learn_enabled:
     registry.register("learn", "default", learn_service)
 
 # --- Advanced query pipeline (replaces SimpleQueryPipeline) ---
-from vektra_core.pipeline_v2 import AdvancedQueryPipeline
+from vektra_core.advanced_pipeline import AdvancedQueryPipeline
 pipeline = AdvancedQueryPipeline(
     embedding=embedding_provider,
     sparse_embedding=registry.get_optional("sparse_embedding", "default"),

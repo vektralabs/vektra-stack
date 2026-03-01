@@ -306,8 +306,8 @@ Communication with vektra-core (query pipeline) and vektra-ingest (content trigg
 ### Component scaffold (3 tasks)
 
 - [ ] Create `vektra-learn/` directory with `pyproject.toml`, `README.md`, `src/vektra_learn/__init__.py`
-- [ ] Add `vektra-learn` to root `pyproject.toml`: workspace members, import-linter contracts, ruff isort known-first-party, coverage source
-- [ ] Create Alembic migration for `enrollments` and `dashboard_tokens` tables (or verify database-phase2 includes them)
+- [ ] Add `vektra-learn` to root `pyproject.toml`: workspace members, import-linter contracts, ruff isort known-first-party, coverage source. Note: shared-protocols-phase2 (Wave 0) may have already added import-linter contracts, isort, and coverage entries - verify and skip if present.
+- [ ] Create Alembic migration `0004_learn_tables.py` with `revision = "0004"`, `down_revision = "0003"` for `enrollments` and `dashboard_tokens` tables. database-phase2 does NOT include these tables; this plan owns them.
 
 ### Backend API (6 tasks)
 

@@ -63,10 +63,10 @@ Additionally, namespace quota enforcement (ARCH-047) rejects ingest operations w
 **RLS activation** (ADR-0009, ARCH-025):
 - Feature flag: `VEKTRA_MULTI_TENANT` env var (default `false`, already defined in ARCH-060)
 - When `true`: middleware executes `SET LOCAL app.current_namespace = :ns` at the start of each request's DB session
-- RLS policies created by the database-phase2 migration on `source_documents`, `document_chunks`, `ingest_jobs`, `conversations`, `conversation_turns`
+- RLS policies created by this plan via Alembic migration on `source_documents`, `document_chunks`, `ingest_jobs`, `conversations`, `conversation_turns`
 - Policy pattern: `USING (namespace_id = current_setting('app.current_namespace'))` with `WITH CHECK` for INSERT
 - Middleware placement: new `RLSMiddleware` or integrated into existing auth flow. Runs after auth (to know the namespace) and before DB queries
-- The namespace is determined from the request: query body `namespace` field, ingest body `namespace` field, or the key's `namespace_id` if set
+- The namespace is determined from the request: query body `namespace` field, ingest body `namespace` field
 - Fallback: if `VEKTRA_MULTI_TENANT=false`, no `SET LOCAL` is executed (Phase 1 behavior, application-level filtering continues)
 
 **Scope enforcement** (REQ-024):
@@ -121,7 +121,8 @@ Additionally, namespace quota enforcement (ARCH-047) rejects ingest operations w
 - [ ] Update `add_key()` in `InMemoryKeyStore` to accept and store `expires_at`. Update the `create_api_key` endpoint in `api.py` to pass `expires_at` through to ORM and keystore
 - [ ] Create `vektra_admin/rate_limit.py` with `RateLimiter` class: sliding window counter using `dict[UUID, deque[float]]`, `check(key_id, rpm_limit) -> tuple[bool, dict]` returning (allowed, headers). Include cleanup of stale entries
 - [ ] Integrate rate limiter into auth flow: after key validation in `require_scope()` or in a new middleware, call `RateLimiter.check()`. On rejection, return 429 with `ERR-AUTH-004` ErrorResponse. Add rate limit response headers to successful responses
-- [ ] Create `vektra_admin/rls.py` with RLS middleware: when `VEKTRA_MULTI_TENANT=true`, execute `SET LOCAL app.current_namespace` at session start. Namespace resolved from request body or key metadata. Middleware is a no-op when the flag is false
+- [ ] Create RLS policies via a new Alembic migration or by extending migration 0002 (coordinate with database-phase2): `ALTER TABLE source_documents ENABLE ROW LEVEL SECURITY`, `CREATE POLICY` with `USING (namespace_id = current_setting('app.current_namespace'))` and `WITH CHECK` for INSERT, on tables: `source_documents`, `document_chunks`, `ingest_jobs`, `conversations`, `conversation_turns`. Policies are permissive and only enforced when `app.current_namespace` is set (Phase 1 behavior preserved when not set). Include `downgrade()` to drop policies.
+- [ ] Create `vektra_admin/rls.py` with RLS middleware: when `VEKTRA_MULTI_TENANT=true`, execute `SET LOCAL app.current_namespace` at session start. Namespace resolved from request body (query or ingest payload `namespace` field). Middleware is a no-op when the flag is false
 - [ ] Add `VEKTRA_MULTI_TENANT` to config schema in `vektra_shared/config.py` if not already present (it is referenced in ARCH-060 but may not be in the Pydantic schema yet). Validate at startup
 - [ ] Implement namespace quota checking: `check_namespace_quota(session, namespace_id, new_documents, new_chunks) -> None` that raises HTTPException 422 with `ERR-QUOTA-001` when quota exceeded. Wire into ingest endpoint validation
 - [ ] Verify scope enforcement across all endpoints: audit every router endpoint in vektra-core, vektra-ingest, vektra-admin to confirm the correct scope is required. Fix any endpoints that accept broader scopes than specified in ARCH-059

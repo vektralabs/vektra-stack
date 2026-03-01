@@ -14,7 +14,7 @@
 ## Provides / Requires
 
 **Provides**:
-- AdvancedQueryPipeline Protocol with rewrite, rerank, and hybrid search steps (consumers: core-pipeline-v2)
+- AdvancedQueryPipeline configuration types: RewriteConfig, RerankConfig (consumers: core-pipeline-v2). Note: AdvancedQueryPipeline is a concrete class implementing the existing QueryPipeline Protocol, NOT a new Protocol.
 - WebhookEventEmitter implementation with HMAC-SHA256 signatures (consumers: ingest-phase2, core-pipeline-v2)
 - DualStrategyChunking additions to ChunkingStrategy Protocol (consumers: ingest-phase2)
 - Extended Namespace type with quota enforcement fields (consumers: admin-enforcement)
@@ -105,7 +105,7 @@ class ChunkingConfig(BaseSettings):
 
 - [ ] Add `WebhookConfig` Pydantic settings to `vektra-shared/src/vektra_shared/config.py` with env var aliases `VEKTRA_WEBHOOK_URL`, `VEKTRA_WEBHOOK_SECRET`, `VEKTRA_WEBHOOK_TIMEOUT`. All three fields optional (webhook disabled when URL is None).
 
-- [ ] Extend `ChunkingConfig` in `vektra-shared/src/vektra_shared/config.py` with Phase 2 dual-strategy fields: `table_split: bool = False`, `parent_child_levels: int = 0`. Add validator: when `strategy == "dual"`, `parent_child_levels` must be >= 1.
+- [ ] Extend chunking fields in `IngestConfig` (in `vektra-shared/src/vektra_shared/config.py`) with Phase 2 dual-strategy fields: `table_split: bool = False`, `parent_child_levels: int = 0`. Add validator: when `strategy == "dual"`, `parent_child_levels` must be >= 1. Note: chunking fields are currently inline in `IngestConfig`, not a separate `ChunkingConfig` class. Either extract a nested `ChunkingConfig` model or add fields directly to `IngestConfig`.
 
 - [ ] Add `quota_bytes: int | None = None` field to the `Namespace` dataclass in `vektra-shared/src/vektra_shared/types.py`. This field exists as nullable in the database (ARCH-040 forward-compatible) and will be enforced in admin-enforcement plan.
 

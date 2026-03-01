@@ -200,8 +200,8 @@ Also update the "No component shall import the app entrypoint" contract to inclu
 
 - [ ] Create `vektra-analytics/` directory with `pyproject.toml`, `README.md`, `src/vektra_analytics/__init__.py`
 - [ ] Add `vektra-analytics` to root `pyproject.toml` workspace members list (`[tool.uv.workspace]`)
-- [ ] Add `vektra_analytics` to root `pyproject.toml` import-linter contracts (new forbidden contract + update existing contracts to include vektra_analytics)
-- [ ] Add `vektra_analytics` to `[tool.ruff.lint.isort] known-first-party` and `[tool.coverage.run] source` in root pyproject.toml
+- [ ] Add `vektra_analytics` to root `pyproject.toml` import-linter contracts (new forbidden contract + update existing contracts to include vektra_analytics). Note: shared-protocols-phase2 (Wave 0) may have already added these - verify and skip if present.
+- [ ] Add `vektra_analytics` to `[tool.ruff.lint.isort] known-first-party` and `[tool.coverage.run] source` in root pyproject.toml. Note: shared-protocols-phase2 (Wave 0) may have already added these - verify and skip if present.
 - [ ] Implement `vektra_analytics/models.py` with QueryTraceOrm (SQLAlchemy ORM model for `query_traces` table)
 - [ ] Implement `vektra_analytics/service.py` with AnalyticsService: store_trace, get_trace, list_traces, get_metrics, delete_before
 - [ ] Implement p95 latency computation in get_metrics using SQL percentile_cont or in-memory calculation from recent traces

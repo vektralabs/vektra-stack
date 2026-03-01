@@ -47,13 +47,15 @@
 
 This plan migrates the in-memory `ConversationStore` in vektra-core to persistent PostgreSQL storage with pgcrypto column-level encryption. Phase 1 uses a dict-keyed-by-UUID store that loses all history on restart (documented as TD-01). Phase 2 replaces this with `ConversationOrm` and `ConversationTurnOrm` models backed by the `conversations` and `conversation_turns` tables created by the database-phase2 plan.
 
-Encryption uses `pgp_sym_encrypt`/`pgp_sym_decrypt` with a dedicated `VEKTRA_CONVERSATION_KEY` environment variable, separate from admin API keys. Content is encrypted at write time and decrypted only in the query processing path. The GET endpoint returns metadata only (no content), enforcing REQ-051.
+Encryption uses `pgp_sym_encrypt`/`pgp_sym_decrypt` with the existing `VEKTRA_CONVERSATION_KEY` environment variable (already defined in VektraSettings as `conversation_key: str | None = None`), separate from admin API keys. The PostgreSQL session variable is `vektra.conversation_key` (set via `SET LOCAL`). Content is encrypted at write time and decrypted only in the query processing path. The GET endpoint returns metadata only (no content), enforcing REQ-051.
 
 This plan also adds feedback endpoints (POST /api/v1/feedback/{response_id} and POST /api/v1/feedback/citation/{citation_id}) per REQ-055, and implements client disconnect cancellation for streaming queries (DEBT-005).
 
 ## Design Notes
 
 **ORM models** (internal to vektra-core, not in vektra_shared per ADR-0005):
+
+> **IMPORTANT**: The sketches below are illustrative. The actual ORM models MUST match the DDL in database-phase2 (migration 0002). Key differences: `conversation_turns` has separate `question` (BYTEA) and `answer` (BYTEA) columns (not a single `content_encrypted`), uses `turn_number` (not `sequence`), has no `role` column, and includes `response_id`, `model`, `prompt_tokens`, `completion_tokens` fields. `conversations` has `key_id`, `title`, `turn_count`, `deleted_at` columns. Always defer to the DDL as the source of truth.
 
 ```python
 # vektra_core/models.py (new file)
@@ -120,7 +122,7 @@ class FeedbackOrm(Base):
 ## Tasks
 
 - [ ] Create `vektra_core/models.py` with `ConversationOrm`, `ConversationTurnOrm`, and `FeedbackOrm` ORM models (follow vektra-admin `models.py` patterns: DeclarativeBase, Mapped[], server_default)
-- [ ] Add `VEKTRA_CONVERSATION_KEY` to config schema in `vektra_shared/config.py` (optional string, None default). Add startup validation: if set, verify non-empty; if not set, log warning about in-memory fallback
+- [ ] Verify `VEKTRA_CONVERSATION_KEY` exists in VektraSettings (`conversation_key: str | None = None` already defined in `vektra_shared/config.py`). Add startup validation in the conversation store initialization: if set, verify non-empty; if not set, log warning about in-memory fallback. No config schema changes needed.
 - [ ] Implement `PersistentConversationStore` in `vektra_core/conversation.py` (keep existing `ConversationStore` class as `InMemoryConversationStore`). Methods: `get_history()` with pgp_sym_decrypt, `add_turn()` with pgp_sym_encrypt and max_turns pruning, `clear()` with CASCADE delete. Constructor takes `AsyncSession` factory and encryption key
 - [ ] Add `create_conversation()` method to `PersistentConversationStore`: creates a new conversation row, returns UUID. Called from pipeline when `conversation_id` is None and a new multi-turn session starts
 - [ ] Implement GET /api/v1/conversations/{id} endpoint in `vektra_core/api.py`: returns metadata only (id, namespace_id, created_at, updated_at, turn_count). Auth: query or admin scope. 404 if not found

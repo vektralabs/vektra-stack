@@ -20,7 +20,7 @@
 - Enhanced graceful degradation with per-step fallback matrix (consumers: infra-phase2)
 
 **Requires**:
-- 20260301-shared-protocols-phase2.md: AdvancedQueryPipeline Protocol definition, extended SafeguardHook types
+- 20260301-shared-protocols-phase2.md: RewriteConfig, RerankConfig configuration types (AdvancedQueryPipeline is a concrete class, not a Protocol)
 - 20260301-index-hybrid.md: hybrid search (SearchMode.HYBRID), SparseEmbeddingProvider registered in ProviderRegistry
 - 20260301-core-conversations.md: persistent ConversationStore with get_history() returning encrypted turns
 

@@ -2,7 +2,7 @@
 
 **Generated**: 2026-02-28
 **Updated**: 2026-03-01
-**Total plans**: 11 (167 tasks total)
+**Total plans**: 11 (168 tasks total)
 **Status legend**: `pending` | `in_progress` | `completed`
 
 ---
@@ -79,7 +79,7 @@ Before generating Phase 2 plans:
 - [x] DOCS-007 resolved (ADR-0024, ADR-0025, ARCH-062/063/064)
 - [x] Scoping plan generated ([phase2-scoping-plan.md](phase2-scoping-plan.md))
 - [x] Dependency validation (SPV L1 + L3 checks)
-- [x] Detailed plans generated with provides/requires (11 plans, 166 tasks, validated CHK-*/CHK-COORD-*)
+- [x] Detailed plans generated with provides/requires (11 plans, 168 tasks, validated CHK-*/CHK-COORD-* + manual codebase review)
 
 ---
 
@@ -99,7 +99,7 @@ Before generating Phase 2 plans:
 | # | Plan | Title | Tasks | Status |
 |---|------|-------|-------|--------|
 | 3 | [core-conversations](20260301-core-conversations.md) | Persistent conversations, feedback | 12 | pending |
-| 4 | [admin-enforcement](20260301-admin-enforcement.md) | RLS, scope enforcement, rate limiting | 13 | pending |
+| 4 | [admin-enforcement](20260301-admin-enforcement.md) | RLS, scope enforcement, rate limiting | 14 | pending |
 | 5 | [index-hybrid](20260301-index-hybrid.md) | Hybrid search, Qdrant, reindex API | 19 | pending |
 | 6 | [ingest-phase2](20260301-ingest-phase2.md) | OCR, dual chunking, versioning, batch ops | 32 | pending |
 

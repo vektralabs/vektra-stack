@@ -132,6 +132,8 @@ Parent chunks are stored alongside child chunks but are not directly returned in
 
 ### Document versioning
 
+Note: `source_documents` already has `version INTEGER NOT NULL DEFAULT 1`, `supersedes_id UUID NULL`, and `deletion_reason VARCHAR(32)` with CHECK constraint including `'superseded'` from Phase 1 migration 0001 (forward-compatible data model, ARCH-040). No schema changes needed for versioning.
+
 When re-ingesting a file with the same filename but different content_hash:
 1. Phase 1 behavior (409 Conflict) is replaced.
 2. Query existing document: `SELECT id, version FROM source_documents WHERE namespace_id = :ns AND filename = :name AND deleted_at IS NULL`.

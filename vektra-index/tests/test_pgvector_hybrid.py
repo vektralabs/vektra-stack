@@ -82,7 +82,10 @@ class TestPgvectorStoreWithSparse:
             result = await provider.store(session, "default", doc_id, chunks)
 
         assert len(result) == 1
-        assert captured_orms[0].sparse_vector == {"indices": [0, 5], "values": [0.5, 0.8]}
+        assert captured_orms[0].sparse_vector == {
+            "indices": [0, 5],
+            "values": [0.5, 0.8],
+        }
 
     @pytest.mark.asyncio
     async def test_store_without_sparse_sets_null(self):
@@ -122,7 +125,9 @@ class TestPgvectorSearchModeDispatch:
         session = _make_session()
         query_embedding = QueryEmbedding(dense=[0.1] * 384)
 
-        with patch.object(provider, "_search_dense", new_callable=AsyncMock, return_value=[]) as mock:
+        with patch.object(
+            provider, "_search_dense", new_callable=AsyncMock, return_value=[]
+        ) as mock:
             await provider.search(session, "ns", query_embedding, 5, SearchMode.DENSE)
             mock.assert_called_once()
 
@@ -137,7 +142,9 @@ class TestPgvectorSearchModeDispatch:
             sparse=SparseVector(indices=[1], values=[0.5]),
         )
 
-        with patch.object(provider, "_search_sparse", new_callable=AsyncMock, return_value=[]) as mock:
+        with patch.object(
+            provider, "_search_sparse", new_callable=AsyncMock, return_value=[]
+        ) as mock:
             await provider.search(session, "ns", query_embedding, 5, SearchMode.SPARSE)
             mock.assert_called_once()
 
@@ -152,7 +159,9 @@ class TestPgvectorSearchModeDispatch:
             sparse=SparseVector(indices=[1], values=[0.5]),
         )
 
-        with patch.object(provider, "_search_hybrid", new_callable=AsyncMock, return_value=[]) as mock:
+        with patch.object(
+            provider, "_search_hybrid", new_callable=AsyncMock, return_value=[]
+        ) as mock:
             await provider.search(session, "ns", query_embedding, 5, SearchMode.HYBRID)
             mock.assert_called_once()
 
@@ -168,7 +177,9 @@ class TestPgvectorSparseFallback:
         session = _make_session()
         query_embedding = QueryEmbedding(dense=[0.1] * 384, sparse=None)
 
-        with patch.object(provider, "_search_dense", new_callable=AsyncMock, return_value=[]) as mock:
+        with patch.object(
+            provider, "_search_dense", new_callable=AsyncMock, return_value=[]
+        ) as mock:
             await provider._search_sparse(session, "ns", query_embedding, 5)
             mock.assert_called_once()
 
@@ -180,7 +191,9 @@ class TestPgvectorSparseFallback:
         session = _make_session()
         query_embedding = QueryEmbedding(dense=[0.1] * 384, sparse=None)
 
-        with patch.object(provider, "_search_dense", new_callable=AsyncMock, return_value=[]) as mock:
+        with patch.object(
+            provider, "_search_dense", new_callable=AsyncMock, return_value=[]
+        ) as mock:
             await provider._search_hybrid(session, "ns", query_embedding, 5)
             mock.assert_called_once()
 
@@ -202,12 +215,20 @@ class TestRRFFusion:
         doc_id = uuid4()
 
         dense_results = [
-            SearchResult(chunk_id=str(chunk_a), score=0.9, text_snippet="a", document_id=doc_id),
-            SearchResult(chunk_id=str(chunk_b), score=0.8, text_snippet="b", document_id=doc_id),
+            SearchResult(
+                chunk_id=str(chunk_a), score=0.9, text_snippet="a", document_id=doc_id
+            ),
+            SearchResult(
+                chunk_id=str(chunk_b), score=0.8, text_snippet="b", document_id=doc_id
+            ),
         ]
         sparse_results = [
-            SearchResult(chunk_id=str(chunk_b), score=0.7, text_snippet="b", document_id=doc_id),
-            SearchResult(chunk_id=str(chunk_c), score=0.6, text_snippet="c", document_id=doc_id),
+            SearchResult(
+                chunk_id=str(chunk_b), score=0.7, text_snippet="b", document_id=doc_id
+            ),
+            SearchResult(
+                chunk_id=str(chunk_c), score=0.6, text_snippet="c", document_id=doc_id
+            ),
         ]
 
         query_embedding = QueryEmbedding(
@@ -216,8 +237,18 @@ class TestRRFFusion:
         )
 
         with (
-            patch.object(provider, "_search_dense", new_callable=AsyncMock, return_value=dense_results),
-            patch.object(provider, "_search_sparse", new_callable=AsyncMock, return_value=sparse_results),
+            patch.object(
+                provider,
+                "_search_dense",
+                new_callable=AsyncMock,
+                return_value=dense_results,
+            ),
+            patch.object(
+                provider,
+                "_search_sparse",
+                new_callable=AsyncMock,
+                return_value=sparse_results,
+            ),
         ):
             results = await provider._search_hybrid(session, "ns", query_embedding, 3)
 
@@ -234,11 +265,21 @@ class TestRRFFusion:
         doc_id = uuid4()
 
         dense_results = [
-            SearchResult(chunk_id=str(uuid4()), score=0.9 - i * 0.1, text_snippet=f"d{i}", document_id=doc_id)
+            SearchResult(
+                chunk_id=str(uuid4()),
+                score=0.9 - i * 0.1,
+                text_snippet=f"d{i}",
+                document_id=doc_id,
+            )
             for i in range(5)
         ]
         sparse_results = [
-            SearchResult(chunk_id=str(uuid4()), score=0.8 - i * 0.1, text_snippet=f"s{i}", document_id=doc_id)
+            SearchResult(
+                chunk_id=str(uuid4()),
+                score=0.8 - i * 0.1,
+                text_snippet=f"s{i}",
+                document_id=doc_id,
+            )
             for i in range(5)
         ]
 
@@ -248,8 +289,18 @@ class TestRRFFusion:
         )
 
         with (
-            patch.object(provider, "_search_dense", new_callable=AsyncMock, return_value=dense_results),
-            patch.object(provider, "_search_sparse", new_callable=AsyncMock, return_value=sparse_results),
+            patch.object(
+                provider,
+                "_search_dense",
+                new_callable=AsyncMock,
+                return_value=dense_results,
+            ),
+            patch.object(
+                provider,
+                "_search_sparse",
+                new_callable=AsyncMock,
+                return_value=sparse_results,
+            ),
         ):
             results = await provider._search_hybrid(session, "ns", query_embedding, 3)
 

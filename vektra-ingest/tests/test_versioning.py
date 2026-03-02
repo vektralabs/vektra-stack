@@ -120,8 +120,12 @@ async def test_reingest_creates_new_version():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
@@ -200,8 +204,12 @@ async def test_reingest_version_3():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
@@ -251,8 +259,12 @@ async def test_new_file_gets_version_1():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
@@ -325,8 +337,12 @@ async def test_superseded_event_emitted():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
@@ -410,8 +426,12 @@ async def test_old_doc_soft_deleted_with_superseded_reason():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk

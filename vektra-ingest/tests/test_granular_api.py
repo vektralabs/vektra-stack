@@ -89,8 +89,13 @@ async def test_extract_returns_document_chunks():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.detection.detect_content_type", return_value="application/pdf"), \
-         patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with (
+        patch(
+            "vektra_ingest.detection.detect_content_type",
+            return_value="application/pdf",
+        ),
+        patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
@@ -112,8 +117,10 @@ async def test_extract_unsupported_type_returns_422():
     """Extract endpoint rejects unsupported content type."""
     app = _make_app()
 
-    with patch("vektra_ingest.detection.detect_content_type", return_value="image/jpeg"), \
-         patch("vektra_ingest.pipeline._get_extractor", return_value=None):
+    with (
+        patch("vektra_ingest.detection.detect_content_type", return_value="image/jpeg"),
+        patch("vektra_ingest.pipeline._get_extractor", return_value=None),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
@@ -139,9 +146,14 @@ async def test_chunk_returns_chunked_elements():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.detection.detect_content_type", return_value="application/pdf"), \
-         patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor), \
-         patch("vektra_ingest.chunking.FixedSizeChunking") as mock_chunker_cls:
+    with (
+        patch(
+            "vektra_ingest.detection.detect_content_type",
+            return_value="application/pdf",
+        ),
+        patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor),
+        patch("vektra_ingest.chunking.FixedSizeChunking") as mock_chunker_cls,
+    ):
         mc = MagicMock()
         mc.chunk = _fake_chunk
         mock_chunker_cls.return_value = mc
@@ -174,9 +186,14 @@ async def test_embed_returns_embeddings():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.detection.detect_content_type", return_value="application/pdf"), \
-         patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor), \
-         patch("vektra_ingest.chunking.FixedSizeChunking") as mock_chunker_cls:
+    with (
+        patch(
+            "vektra_ingest.detection.detect_content_type",
+            return_value="application/pdf",
+        ),
+        patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor),
+        patch("vektra_ingest.chunking.FixedSizeChunking") as mock_chunker_cls,
+    ):
         mc = MagicMock()
         mc.chunk = _fake_chunk
         mock_chunker_cls.return_value = mc

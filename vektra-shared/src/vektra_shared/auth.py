@@ -147,9 +147,7 @@ def require_scope(
         # 5. Rate limiting (optional, duck-typed from app.state)
         rate_limiter = getattr(request.app.state, "rate_limiter", None)
         if rate_limiter is not None and info.rate_limit_rpm is not None:
-            allowed, rl_headers = rate_limiter.check(
-                info.key_id, info.rate_limit_rpm
-            )
+            allowed, rl_headers = rate_limiter.check(info.key_id, info.rate_limit_rpm)
             if not allowed:
                 err = ErrorResponse(
                     category=ErrorCategory.TRANSIENT,

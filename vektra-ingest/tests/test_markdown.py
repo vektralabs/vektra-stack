@@ -50,13 +50,7 @@ async def test_markdown_empty_sections_skipped():
     """Sections with no content after the heading are skipped."""
     from vektra_ingest.extractors.markdown import MarkdownExtractor
 
-    content = (
-        "# Title\n"
-        "\n"
-        "## Empty section\n"
-        "## Section with content\n"
-        "Some content.\n"
-    )
+    content = "# Title\n\n## Empty section\n## Section with content\nSome content.\n"
     req = ExtractionRequest(
         content=content.encode(),
         content_type="text/markdown",

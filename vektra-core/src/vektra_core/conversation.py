@@ -63,9 +63,7 @@ class InMemoryConversationStore:
         self._store: dict[UUID, list[_InMemoryTurn]] = {}
         self._lock = asyncio.Lock()
 
-    async def get_history(
-        self, conversation_id: UUID
-    ) -> list[dict[str, str | None]]:
+    async def get_history(self, conversation_id: UUID) -> list[dict[str, str | None]]:
         """Return conversation history as a list of dicts (oldest first)."""
         async with self._lock:
             turns = self._store.get(conversation_id, [])
@@ -145,27 +143,24 @@ class PersistentConversationStore:
             )
             return conversation_id
 
-    async def get_history(
-        self, conversation_id: UUID
-    ) -> list[dict[str, str | None]]:
+    async def get_history(self, conversation_id: UUID) -> list[dict[str, str | None]]:
         """Return decrypted conversation history ordered by turn_number."""
         async with self._session_factory() as session:
             stmt = (
                 select(
-                    func.pgp_sym_decrypt(
-                        ConversationTurnOrm.question, self._key
-                    ).label("question"),
-                    func.pgp_sym_decrypt(
-                        ConversationTurnOrm.answer, self._key
-                    ).label("answer"),
+                    func.pgp_sym_decrypt(ConversationTurnOrm.question, self._key).label(
+                        "question"
+                    ),
+                    func.pgp_sym_decrypt(ConversationTurnOrm.answer, self._key).label(
+                        "answer"
+                    ),
                 )
                 .where(ConversationTurnOrm.conversation_id == conversation_id)
                 .order_by(ConversationTurnOrm.turn_number)
             )
             result = await session.execute(stmt)
             return [
-                {"question": row.question, "answer": row.answer}
-                for row in result.all()
+                {"question": row.question, "answer": row.answer} for row in result.all()
             ]
 
     async def add_turn(
@@ -231,9 +226,7 @@ class PersistentConversationStore:
     async def clear(self, conversation_id: UUID) -> None:
         """Delete a conversation and all its turns (CASCADE)."""
         async with self._session_factory() as session:
-            stmt = delete(ConversationOrm).where(
-                ConversationOrm.id == conversation_id
-            )
+            stmt = delete(ConversationOrm).where(ConversationOrm.id == conversation_id)
             await session.execute(stmt)
             await session.commit()
             log.info(
@@ -241,9 +234,7 @@ class PersistentConversationStore:
                 conversation_id=str(conversation_id),
             )
 
-    async def get_metadata(
-        self, conversation_id: UUID
-    ) -> dict[str, Any] | None:
+    async def get_metadata(self, conversation_id: UUID) -> dict[str, Any] | None:
         """Return conversation metadata (no content). For GET endpoint."""
         async with self._session_factory() as session:
             stmt = select(

@@ -49,8 +49,16 @@ class MarkdownExtractor:
                             element_type=ElementType.TEXT,
                             content_format="markdown",
                             metadata={
-                                **({"heading_level": current_level} if current_level else {}),
-                                **({"section_title": current_title} if current_title else {}),
+                                **(
+                                    {"heading_level": current_level}
+                                    if current_level
+                                    else {}
+                                ),
+                                **(
+                                    {"section_title": current_title}
+                                    if current_title
+                                    else {}
+                                ),
                             },
                         )
                     current_lines = []

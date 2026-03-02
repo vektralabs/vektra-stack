@@ -55,9 +55,7 @@ class ConversationOrm(Base):
         ForeignKey("namespaces.id"),
         nullable=False,
     )
-    key_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=False
-    )
+    key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     turn_count: Mapped[int] = mapped_column(
         INTEGER, nullable=False, server_default=text("0")
@@ -146,9 +144,7 @@ class FeedbackOrm(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    response_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=False
-    )
+    response_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     citation_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
     )
@@ -157,9 +153,7 @@ class FeedbackOrm(Base):
         ForeignKey("namespaces.id"),
         nullable=False,
     )
-    key_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=False
-    )
+    key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     rating: Mapped[int] = mapped_column(SMALLINT, nullable=False)
     comment: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -167,9 +161,7 @@ class FeedbackOrm(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "rating >= 1 AND rating <= 5", name="ck_feedback_rating"
-        ),
+        CheckConstraint("rating >= 1 AND rating <= 5", name="ck_feedback_rating"),
         Index("ix_feedback_response", "response_id"),
         Index("ix_feedback_namespace", "namespace_id"),
         Index("ix_feedback_created", "created_at"),

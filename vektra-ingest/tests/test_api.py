@@ -285,8 +285,12 @@ async def test_audit_log_written_on_409_conflict():
     """409 Conflict response writes audit log with error action (DEBT-007)."""
     app = _make_app()
 
-    with patch("vektra_ingest.api.run_ingest") as mock_ingest, \
-         patch("vektra_ingest.api._write_audit_log_direct", new_callable=AsyncMock) as mock_audit:
+    with (
+        patch("vektra_ingest.api.run_ingest") as mock_ingest,
+        patch(
+            "vektra_ingest.api._write_audit_log_direct", new_callable=AsyncMock
+        ) as mock_audit,
+    ):
         from vektra_ingest.exceptions import IngestConflictError
 
         mock_ingest.side_effect = IngestConflictError(
@@ -314,8 +318,12 @@ async def test_audit_log_written_on_422_ingest_error():
     """422 IngestError response writes audit log with error action (DEBT-007)."""
     app = _make_app()
 
-    with patch("vektra_ingest.api.run_ingest") as mock_ingest, \
-         patch("vektra_ingest.api._write_audit_log_direct", new_callable=AsyncMock) as mock_audit:
+    with (
+        patch("vektra_ingest.api.run_ingest") as mock_ingest,
+        patch(
+            "vektra_ingest.api._write_audit_log_direct", new_callable=AsyncMock
+        ) as mock_audit,
+    ):
         from vektra_ingest.exceptions import IngestError
 
         mock_ingest.side_effect = IngestError(

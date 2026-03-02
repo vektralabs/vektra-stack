@@ -219,7 +219,9 @@ async def search(
             try:
                 sparse_vector = await sparse_provider.embed_query(body.query)
             except Exception as exc:
-                _logger.warning("sparse_embedding_failed, falling back to DENSE: %s", exc)
+                _logger.warning(
+                    "sparse_embedding_failed, falling back to DENSE: %s", exc
+                )
                 effective_mode = SearchMode.DENSE
         else:
             _logger.warning(

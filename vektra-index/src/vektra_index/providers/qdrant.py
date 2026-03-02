@@ -39,6 +39,7 @@ def _import_qdrant() -> Any:
     """Import qdrant_client with a clear error message if missing."""
     try:
         import qdrant_client
+
         return qdrant_client
     except ImportError as exc:
         raise ImportError(
@@ -197,16 +198,10 @@ class QdrantVectorStoreProvider:
         base_filter = self._build_filter(namespace, filters, raw_filters)
 
         if search_mode == SearchMode.HYBRID:
-            return await self._search_hybrid(
-                query_embedding, top_k, base_filter
-            )
+            return await self._search_hybrid(query_embedding, top_k, base_filter)
         if search_mode == SearchMode.SPARSE:
-            return await self._search_sparse(
-                query_embedding, top_k, base_filter
-            )
-        return await self._search_dense(
-            query_embedding, top_k, base_filter
-        )
+            return await self._search_sparse(query_embedding, top_k, base_filter)
+        return await self._search_dense(query_embedding, top_k, base_filter)
 
     async def _search_dense(
         self,
@@ -231,7 +226,9 @@ class QdrantVectorStoreProvider:
         base_filter: Any,
     ) -> list[SearchResult]:
         if query_embedding.sparse is None:
-            logger.warning("qdrant_sparse_search_no_sparse_embedding, falling back to DENSE")
+            logger.warning(
+                "qdrant_sparse_search_no_sparse_embedding, falling back to DENSE"
+            )
             return await self._search_dense(query_embedding, top_k, base_filter)
 
         from qdrant_client import models
@@ -261,7 +258,9 @@ class QdrantVectorStoreProvider:
         fused server-side via RRF.
         """
         if query_embedding.sparse is None:
-            logger.warning("qdrant_hybrid_search_no_sparse_embedding, falling back to DENSE")
+            logger.warning(
+                "qdrant_hybrid_search_no_sparse_embedding, falling back to DENSE"
+            )
             return await self._search_dense(query_embedding, top_k, base_filter)
 
         from qdrant_client import models
@@ -406,7 +405,9 @@ class QdrantVectorStoreProvider:
                     score=float(point.score) if point.score is not None else 0.0,
                     text_snippet=payload.get("text", ""),
                     document_id=doc_id,
-                    document_version=payload.get("metadata", {}).get("document_version", 1),
+                    document_version=payload.get("metadata", {}).get(
+                        "document_version", 1
+                    ),
                     metadata=payload.get("metadata", {}),
                 )
             )

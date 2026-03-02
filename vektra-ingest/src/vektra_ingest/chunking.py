@@ -19,21 +19,25 @@ from vektra_shared.types import DocumentChunk, ElementType
 log = structlog.get_logger(__name__)
 
 # Element types that are accumulated as text and split with overlap
-_TEXT_TYPES = frozenset({
-    ElementType.TEXT,
-    ElementType.TITLE,
-    ElementType.LIST,
-    ElementType.HEADER,
-    ElementType.FOOTER,
-    ElementType.FIGURE_CAPTION,
-    ElementType.FORMULA,
-})
+_TEXT_TYPES = frozenset(
+    {
+        ElementType.TEXT,
+        ElementType.TITLE,
+        ElementType.LIST,
+        ElementType.HEADER,
+        ElementType.FOOTER,
+        ElementType.FIGURE_CAPTION,
+        ElementType.FORMULA,
+    }
+)
 
 # Element types that are skipped entirely
-_SKIP_TYPES = frozenset({
-    ElementType.PAGE_BREAK,
-    ElementType.IMAGE,
-})
+_SKIP_TYPES = frozenset(
+    {
+        ElementType.PAGE_BREAK,
+        ElementType.IMAGE,
+    }
+)
 
 
 class FixedSizeChunking:
@@ -177,7 +181,9 @@ class DualStrategyChunking:
         # 2. Split text runs into parent + child chunks, emit tables as-is
 
         # A "segment" is either a text run (list of tokens) or a table element
-        segments: list[tuple[str, Any]] = []  # ("text", tokens_list) or ("table", DocumentChunk)
+        segments: list[
+            tuple[str, Any]
+        ] = []  # ("text", tokens_list) or ("table", DocumentChunk)
         current_text_tokens: list[int] = []
         first_metadata: dict[str, Any] = {}
 
@@ -235,7 +241,9 @@ class DualStrategyChunking:
                 # Split into parent-sized sections, then child chunks within each
                 parent_start = 0
                 while parent_start < len(tokens):
-                    parent_end = min(parent_start + self._parent_chunk_size, len(tokens))
+                    parent_end = min(
+                        parent_start + self._parent_chunk_size, len(tokens)
+                    )
                     parent_tokens = tokens[parent_start:parent_end]
 
                     # Emit parent chunk (level 0)
@@ -265,7 +273,9 @@ class DualStrategyChunking:
                     child_start = 0
 
                     while child_start < len(parent_tokens):
-                        child_end = min(child_start + self._text_chunk_size, len(parent_tokens))
+                        child_end = min(
+                            child_start + self._text_chunk_size, len(parent_tokens)
+                        )
                         child_tokens = parent_tokens[child_start:child_end]
 
                         try:

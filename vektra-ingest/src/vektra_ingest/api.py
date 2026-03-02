@@ -475,15 +475,19 @@ async def extract_only(
 
     from vektra_shared.types import ExtractionRequest
 
-    req = ExtractionRequest(content=file_content, content_type=content_type, filename=filename)
+    req = ExtractionRequest(
+        content=file_content, content_type=content_type, filename=filename
+    )
     elements = []
     async for chunk in await extractor.extract(req):
-        elements.append({
-            "text": chunk.text,
-            "element_type": chunk.element_type.value,
-            "content_format": chunk.content_format,
-            "metadata": chunk.metadata,
-        })
+        elements.append(
+            {
+                "text": chunk.text,
+                "element_type": chunk.element_type.value,
+                "content_format": chunk.content_format,
+                "metadata": chunk.metadata,
+            }
+        )
 
     return elements
 
@@ -521,7 +525,9 @@ async def chunk_only(
 
     from vektra_shared.types import ExtractionRequest
 
-    req = ExtractionRequest(content=file_content, content_type=content_type, filename=filename)
+    req = ExtractionRequest(
+        content=file_content, content_type=content_type, filename=filename
+    )
     elements_iter = await extractor.extract(req)
 
     ingest_config = IngestConfig()
@@ -540,12 +546,14 @@ async def chunk_only(
 
     chunks = []
     async for chunk in await chunker.chunk(elements_iter):
-        chunks.append({
-            "text": chunk.text,
-            "element_type": chunk.element_type.value,
-            "content_format": chunk.content_format,
-            "metadata": chunk.metadata,
-        })
+        chunks.append(
+            {
+                "text": chunk.text,
+                "element_type": chunk.element_type.value,
+                "content_format": chunk.content_format,
+                "metadata": chunk.metadata,
+            }
+        )
 
     return chunks
 
@@ -584,7 +592,9 @@ async def embed_only(
 
     from vektra_shared.types import ExtractionRequest
 
-    req = ExtractionRequest(content=file_content, content_type=content_type, filename=filename)
+    req = ExtractionRequest(
+        content=file_content, content_type=content_type, filename=filename
+    )
     elements_iter = await extractor.extract(req)
 
     ingest_config = IngestConfig()
@@ -620,18 +630,20 @@ async def embed_only(
 
     results = []
     for i, (chunk, embedding) in enumerate(zip(all_chunks, embeddings)):
-        results.append({
-            "text": chunk.text,
-            "dense": embedding,
-            "element_type": chunk.element_type.value,
-            "content_format": chunk.content_format,
-            "metadata": {
-                **chunk.metadata,
-                "content_type": content_type,
+        results.append(
+            {
+                "text": chunk.text,
+                "dense": embedding,
                 "element_type": chunk.element_type.value,
-                "position": i,
-            },
-        })
+                "content_format": chunk.content_format,
+                "metadata": {
+                    **chunk.metadata,
+                    "content_type": content_type,
+                    "element_type": chunk.element_type.value,
+                    "position": i,
+                },
+            }
+        )
 
     return results
 

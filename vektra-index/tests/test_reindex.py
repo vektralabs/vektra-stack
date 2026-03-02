@@ -55,7 +55,6 @@ class TestReindexModels:
 
 
 class TestRunReindex:
-
     @pytest.mark.asyncio
     async def test_run_reindex_updates_progress(self):
         """Verify that run_reindex updates job status."""

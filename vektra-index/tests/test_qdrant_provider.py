@@ -50,7 +50,6 @@ def _make_scored_point(point_id: str, score: float, payload: dict):
 
 
 class TestQdrantStore:
-
     @pytest.mark.asyncio
     async def test_store_upserts_with_wait(self):
         provider, client = _make_provider()
@@ -103,7 +102,6 @@ class TestQdrantStore:
 
 
 class TestQdrantSearch:
-
     @pytest.mark.asyncio
     async def test_search_dense(self):
         provider, client = _make_provider()
@@ -111,13 +109,17 @@ class TestQdrantSearch:
 
         query_result = MagicMock()
         query_result.points = [
-            _make_scored_point("p1", 0.95, {
-                "text": "hello world",
-                "document_id": doc_id,
-                "metadata": {},
-                "namespace_id": "default",
-                "index_version": 1,
-            }),
+            _make_scored_point(
+                "p1",
+                0.95,
+                {
+                    "text": "hello world",
+                    "document_id": doc_id,
+                    "metadata": {},
+                    "namespace_id": "default",
+                    "index_version": 1,
+                },
+            ),
         ]
         client.query_points = AsyncMock(return_value=query_result)
 
@@ -136,13 +138,17 @@ class TestQdrantSearch:
 
         query_result = MagicMock()
         query_result.points = [
-            _make_scored_point("p1", 0.8, {
-                "text": "sparse result",
-                "document_id": doc_id,
-                "metadata": {},
-                "namespace_id": "default",
-                "index_version": 1,
-            }),
+            _make_scored_point(
+                "p1",
+                0.8,
+                {
+                    "text": "sparse result",
+                    "document_id": doc_id,
+                    "metadata": {},
+                    "namespace_id": "default",
+                    "index_version": 1,
+                },
+            ),
         ]
         client.query_points = AsyncMock(return_value=query_result)
 
@@ -162,13 +168,17 @@ class TestQdrantSearch:
 
         query_result = MagicMock()
         query_result.points = [
-            _make_scored_point("p1", 0.9, {
-                "text": "hybrid result",
-                "document_id": doc_id,
-                "metadata": {},
-                "namespace_id": "default",
-                "index_version": 1,
-            }),
+            _make_scored_point(
+                "p1",
+                0.9,
+                {
+                    "text": "hybrid result",
+                    "document_id": doc_id,
+                    "metadata": {},
+                    "namespace_id": "default",
+                    "index_version": 1,
+                },
+            ),
         ]
         client.query_points = AsyncMock(return_value=query_result)
 
@@ -201,7 +211,6 @@ class TestQdrantSearch:
 
 
 class TestQdrantDelete:
-
     @pytest.mark.asyncio
     async def test_delete_by_document_id(self):
         provider, client = _make_provider()
@@ -214,7 +223,6 @@ class TestQdrantDelete:
 
 
 class TestQdrantHealthCheck:
-
     @pytest.mark.asyncio
     async def test_healthy(self):
         provider, client = _make_provider()

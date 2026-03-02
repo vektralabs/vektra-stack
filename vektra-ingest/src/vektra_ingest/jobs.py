@@ -128,7 +128,9 @@ async def ingest_document_task(
         return
 
     async def _on_phase(phase: str, percentage: int | None) -> None:
-        await _update_job(job_uuid, status="processing", phase=phase, percentage=percentage)
+        await _update_job(
+            job_uuid, status="processing", phase=phase, percentage=percentage
+        )
 
     try:
         async with _shared_db._session_factory() as session:
@@ -224,9 +226,7 @@ async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
 
             # Hard-delete (CASCADE handles document_chunks)
             await session.execute(
-                delete(SourceDocumentOrm).where(
-                    SourceDocumentOrm.id.in_(expired_ids)
-                )
+                delete(SourceDocumentOrm).where(SourceDocumentOrm.id.in_(expired_ids))
             )
             await session.commit()
 

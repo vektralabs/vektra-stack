@@ -220,8 +220,12 @@ async def test_filename_match_creates_new_version():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
@@ -517,8 +521,12 @@ async def test_on_phase_callback_called_in_sequence():
     async def _on_phase(phase: str, percentage: int | None) -> None:
         phases.append((phase, percentage))
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
@@ -589,8 +597,12 @@ async def test_document_indexed_event_emitted():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
@@ -607,7 +619,9 @@ async def test_document_indexed_event_emitted():
     assert result.status == "indexed"
 
     # Check document.indexed event was emitted
-    emit_calls = [c for c in mock_events.emit.call_args_list if c.args[0] == "document.indexed"]
+    emit_calls = [
+        c for c in mock_events.emit.call_args_list if c.args[0] == "document.indexed"
+    ]
     assert len(emit_calls) == 1
     payload = emit_calls[0].args[1]
     assert payload["document_id"] == str(doc_id)
@@ -647,7 +661,9 @@ async def test_document_failed_event_emitted_on_error():
     mock_vs = AsyncMock()
     mock_vs.store = AsyncMock(side_effect=RuntimeError("storage failed"))
 
-    registry, mock_embedding, _ = _make_registry(vector_store=mock_vs, events=mock_events)
+    registry, mock_embedding, _ = _make_registry(
+        vector_store=mock_vs, events=mock_events
+    )
     mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
 
     async def _fake_extract(req):
@@ -666,14 +682,20 @@ async def test_document_failed_event_emitted_on_error():
     mock_extractor = MagicMock()
     mock_extractor.extract = _fake_extract
 
-    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
-        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
             with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
                 mc = MagicMock()
                 mc.chunk = _fake_chunk
                 mock_cc.return_value = mc
 
-                with patch("vektra_ingest.pipeline._cleanup_document", new_callable=AsyncMock):
+                with patch(
+                    "vektra_ingest.pipeline._cleanup_document", new_callable=AsyncMock
+                ):
                     with pytest.raises(IngestError):
                         await run_ingest(
                             file_content=b"%PDF-1.4 fake",

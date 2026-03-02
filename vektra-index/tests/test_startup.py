@@ -192,7 +192,9 @@ async def test_check_sparse_embedding_model_failure() -> None:
 
     registry = _make_registry(has_sparse=True)
     sparse_provider = registry.get("sparse_embedding", "default")
-    sparse_provider.embed_query = AsyncMock(side_effect=ImportError("fastembed not found"))
+    sparse_provider.embed_query = AsyncMock(
+        side_effect=ImportError("fastembed not found")
+    )
 
     with pytest.raises(StartupValidationError, match="fastembed"):
         await check_sparse_embedding_model(registry)

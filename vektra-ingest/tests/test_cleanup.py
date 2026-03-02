@@ -26,8 +26,10 @@ async def test_cleanup_purges_expired_documents():
     mock_factory.return_value.__aenter__ = AsyncMock(return_value=session)
     mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("vektra_ingest.jobs._shared_db") as mock_db, \
-         patch("vektra_shared.config.ObservabilityConfig") as mock_config_cls:
+    with (
+        patch("vektra_ingest.jobs._shared_db") as mock_db,
+        patch("vektra_shared.config.ObservabilityConfig") as mock_config_cls,
+    ):
         mock_db._session_factory = mock_factory
         mock_config_cls.return_value.retention_days = 30
 
@@ -65,8 +67,10 @@ async def test_cleanup_skips_when_nothing_to_purge():
     mock_factory.return_value.__aenter__ = AsyncMock(return_value=session)
     mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("vektra_ingest.jobs._shared_db") as mock_db, \
-         patch("vektra_shared.config.ObservabilityConfig") as mock_config_cls:
+    with (
+        patch("vektra_ingest.jobs._shared_db") as mock_db,
+        patch("vektra_shared.config.ObservabilityConfig") as mock_config_cls,
+    ):
         mock_db._session_factory = mock_factory
         mock_config_cls.return_value.retention_days = 30
 

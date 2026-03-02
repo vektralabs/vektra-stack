@@ -39,7 +39,12 @@ def upgrade() -> None:
             server_default=sa.text("gen_random_uuid()"),
             primary_key=True,
         ),
-        sa.Column("namespace_id", sa.String(64), sa.ForeignKey("namespaces.id"), nullable=False),
+        sa.Column(
+            "namespace_id",
+            sa.String(64),
+            sa.ForeignKey("namespaces.id"),
+            nullable=False,
+        ),
         sa.Column("source_index_version", sa.INTEGER(), nullable=False),
         sa.Column("target_index_version", sa.INTEGER(), nullable=False),
         sa.Column(
@@ -48,9 +53,20 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'pending'"),
         ),
-        sa.Column("total_documents", sa.INTEGER(), nullable=False, server_default=sa.text("0")),
-        sa.Column("processed_documents", sa.INTEGER(), nullable=False, server_default=sa.text("0")),
-        sa.Column("current_document_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column(
+            "total_documents", sa.INTEGER(), nullable=False, server_default=sa.text("0")
+        ),
+        sa.Column(
+            "processed_documents",
+            sa.INTEGER(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
+        sa.Column(
+            "current_document_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            nullable=True,
+        ),
         sa.Column("error_message", sa.TEXT(), nullable=True),
         sa.Column(
             "created_at",

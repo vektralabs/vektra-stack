@@ -26,7 +26,10 @@ def _text_element(text: str, **kwargs) -> DocumentChunk:
 
 def _table_element(text: str, content_format: str = "html", **kwargs) -> DocumentChunk:
     return DocumentChunk(
-        text=text, element_type=ElementType.TABLE, content_format=content_format, **kwargs
+        text=text,
+        element_type=ElementType.TABLE,
+        content_format=content_format,
+        **kwargs,
     )
 
 
@@ -46,7 +49,9 @@ def test_parent_size_must_be_gte_child_size():
     from vektra_ingest.chunking import DualStrategyChunking
 
     with pytest.raises(ValueError, match="parent_chunk_size"):
-        DualStrategyChunking(text_chunk_size=100, text_chunk_overlap=20, parent_chunk_size=50)
+        DualStrategyChunking(
+            text_chunk_size=100, text_chunk_overlap=20, parent_chunk_size=50
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +74,9 @@ async def test_text_elements_split_with_overlap():
     chunks = await _collect(chunker, elements)
 
     # Should have at least one parent and at least one child
-    parents = [c for c in chunks if c.parent_id is None and c.element_type == ElementType.TEXT]
+    parents = [
+        c for c in chunks if c.parent_id is None and c.element_type == ElementType.TEXT
+    ]
     children = [c for c in chunks if c.parent_id is not None]
 
     assert len(parents) >= 1

@@ -73,17 +73,13 @@ class FastEmbedBM25Provider:
     async def embed_documents(self, texts: list[str]) -> list[SparseVector]:
         """Embed a batch of document passages for indexing."""
         model = self._model()
-        embeddings = await asyncio.to_thread(
-            lambda: list(model.embed(texts))
-        )
+        embeddings = await asyncio.to_thread(lambda: list(model.embed(texts)))
         return [_to_sparse_vector(e) for e in embeddings]
 
     async def embed_query(self, text: str) -> SparseVector:
         """Embed a single query string for retrieval."""
         model = self._model()
-        embeddings = await asyncio.to_thread(
-            lambda: list(model.query_embed(text))
-        )
+        embeddings = await asyncio.to_thread(lambda: list(model.query_embed(text)))
         return _to_sparse_vector(embeddings[0])
 
     def vocab_size(self) -> int | None:

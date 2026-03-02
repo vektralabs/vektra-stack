@@ -27,9 +27,7 @@ class RateLimiter:
     def __init__(self) -> None:
         self._windows: dict[UUID, deque[float]] = {}
 
-    def check(
-        self, key_id: UUID, rpm_limit: int | None
-    ) -> tuple[bool, dict[str, str]]:
+    def check(self, key_id: UUID, rpm_limit: int | None) -> tuple[bool, dict[str, str]]:
         """Check if a request is within the rate limit.
 
         Args:

@@ -86,9 +86,7 @@ async def test_create_conversation_returns_uuid():
     session.execute.return_value = mock_result
 
     store = PersistentConversationStore(factory, "key123")
-    result = await store.create_conversation(
-        namespace_id="test-ns", key_id=uuid4()
-    )
+    result = await store.create_conversation(namespace_id="test-ns", key_id=uuid4())
 
     assert result == expected_id
     session.execute.assert_called_once()

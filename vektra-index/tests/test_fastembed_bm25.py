@@ -23,24 +23,31 @@ class TestFastEmbedBM25Provider:
 
     def _make_mock_model(self) -> MagicMock:
         model = MagicMock()
-        model.embed.return_value = iter([
-            FakeSparseEmbedding([0, 5, 12], [0.5, 0.8, 0.3]),
-            FakeSparseEmbedding([1, 7], [0.6, 0.4]),
-        ])
-        model.query_embed.return_value = iter([
-            FakeSparseEmbedding([2, 9], [0.7, 0.9]),
-        ])
+        model.embed.return_value = iter(
+            [
+                FakeSparseEmbedding([0, 5, 12], [0.5, 0.8, 0.3]),
+                FakeSparseEmbedding([1, 7], [0.6, 0.4]),
+            ]
+        )
+        model.query_embed.return_value = iter(
+            [
+                FakeSparseEmbedding([2, 9], [0.7, 0.9]),
+            ]
+        )
         return model
 
     @pytest.mark.asyncio
     async def test_embed_documents_returns_sparse_vectors(self):
         mock_model = self._make_mock_model()
-        with patch(
-            "vektra_index.providers.fastembed_bm25._get_sparse_model",
-            return_value=mock_model,
-        ), patch(
-            "vektra_index.providers.fastembed_bm25._sparse_model",
-            mock_model,
+        with (
+            patch(
+                "vektra_index.providers.fastembed_bm25._get_sparse_model",
+                return_value=mock_model,
+            ),
+            patch(
+                "vektra_index.providers.fastembed_bm25._sparse_model",
+                mock_model,
+            ),
         ):
             from vektra_index.providers.fastembed_bm25 import FastEmbedBM25Provider
 
@@ -60,12 +67,15 @@ class TestFastEmbedBM25Provider:
     @pytest.mark.asyncio
     async def test_embed_query_returns_sparse_vector(self):
         mock_model = self._make_mock_model()
-        with patch(
-            "vektra_index.providers.fastembed_bm25._get_sparse_model",
-            return_value=mock_model,
-        ), patch(
-            "vektra_index.providers.fastembed_bm25._sparse_model",
-            mock_model,
+        with (
+            patch(
+                "vektra_index.providers.fastembed_bm25._get_sparse_model",
+                return_value=mock_model,
+            ),
+            patch(
+                "vektra_index.providers.fastembed_bm25._sparse_model",
+                mock_model,
+            ),
         ):
             from vektra_index.providers.fastembed_bm25 import FastEmbedBM25Provider
 
@@ -81,12 +91,15 @@ class TestFastEmbedBM25Provider:
     @pytest.mark.asyncio
     async def test_vocab_size_returns_none(self):
         mock_model = self._make_mock_model()
-        with patch(
-            "vektra_index.providers.fastembed_bm25._get_sparse_model",
-            return_value=mock_model,
-        ), patch(
-            "vektra_index.providers.fastembed_bm25._sparse_model",
-            mock_model,
+        with (
+            patch(
+                "vektra_index.providers.fastembed_bm25._get_sparse_model",
+                return_value=mock_model,
+            ),
+            patch(
+                "vektra_index.providers.fastembed_bm25._sparse_model",
+                mock_model,
+            ),
         ):
             from vektra_index.providers.fastembed_bm25 import FastEmbedBM25Provider
 

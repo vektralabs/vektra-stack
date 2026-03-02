@@ -9,7 +9,7 @@
 # Phase 1 wave completion: all completed (Waves 0-7)
 # Phase 2 wave completion:
 #   Wave 0: completed (shared-protocols-phase2, database-phase2)
-#   Wave 1: in progress (core-conversations, admin-enforcement, index-hybrid done; ingest-phase2 T1-T11/T32)
+#   Wave 1: completed (core-conversations, admin-enforcement, index-hybrid, ingest-phase2)
 version: "1.0"
 
 matrix:
@@ -28,7 +28,7 @@ matrix:
     title: "WF-INGEST-001: Document ingestion workflow"
     arch: "ARCH-005; ARCH-006; ARCH-009; ARCH-010; ARCH-011"
     plan_task: "20260217-component-ingest:pipeline"
-    test: "vektra-ingest/tests/test_unstructured.py"
+    test: "vektra-ingest/tests/test_unstructured.py; vektra-ingest/tests/test_markdown.py; vektra-ingest/tests/test_granular_api.py"
 
   - req: REQ-003
     title: "WF-QUERY-001: RAG query workflow"
@@ -94,7 +94,7 @@ matrix:
     title: "vektra-ingest Phase 1 API surface"
     arch: "ARCH-005; ARCH-019"
     plan_task: "20260217-component-ingest:api"
-    test: ""
+    test: "vektra-ingest/tests/test_api.py; vektra-ingest/tests/test_granular_api.py"
 
   - req: REQ-016
     title: "Phase 1 input constraints"
@@ -136,7 +136,7 @@ matrix:
     title: "API key audit logging"
     arch: "ARCH-041"
     plan_task: "20260217-component-admin:audit"
-    test: ""
+    test: "vektra-ingest/tests/test_api.py"
 
   - req: REQ-023
     title: "API key table schema with scope support"
@@ -328,13 +328,13 @@ matrix:
     title: "Soft delete for documents"
     arch: "ARCH-040; ARCH-058"
     plan_task: "20260217-infra-database:source-documents-table"
-    test: "vektra-shared/tests/test_migration.py"
+    test: "vektra-shared/tests/test_migration.py; vektra-ingest/tests/test_cleanup.py; vektra-ingest/tests/test_api.py"
 
   - req: REQ-058
     title: "Content type detection via magic bytes"
     arch: "ARCH-042"
     plan_task: "20260217-component-ingest:detection"
-    test: ""
+    test: "vektra-ingest/tests/test_markdown.py"
 
   - req: REQ-059
     title: "LLM graceful degradation"
@@ -352,7 +352,7 @@ matrix:
     title: "EventEmitter interface"
     arch: "ARCH-038"
     plan_task: "20260217-component-shared:events"
-    test: "vektra-shared/tests/test_protocols.py; vektra-shared/tests/test_events.py"
+    test: "vektra-shared/tests/test_protocols.py; vektra-shared/tests/test_events.py; vektra-ingest/tests/test_pipeline.py"
 
   - req: REQ-062
     title: "ProviderRegistry pattern"
@@ -425,7 +425,7 @@ matrix:
     title: "Document ingestion status model"
     arch: "ARCH-005; ARCH-006"
     plan_task: "20260217-component-ingest:jobs"
-    test: ""
+    test: "vektra-ingest/tests/test_pipeline.py"
     nfr_operationalization: |
       tool: pytest integration test
       dataset: real PDF ingestion through the full pipeline (sync path for files <= 10MB, async path for files > 10MB)
@@ -517,7 +517,7 @@ matrix:
     title: "Audit log completeness (100%)"
     arch: "ARCH-041"
     plan_task: "20260217-component-admin:audit"
-    test: ""
+    test: "vektra-ingest/tests/test_api.py"
     nfr_operationalization: |
       tool: pytest integration test in tests/test_nfr_hard.py
       dataset: 50 authenticated HTTP requests against all API endpoint categories (ingest, query, admin, index); each request uses a valid API key with admin scope
@@ -550,7 +550,7 @@ matrix:
     title: "Long operation progress feedback"
     arch: "ARCH-005; ARCH-006"
     plan_task: "20260217-component-ingest:jobs"
-    test: ""
+    test: "vektra-ingest/tests/test_pipeline.py"
     nfr_operationalization: |
       tool: pytest integration test
       dataset: ingestion of a file > 10MB (async path); polling GET /ingest/jobs/{id}/status at 1-second intervals during processing

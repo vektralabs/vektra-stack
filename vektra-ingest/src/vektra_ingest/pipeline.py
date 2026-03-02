@@ -247,7 +247,7 @@ async def run_ingest(
         try:
             vector_store = registry.get("vector_store", "default")
             await vector_store.delete(namespace, [str(existing_by_name.id)])
-        except (ValueError, Exception) as exc:
+        except Exception as exc:
             # Non-fatal: old chunks will be excluded from search
             # (search joins with source_documents WHERE deleted_at IS NULL)
             log.warning(

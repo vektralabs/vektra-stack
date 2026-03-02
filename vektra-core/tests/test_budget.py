@@ -94,7 +94,7 @@ def test_history_selection_order_preserved():
     assert history_idx == sorted(history_idx)
 
 
-def test_unsorted_input_selects_highest_scores(self=None):
+def test_unsorted_input_selects_highest_scores():
     """DEBT-004: when chunks are NOT sorted by score descending, the
     allocator still processes them front-to-back. The caller (pipeline.py)
     is responsible for sorting. This test verifies the allocator's behavior

@@ -18,7 +18,7 @@ from datetime import UTC
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, literal_column, select, text, update
+from sqlalchemy import Float, delete, func, literal_column, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.types import (
@@ -220,7 +220,7 @@ class PgvectorProvider:
             ), 0.0)
         """)
 
-        score_col = sparse_score_sql.columns(score=func.coalesce).label("score")
+        score_col = sparse_score_sql.columns(score=Float).label("score")
 
         stmt = (
             select(

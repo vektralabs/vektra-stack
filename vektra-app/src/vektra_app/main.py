@@ -380,12 +380,14 @@ def create_app() -> FastAPI:
     from vektra_admin.api import router as admin_router
     from vektra_core.api import router as core_router
     from vektra_index.api import router as index_router
+    from vektra_index.reindex import router as reindex_router
     from vektra_ingest.api import router as ingest_router
 
     app.include_router(admin_router)
     app.include_router(core_router)
     app.include_router(ingest_router)
     app.include_router(index_router)
+    app.include_router(reindex_router)
 
     # --- Middleware (LIFO: last added = outermost = runs first) ---
 

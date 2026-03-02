@@ -18,6 +18,7 @@ so it can include key_id and request_id from the request context).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vektra_ingest.chunking import DualStrategyChunking, FixedSizeChunking
 from vektra_ingest.detection import detect_content_type
 from vektra_ingest.exceptions import IngestConflictError, IngestError
+from vektra_ingest.extractors.markdown import MarkdownExtractor
 from vektra_ingest.extractors.pdf import PdfplumberExtractor
 from vektra_ingest.extractors.powerpoint import PowerPointExtractor
 from vektra_ingest.extractors.word import WordExtractor
@@ -84,6 +86,7 @@ def _build_extractor_registry() -> dict[str, Any]:
         PdfplumberExtractor(),
         WordExtractor(),
         PowerPointExtractor(),
+        MarkdownExtractor(),
     ]
     for extractor in extractors:
         for mime_type in extractor.supported_types():
@@ -129,6 +132,7 @@ async def run_ingest(
     namespace: str,
     session: AsyncSession,
     registry: Any,  # ProviderRegistry - typed loosely to avoid circular import
+    on_phase: Callable[[str, int | None], Awaitable[None]] | None = None,
 ) -> IngestResult:
     """Execute the full document ingestion pipeline.
 
@@ -148,6 +152,7 @@ async def run_ingest(
         namespace: Target namespace ID.
         session: AsyncSession for source_documents + ingest_jobs writes.
         registry: ProviderRegistry providing "embedding" and "vector_store".
+        on_phase: Optional progress callback (phase_name, percentage).
 
     Raises:
         IngestConflictError: Concurrent re-ingest TOCTOU race (→ 409).
@@ -312,12 +317,18 @@ async def run_ingest(
     # Steps 6-7: Extract → Chunk → Embed → Store
     # ------------------------------------------------------------------
     try:
+        if on_phase is not None:
+            await on_phase("extracting", None)
+
         extraction_req = ExtractionRequest(
             content=file_content,
             content_type=content_type,
             filename=filename,
         )
         elements_iter = await extractor.extract(extraction_req)
+
+        if on_phase is not None:
+            await on_phase("chunking", None)
 
         ingest_config = IngestConfig()
         chunker: FixedSizeChunking | DualStrategyChunking
@@ -344,6 +355,9 @@ async def run_ingest(
                 error_code=ERR_INGEST_001,
                 message="No extractable text found in document.",
             )
+
+        if on_phase is not None:
+            await on_phase("embedding", 50)
 
         # Embed
         embedding_provider = registry.get("embedding", "default")
@@ -380,9 +394,10 @@ async def run_ingest(
         vector_store = registry.get("vector_store", "default")
         chunk_ids = await vector_store.store(namespace, chunk_embeddings)
 
-    except (IngestError, IngestConflictError):
+    except (IngestError, IngestConflictError) as exc:
         # These are expected errors - still need to clean up the source_document
         await _cleanup_document(doc_id)
+        _emit_failed_event(registry, doc_id, namespace, filename, exc)
         raise
     except Exception as exc:
         log.error(
@@ -392,10 +407,12 @@ async def run_ingest(
             error=str(exc),
         )
         await _cleanup_document(doc_id)
-        raise IngestError(
+        ingest_err = IngestError(
             error_code=ERR_INGEST_004,
             message=f"Storage failed: {exc}",
-        ) from exc
+        )
+        _emit_failed_event(registry, doc_id, namespace, filename, ingest_err)
+        raise ingest_err from exc
 
     # ------------------------------------------------------------------
     # Step 8: Update chunk_count
@@ -477,3 +494,34 @@ async def _cleanup_document(doc_id: UUID) -> None:
             document_id=str(doc_id),
             error=str(exc),
         )
+
+
+def _emit_failed_event(
+    registry: Any,
+    doc_id: UUID | None,
+    namespace: str,
+    filename: str,
+    error: Exception,
+) -> None:
+    """Best-effort emit document.failed event (fire-and-forget)."""
+    try:
+        events = registry.get("events", "default")
+        import asyncio
+
+        error_code = getattr(error, "error_code", "ERR-INGEST-004")
+        error_message = getattr(error, "message", str(error))
+
+        asyncio.get_event_loop().create_task(
+            events.emit(
+                "document.failed",
+                {
+                    "document_id": str(doc_id) if doc_id else None,
+                    "namespace": namespace,
+                    "filename": filename,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                },
+            )
+        )
+    except (ValueError, AttributeError):
+        pass  # events emitter not registered

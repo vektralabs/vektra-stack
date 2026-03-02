@@ -163,7 +163,11 @@ class UnstructuredExtractor:
                 metadata["page"] = page_number
 
             # Use HTML text for tables when available
-            if content_format == "html" and hasattr(meta, "text_as_html"):
+            if (
+                content_format == "html"
+                and meta is not None
+                and hasattr(meta, "text_as_html")
+            ):
                 text = meta.text_as_html
 
             yield DocumentChunk(

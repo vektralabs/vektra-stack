@@ -234,17 +234,17 @@ class DualStrategyChunking:
                 chunk_index += 1
 
             elif seg_type == "text":
-                tokens: list[int] = seg_data
-                if not tokens:
+                text_tokens: list[int] = seg_data
+                if not text_tokens:
                     continue
 
                 # Split into parent-sized sections, then child chunks within each
                 parent_start = 0
-                while parent_start < len(tokens):
+                while parent_start < len(text_tokens):
                     parent_end = min(
-                        parent_start + self._parent_chunk_size, len(tokens)
+                        parent_start + self._parent_chunk_size, len(text_tokens)
                     )
-                    parent_tokens = tokens[parent_start:parent_end]
+                    parent_tokens = text_tokens[parent_start:parent_end]
 
                     # Emit parent chunk (level 0)
                     parent_id = str(uuid4())

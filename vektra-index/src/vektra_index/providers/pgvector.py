@@ -352,7 +352,7 @@ class PgvectorProvider:
         )
 
     @staticmethod
-    def _rows_to_results(rows: list[Any]) -> list[SearchResult]:
+    def _rows_to_results(rows: Sequence[Any]) -> list[SearchResult]:
         return [
             SearchResult(
                 chunk_id=str(row.id),

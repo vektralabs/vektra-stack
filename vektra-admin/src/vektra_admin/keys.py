@@ -64,7 +64,7 @@ def verify_key(plaintext: str, key_hash: str) -> bool:
     with _cache_lock:
         cached = _verify_cache.get(cache_key)
         if cached is not None:
-            return cached
+            return bool(cached)
 
     # Cache miss: run argon2id verification (slow by design)
     try:

@@ -1,8 +1,8 @@
 # Implementation Plan: vektra-ingest - OCR, dual chunking, versioning, batch ops
 
 **ID**: 20260301-ingest-phase2
-**Status**: pending
-**Branch**: N/A
+**Status**: in_progress
+**Branch**: feat/phase2-wave1
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
 
@@ -244,23 +244,23 @@ All require `ingest` or `admin` scope. These are synchronous-only (no background
 
 ### OCR support
 
-- [ ] **T1**: Implement UnstructuredExtractor in `vektra-ingest/src/vektra_ingest/extractors/unstructured.py`. Methods: `supported_types()` returns `{"application/pdf"}`, `extract()` uses `partition_pdf(strategy="auto")` with import guard. Map Unstructured element categories to Vektra ElementType. Extract coordinates as BoundingBox when available.
-- [ ] **T2**: Add `unstructured[pdf]` as optional dependency in `vektra-ingest/pyproject.toml` (under `[project.optional-dependencies]` group `ocr`). Add import guard that logs clear error when package is missing and VEKTRA_DOCUMENT_EXTRACTOR=unstructured.
-- [ ] **T3**: Update `_build_extractor_registry()` in pipeline.py: when VEKTRA_DOCUMENT_EXTRACTOR=unstructured and the package is available, register UnstructuredExtractor for application/pdf instead of PdfplumberExtractor. When not available, fall back to PdfplumberExtractor and log a warning.
-- [ ] **T4**: Write unit tests for UnstructuredExtractor: mock `partition_pdf`, verify element type mapping, verify scanned PDF produces text output (not ERR-INGEST-003), verify coordinates extraction.
+- [x] **T1**: Implement UnstructuredExtractor in `vektra-ingest/src/vektra_ingest/extractors/unstructured.py`. Methods: `supported_types()` returns `{"application/pdf"}`, `extract()` uses `partition_pdf(strategy="auto")` with import guard. Map Unstructured element categories to Vektra ElementType. Extract coordinates as BoundingBox when available.
+- [x] **T2**: Add `unstructured[pdf]` as optional dependency in `vektra-ingest/pyproject.toml` (under `[project.optional-dependencies]` group `ocr`). Add import guard that logs clear error when package is missing and VEKTRA_DOCUMENT_EXTRACTOR=unstructured.
+- [x] **T3**: Update `_build_extractor_registry()` in pipeline.py: when VEKTRA_DOCUMENT_EXTRACTOR=unstructured and the package is available, register UnstructuredExtractor for application/pdf instead of PdfplumberExtractor. When not available, fall back to PdfplumberExtractor and log a warning.
+- [x] **T4**: Write unit tests for UnstructuredExtractor: mock `partition_pdf`, verify element type mapping, verify scanned PDF produces text output (not ERR-INGEST-003), verify coordinates extraction.
 
 ### DualStrategyChunking
 
-- [ ] **T5**: Implement DualStrategyChunking in `vektra-ingest/src/vektra_ingest/chunking.py` alongside FixedSizeChunking. Text elements accumulated and split with overlap (reuse FixedSizeChunking logic). Table elements yielded as-is with content_format="html". Parent-child hierarchy: emit parent chunks every `parent_chunk_size` tokens, child chunks reference parent via parent_id.
-- [ ] **T6**: Update pipeline.py chunker selection: when VEKTRA_CHUNKING_STRATEGY=dual, instantiate DualStrategyChunking. When "fixed", use FixedSizeChunking (existing behavior).
-- [ ] **T7**: Write unit tests for DualStrategyChunking: text elements are split with overlap (same as FixedSizeChunking output), table elements are never split, parent chunks are emitted at correct intervals, child chunks have parent_id set, mixed text+table input produces correct output.
+- [x] **T5**: Implement DualStrategyChunking in `vektra-ingest/src/vektra_ingest/chunking.py` alongside FixedSizeChunking. Text elements accumulated and split with overlap (reuse FixedSizeChunking logic). Table elements yielded as-is with content_format="html". Parent-child hierarchy: emit parent chunks every `parent_chunk_size` tokens, child chunks reference parent via parent_id.
+- [x] **T6**: Update pipeline.py chunker selection: when VEKTRA_CHUNKING_STRATEGY=dual, instantiate DualStrategyChunking. When "fixed", use FixedSizeChunking (existing behavior).
+- [x] **T7**: Write unit tests for DualStrategyChunking: text elements are split with overlap (same as FixedSizeChunking output), table elements are never split, parent chunks are emitted at correct intervals, child chunks have parent_id set, mixed text+table input produces correct output.
 
 ### Document versioning
 
-- [ ] **T8**: Refactor the conflict detection section of `run_ingest()`. When a filename match with different content_hash is found: instead of raising IngestConflictError, compute `new_version = existing.version + 1`, soft-delete the old document (deletion_reason="superseded"), hard-delete old chunks, then proceed with ingestion for the new version with `supersedes_id = existing.id`.
-- [ ] **T9**: Update SourceDocumentOrm creation in `run_ingest()` to pass `version` and `supersedes_id` when applicable.
-- [ ] **T10**: Emit `document.superseded` event via EventEmitter when old version is soft-deleted.
-- [ ] **T11**: Write tests for versioning: re-ingest same filename with different content creates version 2 with supersedes_id pointing to version 1. Old version is soft-deleted. Search only returns chunks from the latest version.
+- [x] **T8**: Refactor the conflict detection section of `run_ingest()`. When a filename match with different content_hash is found: instead of raising IngestConflictError, compute `new_version = existing.version + 1`, soft-delete the old document (deletion_reason="superseded"), hard-delete old chunks, then proceed with ingestion for the new version with `supersedes_id = existing.id`.
+- [x] **T9**: Update SourceDocumentOrm creation in `run_ingest()` to pass `version` and `supersedes_id` when applicable.
+- [x] **T10**: Emit `document.superseded` event via EventEmitter when old version is soft-deleted.
+- [x] **T11**: Write tests for versioning: re-ingest same filename with different content creates version 2 with supersedes_id pointing to version 1. Old version is soft-deleted. Search only returns chunks from the latest version.
 
 ### Batch operations
 

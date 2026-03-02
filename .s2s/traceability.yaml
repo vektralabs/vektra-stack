@@ -1,14 +1,15 @@
 # Requirements Traceability Matrix (RTM) - SPV Level 2
 # Generated: 2026-02-18
+# Updated: 2026-03-02
 # Source documents:
 #   requirements.md v1.5.0 (61 REQs, 13 NFRs, 5 BRs)
-#   architecture.md v1.9 (60 ARCH decisions, 22 ADRs)
+#   architecture.md v1.10 (64 ARCH decisions, 25 ADRs)
 #   plans/INDEX-PHASE1.md + 15 plan files (Wave 0-7)
-# Wave completion:
-#   Wave 0: completed (docs-008, infra-003, component-shared)
-#   Wave 1: completed (infra-database)
-#   Wave 2: completed (component-index)
-#   Wave 3-7: pending
+#   plans/INDEX-PHASE2.md + 11 plan files (Wave 0-5)
+# Phase 1 wave completion: all completed (Waves 0-7)
+# Phase 2 wave completion:
+#   Wave 0: completed (shared-protocols-phase2, database-phase2)
+#   Wave 1: in progress (core-conversations, admin-enforcement, index-hybrid done; ingest-phase2 T1-T11/T32)
 version: "1.0"
 
 matrix:
@@ -27,7 +28,7 @@ matrix:
     title: "WF-INGEST-001: Document ingestion workflow"
     arch: "ARCH-005; ARCH-006; ARCH-009; ARCH-010; ARCH-011"
     plan_task: "20260217-component-ingest:pipeline"
-    test: ""
+    test: "vektra-ingest/tests/test_unstructured.py"
 
   - req: REQ-003
     title: "WF-QUERY-001: RAG query workflow"
@@ -117,7 +118,7 @@ matrix:
     title: "API key authentication for all components"
     arch: "ARCH-020; ARCH-023"
     plan_task: "20260217-component-shared:auth"
-    test: "vektra-shared/tests/test_auth.py"
+    test: "vektra-shared/tests/test_auth.py; vektra-admin/tests/test_ttlcache.py"
 
   - req: REQ-020
     title: "API key management via admin component"
@@ -147,7 +148,7 @@ matrix:
     title: "Phase 1 scope enforcement"
     arch: "ARCH-020; ARCH-023"
     plan_task: "20260217-component-shared:auth"
-    test: "vektra-shared/tests/test_auth.py"
+    test: "vektra-shared/tests/test_auth.py; vektra-admin/tests/test_rate_limit.py"
 
   - req: REQ-025
     title: "Health endpoint authentication: two-tier model"
@@ -279,13 +280,13 @@ matrix:
     title: "Multi-turn conversation context"
     arch: "ARCH-031"
     plan_task: "20260217-component-core:conversation"
-    test: ""
+    test: "vektra-core/tests/test_persistent_conversation.py; vektra-core/tests/test_feedback_api.py"
 
   - req: REQ-050
     title: "Pluggable vector store backend"
     arch: "ARCH-029; ARCH-035; ARCH-051; ARCH-052; ARCH-053"
     plan_task: "20260217-component-shared:protocols"
-    test: "vektra-shared/tests/test_protocols.py"
+    test: "vektra-shared/tests/test_protocols.py; vektra-index/tests/test_qdrant_provider.py; vektra-index/tests/test_pgvector_hybrid.py; vektra-index/tests/test_fastembed_bm25.py"
 
   - req: REQ-051
     title: "Operator privacy: no conversation content access"
@@ -309,7 +310,7 @@ matrix:
     title: "ChunkingStrategy Protocol"
     arch: "ARCH-037"
     plan_task: "20260217-component-shared:protocols"
-    test: "vektra-shared/tests/test_protocols.py"
+    test: "vektra-shared/tests/test_protocols.py; vektra-ingest/tests/test_dual_chunking.py"
 
   - req: REQ-055
     title: "Response and citation traceability"
@@ -321,7 +322,7 @@ matrix:
     title: "Document versioning in data model"
     arch: "ARCH-040; ARCH-058"
     plan_task: "20260217-infra-database:source-documents-table"
-    test: "vektra-shared/tests/test_migration.py"
+    test: "vektra-shared/tests/test_migration.py; vektra-ingest/tests/test_versioning.py"
 
   - req: REQ-057
     title: "Soft delete for documents"
@@ -351,7 +352,7 @@ matrix:
     title: "EventEmitter interface"
     arch: "ARCH-038"
     plan_task: "20260217-component-shared:events"
-    test: "vektra-shared/tests/test_protocols.py"
+    test: "vektra-shared/tests/test_protocols.py; vektra-shared/tests/test_events.py"
 
   - req: REQ-062
     title: "ProviderRegistry pattern"
@@ -369,7 +370,7 @@ matrix:
     title: "Zero-downtime reindex via index_version"
     arch: "ARCH-045; ARCH-058"
     plan_task: "20260217-component-index:pgvector-provider"
-    test: "vektra-index/tests/test_pgvector_unit.py"
+    test: "vektra-index/tests/test_pgvector_unit.py; vektra-index/tests/test_reindex.py"
 
   - req: REQ-065
     title: "Prompt versioning"

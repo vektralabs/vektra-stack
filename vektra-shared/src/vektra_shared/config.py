@@ -89,6 +89,21 @@ class VectorStoreConfig(BaseSettings):
         alias="VEKTRA_ACTIVE_INDEX_VERSION",
         description="Active index version for search queries. Change after re-embedding for zero-downtime reindex.",
     )
+    qdrant_url: str = Field(
+        "http://localhost:6333",
+        alias="VEKTRA_QDRANT_URL",
+        description="Qdrant server URL. Only used when vector_store_provider='qdrant'.",
+    )
+    qdrant_api_key: str | None = Field(
+        None,
+        alias="VEKTRA_QDRANT_API_KEY",
+        description="Qdrant API key for authenticated access. Optional.",
+    )
+    qdrant_collection: str = Field(
+        "vektra",
+        alias="VEKTRA_QDRANT_COLLECTION",
+        description="Qdrant collection name.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
@@ -408,6 +423,9 @@ class VektraSettings(BaseSettings):
     # Vector store
     vector_store_provider: str = Field("pgvector", alias="VEKTRA_VECTOR_STORE_PROVIDER")
     active_index_version: int = Field(1, alias="VEKTRA_ACTIVE_INDEX_VERSION")
+    qdrant_url: str = Field("http://localhost:6333", alias="VEKTRA_QDRANT_URL")
+    qdrant_api_key: str | None = Field(None, alias="VEKTRA_QDRANT_API_KEY")
+    qdrant_collection: str = Field("vektra", alias="VEKTRA_QDRANT_COLLECTION")
 
     # Query pipeline
     query_pipeline: str = Field("simple", alias="VEKTRA_QUERY_PIPELINE")

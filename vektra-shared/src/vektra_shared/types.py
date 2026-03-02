@@ -71,8 +71,16 @@ class ChunkMetadata(TypedDict, total=False):
 
     Base fields (always present after extraction), plus optional generic
     filterable fields. Arbitrary additional keys are accepted (stored as JSONB).
-    Domain-specific fields (e.g., course_id, module_id) are defined by
-    verticals in Phase 2.
+
+    Domain-specific fields (Phase 2 verticals):
+      - course_id: str - e-learning course identifier
+      - module_id: str - e-learning module/section identifier
+      - academic_year: str - academic year (e.g., "2025-2026")
+      - document_version: int - source document version (REQ-056)
+
+    These keys are accepted at runtime via JSONB storage. They are
+    documented here for type awareness but not enforced by the TypedDict
+    (total=False allows arbitrary additional keys at runtime).
     """
 
     page: int
@@ -80,6 +88,10 @@ class ChunkMetadata(TypedDict, total=False):
     source_file: str
     content_type: str | None  # MIME type or operator-defined category
     language: str | None  # ISO 639-1 code
+    # Domain-specific (Phase 2, optional)
+    course_id: str
+    module_id: str
+    academic_year: str
 
 
 @dataclass

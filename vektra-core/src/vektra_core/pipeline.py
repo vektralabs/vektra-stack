@@ -292,6 +292,9 @@ class SimpleQueryPipeline:
         system_text = self._renderer.render_system(namespace=query.namespace)
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
+        # DEBT-004: sort by score descending so budget allocator selects
+        # highest-scoring chunks first, regardless of provider ordering
+        filtered = sorted(filtered, key=lambda r: r.score, reverse=True)
         chunk_inputs = [(r.score, self._count_tokens(r.text_snippet)) for r in filtered]
         history_tokens = [
             self._count_tokens((t["question"] or "") + " " + (t["answer"] or ""))
@@ -444,6 +447,9 @@ class SimpleQueryPipeline:
         system_text = self._renderer.render_system(namespace=query.namespace)
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
+        # DEBT-004: sort by score descending so budget allocator selects
+        # highest-scoring chunks first, regardless of provider ordering
+        filtered = sorted(filtered, key=lambda r: r.score, reverse=True)
         chunk_inputs = [(r.score, self._count_tokens(r.text_snippet)) for r in filtered]
         history_tokens = [
             self._count_tokens((t["question"] or "") + " " + (t["answer"] or ""))

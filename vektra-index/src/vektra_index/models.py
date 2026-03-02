@@ -87,6 +87,7 @@ class DocumentChunkOrm(Base):
         INTEGER, nullable=False, server_default=text("1")
     )
     parent_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    sparse_vector: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     coordinates: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
@@ -156,4 +157,48 @@ class SourceDocumentOrm(Base):
             "deletion_reason IS NULL OR deletion_reason IN ('user_request','superseded','expired')",
             name="ck_source_documents_deletion_reason",
         ),
+    )
+
+
+class ReindexJobOrm(Base):
+    """ORM mapping for reindex_jobs table (ARCH-045, REQ-064)."""
+
+    __tablename__ = "reindex_jobs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    namespace_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("namespaces.id"), nullable=False
+    )
+    source_index_version: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    target_index_version: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'pending'")
+    )
+    total_documents: Mapped[int] = mapped_column(
+        INTEGER, nullable=False, server_default=text("0")
+    )
+    processed_documents: Mapped[int] = mapped_column(
+        INTEGER, nullable=False, server_default=text("0")
+    )
+    current_document_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    error_message: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed')",
+            name="ck_reindex_jobs_status",
+        ),
+        Index("ix_reindex_jobs_namespace_status", "namespace_id", "status"),
     )

@@ -320,4 +320,6 @@ The version bump from `0.2.0-dev` to `0.2.0` happens after all plans are complet
 
 ## Notes
 
-<!-- Progress notes during implementation -->
+### Deferred from admin-enforcement (Wave 1)
+
+**Rate limit response headers on 200 responses**: `require_scope()` computes `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` and stores them in `request.state.rate_limit_headers`, but no response middleware reads them. Clients only see these headers on 429 rejections. A response middleware in the app entrypoint should copy `request.state.rate_limit_headers` (when present) into the response headers. Natural placement: alongside RLS middleware registration in the lifespan/middleware setup.

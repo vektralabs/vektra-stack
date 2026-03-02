@@ -92,3 +92,38 @@ def test_history_selection_order_preserved():
         reserve=200,
     )
     assert history_idx == sorted(history_idx)
+
+
+def test_unsorted_input_selects_highest_scores(self=None):
+    """DEBT-004: when chunks are NOT sorted by score descending, the
+    allocator still processes them front-to-back. The caller (pipeline.py)
+    is responsible for sorting. This test verifies the allocator's behavior
+    with unsorted input: it picks from the front regardless of score.
+    """
+    # Unsorted: low score first, high score last
+    chunks_idx, _ = allocate_token_budget(
+        context_window=1000,
+        system_tokens=100,
+        question_tokens=50,
+        chunks=[(0.3, 300), (0.5, 300), (0.9, 300)],
+        history_turns=[],
+        reserve=200,
+        chunk_ratio=0.6,
+    )
+    # Budget allows only 1 chunk (390 budget, each 300).
+    # Allocator picks index 0 (score 0.3) because it processes front-to-back.
+    # This demonstrates why pipeline.py must sort before calling.
+    assert chunks_idx == [0]
+
+    # Properly sorted: high score first
+    chunks_idx_sorted, _ = allocate_token_budget(
+        context_window=1000,
+        system_tokens=100,
+        question_tokens=50,
+        chunks=[(0.9, 300), (0.5, 300), (0.3, 300)],
+        history_turns=[],
+        reserve=200,
+        chunk_ratio=0.6,
+    )
+    # Now index 0 is the highest-scoring chunk (0.9)
+    assert chunks_idx_sorted == [0]

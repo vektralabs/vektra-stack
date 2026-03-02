@@ -75,13 +75,6 @@ async def test_text_elements_split_with_overlap():
     assert len(parents) >= 1
     assert len(children) >= 1
 
-    # Children should reference a parent
-    parent_ids = {None}  # tables have parent_id=None but are TABLE type
-    for p in parents:
-        # We need to track parent IDs; parent chunks don't store their own ID
-        # in the chunk, but children reference it via parent_id
-        pass
-
     for child in children:
         assert child.parent_id is not None
         assert child.metadata.get("chunk_level") == "child"

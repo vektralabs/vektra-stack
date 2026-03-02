@@ -6,14 +6,12 @@ content creates a new version instead of raising IngestConflictError.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from vektra_shared.types import DocumentChunk, ElementType
-
 
 # ---------------------------------------------------------------------------
 # Mock helpers (reuse pattern from test_pipeline.py)

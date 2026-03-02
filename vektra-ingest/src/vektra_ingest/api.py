@@ -208,6 +208,7 @@ async def ingest(
             },
         )
     else:
+        assert result is not None
         _write_audit_log(
             background_tasks=background_tasks,
             key_info=key_info,
@@ -283,7 +284,7 @@ async def batch_ingest(
     max_bytes = ingest_config.max_file_size_mb * 1024 * 1024
     registry = getattr(request.app.state, "registry", None)
 
-    items: list[dict] = []
+    items: list[dict[str, Any]] = []
 
     for upload in files:
         file_content = await upload.read()
@@ -446,7 +447,7 @@ async def batch_delete(
 async def extract_only(
     file: UploadFile,
     _key: ApiKeyInfo = Depends(require_scope("ingest")),
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Extract document elements without chunking or embedding.
 
     Returns JSON array of DocumentChunks (text, element_type, metadata).
@@ -491,7 +492,7 @@ async def extract_only(
 async def chunk_only(
     file: UploadFile,
     _key: ApiKeyInfo = Depends(require_scope("ingest")),
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Extract and chunk a document without embedding or storage.
 
     Returns JSON array of chunked DocumentChunks.
@@ -554,7 +555,7 @@ async def embed_only(
     request: Request,
     file: UploadFile,
     _key: ApiKeyInfo = Depends(require_scope("ingest")),
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Extract, chunk, and embed a document without storage.
 
     Returns JSON array of ChunkEmbeddings (text, dense vector, metadata).
@@ -608,6 +609,11 @@ async def embed_only(
         return []
 
     registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"message": "Embedding provider not configured"}},
+        )
     embedding_provider = registry.get("embedding", "default")
     texts = [c.text for c in all_chunks]
     embeddings = await embedding_provider.embed_documents(texts)

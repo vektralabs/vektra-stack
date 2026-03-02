@@ -200,7 +200,7 @@ async def ingest(
             key_info=key_info,
             request=request,
             status_code=status_code,
-            action=f"ingest_error",
+            action="ingest_error",
             log_metadata={
                 "namespace": namespace,
                 "filename": filename,
@@ -840,8 +840,8 @@ def _write_audit_log(
     background_tasks.add_task(
         log_event,
         key_id=key_info.key_id,
-        endpoint="/api/v1/ingest",
-        method="POST",
+        endpoint=request.url.path,
+        method=request.method,
         status_code=status_code,
         request_id=request_id,
         action=action,
@@ -867,8 +867,8 @@ async def _write_audit_log_direct(
     try:
         await log_event(
             key_id=key_info.key_id,
-            endpoint="/api/v1/ingest",
-            method="POST",
+            endpoint=request.url.path,
+            method=request.method,
             status_code=status_code,
             request_id=request_id,
             action=action,

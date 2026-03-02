@@ -54,8 +54,6 @@ def _make_app(key_store=None, scopes: list[str] | None = None):
         # Handle ORM add + refresh pattern (batch ingest creates IngestJobOrm)
         session.add = MagicMock()  # sync method, not async
 
-        _original_refresh = session.refresh
-
         async def _refresh(obj):
             if hasattr(obj, "id") and obj.id is None:
                 obj.id = uuid4()

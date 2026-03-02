@@ -511,7 +511,7 @@ def _emit_failed_event(
         error_code = getattr(error, "error_code", "ERR-INGEST-004")
         error_message = getattr(error, "message", str(error))
 
-        asyncio.get_event_loop().create_task(
+        asyncio.get_running_loop().create_task(
             events.emit(
                 "document.failed",
                 {

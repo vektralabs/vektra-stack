@@ -1,27 +1,39 @@
-"""FixedSizeChunking: fixed-size token-based chunking (ARCH-037, REQ-002).
+"""Chunking strategies for vektra-ingest (ARCH-037, REQ-002, REQ-054).
 
-Phase 1 implementation of the ChunkingStrategy Protocol.
+Phase 1: FixedSizeChunking - fixed-size token windows with overlap.
+Phase 2: DualStrategyChunking - text/table-aware chunking with parent-child hierarchy.
 
-Uses tiktoken cl100k_base encoding (matches most LLM tokenizers).
-Splits accumulated text into overlapping windows of VEKTRA_CHUNK_SIZE tokens
-with VEKTRA_CHUNK_OVERLAP overlap.
-
-All elements are accumulated in memory before splitting. This is acceptable
-for Phase 1 document sizes (<= 50MB). Large documents produce ~50K tokens at
-most (a 50MB text file is ~12.5M chars / 4 = ~3M tokens, but realistically
-PDFs yield much less usable text).
+Both use tiktoken cl100k_base encoding (matches most LLM tokenizers).
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
+from uuid import uuid4
 
 import structlog
 
 from vektra_shared.types import DocumentChunk, ElementType
 
 log = structlog.get_logger(__name__)
+
+# Element types that are accumulated as text and split with overlap
+_TEXT_TYPES = frozenset({
+    ElementType.TEXT,
+    ElementType.TITLE,
+    ElementType.LIST,
+    ElementType.HEADER,
+    ElementType.FOOTER,
+    ElementType.FIGURE_CAPTION,
+    ElementType.FORMULA,
+})
+
+# Element types that are skipped entirely
+_SKIP_TYPES = frozenset({
+    ElementType.PAGE_BREAK,
+    ElementType.IMAGE,
+})
 
 
 class FixedSizeChunking:
@@ -102,3 +114,182 @@ class FixedSizeChunking:
             if end >= len(all_tokens):
                 break
             start += step
+
+
+class DualStrategyChunking:
+    """ChunkingStrategy with text/table-aware splitting and parent-child hierarchy.
+
+    Behavior by element type:
+    - TEXT, TITLE, LIST, HEADER, FOOTER, FIGURE_CAPTION, FORMULA:
+      Accumulated into a text buffer, then split with overlap (same as
+      FixedSizeChunking). Each child chunk references a parent chunk.
+    - TABLE: Never split. Each table element becomes exactly one chunk
+      with content_format="html" (or original format).
+    - PAGE_BREAK, IMAGE: Skipped (metadata-only markers).
+
+    Parent-child hierarchy (2 levels):
+    - Level 0 (parent): every parent_chunk_size tokens, a parent chunk is
+      emitted with the full accumulated text. parent_id = None.
+    - Level 1 (child): normal fixed-size chunks with overlap.
+      parent_id = ID of the enclosing parent chunk.
+
+    Args:
+        text_chunk_size: Maximum tokens per child text chunk (default 1000).
+        text_chunk_overlap: Token overlap between consecutive text chunks (default 200).
+        parent_chunk_size: Token threshold for parent chunk boundaries (default 3000).
+    """
+
+    def __init__(
+        self,
+        text_chunk_size: int = 1000,
+        text_chunk_overlap: int = 200,
+        parent_chunk_size: int = 3000,
+    ) -> None:
+        if text_chunk_overlap >= text_chunk_size:
+            raise ValueError(
+                f"text_chunk_overlap ({text_chunk_overlap}) must be less than "
+                f"text_chunk_size ({text_chunk_size})"
+            )
+        if parent_chunk_size < text_chunk_size:
+            raise ValueError(
+                f"parent_chunk_size ({parent_chunk_size}) must be >= "
+                f"text_chunk_size ({text_chunk_size})"
+            )
+        self._text_chunk_size = text_chunk_size
+        self._text_chunk_overlap = text_chunk_overlap
+        self._parent_chunk_size = parent_chunk_size
+
+    async def chunk(
+        self, elements: AsyncIterator[DocumentChunk]
+    ) -> AsyncIterator[DocumentChunk]:
+        return self._chunk_impl(elements)
+
+    async def _chunk_impl(
+        self, elements: AsyncIterator[DocumentChunk]
+    ) -> AsyncGenerator[DocumentChunk, None]:
+        import tiktoken
+
+        enc = tiktoken.get_encoding("cl100k_base")
+
+        # Accumulate text elements and table elements in order
+        # We process elements in two passes:
+        # 1. Collect all elements, separating text runs from tables
+        # 2. Split text runs into parent + child chunks, emit tables as-is
+
+        # A "segment" is either a text run (list of tokens) or a table element
+        segments: list[tuple[str, Any]] = []  # ("text", tokens_list) or ("table", DocumentChunk)
+        current_text_tokens: list[int] = []
+        first_metadata: dict[str, Any] = {}
+
+        async for element in elements:
+            if element.element_type in _SKIP_TYPES:
+                continue
+
+            if element.element_type == ElementType.TABLE:
+                # Flush any accumulated text tokens as a text segment
+                if current_text_tokens:
+                    segments.append(("text", list(current_text_tokens)))
+                    current_text_tokens = []
+                segments.append(("table", element))
+            elif element.element_type in _TEXT_TYPES:
+                tokens = enc.encode(element.text)
+                if not current_text_tokens and not first_metadata and tokens:
+                    first_metadata = dict(element.metadata)
+                current_text_tokens.extend(tokens)
+            # Unknown types: treat as text
+            else:
+                tokens = enc.encode(element.text)
+                current_text_tokens.extend(tokens)
+
+        # Flush remaining text tokens
+        if current_text_tokens:
+            segments.append(("text", list(current_text_tokens)))
+
+        # Now emit chunks from segments
+        chunk_index = 0
+
+        for seg_type, seg_data in segments:
+            if seg_type == "table":
+                table_el: DocumentChunk = seg_data
+                content_format = table_el.content_format
+                if content_format == "text":
+                    content_format = "html"
+                yield DocumentChunk(
+                    text=table_el.text,
+                    element_type=ElementType.TABLE,
+                    content_format=content_format,
+                    metadata={
+                        **table_el.metadata,
+                        "chunk_index": chunk_index,
+                    },
+                    parent_id=None,  # tables are standalone
+                    coordinates=table_el.coordinates,
+                )
+                chunk_index += 1
+
+            elif seg_type == "text":
+                tokens: list[int] = seg_data
+                if not tokens:
+                    continue
+
+                # Split into parent-sized sections, then child chunks within each
+                parent_start = 0
+                while parent_start < len(tokens):
+                    parent_end = min(parent_start + self._parent_chunk_size, len(tokens))
+                    parent_tokens = tokens[parent_start:parent_end]
+
+                    # Emit parent chunk (level 0)
+                    parent_id = str(uuid4())
+                    try:
+                        parent_text = enc.decode(parent_tokens)
+                    except Exception as exc:
+                        log.warning("parent_chunk_decode_failed", error=str(exc))
+                        parent_start = parent_end
+                        continue
+
+                    yield DocumentChunk(
+                        text=parent_text,
+                        element_type=ElementType.TEXT,
+                        metadata={
+                            **first_metadata,
+                            "chunk_index": chunk_index,
+                            "token_count": len(parent_tokens),
+                            "chunk_level": "parent",
+                        },
+                        parent_id=None,
+                    )
+                    chunk_index += 1
+
+                    # Emit child chunks (level 1) within this parent
+                    step = self._text_chunk_size - self._text_chunk_overlap
+                    child_start = 0
+
+                    while child_start < len(parent_tokens):
+                        child_end = min(child_start + self._text_chunk_size, len(parent_tokens))
+                        child_tokens = parent_tokens[child_start:child_end]
+
+                        try:
+                            child_text = enc.decode(child_tokens)
+                        except Exception as exc:
+                            log.warning("child_chunk_decode_failed", error=str(exc))
+                            child_start += step
+                            continue
+
+                        yield DocumentChunk(
+                            text=child_text,
+                            element_type=ElementType.TEXT,
+                            metadata={
+                                **first_metadata,
+                                "chunk_index": chunk_index,
+                                "token_count": len(child_tokens),
+                                "chunk_level": "child",
+                            },
+                            parent_id=parent_id,
+                        )
+                        chunk_index += 1
+
+                        if child_end >= len(parent_tokens):
+                            break
+                        child_start += step
+
+                    parent_start = parent_end

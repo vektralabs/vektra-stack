@@ -149,20 +149,22 @@ async def test_dedup_alias_different_filename():
 
 
 # ---------------------------------------------------------------------------
-# Deduplication: filename conflict
+# Document versioning (Phase 2): same filename, different content → new version
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_filename_conflict_raises_error():
-    """Different content_hash + same filename → IngestConflictError (→ 409)."""
-    from vektra_ingest.exceptions import IngestConflictError
+async def test_filename_match_creates_new_version():
+    """Different content_hash + same filename → version increment (Phase 2)."""
     from vektra_ingest.pipeline import run_ingest
 
-    conflicting_doc = MagicMock()
-    conflicting_doc.id = uuid4()
-    conflicting_doc.filename = "doc.pdf"
-    conflicting_doc.filename_aliases = []
+    old_doc_id = uuid4()
+    new_doc_id = uuid4()
+
+    existing_doc = MagicMock()
+    existing_doc.id = old_doc_id
+    existing_doc.filename = "doc.pdf"
+    existing_doc.version = 1
 
     call_count = 0
 
@@ -173,30 +175,71 @@ async def test_filename_conflict_raises_error():
             # content_hash query → no match (different content)
             mock_result.scalar_one_or_none.return_value = None
         elif call_count == 1:
-            # filename query → finds conflict
-            mock_result.scalar_one_or_none.return_value = conflicting_doc
+            # filename query → finds existing doc
+            mock_result.scalar_one_or_none.return_value = existing_doc
         else:
             mock_result.scalar_one_or_none.return_value = None
         call_count += 1
         return mock_result
 
+    added_docs: list = []
+
+    def _session_add(obj):
+        added_docs.append(obj)
+
+    async def _flush_side_effect():
+        for obj in added_docs:
+            if not hasattr(obj, "_id_set"):
+                obj.id = new_doc_id
+                obj._id_set = True
+
     session = AsyncMock()
     session.execute = _execute
+    session.add = _session_add
+    session.flush = AsyncMock(side_effect=_flush_side_effect)
     session.commit = AsyncMock()
-    session.rollback = AsyncMock()
 
-    registry, _, _ = _make_registry()
+    registry, mock_embedding, mock_vs = _make_registry()
+    mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+    mock_vs.store = AsyncMock(return_value=["chunk-1"])
+    mock_vs.delete = AsyncMock(return_value=3)
 
-    with pytest.raises(IngestConflictError) as exc_info:
-        await run_ingest(
-            file_content=b"completely different content",
-            filename="doc.pdf",
-            namespace="default",
-            session=session,
-            registry=registry,
-        )
+    async def _fake_extract(req):
+        async def _gen():
+            yield DocumentChunk(text="new chunk content", element_type=ElementType.TEXT)
 
-    assert "doc.pdf" in str(exc_info.value)
+        return _gen()
+
+    async def _fake_chunk(elements):
+        async def _gen():
+            async for e in elements:
+                yield e
+
+        return _gen()
+
+    mock_extractor = MagicMock()
+    mock_extractor.extract = _fake_extract
+
+    with patch("vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"):
+        with patch("vektra_ingest.pipeline._get_extractor", return_value=mock_extractor):
+            with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
+                mc = MagicMock()
+                mc.chunk = _fake_chunk
+                mock_cc.return_value = mc
+
+                result = await run_ingest(
+                    file_content=b"completely different content",
+                    filename="doc.pdf",
+                    namespace="default",
+                    session=session,
+                    registry=registry,
+                )
+
+    assert result.status == "indexed"
+    assert result.version == 2
+    assert result.supersedes_id == old_doc_id
+    # Old chunks were deleted
+    mock_vs.delete.assert_called_once_with("default", [str(old_doc_id)])
 
 
 # ---------------------------------------------------------------------------

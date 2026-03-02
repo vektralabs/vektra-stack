@@ -27,7 +27,7 @@ import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vektra_ingest.chunking import FixedSizeChunking
+from vektra_ingest.chunking import DualStrategyChunking, FixedSizeChunking
 from vektra_ingest.detection import detect_content_type
 from vektra_ingest.exceptions import IngestConflictError, IngestError
 from vektra_ingest.extractors.pdf import PdfplumberExtractor
@@ -61,6 +61,8 @@ class IngestResult:
     document_id: UUID | None = None
     chunk_count: int | None = None
     alias_count: int | None = None  # only set when status="alias"
+    version: int = 1  # document version (REQ-056)
+    supersedes_id: UUID | None = None  # previous version's document_id
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -70,7 +72,13 @@ class IngestResult:
 
 
 def _build_extractor_registry() -> dict[str, Any]:
-    """Build content_type → extractor mapping for all supported types."""
+    """Build content_type → extractor mapping for all supported types.
+
+    When VEKTRA_DOCUMENT_EXTRACTOR=unstructured and the package is installed,
+    UnstructuredExtractor handles application/pdf instead of PdfplumberExtractor.
+    """
+    config = IngestConfig()
+
     registry: dict[str, Any] = {}
     extractors: list[Any] = [
         PdfplumberExtractor(),
@@ -80,6 +88,22 @@ def _build_extractor_registry() -> dict[str, Any]:
     for extractor in extractors:
         for mime_type in extractor.supported_types():
             registry[mime_type] = extractor
+
+    # Override PDF extractor when Unstructured is configured
+    if config.document_extractor == "unstructured":
+        try:
+            from vektra_ingest.extractors.unstructured import UnstructuredExtractor
+
+            unstructured_ext = UnstructuredExtractor()
+            for mime_type in unstructured_ext.supported_types():
+                registry[mime_type] = unstructured_ext
+            log.info("extractor_registry", pdf_extractor="unstructured")
+        except ImportError:
+            log.warning(
+                "extractor_registry_fallback",
+                reason="unstructured package not installed, falling back to pdfplumber",
+            )
+
     return registry
 
 
@@ -126,7 +150,7 @@ async def run_ingest(
         registry: ProviderRegistry providing "embedding" and "vector_store".
 
     Raises:
-        IngestConflictError: Same filename, different content hash (→ 409).
+        IngestConflictError: Concurrent re-ingest TOCTOU race (→ 409).
         IngestError: Unsupported type, scanned PDF, or storage failure.
     """
     content_hash = hashlib.sha256(file_content).hexdigest()
@@ -176,8 +200,17 @@ async def run_ingest(
         )
 
     # ------------------------------------------------------------------
-    # Step 2: Check for filename conflict (different content, same name)
+    # Step 2: Check for filename match (different content, same name)
+    #
+    # Phase 2 versioning: instead of 409 Conflict, create a new version.
+    # Soft-delete old document (reason="superseded"), hard-delete its
+    # chunks, then proceed with ingestion for the new version.
+    # IngestConflictError is still raised for TOCTOU race conditions
+    # (caught by the unique partial index from database-phase2 / TECH-004).
     # ------------------------------------------------------------------
+    new_version = 1
+    supersedes_id: UUID | None = None
+
     result = await session.execute(
         select(SourceDocumentOrm).where(
             SourceDocumentOrm.namespace_id == namespace,
@@ -185,9 +218,59 @@ async def run_ingest(
             SourceDocumentOrm.deleted_at.is_(None),
         )
     )
-    name_conflict = result.scalar_one_or_none()
-    if name_conflict is not None:
-        raise IngestConflictError(filename=filename, namespace=namespace)
+    existing_by_name = result.scalar_one_or_none()
+    if existing_by_name is not None:
+        new_version = existing_by_name.version + 1
+        supersedes_id = existing_by_name.id
+
+        log.info(
+            "ingest_version_increment",
+            old_document_id=str(existing_by_name.id),
+            old_version=existing_by_name.version,
+            new_version=new_version,
+            namespace=namespace,
+            filename=filename,
+        )
+
+        # Soft-delete the old document
+        await session.execute(
+            update(SourceDocumentOrm)
+            .where(SourceDocumentOrm.id == existing_by_name.id)
+            .values(
+                deleted_at=datetime.now(UTC),
+                deletion_reason="superseded",
+            )
+        )
+        await session.commit()
+
+        # Hard-delete old chunks via VectorStoreProvider
+        try:
+            vector_store = registry.get("vector_store", "default")
+            await vector_store.delete(namespace, [str(existing_by_name.id)])
+        except (ValueError, Exception) as exc:
+            # Non-fatal: old chunks will be excluded from search
+            # (search joins with source_documents WHERE deleted_at IS NULL)
+            log.warning(
+                "ingest_old_chunks_delete_failed",
+                old_document_id=str(existing_by_name.id),
+                error=str(exc),
+            )
+
+        # Emit document.superseded event (T10)
+        try:
+            events = registry.get("events", "default")
+            await events.emit(
+                "document.superseded",
+                {
+                    "document_id": str(existing_by_name.id),
+                    "namespace": namespace,
+                    "filename": filename,
+                    "old_version": existing_by_name.version,
+                    "new_version": new_version,
+                },
+            )
+        except ValueError:
+            pass  # events emitter not registered
 
     # ------------------------------------------------------------------
     # Step 3: Detect content type
@@ -214,6 +297,8 @@ async def run_ingest(
         content_hash=content_hash,
         content_type=content_type,
         file_size_bytes=len(file_content),
+        version=new_version,
+        supersedes_id=supersedes_id,
     )
     session.add(doc)
     await session.flush()  # assigns doc.id without committing
@@ -235,10 +320,18 @@ async def run_ingest(
         elements_iter = await extractor.extract(extraction_req)
 
         ingest_config = IngestConfig()
-        chunker = FixedSizeChunking(
-            chunk_size=ingest_config.chunk_size,
-            chunk_overlap=ingest_config.chunk_overlap,
-        )
+        chunker: FixedSizeChunking | DualStrategyChunking
+        if ingest_config.chunking_strategy == "dual":
+            chunker = DualStrategyChunking(
+                text_chunk_size=ingest_config.chunk_size,
+                text_chunk_overlap=ingest_config.chunk_overlap,
+                parent_chunk_size=ingest_config.chunk_size * 3,
+            )
+        else:
+            chunker = FixedSizeChunking(
+                chunk_size=ingest_config.chunk_size,
+                chunk_overlap=ingest_config.chunk_overlap,
+            )
         chunks_iter = await chunker.chunk(elements_iter)
 
         # Collect all chunks
@@ -350,6 +443,8 @@ async def run_ingest(
         status="indexed",
         document_id=doc_id,
         chunk_count=len(chunk_ids),
+        version=new_version,
+        supersedes_id=supersedes_id,
     )
 
 

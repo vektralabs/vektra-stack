@@ -122,6 +122,8 @@ async def check_sparse_embedding_model(registry: Any) -> None:
     Called when VEKTRA_SPARSE_EMBEDDING_PROVIDER is set.
     """
     try:
+        # "default" is the ProviderRegistry convention for runtime lookup;
+        # the configured provider name is only used during registration.
         provider = registry.get("sparse_embedding", "default")
         test_result = await provider.embed_query("startup validation test")
         if not test_result.indices or not test_result.values:

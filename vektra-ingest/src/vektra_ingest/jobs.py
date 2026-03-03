@@ -68,9 +68,7 @@ async def _update_job(
 
     if status == "processing":
         # Only set started_at on the first processing update (when NULL)
-        values["started_at"] = func.coalesce(
-            IngestJobOrm.started_at, datetime.now(UTC)
-        )
+        values["started_at"] = func.coalesce(IngestJobOrm.started_at, datetime.now(UTC))
     elif status in ("indexed", "failed"):
         values["completed_at"] = datetime.now(UTC)
         if "phase" not in values:

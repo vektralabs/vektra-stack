@@ -1,6 +1,6 @@
 """Unit tests: TTLCache replacement for key verification (DEBT-008).
 
-Verifies cache hit, miss, expiration after TTL, and thread safety.
+Verifies cache hit, miss, configuration, and thread safety.
 """
 
 from __future__ import annotations

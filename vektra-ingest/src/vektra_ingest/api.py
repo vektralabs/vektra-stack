@@ -77,7 +77,7 @@ class AsyncIngestResponse(BaseModel):
 class BatchIngestItemResponse(BaseModel):
     job_id: UUID | None = None
     filename: str
-    status: str  # "pending" or "rejected"
+    status: str  # "pending", "rejected", or "failed"
     error: str | None = None
 
 

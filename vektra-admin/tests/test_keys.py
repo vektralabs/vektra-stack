@@ -48,8 +48,8 @@ def test_plaintext_uniqueness():
 
 
 @pytest.mark.asyncio
-async def test_lru_cache_hit_on_second_verify():
-    """Verify that repeated lookups use the LRU cache (no exception, same result)."""
+async def test_ttlcache_hit_on_second_verify():
+    """Verify that repeated lookups use the TTLCache (no exception, same result)."""
     plaintext, key_hash, _ = generate_key()
     result1 = await verify_key(plaintext, key_hash)
     result2 = await verify_key(plaintext, key_hash)

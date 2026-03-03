@@ -99,6 +99,7 @@ class InMemoryKeyStore:
         key_preview: str,
         scopes: list[str],
         expires_at: datetime | None = None,
+        rate_limit_rpm: int | None = None,
     ) -> None:
         """Add a newly created key to the cache immediately."""
         entry = _KeyEntry(
@@ -108,6 +109,7 @@ class InMemoryKeyStore:
             scopes=scopes,
             revoked_at=None,
             expires_at=expires_at,
+            rate_limit_rpm=rate_limit_rpm,
         )
         async with self._lock:
             self._by_hash[key_hash] = entry

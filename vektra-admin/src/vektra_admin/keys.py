@@ -22,7 +22,7 @@ from cachetools import TTLCache
 # Single PasswordHasher instance (argon2id, default time_cost=3, memory_cost=65536)
 _ph = PasswordHasher()
 
-# TTLCache: maps (key_hash, plaintext_key) -> True (verified) or absent.
+# TTLCache: maps (key_hash, plaintext_key) -> True (verified) or False (failed).
 # Max 300s TTL limits plaintext key exposure in memory (DEBT-008).
 # Cache size 512 is generous for a single-process deployment.
 _CACHE_SIZE = 512

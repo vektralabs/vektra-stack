@@ -251,7 +251,7 @@ class PersistentConversationStore:
             )
 
     async def get_metadata(self, conversation_id: UUID) -> dict[str, Any] | None:
-        """Return conversation metadata (no content). For GET endpoint."""
+        """Return conversation metadata (no content), including soft-deleted."""
         async with self._session_factory() as session:
             stmt = select(
                 ConversationOrm.id,

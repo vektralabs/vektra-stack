@@ -89,6 +89,7 @@ class ChunkMetadata(TypedDict, total=False):
     content_type: str | None  # MIME type or operator-defined category
     language: str | None  # ISO 639-1 code
     # Domain-specific (Phase 2, optional)
+    document_version: int
     course_id: str
     module_id: str
     academic_year: str

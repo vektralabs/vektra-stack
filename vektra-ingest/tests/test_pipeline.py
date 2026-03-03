@@ -630,8 +630,8 @@ async def test_document_indexed_event_emitted():
 
 
 @pytest.mark.asyncio
-async def test_document_failed_event_emitted_on_error():
-    """document.failed event is emitted when ingest fails."""
+async def test_storage_failure_raises_ingest_error():
+    """Storage failure wraps exception as IngestError."""
     from vektra_ingest.exceptions import IngestError
     from vektra_ingest.pipeline import run_ingest
 

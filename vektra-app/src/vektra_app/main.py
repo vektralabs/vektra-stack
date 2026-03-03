@@ -165,18 +165,17 @@ async def _step_5_register_providers(
     from vektra_core.pipeline import SimpleQueryPipeline
     from vektra_core.templates import TemplateRenderer
 
-    store: InMemoryConversationStore | PersistentConversationStore
+    conversation_store: InMemoryConversationStore | PersistentConversationStore
     if settings.conversation_key:
-        store = PersistentConversationStore(
+        conversation_store = PersistentConversationStore(
             session_factory=get_session_factory(),
             encryption_key=settings.conversation_key,
             max_turns=settings.max_conversation_turns,
         )
     else:
-        store = InMemoryConversationStore(
+        conversation_store = InMemoryConversationStore(
             max_turns=settings.max_conversation_turns,
         )
-    conversation_store = store
     templates_dir = (
         Path(settings.prompt_templates_dir) if settings.prompt_templates_dir else None
     )

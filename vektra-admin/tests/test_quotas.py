@@ -108,7 +108,7 @@ class TestDocumentQuota:
 
     @pytest.mark.asyncio
     async def test_over_limit_raises(self):
-        """Exceeding document quota raises HTTPException 422."""
+        """Exceeding document quota raises HTTPException 422 with ERR-QUOTA-001."""
         from vektra_admin.quotas import check_namespace_quota
 
         row = _namespace_row(quota_documents=10)
@@ -116,6 +116,7 @@ class TestDocumentQuota:
         with pytest.raises(HTTPException) as exc_info:
             await check_namespace_quota(session, "ns-1", new_documents=2)
         assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "ERR-QUOTA-001"
 
     @pytest.mark.asyncio
     async def test_zero_new_documents_skips_check(self):
@@ -141,7 +142,7 @@ class TestChunkQuota:
 
     @pytest.mark.asyncio
     async def test_over_limit_raises(self):
-        """Exceeding chunk quota raises HTTPException 422."""
+        """Exceeding chunk quota raises HTTPException 422 with ERR-QUOTA-001."""
         from vektra_admin.quotas import check_namespace_quota
 
         row = _namespace_row(quota_chunks=1000)
@@ -149,6 +150,7 @@ class TestChunkQuota:
         with pytest.raises(HTTPException) as exc_info:
             await check_namespace_quota(session, "ns-1", new_chunks=100)
         assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "ERR-QUOTA-001"
 
     @pytest.mark.asyncio
     async def test_zero_new_chunks_skips_check(self):
@@ -181,3 +183,4 @@ class TestCombinedQuotas:
         with pytest.raises(HTTPException) as exc_info:
             await check_namespace_quota(session, "ns-1", new_documents=1, new_chunks=10)
         assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "ERR-QUOTA-001"

@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from vektra_shared.types import DocumentChunk, ElementType, ExtractionRequest
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
+_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 
 
 class MarkdownExtractor:
@@ -36,9 +37,16 @@ class MarkdownExtractor:
         current_title: str | None = None
         current_level: int | None = None
         current_lines: list[str] = []
+        in_code_block = False
 
         for line in lines:
-            match = _HEADING_RE.match(line)
+            # Track fenced code blocks (``` or ~~~)
+            if _FENCE_RE.match(line.strip()):
+                in_code_block = not in_code_block
+                current_lines.append(line)
+                continue
+
+            match = _HEADING_RE.match(line) if not in_code_block else None
             if match:
                 # Yield previous section if it has content
                 if current_lines:

@@ -138,10 +138,6 @@ class UnstructuredExtractor:
 
         position = 0
         for el in elements:
-            text = str(el).strip()
-            if not text:
-                continue
-
             category = getattr(el, "category", "UncategorizedText")
             element_type = _map_element_type(category)
 
@@ -150,9 +146,21 @@ class UnstructuredExtractor:
                 continue
 
             content_format = _detect_format(el)
-            coordinates = _extract_coordinates(el)
-
             meta = getattr(el, "metadata", None)
+
+            # Use HTML text for tables when available (check before empty filter)
+            text = str(el).strip()
+            if (
+                content_format == "html"
+                and meta is not None
+                and hasattr(meta, "text_as_html")
+            ):
+                text = meta.text_as_html
+
+            if not text:
+                continue
+
+            coordinates = _extract_coordinates(el)
             page_number = getattr(meta, "page_number", None) if meta else None
 
             metadata: dict[str, Any] = {
@@ -161,14 +169,6 @@ class UnstructuredExtractor:
             }
             if page_number is not None:
                 metadata["page"] = page_number
-
-            # Use HTML text for tables when available
-            if (
-                content_format == "html"
-                and meta is not None
-                and hasattr(meta, "text_as_html")
-            ):
-                text = meta.text_as_html
 
             yield DocumentChunk(
                 text=text,

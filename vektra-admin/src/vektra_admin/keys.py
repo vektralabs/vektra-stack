@@ -10,6 +10,7 @@ Key lifecycle:
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import threading
 from base64 import urlsafe_b64encode
@@ -52,12 +53,15 @@ def hash_key(plaintext: str) -> str:
     return _ph.hash(plaintext)
 
 
-def verify_key(plaintext: str, key_hash: str) -> bool:
+async def verify_key(plaintext: str, key_hash: str) -> bool:
     """Verify a plaintext key against its stored hash.
 
     Uses a TTLCache (300s) to avoid re-running argon2id on every request for
     recently verified keys. Returns False on any verification failure;
     never raises (callers treat False as 401).
+
+    argon2id verification is CPU-bound; cache misses are offloaded to a
+    thread via asyncio.to_thread to avoid blocking the event loop.
     """
     cache_key = (key_hash, plaintext)
 
@@ -66,17 +70,22 @@ def verify_key(plaintext: str, key_hash: str) -> bool:
         if cached is not None:
             return bool(cached)
 
-    # Cache miss: run argon2id verification (slow by design)
-    try:
-        _ph.verify(key_hash, plaintext)
-        result = True
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
-        result = False
+    # Cache miss: run argon2id verification in a thread (CPU-bound)
+    result = await asyncio.to_thread(_verify_sync, key_hash, plaintext)
 
     with _cache_lock:
         _verify_cache[cache_key] = result
 
     return result
+
+
+def _verify_sync(key_hash: str, plaintext: str) -> bool:
+    """Synchronous argon2id verify (runs in thread pool)."""
+    try:
+        _ph.verify(key_hash, plaintext)
+        return True
+    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        return False
 
 
 def needs_rehash(key_hash: str) -> bool:

@@ -144,8 +144,21 @@ class PersistentConversationStore:
             return conversation_id
 
     async def get_history(self, conversation_id: UUID) -> list[dict[str, str | None]]:
-        """Return decrypted conversation history ordered by turn_number."""
+        """Return decrypted conversation history ordered by turn_number.
+
+        Returns empty list if the conversation is soft-deleted.
+        """
         async with self._session_factory() as session:
+            # Gate on active (non-deleted) conversation
+            check = await session.execute(
+                select(ConversationOrm.id).where(
+                    ConversationOrm.id == conversation_id,
+                    ConversationOrm.deleted_at.is_(None),
+                )
+            )
+            if check.scalar_one_or_none() is None:
+                return []
+
             stmt = (
                 select(
                     func.pgp_sym_decrypt(ConversationTurnOrm.question, self._key).label(
@@ -175,7 +188,10 @@ class PersistentConversationStore:
             # and prevent duplicate turn_numbers (uq_conversation_turns_order).
             count_stmt = (
                 select(ConversationOrm.turn_count)
-                .where(ConversationOrm.id == conversation_id)
+                .where(
+                    ConversationOrm.id == conversation_id,
+                    ConversationOrm.deleted_at.is_(None),
+                )
                 .with_for_update()
             )
             count_result = await session.execute(count_stmt)

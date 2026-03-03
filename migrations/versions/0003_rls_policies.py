@@ -54,13 +54,15 @@ def upgrade() -> None:
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
 
         # Permissive SELECT/UPDATE/DELETE policy.
-        # When app.current_namespace is unset (empty string), all rows are
+        # COALESCE handles the case where the setting doesn't exist (NULL):
+        # without it, NULL = '' evaluates to NULL (falsy), blocking all rows.
+        # When app.current_namespace is unset or empty, all rows are
         # visible -- this preserves Phase 1 single-tenant behavior even with
         # FORCE ROW LEVEL SECURITY enabled.
         op.execute(f"""
             CREATE POLICY {table}_namespace_isolation ON {table}
                 USING (
-                    current_setting('app.current_namespace', true) = ''
+                    COALESCE(current_setting('app.current_namespace', true), '') = ''
                     OR namespace_id = current_setting('app.current_namespace', true)
                 )
         """)
@@ -71,7 +73,7 @@ def upgrade() -> None:
             CREATE POLICY {table}_namespace_insert ON {table}
                 FOR INSERT
                 WITH CHECK (
-                    current_setting('app.current_namespace', true) = ''
+                    COALESCE(current_setting('app.current_namespace', true), '') = ''
                     OR namespace_id = current_setting('app.current_namespace', true)
                 )
         """)

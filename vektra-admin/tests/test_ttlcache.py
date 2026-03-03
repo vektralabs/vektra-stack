@@ -5,7 +5,10 @@ Verifies cache hit, miss, expiration after TTL, and thread safety.
 
 from __future__ import annotations
 
+import asyncio
 import threading
+
+import pytest
 
 from vektra_admin.keys import (
     _CACHE_TTL,
@@ -29,50 +32,55 @@ class TestTTLCacheHitMiss:
     def teardown_method(self) -> None:
         _clear_cache()
 
-    def test_cache_populated_after_verify(self):
+    @pytest.mark.asyncio
+    async def test_cache_populated_after_verify(self):
         """After verify_key, the cache should contain the (hash, plaintext) entry."""
         plaintext, key_hash, _ = generate_key()
-        verify_key(plaintext, key_hash)
+        await verify_key(plaintext, key_hash)
 
         with _cache_lock:
             assert (key_hash, plaintext) in _verify_cache
             assert _verify_cache[(key_hash, plaintext)] is True
 
-    def test_cache_populated_for_failed_verify(self):
+    @pytest.mark.asyncio
+    async def test_cache_populated_for_failed_verify(self):
         """Failed verifications should also be cached (False value)."""
         _, key_hash, _ = generate_key()
         wrong_token = "wrong_token_abc"
-        verify_key(wrong_token, key_hash)
+        await verify_key(wrong_token, key_hash)
 
         with _cache_lock:
             assert (key_hash, wrong_token) in _verify_cache
             assert _verify_cache[(key_hash, wrong_token)] is False
 
-    def test_cache_hit_returns_same_result(self):
+    @pytest.mark.asyncio
+    async def test_cache_hit_returns_same_result(self):
         """Repeated verify_key calls return the same result from cache."""
         plaintext, key_hash, _ = generate_key()
-        result1 = verify_key(plaintext, key_hash)
-        result2 = verify_key(plaintext, key_hash)
+        result1 = await verify_key(plaintext, key_hash)
+        result2 = await verify_key(plaintext, key_hash)
         assert result1 is True
         assert result2 is True
 
-    def test_different_keys_cached_independently(self):
+    @pytest.mark.asyncio
+    async def test_different_keys_cached_independently(self):
         """Each (hash, plaintext) pair has its own cache entry."""
         pt1, hash1, _ = generate_key()
         pt2, hash2, _ = generate_key()
 
-        verify_key(pt1, hash1)
-        verify_key(pt2, hash2)
+        await verify_key(pt1, hash1)
+        await verify_key(pt2, hash2)
 
         with _cache_lock:
             assert (hash1, pt1) in _verify_cache
             assert (hash2, pt2) in _verify_cache
             assert len(_verify_cache) >= 2
 
-    def test_cache_cleared_means_miss(self):
+    @pytest.mark.asyncio
+    async def test_cache_cleared_means_miss(self):
         """After clearing, the next verify_key call is a cache miss."""
         plaintext, key_hash, _ = generate_key()
-        verify_key(plaintext, key_hash)
+        await verify_key(plaintext, key_hash)
 
         with _cache_lock:
             assert (key_hash, plaintext) in _verify_cache
@@ -83,7 +91,7 @@ class TestTTLCacheHitMiss:
             assert (key_hash, plaintext) not in _verify_cache
 
         # Re-verify should repopulate
-        verify_key(plaintext, key_hash)
+        await verify_key(plaintext, key_hash)
         with _cache_lock:
             assert (key_hash, plaintext) in _verify_cache
 
@@ -117,7 +125,7 @@ class TestTTLCacheThreadSafety:
 
         def worker() -> None:
             try:
-                result = verify_key(plaintext, key_hash)
+                result = asyncio.run(verify_key(plaintext, key_hash))
                 results.append(result)
             except Exception as exc:
                 errors.append(exc)
@@ -140,7 +148,7 @@ class TestTTLCacheThreadSafety:
 
         def worker(idx: int, pt: str, kh: str) -> None:
             try:
-                results[idx] = verify_key(pt, kh)
+                results[idx] = asyncio.run(verify_key(pt, kh))
             except Exception as exc:
                 errors.append(exc)
 

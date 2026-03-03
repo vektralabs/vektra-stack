@@ -215,6 +215,7 @@ async def run_ingest(
     # ------------------------------------------------------------------
     new_version = 1
     supersedes_id: UUID | None = None
+    old_version: int | None = None
 
     result = await session.execute(
         select(SourceDocumentOrm).where(
@@ -227,6 +228,7 @@ async def run_ingest(
     if existing_by_name is not None:
         new_version = existing_by_name.version + 1
         supersedes_id = existing_by_name.id
+        old_version = existing_by_name.version
 
         log.info(
             "ingest_version_increment",
@@ -247,35 +249,8 @@ async def run_ingest(
             )
         )
         await session.commit()
-
-        # Hard-delete old chunks via VectorStoreProvider
-        try:
-            vector_store = registry.get("vector_store", "default")
-            await vector_store.delete(namespace, [str(existing_by_name.id)])
-        except Exception as exc:
-            # Non-fatal: old chunks will be excluded from search
-            # (search joins with source_documents WHERE deleted_at IS NULL)
-            log.warning(
-                "ingest_old_chunks_delete_failed",
-                old_document_id=str(existing_by_name.id),
-                error=str(exc),
-            )
-
-        # Emit document.superseded event (T10)
-        try:
-            events = registry.get("events", "default")
-            await events.emit(
-                "document.superseded",
-                {
-                    "document_id": str(existing_by_name.id),
-                    "namespace": namespace,
-                    "filename": filename,
-                    "old_version": existing_by_name.version,
-                    "new_version": new_version,
-                },
-            )
-        except ValueError:
-            pass  # events emitter not registered
+        # Old chunks remain in vector store until new ingest succeeds.
+        # They won't appear in search (JOIN excludes soft-deleted docs).
 
     # ------------------------------------------------------------------
     # Step 3: Detect content type
@@ -397,6 +372,8 @@ async def run_ingest(
     except (IngestError, IngestConflictError) as exc:
         # These are expected errors - still need to clean up the source_document
         await _cleanup_document(doc_id)
+        if supersedes_id is not None:
+            await _restore_superseded_document(supersedes_id)
         _emit_failed_event(registry, doc_id, namespace, filename, exc)
         raise
     except Exception as exc:
@@ -407,12 +384,44 @@ async def run_ingest(
             error=str(exc),
         )
         await _cleanup_document(doc_id)
+        if supersedes_id is not None:
+            await _restore_superseded_document(supersedes_id)
         ingest_err = IngestError(
             error_code=ERR_INGEST_004,
             message=f"Storage failed: {exc}",
         )
         _emit_failed_event(registry, doc_id, namespace, filename, ingest_err)
         raise ingest_err from exc
+
+    # ------------------------------------------------------------------
+    # Step 7b: Finalize superseded document (only after successful store)
+    # ------------------------------------------------------------------
+    if supersedes_id is not None:
+        # Hard-delete old chunks (best-effort, old doc already soft-deleted)
+        try:
+            await vector_store.delete(namespace, [str(supersedes_id)])
+        except Exception as exc:
+            log.warning(
+                "ingest_old_chunks_delete_failed",
+                old_document_id=str(supersedes_id),
+                error=str(exc),
+            )
+
+        # Emit document.superseded event
+        try:
+            events = registry.get("events", "default")
+            await events.emit(
+                "document.superseded",
+                {
+                    "document_id": str(supersedes_id),
+                    "namespace": namespace,
+                    "filename": filename,
+                    "old_version": old_version,
+                    "new_version": new_version,
+                },
+            )
+        except ValueError:
+            pass  # events emitter not registered
 
     # ------------------------------------------------------------------
     # Step 8: Update chunk_count
@@ -492,6 +501,35 @@ async def _cleanup_document(doc_id: UUID) -> None:
         log.error(
             "cleanup_document_failed",
             document_id=str(doc_id),
+            error=str(exc),
+        )
+
+
+async def _restore_superseded_document(old_doc_id: UUID) -> None:
+    """Restore a superseded document after new version ingest failed.
+
+    Clears the soft-delete so the old version becomes active again.
+    Uses its own session (same pattern as _cleanup_document).
+    """
+    import vektra_shared.db as _shared_db
+
+    if _shared_db._session_factory is None:
+        log.error("restore_failed_no_session_factory", document_id=str(old_doc_id))
+        return
+
+    try:
+        async with _shared_db._session_factory() as session:
+            await session.execute(
+                update(SourceDocumentOrm)
+                .where(SourceDocumentOrm.id == old_doc_id)
+                .values(deleted_at=None, deletion_reason=None)
+            )
+            await session.commit()
+        log.info("superseded_document_restored", document_id=str(old_doc_id))
+    except Exception as exc:
+        log.error(
+            "restore_superseded_failed",
+            document_id=str(old_doc_id),
             error=str(exc),
         )
 

@@ -134,7 +134,11 @@ def require_scope(
                 detail=err.to_envelope(),
             )
 
-        # 4. Check scope (admin is a superscope per ARCH-059)
+        # 4. Expose key_id on request.state for audit attribution
+        #    (set early so denied requests are still attributable)
+        request.state.key_id = info.key_id
+
+        # 5. Check scope (admin is a superscope per ARCH-059)
         if required_scope is not None and not (
             info.has_scope(required_scope) or info.has_scope("admin")
         ):
@@ -144,7 +148,7 @@ def require_scope(
                 detail=err.to_envelope(),
             )
 
-        # 5. Rate limiting (optional, duck-typed from app.state)
+        # 6. Rate limiting (optional, duck-typed from app.state)
         rate_limiter = getattr(request.app.state, "rate_limiter", None)
         if rate_limiter is not None and info.rate_limit_rpm is not None:
             allowed, rl_headers = rate_limiter.check(info.key_id, info.rate_limit_rpm)
@@ -162,9 +166,6 @@ def require_scope(
                 )
             # Store headers for response middleware to add
             request.state.rate_limit_headers = rl_headers
-
-        # 6. Expose key_id on request.state for AuditMiddleware
-        request.state.key_id = info.key_id
 
         return info
 

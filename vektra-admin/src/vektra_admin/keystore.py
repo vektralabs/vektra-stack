@@ -71,7 +71,7 @@ class InMemoryKeyStore:
             entry = self._by_hash.get(key_hash)
             if entry is None:
                 continue
-            if not verify_key(token, key_hash):
+            if not await verify_key(token, key_hash):
                 continue
             # Found a matching key
             if entry.revoked_at is not None:

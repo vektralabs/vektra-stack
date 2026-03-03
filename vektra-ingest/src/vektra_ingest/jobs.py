@@ -21,7 +21,7 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 import vektra_shared.db as _shared_db
 from vektra_ingest.exceptions import IngestConflictError, IngestError
@@ -67,7 +67,10 @@ async def _update_job(
         values["percentage"] = percentage
 
     if status == "processing":
-        values["started_at"] = datetime.now(UTC)
+        # Only set started_at on the first processing update (when NULL)
+        values["started_at"] = func.coalesce(
+            IngestJobOrm.started_at, datetime.now(UTC)
+        )
     elif status in ("indexed", "failed"):
         values["completed_at"] = datetime.now(UTC)
         if "phase" not in values:

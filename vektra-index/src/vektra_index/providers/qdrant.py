@@ -128,8 +128,6 @@ class QdrantVectorStoreProvider:
         points: list[models.PointStruct] = []
         point_ids: list[str] = []
 
-        document_id = chunks[0].metadata.get("document_id", "")
-
         for chunk in chunks:
             point_id = chunk.chunk_id or str(uuid4())
             point_ids.append(point_id)
@@ -152,7 +150,7 @@ class QdrantVectorStoreProvider:
                         "index_version": self._active_index_version,
                         "text": chunk.text,
                         "metadata": chunk.metadata,
-                        "document_id": document_id,
+                        "document_id": chunk.metadata.get("document_id", ""),
                     },
                 )
             )

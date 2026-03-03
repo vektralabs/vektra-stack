@@ -317,7 +317,7 @@ async def batch_ingest(
         await session.commit()
         await session.refresh(job)
 
-        await _enqueue_batch_file(
+        enqueued = await _enqueue_batch_file(
             job_id=job.id,
             file_content=file_content,
             filename=filename,
@@ -331,7 +331,8 @@ async def batch_ingest(
             BatchIngestItemResponse(
                 job_id=job.id,
                 filename=filename,
-                status="pending",
+                status="pending" if enqueued else "failed",
+                error="Failed to enqueue job" if not enqueued else None,
             ).model_dump(mode="json")
         )
 
@@ -401,19 +402,26 @@ async def batch_delete(
         )
         deleted.append(str(doc_id))
 
-        # Hard-delete chunks (best-effort)
-        if registry is not None:
-            try:
-                vector_store = registry.get("vector_store", "default")
-                await vector_store.delete(body.namespace, [str(doc_id)])
-            except Exception as exc:
-                log.warning(
-                    "batch_delete_chunks_failed",
-                    document_id=str(doc_id),
-                    error=str(exc),
-                )
-
+    # Commit soft-deletes before external cleanup to avoid inconsistency:
+    # if commit fails, no vectors have been deleted yet.
     await session.commit()
+
+    # Best-effort vector cleanup after DB state is persisted
+    if registry is not None and deleted:
+        try:
+            vector_store = registry.get("vector_store", "default")
+        except ValueError:
+            vector_store = None
+        if vector_store is not None:
+            for doc_id_str in deleted:
+                try:
+                    await vector_store.delete(body.namespace, [doc_id_str])
+                except Exception as exc:
+                    log.warning(
+                        "batch_delete_chunks_failed",
+                        document_id=doc_id_str,
+                        error=str(exc),
+                    )
 
     _write_audit_log(
         background_tasks=background_tasks,
@@ -783,8 +791,11 @@ async def _enqueue_batch_file(
     registry: Any,
     background_tasks: BackgroundTasks,
     request: Request,
-) -> None:
-    """Enqueue a single file from a batch ingest request."""
+) -> bool:
+    """Enqueue a single file from a batch ingest request.
+
+    Returns True if the job was successfully enqueued, False on failure.
+    """
     from arq import ArqRedis
 
     arq_pool: ArqRedis | None = None
@@ -813,6 +824,7 @@ async def _enqueue_batch_file(
                 error_code="ERR-INGEST-004",
                 error_message=f"Failed to enqueue job: {exc}",
             )
+            return False
     else:
         background_tasks.add_task(
             _run_task_in_background,
@@ -822,6 +834,7 @@ async def _enqueue_batch_file(
             file_bytes=file_content,
             registry=registry,
         )
+    return True
 
 
 async def _run_task_in_background(

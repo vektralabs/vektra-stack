@@ -568,5 +568,5 @@ def _emit_failed_event(
                 },
             )
         )
-    except (ValueError, AttributeError):
-        pass  # events emitter not registered
+    except Exception:
+        pass  # emitter not registered or delivery failed

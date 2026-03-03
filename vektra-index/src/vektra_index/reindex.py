@@ -235,9 +235,10 @@ async def reindex_status(
     """Get the status of a reindex job."""
     from vektra_index.models import ReindexJobOrm
 
-    result = await session.execute(
-        select(ReindexJobOrm).where(ReindexJobOrm.id == job_id)
-    )
+    filters = [ReindexJobOrm.id == job_id]
+    if key.namespace_id is not None:
+        filters.append(ReindexJobOrm.namespace_id == key.namespace_id)
+    result = await session.execute(select(ReindexJobOrm).where(*filters))
     job = result.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=404, detail="Reindex job not found")

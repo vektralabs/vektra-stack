@@ -74,11 +74,11 @@ async def run_reindex(
     source_version: int,
     target_version: int,
 ) -> None:
-    """Background reindex job.
+    """Background reindex job (skeleton - progress tracking only).
 
-    Iterates source_documents in the namespace, re-processes each one,
-    and stores chunks with the target_index_version. Updates reindex_jobs
-    progress after each document.
+    Iterates source_documents in the namespace and updates reindex_jobs
+    progress. Full extract/chunk/embed/store execution is deferred to
+    infra-phase2 (Wave 5).
 
     This function runs outside the request lifecycle. It creates its own
     DB sessions as needed.

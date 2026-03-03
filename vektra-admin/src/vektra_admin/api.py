@@ -271,6 +271,16 @@ async def create_api_key(
         )
         raise HTTPException(status_code=422, detail=err.to_envelope())
 
+    # --- Validate expires_at ---
+    if body.expires_at is not None and body.expires_at <= datetime.now(UTC):
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-004",
+            message="expires_at must be in the future.",
+            remediation="Provide a future UTC timestamp or omit expires_at.",
+        )
+        raise HTTPException(status_code=422, detail=err.to_envelope())
+
     # --- Generate and persist key ---
     plaintext, key_hash, key_preview = generate_key()
 

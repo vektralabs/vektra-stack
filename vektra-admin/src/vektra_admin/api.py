@@ -27,7 +27,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,6 +93,13 @@ class CreateKeyRequest(BaseModel):
     label: str | None = None
     scopes: list[str] | None = None  # defaults to ["admin"] if not provided
     expires_at: datetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def _expires_at_must_be_timezone_aware(cls, v: datetime | None) -> datetime | None:
+        if v is not None and v.tzinfo is None:
+            raise ValueError("expires_at must include timezone info")
+        return v
 
 
 class CreateKeyResponse(BaseModel):

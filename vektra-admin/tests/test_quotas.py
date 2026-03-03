@@ -153,6 +153,15 @@ class TestChunkQuota:
         assert exc_info.value.detail["error"]["code"] == "ERR-QUOTA-001"
 
     @pytest.mark.asyncio
+    async def test_at_limit_passes(self):
+        """Adding chunks that exactly reach the quota succeeds."""
+        from vektra_admin.quotas import check_namespace_quota
+
+        row = _namespace_row(quota_chunks=1000)
+        session = _make_session(namespace_row=row, chunk_count=900)
+        await check_namespace_quota(session, "ns-1", new_chunks=100)
+
+    @pytest.mark.asyncio
     async def test_zero_new_chunks_skips_check(self):
         """new_chunks=0 skips the chunk count query."""
         from vektra_admin.quotas import check_namespace_quota
@@ -180,6 +189,18 @@ class TestCombinedQuotas:
 
         row = _namespace_row(quota_documents=10, quota_chunks=1000)
         session = _make_session(namespace_row=row, doc_count=10)
+        with pytest.raises(HTTPException) as exc_info:
+            await check_namespace_quota(session, "ns-1", new_documents=1, new_chunks=10)
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "ERR-QUOTA-001"
+
+    @pytest.mark.asyncio
+    async def test_chunk_quota_exceeded_with_both_set(self):
+        """Chunk quota exceeded blocks even if document quota is fine."""
+        from vektra_admin.quotas import check_namespace_quota
+
+        row = _namespace_row(quota_documents=10, quota_chunks=100)
+        session = _make_session(namespace_row=row, doc_count=5, chunk_count=95)
         with pytest.raises(HTTPException) as exc_info:
             await check_namespace_quota(session, "ns-1", new_documents=1, new_chunks=10)
         assert exc_info.value.status_code == 422

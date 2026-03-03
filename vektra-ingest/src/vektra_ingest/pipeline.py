@@ -414,7 +414,7 @@ async def run_ingest(
                 error=str(exc),
             )
 
-        # Emit document.superseded event
+        # Emit document.superseded event (best-effort)
         try:
             events = registry.get("events", "default")
             await events.emit(
@@ -427,8 +427,8 @@ async def run_ingest(
                     "new_version": new_version,
                 },
             )
-        except ValueError:
-            pass  # events emitter not registered
+        except Exception:
+            pass  # emitter not registered or delivery failed
 
     # ------------------------------------------------------------------
     # Step 8: Update chunk_count
@@ -460,8 +460,8 @@ async def run_ingest(
                 "filename": filename,
             },
         )
-    except ValueError:
-        pass  # events emitter not registered
+    except Exception:
+        pass  # emitter not registered or delivery failed
 
     log.info(
         "ingest_complete",

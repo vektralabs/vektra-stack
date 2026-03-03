@@ -446,9 +446,9 @@ async def test_old_doc_soft_deleted_with_superseded_reason():
                 )
 
     # Verify soft-delete UPDATE includes deletion_reason='superseded'
-    assert any(
-        "deletion_reason" in str(s) for s in executed_stmts
-    ), "Expected UPDATE with deletion_reason='superseded'"
+    assert any("deletion_reason" in str(s) for s in executed_stmts), (
+        "Expected UPDATE with deletion_reason='superseded'"
+    )
 
     # Vector store delete was called to remove old chunks
     mock_vs.delete.assert_called_once_with("default", [str(old_doc_id)])

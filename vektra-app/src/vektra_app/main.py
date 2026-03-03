@@ -172,9 +172,15 @@ async def _step_5_register_providers(
             encryption_key=settings.conversation_key,
             max_turns=settings.max_conversation_turns,
         )
+        log.info("conversation_store_selected", backend="persistent")
     else:
         conversation_store = InMemoryConversationStore(
             max_turns=settings.max_conversation_turns,
+        )
+        log.warning(
+            "conversation_store_selected",
+            backend="in_memory",
+            persistence="disabled",
         )
     templates_dir = (
         Path(settings.prompt_templates_dir) if settings.prompt_templates_dir else None

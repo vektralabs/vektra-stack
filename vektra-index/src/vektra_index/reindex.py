@@ -196,13 +196,16 @@ async def trigger_reindex(
     """Trigger a background reindex job (admin scope required)."""
     from vektra_index.models import ReindexJobOrm
 
+    # Enforce namespace binding: namespace-bound keys override body.namespace
+    namespace = key.namespace_id or body.namespace
+
     # Determine current active version from settings (or default 1)
     source_version = 1  # Will be overridden by app config in infra-phase2
 
     job_id = uuid4()
     job = ReindexJobOrm(
         id=job_id,
-        namespace_id=body.namespace,
+        namespace_id=namespace,
         source_index_version=source_version,
         target_index_version=body.target_index_version,
         status="pending",
@@ -213,7 +216,7 @@ async def trigger_reindex(
     background_tasks.add_task(
         run_reindex,
         job_id=job_id,
-        namespace=body.namespace,
+        namespace=namespace,
         source_version=source_version,
         target_version=body.target_index_version,
     )
@@ -221,7 +224,7 @@ async def trigger_reindex(
     return ReindexResponse(
         job_id=str(job_id),
         status="pending",
-        namespace=body.namespace,
+        namespace=namespace,
         target_index_version=body.target_index_version,
     )
 

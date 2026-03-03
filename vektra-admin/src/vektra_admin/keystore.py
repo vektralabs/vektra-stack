@@ -77,7 +77,7 @@ class InMemoryKeyStore:
             if entry.revoked_at is not None:
                 log.info("auth_rejected_revoked_key", key_id=str(entry.key_id))
                 return None
-            if entry.expires_at is not None and entry.expires_at < datetime.now(UTC):
+            if entry.expires_at is not None and entry.expires_at <= datetime.now(UTC):
                 log.info("auth_rejected_expired_key", key_id=str(entry.key_id))
                 return None
             return ApiKeyInfo(

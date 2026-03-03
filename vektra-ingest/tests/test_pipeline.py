@@ -243,7 +243,7 @@ async def test_filename_match_creates_new_version():
     assert result.version == 2
     assert result.supersedes_id == old_doc_id
     # Old chunks were deleted
-    mock_vs.delete.assert_called_once_with("default", [str(old_doc_id)])
+    mock_vs.delete.assert_awaited_once_with("default", [str(old_doc_id)])
 
 
 # ---------------------------------------------------------------------------

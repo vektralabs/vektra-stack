@@ -1,8 +1,9 @@
 """Reindex API and background job (ARCH-045, REQ-064).
 
-POST /api/v1/reindex triggers a background job that re-extracts, re-chunks,
-re-embeds, and stores documents with a new index_version. Progress is tracked
-via the reindex_jobs table.
+POST /api/v1/reindex triggers a background job that currently tracks
+reindex progress only (skeleton implementation). Full extract/chunk/embed/store
+orchestration is planned for infra-phase2 (Wave 5). Progress is tracked via
+the reindex_jobs table.
 
 GET /api/v1/reindex/{job_id}/status returns current progress.
 

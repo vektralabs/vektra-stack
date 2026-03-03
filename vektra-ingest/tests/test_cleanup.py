@@ -45,11 +45,15 @@ async def test_cleanup_skips_when_retention_days_not_set():
     """No cleanup when VEKTRA_RETENTION_DAYS is None."""
     from vektra_ingest.jobs import cleanup_soft_deleted_task
 
-    with patch("vektra_shared.config.ObservabilityConfig") as mock_config_cls:
+    with (
+        patch("vektra_ingest.jobs._shared_db") as mock_db,
+        patch("vektra_shared.config.ObservabilityConfig") as mock_config_cls,
+    ):
         mock_config_cls.return_value.retention_days = None
-
-        # Should return without accessing DB
         await cleanup_soft_deleted_task({})
+
+    # Should never access the database
+    mock_db._session_factory.assert_not_called()
 
 
 @pytest.mark.asyncio

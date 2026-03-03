@@ -120,24 +120,23 @@ class TestTTLCacheThreadSafety:
     def test_concurrent_verify_same_key(self):
         """Multiple threads verifying the same key should not raise."""
         plaintext, key_hash, _ = generate_key()
-        results: list[bool] = []
+        results: dict[int, bool] = {}
         errors: list[Exception] = []
 
-        def worker() -> None:
+        def worker(idx: int) -> None:
             try:
-                result = asyncio.run(verify_key(plaintext, key_hash))
-                results.append(result)
+                results[idx] = asyncio.run(verify_key(plaintext, key_hash))
             except Exception as exc:
                 errors.append(exc)
 
-        threads = [threading.Thread(target=worker) for _ in range(10)]
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
         for t in threads:
             t.start()
         for t in threads:
             t.join(timeout=30)
 
         assert not errors, f"Threads raised exceptions: {errors}"
-        assert all(r is True for r in results)
+        assert all(v is True for v in results.values())
         assert len(results) == 10
 
     def test_concurrent_verify_different_keys(self):

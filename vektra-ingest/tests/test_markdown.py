@@ -46,8 +46,8 @@ async def test_markdown_split_on_headings():
 
 
 @pytest.mark.asyncio
-async def test_markdown_empty_sections_skipped():
-    """Sections with no content after the heading are skipped."""
+async def test_markdown_heading_only_sections_included():
+    """Sections with only a heading (no body text) are still included."""
     from vektra_ingest.extractors.markdown import MarkdownExtractor
 
     content = "# Title\n\n## Empty section\n## Section with content\nSome content.\n"

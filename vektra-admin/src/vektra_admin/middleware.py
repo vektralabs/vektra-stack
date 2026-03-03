@@ -68,6 +68,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
             # Unauthenticated request (e.g. 401 response from auth dep) — skip
             return response
 
+        # Namespace set by RLSMiddleware (may be None for admin keys)
+        namespace: str | None = getattr(request.state, "rls_namespace", None)
+
         # Write audit log with a dedicated session (independent of request lifecycle)
         task = asyncio.create_task(
             _write_audit(
@@ -76,6 +79,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 method=request.method,
                 status_code=response.status_code,
                 request_id=request_id,
+                namespace=namespace,
             )
         )
         _audit_tasks.add(task)
@@ -91,6 +95,7 @@ async def _write_audit(
     method: str,
     status_code: int,
     request_id: UUID,
+    namespace: str | None = None,
 ) -> None:
     """Write one audit_log row using an independent session.
 
@@ -106,6 +111,10 @@ async def _write_audit(
         log.warning("audit_middleware_no_session_factory")
         return
 
+    metadata: dict[str, str] = {}
+    if namespace is not None:
+        metadata["namespace"] = namespace
+
     try:
         async with session_factory() as session:
             entry = AuditLogOrm(
@@ -114,6 +123,7 @@ async def _write_audit(
                 method=method,
                 status_code=status_code,
                 request_id=request_id,
+                log_metadata=metadata,
             )
             session.add(entry)
             await session.commit()

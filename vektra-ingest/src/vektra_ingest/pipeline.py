@@ -265,7 +265,7 @@ async def run_ingest(
         raise IngestError(
             error_code=ERR_INGEST_001,
             message=f"Unsupported content type: '{content_type}'. "
-            f"Supported: PDF, DOCX, PPTX.",
+            f"Supported: PDF, DOCX, PPTX, Markdown.",
         )
 
     # ------------------------------------------------------------------

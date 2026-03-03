@@ -298,7 +298,7 @@ async def create_api_key(
                 key_hash=key_hash,
                 key_preview=key_preview,
                 scopes=requested_scopes,
-                expires_at=body.expires_at,
+                expires_at=new_key.expires_at,
             )
         except ValueError:
             pass  # key_store not yet registered (e.g. during tests)

@@ -130,11 +130,22 @@ class UnstructuredExtractor:
     ) -> AsyncGenerator[DocumentChunk, None]:
         from unstructured.partition.pdf import partition_pdf
 
-        elements = await asyncio.to_thread(
-            partition_pdf,
-            file=io.BytesIO(request.content),
-            strategy="auto",
-        )
+        # Timeout prevents OCR on large scanned PDFs from starving
+        # the thread pool indefinitely (default 10 minutes).
+        timeout_s = 600
+        try:
+            elements = await asyncio.wait_for(
+                asyncio.to_thread(
+                    partition_pdf,
+                    file=io.BytesIO(request.content),
+                    strategy="auto",
+                ),
+                timeout=timeout_s,
+            )
+        except TimeoutError:
+            raise RuntimeError(
+                f"PDF extraction timed out after {timeout_s}s"
+            ) from None
 
         position = 0
         for el in elements:

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
+from vektra_shared.config import EmbeddingConfig, VectorStoreConfig
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ERR_INGEST_004,
@@ -33,6 +34,10 @@ from vektra_shared.types import (
     SearchMode,
     SparseVector,
 )
+
+# Read from env once at import time (immutable for process lifetime)
+_VS_CONFIG = VectorStoreConfig()
+_EMB_CONFIG = EmbeddingConfig()
 
 router = APIRouter(prefix="/api/v1", tags=["index"])
 
@@ -132,6 +137,9 @@ async def store_chunks(
     """
     from vektra_index.providers.pgvector import PgvectorProvider
 
+    # Enforce namespace binding for scoped keys (H5)
+    effective_ns = key.namespace_id or body.namespace
+
     # Build ChunkEmbedding objects from the request payload
     chunk_embeddings = [
         ChunkEmbedding(
@@ -146,13 +154,13 @@ async def store_chunks(
         for item in body.chunks
     ]
 
-    provider = PgvectorProvider()
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
 
     try:
         async with session.begin():
             chunk_ids = await provider.store(
                 session=session,
-                namespace=body.namespace,
+                namespace=effective_ns,
                 document_id=document_id,
                 chunks=chunk_embeddings,
             )
@@ -198,8 +206,11 @@ async def search(
 
     _logger = logging.getLogger(__name__)
 
-    embedding_provider = SentenceTransformersProvider()
-    pgvector_provider = PgvectorProvider()
+    # Enforce namespace binding for scoped keys (H5)
+    effective_ns = key.namespace_id or body.namespace
+
+    embedding_provider = SentenceTransformersProvider(model_name=_EMB_CONFIG.embedding_model)
+    pgvector_provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
 
     # Embed the query (dense)
     try:
@@ -239,7 +250,7 @@ async def search(
     try:
         results = await pgvector_provider.search(
             session=session,
-            namespace=body.namespace,
+            namespace=effective_ns,
             query_embedding=query_embedding,
             top_k=body.top_k,
             search_mode=effective_mode,
@@ -286,7 +297,7 @@ async def delete_document(
     """
     from vektra_index.providers.pgvector import PgvectorProvider
 
-    provider = PgvectorProvider()
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
 
     async with session.begin():
         chunks_removed = await provider.delete(
@@ -313,7 +324,7 @@ async def stats(
     """
     from vektra_index.providers.pgvector import PgvectorProvider
 
-    provider = PgvectorProvider()
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
     data = await provider.namespace_stats(session=session, namespace=namespace)
 
     return StatsResponse(**data)
@@ -326,7 +337,7 @@ async def health(
     """Unauthenticated component health check."""
     from vektra_index.providers.pgvector import PgvectorProvider
 
-    provider = PgvectorProvider()
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
     status = await provider.health_check(session=session)
 
     return HealthResponse(

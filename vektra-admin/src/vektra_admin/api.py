@@ -152,18 +152,19 @@ async def health(
             raise HTTPException(
                 status_code=http_status_for(err), detail=err.to_envelope()
             )
-        # Validate token (best-effort; use same registry pattern)
-        if registry is not None:
-            try:
-                key_store = registry.get("key_store", "default")
-                info = await key_store.lookup_by_token(credentials.credentials)
-                if info is None:
-                    err = auth_invalid_token()
-                    raise HTTPException(
-                        status_code=http_status_for(err), detail=err.to_envelope()
-                    )
-            except ValueError:
-                pass  # key_store not yet registered during startup probe
+        # Validate token; fail closed if registry/key_store unavailable
+        if registry is None:
+            raise HTTPException(status_code=503, detail="Service initializing")
+        try:
+            key_store = registry.get("key_store", "default")
+            info = await key_store.lookup_by_token(credentials.credentials)
+            if info is None:
+                err = auth_invalid_token()
+                raise HTTPException(
+                    status_code=http_status_for(err), detail=err.to_envelope()
+                )
+        except ValueError:
+            raise HTTPException(status_code=503, detail="Service initializing")
 
         status_code = 503 if deep.status == "unhealthy" else 200
         return Response(

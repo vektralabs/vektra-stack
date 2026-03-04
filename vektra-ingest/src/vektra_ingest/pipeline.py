@@ -26,6 +26,7 @@ from uuid import UUID
 
 import structlog
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_ingest.chunking import DualStrategyChunking, FixedSizeChunking
@@ -155,7 +156,7 @@ async def run_ingest(
         on_phase: Optional progress callback (phase_name, percentage).
 
     Raises:
-        IngestConflictError: Concurrent re-ingest TOCTOU race (→ 409).
+        IngestConflictError: Concurrent duplicate filename insert (TOCTOU, → 409).
         IngestError: Unsupported type, scanned PDF, or storage failure.
     """
     content_hash = hashlib.sha256(file_content).hexdigest()
@@ -291,7 +292,13 @@ async def run_ingest(
             supersedes_id=supersedes_id,
         )
         session.add(doc)
-        await session.flush()  # assigns doc.id without committing
+        try:
+            await session.flush()  # assigns doc.id without committing
+        except IntegrityError as exc:
+            await session.rollback()
+            if "uq_source_documents_filename" in str(exc):
+                raise IngestConflictError(filename, namespace) from exc
+            raise
         doc_id = doc.id
 
         # Commit the source_document so the VectorStoreProvider (which uses

@@ -659,14 +659,21 @@ async def embed_only(
 @router.get("/api/v1/ingest/jobs/{job_id}/status", response_model=JobStatusResponse)
 async def get_job_status(
     job_id: UUID,
+    namespace: str = "default",
     session: AsyncSession = Depends(get_session),
-    _key: ApiKeyInfo = Depends(require_scope("ingest")),
+    key_info: ApiKeyInfo = Depends(require_scope("ingest")),
 ) -> JobStatusResponse:
     """Return current status of an async ingest job (REQ-014, NFR-010)."""
     from vektra_ingest.models import IngestJobOrm
 
+    # Enforce namespace binding for scoped keys
+    effective_ns = key_info.namespace_id or namespace
+
     result = await session.execute(
-        select(IngestJobOrm).where(IngestJobOrm.id == job_id)
+        select(IngestJobOrm).where(
+            IngestJobOrm.id == job_id,
+            IngestJobOrm.namespace_id == effective_ns,
+        )
     )
     job = result.scalar_one_or_none()
     if job is None:

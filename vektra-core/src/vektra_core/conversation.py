@@ -59,6 +59,8 @@ class InMemoryConversationStore:
     """
 
     def __init__(self, max_turns: int = 10) -> None:
+        if max_turns < 1:
+            raise ValueError("max_turns must be >= 1")
         self._max_turns = max_turns
         self._store: dict[UUID, list[_InMemoryTurn]] = {}
         self._lock = asyncio.Lock()
@@ -111,6 +113,8 @@ class PersistentConversationStore:
                 "VEKTRA_CONVERSATION_KEY must be a non-empty string "
                 "for persistent conversation storage"
             )
+        if max_turns < 1:
+            raise ValueError("max_turns must be >= 1")
         self._session_factory = session_factory
         self._key = encryption_key
         self._max_turns = max_turns

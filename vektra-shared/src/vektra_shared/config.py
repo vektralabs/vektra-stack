@@ -330,6 +330,7 @@ class ObservabilityConfig(BaseSettings):
     )
     retention_days: int | None = Field(
         None,
+        ge=1,
         alias="VEKTRA_RETENTION_DAYS",
         description="Soft-deleted record retention period. Phase 2: arq cleanup job.",
     )

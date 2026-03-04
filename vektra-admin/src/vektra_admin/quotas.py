@@ -27,6 +27,8 @@ async def check_namespace_quota(
     new_documents: int = 0,
     new_chunks: int = 0,
 ) -> None:
+    if new_documents < 0 or new_chunks < 0:
+        raise ValueError("Quota deltas must be non-negative")
     """Raise HTTPException 422 if adding would exceed namespace quotas.
 
     Args:

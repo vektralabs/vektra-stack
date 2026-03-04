@@ -14,7 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
@@ -59,6 +59,15 @@ class SparseVectorPayload(BaseModel):
 
     indices: list[int]
     values: list[float]
+
+    @model_validator(mode="after")
+    def _check_lengths(self) -> SparseVectorPayload:
+        if len(self.indices) != len(self.values):
+            raise ValueError(
+                f"indices length ({len(self.indices)}) must equal "
+                f"values length ({len(self.values)})"
+            )
+        return self
 
 
 class ChunkEmbeddingPayload(BaseModel):

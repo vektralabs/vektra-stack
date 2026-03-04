@@ -180,12 +180,12 @@ class DualStrategyChunking:
         # 1. Collect all elements, separating text runs from tables
         # 2. Split text runs into parent + child chunks, emit tables as-is
 
-        # A "segment" is either a text run (list of tokens) or a table element
+        # A "segment" is either a text run (tokens + metadata) or a table element
         segments: list[
             tuple[str, Any]
-        ] = []  # ("text", tokens_list) or ("table", DocumentChunk)
+        ] = []  # ("text", (tokens_list, metadata)) or ("table", DocumentChunk)
         current_text_tokens: list[int] = []
-        first_metadata: dict[str, Any] = {}
+        current_segment_metadata: dict[str, Any] = {}
 
         async for element in elements:
             if element.element_type in _SKIP_TYPES:
@@ -194,13 +194,16 @@ class DualStrategyChunking:
             if element.element_type == ElementType.TABLE:
                 # Flush any accumulated text tokens as a text segment
                 if current_text_tokens:
-                    segments.append(("text", list(current_text_tokens)))
+                    segments.append(
+                        ("text", (list(current_text_tokens), current_segment_metadata))
+                    )
                     current_text_tokens = []
+                    current_segment_metadata = {}
                 segments.append(("table", element))
             elif element.element_type in _TEXT_TYPES:
                 tokens = enc.encode(element.text)
-                if not current_text_tokens and not first_metadata and tokens:
-                    first_metadata = dict(element.metadata)
+                if not current_text_tokens and tokens:
+                    current_segment_metadata = dict(element.metadata)
                 current_text_tokens.extend(tokens)
             # Unknown types: treat as text
             else:
@@ -209,7 +212,9 @@ class DualStrategyChunking:
 
         # Flush remaining text tokens
         if current_text_tokens:
-            segments.append(("text", list(current_text_tokens)))
+            segments.append(
+                ("text", (list(current_text_tokens), current_segment_metadata))
+            )
 
         # Now emit chunks from segments
         chunk_index = 0
@@ -234,7 +239,9 @@ class DualStrategyChunking:
                 chunk_index += 1
 
             elif seg_type == "text":
-                text_tokens: list[int] = seg_data
+                text_tokens: list[int]
+                seg_metadata: dict[str, Any]
+                text_tokens, seg_metadata = seg_data
                 if not text_tokens:
                     continue
 
@@ -259,7 +266,7 @@ class DualStrategyChunking:
                         text=parent_text,
                         element_type=ElementType.TEXT,
                         metadata={
-                            **first_metadata,
+                            **seg_metadata,
                             "chunk_index": chunk_index,
                             "token_count": len(parent_tokens),
                             "chunk_level": "parent",
@@ -289,7 +296,7 @@ class DualStrategyChunking:
                             text=child_text,
                             element_type=ElementType.TEXT,
                             metadata={
-                                **first_metadata,
+                                **seg_metadata,
                                 "chunk_index": chunk_index,
                                 "token_count": len(child_tokens),
                                 "chunk_level": "child",

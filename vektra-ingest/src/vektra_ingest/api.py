@@ -636,6 +636,19 @@ async def embed_only(
     texts = [c.text for c in all_chunks]
     embeddings = await embedding_provider.embed_documents(texts)
 
+    if len(embeddings) != len(all_chunks):
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "message": (
+                        f"Embedding count ({len(embeddings)}) does not match "
+                        f"chunk count ({len(all_chunks)})"
+                    ),
+                }
+            },
+        )
+
     results = []
     for i, (chunk, embedding) in enumerate(zip(all_chunks, embeddings)):
         results.append(

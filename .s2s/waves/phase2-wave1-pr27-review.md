@@ -36,7 +36,7 @@
 | M13 | index | `reindex.py:206-222` | No duplicate reindex job guard for same namespace | DEFER |
 | M14 | ingest | `api.py:307-318` | Batch ingest commits per-file; mid-loop failure orphans jobs | DEFER |
 | M15 | ingest | `chunking.py:76-83` | FixedSizeChunking discards element type metadata | DEFER |
-| M16 | ingest | `chunking.py:202-203` | DualStrategyChunking: stale first_metadata across segments | DEFER |
+| M16 | ingest | `chunking.py:202-203` | DualStrategyChunking: stale first_metadata across segments | FIXED |
 | M17 | ingest | `pipeline.py:502-504` | Wrong deletion_reason on cleanup ("user_request" for pipeline failure) | DEFER |
 | M18 | shared | `main.py:52-57` | PII redactor only runs at WARNING+ (INFO/DEBUG leaks PII) | DEFER |
 | M19 | migrations | `0004` | `reindex_jobs` has no RLS policy despite namespace_id column | DEFER |
@@ -69,12 +69,12 @@ Inline comments posted directly on diff lines. Comment ID links to the thread.
 | CR1 | Critical | `rls.py:53` | RLS namespace from client input without auth validation | 2874743808 | 3878766241 | WONTFIX |
 | CR2 | Major | `rls.py:70` | BaseHTTPMiddleware body consumption (Starlette limitation) | 2874743814 | 3878766241 | DEFER (infra-phase2) |
 | CR3 | Major | `reindex.py:146` | Reindex loop is stub (doesn't re-embed) | 2874743864 | 3878766241 | WONTFIX (by design) |
-| CR4 | Major | `ingest/api.py:623` | `zip(chunks, embeddings)` truncates silently on length mismatch | 2874743885 | 3878766241 | DEFER |
-| CR5 | Major | `index/api.py:62` | Sparse vector `indices`/`values` length not validated | 2874773746 | 3878803063 | DEFER |
+| CR4 | Major | `ingest/api.py:623` | `zip(chunks, embeddings)` truncates silently on length mismatch | 2874743885 | 3878766241 | FIXED |
+| CR5 | Major | `index/api.py:62` | Sparse vector `indices`/`values` length not validated | 2874773746 | 3878803063 | FIXED |
 | CR6 | Major | `jobs.py:231` | Cleanup SELECT-then-DELETE pattern (memory, not correctness) | 2874743911 | 3878766241 | DEFER |
 | CR7 | Major | `test_unstructured.py:39` | Module-level sys.modules patch leaks across tests | 2874743944 | 3878766241 | DEFER |
-| CR8 | Minor | `quotas.py:28` | No guard against negative quota deltas | 2874773736 | 3878803063 | DEFER |
-| CR9 | Minor | `conversation.py:64` | `max_turns` accepts 0/negative values | 2874773745 | 3878803063 | DEFER |
+| CR8 | Minor | `quotas.py:28` | No guard against negative quota deltas | 2874773736 | 3878803063 | FIXED |
+| CR9 | Minor | `conversation.py:64` | `max_turns` accepts 0/negative values | 2874773745 | 3878803063 | FIXED |
 | CR10 | Critical | `0003_rls_policies.py:80` | NULL vs '' in RLS COALESCE (Gemini) | 2874749003 | 3878772110 | FIXED (0a3acfa) |
 | CR11 | High | `keys.py:79` | Blocking argon2 verify_key (Gemini) | 2874749014 | 3878772110 | FIXED (0a3acfa) |
 | CR12 | Major | `core/api.py:143` | SSE drops trace chunks | 2874743830 | 3878766241 | FIXED (9a0cbac) |
@@ -85,7 +85,7 @@ Inline comments posted directly on diff lines. Comment ID links to the thread.
 | CR17 | Major | `startup.py:135` | Hardcoded "default" provider name may not match | 2874743867 | 3878766241 | WONTFIX (convention) |
 | CR18 | Major | `ingest/api.py` | Batch API reports `pending` when enqueue already failed | 2874743873 | 3878766241 | FIXED (0a3acfa) |
 | CR19 | Critical | `ingest/api.py:407` | Commit soft-deletes before calling vector-store delete | 2874743879 | 3878766241 | FIXED (0a3acfa) |
-| CR20 | Major | `chunking.py:203` | Chunk metadata pinned to first text element | 2874743889 | 3878766241 | DEFER (= M16) |
+| CR20 | Major | `chunking.py:203` | Chunk metadata pinned to first text element | 2874743889 | 3878766241 | FIXED (= M16) |
 | CR21 | Major | `unstructured.py` | Empty-text guard runs before table HTML fallback | 2874743897 | 3878766241 | FIXED |
 | CR22 | Major | `jobs.py:135` | Phase progress updates resetting `started_at` | 2874743904 | 3878766241 | FIXED (coalesce) |
 | CR23 | Critical | `pipeline.py` | Superseding old data before successful re-index | 2874743917 | 3878766241 | FIXED (0a3acfa) |
@@ -116,11 +116,11 @@ Inline comments posted directly on diff lines. Comment ID links to the thread.
 | CR43 | Minor | `test_pipeline.py:247` | Test assertion improvement | 2879365878 | 3883815058 | DEFER |
 | CR44 | Minor | `reindex.py` | `run_reindex` docstring alignment | 2879465162 | 3883926320 | DEFER (Wave 5) |
 | CR45 | Minor | `admin/api.py:96` | Validate `expires_at` is in the future | 2879566058 | 3884038356 | FIXED (51433e5) |
-| CR46 | Major | `pipeline.py:68` | `IngestResult.version` wrong for `exists`/`alias` | 2879566069 | 3884038356 | DEFER |
+| CR46 | Major | `pipeline.py:68` | `IngestResult.version` wrong for `exists`/`alias` | 2879566069 | 3884038356 | FALSE POSITIVE |
 | CR47 | Minor | `pipeline.py:211` | Step 2 comment no longer matches runtime | 2879566077 | 3884038356 | FIXED (51433e5) |
 | CR48 | Critical | `pipeline.py:259` | Expand rollback/error handling post-supersede | 2879566085 | 3884038356 | DEFER (Wave 2) |
 | CR49 | Major | `admin/api.py:96` | Bootstrap validation gap | 2880530743 | 3885099127 | DEFER |
-| CR50 | Major | `jobs.py:207` | Negative `retention_days` creates future cutoff | 2880530752 | 3885099127 | DEFER (Wave 5) |
+| CR50 | Major | `jobs.py:207` | Negative `retention_days` creates future cutoff | 2880530752 | 3885099127 | FIXED |
 | CR51 | Major | `pipeline.py:308` | Map commit-time TOCTOU to IngestConflictError | 2880530755 | 3885099127 | DEFER (Wave 2) |
 | CR52 | Major | `pipeline.py` | Best-effort event delivery not fully honored | 2880530756 | 3885099127 | WONTFIX (ARCH-038) |
 | CR53 | Minor | `test_versioning.py:489` | Ruff format check failing | 2880530758 | 3885099127 | FIXED |
@@ -214,7 +214,7 @@ Items deferred to specific future waves for pickup:
 
 | Item | Target | Description |
 |------|--------|-------------|
-| CR2, M10, CR28, CR38, CR41, CR42, CR44, CR50 | infra-phase2 (Wave 5) | ASGI middleware, Qdrant TOCTOU/schema, reindex rewrite, retention_days |
+| CR2, M10, CR28, CR38, CR41, CR42, CR44 | infra-phase2 (Wave 5) | ASGI middleware, Qdrant TOCTOU/schema, reindex rewrite |
 | CR48, CR51 | core-pipeline-v2 (Wave 2) | Pipeline rollback, IntegrityError mapping |
 | M19 | database migration (Wave 5) | RLS policy for reindex_jobs table |
 
@@ -228,12 +228,11 @@ Items deferred without a specific wave (address opportunistically or in Phase 3)
 | M11, NP13 | fastembed singleton thread-safety (Lock) |
 | M13 | Duplicate reindex job guard |
 | M14 | Batch ingest per-file commits |
-| M15, M16, CR20 | Chunking metadata (element type, per-segment) |
+| M15 | FixedSizeChunking element type metadata |
 | M17 | Wrong deletion_reason on cleanup |
 | M18 | PII redactor log level filter |
 | M20 | Audit middleware action NULL |
-| CR4, CR5 | Input validation (zip length, sparse vector shape) |
-| CR6, CR7, CR8, CR9 | Minor correctness guards |
+| CR6, CR7 | Cleanup pattern, test isolation |
 | OD1, OD2, OD5 | Stale error text, raw_filters, pgvector JOIN namespace |
 | L1-L9, L11-L13 | Low-priority improvements |
 | MN1-MN8, NP1-NP22 | Test improvements and nitpicks |
@@ -247,8 +246,8 @@ Items deferred without a specific wave (address opportunistically or in Phase 3)
 ## Summary
 
 - **Total findings**: 7H + 20M + 13L + 57CR + 7OD + 9MN + 13DUP + 22NP = 148
-- **Fixed**: 7H + 5M + 1L + 25CR + 2OD = 40
+- **Fixed**: 7H + 6M + 1L + 31CR + 2OD = 47
 - **WONTFIX**: 2M + 8CR + 1MN = 11
-- **FALSE POSITIVE**: 2CR + 1OD = 3
-- **DEFER**: 13M + 12L + 22CR + 5OD + 8MN + 21NP = 81
+- **FALSE POSITIVE**: 3CR + 1OD = 4
+- **DEFER**: 12M + 12L + 15CR + 5OD + 8MN + 21NP = 73
 - **DUP** (no action): 13

@@ -250,9 +250,18 @@ class PersistentConversationStore:
                 conversation_id=str(conversation_id),
             )
 
-    async def get_metadata(self, conversation_id: UUID) -> dict[str, Any] | None:
-        """Return conversation metadata (no content), including soft-deleted."""
+    async def get_metadata(
+        self, conversation_id: UUID, namespace: str | None = None
+    ) -> dict[str, Any] | None:
+        """Return conversation metadata (no content), including soft-deleted.
+
+        If *namespace* is provided, only returns the conversation if it belongs
+        to that namespace (scoped key enforcement).
+        """
         async with self._session_factory() as session:
+            where_clauses = [ConversationOrm.id == conversation_id]
+            if namespace is not None:
+                where_clauses.append(ConversationOrm.namespace_id == namespace)
             stmt = select(
                 ConversationOrm.id,
                 ConversationOrm.namespace_id,
@@ -261,7 +270,7 @@ class PersistentConversationStore:
                 ConversationOrm.turn_count,
                 ConversationOrm.title,
                 ConversationOrm.deleted_at,
-            ).where(ConversationOrm.id == conversation_id)
+            ).where(*where_clauses)
             result = await session.execute(stmt)
             row = result.one_or_none()
             if row is None:
@@ -276,15 +285,24 @@ class PersistentConversationStore:
                 "deleted_at": row.deleted_at,
             }
 
-    async def soft_delete(self, conversation_id: UUID) -> bool:
-        """Soft-delete a conversation (set deleted_at). Returns True if found."""
+    async def soft_delete(
+        self, conversation_id: UUID, namespace: str | None = None
+    ) -> bool:
+        """Soft-delete a conversation (set deleted_at). Returns True if found.
+
+        If *namespace* is provided, only deletes if the conversation belongs
+        to that namespace (scoped key enforcement).
+        """
         async with self._session_factory() as session:
+            where_clauses = [
+                ConversationOrm.id == conversation_id,
+                ConversationOrm.deleted_at.is_(None),
+            ]
+            if namespace is not None:
+                where_clauses.append(ConversationOrm.namespace_id == namespace)
             stmt = (
                 update(ConversationOrm)
-                .where(
-                    ConversationOrm.id == conversation_id,
-                    ConversationOrm.deleted_at.is_(None),
-                )
+                .where(*where_clauses)
                 .values(deleted_at=func.now())
             )
             result = await session.execute(stmt)

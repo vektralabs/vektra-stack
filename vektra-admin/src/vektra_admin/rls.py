@@ -82,12 +82,18 @@ async def set_rls_namespace(session: object, namespace: str) -> None:
 
     Called by the session factory hook in infra-phase2 when
     request.state.rls_namespace is set.
+
+    Raises TypeError if *session* is not an AsyncSession, to catch
+    misconfiguration early rather than silently skipping RLS binding.
     """
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    if isinstance(session, AsyncSession):
-        await session.execute(
-            text("SET LOCAL app.current_namespace = :ns"),
-            {"ns": namespace},
+    if not isinstance(session, AsyncSession):
+        raise TypeError(
+            f"set_rls_namespace requires AsyncSession, got {type(session).__name__}"
         )
+    await session.execute(
+        text("SET LOCAL app.current_namespace = :ns"),
+        {"ns": namespace},
+    )

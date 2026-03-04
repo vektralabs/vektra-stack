@@ -164,8 +164,8 @@ class TestSetRlsNamespace:
         assert call_args[0][1] == {"ns": "ns-test"}
 
     @pytest.mark.asyncio
-    async def test_non_async_session_is_noop(self):
-        """Non-AsyncSession is a no-op (isinstance check)."""
+    async def test_non_async_session_raises_type_error(self):
+        """Non-AsyncSession raises TypeError (fail-closed)."""
         session = MagicMock()  # not an AsyncSession
-        await set_rls_namespace(session, "ns-test")
-        session.execute.assert_not_called()
+        with pytest.raises(TypeError, match="requires AsyncSession"):
+            await set_rls_namespace(session, "ns-test")

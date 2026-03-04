@@ -22,13 +22,13 @@
 | # | Module | File:Line | Issue | Status |
 |---|--------|-----------|-------|--------|
 | M1 | core | `conversation.py:220-228` | `turn_count` is monotonic, not current (misleading after pruning) | |
-| M2 | core | `api.py:371` | `delete_conversation` has no namespace check (cross-tenant deletion) | |
-| M3 | core | `api.py:401,440` | Feedback namespace not validated against key scope | |
+| M2 | core | `api.py:371` | `delete_conversation` has no namespace check (cross-tenant deletion) | FIXED |
+| M3 | core | `api.py:401,440` | Feedback namespace not validated against key scope | FIXED |
 | M4 | core | `conversation.py:244` | `clear()` hard-deletes, bypassing GDPR retention | |
-| M5 | admin | `api.py:459-493` | XSS in HTML dashboard (unescaped component data) | |
+| M5 | admin | `api.py:459-493` | XSS in HTML dashboard (unescaped component data) | FIXED |
 | M6 | admin | `quotas.py:88` | Chunk quota counts orphaned chunks from soft-deleted documents | |
 | M7 | admin | `quotas.py:44-104` | Quota check is TOCTOU (soft limit only, document as known limitation) | |
-| M8 | admin | `rls.py:80-93` | `set_rls_namespace` silently no-ops on wrong session type | |
+| M8 | admin | `rls.py:80-93` | `set_rls_namespace` silently no-ops on wrong session type | FIXED |
 | M9 | index | `pgvector.py:438-460` | `namespace_stats` chunk count includes soft-deleted doc chunks | |
 | M10 | index | `qdrant.py:83-110` | `ensure_collection` TOCTOU on startup (catch "already exists") | |
 | M11 | index | `fastembed_bm25.py:26-47` | Global sparse model singleton not thread-safe (needs Lock) | |

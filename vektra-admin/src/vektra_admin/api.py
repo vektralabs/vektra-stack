@@ -12,6 +12,7 @@ as authentication (once only) or a valid admin-scoped Bearer token.
 
 from __future__ import annotations
 
+import html as _html
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -457,15 +458,20 @@ async def admin_dashboard(
         "unhealthy": "#cc3333",
     }.get(deep.status, "#666")
 
+    _e = _html.escape
     rows = "".join(
         f"<tr>"
-        f"<td>{c.name}</td>"
-        f"<td style='color:{status_color if c.status == deep.status else '#666'}'>{c.status}</td>"
+        f"<td>{_e(c.name)}</td>"
+        f"<td style='color:{status_color if c.status == deep.status else '#666'}'>{_e(c.status)}</td>"
         f"<td>{c.latency_ms if c.latency_ms is not None else '-'} ms</td>"
-        f"<td>{c.message or ''}</td>"
+        f"<td>{_e(c.message or '')}</td>"
         f"</tr>"
         for c in deep.components
     )
+
+    safe_version = _e(str(version))
+    safe_status = _e(deep.status)
+    safe_timestamp = _e(str(deep.timestamp))
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -482,8 +488,8 @@ async def admin_dashboard(
 </style>
 </head>
 <body>
-<h1>Vektra {version}</h1>
-<p>Status: <span class="status">{deep.status}</span> &mdash; {deep.timestamp}</p>
+<h1>Vektra {safe_version}</h1>
+<p>Status: <span class="status">{safe_status}</span> &mdash; {safe_timestamp}</p>
 <table>
 <tr><th>Component</th><th>Status</th><th>Latency</th><th>Message</th></tr>
 {rows if rows else "<tr><td colspan='4'>No health checks registered</td></tr>"}

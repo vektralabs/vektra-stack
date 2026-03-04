@@ -343,7 +343,7 @@ async def get_conversation(
 ) -> ConversationMetadata:
     """Return conversation metadata. Never returns content (REQ-051)."""
     store = _get_conversation_store(request)
-    meta = await store.get_metadata(conversation_id)
+    meta = await store.get_metadata(conversation_id, namespace=_key.namespace_id)
     if meta is None or meta.get("deleted_at") is not None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -368,7 +368,7 @@ async def delete_conversation(
 ) -> Response:
     """Soft-delete a conversation and all its turns."""
     store = _get_conversation_store(request)
-    deleted = await store.soft_delete(conversation_id)
+    deleted = await store.soft_delete(conversation_id, namespace=_key.namespace_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -398,7 +398,7 @@ async def submit_feedback(
     session: AsyncSession = Depends(get_session),
 ) -> FeedbackCreated:
     """Submit response-level feedback (rating 1-5 with optional comment)."""
-    namespace = body.namespace
+    namespace = _key.namespace_id or body.namespace
     stmt = (
         insert(FeedbackOrm)
         .values(
@@ -437,7 +437,7 @@ async def submit_citation_feedback(
     session: AsyncSession = Depends(get_session),
 ) -> FeedbackCreated:
     """Submit citation-level feedback (rating 1-5 with optional comment)."""
-    namespace = body.namespace
+    namespace = _key.namespace_id or body.namespace
     stmt = (
         insert(FeedbackOrm)
         .values(

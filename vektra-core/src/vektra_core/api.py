@@ -136,7 +136,7 @@ async def _sse_generator(
 
             if chunk.type == "token":
                 yield f"data: {chunk.data}\n\n"
-            elif chunk.type in ("sources", "error"):
+            elif chunk.type in ("sources", "error", "trace"):
                 payload = json.dumps({"type": chunk.type, "data": chunk.data})
                 yield f"data: {payload}\n\n"
             elif chunk.type == "done":

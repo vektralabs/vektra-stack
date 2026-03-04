@@ -209,8 +209,12 @@ async def search(
     # Enforce namespace binding for scoped keys (H5)
     effective_ns = key.namespace_id or body.namespace
 
-    embedding_provider = SentenceTransformersProvider(model_name=_EMB_CONFIG.embedding_model)
-    pgvector_provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
+    embedding_provider = SentenceTransformersProvider(
+        model_name=_EMB_CONFIG.embedding_model
+    )
+    pgvector_provider = PgvectorProvider(
+        active_index_version=_VS_CONFIG.active_index_version
+    )
 
     # Embed the query (dense)
     try:

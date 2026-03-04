@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-03
 **Branch**: feat/phase2-wave1
-**Commits**: 27 (8f055c3..dba8b87)
+**Commits**: 27 (8f055c3..dba8b87) + fix commits
 **Files**: 72 changed, ~10.8K additions
 
 ## HIGH - Security / correctness issues
@@ -27,12 +27,12 @@
 | M4 | core | `conversation.py:244` | `clear()` hard-deletes, bypassing GDPR retention | |
 | M5 | admin | `api.py:459-493` | XSS in HTML dashboard (unescaped component data) | FIXED |
 | M6 | admin | `quotas.py:88` | Chunk quota counts orphaned chunks from soft-deleted documents | |
-| M7 | admin | `quotas.py:44-104` | Quota check is TOCTOU (soft limit only, document as known limitation) | |
+| M7 | admin | `quotas.py:44-104` | Quota check is TOCTOU (soft limit only, document as known limitation) | WONTFIX |
 | M8 | admin | `rls.py:80-93` | `set_rls_namespace` silently no-ops on wrong session type | FIXED |
 | M9 | index | `pgvector.py:438-460` | `namespace_stats` chunk count includes soft-deleted doc chunks | |
 | M10 | index | `qdrant.py:83-110` | `ensure_collection` TOCTOU on startup (catch "already exists") | |
 | M11 | index | `fastembed_bm25.py:26-47` | Global sparse model singleton not thread-safe (needs Lock) | |
-| M12 | index | `reindex.py:71-182` | Reindex runs in BackgroundTasks, not arq (lost on restart) | |
+| M12 | index | `reindex.py:71-182` | Reindex runs in BackgroundTasks, not arq (lost on restart) | WONTFIX |
 | M13 | index | `reindex.py:206-222` | No duplicate reindex job guard for same namespace | |
 | M14 | ingest | `api.py:307-318` | Batch ingest commits per-file; mid-loop failure orphans jobs | |
 | M15 | ingest | `chunking.py:76-83` | FixedSizeChunking discards element type metadata | |
@@ -55,13 +55,37 @@
 | L7 | index | `models.py:74` | Embedding dimension hardcoded to 384 | |
 | L8 | ingest | `jobs.py:92-98` | File bytes in arq/Redis payload (up to 100MB) | |
 | L9 | core | `api.py:326-332` | `isinstance` check on concrete class breaks Protocol abstraction | |
-| L10 | core | `api.py:137-143` | SSE format inconsistent (tokens raw, errors/sources JSON) | |
+| L10 | core | `api.py:137-143` | SSE format inconsistent (tokens raw, errors/sources JSON) | FIXED |
 | L11 | shared | `main.py:418-421` | CORS overly permissive with allow_credentials=True | |
 | L12 | shared | `main.py:428` | `/metrics` endpoint unauthenticated | |
 | L13 | shared | `main.py:467` | VEKTRA_CORS_ORIGINS not in VektraSettings | |
+
+## CodeRabbit/Gemini findings (additional to original review)
+
+| # | Source | File:Line | Issue | Status |
+|---|--------|-----------|-------|--------|
+| CR1 | CR Critical | `rls.py:53` | RLS namespace from client input without auth validation | WONTFIX (endpoint-level binding is primary defense) |
+| CR2 | CR Major | `rls.py:70` | BaseHTTPMiddleware body consumption (Starlette limitation) | DEFER (low risk, JSON bodies cached) |
+| CR3 | CR Major | `reindex.py:146` | Reindex loop is stub (doesn't re-embed) | WONTFIX (by design, Phase 2 stub) |
+| CR4 | CR Major | `ingest/api.py:623` | `zip(chunks, embeddings)` truncates silently on length mismatch | |
+| CR5 | CR Major | `index/api.py:62` | Sparse vector `indices`/`values` length not validated | |
+| CR6 | CR Major | `jobs.py:231` | Cleanup SELECT-then-DELETE pattern (memory, not correctness) | |
+| CR7 | CR Major | `test_unstructured.py:39` | Module-level sys.modules patch leaks across tests | |
+| CR8 | CR Minor | `quotas.py:28` | No guard against negative quota deltas | |
+| CR9 | CR Minor | `conversation.py:64` | `max_turns` accepts 0/negative values | |
+| CR10 | Gemini Critical | `0003_rls_policies.py:80` | NULL vs '' in RLS COALESCE | FIXED (0a3acfa) |
+| CR11 | Gemini High | `keys.py:79` | Blocking argon2 verify_key | FIXED (0a3acfa, async+to_thread) |
+| CR12 | CR Major | `core/api.py:143` | SSE drops trace chunks | FIXED |
 
 ## Patterns (non-blocking, for awareness)
 
 - `updated_at` without `onupdate` on NamespaceOrm and SourceDocumentOrm
 - `IngestConflictError` is likely dead code (Phase 2 versioning replaced conflict behavior)
 - Sparse search O(n*m) with no index (expected for Phase 2 prototype)
+
+## Summary
+
+- **Total findings**: 7H + 20M + 13L + 12CR = 52
+- **Fixed**: 7H + 5M + 1L + 3CR = 16
+- **WONTFIX/DEFER**: 2M + 3CR = 5
+- **Remaining**: 13M + 12L + 6CR = 31

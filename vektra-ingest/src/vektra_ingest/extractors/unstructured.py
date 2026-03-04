@@ -143,9 +143,7 @@ class UnstructuredExtractor:
                 timeout=timeout_s,
             )
         except TimeoutError:
-            raise RuntimeError(
-                f"PDF extraction timed out after {timeout_s}s"
-            ) from None
+            raise RuntimeError(f"PDF extraction timed out after {timeout_s}s") from None
 
         position = 0
         for el in elements:

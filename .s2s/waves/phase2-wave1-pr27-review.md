@@ -128,6 +128,8 @@ Inline comments posted directly on diff lines. Comment ID links to the thread.
 | CR55 | Major | `admin/api.py:168` | Deep-health doesn't set `request.state.key_id` | 2883881771 | 3889528234 | DEFER |
 | CR56 | Minor | `ingest/api.py:197` | Audit `status_code` mismatch (422 vs actual) | 2883881781 | 3889528234 | FALSE POSITIVE |
 | CR57 | Minor | `unstructured.py:197` | Run formatter before merge | 2883881785 | 3889528234 | FIXED (9a0cbac) |
+| CR58 | Major | `index/api.py:341` | `stats()` not namespace-scoped (cross-tenant reads) | 2884559008 | 3890237157 | FIXED (d64537f) |
+| CR59 | Minor | `chunking.py:276` | Parent chunk UUID not stored in metadata | 2884559016 | 3890237157 | DEFER |
 
 ## Outside-diff findings (in review bodies, not inline comments)
 
@@ -245,8 +247,8 @@ Items deferred without a specific wave (address opportunistically or in Phase 3)
 
 ## Summary
 
-- **Total findings**: 7H + 20M + 13L + 57CR + 7OD + 9MN + 13DUP + 22NP = 148
-- **Fixed**: 7H + 6M + 1L + 31CR + 2OD = 47
+- **Total findings**: 7H + 20M + 13L + 59CR + 7OD + 9MN + 13DUP + 22NP = 150
+- **Fixed**: 7H + 6M + 1L + 33CR + 2OD = 49
 - **WONTFIX**: 2M + 8CR + 1MN = 11
 - **FALSE POSITIVE**: 3CR + 1OD = 4
 - **DEFER**: 12M + 12L + 15CR + 5OD + 8MN + 21NP = 73

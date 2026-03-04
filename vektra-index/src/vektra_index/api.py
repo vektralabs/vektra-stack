@@ -337,8 +337,12 @@ async def stats(
     """
     from vektra_index.providers.pgvector import PgvectorProvider
 
+    effective_ns = key.namespace_id or namespace
+    if key.namespace_id and namespace and namespace != key.namespace_id:
+        raise HTTPException(status_code=403, detail="Namespace scope violation")
+
     provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
-    data = await provider.namespace_stats(session=session, namespace=namespace)
+    data = await provider.namespace_stats(session=session, namespace=effective_ns)
 
     return StatsResponse(**data)
 

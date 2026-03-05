@@ -15,6 +15,7 @@ QueryTrace never contains query text or response text (REQ-051 / ADR-0017).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
@@ -104,6 +105,92 @@ def _apply_retrieval_filter(
 
 
 # ---------------------------------------------------------------------------
+# Shared helpers (used by both SimpleQueryPipeline and AdvancedQueryPipeline)
+# ---------------------------------------------------------------------------
+
+
+def _count_tokens_impl(llm: LLMProvider, model: str, text: str) -> int:
+    """Count tokens using the LLM provider, with char/4 fallback."""
+    try:
+        return llm.count_tokens(text, model)
+    except Exception:
+        return max(1, len(text) // 4)
+
+
+def _context_window_impl(model: str) -> int:
+    """Get context window size from litellm, with default fallback."""
+    try:
+        return litellm.get_max_tokens(model) or _DEFAULT_CONTEXT_WINDOW
+    except Exception:
+        return _DEFAULT_CONTEXT_WINDOW
+
+
+async def _call_llm_with_fallback_impl(
+    llm: LLMProvider,
+    llm_config: LLMConfig,
+    messages: list[Message],
+) -> tuple[str | None, str]:
+    """Try primary LLM, then fallback model, then context-only (ARCH-043).
+
+    Returns (answer_text | None, model_used).
+    None answer means context-only response (REQ-059).
+    """
+    timeout_s = llm_config.fallback_timeout_ms / 1000.0
+
+    try:
+        result = await asyncio.wait_for(
+            llm.complete(messages, model=llm_config.provider),
+            timeout=timeout_s,
+        )
+        return result.content, result.model
+    except Exception as exc:
+        log.warning(
+            "llm_primary_failed",
+            model=llm_config.provider,
+            error=str(exc),
+        )
+
+    if llm_config.fallback_model:
+        try:
+            result = await asyncio.wait_for(
+                llm.complete(messages, model=llm_config.fallback_model),
+                timeout=timeout_s,
+            )
+            return result.content, result.model
+        except Exception as exc:
+            log.warning(
+                "llm_fallback_failed",
+                model=llm_config.fallback_model,
+                error=str(exc),
+            )
+
+    log.info("llm_context_only", model=llm_config.provider)
+    return None, llm_config.provider
+
+
+def _trace_to_dict(trace: QueryTrace) -> dict[str, Any]:
+    """Serialize QueryTrace to a JSON-safe dict for SSE emission."""
+    return {
+        "response_id": str(trace.response_id),
+        "steps": [
+            {
+                "name": s.name,
+                "duration_ms": s.duration_ms,
+                "metadata": s.metadata,
+            }
+            for s in trace.steps
+        ],
+        "total_duration_ms": trace.total_duration_ms,
+        "chunks_retrieved": [
+            {"chunk_id": c.chunk_id, "score": c.score} for c in trace.chunks_retrieved
+        ],
+        "llm_model": trace.llm_model,
+        "prompt_version": trace.prompt_version,
+        "created_at": trace.created_at.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # SimpleQueryPipeline
 # ---------------------------------------------------------------------------
 
@@ -136,63 +223,16 @@ class SimpleQueryPipeline:
         self._config = pipeline_config
 
     def _count_tokens(self, text: str) -> int:
-        try:
-            return self._llm.count_tokens(text, self._llm_config.provider)
-        except Exception:
-            return max(1, len(text) // 4)
+        return _count_tokens_impl(self._llm, self._llm_config.provider, text)
 
     def _context_window(self) -> int:
-        try:
-            return (
-                litellm.get_max_tokens(self._llm_config.provider)
-                or _DEFAULT_CONTEXT_WINDOW
-            )
-        except Exception:
-            return _DEFAULT_CONTEXT_WINDOW
+        return _context_window_impl(self._llm_config.provider)
 
     async def _call_llm_with_fallback(
         self,
         messages: list[Message],
     ) -> tuple[str | None, str]:
-        """Try primary LLM, then fallback model, then context-only.
-
-        Returns (answer_text | None, model_used).
-        None answer means context-only response (REQ-059, ARCH-043).
-        """
-        timeout_s = self._llm_config.fallback_timeout_ms / 1000.0
-
-        # Primary model
-        try:
-            result = await asyncio.wait_for(
-                self._llm.complete(messages, model=self._llm_config.provider),
-                timeout=timeout_s,
-            )
-            return result.content, result.model
-        except Exception as exc:
-            log.warning(
-                "llm_primary_failed",
-                model=self._llm_config.provider,
-                error=str(exc),
-            )
-
-        # Fallback model
-        if self._llm_config.fallback_model:
-            try:
-                result = await asyncio.wait_for(
-                    self._llm.complete(messages, model=self._llm_config.fallback_model),
-                    timeout=timeout_s,
-                )
-                return result.content, result.model
-            except Exception as exc:
-                log.warning(
-                    "llm_fallback_failed",
-                    model=self._llm_config.fallback_model,
-                    error=str(exc),
-                )
-
-        # Context-only: return chunks without LLM synthesis
-        log.info("llm_context_only", model=self._llm_config.provider)
-        return None, self._llm_config.provider
+        return await _call_llm_with_fallback_impl(self._llm, self._llm_config, messages)
 
     async def execute(
         self,
@@ -253,8 +293,9 @@ class SimpleQueryPipeline:
                 conversation_id=query.conversation_id,
             )
             try:
+                query_hash = hashlib.sha256(query.question.encode()).hexdigest()[:16]
                 sg_post = await self._safeguard.post_retrieval(
-                    query.question, filtered, sg_ctx_post
+                    query_hash, filtered, sg_ctx_post
                 )
                 if sg_post.filtered_ids:
                     excluded = set(sg_post.filtered_ids)
@@ -450,7 +491,6 @@ class SimpleQueryPipeline:
 
     async def _stream(self, query: QueryRequest) -> AsyncGenerator[QueryChunk, None]:
         """Async generator for streaming response (SSE) with trace emission (DEBT-002)."""
-        from vektra_core.advanced_pipeline import _trace_to_dict
 
         t_total = time.monotonic()
         response_id = uuid4()
@@ -520,8 +560,9 @@ class SimpleQueryPipeline:
             conversation_id=query.conversation_id,
         )
         try:
+            query_hash = hashlib.sha256(query.question.encode()).hexdigest()[:16]
             sg_result = await self._safeguard.post_retrieval(
-                query.question, filtered, sg_ctx
+                query_hash, filtered, sg_ctx
             )
             if sg_result.filtered_ids:
                 excluded = set(sg_result.filtered_ids)
@@ -655,6 +696,8 @@ class SimpleQueryPipeline:
         if not sg_result.allowed:
             log.warning("stream_safeguard_blocked", namespace=query.namespace)
             full_answer = None
+        elif sg_result.modified_content is not None:
+            full_answer = sg_result.modified_content
         steps.append(
             StepTrace(
                 name="safeguard",

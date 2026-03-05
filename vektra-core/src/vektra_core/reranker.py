@@ -70,7 +70,7 @@ def create_reranker(config: RerankConfig) -> RerankerService | None:
     model_name = config.model or _default_model_for_provider(config.provider)
 
     try:
-        from rerankers import Reranker
+        from rerankers import Reranker  # type: ignore[import-untyped]
 
         ranker = Reranker(model_name, model_type=model_type, verbose=0)
         if ranker is None:

@@ -20,14 +20,20 @@ import hashlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
 from uuid import uuid4
 
 import structlog
 
 from vektra_core.budget import allocate_token_budget
 from vektra_core.conversation import ConversationStore
-from vektra_core.pipeline import _apply_retrieval_filter, _elapsed_ms
+from vektra_core.pipeline import (
+    _apply_retrieval_filter,
+    _call_llm_with_fallback_impl,
+    _context_window_impl,
+    _count_tokens_impl,
+    _elapsed_ms,
+    _trace_to_dict,
+)
 from vektra_core.reranker import RerankerService
 from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
@@ -55,7 +61,6 @@ from vektra_shared.types import (
 
 log = structlog.get_logger(__name__)
 
-_DEFAULT_CONTEXT_WINDOW = 4096
 _REWRITE_TOP_K = 20  # Fetch more candidates for reranking
 
 
@@ -91,61 +96,19 @@ class AdvancedQueryPipeline:
         self._reranker = reranker
         self._rewrite_enabled = pipeline_config.rewrite.enabled
 
-    # -- Helpers (same as SimpleQueryPipeline) --
+    # -- Helpers (delegating to shared module-level functions) --
 
     def _count_tokens(self, text: str) -> int:
-        try:
-            return self._llm.count_tokens(text, self._llm_config.provider)
-        except Exception:
-            return max(1, len(text) // 4)
+        return _count_tokens_impl(self._llm, self._llm_config.provider, text)
 
     def _context_window(self) -> int:
-        try:
-            import litellm
-
-            return (
-                litellm.get_max_tokens(self._llm_config.provider)
-                or _DEFAULT_CONTEXT_WINDOW
-            )
-        except Exception:
-            return _DEFAULT_CONTEXT_WINDOW
+        return _context_window_impl(self._llm_config.provider)
 
     async def _call_llm_with_fallback(
         self,
         messages: list[Message],
     ) -> tuple[str | None, str]:
-        """Try primary LLM, then fallback model, then context-only (ARCH-043)."""
-        timeout_s = self._llm_config.fallback_timeout_ms / 1000.0
-
-        try:
-            result = await asyncio.wait_for(
-                self._llm.complete(messages, model=self._llm_config.provider),
-                timeout=timeout_s,
-            )
-            return result.content, result.model
-        except Exception as exc:
-            log.warning(
-                "llm_primary_failed",
-                model=self._llm_config.provider,
-                error=str(exc),
-            )
-
-        if self._llm_config.fallback_model:
-            try:
-                result = await asyncio.wait_for(
-                    self._llm.complete(messages, model=self._llm_config.fallback_model),
-                    timeout=timeout_s,
-                )
-                return result.content, result.model
-            except Exception as exc:
-                log.warning(
-                    "llm_fallback_failed",
-                    model=self._llm_config.fallback_model,
-                    error=str(exc),
-                )
-
-        log.info("llm_context_only", model=self._llm_config.provider)
-        return None, self._llm_config.provider
+        return await _call_llm_with_fallback_impl(self._llm, self._llm_config, messages)
 
     # -- Step 0: Query rewriting (ARCH-061) --
 
@@ -330,8 +293,9 @@ class AdvancedQueryPipeline:
                 conversation_id=query.conversation_id,
             )
             try:
+                query_hash = hashlib.sha256(effective_query.encode()).hexdigest()[:16]
                 sg_result = await self._safeguard.post_retrieval(
-                    effective_query, filtered, sg_ctx
+                    query_hash, filtered, sg_ctx
                 )
                 if sg_result.filtered_ids:
                     excluded = set(sg_result.filtered_ids)
@@ -499,18 +463,28 @@ class AdvancedQueryPipeline:
             namespace=query.namespace,
             conversation_id=query.conversation_id,
         )
-        sg_result = await self._safeguard.pre_response(answer or "", sg_ctx)
-        if not sg_result.allowed:
-            answer = None
-        elif sg_result.modified_content is not None:
-            answer = sg_result.modified_content
-        steps.append(
-            StepTrace(
-                name="safeguard",
-                duration_ms=_elapsed_ms(t0),
-                metadata={"allowed": sg_result.allowed},
+        try:
+            sg_result = await self._safeguard.pre_response(answer or "", sg_ctx)
+            if not sg_result.allowed:
+                answer = None
+            elif sg_result.modified_content is not None:
+                answer = sg_result.modified_content
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_result.allowed},
+                )
             )
-        )
+        except Exception as exc:
+            log.error("pre_response_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
 
         # Save conversation turn
         if query.conversation_id is not None:
@@ -649,17 +623,29 @@ class AdvancedQueryPipeline:
             namespace=query.namespace,
             conversation_id=query.conversation_id,
         )
-        sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
-        if not sg_result.allowed:
-            log.warning("stream_safeguard_blocked", namespace=query.namespace)
-            full_answer = None
-        steps.append(
-            StepTrace(
-                name="safeguard",
-                duration_ms=_elapsed_ms(t0),
-                metadata={"allowed": sg_result.allowed},
+        try:
+            sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
+            if not sg_result.allowed:
+                log.warning("stream_safeguard_blocked", namespace=query.namespace)
+                full_answer = None
+            elif sg_result.modified_content is not None:
+                full_answer = sg_result.modified_content
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_result.allowed},
+                )
             )
-        )
+        except Exception as exc:
+            log.error("pre_response_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
 
         # Save conversation turn
         if query.conversation_id is not None and full_answer:
@@ -701,25 +687,3 @@ class AdvancedQueryPipeline:
         )
         yield QueryChunk(type="trace", data=_trace_to_dict(trace))
         yield QueryChunk(type="done", data="")
-
-
-def _trace_to_dict(trace: QueryTrace) -> dict[str, Any]:
-    """Serialize QueryTrace to a JSON-safe dict for SSE emission."""
-    return {
-        "response_id": str(trace.response_id),
-        "steps": [
-            {
-                "name": s.name,
-                "duration_ms": s.duration_ms,
-                "metadata": s.metadata,
-            }
-            for s in trace.steps
-        ],
-        "total_duration_ms": trace.total_duration_ms,
-        "chunks_retrieved": [
-            {"chunk_id": c.chunk_id, "score": c.score} for c in trace.chunks_retrieved
-        ],
-        "llm_model": trace.llm_model,
-        "prompt_version": trace.prompt_version,
-        "created_at": trace.created_at.isoformat(),
-    }

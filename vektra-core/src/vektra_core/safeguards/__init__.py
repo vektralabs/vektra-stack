@@ -14,11 +14,12 @@ from vektra_shared.safeguards import PassthroughSafeguard
 log = structlog.get_logger(__name__)
 
 
-def create_safeguard(mode: str) -> SafeguardHook:
+def create_safeguard(mode: str, *, pii_chunk_threshold: int = 3) -> SafeguardHook:
     """Create a SafeguardHook implementation based on the configured mode.
 
     Args:
         mode: "passthrough" or "presidio".
+        pii_chunk_threshold: PII entity count threshold for post_retrieval filtering.
 
     Returns:
         A SafeguardHook implementation.
@@ -27,7 +28,7 @@ def create_safeguard(mode: str) -> SafeguardHook:
         try:
             from vektra_core.safeguards.presidio import PresidioPIISafeguard
 
-            return PresidioPIISafeguard()
+            return PresidioPIISafeguard(pii_chunk_threshold=pii_chunk_threshold)
         except Exception as exc:
             log.warning(
                 "safeguard_presidio_unavailable",

@@ -80,7 +80,7 @@ class PresidioPIISafeguard:
             }
             nlp_engine = NlpEngineProvider(nlp_configuration=nlp_config).create_engine()
             self._analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-            self._anonymizer = AnonymizerEngine()
+            self._anonymizer = AnonymizerEngine()  # type: ignore[no-untyped-call]
             log.info("presidio_engines_loaded", spacy_model=model_name)
             return True
         except (Exception, SystemExit) as exc:
@@ -164,7 +164,7 @@ class PresidioPIISafeguard:
 
             anonymized = self._anonymizer.anonymize(  # type: ignore[union-attr]
                 text=response_ref,
-                analyzer_results=analyzer_results,
+                analyzer_results=analyzer_results,  # type: ignore[arg-type]
             )
 
             entity_types = list({r.entity_type for r in analyzer_results})

@@ -3,8 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
-import pytest
-
 from vektra_core.advanced_pipeline import AdvancedQueryPipeline
 from vektra_core.conversation import InMemoryConversationStore
 from vektra_core.reranker import RerankerService
@@ -18,7 +16,6 @@ from vektra_shared.types import (
     SearchResult,
     SparseVector,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -150,7 +147,7 @@ async def test_execute_no_relevant_context():
     vector_store.search = AsyncMock(return_value=results)
 
     pipeline = _make_pipeline(vector_store=vector_store)
-    response, trace = await pipeline.execute(QueryRequest(question="test"))
+    response, _trace = await pipeline.execute(QueryRequest(question="test"))
 
     assert response.no_relevant_context is True
     assert response.answer is None
@@ -199,7 +196,7 @@ async def test_query_rewrite_with_history():
         conversation_store=conv_store,
     )
     query = QueryRequest(question="Which ones?", conversation_id=cid)
-    response, trace = await pipeline.execute(query)
+    _response, trace = await pipeline.execute(query)
 
     # Verify rewrite happened
     rewrite_step = next(s for s in trace.steps if s.name == "query_rewrite")
@@ -323,7 +320,7 @@ async def test_dense_fallback_when_sparse_fails():
     sparse.embed_query = AsyncMock(side_effect=RuntimeError("sparse failed"))
 
     pipeline = _make_pipeline(vector_store=vector_store, sparse_embedding=sparse)
-    response, trace = await pipeline.execute(QueryRequest(question="test"))
+    response, _trace = await pipeline.execute(QueryRequest(question="test"))
 
     call_args = vector_store.search.call_args
     assert call_args.kwargs["search_mode"].value == "dense"
@@ -349,7 +346,7 @@ async def test_post_retrieval_filters_chunks():
     )
 
     pipeline = _make_pipeline(vector_store=vector_store, safeguard=safeguard)
-    response, trace = await pipeline.execute(QueryRequest(question="test"))
+    response, _trace = await pipeline.execute(QueryRequest(question="test"))
 
     assert len(response.sources) == 1
     assert response.sources[0].chunk_id == r1.chunk_id
@@ -438,11 +435,12 @@ async def test_pre_response_safeguard_failure_returns_answer():
 
     pipeline = _make_pipeline(llm=llm, vector_store=vector_store, safeguard=safeguard)
 
-    # pre_response raises, but pipeline should handle gracefully
-    # Since the safeguard is called directly without try/except in execute(),
-    # this will propagate. Let's verify the pipeline behavior.
-    with pytest.raises(RuntimeError):
-        await pipeline.execute(QueryRequest(question="test"))
+    # pre_response raises, pipeline degrades gracefully: unmodified answer returned
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+    assert response.answer == "The answer."
+    safeguard_steps = [s for s in trace.steps if s.name == "safeguard"]
+    assert len(safeguard_steps) == 1
+    assert safeguard_steps[0].metadata.get("skipped") is True
 
 
 # ---------------------------------------------------------------------------

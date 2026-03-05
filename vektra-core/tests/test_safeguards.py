@@ -8,8 +8,7 @@ import pytest
 from vektra_core.safeguards import create_safeguard
 from vektra_core.safeguards.presidio import PresidioPIISafeguard
 from vektra_shared.safeguards import PassthroughSafeguard
-from vektra_shared.types import SafeguardContext, SafeguardResult, SearchResult
-
+from vektra_shared.types import SafeguardContext, SearchResult
 
 # ---------------------------------------------------------------------------
 # Factory tests

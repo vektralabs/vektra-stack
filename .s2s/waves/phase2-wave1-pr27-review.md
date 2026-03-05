@@ -165,8 +165,8 @@ Test improvements and minor code suggestions from review body sections. All low 
 
 These are CodeRabbit re-raising inline findings across subsequent review rounds. No action needed, listed for completeness.
 
-| File:Line | Issue | Review ID | Maps to |
-|-----------|-------|-----------|---------|
+| # | File:Line | Issue | Review ID | Maps to |
+|---|-----------|-------|-----------|---------|
 | `chunking.py:188-213` | Chunk metadata provenance pinned across segments | 3878803063 | CR20, M16 |
 | `conversation.py:146-183` | Block reads/writes for soft-deleted conversations | 3878803063 | CR14 |
 | `qdrant.py:131-156` | Use each chunk's `document_id` in point payloads | 3878803063 | CR15 |
@@ -180,6 +180,7 @@ These are CodeRabbit re-raising inline findings across subsequent review rounds.
 | `pipeline.py:242-252` | Critical rollback gap after supersede commit | 3882649738 | CR23, CR48 |
 | `keys.py:25-27` | Cache comment mismatches actual behavior | 3882649738 | CR34 |
 | `qdrant.py:131-154` | Reject chunks missing `metadata.document_id` | 3882649738 | CR15 |
+| `conversation.py:155-181` | TOCTOU in `get_history` (two-step check+fetch) | 3890278302 | CR14 refinement |
 
 ## Nitpick comments (in review bodies)
 
@@ -209,6 +210,8 @@ Very low-priority style and test suggestions from review body sections.
 | NP20 | `conversation.py` | Document that `get_metadata` returns soft-deleted conversations | 3882649738 | DEFER |
 | NP21 | `test_keys.py` | Rename test to TTLCache terminology | 3882649738 | DEFER |
 | NP22 | `test_ttlcache.py` | Module docstring overstates TTL-expiration coverage | 3882649738 | DEFER |
+| NP23 | `config.py:427-429` | Qdrant fields duplicated in root VektraSettings | 3890278302 | DEFER (Wave 5) |
+| NP24 | `index/api.py:221-223` | Dense embedding computed eagerly even for SPARSE mode | 3890436911 | DEFER (Wave 2) |
 
 ## Deferred items: target wave mapping
 
@@ -216,9 +219,9 @@ All DEFER items now have a wave assignment or are explicitly marked opportunisti
 
 | Target | Items | Description |
 |--------|-------|-------------|
-| Wave 2 (core-pipeline-v2 + admin-ui) | CR48, CR51, M15, M17, M20, CR55, OD1 | Pipeline rollback, IntegrityError, chunking metadata, deletion_reason, audit action, deep-health key_id, error text |
+| Wave 2 (core-pipeline-v2 + admin-ui) | CR48, CR51, M15, M17, M20, CR55, OD1, NP24 | Pipeline rollback, IntegrityError, chunking metadata, deletion_reason, audit action, deep-health key_id, error text, lazy dense embedding |
 | Wave 3 (component-analytics) | M6, M9 | Quota/stats counting soft-deleted documents |
-| Wave 5 (infra-phase2) | CR2, M10/CR28, CR38, CR41, CR42, CR44, M19, M1, M11/NP13, M13, M14, M18, CR6, CR37, CR49, OD2, OD5 | ASGI middleware, Qdrant TOCTOU/schema, reindex, RLS, turn_count, thread-safety, batch atomicity, PII redactor, cleanup pattern, auth hardening, raw_filters, JOIN namespace |
+| Wave 5 (infra-phase2) | CR2, M10/CR28, CR38, CR41, CR42, CR44, M19, M1, M11/NP13, M13, M14, M18, CR6, CR37, CR49, OD2, OD5, NP23 | ASGI middleware, Qdrant TOCTOU/schema, reindex, RLS, turn_count, thread-safety, batch atomicity, PII redactor, cleanup pattern, auth hardening, raw_filters, JOIN namespace, Qdrant config cleanup |
 | Opportunistic / Phase 3 | CR7, CR43, CR59, L1-L9, L11-L13, MN1-MN8, NP1-NP22 | Test isolation, test assertions, parent chunk UUID, LOW improvements, test/style nitpicks |
 
 ## Patterns (non-blocking, for awareness)
@@ -229,9 +232,9 @@ All DEFER items now have a wave assignment or are explicitly marked opportunisti
 
 ## Summary
 
-- **Total findings**: 7H + 20M + 13L + 59CR + 7OD + 9MN + 13DUP + 22NP = 150
+- **Total findings**: 7H + 20M + 13L + 59CR + 7OD + 9MN + 14DUP + 24NP = 153
 - **Fixed**: 7H + 6M + 1L + 33CR + 2OD = 49
 - **WONTFIX**: 3M + 8CR + 1MN = 12
 - **FALSE POSITIVE**: 3CR + 1OD = 4
-- **DEFER (all wave-assigned)**: 11M + 12L + 15CR + 5OD + 8MN + 21NP = 72
-- **DUP** (no action): 13
+- **DEFER (all wave-assigned)**: 11M + 12L + 15CR + 5OD + 8MN + 23NP = 74
+- **DUP** (no action): 14

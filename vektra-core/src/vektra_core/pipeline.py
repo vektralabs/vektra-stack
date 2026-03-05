@@ -435,18 +435,28 @@ class SimpleQueryPipeline:
             namespace=query.namespace,
             conversation_id=query.conversation_id,
         )
-        sg_result = await self._safeguard.pre_response(answer or "", sg_ctx)
-        if not sg_result.allowed:
-            answer = None
-        elif sg_result.modified_content is not None:
-            answer = sg_result.modified_content
-        steps.append(
-            StepTrace(
-                name="safeguard",
-                duration_ms=_elapsed_ms(t0),
-                metadata={"allowed": sg_result.allowed},
+        try:
+            sg_result = await self._safeguard.pre_response(answer or "", sg_ctx)
+            if not sg_result.allowed:
+                answer = None
+            elif sg_result.modified_content is not None:
+                answer = sg_result.modified_content
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_result.allowed},
+                )
             )
-        )
+        except Exception as exc:
+            log.error("pre_response_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
 
         # Save conversation turn
         if query.conversation_id is not None:
@@ -692,19 +702,29 @@ class SimpleQueryPipeline:
 
         # Step 6: Safeguard pre_response (post-stream, on accumulated answer)
         t0 = time.monotonic()
-        sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
-        if not sg_result.allowed:
-            log.warning("stream_safeguard_blocked", namespace=query.namespace)
-            full_answer = None
-        elif sg_result.modified_content is not None:
-            full_answer = sg_result.modified_content
-        steps.append(
-            StepTrace(
-                name="safeguard",
-                duration_ms=_elapsed_ms(t0),
-                metadata={"allowed": sg_result.allowed},
+        try:
+            sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
+            if not sg_result.allowed:
+                log.warning("stream_safeguard_blocked", namespace=query.namespace)
+                full_answer = None
+            elif sg_result.modified_content is not None:
+                full_answer = sg_result.modified_content
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_result.allowed},
+                )
             )
-        )
+        except Exception as exc:
+            log.error("pre_response_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
 
         # Save conversation turn
         if query.conversation_id is not None and full_answer:

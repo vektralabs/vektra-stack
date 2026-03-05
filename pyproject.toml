@@ -87,6 +87,14 @@ module = [
     "psutil.*",
     "starlette_prometheus.*",
     "uvicorn.*",
+    "qdrant_client",
+    "qdrant_client.*",
+    "fastembed",
+    "fastembed.*",
+    "unstructured",
+    "unstructured.*",
+    "cachetools",
+    "cachetools.*",
 ]
 ignore_missing_imports = true
 

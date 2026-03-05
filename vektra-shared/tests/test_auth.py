@@ -125,6 +125,59 @@ class TestRequireScope:
             == 200
         )
 
+    def test_admin_superscope_accesses_query_endpoint(self):
+        """Admin keys can access query-scoped endpoints (ARCH-059)."""
+        store = MockKeyStore(
+            {"admin-token": ApiKeyInfo(key_id=uuid4(), scopes=["admin"])}
+        )
+        client = TestClient(_make_app(store))
+        response = client.get(
+            "/query-only", headers={"Authorization": "Bearer admin-token"}
+        )
+        assert response.status_code == 200
+
+    def test_ingest_scope_cannot_access_query_endpoint(self):
+        """Ingest keys cannot access query-scoped endpoints."""
+        store = MockKeyStore(
+            {"ingest-token": ApiKeyInfo(key_id=uuid4(), scopes=["ingest"])}
+        )
+        client = TestClient(_make_app(store))
+        response = client.get(
+            "/query-only", headers={"Authorization": "Bearer ingest-token"}
+        )
+        assert response.status_code == 403
+
+    def test_query_scope_cannot_access_admin_endpoint(self):
+        """Query keys cannot access admin-scoped endpoints (admin is not a sub-scope)."""
+        store = MockKeyStore(
+            {"query-token": ApiKeyInfo(key_id=uuid4(), scopes=["query"])}
+        )
+        client = TestClient(_make_app(store))
+        response = client.get(
+            "/admin-only", headers={"Authorization": "Bearer query-token"}
+        )
+        assert response.status_code == 403
+
+    def test_require_scope_none_accepts_any_scope(self):
+        """require_scope(None) accepts any valid token regardless of scope."""
+        app = FastAPI()
+        registry = ProviderRegistry()
+        store = MockKeyStore(
+            {"ingest-token": ApiKeyInfo(key_id=uuid4(), scopes=["ingest"])}
+        )
+        registry.register("key_store", "default", store)
+        app.state.registry = registry
+
+        @app.get("/any-scope")
+        async def any_scope(key: ApiKeyInfo = Depends(require_scope(None))):
+            return {"scopes": key.scopes}
+
+        client = TestClient(app)
+        response = client.get(
+            "/any-scope", headers={"Authorization": "Bearer ingest-token"}
+        )
+        assert response.status_code == 200
+
     def test_no_registry_on_app_state_returns_500(self):
         app = FastAPI()
         # No registry set on app.state

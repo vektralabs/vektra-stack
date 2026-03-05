@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, MutableMapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -45,8 +45,10 @@ log = structlog.get_logger(__name__)
 
 
 def _pii_redactor(
-    _logger: Any, method_name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    _logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
     """Strip PII-sensitive fields from WARNING+ log events."""
     if method_name in ("warning", "error", "critical"):
         for key in ("query", "question", "answer", "response_text"):
@@ -156,13 +158,30 @@ async def _step_5_register_providers(
     registry.register("key_store", "default", key_store)
 
     # --- Query pipeline ---
-    from vektra_core.conversation import ConversationStore
+    from vektra_core.conversation import (
+        InMemoryConversationStore,
+        PersistentConversationStore,
+    )
     from vektra_core.pipeline import SimpleQueryPipeline
     from vektra_core.templates import TemplateRenderer
 
-    conversation_store = ConversationStore(
-        max_turns=settings.max_conversation_turns,
-    )
+    conversation_store: InMemoryConversationStore | PersistentConversationStore
+    if settings.conversation_key:
+        conversation_store = PersistentConversationStore(
+            session_factory=get_session_factory(),
+            encryption_key=settings.conversation_key,
+            max_turns=settings.max_conversation_turns,
+        )
+        log.info("conversation_store_selected", backend="persistent")
+    else:
+        conversation_store = InMemoryConversationStore(
+            max_turns=settings.max_conversation_turns,
+        )
+        log.warning(
+            "conversation_store_selected",
+            backend="in_memory",
+            persistence="disabled",
+        )
     templates_dir = (
         Path(settings.prompt_templates_dir) if settings.prompt_templates_dir else None
     )
@@ -355,7 +374,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=str(request_id))
 
-        response = await call_next(request)
+        response: Response = await call_next(request)
         response.headers["X-Request-ID"] = str(request_id)
         return response
 
@@ -380,12 +399,14 @@ def create_app() -> FastAPI:
     from vektra_admin.api import router as admin_router
     from vektra_core.api import router as core_router
     from vektra_index.api import router as index_router
+    from vektra_index.reindex import router as reindex_router
     from vektra_ingest.api import router as ingest_router
 
     app.include_router(admin_router)
     app.include_router(core_router)
     app.include_router(ingest_router)
     app.include_router(index_router)
+    app.include_router(reindex_router)
 
     # --- Middleware (LIFO: last added = outermost = runs first) ---
 

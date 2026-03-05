@@ -1,8 +1,8 @@
 # Implementation Plan: vektra-ingest - OCR, dual chunking, versioning, batch ops
 
 **ID**: 20260301-ingest-phase2
-**Status**: pending
-**Branch**: N/A
+**Status**: completed
+**Branch**: feat/phase2-wave1
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
 
@@ -244,65 +244,65 @@ All require `ingest` or `admin` scope. These are synchronous-only (no background
 
 ### OCR support
 
-- [ ] **T1**: Implement UnstructuredExtractor in `vektra-ingest/src/vektra_ingest/extractors/unstructured.py`. Methods: `supported_types()` returns `{"application/pdf"}`, `extract()` uses `partition_pdf(strategy="auto")` with import guard. Map Unstructured element categories to Vektra ElementType. Extract coordinates as BoundingBox when available.
-- [ ] **T2**: Add `unstructured[pdf]` as optional dependency in `vektra-ingest/pyproject.toml` (under `[project.optional-dependencies]` group `ocr`). Add import guard that logs clear error when package is missing and VEKTRA_DOCUMENT_EXTRACTOR=unstructured.
-- [ ] **T3**: Update `_build_extractor_registry()` in pipeline.py: when VEKTRA_DOCUMENT_EXTRACTOR=unstructured and the package is available, register UnstructuredExtractor for application/pdf instead of PdfplumberExtractor. When not available, fall back to PdfplumberExtractor and log a warning.
-- [ ] **T4**: Write unit tests for UnstructuredExtractor: mock `partition_pdf`, verify element type mapping, verify scanned PDF produces text output (not ERR-INGEST-003), verify coordinates extraction.
+- [x] **T1**: Implement UnstructuredExtractor in `vektra-ingest/src/vektra_ingest/extractors/unstructured.py`. Methods: `supported_types()` returns `{"application/pdf"}`, `extract()` uses `partition_pdf(strategy="auto")` with import guard. Map Unstructured element categories to Vektra ElementType. Extract coordinates as BoundingBox when available.
+- [x] **T2**: Add `unstructured[pdf]` as optional dependency in `vektra-ingest/pyproject.toml` (under `[project.optional-dependencies]` group `ocr`). Add import guard that logs clear error when package is missing and VEKTRA_DOCUMENT_EXTRACTOR=unstructured.
+- [x] **T3**: Update `_build_extractor_registry()` in pipeline.py: when VEKTRA_DOCUMENT_EXTRACTOR=unstructured and the package is available, register UnstructuredExtractor for application/pdf instead of PdfplumberExtractor. When not available, fall back to PdfplumberExtractor and log a warning.
+- [x] **T4**: Write unit tests for UnstructuredExtractor: mock `partition_pdf`, verify element type mapping, verify scanned PDF produces text output (not ERR-INGEST-003), verify coordinates extraction.
 
 ### DualStrategyChunking
 
-- [ ] **T5**: Implement DualStrategyChunking in `vektra-ingest/src/vektra_ingest/chunking.py` alongside FixedSizeChunking. Text elements accumulated and split with overlap (reuse FixedSizeChunking logic). Table elements yielded as-is with content_format="html". Parent-child hierarchy: emit parent chunks every `parent_chunk_size` tokens, child chunks reference parent via parent_id.
-- [ ] **T6**: Update pipeline.py chunker selection: when VEKTRA_CHUNKING_STRATEGY=dual, instantiate DualStrategyChunking. When "fixed", use FixedSizeChunking (existing behavior).
-- [ ] **T7**: Write unit tests for DualStrategyChunking: text elements are split with overlap (same as FixedSizeChunking output), table elements are never split, parent chunks are emitted at correct intervals, child chunks have parent_id set, mixed text+table input produces correct output.
+- [x] **T5**: Implement DualStrategyChunking in `vektra-ingest/src/vektra_ingest/chunking.py` alongside FixedSizeChunking. Text elements accumulated and split with overlap (reuse FixedSizeChunking logic). Table elements yielded as-is with content_format="html". Parent-child hierarchy: emit parent chunks every `parent_chunk_size` tokens, child chunks reference parent via parent_id.
+- [x] **T6**: Update pipeline.py chunker selection: when VEKTRA_CHUNKING_STRATEGY=dual, instantiate DualStrategyChunking. When "fixed", use FixedSizeChunking (existing behavior).
+- [x] **T7**: Write unit tests for DualStrategyChunking: text elements are split with overlap (same as FixedSizeChunking output), table elements are never split, parent chunks are emitted at correct intervals, child chunks have parent_id set, mixed text+table input produces correct output.
 
 ### Document versioning
 
-- [ ] **T8**: Refactor the conflict detection section of `run_ingest()`. When a filename match with different content_hash is found: instead of raising IngestConflictError, compute `new_version = existing.version + 1`, soft-delete the old document (deletion_reason="superseded"), hard-delete old chunks, then proceed with ingestion for the new version with `supersedes_id = existing.id`.
-- [ ] **T9**: Update SourceDocumentOrm creation in `run_ingest()` to pass `version` and `supersedes_id` when applicable.
-- [ ] **T10**: Emit `document.superseded` event via EventEmitter when old version is soft-deleted.
-- [ ] **T11**: Write tests for versioning: re-ingest same filename with different content creates version 2 with supersedes_id pointing to version 1. Old version is soft-deleted. Search only returns chunks from the latest version.
+- [x] **T8**: Refactor the conflict detection section of `run_ingest()`. When a filename match with different content_hash is found: instead of raising IngestConflictError, compute `new_version = existing.version + 1`, soft-delete the old document (deletion_reason="superseded"), hard-delete old chunks, then proceed with ingestion for the new version with `supersedes_id = existing.id`.
+- [x] **T9**: Update SourceDocumentOrm creation in `run_ingest()` to pass `version` and `supersedes_id` when applicable.
+- [x] **T10**: Emit `document.superseded` event via EventEmitter when old version is soft-deleted.
+- [x] **T11**: Write tests for versioning: re-ingest same filename with different content creates version 2 with supersedes_id pointing to version 1. Old version is soft-deleted. Search only returns chunks from the latest version.
 
 ### Batch operations
 
-- [ ] **T12**: Add `POST /api/v1/ingest/batch` endpoint in api.py. Accept multiple files via multipart/form-data. For each file: validate size, create IngestJobOrm, enqueue arq task. Always return 202 with array of `{job_id, filename, status}`.
-- [ ] **T13**: Add `DELETE /api/v1/documents/batch` endpoint. Accept JSON body with `document_ids` list and `namespace`. Delete each document, return `{deleted: [...], not_found: [...]}`. Requires admin scope.
-- [ ] **T14**: Write tests for batch ingest: multiple files produce multiple job IDs. Write tests for batch delete: mix of existing and non-existing IDs returns correct categorization.
+- [x] **T12**: Add `POST /api/v1/ingest/batch` endpoint in api.py. Accept multiple files via multipart/form-data. For each file: validate size, create IngestJobOrm, enqueue arq task. Always return 202 with array of `{job_id, filename, status}`.
+- [x] **T13**: Add `DELETE /api/v1/documents/batch` endpoint. Accept JSON body with `document_ids` list and `namespace`. Delete each document, return `{deleted: [...], not_found: [...]}`. Requires admin scope.
+- [x] **T14**: Write tests for batch ingest: multiple files produce multiple job IDs. Write tests for batch delete: mix of existing and non-existing IDs returns correct categorization.
 
 ### Markdown ingestion
 
-- [ ] **T15**: Implement MarkdownExtractor in `vektra-ingest/src/vektra_ingest/extractors/markdown.py`. Supported types: `text/markdown`, `text/x-markdown`. Split on heading boundaries (regex `^#{1,6}\s`). Each section becomes a DocumentChunk with element_type=TEXT, content_format="markdown", metadata includes heading_level and section_title.
-- [ ] **T16**: Add markdown MIME types and extensions to `_EXT_MAP` in detection.py: `.md` -> `text/markdown`, `.markdown` -> `text/markdown`.
-- [ ] **T17**: Register MarkdownExtractor in `_build_extractor_registry()`.
-- [ ] **T18**: Write unit tests: markdown file split on headings, metadata includes heading level, empty sections skipped.
+- [x] **T15**: Implement MarkdownExtractor in `vektra-ingest/src/vektra_ingest/extractors/markdown.py`. Supported types: `text/markdown`, `text/x-markdown`. Split on heading boundaries (regex `^#{1,6}\s`). Each section becomes a DocumentChunk with element_type=TEXT, content_format="markdown", metadata includes heading_level and section_title.
+- [x] **T16**: Add markdown MIME types and extensions to `_EXT_MAP` in detection.py: `.md` -> `text/markdown`, `.markdown` -> `text/markdown`.
+- [x] **T17**: Register MarkdownExtractor in `_build_extractor_registry()`.
+- [x] **T18**: Write unit tests: markdown file split on headings, metadata includes heading level, empty sections skipped.
 
 ### Ingest phase tracking (DEBT-006)
 
-- [ ] **T19**: Add `on_phase` callback parameter to `run_ingest()` signature. Insert callback calls at phase transitions: before extraction ("extracting"), before chunking ("chunking"), before embedding ("embedding"). When callback is None, skip (backward compatible).
-- [ ] **T20**: Update `ingest_document_task` in jobs.py to pass a callback that calls `_update_job(job_uuid, status="processing", phase=..., percentage=...)`.
-- [ ] **T21**: Write test: mock callback, verify it is called with correct phase sequence (extracting, chunking, embedding).
+- [x] **T19**: Add `on_phase` callback parameter to `run_ingest()` signature. Insert callback calls at phase transitions: before extraction ("extracting"), before chunking ("chunking"), before embedding ("embedding"). When callback is None, skip (backward compatible).
+- [x] **T20**: Update `ingest_document_task` in jobs.py to pass a callback that calls `_update_job(job_uuid, status="processing", phase=..., percentage=...)`.
+- [x] **T21**: Write test: mock callback, verify it is called with correct phase sequence (extracting, chunking, embedding).
 
 ### Audit log for error responses (DEBT-007)
 
-- [ ] **T22**: Refactor the sync ingest path in `api.py:ingest()` to use try/finally for audit logging. On error paths (409, 422), call `await log_event(...)` directly instead of via BackgroundTasks. Ensure audit entries include error_code and status_code.
-- [ ] **T23**: Write test: simulate 409 and 422 responses, verify audit log entries are written with correct action and status_code.
+- [x] **T22**: Refactor the sync ingest path in `api.py:ingest()` to use try/finally for audit logging. On error paths (409, 422), call `await log_event(...)` directly instead of via BackgroundTasks. Ensure audit entries include error_code and status_code.
+- [x] **T23**: Write test: simulate 409 and 422 responses, verify audit log entries are written with correct action and status_code.
 
 ### Arq cleanup job (REQ-057)
 
-- [ ] **T24**: Implement `cleanup_soft_deleted_task` in jobs.py. Query soft-deleted documents past VEKTRA_RETENTION_DAYS. Hard-delete expired records (CASCADE handles document_chunks). Log count of purged documents.
-- [ ] **T25**: Register the cleanup task in `get_worker_settings()`. Configure schedule via arq's `cron_jobs` with default daily execution.
-- [ ] **T26**: Write test: create soft-deleted documents with old timestamps, run cleanup, verify they are hard-deleted. Verify documents within retention period are not touched.
+- [x] **T24**: Implement `cleanup_soft_deleted_task` in jobs.py. Query soft-deleted documents past VEKTRA_RETENTION_DAYS. Hard-delete expired records (CASCADE handles document_chunks). Log count of purged documents.
+- [x] **T25**: Register the cleanup task in `get_worker_settings()`. Configure schedule via arq's `cron_jobs` with default daily execution.
+- [x] **T26**: Write test: create soft-deleted documents with old timestamps, run cleanup, verify they are hard-deleted. Verify documents within retention period are not touched.
 
 ### Webhook event emission
 
-- [ ] **T27**: Add `document.failed` event emission in `run_ingest()` exception handlers and in `ingest_document_task` exception handlers. Payload includes document_id (if available), namespace, filename, error_code, error_message.
-- [ ] **T28**: Verify `document.indexed` event (already present in pipeline.py) fires correctly when WebhookEventEmitter is registered. Write test with mock EventEmitter.
+- [x] **T27**: Add `document.failed` event emission in `run_ingest()` exception handlers and in `ingest_document_task` exception handlers. Payload includes document_id (if available), namespace, filename, error_code, error_message.
+- [x] **T28**: Verify `document.indexed` event (already present in pipeline.py) fires correctly when WebhookEventEmitter is registered. Write test with mock EventEmitter.
 
 ### Granular ingest APIs (EX-010)
 
-- [ ] **T29**: Add `POST /api/v1/ingest/extract` endpoint: accept file, run content detection + extraction only, return JSON array of DocumentChunks (text, element_type, metadata). No chunking, no embedding.
-- [ ] **T30**: Add `POST /api/v1/ingest/chunk` endpoint: accept file, run extraction + chunking, return JSON array of chunked DocumentChunks.
-- [ ] **T31**: Add `POST /api/v1/ingest/embed` endpoint: accept file, run extraction + chunking + embedding, return JSON array of ChunkEmbeddings (text, dense vector, sparse vector if available, metadata). No storage.
-- [ ] **T32**: Write tests for all three granular endpoints: verify output structure matches expected types.
+- [x] **T29**: Add `POST /api/v1/ingest/extract` endpoint: accept file, run content detection + extraction only, return JSON array of DocumentChunks (text, element_type, metadata). No chunking, no embedding.
+- [x] **T30**: Add `POST /api/v1/ingest/chunk` endpoint: accept file, run extraction + chunking, return JSON array of chunked DocumentChunks.
+- [x] **T31**: Add `POST /api/v1/ingest/embed` endpoint: accept file, run extraction + chunking + embedding, return JSON array of ChunkEmbeddings (text, dense vector, sparse vector if available, metadata). No storage.
+- [x] **T32**: Write tests for all three granular endpoints: verify output structure matches expected types.
 
 ## Task count assessment
 
@@ -310,22 +310,22 @@ This plan contains 32 tasks across 10 feature groups. This exceeds the 30-task t
 
 ## Acceptance Criteria
 
-- [ ] Scanned PDFs are processed with OCR when Unstructured is installed (VEKTRA_DOCUMENT_EXTRACTOR=unstructured)
-- [ ] Scanned PDFs are rejected with ERR-INGEST-003 when Unstructured is not installed (existing behavior preserved)
-- [ ] DualStrategyChunking splits text elements with overlap, preserves table elements intact, produces parent-child hierarchy
-- [ ] VEKTRA_CHUNKING_STRATEGY=fixed still uses FixedSizeChunking (no regression)
-- [ ] Re-ingesting a file with same filename and different content creates version N+1 with supersedes_id
-- [ ] Old version is soft-deleted with reason "superseded" and its chunks are hard-deleted
-- [ ] POST /ingest/batch accepts multiple files and returns array of job IDs (202)
-- [ ] DELETE /documents/batch deletes multiple documents and reports not_found IDs
-- [ ] Markdown files are extracted and chunked correctly
-- [ ] Job status endpoint reports phase transitions: extracting, chunking, embedding (DEBT-006)
-- [ ] Audit log entries are written for 409 and 422 error responses (DEBT-007)
-- [ ] Cleanup job hard-deletes soft-deleted documents past retention period
-- [ ] document.indexed, document.failed, and document.superseded events are emitted via EventEmitter
-- [ ] Granular APIs (extract, chunk, embed) return correct intermediate representations
-- [ ] All new code has unit tests; existing Phase 1 ingest tests pass without modification
-- [ ] Unstructured is an optional dependency (import-guarded, clear error when missing)
+- [x] Scanned PDFs are processed with OCR when Unstructured is installed (VEKTRA_DOCUMENT_EXTRACTOR=unstructured)
+- [x] Scanned PDFs are rejected with ERR-INGEST-003 when Unstructured is not installed (existing behavior preserved)
+- [x] DualStrategyChunking splits text elements with overlap, preserves table elements intact, produces parent-child hierarchy
+- [x] VEKTRA_CHUNKING_STRATEGY=fixed still uses FixedSizeChunking (no regression)
+- [x] Re-ingesting a file with same filename and different content creates version N+1 with supersedes_id
+- [x] Old version is soft-deleted with reason "superseded" and its chunks are hard-deleted
+- [x] POST /ingest/batch accepts multiple files and returns array of job IDs (202)
+- [x] DELETE /documents/batch deletes multiple documents and reports not_found IDs
+- [x] Markdown files are extracted and chunked correctly
+- [x] Job status endpoint reports phase transitions: extracting, chunking, embedding (DEBT-006)
+- [x] Audit log entries are written for 409 and 422 error responses (DEBT-007)
+- [x] Cleanup job hard-deletes soft-deleted documents past retention period
+- [x] document.indexed, document.failed, and document.superseded events are emitted via EventEmitter
+- [x] Granular APIs (extract, chunk, embed) return correct intermediate representations
+- [x] All new code has unit tests; existing Phase 1 ingest tests pass without modification
+- [x] Unstructured is an optional dependency (import-guarded, clear error when missing)
 
 ## Testing Approach
 

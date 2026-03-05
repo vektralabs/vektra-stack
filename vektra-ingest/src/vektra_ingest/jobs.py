@@ -16,16 +16,16 @@ Worker settings (get_worker_settings) are used by the vektra-worker entrypoint.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import delete, func, select, update
 
 import vektra_shared.db as _shared_db
 from vektra_ingest.exceptions import IngestConflictError, IngestError
-from vektra_ingest.models import IngestJobOrm
+from vektra_ingest.models import IngestJobOrm, SourceDocumentOrm
 from vektra_ingest.pipeline import run_ingest
 
 log = structlog.get_logger(__name__)
@@ -67,7 +67,8 @@ async def _update_job(
         values["percentage"] = percentage
 
     if status == "processing":
-        values["started_at"] = datetime.now(UTC)
+        # Only set started_at on the first processing update (when NULL)
+        values["started_at"] = func.coalesce(IngestJobOrm.started_at, datetime.now(UTC))
     elif status in ("indexed", "failed"):
         values["completed_at"] = datetime.now(UTC)
         if "phase" not in values:
@@ -127,6 +128,11 @@ async def ingest_document_task(
         )
         return
 
+    async def _on_phase(phase: str, percentage: int | None) -> None:
+        await _update_job(
+            job_uuid, status="processing", phase=phase, percentage=percentage
+        )
+
     try:
         async with _shared_db._session_factory() as session:
             result = await run_ingest(
@@ -135,6 +141,7 @@ async def ingest_document_task(
                 namespace=namespace_id,
                 session=session,
                 registry=registry,
+                on_phase=_on_phase,
             )
 
         await _update_job(
@@ -180,6 +187,57 @@ async def ingest_document_task(
 
 
 # ---------------------------------------------------------------------------
+# Cleanup job (REQ-057)
+# ---------------------------------------------------------------------------
+
+
+async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
+    """arq cron task: hard-delete soft-deleted documents past retention period.
+
+    Reads VEKTRA_RETENTION_DAYS from config. When None, no cleanup is performed.
+    For each expired document: hard-delete the row (CASCADE deletes document_chunks).
+    """
+    from vektra_shared.config import ObservabilityConfig
+
+    config = ObservabilityConfig()
+    if config.retention_days is None:
+        log.debug("cleanup_skipped", reason="VEKTRA_RETENTION_DAYS not set")
+        return
+
+    cutoff = datetime.now(UTC) - timedelta(days=config.retention_days)
+
+    if _shared_db._session_factory is None:
+        log.error("cleanup_no_session_factory")
+        return
+
+    try:
+        async with _shared_db._session_factory() as session:
+            # Find expired soft-deleted documents
+            result = await session.execute(
+                select(SourceDocumentOrm.id).where(
+                    SourceDocumentOrm.deleted_at.is_not(None),
+                    SourceDocumentOrm.deleted_at < cutoff,
+                )
+            )
+            expired_ids = [row[0] for row in result.all()]
+
+            if not expired_ids:
+                log.debug("cleanup_nothing_to_purge")
+                return
+
+            # Hard-delete (CASCADE handles document_chunks)
+            await session.execute(
+                delete(SourceDocumentOrm).where(SourceDocumentOrm.id.in_(expired_ids))
+            )
+            await session.commit()
+
+        log.info("cleanup_purged", count=len(expired_ids))
+
+    except Exception as exc:
+        log.error("cleanup_failed", error=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Worker settings factory
 # ---------------------------------------------------------------------------
 
@@ -193,12 +251,14 @@ def get_worker_settings(registry: Any) -> Any:
     The worker process (CMD_TARGET=worker in the same Docker image) calls this
     after init_db() and provider registration.
     """
+    from arq import cron
 
     async def on_startup(ctx: dict[str, Any]) -> None:
         ctx["registry"] = registry
 
     class WorkerSettings:
         functions = [ingest_document_task]
+        cron_jobs = [cron(cleanup_soft_deleted_task, hour=3, minute=0)]
         on_startup = on_startup
         redis_settings = None  # uses REDIS_URL env var via arq default
 

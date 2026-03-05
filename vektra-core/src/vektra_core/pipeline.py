@@ -292,6 +292,9 @@ class SimpleQueryPipeline:
         system_text = self._renderer.render_system(namespace=query.namespace)
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
+        # DEBT-004: sort by score descending so budget allocator selects
+        # highest-scoring chunks first, regardless of provider ordering
+        filtered = sorted(filtered, key=lambda r: r.score, reverse=True)
         chunk_inputs = [(r.score, self._count_tokens(r.text_snippet)) for r in filtered]
         history_tokens = [
             self._count_tokens((t["question"] or "") + " " + (t["answer"] or ""))
@@ -413,8 +416,6 @@ class SimpleQueryPipeline:
 
     async def _stream(self, query: QueryRequest) -> AsyncGenerator[QueryChunk, None]:
         """Async generator for streaming response (SSE)."""
-        response_id = uuid4()
-
         # Steps 1-3: embed, search, filter
         dense = await self._embedding.embed_query(query.question)
         results = await self._vector_store.search(
@@ -444,6 +445,9 @@ class SimpleQueryPipeline:
         system_text = self._renderer.render_system(namespace=query.namespace)
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
+        # DEBT-004: sort by score descending so budget allocator selects
+        # highest-scoring chunks first, regardless of provider ordering
+        filtered = sorted(filtered, key=lambda r: r.score, reverse=True)
         chunk_inputs = [(r.score, self._count_tokens(r.text_snippet)) for r in filtered]
         history_tokens = [
             self._count_tokens((t["question"] or "") + " " + (t["answer"] or ""))
@@ -480,17 +484,7 @@ class SimpleQueryPipeline:
             )
         )
 
-        # Step 5: Safeguard pre_response (before streaming)
-        sg_ctx = SafeguardContext(
-            namespace=query.namespace,
-            conversation_id=query.conversation_id,
-        )
-        sg_result = await self._safeguard.pre_response(str(response_id), sg_ctx)
-        if not sg_result.allowed:
-            yield QueryChunk(type="error", data="Request blocked by safeguard")
-            return
-
-        # Step 6: Stream LLM tokens
+        # Step 5: Stream LLM tokens
         full_answer_parts: list[str] = []
         try:
             token_stream = await self._llm.stream(
@@ -505,8 +499,19 @@ class SimpleQueryPipeline:
             yield QueryChunk(type="error", data="LLM unavailable")
             return
 
-        # Save conversation turn
         full_answer = "".join(full_answer_parts) or None
+
+        # Step 6: Safeguard pre_response (post-stream, on accumulated answer)
+        sg_ctx = SafeguardContext(
+            namespace=query.namespace,
+            conversation_id=query.conversation_id,
+        )
+        sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
+        if not sg_result.allowed:
+            log.warning("stream_safeguard_blocked", namespace=query.namespace)
+            full_answer = None
+
+        # Save conversation turn
         if query.conversation_id is not None and full_answer:
             await self._conversation_store.add_turn(
                 query.conversation_id, query.question, full_answer

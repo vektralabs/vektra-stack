@@ -336,11 +336,10 @@ async def test_alias_same_content_different_filename(session, registry):
     assert result2.alias_count == 1
 
 
-async def test_filename_conflict_raises_error(session, registry):
-    """Different content + same filename → IngestConflictError (→ 409)."""
+async def test_filename_reingest_creates_new_version(session, registry):
+    """Different content + same filename → version increment (Phase 2)."""
     from sqlalchemy import text
 
-    from vektra_ingest.exceptions import IngestConflictError
     from vektra_ingest.pipeline import run_ingest
 
     namespace = f"ns-{uuid4().hex[:8]}"
@@ -357,22 +356,25 @@ async def test_filename_conflict_raises_error(session, registry):
     pdf2 = pdf1 + b"  extra bytes making it different"
 
     # Ingest first document
-    await run_ingest(
+    result1 = await run_ingest(
         file_content=pdf1,
         filename="report.pdf",
         namespace=namespace,
         session=session,
         registry=registry,
     )
+    assert result1.status == "indexed"
+    assert result1.version == 1
 
-    # Try to ingest different content with same filename
-    with pytest.raises(IngestConflictError) as exc_info:
-        await run_ingest(
-            file_content=pdf2,
-            filename="report.pdf",  # same name, different content
-            namespace=namespace,
-            session=session,
-            registry=registry,
-        )
-
-    assert "report.pdf" in str(exc_info.value)
+    # Re-ingest with different content → creates version 2
+    result2 = await run_ingest(
+        file_content=pdf2,
+        filename="report.pdf",  # same name, different content
+        namespace=namespace,
+        session=session,
+        registry=registry,
+    )
+    assert result2.status == "indexed"
+    assert result2.version == 2
+    assert result2.supersedes_id == result1.document_id
+    assert result2.document_id != result1.document_id

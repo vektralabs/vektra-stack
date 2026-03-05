@@ -22,6 +22,8 @@ _EXT_MAP: dict[str, str] = {
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".doc": "application/msword",
     ".ppt": "application/vnd.ms-powerpoint",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
 }
 
 

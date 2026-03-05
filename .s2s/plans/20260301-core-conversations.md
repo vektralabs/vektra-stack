@@ -1,8 +1,8 @@
 # Implementation Plan: vektra-core - Persistent conversations, feedback, disconnect handling
 
 **ID**: 20260301-core-conversations
-**Status**: pending
-**Branch**: N/A
+**Status**: completed
+**Branch**: feat/phase2-wave1
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
 
@@ -121,31 +121,31 @@ class FeedbackOrm(Base):
 
 ## Tasks
 
-- [ ] Create `vektra_core/models.py` with `ConversationOrm`, `ConversationTurnOrm`, and `FeedbackOrm` ORM models (follow vektra-admin `models.py` patterns: DeclarativeBase, Mapped[], server_default)
-- [ ] Verify `VEKTRA_CONVERSATION_KEY` exists in VektraSettings (`conversation_key: str | None = None` already defined in `vektra_shared/config.py`). Add startup validation in the conversation store initialization: if set, verify non-empty; if not set, log warning about in-memory fallback. No config schema changes needed.
-- [ ] Implement `PersistentConversationStore` in `vektra_core/conversation.py` (keep existing `ConversationStore` class as `InMemoryConversationStore`). Methods: `get_history()` with pgp_sym_decrypt, `add_turn()` with pgp_sym_encrypt and max_turns pruning, `clear()` with CASCADE delete. Constructor takes `AsyncSession` factory and encryption key
-- [ ] Add `create_conversation()` method to `PersistentConversationStore`: creates a new conversation row, returns UUID. Called from pipeline when `conversation_id` is None and a new multi-turn session starts
-- [ ] Implement GET /api/v1/conversations/{id} endpoint in `vektra_core/api.py`: returns metadata only (id, namespace_id, created_at, updated_at, turn_count). Auth: query or admin scope. 404 if not found
-- [ ] Implement DELETE /api/v1/conversations/{id} endpoint in `vektra_core/api.py`: soft deletes or hard deletes the conversation. Auth: query or admin scope. 404 if not found. 204 on success
-- [ ] Implement POST /api/v1/feedback/{response_id} endpoint: accepts `{ rating: int, comment: str | None }`, validates rating 1-5, writes FeedbackOrm row with citation_id=None. Auth: query or admin scope. Returns 201
-- [ ] Implement POST /api/v1/feedback/citation/{citation_id} endpoint: same as above but sets citation_id. Returns 201
-- [ ] Update `SimpleQueryPipeline.__init__()` to accept either `ConversationStore` (in-memory) or `PersistentConversationStore` (persistent). Use a common base class or Protocol to type the parameter
-- [ ] Implement client disconnect cancellation in `api.py`: pass `request` to `_sse_generator()`, poll `request.is_disconnected()` between token yields, call `aclose()` on the LLM stream iterator on disconnect, log the event (DEBT-005)
-- [ ] Write unit tests for `PersistentConversationStore`: encryption round-trip, max_turns pruning, get_history ordering, clear cascade
-- [ ] Write unit tests for feedback endpoints: valid rating, invalid rating (0, 6), response-level vs citation-level, auth scope enforcement
+- [x] Create `vektra_core/models.py` with `ConversationOrm`, `ConversationTurnOrm`, and `FeedbackOrm` ORM models (follow vektra-admin `models.py` patterns: DeclarativeBase, Mapped[], server_default)
+- [x] Verify `VEKTRA_CONVERSATION_KEY` exists in VektraSettings (`conversation_key: str | None = None` already defined in `vektra_shared/config.py`). Add startup validation in the conversation store initialization: if set, verify non-empty; if not set, log warning about in-memory fallback. No config schema changes needed.
+- [x] Implement `PersistentConversationStore` in `vektra_core/conversation.py` (keep existing `ConversationStore` class as `InMemoryConversationStore`). Methods: `get_history()` with pgp_sym_decrypt, `add_turn()` with pgp_sym_encrypt and max_turns pruning, `clear()` with CASCADE delete. Constructor takes `AsyncSession` factory and encryption key
+- [x] Add `create_conversation()` method to `PersistentConversationStore`: creates a new conversation row, returns UUID. Called from pipeline when `conversation_id` is None and a new multi-turn session starts
+- [x] Implement GET /api/v1/conversations/{id} endpoint in `vektra_core/api.py`: returns metadata only (id, namespace_id, created_at, updated_at, turn_count). Auth: query or admin scope. 404 if not found
+- [x] Implement DELETE /api/v1/conversations/{id} endpoint in `vektra_core/api.py`: soft deletes or hard deletes the conversation. Auth: query or admin scope. 404 if not found. 204 on success
+- [x] Implement POST /api/v1/feedback/{response_id} endpoint: accepts `{ rating: int, comment: str | None }`, validates rating 1-5, writes FeedbackOrm row with citation_id=None. Auth: query or admin scope. Returns 201
+- [x] Implement POST /api/v1/feedback/citation/{citation_id} endpoint: same as above but sets citation_id. Returns 201
+- [x] Update `SimpleQueryPipeline.__init__()` to accept either `ConversationStore` (in-memory) or `PersistentConversationStore` (persistent). Use a common base class or Protocol to type the parameter
+- [x] Implement client disconnect cancellation in `api.py`: pass `request` to `_sse_generator()`, poll `request.is_disconnected()` between token yields, call `aclose()` on the LLM stream iterator on disconnect, log the event (DEBT-005)
+- [x] Write unit tests for `PersistentConversationStore`: encryption round-trip, max_turns pruning, get_history ordering, clear cascade
+- [x] Write unit tests for feedback endpoints: valid rating, invalid rating (0, 6), response-level vs citation-level, auth scope enforcement
 
 ## Acceptance Criteria
 
-- [ ] Conversations persist across application restarts when VEKTRA_CONVERSATION_KEY is set
-- [ ] Conversation content is encrypted at rest (pgcrypto column-level encryption, verifiable by querying raw bytes)
-- [ ] GET /conversations/{id} returns metadata only, never content (REQ-051)
-- [ ] DELETE /conversations/{id} removes conversation and all turns
-- [ ] POST /feedback/{response_id} stores rating (1-5) and optional comment
-- [ ] POST /feedback/citation/{citation_id} stores citation-level feedback
-- [ ] When VEKTRA_CONVERSATION_KEY is not set, application falls back to in-memory conversation store with a logged warning
-- [ ] Client disconnect during SSE streaming explicitly closes the LLM iterator (DEBT-005)
-- [ ] No orphan async tasks after simulated client disconnect
-- [ ] Existing pipeline tests continue to pass (backward compatible)
+- [x] Conversations persist across application restarts when VEKTRA_CONVERSATION_KEY is set
+- [x] Conversation content is encrypted at rest (pgcrypto column-level encryption, verifiable by querying raw bytes)
+- [x] GET /conversations/{id} returns metadata only, never content (REQ-051)
+- [x] DELETE /conversations/{id} removes conversation and all turns
+- [x] POST /feedback/{response_id} stores rating (1-5) and optional comment
+- [x] POST /feedback/citation/{citation_id} stores citation-level feedback
+- [x] When VEKTRA_CONVERSATION_KEY is not set, application falls back to in-memory conversation store with a logged warning
+- [x] Client disconnect during SSE streaming explicitly closes the LLM iterator (DEBT-005)
+- [x] No orphan async tasks after simulated client disconnect
+- [x] Existing pipeline tests continue to pass (backward compatible)
 
 ## Testing Approach
 
@@ -165,4 +165,11 @@ The infra-phase2 plan will update the app lifespan to construct `PersistentConve
 
 ## Notes
 
-<!-- Progress notes during implementation -->
+All 12 tasks completed. 79 tests pass (50 existing + 29 new). Lint, mypy, import-linter all clean.
+
+Key implementation decisions:
+- `ConversationStore` is now a `Protocol` (was a concrete class). Both `InMemoryConversationStore` and `PersistentConversationStore` satisfy it.
+- Pipeline type hint unchanged (`ConversationStore`), works for both implementations.
+- Citation feedback endpoint requires `response_id` in the body (response-level only requires `rating` + optional `comment`).
+- `_sse_generator()` now accepts `Request` to poll `is_disconnected()`, calls `aclose()` in `finally` block.
+- `soft_delete` used for DELETE endpoint (GDPR compliance per REQ-057).

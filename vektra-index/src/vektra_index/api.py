@@ -13,11 +13,12 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
+from vektra_shared.config import EmbeddingConfig, VectorStoreConfig
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ERR_INGEST_004,
@@ -31,7 +32,12 @@ from vektra_shared.types import (
     QueryEmbedding,
     SearchFilters,
     SearchMode,
+    SparseVector,
 )
+
+# Read from env once at import time (immutable for process lifetime)
+_VS_CONFIG = VectorStoreConfig()
+_EMB_CONFIG = EmbeddingConfig()
 
 router = APIRouter(prefix="/api/v1", tags=["index"])
 
@@ -48,12 +54,29 @@ class StoreChunksRequest(BaseModel):
     namespace: str = "default"
 
 
+class SparseVectorPayload(BaseModel):
+    """Sparse vector representation (indices + values)."""
+
+    indices: list[int]
+    values: list[float]
+
+    @model_validator(mode="after")
+    def _check_lengths(self) -> SparseVectorPayload:
+        if len(self.indices) != len(self.values):
+            raise ValueError(
+                f"indices length ({len(self.indices)}) must equal "
+                f"values length ({len(self.values)})"
+            )
+        return self
+
+
 class ChunkEmbeddingPayload(BaseModel):
     """A single chunk with its dense embedding (from the ingest pipeline)."""
 
     chunk_id: str | None = None  # optional; server generates UUID if absent
     text: str
     dense: list[float]
+    sparse: SparseVectorPayload | None = None  # Phase 2: BM25/SPLADE
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -123,24 +146,30 @@ async def store_chunks(
     """
     from vektra_index.providers.pgvector import PgvectorProvider
 
+    # Enforce namespace binding for scoped keys (H5)
+    effective_ns = key.namespace_id or body.namespace
+
     # Build ChunkEmbedding objects from the request payload
     chunk_embeddings = [
         ChunkEmbedding(
             chunk_id=item.chunk_id or "",
             text=item.text,
             dense=item.dense,
+            sparse=SparseVector(indices=item.sparse.indices, values=item.sparse.values)
+            if item.sparse
+            else None,
             metadata=item.metadata,
         )
         for item in body.chunks
     ]
 
-    provider = PgvectorProvider()
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
 
     try:
         async with session.begin():
             chunk_ids = await provider.store(
                 session=session,
-                namespace=body.namespace,
+                namespace=effective_ns,
                 document_id=document_id,
                 chunks=chunk_embeddings,
             )
@@ -167,6 +196,7 @@ async def store_chunks(
 
 @router.post("/search", response_model=SearchResponse)
 async def search(
+    request: Request,
     body: SearchRequest,
     key: ApiKeyInfo = Depends(require_scope("query")),
     session: AsyncSession = Depends(get_session),
@@ -176,15 +206,26 @@ async def search(
     Embeds the query string, then runs cosine similarity search with optional
     JSONB metadata filtering. Returns ranked chunks.
     """
+    import logging
+
     from vektra_index.providers.pgvector import PgvectorProvider
     from vektra_index.providers.sentence_transformers import (
         SentenceTransformersProvider,
     )
 
-    embedding_provider = SentenceTransformersProvider()
-    pgvector_provider = PgvectorProvider()
+    _logger = logging.getLogger(__name__)
 
-    # Embed the query
+    # Enforce namespace binding for scoped keys (H5)
+    effective_ns = key.namespace_id or body.namespace
+
+    embedding_provider = SentenceTransformersProvider(
+        model_name=_EMB_CONFIG.embedding_model
+    )
+    pgvector_provider = PgvectorProvider(
+        active_index_version=_VS_CONFIG.active_index_version
+    )
+
+    # Embed the query (dense)
     try:
         dense_vector = await embedding_provider.embed_query(body.query)
     except Exception as exc:
@@ -192,7 +233,28 @@ async def search(
             status_code=500, detail={"error": {"message": f"Embedding failed: {exc}"}}
         ) from exc
 
-    query_embedding = QueryEmbedding(dense=dense_vector)
+    # Embed the query (sparse) - only when SparseEmbeddingProvider is available
+    sparse_vector = None
+    effective_mode = body.search_mode
+
+    if body.search_mode in (SearchMode.SPARSE, SearchMode.HYBRID):
+        sparse_provider = getattr(request.app.state, "sparse_embedding_provider", None)
+        if sparse_provider is not None:
+            try:
+                sparse_vector = await sparse_provider.embed_query(body.query)
+            except Exception as exc:
+                _logger.warning(
+                    "sparse_embedding_failed, falling back to DENSE: %s", exc
+                )
+                effective_mode = SearchMode.DENSE
+        else:
+            _logger.warning(
+                "sparse_embedding_not_registered, search_mode=%s falling back to DENSE",
+                body.search_mode.value,
+            )
+            effective_mode = SearchMode.DENSE
+
+    query_embedding = QueryEmbedding(dense=dense_vector, sparse=sparse_vector)
 
     filters: SearchFilters | None = None
     if body.filters:
@@ -201,10 +263,10 @@ async def search(
     try:
         results = await pgvector_provider.search(
             session=session,
-            namespace=body.namespace,
+            namespace=effective_ns,
             query_embedding=query_embedding,
             top_k=body.top_k,
-            search_mode=body.search_mode,
+            search_mode=effective_mode,
             filters=filters,
         )
     except Exception as exc:
@@ -248,7 +310,7 @@ async def delete_document(
     """
     from vektra_index.providers.pgvector import PgvectorProvider
 
-    provider = PgvectorProvider()
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
 
     async with session.begin():
         chunks_removed = await provider.delete(
@@ -266,14 +328,21 @@ async def delete_document(
 @router.get("/stats", response_model=StatsResponse)
 async def stats(
     namespace: str | None = Query(None),
-    key: ApiKeyInfo = Depends(require_scope("query")),
+    key: ApiKeyInfo = Depends(require_scope(None)),
     session: AsyncSession = Depends(get_session),
 ) -> StatsResponse:
-    """Return document and chunk counts (optionally scoped to a namespace)."""
+    """Return document and chunk counts (optionally scoped to a namespace).
+
+    Accepts any valid API key scope (ARCH-059).
+    """
     from vektra_index.providers.pgvector import PgvectorProvider
 
-    provider = PgvectorProvider()
-    data = await provider.namespace_stats(session=session, namespace=namespace)
+    effective_ns = key.namespace_id or namespace
+    if key.namespace_id and namespace and namespace != key.namespace_id:
+        raise HTTPException(status_code=403, detail="Namespace scope violation")
+
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
+    data = await provider.namespace_stats(session=session, namespace=effective_ns)
 
     return StatsResponse(**data)
 
@@ -285,7 +354,7 @@ async def health(
     """Unauthenticated component health check."""
     from vektra_index.providers.pgvector import PgvectorProvider
 
-    provider = PgvectorProvider()
+    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
     status = await provider.health_check(session=session)
 
     return HealthResponse(

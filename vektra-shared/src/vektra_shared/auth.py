@@ -19,6 +19,9 @@ from fastapi import HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from vektra_shared.errors import (
+    ERR_AUTH_004,
+    ErrorCategory,
+    ErrorResponse,
     auth_insufficient_scope,
     auth_invalid_token,
     http_status_for,
@@ -39,6 +42,7 @@ class ApiKeyInfo:
     key_id: UUID
     scopes: list[str]
     namespace_id: str | None = None
+    rate_limit_rpm: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def has_scope(self, scope: str) -> bool:
@@ -68,7 +72,7 @@ class KeyStoreProvider(Protocol):
 
 
 def require_scope(
-    required_scope: str,
+    required_scope: str | None,
 ) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
     """Return a FastAPI dependency that enforces the given API key scope.
 
@@ -76,6 +80,11 @@ def require_scope(
         @router.get("/endpoint")
         async def endpoint(key: ApiKeyInfo = Depends(require_scope("admin"))):
             ...
+
+    Pass None to require authentication without enforcing a specific scope.
+
+    Admin scope is treated as a superscope: keys with "admin" scope pass
+    any scope check (ARCH-059).
 
     The dependency reads the key store from request.app.state.registry.
     Raises HTTP 401 (ERR-AUTH-001) for missing/invalid tokens.
@@ -125,19 +134,41 @@ def require_scope(
                 detail=err.to_envelope(),
             )
 
-        # 4. Check scope
-        if not info.has_scope(required_scope):
+        # 4. Expose key_id on request.state for audit attribution
+        #    (set early so denied requests are still attributable)
+        request.state.key_id = info.key_id
+
+        # 5. Check scope (admin is a superscope per ARCH-059)
+        if required_scope is not None and not (
+            info.has_scope(required_scope) or info.has_scope("admin")
+        ):
             err = auth_insufficient_scope(required_scope)
             raise HTTPException(
                 status_code=http_status_for(err),
                 detail=err.to_envelope(),
             )
 
-        # 5. Expose key_id on request.state for AuditMiddleware
-        request.state.key_id = info.key_id
+        # 6. Rate limiting (optional, duck-typed from app.state)
+        rate_limiter = getattr(request.app.state, "rate_limiter", None)
+        if rate_limiter is not None and info.rate_limit_rpm is not None:
+            allowed, rl_headers = rate_limiter.check(info.key_id, info.rate_limit_rpm)
+            if not allowed:
+                err = ErrorResponse(
+                    category=ErrorCategory.TRANSIENT,
+                    code=ERR_AUTH_004,
+                    message="Rate limit exceeded.",
+                    remediation="Wait and retry after the rate limit window resets.",
+                )
+                raise HTTPException(
+                    status_code=http_status_for(err),
+                    detail=err.to_envelope(),
+                    headers=rl_headers,
+                )
+            # Store headers for response middleware to add
+            request.state.rate_limit_headers = rl_headers
 
         return info
 
     # Give the dependency a descriptive name for FastAPI's OpenAPI schema
-    _dependency.__name__ = f"require_scope_{required_scope}"
+    _dependency.__name__ = f"require_scope_{required_scope or 'any'}"
     return _dependency

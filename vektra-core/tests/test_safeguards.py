@@ -10,6 +10,20 @@ from vektra_core.safeguards.presidio import PresidioPIISafeguard
 from vektra_shared.safeguards import PassthroughSafeguard
 from vektra_shared.types import SafeguardContext, SearchResult
 
+_has_spacy_model = False
+try:
+    import spacy.util
+
+    _has_spacy_model = spacy.util.is_package("en_core_web_lg") or spacy.util.is_package(
+        "en_core_web_sm"
+    )
+except ImportError:
+    pass
+
+requires_presidio = pytest.mark.skipif(
+    not _has_spacy_model, reason="No spaCy model available for Presidio"
+)
+
 # ---------------------------------------------------------------------------
 # Factory tests
 # ---------------------------------------------------------------------------
@@ -80,6 +94,7 @@ async def test_post_retrieval_no_pii(safeguard, ctx):
     assert result.filtered_ids is None
 
 
+@requires_presidio
 async def test_post_retrieval_filters_high_pii_chunks(safeguard, ctx):
     """Chunks with PII count >= threshold are filtered."""
     clean = _make_result("The weather is sunny today")
@@ -95,6 +110,7 @@ async def test_post_retrieval_filters_high_pii_chunks(safeguard, ctx):
         assert clean.chunk_id not in result.filtered_ids
 
 
+@requires_presidio
 async def test_pre_response_anonymizes_pii(safeguard, ctx):
     """Pre-response anonymizes PII entities in the answer."""
     text = "John Smith lives at 123 Main St and his email is john@example.com"
@@ -109,6 +125,7 @@ async def test_pre_response_anonymizes_pii(safeguard, ctx):
     assert result.annotations["pii_entity_count"] > 0
 
 
+@requires_presidio
 async def test_pre_response_no_pii(safeguard, ctx):
     """Pre-response returns unmodified when no PII found."""
     text = "The quick brown fox jumps over the lazy dog"

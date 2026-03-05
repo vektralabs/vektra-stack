@@ -21,26 +21,26 @@
 
 | # | Module | File:Line | Issue | Status |
 |---|--------|-----------|-------|--------|
-| M1 | core | `conversation.py:220-228` | `turn_count` is monotonic, not current (misleading after pruning) | DEFER |
+| M1 | core | `conversation.py:220-228` | `turn_count` is monotonic, not current (misleading after pruning) | DEFER (Wave 5) |
 | M2 | core | `api.py:371` | `delete_conversation` has no namespace check (cross-tenant deletion) | FIXED |
 | M3 | core | `api.py:401,440` | Feedback namespace not validated against key scope | FIXED |
-| M4 | core | `conversation.py:244` | `clear()` hard-deletes, bypassing GDPR retention | DEFER |
+| M4 | core | `conversation.py:244` | `clear()` hard-deletes, bypassing GDPR retention | WONTFIX (InMemory dev/test only) |
 | M5 | admin | `api.py:459-493` | XSS in HTML dashboard (unescaped component data) | FIXED |
-| M6 | admin | `quotas.py:88` | Chunk quota counts orphaned chunks from soft-deleted documents | DEFER |
+| M6 | admin | `quotas.py:88` | Chunk quota counts orphaned chunks from soft-deleted documents | DEFER (Wave 3) |
 | M7 | admin | `quotas.py:44-104` | Quota check is TOCTOU (soft limit only, document as known limitation) | WONTFIX |
 | M8 | admin | `rls.py:80-93` | `set_rls_namespace` silently no-ops on wrong session type | FIXED |
-| M9 | index | `pgvector.py:438-460` | `namespace_stats` chunk count includes soft-deleted doc chunks | DEFER |
+| M9 | index | `pgvector.py:438-460` | `namespace_stats` chunk count includes soft-deleted doc chunks | DEFER (Wave 3) |
 | M10 | index | `qdrant.py:83-110` | `ensure_collection` TOCTOU on startup (catch "already exists") | DEFER (infra-phase2, Wave 5) |
-| M11 | index | `fastembed_bm25.py:26-47` | Global sparse model singleton not thread-safe (needs Lock) | DEFER |
+| M11 | index | `fastembed_bm25.py:26-47` | Global sparse model singleton not thread-safe (needs Lock) | DEFER (Wave 5) |
 | M12 | index | `reindex.py:71-182` | Reindex runs in BackgroundTasks, not arq (lost on restart) | WONTFIX |
-| M13 | index | `reindex.py:206-222` | No duplicate reindex job guard for same namespace | DEFER |
-| M14 | ingest | `api.py:307-318` | Batch ingest commits per-file; mid-loop failure orphans jobs | DEFER |
-| M15 | ingest | `chunking.py:76-83` | FixedSizeChunking discards element type metadata | DEFER |
+| M13 | index | `reindex.py:206-222` | No duplicate reindex job guard for same namespace | DEFER (Wave 5) |
+| M14 | ingest | `api.py:307-318` | Batch ingest commits per-file; mid-loop failure orphans jobs | DEFER (Wave 5) |
+| M15 | ingest | `chunking.py:76-83` | FixedSizeChunking discards element type metadata | DEFER (Wave 2) |
 | M16 | ingest | `chunking.py:202-203` | DualStrategyChunking: stale first_metadata across segments | FIXED |
-| M17 | ingest | `pipeline.py:502-504` | Wrong deletion_reason on cleanup ("user_request" for pipeline failure) | DEFER |
-| M18 | shared | `main.py:52-57` | PII redactor only runs at WARNING+ (INFO/DEBUG leaks PII) | DEFER |
+| M17 | ingest | `pipeline.py:502-504` | Wrong deletion_reason on cleanup ("user_request" for pipeline failure) | DEFER (Wave 2) |
+| M18 | shared | `main.py:52-57` | PII redactor only runs at WARNING+ (INFO/DEBUG leaks PII) | DEFER (Wave 5) |
 | M19 | migrations | `0004` | `reindex_jobs` has no RLS policy despite namespace_id column | DEFER |
-| M20 | admin | `middleware.py:91-136` | Audit middleware action is always NULL | DEFER |
+| M20 | admin | `middleware.py:91-136` | Audit middleware action is always NULL | DEFER (Wave 2) |
 
 ## LOW - Minor issues
 
@@ -71,7 +71,7 @@ Inline comments posted directly on diff lines. Comment ID links to the thread.
 | CR3 | Major | `reindex.py:146` | Reindex loop is stub (doesn't re-embed) | 2874743864 | 3878766241 | WONTFIX (by design) |
 | CR4 | Major | `ingest/api.py:623` | `zip(chunks, embeddings)` truncates silently on length mismatch | 2874743885 | 3878766241 | FIXED |
 | CR5 | Major | `index/api.py:62` | Sparse vector `indices`/`values` length not validated | 2874773746 | 3878803063 | FIXED |
-| CR6 | Major | `jobs.py:231` | Cleanup SELECT-then-DELETE pattern (memory, not correctness) | 2874743911 | 3878766241 | DEFER |
+| CR6 | Major | `jobs.py:231` | Cleanup SELECT-then-DELETE pattern (memory, not correctness) | 2874743911 | 3878766241 | DEFER (Wave 5) |
 | CR7 | Major | `test_unstructured.py:39` | Module-level sys.modules patch leaks across tests | 2874743944 | 3878766241 | DEFER |
 | CR8 | Minor | `quotas.py:28` | No guard against negative quota deltas | 2874773736 | 3878803063 | FIXED |
 | CR9 | Minor | `conversation.py:64` | `max_turns` accepts 0/negative values | 2874773745 | 3878803063 | FIXED |
@@ -107,7 +107,7 @@ Inline comments posted directly on diff lines. Comment ID links to the thread.
 
 | # | Severity | File:Line | Issue | Comment ID | Review ID | Status |
 |---|----------|-----------|-------|------------|-----------|--------|
-| CR37 | Minor | `keystore.py` | Inclusive expiry check at runtime | 2878329959 | 3882649738 | DEFER |
+| CR37 | Minor | `keystore.py` | Inclusive expiry check at runtime | 2878329959 | 3882649738 | DEFER (Wave 5) |
 | CR38 | Major | `qdrant.py:95` | Qdrant schema validation on startup | 2878329967 | 3882649738 | DEFER (Wave 5) |
 | CR39 | Critical | `reindex.py:230` | Enforce namespace binding on reindex job creation | 2878518595 | 3882867623 | FIXED (f089f04) |
 | CR40 | Minor | `middleware.py:99` | Use `rls_namespace` as JSON metadata key | 2879238157 | 3883675871 | WONTFIX (by design) |
@@ -119,13 +119,13 @@ Inline comments posted directly on diff lines. Comment ID links to the thread.
 | CR46 | Major | `pipeline.py:68` | `IngestResult.version` wrong for `exists`/`alias` | 2879566069 | 3884038356 | FALSE POSITIVE |
 | CR47 | Minor | `pipeline.py:211` | Step 2 comment no longer matches runtime | 2879566077 | 3884038356 | FIXED (51433e5) |
 | CR48 | Critical | `pipeline.py:259` | Expand rollback/error handling post-supersede | 2879566085 | 3884038356 | DEFER (Wave 2) |
-| CR49 | Major | `admin/api.py:96` | Bootstrap validation gap | 2880530743 | 3885099127 | DEFER |
+| CR49 | Major | `admin/api.py:96` | Bootstrap validation gap | 2880530743 | 3885099127 | DEFER (Wave 5) |
 | CR50 | Major | `jobs.py:207` | Negative `retention_days` creates future cutoff | 2880530752 | 3885099127 | FIXED |
 | CR51 | Major | `pipeline.py:308` | Map commit-time TOCTOU to IngestConflictError | 2880530755 | 3885099127 | DEFER (Wave 2) |
 | CR52 | Major | `pipeline.py` | Best-effort event delivery not fully honored | 2880530756 | 3885099127 | WONTFIX (ARCH-038) |
 | CR53 | Minor | `test_versioning.py:489` | Ruff format check failing | 2880530758 | 3885099127 | FIXED |
 | CR54 | Major | `pipeline.py` | Broader exception handling for event emission | 2880658376 | 3885237193 | FIXED (dba8b87) |
-| CR55 | Major | `admin/api.py:168` | Deep-health doesn't set `request.state.key_id` | 2883881771 | 3889528234 | DEFER |
+| CR55 | Major | `admin/api.py:168` | Deep-health doesn't set `request.state.key_id` | 2883881771 | 3889528234 | DEFER (Wave 2) |
 | CR56 | Minor | `ingest/api.py:197` | Audit `status_code` mismatch (422 vs actual) | 2883881781 | 3889528234 | FALSE POSITIVE |
 | CR57 | Minor | `unstructured.py:197` | Run formatter before merge | 2883881785 | 3889528234 | FIXED (9a0cbac) |
 | CR58 | Major | `index/api.py:341` | `stats()` not namespace-scoped (cross-tenant reads) | 2884559008 | 3890237157 | FIXED (d64537f) |
@@ -137,11 +137,11 @@ Items embedded in review body text (no individual comment ID, only review ID).
 
 | # | Severity | File:Line | Issue | Review ID | Status |
 |---|----------|-----------|-------|-----------|--------|
-| OD1 | Minor | `pipeline.py:289-294` | Unsupported-type error text stale after Markdown support | 3878766241 | DEFER |
-| OD2 | Major | `pgvector.py:100-130` | `raw_filters` accepted but never applied (silent drop) | 3878766241 | DEFER (Phase 2 escape hatch, ARCH-051) |
+| OD1 | Minor | `pipeline.py:289-294` | Unsupported-type error text stale after Markdown support | 3878766241 | DEFER (Wave 2) |
+| OD2 | Major | `pgvector.py:100-130` | `raw_filters` accepted but never applied (silent drop) | 3878766241 | DEFER (Wave 5, ARCH-051) |
 | OD3 | Major | `admin/api.py:296-302` | Normalize `expires_at` to prevent naive datetime crash | 3878766241 | FIXED (= CR45, 51433e5) |
 | OD4 | Major | `core/api.py:211-217` | Namespace not bound to authenticated key | 3878766241 | FIXED (= M2+M3+H5) |
-| OD5 | Major | `pgvector.py:346-350` | Enforce namespace equality in source document JOIN | 3878966774 | DEFER |
+| OD5 | Major | `pgvector.py:346-350` | Enforce namespace equality in source document JOIN | 3878966774 | DEFER (Wave 5) |
 | OD6 | Minor | `jobs.py:19-264` | CI blocker: jobs.py needs formatting | 3882649738 | FIXED (ruff format passes) |
 | OD7 | Major | `keystore.py:95-111` | `add_key()` missing `rate_limit_rpm` propagation | 3882649738 | FALSE POSITIVE (already present) |
 
@@ -212,32 +212,14 @@ Very low-priority style and test suggestions from review body sections.
 
 ## Deferred items: target wave mapping
 
-Items deferred to specific future waves for pickup:
+All DEFER items now have a wave assignment or are explicitly marked opportunistic/Phase 3.
 
-| Item | Target | Description |
-|------|--------|-------------|
-| CR2, M10, CR28, CR38, CR41, CR42, CR44 | infra-phase2 (Wave 5) | ASGI middleware, Qdrant TOCTOU/schema, reindex rewrite |
-| CR48, CR51 | core-pipeline-v2 (Wave 2) | Pipeline rollback, IntegrityError mapping |
-| M19 | database migration (Wave 5) | RLS policy for reindex_jobs table |
-
-Items deferred without a specific wave (address opportunistically or in Phase 3):
-
-| Item | Description |
-|------|-------------|
-| M1 | turn_count monotonic after pruning |
-| M4 | clear() hard-deletes (GDPR retention) |
-| M6, M9 | Quota/stats counting soft-deleted documents |
-| M11, NP13 | fastembed singleton thread-safety (Lock) |
-| M13 | Duplicate reindex job guard |
-| M14 | Batch ingest per-file commits |
-| M15 | FixedSizeChunking element type metadata |
-| M17 | Wrong deletion_reason on cleanup |
-| M18 | PII redactor log level filter |
-| M20 | Audit middleware action NULL |
-| CR6, CR7 | Cleanup pattern, test isolation |
-| OD1, OD2, OD5 | Stale error text, raw_filters, pgvector JOIN namespace |
-| L1-L9, L11-L13 | Low-priority improvements |
-| MN1-MN8, NP1-NP22 | Test improvements and nitpicks |
+| Target | Items | Description |
+|--------|-------|-------------|
+| Wave 2 (core-pipeline-v2 + admin-ui) | CR48, CR51, M15, M17, M20, CR55, OD1 | Pipeline rollback, IntegrityError, chunking metadata, deletion_reason, audit action, deep-health key_id, error text |
+| Wave 3 (component-analytics) | M6, M9 | Quota/stats counting soft-deleted documents |
+| Wave 5 (infra-phase2) | CR2, M10/CR28, CR38, CR41, CR42, CR44, M19, M1, M11/NP13, M13, M14, M18, CR6, CR37, CR49, OD2, OD5 | ASGI middleware, Qdrant TOCTOU/schema, reindex, RLS, turn_count, thread-safety, batch atomicity, PII redactor, cleanup pattern, auth hardening, raw_filters, JOIN namespace |
+| Opportunistic / Phase 3 | CR7, CR43, CR59, L1-L9, L11-L13, MN1-MN8, NP1-NP22 | Test isolation, test assertions, parent chunk UUID, LOW improvements, test/style nitpicks |
 
 ## Patterns (non-blocking, for awareness)
 
@@ -249,7 +231,7 @@ Items deferred without a specific wave (address opportunistically or in Phase 3)
 
 - **Total findings**: 7H + 20M + 13L + 59CR + 7OD + 9MN + 13DUP + 22NP = 150
 - **Fixed**: 7H + 6M + 1L + 33CR + 2OD = 49
-- **WONTFIX**: 2M + 8CR + 1MN = 11
+- **WONTFIX**: 3M + 8CR + 1MN = 12
 - **FALSE POSITIVE**: 3CR + 1OD = 4
-- **DEFER**: 12M + 12L + 15CR + 5OD + 8MN + 21NP = 73
+- **DEFER (all wave-assigned)**: 11M + 12L + 15CR + 5OD + 8MN + 21NP = 72
 - **DUP** (no action): 13

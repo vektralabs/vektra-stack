@@ -84,6 +84,7 @@ class PresidioPIISafeguard:
             log.info("presidio_engines_loaded", spacy_model=model_name)
             return True
         except (Exception, SystemExit) as exc:
+            # SystemExit: spaCy calls sys.exit(1) when model download fails
             log.warning("presidio_engines_failed", error=str(exc))
             return False
 

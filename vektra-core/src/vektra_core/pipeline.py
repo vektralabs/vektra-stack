@@ -483,7 +483,7 @@ class SimpleQueryPipeline:
             duration_ms=total_ms,
             llm_model=llm_model,
             chunks_retrieved=len(filtered),
-            # No query text or response text (REQ-051)
+            pipeline="simple",
         )
 
         return QueryResponse(
@@ -762,6 +762,7 @@ class SimpleQueryPipeline:
             "query_stream_complete",
             response_id=str(response_id),
             duration_ms=trace.total_duration_ms,
+            pipeline="simple",
         )
         yield QueryChunk(type="trace", data=_trace_to_dict(trace))
         yield QueryChunk(type="done", data="")

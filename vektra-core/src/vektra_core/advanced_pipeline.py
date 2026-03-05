@@ -1,37 +1,41 @@
-"""SimpleQueryPipeline: RAG query pipeline (ADR-0014, ARCH-036, ARCH-056).
+"""AdvancedQueryPipeline: Phase 2 RAG pipeline with query rewriting, hybrid search, and reranking.
 
-Pipeline steps:
-  embed_query       → EmbeddingProvider.embed_query()
-  vector_search     → VectorStoreProvider.search()
-  retrieval_filter  → score threshold + overlap deduplication (ARCH-056)
-  build_prompt      → token budget allocation + Jinja2 template rendering (ARCH-055)
-  llm_call          → LitellmProvider.complete() with graceful degradation (ARCH-043)
-  safeguard         → SafeguardHook.pre_response()
-
-QueryTrace is emitted via structlog after each execute() call (ARCH-041).
-QueryTrace never contains query text or response text (REQ-051 / ADR-0017).
+10-step pipeline (ARCH-036, ARCH-061, ADR-0014, ADR-0023):
+  0. query_rewrite       - LLM call to resolve pronouns/references (skip if no history)
+  1. embed_query         - EmbeddingProvider.embed_query(rewritten_query)
+  2. sparse_embed        - SparseEmbeddingProvider.embed_query() (skip if not registered)
+  3. vector_search       - HYBRID if sparse available, else DENSE
+  4. rerank              - cross-encoder reranking (skip if not configured)
+  5. retrieval_filter    - score threshold + overlap dedup (ARCH-056)
+  6. post_retrieval      - SafeguardHook.post_retrieval() (DEBT-003)
+  7. build_prompt        - token budget + Jinja2 rendering (ARCH-055)
+  8. llm_call            - LLM with graceful degradation (ARCH-043)
+  9. pre_response        - SafeguardHook.pre_response() (ARCH-049)
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-import litellm
 import structlog
 
 from vektra_core.budget import allocate_token_budget
 from vektra_core.conversation import ConversationStore
+from vektra_core.pipeline import _apply_retrieval_filter, _elapsed_ms
+from vektra_core.reranker import RerankerService
 from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.protocols import (
     EmbeddingProvider,
     LLMProvider,
     SafeguardHook,
+    SparseEmbeddingProvider,
     VectorStoreProvider,
 )
 from vektra_shared.types import (
@@ -43,6 +47,7 @@ from vektra_shared.types import (
     QueryResponse,
     QueryTrace,
     SafeguardContext,
+    SearchMode,
     SearchResult,
     SourceRef,
     StepTrace,
@@ -51,67 +56,13 @@ from vektra_shared.types import (
 log = structlog.get_logger(__name__)
 
 _DEFAULT_CONTEXT_WINDOW = 4096
+_REWRITE_TOP_K = 20  # Fetch more candidates for reranking
 
 
-def _elapsed_ms(since: float) -> int:
-    return int((time.monotonic() - since) * 1000)
+class AdvancedQueryPipeline:
+    """Phase 2 QueryPipeline with query rewriting, hybrid search, and reranking.
 
-
-# ---------------------------------------------------------------------------
-# Retrieval filter (ARCH-056)
-# ---------------------------------------------------------------------------
-
-
-def _token_overlap_ratio(text_a: str, text_b: str) -> float:
-    """Compute Jaccard-style token overlap: intersection / min(size_a, size_b)."""
-    tokens_a = set(text_a.lower().split())
-    tokens_b = set(text_b.lower().split())
-    if not tokens_a or not tokens_b:
-        return 0.0
-    return len(tokens_a & tokens_b) / min(len(tokens_a), len(tokens_b))
-
-
-def _apply_retrieval_filter(
-    results: list[SearchResult],
-    min_score: float,
-    dedup_enabled: bool,
-) -> list[SearchResult]:
-    """Filter by relevance score and remove near-duplicate chunks (ARCH-056).
-
-    Step 1: Remove chunks below min_score.
-    Step 2: If dedup_enabled, remove chunks with >80% token overlap with any
-            already-selected chunk (keeping higher-scoring ones by processing
-            in score-descending order).
-    """
-    filtered = [r for r in results if r.score >= min_score]
-
-    if not dedup_enabled:
-        return filtered
-
-    # Process by score descending; keep first occurrence of near-duplicates
-    kept: list[SearchResult] = []
-    for candidate in sorted(filtered, key=lambda r: r.score, reverse=True):
-        is_dup = any(
-            _token_overlap_ratio(candidate.text_snippet, sel.text_snippet) > 0.8
-            for sel in kept
-        )
-        if not is_dup:
-            kept.append(candidate)
-
-    # Restore stable order (by original position in results)
-    order = {r.chunk_id: i for i, r in enumerate(results)}
-    return sorted(kept, key=lambda r: order.get(r.chunk_id, 0))
-
-
-# ---------------------------------------------------------------------------
-# SimpleQueryPipeline
-# ---------------------------------------------------------------------------
-
-
-class SimpleQueryPipeline:
-    """Implements QueryPipeline Protocol (Phase 1).
-
-    All dependencies are injected at construction time by infra-app-entrypoint.
+    Implements QueryPipeline Protocol. All dependencies injected at construction.
     """
 
     def __init__(
@@ -125,6 +76,8 @@ class SimpleQueryPipeline:
         conversation_store: ConversationStore,
         renderer: TemplateRenderer,
         pipeline_config: QueryPipelineConfig,
+        sparse_embedding: SparseEmbeddingProvider | None = None,
+        reranker: RerankerService | None = None,
     ) -> None:
         self._embedding = embedding
         self._vector_store = vector_store
@@ -134,6 +87,11 @@ class SimpleQueryPipeline:
         self._conversation_store = conversation_store
         self._renderer = renderer
         self._config = pipeline_config
+        self._sparse_embedding = sparse_embedding
+        self._reranker = reranker
+        self._rewrite_enabled = pipeline_config.rewrite.enabled
+
+    # -- Helpers (same as SimpleQueryPipeline) --
 
     def _count_tokens(self, text: str) -> int:
         try:
@@ -143,6 +101,8 @@ class SimpleQueryPipeline:
 
     def _context_window(self) -> int:
         try:
+            import litellm
+
             return (
                 litellm.get_max_tokens(self._llm_config.provider)
                 or _DEFAULT_CONTEXT_WINDOW
@@ -154,14 +114,9 @@ class SimpleQueryPipeline:
         self,
         messages: list[Message],
     ) -> tuple[str | None, str]:
-        """Try primary LLM, then fallback model, then context-only.
-
-        Returns (answer_text | None, model_used).
-        None answer means context-only response (REQ-059, ARCH-043).
-        """
+        """Try primary LLM, then fallback model, then context-only (ARCH-043)."""
         timeout_s = self._llm_config.fallback_timeout_ms / 1000.0
 
-        # Primary model
         try:
             result = await asyncio.wait_for(
                 self._llm.complete(messages, model=self._llm_config.provider),
@@ -175,7 +130,6 @@ class SimpleQueryPipeline:
                 error=str(exc),
             )
 
-        # Fallback model
         if self._llm_config.fallback_model:
             try:
                 result = await asyncio.wait_for(
@@ -190,42 +144,165 @@ class SimpleQueryPipeline:
                     error=str(exc),
                 )
 
-        # Context-only: return chunks without LLM synthesis
         log.info("llm_context_only", model=self._llm_config.provider)
         return None, self._llm_config.provider
 
-    async def execute(
+    # -- Step 0: Query rewriting (ARCH-061) --
+
+    async def _rewrite_query(
+        self,
+        question: str,
+        history: list[dict[str, str | None]],
+    ) -> tuple[str, StepTrace]:
+        """Rewrite query using LLM to resolve pronouns and references."""
+        t0 = time.monotonic()
+
+        if not self._rewrite_enabled or not history:
+            return question, StepTrace(
+                name="query_rewrite",
+                duration_ms=_elapsed_ms(t0),
+                metadata={"rewritten": False, "history_turns_used": 0},
+            )
+
+        try:
+            rewrite_tmpl = self._renderer._env.get_template("rewrite.j2")
+            prompt_text = rewrite_tmpl.render(history=history, question=question)
+
+            rewrite_model = self._config.rewrite.model or self._llm_config.provider
+            timeout_s = self._llm_config.fallback_timeout_ms / 1000.0
+            result = await asyncio.wait_for(
+                self._llm.complete(
+                    [Message(role="user", content=prompt_text)],
+                    model=rewrite_model,
+                    temperature=0.0,
+                ),
+                timeout=timeout_s,
+            )
+
+            rewritten = result.content.strip()
+            if not rewritten:
+                rewritten = question
+
+            original_hash = hashlib.sha256(question.encode()).hexdigest()[:8]
+            return rewritten, StepTrace(
+                name="query_rewrite",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "original_query_hash": original_hash,
+                    "rewritten": True,
+                    "history_turns_used": len(history),
+                },
+            )
+        except Exception as exc:
+            log.warning("query_rewrite_failed", error=str(exc))
+            return question, StepTrace(
+                name="query_rewrite",
+                duration_ms=_elapsed_ms(t0),
+                metadata={"rewritten": False, "error": str(exc)},
+            )
+
+    # -- Pre-LLM steps shared between execute() and execute_stream() --
+
+    async def _run_pre_llm_steps(
         self,
         query: QueryRequest,
-    ) -> tuple[QueryResponse, QueryTrace]:
-        """Execute the full RAG pipeline, returning response + trace."""
-        t_total = time.monotonic()
-        response_id = uuid4()
+    ) -> tuple[
+        list[StepTrace],
+        list[SearchResult],
+        bool,
+        str,
+        list[dict[str, str | None]],
+    ]:
+        """Run steps 0-6 (rewrite through post_retrieval safeguard).
+
+        Returns (steps, filtered_results, no_relevant_context, effective_query, history).
+        """
         steps: list[StepTrace] = []
 
-        # Step 1: Embed query
+        # Get conversation history (needed for rewrite and prompt)
+        history: list[dict[str, str | None]] = []
+        if query.conversation_id is not None:
+            history = await self._conversation_store.get_history(query.conversation_id)
+
+        # Step 0: Query rewrite
+        effective_query, rewrite_step = await self._rewrite_query(
+            query.question, history
+        )
+        steps.append(rewrite_step)
+
+        # Step 1: Embed query (dense)
         t0 = time.monotonic()
-        dense = await self._embedding.embed_query(query.question)
+        dense = await self._embedding.embed_query(effective_query)
         steps.append(StepTrace(name="embed_query", duration_ms=_elapsed_ms(t0)))
 
-        # Step 2: Vector search
+        # Step 2: Sparse embed (optional)
+        sparse = None
+        if self._sparse_embedding is not None:
+            t0 = time.monotonic()
+            try:
+                sparse = await self._sparse_embedding.embed_query(effective_query)
+                steps.append(
+                    StepTrace(name="sparse_embed", duration_ms=_elapsed_ms(t0))
+                )
+            except Exception as exc:
+                log.warning("sparse_embed_failed", error=str(exc))
+                steps.append(
+                    StepTrace(
+                        name="sparse_embed",
+                        duration_ms=_elapsed_ms(t0),
+                        metadata={"skipped": True, "error": str(exc)},
+                    )
+                )
+
+        # Step 3: Vector search
         t0 = time.monotonic()
+        search_mode = SearchMode.HYBRID if sparse is not None else SearchMode.DENSE
+        # Fetch more candidates for reranking
+        fetch_k = _REWRITE_TOP_K if self._reranker else query.top_k
         results = await self._vector_store.search(
             namespace=query.namespace,
-            query_embedding=QueryEmbedding(dense=dense),
-            top_k=query.top_k,
-            search_mode=query.search_mode,
+            query_embedding=QueryEmbedding(dense=dense, sparse=sparse),
+            top_k=fetch_k,
+            search_mode=search_mode,
             filters=query.filters,
         )
         steps.append(
             StepTrace(
                 name="vector_search",
                 duration_ms=_elapsed_ms(t0),
-                metadata={"retrieved": len(results)},
+                metadata={
+                    "retrieved": len(results),
+                    "search_mode": search_mode.value,
+                },
             )
         )
 
-        # Step 3: Retrieval filter
+        # Step 4: Rerank (optional)
+        if self._reranker and results:
+            t0 = time.monotonic()
+            try:
+                results = await self._reranker.rerank(
+                    effective_query, results, top_k=query.top_k
+                )
+                steps.append(
+                    StepTrace(
+                        name="rerank",
+                        duration_ms=_elapsed_ms(t0),
+                        metadata={"after_rerank": len(results)},
+                    )
+                )
+            except Exception as exc:
+                log.warning("rerank_failed", error=str(exc))
+                results = results[: query.top_k]
+                steps.append(
+                    StepTrace(
+                        name="rerank",
+                        duration_ms=_elapsed_ms(t0),
+                        metadata={"skipped": True, "error": str(exc)},
+                    )
+                )
+
+        # Step 5: Retrieval filter (ARCH-056)
         t0 = time.monotonic()
         filtered = _apply_retrieval_filter(
             results,
@@ -245,26 +322,26 @@ class SimpleQueryPipeline:
             )
         )
 
-        # Post-retrieval safeguard (DEBT-003)
+        # Step 6: Post-retrieval safeguard (DEBT-003)
         if filtered:
             t0 = time.monotonic()
-            sg_ctx_post = SafeguardContext(
+            sg_ctx = SafeguardContext(
                 namespace=query.namespace,
                 conversation_id=query.conversation_id,
             )
             try:
-                sg_post = await self._safeguard.post_retrieval(
-                    query.question, filtered, sg_ctx_post
+                sg_result = await self._safeguard.post_retrieval(
+                    effective_query, filtered, sg_ctx
                 )
-                if sg_post.filtered_ids:
-                    excluded = set(sg_post.filtered_ids)
+                if sg_result.filtered_ids:
+                    excluded = set(sg_result.filtered_ids)
                     filtered = [r for r in filtered if r.chunk_id not in excluded]
                 steps.append(
                     StepTrace(
                         name="post_retrieval_safeguard",
                         duration_ms=_elapsed_ms(t0),
                         metadata={
-                            "filtered_out": len(sg_post.filtered_ids or []),
+                            "filtered_out": len(sg_result.filtered_ids or []),
                             "remaining": len(filtered),
                         },
                     )
@@ -279,55 +356,23 @@ class SimpleQueryPipeline:
                     )
                 )
 
-        # Sources from filtered results (each gets a unique citation_id)
-        sources = [
-            SourceRef(
-                doc_id=r.document_id,
-                chunk_id=r.chunk_id,
-                score=r.score,
-                snippet=r.text_snippet,
-                citation_id=uuid4(),
-                document_version=r.document_version,
-            )
-            for r in filtered
-        ]
+        return steps, filtered, no_relevant_context, effective_query, history
 
-        # No relevant context → skip LLM, return early
-        if no_relevant_context:
-            trace = QueryTrace(
-                response_id=response_id,
-                steps=steps,
-                total_duration_ms=_elapsed_ms(t_total),
-                chunks_retrieved=[],
-                llm_model=self._llm_config.provider,
-                prompt_version=self._renderer.prompt_version,
-                created_at=datetime.now(UTC),
-            )
-            log.info(
-                "query_no_relevant_context",
-                response_id=str(response_id),
-                namespace=query.namespace,
-            )
-            return QueryResponse(
-                response_id=response_id,
-                answer=None,
-                sources=[],
-                conversation_id=query.conversation_id,
-                no_relevant_context=True,
-            ), trace
-
-        # Step 4: Build prompt
+    def _build_prompt(
+        self,
+        query: QueryRequest,
+        filtered: list[SearchResult],
+        history: list[dict[str, str | None]],
+    ) -> tuple[
+        list[Message], list[SearchResult], list[dict[str, str | None]], StepTrace
+    ]:
+        """Build the LLM prompt with token budget allocation (ARCH-055)."""
         t0 = time.monotonic()
-        history: list[dict[str, Any]] = []
-        if query.conversation_id is not None:
-            history = await self._conversation_store.get_history(query.conversation_id)
 
-        # Token budget allocation
         system_text = self._renderer.render_system(namespace=query.namespace)
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
-        # DEBT-004: sort by score descending so budget allocator selects
-        # highest-scoring chunks first, regardless of provider ordering
+
         filtered = sorted(filtered, key=lambda r: r.score, reverse=True)
         chunk_inputs = [(r.score, self._count_tokens(r.text_snippet)) for r in filtered]
         history_tokens = [
@@ -365,19 +410,79 @@ class SimpleQueryPipeline:
             )
         )
 
-        steps.append(
-            StepTrace(
-                name="build_prompt",
-                duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "prompt_version": self._renderer.prompt_version,
-                    "chunks_in_prompt": len(selected_chunks),
-                    "history_turns_in_prompt": len(selected_history),
-                },
-            )
+        step = StepTrace(
+            name="build_prompt",
+            duration_ms=_elapsed_ms(t0),
+            metadata={
+                "prompt_version": self._renderer.prompt_version,
+                "chunks_in_prompt": len(selected_chunks),
+                "history_turns_in_prompt": len(selected_history),
+            },
         )
+        return messages, selected_chunks, selected_history, step
 
-        # Step 5: LLM call with graceful degradation
+    # -- execute() --
+
+    async def execute(
+        self,
+        query: QueryRequest,
+    ) -> tuple[QueryResponse, QueryTrace]:
+        """Execute the full 10-step advanced RAG pipeline."""
+        t_total = time.monotonic()
+        response_id = uuid4()
+
+        # Steps 0-6
+        (
+            steps,
+            filtered,
+            no_relevant_context,
+            _effective_query,
+            history,
+        ) = await self._run_pre_llm_steps(query)
+
+        sources = [
+            SourceRef(
+                doc_id=r.document_id,
+                chunk_id=r.chunk_id,
+                score=r.score,
+                snippet=r.text_snippet,
+                citation_id=uuid4(),
+                document_version=r.document_version,
+            )
+            for r in filtered
+        ]
+
+        # No relevant context -> skip LLM
+        if no_relevant_context or not filtered:
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            log.info(
+                "query_no_relevant_context",
+                response_id=str(response_id),
+                namespace=query.namespace,
+            )
+            return QueryResponse(
+                response_id=response_id,
+                answer=None,
+                sources=[],
+                conversation_id=query.conversation_id,
+                no_relevant_context=True,
+            ), trace
+
+        # Step 7: Build prompt
+        messages, _selected_chunks, _, prompt_step = self._build_prompt(
+            query, filtered, history
+        )
+        steps.append(prompt_step)
+
+        # Step 8: LLM call with graceful degradation
         t0 = time.monotonic()
         answer, llm_model = await self._call_llm_with_fallback(messages)
         steps.append(
@@ -388,7 +493,7 @@ class SimpleQueryPipeline:
             )
         )
 
-        # Step 6: Safeguard pre_response
+        # Step 9: Pre-response safeguard (ARCH-049)
         t0 = time.monotonic()
         sg_ctx = SafeguardContext(
             namespace=query.namespace,
@@ -432,7 +537,7 @@ class SimpleQueryPipeline:
             duration_ms=total_ms,
             llm_model=llm_model,
             chunks_retrieved=len(filtered),
-            # No query text or response text (REQ-051)
+            pipeline="advanced",
         )
 
         return QueryResponse(
@@ -444,62 +549,35 @@ class SimpleQueryPipeline:
             no_relevant_context=no_relevant_context,
         ), trace
 
-    async def execute_stream(self, query: QueryRequest) -> AsyncIterator[QueryChunk]:
+    # -- execute_stream() --
+
+    async def execute_stream(
+        self,
+        query: QueryRequest,
+    ) -> AsyncIterator[QueryChunk]:
         """Return an async iterator that yields QueryChunk events for SSE streaming."""
         return self._stream(query)
 
-    async def _stream(self, query: QueryRequest) -> AsyncGenerator[QueryChunk, None]:
+    async def _stream(
+        self,
+        query: QueryRequest,
+    ) -> AsyncGenerator[QueryChunk, None]:
         """Async generator for streaming response (SSE) with trace emission (DEBT-002)."""
-        from vektra_core.advanced_pipeline import _trace_to_dict
-
         t_total = time.monotonic()
         response_id = uuid4()
-        steps: list[StepTrace] = []
 
-        # Step 1: Embed query
-        t0 = time.monotonic()
-        dense = await self._embedding.embed_query(query.question)
-        steps.append(StepTrace(name="embed_query", duration_ms=_elapsed_ms(t0)))
-
-        # Step 2: Vector search
-        t0 = time.monotonic()
-        results = await self._vector_store.search(
-            namespace=query.namespace,
-            query_embedding=QueryEmbedding(dense=dense),
-            top_k=query.top_k,
-            search_mode=query.search_mode,
-            filters=query.filters,
-        )
-        steps.append(
-            StepTrace(
-                name="vector_search",
-                duration_ms=_elapsed_ms(t0),
-                metadata={"retrieved": len(results)},
-            )
-        )
-
-        # Step 3: Retrieval filter
-        t0 = time.monotonic()
-        filtered = _apply_retrieval_filter(
-            results,
-            min_score=self._config.min_relevance_score,
-            dedup_enabled=self._config.chunk_dedup_enabled,
-        )
-        no_relevant_context = len(results) > 0 and len(filtered) == 0
-        steps.append(
-            StepTrace(
-                name="retrieval_filter",
-                duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "before": len(results),
-                    "after": len(filtered),
-                    "no_relevant_context": no_relevant_context,
-                },
-            )
-        )
+        # Steps 0-6
+        (
+            steps,
+            filtered,
+            no_relevant_context,
+            _effective_query,
+            history,
+        ) = await self._run_pre_llm_steps(query)
 
         if no_relevant_context or not filtered:
             yield QueryChunk(type="sources", data=[])
+            # Emit trace before done (DEBT-002)
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -513,101 +591,16 @@ class SimpleQueryPipeline:
             yield QueryChunk(type="done", data="")
             return
 
-        # Post-retrieval safeguard (DEBT-003)
-        t0 = time.monotonic()
-        sg_ctx = SafeguardContext(
-            namespace=query.namespace,
-            conversation_id=query.conversation_id,
+        # Step 7: Build prompt
+        messages, _selected_chunks, _, prompt_step = self._build_prompt(
+            query, filtered, history
         )
-        try:
-            sg_result = await self._safeguard.post_retrieval(
-                query.question, filtered, sg_ctx
-            )
-            if sg_result.filtered_ids:
-                excluded = set(sg_result.filtered_ids)
-                filtered = [r for r in filtered if r.chunk_id not in excluded]
-            steps.append(
-                StepTrace(
-                    name="post_retrieval_safeguard",
-                    duration_ms=_elapsed_ms(t0),
-                    metadata={
-                        "filtered_out": len(sg_result.filtered_ids or []),
-                        "remaining": len(filtered),
-                    },
-                )
-            )
-        except Exception as exc:
-            log.error("post_retrieval_safeguard_failed", error=str(exc))
-            steps.append(
-                StepTrace(
-                    name="post_retrieval_safeguard",
-                    duration_ms=_elapsed_ms(t0),
-                    metadata={"skipped": True, "error": str(exc)},
-                )
-            )
+        steps.append(prompt_step)
 
-        # Step 4: Build prompt (with token budget allocation, ARCH-055)
-        t0 = time.monotonic()
-        history: list[dict[str, Any]] = []
-        if query.conversation_id is not None:
-            history = await self._conversation_store.get_history(query.conversation_id)
-
-        system_text = self._renderer.render_system(namespace=query.namespace)
-        system_tokens = self._count_tokens(system_text)
-        question_tokens = self._count_tokens(query.question)
-        # DEBT-004: sort by score descending so budget allocator selects
-        # highest-scoring chunks first, regardless of provider ordering
-        filtered = sorted(filtered, key=lambda r: r.score, reverse=True)
-        chunk_inputs = [(r.score, self._count_tokens(r.text_snippet)) for r in filtered]
-        history_tokens = [
-            self._count_tokens((t["question"] or "") + " " + (t["answer"] or ""))
-            for t in history
-        ]
-
-        selected_chunk_idx, selected_history_idx = allocate_token_budget(
-            context_window=self._context_window(),
-            system_tokens=system_tokens,
-            question_tokens=question_tokens,
-            chunks=chunk_inputs,
-            history_turns=history_tokens,
-            reserve=self._config.response_token_reserve,
-            chunk_ratio=self._config.context_chunk_ratio,
-        )
-
-        selected_chunks = [filtered[i] for i in selected_chunk_idx]
-        selected_history = [history[i] for i in selected_history_idx]
-
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
-        )
-        conv_text = self._renderer.render_conversation(selected_history)
-
-        messages: list[Message] = [Message(role="system", content=system_text)]
-        if conv_text.strip():
-            messages.append(
-                Message(role="user", content=f"Previous conversation:\n{conv_text}")
-            )
-        messages.append(
-            Message(
-                role="user",
-                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
-            )
-        )
-        steps.append(
-            StepTrace(
-                name="build_prompt",
-                duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "prompt_version": self._renderer.prompt_version,
-                    "chunks_in_prompt": len(selected_chunks),
-                    "history_turns_in_prompt": len(selected_history),
-                },
-            )
-        )
-
-        # Step 5: Stream LLM tokens
+        # Step 8: Stream LLM tokens
         t0 = time.monotonic()
         full_answer_parts: list[str] = []
+        llm_model = self._llm_config.provider
         try:
             token_stream = await self._llm.stream(
                 messages, model=self._llm_config.provider
@@ -620,7 +613,7 @@ class SimpleQueryPipeline:
                 StepTrace(
                     name="llm_stream",
                     duration_ms=_elapsed_ms(t0),
-                    metadata={"model": self._llm_config.provider},
+                    metadata={"model": llm_model},
                 )
             )
         except Exception as exc:
@@ -633,6 +626,7 @@ class SimpleQueryPipeline:
                 )
             )
             yield QueryChunk(type="error", data="LLM unavailable")
+            # Still emit trace on error
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -640,7 +634,7 @@ class SimpleQueryPipeline:
                 chunks_retrieved=[
                     ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
                 ],
-                llm_model=self._llm_config.provider,
+                llm_model=llm_model,
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
@@ -649,8 +643,12 @@ class SimpleQueryPipeline:
 
         full_answer = "".join(full_answer_parts) or None
 
-        # Step 6: Safeguard pre_response (post-stream, on accumulated answer)
+        # Step 9: Pre-response safeguard
         t0 = time.monotonic()
+        sg_ctx = SafeguardContext(
+            namespace=query.namespace,
+            conversation_id=query.conversation_id,
+        )
         sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
         if not sg_result.allowed:
             log.warning("stream_safeguard_blocked", namespace=query.namespace)
@@ -691,7 +689,7 @@ class SimpleQueryPipeline:
             chunks_retrieved=[
                 ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
             ],
-            llm_model=self._llm_config.provider,
+            llm_model=llm_model,
             prompt_version=self._renderer.prompt_version,
             created_at=datetime.now(UTC),
         )
@@ -699,6 +697,29 @@ class SimpleQueryPipeline:
             "query_stream_complete",
             response_id=str(response_id),
             duration_ms=trace.total_duration_ms,
+            pipeline="advanced",
         )
         yield QueryChunk(type="trace", data=_trace_to_dict(trace))
         yield QueryChunk(type="done", data="")
+
+
+def _trace_to_dict(trace: QueryTrace) -> dict[str, Any]:
+    """Serialize QueryTrace to a JSON-safe dict for SSE emission."""
+    return {
+        "response_id": str(trace.response_id),
+        "steps": [
+            {
+                "name": s.name,
+                "duration_ms": s.duration_ms,
+                "metadata": s.metadata,
+            }
+            for s in trace.steps
+        ],
+        "total_duration_ms": trace.total_duration_ms,
+        "chunks_retrieved": [
+            {"chunk_id": c.chunk_id, "score": c.score} for c in trace.chunks_retrieved
+        ],
+        "llm_model": trace.llm_model,
+        "prompt_version": trace.prompt_version,
+        "created_at": trace.created_at.isoformat(),
+    }

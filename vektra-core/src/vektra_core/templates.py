@@ -26,6 +26,7 @@ log = structlog.get_logger(__name__)
 
 _BUILTIN_DIR = Path(__file__).parent / "templates"
 _TEMPLATE_NAMES = ("system", "context", "conversation")
+_OPTIONAL_TEMPLATES = ("rewrite",)
 
 
 class TemplateRenderer:
@@ -57,6 +58,16 @@ class TemplateRenderer:
             content = path.read_text(encoding="utf-8")
             self._per_version[name] = hashlib.sha256(content.encode()).hexdigest()[:8]
             combined_content += content
+
+        # Include optional templates (rewrite.j2) in hash if they exist (ARCH-048)
+        for name in _OPTIONAL_TEMPLATES:
+            path = search_dir / f"{name}.j2"
+            if path.exists():
+                content = path.read_text(encoding="utf-8")
+                self._per_version[name] = hashlib.sha256(content.encode()).hexdigest()[
+                    :8
+                ]
+                combined_content += content
 
         self._prompt_version = hashlib.sha256(combined_content.encode()).hexdigest()[:8]
         log.info(

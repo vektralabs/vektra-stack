@@ -33,6 +33,7 @@ out/
 # Python
 .venv/
 __pycache__/
+.flashrank_cache/
 *.pyc
 *.pyo
 *.pyd

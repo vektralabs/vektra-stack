@@ -88,6 +88,7 @@ def _make_pipeline(
         safeguard = AsyncMock()
         safeguard.pre_response = AsyncMock(return_value=SafeguardResult(allowed=True))
         safeguard.pre_query = AsyncMock(return_value=SafeguardResult(allowed=True))
+        safeguard.post_retrieval = AsyncMock(return_value=SafeguardResult(allowed=True))
 
     return SimpleQueryPipeline(
         embedding=embedding,
@@ -175,9 +176,12 @@ async def test_execute_returns_response_and_trace():
     assert response.answer == "The answer."
     assert len(response.sources) == 1
     assert trace.response_id == response.response_id
-    assert len(trace.steps) == 6  # embed, search, filter, build_prompt, llm, safeguard
+    assert (
+        len(trace.steps) == 7
+    )  # embed, search, filter, post_retrieval, build_prompt, llm, safeguard
     step_names = [s.name for s in trace.steps]
     assert "embed_query" in step_names
+    assert "post_retrieval_safeguard" in step_names
     assert "llm_call" in step_names
     assert "safeguard" in step_names
 

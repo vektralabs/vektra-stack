@@ -1,7 +1,7 @@
 # Implementation Plan: vektra-core - AdvancedQueryPipeline, safeguards, streaming trace
 
 **ID**: 20260301-core-pipeline-v2
-**Status**: pending
+**Status**: in_progress
 **Branch**: N/A
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
@@ -141,25 +141,25 @@ Step 9: safeguard.pre_response - PII anonymization on LLM output (ARCH-049)
 
 ## Tasks
 
-- [ ] Create `vektra_core/safeguards/` package: `__init__.py` with factory function `create_safeguard(mode: str) -> SafeguardHook` that returns PassthroughSafeguard for "passthrough" and PresidioPIISafeguard for "presidio"; move PassthroughSafeguard import from vektra_shared (already there, no code move needed - just re-export through factory)
-- [ ] Implement `vektra_core/safeguards/presidio.py`: PresidioPIISafeguard class implementing SafeguardHook Protocol; lazy-load `presidio_analyzer.AnalyzerEngine` and `presidio_anonymizer.AnonymizerEngine` on first call; `pre_query()` returns allowed=True (pass-through); `post_retrieval()` scans each chunk's text_snippet for PII entities, returns filtered_ids for chunks with entity count above VEKTRA_PII_CHUNK_THRESHOLD (default 3); `pre_response()` runs anonymizer on answer text, sets modified_content with anonymized output, records entity types in annotations dict
-- [ ] Add `presidio-analyzer>=2.2` and `presidio-anonymizer>=2.2` to vektra-core/pyproject.toml dependencies; add `rerankers>=0.5` to dependencies
-- [ ] Create `rewrite.j2` template in `vektra_core/templates/`: follow the template from ADR-0023; variables: `history` (list of turn dicts), `question` (string); output: single rewritten question
-- [ ] Implement `vektra_core/reranker.py`: thin wrapper around `rerankers.Reranker`; `RerankerService.__init__(model_name: str)` loads cross-encoder model; `async rerank(query: str, results: list[SearchResult], top_k: int) -> list[SearchResult]` runs reranking in asyncio.to_thread() (CPU-bound inference), returns top_k results sorted by reranker score; handle import errors and model load failures by returning None from factory
-- [ ] Implement `vektra_core/advanced_pipeline.py` as AdvancedQueryPipeline implementing QueryPipeline Protocol:
+- [x] Create `vektra_core/safeguards/` package: `__init__.py` with factory function `create_safeguard(mode: str) -> SafeguardHook` that returns PassthroughSafeguard for "passthrough" and PresidioPIISafeguard for "presidio"; move PassthroughSafeguard import from vektra_shared (already there, no code move needed - just re-export through factory)
+- [x] Implement `vektra_core/safeguards/presidio.py`: PresidioPIISafeguard class implementing SafeguardHook Protocol; lazy-load `presidio_analyzer.AnalyzerEngine` and `presidio_anonymizer.AnonymizerEngine` on first call; `pre_query()` returns allowed=True (pass-through); `post_retrieval()` scans each chunk's text_snippet for PII entities, returns filtered_ids for chunks with entity count above VEKTRA_PII_CHUNK_THRESHOLD (default 3); `pre_response()` runs anonymizer on answer text, sets modified_content with anonymized output, records entity types in annotations dict
+- [x] Add `presidio-analyzer>=2.2` and `presidio-anonymizer>=2.2` to vektra-core/pyproject.toml dependencies; add `rerankers>=0.5` to dependencies
+- [x] Create `rewrite.j2` template in `vektra_core/templates/`: follow the template from ADR-0023; variables: `history` (list of turn dicts), `question` (string); output: single rewritten question
+- [x] Implement `vektra_core/reranker.py`: thin wrapper around `rerankers.Reranker`; `RerankerService.__init__(model_name: str)` loads cross-encoder model; `async rerank(query: str, results: list[SearchResult], top_k: int) -> list[SearchResult]` runs reranking in asyncio.to_thread() (CPU-bound inference), returns top_k results sorted by reranker score; handle import errors and model load failures by returning None from factory
+- [x] Implement `vektra_core/advanced_pipeline.py` as AdvancedQueryPipeline implementing QueryPipeline Protocol:
   - Constructor: same dependencies as SimpleQueryPipeline plus optional SparseEmbeddingProvider, optional RerankerService, rewrite_enabled flag
   - `execute(query)`: run the 10-step sequence (query_rewrite -> embed -> sparse_embed -> search -> rerank -> retrieval_filter -> post_retrieval safeguard -> build_prompt -> llm_call -> pre_response safeguard); collect StepTrace for each step; return (QueryResponse, QueryTrace)
   - Reuse `_apply_retrieval_filter()`, `allocate_token_budget()`, `_call_llm_with_fallback()` from existing pipeline module (import, do not copy)
   - Handle all skip conditions and graceful degradation per the matrix above
-- [ ] Implement `execute_stream()` in AdvancedQueryPipeline: same pre-LLM steps as execute(); stream LLM tokens via SSE; collect StepTrace entries during generator lifecycle; after stream completes (or on error), assemble QueryTrace and yield as `QueryChunk(type="trace", data=trace_dict)` before yielding "done" event (DEBT-002)
-- [ ] Backport streaming trace to SimpleQueryPipeline._stream(): add StepTrace collection for each step (embed, search, filter, build_prompt, llm_stream); emit QueryTrace via structlog after stream completes; yield QueryChunk(type="trace") before "done" (DEBT-002)
-- [ ] Add post_retrieval safeguard call to SimpleQueryPipeline.execute() and _stream(): after retrieval_filter and before build_prompt, call `safeguard.post_retrieval(query_ref, filtered_results, sg_ctx)`; remove chunks whose IDs appear in SafeguardResult.filtered_ids; add StepTrace entry (DEBT-003)
-- [ ] Update TemplateRenderer to include rewrite.j2 in prompt_version hash when the template exists: make _TEMPLATE_NAMES configurable or check for optional templates; rewrite.j2 is optional (only loaded by AdvancedQueryPipeline)
-- [ ] Update `vektra_core/api.py` _sse_generator to handle new QueryChunk type="trace": serialize trace data as JSON SSE event
-- [ ] Add VEKTRA_QUERY_PIPELINE, VEKTRA_QUERY_REWRITE_ENABLED, VEKTRA_RERANKER_MODEL, VEKTRA_SAFEGUARD_MODE, VEKTRA_PII_CHUNK_THRESHOLD to config classes in vektra_shared (QueryPipelineConfig or new AdvancedPipelineConfig)
-- [ ] Write unit tests for AdvancedQueryPipeline: query rewriting with mock LLM (verify rewritten query used for embedding), reranking with mock cross-encoder, hybrid search mode selection, post_retrieval safeguard filtering, graceful degradation for each failure path (6 scenarios from matrix), streaming trace emission
-- [ ] Write unit tests for PresidioPIISafeguard: post_retrieval filters chunks with PII above threshold, pre_response anonymizes PII entities, annotations record entity types, graceful fallback when Presidio model unavailable
-- [ ] Write integration tests: full advanced pipeline query with mock providers, streaming with trace event, pipeline selection via VEKTRA_QUERY_PIPELINE env var, SimpleQueryPipeline post_retrieval boundary (DEBT-003 regression test)
+- [x] Implement `execute_stream()` in AdvancedQueryPipeline: same pre-LLM steps as execute(); stream LLM tokens via SSE; collect StepTrace entries during generator lifecycle; after stream completes (or on error), assemble QueryTrace and yield as `QueryChunk(type="trace", data=trace_dict)` before yielding "done" event (DEBT-002)
+- [x] Backport streaming trace to SimpleQueryPipeline._stream(): add StepTrace collection for each step (embed, search, filter, build_prompt, llm_stream); emit QueryTrace via structlog after stream completes; yield QueryChunk(type="trace") before "done" (DEBT-002)
+- [x] Add post_retrieval safeguard call to SimpleQueryPipeline.execute() and _stream(): after retrieval_filter and before build_prompt, call `safeguard.post_retrieval(query_ref, filtered_results, sg_ctx)`; remove chunks whose IDs appear in SafeguardResult.filtered_ids; add StepTrace entry (DEBT-003)
+- [x] Update TemplateRenderer to include rewrite.j2 in prompt_version hash when the template exists: make _TEMPLATE_NAMES configurable or check for optional templates; rewrite.j2 is optional (only loaded by AdvancedQueryPipeline)
+- [x] Update `vektra_core/api.py` _sse_generator to handle new QueryChunk type="trace": serialize trace data as JSON SSE event (already handled - "trace" is in the sources/error/trace branch)
+- [x] Add VEKTRA_QUERY_PIPELINE, VEKTRA_QUERY_REWRITE_ENABLED, VEKTRA_RERANKER_MODEL, VEKTRA_SAFEGUARD_MODE, VEKTRA_PII_CHUNK_THRESHOLD to config classes in vektra_shared (most already existed; added pii_chunk_threshold to SecurityConfig + VektraSettings)
+- [x] Write unit tests for AdvancedQueryPipeline: query rewriting with mock LLM (verify rewritten query used for embedding), reranking with mock cross-encoder, hybrid search mode selection, post_retrieval safeguard filtering, graceful degradation for each failure path (6 scenarios from matrix), streaming trace emission
+- [x] Write unit tests for PresidioPIISafeguard: post_retrieval filters chunks with PII above threshold, pre_response anonymizes PII entities, annotations record entity types, graceful fallback when Presidio model unavailable
+- [x] Write integration tests: full advanced pipeline query with mock providers, streaming with trace event, pipeline selection via VEKTRA_QUERY_PIPELINE env var, SimpleQueryPipeline post_retrieval boundary (DEBT-003 regression test)
 
 ## Acceptance Criteria
 
@@ -189,4 +189,17 @@ component-analytics (Wave 3) will consume QueryTrace from both structlog output 
 
 ## Notes
 
-<!-- Progress notes during implementation -->
+All 15 tasks completed in a single session. Summary:
+
+- `vektra_core/safeguards/__init__.py`: factory with passthrough/presidio selection
+- `vektra_core/safeguards/presidio.py`: PresidioPIISafeguard with lazy engine loading, spaCy model auto-detection (en_core_web_lg -> en_core_web_sm fallback), SystemExit handling for spaCy download failures
+- `vektra_core/reranker.py`: RerankerService wrapping `rerankers` library with flashrank as default provider
+- `vektra_core/advanced_pipeline.py`: 10-step pipeline with query rewriting, hybrid search, reranking, post_retrieval safeguard, streaming trace
+- `vektra_core/templates/rewrite.j2`: conversational query rewriting template per ADR-0023
+- `vektra_core/pipeline.py`: backported streaming trace (DEBT-002) + post_retrieval safeguard (DEBT-003)
+- `vektra_core/templates.py`: optional template (rewrite.j2) included in prompt_version hash
+- `vektra_shared/config.py`: added `pii_chunk_threshold` to SecurityConfig + VektraSettings
+- `vektra-core/pyproject.toml`: added presidio-analyzer, presidio-anonymizer, rerankers[flashrank]
+- 27 new tests (test_advanced_pipeline.py + test_safeguards.py), 230 total passing
+
+Remaining for vektra-app/main.py: update `_step_5_register_providers` to use `create_safeguard()` and optionally instantiate `AdvancedQueryPipeline` based on `VEKTRA_QUERY_PIPELINE` config. This is the entrypoint wiring that should be done when admin-ui plan is also ready, or as a follow-up task.

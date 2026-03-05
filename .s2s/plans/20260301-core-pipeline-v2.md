@@ -1,7 +1,7 @@
 # Implementation Plan: vektra-core - AdvancedQueryPipeline, safeguards, streaming trace
 
 **ID**: 20260301-core-pipeline-v2
-**Status**: in_progress
+**Status**: completed
 **Branch**: N/A
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
@@ -163,17 +163,17 @@ Step 9: safeguard.pre_response - PII anonymization on LLM output (ARCH-049)
 
 ## Acceptance Criteria
 
-- [ ] `VEKTRA_QUERY_PIPELINE=advanced` activates AdvancedQueryPipeline; `simple` retains Phase 1 behavior
-- [ ] Query rewriting resolves pronouns in multi-turn conversations: rewritten query used for embedding (verifiable via StepTrace metadata)
-- [ ] Reranking narrows vector search results from top-20 to top-K using cross-encoder scores
-- [ ] Hybrid search mode used when SparseEmbeddingProvider is registered; falls back to DENSE when not available
-- [ ] post_retrieval safeguard called in both execute() and execute_stream() for both pipeline implementations (DEBT-003)
-- [ ] PresidioPIISafeguard anonymizes PII in LLM responses via modified_content (REQ-044)
-- [ ] Streaming queries emit QueryTrace via structlog and as SSE event before "done" (DEBT-002)
-- [ ] QueryTrace contains no query text or response text (REQ-051)
-- [ ] Each new pipeline step has a graceful degradation path: failure in any step does not cause a 5xx error
-- [ ] SimpleQueryPipeline unchanged in behavior when VEKTRA_QUERY_PIPELINE=simple (no regression)
-- [ ] prompt_version includes rewrite.j2 hash when AdvancedQueryPipeline is active (ARCH-048)
+- [x] `VEKTRA_QUERY_PIPELINE=advanced` activates AdvancedQueryPipeline; `simple` retains Phase 1 behavior
+- [x] Query rewriting resolves pronouns in multi-turn conversations: rewritten query used for embedding (verifiable via StepTrace metadata)
+- [x] Reranking narrows vector search results from top-20 to top-K using cross-encoder scores
+- [x] Hybrid search mode used when SparseEmbeddingProvider is registered; falls back to DENSE when not available
+- [x] post_retrieval safeguard called in both execute() and execute_stream() for both pipeline implementations (DEBT-003)
+- [x] PresidioPIISafeguard anonymizes PII in LLM responses via modified_content (REQ-044)
+- [x] Streaming queries emit QueryTrace via structlog and as SSE event before "done" (DEBT-002)
+- [x] QueryTrace contains no query text or response text (REQ-051)
+- [x] Each new pipeline step has a graceful degradation path: failure in any step does not cause a 5xx error
+- [x] SimpleQueryPipeline unchanged in behavior when VEKTRA_QUERY_PIPELINE=simple (no regression)
+- [x] prompt_version includes rewrite.j2 hash when AdvancedQueryPipeline is active (ARCH-048)
 
 ## Testing Approach
 

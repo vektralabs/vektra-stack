@@ -10,7 +10,7 @@ Rules:
 
 Conversation history:
 {% for turn in history %}User: {{ turn.question }}
-Assistant: {{ turn.answer }}
+Assistant: {{ turn.answer | default('', true) }}
 {% endfor %}
 
 New question: {{ question }}

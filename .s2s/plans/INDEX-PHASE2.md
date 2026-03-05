@@ -109,7 +109,7 @@ Before generating Phase 2 plans:
 
 | # | Plan | Title | Tasks | Status |
 |---|------|-------|-------|--------|
-| 7 | [core-pipeline-v2](20260301-core-pipeline-v2.md) | Advanced pipeline, safeguards, streaming trace | 15 | in_progress |
+| 7 | [core-pipeline-v2](20260301-core-pipeline-v2.md) | Advanced pipeline, safeguards, streaming trace | 15 | completed |
 | 8 | [admin-ui](20260301-admin-ui.md) | HTMX + Jinja2 admin dashboard | 12 | pending |
 
 ---

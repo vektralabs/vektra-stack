@@ -74,8 +74,7 @@ def test_create_reranker_handles_import_error():
     config = RerankConfig.model_validate({"VEKTRA_RERANK_ENABLED": True})
     with patch.dict("sys.modules", {"rerankers": None}):
         result = create_reranker(config)
-    # Either returns a service (if rerankers is installed) or None (import fails)
-    assert result is None or isinstance(result, RerankerService)
+    assert result is None
 
 
 # ---------------------------------------------------------------------------

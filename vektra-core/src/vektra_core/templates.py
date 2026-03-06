@@ -78,7 +78,7 @@ class TemplateRenderer:
 
     @property
     def prompt_version(self) -> str:
-        """Combined SHA-256[:8] of all three template sources (ARCH-048)."""
+        """Combined SHA-256[:8] of required and optional template sources (ARCH-048)."""
         return self._prompt_version
 
     def render_system(self, namespace: str = "default") -> str:

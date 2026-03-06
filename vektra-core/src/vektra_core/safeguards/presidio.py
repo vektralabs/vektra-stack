@@ -168,7 +168,7 @@ class PresidioPIISafeguard:
                 analyzer_results=analyzer_results,  # type: ignore[arg-type]
             )
 
-            entity_types = list({r.entity_type for r in analyzer_results})
+            entity_types = sorted({r.entity_type for r in analyzer_results})
             log.info(
                 "presidio_pre_response_anonymized",
                 entity_count=len(analyzer_results),

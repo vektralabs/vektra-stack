@@ -105,9 +105,9 @@ async def test_post_retrieval_filters_high_pii_chunks(safeguard, ctx):
     result = await safeguard.post_retrieval("test", results, ctx)
 
     assert result.allowed is True
-    if result.filtered_ids:
-        assert pii_heavy.chunk_id in result.filtered_ids
-        assert clean.chunk_id not in result.filtered_ids
+    assert result.filtered_ids is not None
+    assert pii_heavy.chunk_id in result.filtered_ids
+    assert clean.chunk_id not in result.filtered_ids
 
 
 @requires_presidio

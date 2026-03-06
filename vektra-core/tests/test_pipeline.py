@@ -12,6 +12,7 @@ from vektra_core.pipeline import (
 from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.types import (
+    CompletionChunk,
     CompletionResponse,
     QueryRequest,
     SafeguardResult,
@@ -382,3 +383,85 @@ async def test_execute_post_retrieval_blocked():
     sg_steps = [s for s in trace.steps if s.name == "post_retrieval_safeguard"]
     assert len(sg_steps) == 1
     assert sg_steps[0].metadata.get("allowed") is False
+
+
+# ---------------------------------------------------------------------------
+# Streaming tests (_stream / execute_stream)
+# ---------------------------------------------------------------------------
+
+
+async def _collect_stream(pipeline, query):
+    """Helper: collect all chunks from execute_stream into a list."""
+    stream = await pipeline.execute_stream(query)
+    return [chunk async for chunk in stream]
+
+
+async def test_stream_happy_path():
+    """Stream yields token, sources, trace, done events."""
+    results = [_make_search_result(0.8, "relevant context about RAG")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+
+    async def _mock_stream_gen():
+        for text in ["Hello", " world"]:
+            yield CompletionChunk(content=text)
+
+    llm.stream = AsyncMock(return_value=_mock_stream_gen())
+
+    pipeline = _make_pipeline(vector_store=vector_store, llm=llm)
+    query = QueryRequest(question="What is RAG?")
+    chunks = await _collect_stream(pipeline, query)
+
+    types = [c.type for c in chunks]
+    assert "token" in types
+    assert "sources" in types
+    assert "trace" in types
+    assert types[-1] == "done"
+
+    token_chunks = [c for c in chunks if c.type == "token"]
+    assert "".join(c.data for c in token_chunks) == "Hello world"
+
+
+async def test_stream_no_relevant_context():
+    """Stream with all chunks below threshold yields empty sources + trace + done."""
+    results = [_make_search_result(0.1, "low score")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(**{"VEKTRA_MIN_RELEVANCE_SCORE": 0.5}),
+    )
+    query = QueryRequest(question="Something")
+    chunks = await _collect_stream(pipeline, query)
+
+    types = [c.type for c in chunks]
+    assert types == ["sources", "trace", "done"]
+    assert chunks[0].data == []
+
+
+async def test_stream_llm_error_yields_error_and_done():
+    """When LLM stream fails, yield error + trace + done."""
+    results = [_make_search_result(0.9, "good context")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+
+    async def _failing_stream():
+        raise ConnectionError("LLM down")
+        yield  # noqa: unreachable - make it an async generator
+
+    llm.stream = AsyncMock(return_value=_failing_stream())
+
+    pipeline = _make_pipeline(vector_store=vector_store, llm=llm)
+    query = QueryRequest(question="Test")
+    chunks = await _collect_stream(pipeline, query)
+
+    types = [c.type for c in chunks]
+    assert "error" in types
+    assert types[-1] == "done"

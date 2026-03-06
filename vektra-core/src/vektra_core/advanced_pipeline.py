@@ -221,7 +221,7 @@ class AdvancedQueryPipeline:
         t0 = time.monotonic()
         search_mode = SearchMode.HYBRID if sparse is not None else SearchMode.DENSE
         # Fetch more candidates for reranking
-        fetch_k = _REWRITE_TOP_K if self._reranker else query.top_k
+        fetch_k = max(query.top_k, _REWRITE_TOP_K) if self._reranker else query.top_k
         results = await self._vector_store.search(
             namespace=query.namespace,
             query_embedding=QueryEmbedding(dense=dense, sparse=sparse),
@@ -297,7 +297,9 @@ class AdvancedQueryPipeline:
                 sg_result = await self._safeguard.post_retrieval(
                     query_hash, filtered, sg_ctx
                 )
-                if sg_result.filtered_ids:
+                if not sg_result.allowed:
+                    filtered = []
+                elif sg_result.filtered_ids:
                     excluded = set(sg_result.filtered_ids)
                     filtered = [r for r in filtered if r.chunk_id not in excluded]
                 steps.append(
@@ -305,6 +307,7 @@ class AdvancedQueryPipeline:
                         name="post_retrieval_safeguard",
                         duration_ms=_elapsed_ms(t0),
                         metadata={
+                            "allowed": sg_result.allowed,
                             "filtered_out": len(sg_result.filtered_ids or []),
                             "remaining": len(filtered),
                         },
@@ -613,6 +616,7 @@ class AdvancedQueryPipeline:
                 created_at=datetime.now(UTC),
             )
             yield QueryChunk(type="trace", data=_trace_to_dict(trace))
+            yield QueryChunk(type="done", data="")
             return
 
         full_answer = "".join(full_answer_parts) or None

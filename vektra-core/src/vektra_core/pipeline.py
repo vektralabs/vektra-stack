@@ -286,6 +286,7 @@ class SimpleQueryPipeline:
         )
 
         # Post-retrieval safeguard (DEBT-003)
+        safeguard_blocked = False
         if filtered:
             t0 = time.monotonic()
             sg_ctx_post = SafeguardContext(
@@ -297,7 +298,10 @@ class SimpleQueryPipeline:
                 sg_post = await self._safeguard.post_retrieval(
                     query_hash, filtered, sg_ctx_post
                 )
-                if sg_post.filtered_ids:
+                if not sg_post.allowed:
+                    filtered = []
+                    safeguard_blocked = True
+                elif sg_post.filtered_ids:
                     excluded = set(sg_post.filtered_ids)
                     filtered = [r for r in filtered if r.chunk_id not in excluded]
                 steps.append(
@@ -305,6 +309,7 @@ class SimpleQueryPipeline:
                         name="post_retrieval_safeguard",
                         duration_ms=_elapsed_ms(t0),
                         metadata={
+                            "allowed": sg_post.allowed,
                             "filtered_out": len(sg_post.filtered_ids or []),
                             "remaining": len(filtered),
                         },
@@ -333,8 +338,8 @@ class SimpleQueryPipeline:
             for r in filtered
         ]
 
-        # No relevant context → skip LLM, return early
-        if no_relevant_context:
+        # No relevant context or safeguard blocked → skip LLM, return early
+        if no_relevant_context or safeguard_blocked:
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -564,6 +569,7 @@ class SimpleQueryPipeline:
             return
 
         # Post-retrieval safeguard (DEBT-003)
+        safeguard_blocked = False
         t0 = time.monotonic()
         sg_ctx = SafeguardContext(
             namespace=query.namespace,
@@ -574,7 +580,10 @@ class SimpleQueryPipeline:
             sg_result = await self._safeguard.post_retrieval(
                 query_hash, filtered, sg_ctx
             )
-            if sg_result.filtered_ids:
+            if not sg_result.allowed:
+                filtered = []
+                safeguard_blocked = True
+            elif sg_result.filtered_ids:
                 excluded = set(sg_result.filtered_ids)
                 filtered = [r for r in filtered if r.chunk_id not in excluded]
             steps.append(
@@ -582,6 +591,7 @@ class SimpleQueryPipeline:
                     name="post_retrieval_safeguard",
                     duration_ms=_elapsed_ms(t0),
                     metadata={
+                        "allowed": sg_result.allowed,
                         "filtered_out": len(sg_result.filtered_ids or []),
                         "remaining": len(filtered),
                     },
@@ -596,6 +606,22 @@ class SimpleQueryPipeline:
                     metadata={"skipped": True, "error": str(exc)},
                 )
             )
+
+        # Safeguard blocked all results → early return
+        if safeguard_blocked:
+            yield QueryChunk(type="sources", data=[])
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            yield QueryChunk(type="trace", data=_trace_to_dict(trace))
+            yield QueryChunk(type="done", data="")
+            return
 
         # Step 4: Build prompt (with token budget allocation, ARCH-055)
         t0 = time.monotonic()
@@ -696,6 +722,7 @@ class SimpleQueryPipeline:
                 created_at=datetime.now(UTC),
             )
             yield QueryChunk(type="trace", data=_trace_to_dict(trace))
+            yield QueryChunk(type="done", data="")
             return
 
         full_answer = "".join(full_answer_parts) or None

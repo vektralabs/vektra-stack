@@ -350,3 +350,35 @@ async def test_execute_saves_conversation_turn():
     assert len(history) == 1
     assert history[0]["question"] == "Q1?"
     assert history[0]["answer"] == "The answer."
+
+
+async def test_execute_post_retrieval_blocked():
+    """When post_retrieval returns allowed=False, pipeline clears results and skips LLM."""
+    results = [_make_search_result(0.8, "sensitive context")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    safeguard = AsyncMock()
+    safeguard.pre_query = AsyncMock(return_value=SafeguardResult(allowed=True))
+    safeguard.post_retrieval = AsyncMock(
+        return_value=SafeguardResult(allowed=False, reason="blocked by policy")
+    )
+    safeguard.pre_response = AsyncMock(return_value=SafeguardResult(allowed=True))
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    llm.complete = AsyncMock()
+
+    pipeline = _make_pipeline(vector_store=vector_store, safeguard=safeguard, llm=llm)
+    query = QueryRequest(question="Show me PII")
+    response, trace = await pipeline.execute(query)
+
+    # Pipeline should produce empty-context response (no LLM call)
+    assert response.answer is None
+    assert response.sources == []
+    # LLM not called because filtered is empty after blocked post_retrieval
+    llm.complete.assert_not_awaited()
+    # Trace records allowed=False
+    sg_steps = [s for s in trace.steps if s.name == "post_retrieval_safeguard"]
+    assert len(sg_steps) == 1
+    assert sg_steps[0].metadata.get("allowed") is False

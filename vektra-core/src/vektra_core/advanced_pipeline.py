@@ -183,6 +183,34 @@ class AdvancedQueryPipeline:
         """
         steps: list[StepTrace] = []
 
+        # Step -1: Pre-query safeguard (ARCH-049)
+        t0 = time.monotonic()
+        sg_ctx = SafeguardContext(
+            namespace=query.namespace,
+            conversation_id=query.conversation_id,
+        )
+        try:
+            query_hash = hashlib.sha256(query.question.encode()).hexdigest()[:16]
+            sg_pre = await self._safeguard.pre_query(query_hash, sg_ctx)
+            steps.append(
+                StepTrace(
+                    name="pre_query_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_pre.allowed},
+                )
+            )
+            if not sg_pre.allowed:
+                return steps, [], False, query.question, []
+        except Exception as exc:
+            log.error("pre_query_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="pre_query_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
+
         # Get conversation history (needed for rewrite and prompt)
         history: list[dict[str, str | None]] = []
         if query.conversation_id is not None:
@@ -408,18 +436,6 @@ class AdvancedQueryPipeline:
             history,
         ) = await self._run_pre_llm_steps(query)
 
-        sources = [
-            SourceRef(
-                doc_id=r.document_id,
-                chunk_id=r.chunk_id,
-                score=r.score,
-                snippet=r.text_snippet,
-                citation_id=uuid4(),
-                document_version=r.document_version,
-            )
-            for r in filtered
-        ]
-
         # No relevant context -> skip LLM
         if no_relevant_context or not filtered:
             trace = QueryTrace(
@@ -441,14 +457,28 @@ class AdvancedQueryPipeline:
                 answer=None,
                 sources=[],
                 conversation_id=query.conversation_id,
-                no_relevant_context=True,
+                context_only=not no_relevant_context,
+                no_relevant_context=no_relevant_context,
             ), trace
 
         # Step 7: Build prompt
-        messages, _selected_chunks, _, prompt_step = self._build_prompt(
+        messages, selected_chunks, _, prompt_step = self._build_prompt(
             query, filtered, history
         )
         steps.append(prompt_step)
+
+        # Sources from budget-selected chunks only (not all filtered)
+        sources = [
+            SourceRef(
+                doc_id=r.document_id,
+                chunk_id=r.chunk_id,
+                score=r.score,
+                snippet=r.text_snippet,
+                citation_id=uuid4(),
+                document_version=r.document_version,
+            )
+            for r in selected_chunks
+        ]
 
         # Step 8: LLM call with graceful degradation
         t0 = time.monotonic()
@@ -570,7 +600,7 @@ class AdvancedQueryPipeline:
             return
 
         # Step 7: Build prompt
-        messages, _selected_chunks, _, prompt_step = self._build_prompt(
+        messages, selected_chunks, _, prompt_step = self._build_prompt(
             query, filtered, history
         )
         steps.append(prompt_step)
@@ -658,7 +688,7 @@ class AdvancedQueryPipeline:
                 query.conversation_id, query.question, full_answer
             )
 
-        # Yield sources
+        # Yield sources (only budget-selected chunks, not all filtered)
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -668,7 +698,7 @@ class AdvancedQueryPipeline:
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
             }
-            for r in filtered
+            for r in selected_chunks
         ]
         yield QueryChunk(type="sources", data=sources_data)
 

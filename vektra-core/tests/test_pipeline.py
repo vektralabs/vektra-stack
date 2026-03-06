@@ -178,9 +178,10 @@ async def test_execute_returns_response_and_trace():
     assert len(response.sources) == 1
     assert trace.response_id == response.response_id
     assert (
-        len(trace.steps) == 7
-    )  # embed, search, filter, post_retrieval, build_prompt, llm, safeguard
+        len(trace.steps) == 8
+    )  # pre_query, embed, search, filter, post_retrieval, build_prompt, llm, safeguard
     step_names = [s.name for s in trace.steps]
+    assert "pre_query_safeguard" in step_names
     assert "embed_query" in step_names
     assert "post_retrieval_safeguard" in step_names
     assert "llm_call" in step_names
@@ -464,4 +465,5 @@ async def test_stream_llm_error_yields_error_and_done():
 
     types = [c.type for c in chunks]
     assert "error" in types
+    assert "trace" in types
     assert types[-1] == "done"

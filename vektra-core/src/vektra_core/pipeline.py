@@ -234,6 +234,37 @@ class SimpleQueryPipeline:
     ) -> tuple[str | None, str]:
         return await _call_llm_with_fallback_impl(self._llm, self._llm_config, messages)
 
+    async def _run_pre_query_safeguard(
+        self, query: QueryRequest, steps: list[StepTrace]
+    ) -> bool:
+        """Run pre_query safeguard (ARCH-049). Returns True if blocked."""
+        t0 = time.monotonic()
+        sg_ctx = SafeguardContext(
+            namespace=query.namespace,
+            conversation_id=query.conversation_id,
+        )
+        try:
+            query_hash = hashlib.sha256(query.question.encode()).hexdigest()[:16]
+            sg_pre = await self._safeguard.pre_query(query_hash, sg_ctx)
+            steps.append(
+                StepTrace(
+                    name="pre_query_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_pre.allowed},
+                )
+            )
+            return not sg_pre.allowed
+        except Exception as exc:
+            log.error("pre_query_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="pre_query_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
+            return False
+
     async def execute(
         self,
         query: QueryRequest,
@@ -242,6 +273,24 @@ class SimpleQueryPipeline:
         t_total = time.monotonic()
         response_id = uuid4()
         steps: list[StepTrace] = []
+
+        # Pre-query safeguard (ARCH-049)
+        if await self._run_pre_query_safeguard(query, steps):
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            return QueryResponse(
+                response_id=response_id,
+                answer=None,
+                sources=[],
+                conversation_id=query.conversation_id,
+            ), trace
 
         # Step 1: Embed query
         t0 = time.monotonic()
@@ -325,19 +374,6 @@ class SimpleQueryPipeline:
                     )
                 )
 
-        # Sources from filtered results (each gets a unique citation_id)
-        sources = [
-            SourceRef(
-                doc_id=r.document_id,
-                chunk_id=r.chunk_id,
-                score=r.score,
-                snippet=r.text_snippet,
-                citation_id=uuid4(),
-                document_version=r.document_version,
-            )
-            for r in filtered
-        ]
-
         # No relevant context or safeguard blocked → skip LLM, return early
         if no_relevant_context or safeguard_blocked:
             trace = QueryTrace(
@@ -359,7 +395,8 @@ class SimpleQueryPipeline:
                 answer=None,
                 sources=[],
                 conversation_id=query.conversation_id,
-                no_relevant_context=True,
+                context_only=safeguard_blocked,
+                no_relevant_context=no_relevant_context,
             ), trace
 
         # Step 4: Build prompt
@@ -422,6 +459,19 @@ class SimpleQueryPipeline:
                 },
             )
         )
+
+        # Sources from budget-selected chunks only (not all filtered)
+        sources = [
+            SourceRef(
+                doc_id=r.document_id,
+                chunk_id=r.chunk_id,
+                score=r.score,
+                snippet=r.text_snippet,
+                citation_id=uuid4(),
+                document_version=r.document_version,
+            )
+            for r in selected_chunks
+        ]
 
         # Step 5: LLM call with graceful degradation
         t0 = time.monotonic()
@@ -510,6 +560,22 @@ class SimpleQueryPipeline:
         t_total = time.monotonic()
         response_id = uuid4()
         steps: list[StepTrace] = []
+
+        # Pre-query safeguard (ARCH-049)
+        if await self._run_pre_query_safeguard(query, steps):
+            yield QueryChunk(type="sources", data=[])
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            yield QueryChunk(type="trace", data=_trace_to_dict(trace))
+            yield QueryChunk(type="done", data="")
+            return
 
         # Step 1: Embed query
         t0 = time.monotonic()
@@ -759,7 +825,7 @@ class SimpleQueryPipeline:
                 query.conversation_id, query.question, full_answer
             )
 
-        # Yield sources
+        # Yield sources (only budget-selected chunks)
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -769,7 +835,7 @@ class SimpleQueryPipeline:
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
             }
-            for r in filtered
+            for r in selected_chunks
         ]
         yield QueryChunk(type="sources", data=sources_data)
 

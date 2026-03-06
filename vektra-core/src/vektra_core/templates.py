@@ -81,6 +81,11 @@ class TemplateRenderer:
         """Combined SHA-256[:8] of required and optional template sources (ARCH-048)."""
         return self._prompt_version
 
+    def render_template(self, name: str, **kwargs: Any) -> str:
+        """Render an arbitrary template by filename (e.g. 'rewrite.j2')."""
+        tmpl = self._env.get_template(name)
+        return tmpl.render(**kwargs)
+
     def render_system(self, namespace: str = "default") -> str:
         """Render system.j2 with namespace variable."""
         tmpl = self._env.get_template("system.j2")

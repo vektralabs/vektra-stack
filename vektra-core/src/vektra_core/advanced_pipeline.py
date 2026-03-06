@@ -128,8 +128,9 @@ class AdvancedQueryPipeline:
             )
 
         try:
-            rewrite_tmpl = self._renderer._env.get_template("rewrite.j2")
-            prompt_text = rewrite_tmpl.render(history=history, question=question)
+            prompt_text = self._renderer.render_template(
+                "rewrite.j2", history=history, question=question
+            )
 
             rewrite_model = self._config.rewrite.model or self._llm_config.provider
             timeout_s = self._llm_config.fallback_timeout_ms / 1000.0

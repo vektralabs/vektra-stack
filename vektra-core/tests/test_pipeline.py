@@ -454,7 +454,7 @@ async def test_stream_llm_error_yields_error_and_done():
 
     async def _failing_stream():
         raise ConnectionError("LLM down")
-        yield  # noqa: unreachable - make it an async generator
+        yield  # make it an async generator
 
     llm.stream = AsyncMock(return_value=_failing_stream())
 

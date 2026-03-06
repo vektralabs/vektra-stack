@@ -4,7 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from vektra_core.reranker import RerankerService, _default_model_for_provider, create_reranker
+from vektra_core.reranker import (
+    RerankerService,
+    _default_model_for_provider,
+    create_reranker,
+)
 from vektra_shared.config import RerankConfig
 from vektra_shared.types import SearchResult
 
@@ -30,7 +34,11 @@ async def test_rerank_empty_results():
 
 
 async def test_rerank_returns_top_k_in_order():
-    results = [_make_result(0.5, "doc A"), _make_result(0.3, "doc B"), _make_result(0.9, "doc C")]
+    results = [
+        _make_result(0.5, "doc A"),
+        _make_result(0.3, "doc B"),
+        _make_result(0.9, "doc C"),
+    ]
 
     # Simulate rerankers output: list of items with doc_id attribute
     ranked_items = [
@@ -80,7 +88,10 @@ def test_default_model_flashrank():
 
 
 def test_default_model_cross_encoder():
-    assert _default_model_for_provider("cross-encoder") == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    assert (
+        _default_model_for_provider("cross-encoder")
+        == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
 
 
 def test_default_model_unknown_provider():

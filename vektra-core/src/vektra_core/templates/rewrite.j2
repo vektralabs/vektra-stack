@@ -1,0 +1,18 @@
+Given the following conversation history and a new user question, rewrite the
+question so it is self-contained - a reader with no prior context should fully
+understand what is being asked.
+
+Rules:
+- Replace all pronouns, demonstratives, and references with their concrete antecedents
+- Preserve the original language of the question
+- If the question is already self-contained, return it unchanged
+- Output ONLY the rewritten question, nothing else
+
+Conversation history:
+{% for turn in history %}User: {{ turn.question }}
+Assistant: {{ turn.answer | default('', true) }}
+{% endfor %}
+
+New question: {{ question }}
+
+Rewritten question:

@@ -294,6 +294,12 @@ class SecurityConfig(BaseSettings):
         alias="VEKTRA_SAFEGUARD_MODE",
         description="SafeguardHook implementation: 'passthrough' (Phase 1), 'presidio', 'guardrails-ai' (Phase 2).",
     )
+    pii_chunk_threshold: int = Field(
+        3,
+        ge=1,
+        alias="VEKTRA_PII_CHUNK_THRESHOLD",
+        description="PII entity count threshold per chunk for post_retrieval filtering. Presidio mode only.",
+    )
     env: str = Field(
         "development",
         alias="VEKTRA_ENV",
@@ -450,6 +456,7 @@ class VektraSettings(BaseSettings):
     # Security / auth
     admin_bootstrap_key: str | None = Field(None, alias="VEKTRA_ADMIN_BOOTSTRAP_KEY")
     safeguard_mode: str = Field("passthrough", alias="VEKTRA_SAFEGUARD_MODE")
+    pii_chunk_threshold: int = Field(3, alias="VEKTRA_PII_CHUNK_THRESHOLD")
     env: str = Field("development", alias="VEKTRA_ENV")
     multi_tenant: bool = Field(False, alias="VEKTRA_MULTI_TENANT")
 

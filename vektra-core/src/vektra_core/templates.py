@@ -26,6 +26,7 @@ log = structlog.get_logger(__name__)
 
 _BUILTIN_DIR = Path(__file__).parent / "templates"
 _TEMPLATE_NAMES = ("system", "context", "conversation")
+_OPTIONAL_TEMPLATES = ("rewrite",)
 
 
 class TemplateRenderer:
@@ -58,6 +59,16 @@ class TemplateRenderer:
             self._per_version[name] = hashlib.sha256(content.encode()).hexdigest()[:8]
             combined_content += content
 
+        # Include optional templates (rewrite.j2) in hash if they exist (ARCH-048)
+        for name in _OPTIONAL_TEMPLATES:
+            path = search_dir / f"{name}.j2"
+            if path.exists():
+                content = path.read_text(encoding="utf-8")
+                self._per_version[name] = hashlib.sha256(content.encode()).hexdigest()[
+                    :8
+                ]
+                combined_content += content
+
         self._prompt_version = hashlib.sha256(combined_content.encode()).hexdigest()[:8]
         log.info(
             "templates_loaded",
@@ -67,8 +78,13 @@ class TemplateRenderer:
 
     @property
     def prompt_version(self) -> str:
-        """Combined SHA-256[:8] of all three template sources (ARCH-048)."""
+        """Combined SHA-256[:8] of required and optional template sources (ARCH-048)."""
         return self._prompt_version
+
+    def render_template(self, name: str, **kwargs: Any) -> str:
+        """Render an arbitrary template by filename (e.g. 'rewrite.j2')."""
+        tmpl = self._env.get_template(name)
+        return tmpl.render(**kwargs)
 
     def render_system(self, namespace: str = "default") -> str:
         """Render system.j2 with namespace variable."""

@@ -10,6 +10,9 @@ dependencies = [
     "litellm>=1.40",
     "jinja2>=3.1",
     "structlog>=24.0",
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+    "rerankers[flashrank]>=0.5",
 ]
 
 [build-system]

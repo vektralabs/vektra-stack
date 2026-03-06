@@ -15,6 +15,7 @@ QueryTrace never contains query text or response text (REQ-051 / ADR-0017).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
@@ -104,6 +105,92 @@ def _apply_retrieval_filter(
 
 
 # ---------------------------------------------------------------------------
+# Shared helpers (used by both SimpleQueryPipeline and AdvancedQueryPipeline)
+# ---------------------------------------------------------------------------
+
+
+def _count_tokens_impl(llm: LLMProvider, model: str, text: str) -> int:
+    """Count tokens using the LLM provider, with char/4 fallback."""
+    try:
+        return llm.count_tokens(text, model)
+    except Exception:
+        return max(1, len(text) // 4)
+
+
+def _context_window_impl(model: str) -> int:
+    """Get context window size from litellm, with default fallback."""
+    try:
+        return litellm.get_max_tokens(model) or _DEFAULT_CONTEXT_WINDOW
+    except Exception:
+        return _DEFAULT_CONTEXT_WINDOW
+
+
+async def _call_llm_with_fallback_impl(
+    llm: LLMProvider,
+    llm_config: LLMConfig,
+    messages: list[Message],
+) -> tuple[str | None, str]:
+    """Try primary LLM, then fallback model, then context-only (ARCH-043).
+
+    Returns (answer_text | None, model_used).
+    None answer means context-only response (REQ-059).
+    """
+    timeout_s = llm_config.fallback_timeout_ms / 1000.0
+
+    try:
+        result = await asyncio.wait_for(
+            llm.complete(messages, model=llm_config.provider),
+            timeout=timeout_s,
+        )
+        return result.content, result.model
+    except Exception as exc:
+        log.warning(
+            "llm_primary_failed",
+            model=llm_config.provider,
+            error=str(exc),
+        )
+
+    if llm_config.fallback_model:
+        try:
+            result = await asyncio.wait_for(
+                llm.complete(messages, model=llm_config.fallback_model),
+                timeout=timeout_s,
+            )
+            return result.content, result.model
+        except Exception as exc:
+            log.warning(
+                "llm_fallback_failed",
+                model=llm_config.fallback_model,
+                error=str(exc),
+            )
+
+    log.info("llm_context_only", model=llm_config.provider)
+    return None, llm_config.provider
+
+
+def _trace_to_dict(trace: QueryTrace) -> dict[str, Any]:
+    """Serialize QueryTrace to a JSON-safe dict for SSE emission."""
+    return {
+        "response_id": str(trace.response_id),
+        "steps": [
+            {
+                "name": s.name,
+                "duration_ms": s.duration_ms,
+                "metadata": s.metadata,
+            }
+            for s in trace.steps
+        ],
+        "total_duration_ms": trace.total_duration_ms,
+        "chunks_retrieved": [
+            {"chunk_id": c.chunk_id, "score": c.score} for c in trace.chunks_retrieved
+        ],
+        "llm_model": trace.llm_model,
+        "prompt_version": trace.prompt_version,
+        "created_at": trace.created_at.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # SimpleQueryPipeline
 # ---------------------------------------------------------------------------
 
@@ -136,63 +223,47 @@ class SimpleQueryPipeline:
         self._config = pipeline_config
 
     def _count_tokens(self, text: str) -> int:
-        try:
-            return self._llm.count_tokens(text, self._llm_config.provider)
-        except Exception:
-            return max(1, len(text) // 4)
+        return _count_tokens_impl(self._llm, self._llm_config.provider, text)
 
     def _context_window(self) -> int:
-        try:
-            return (
-                litellm.get_max_tokens(self._llm_config.provider)
-                or _DEFAULT_CONTEXT_WINDOW
-            )
-        except Exception:
-            return _DEFAULT_CONTEXT_WINDOW
+        return _context_window_impl(self._llm_config.provider)
 
     async def _call_llm_with_fallback(
         self,
         messages: list[Message],
     ) -> tuple[str | None, str]:
-        """Try primary LLM, then fallback model, then context-only.
+        return await _call_llm_with_fallback_impl(self._llm, self._llm_config, messages)
 
-        Returns (answer_text | None, model_used).
-        None answer means context-only response (REQ-059, ARCH-043).
-        """
-        timeout_s = self._llm_config.fallback_timeout_ms / 1000.0
-
-        # Primary model
+    async def _run_pre_query_safeguard(
+        self, query: QueryRequest, steps: list[StepTrace]
+    ) -> bool:
+        """Run pre_query safeguard (ARCH-049). Returns True if blocked."""
+        t0 = time.monotonic()
+        sg_ctx = SafeguardContext(
+            namespace=query.namespace,
+            conversation_id=query.conversation_id,
+        )
         try:
-            result = await asyncio.wait_for(
-                self._llm.complete(messages, model=self._llm_config.provider),
-                timeout=timeout_s,
+            query_hash = hashlib.sha256(query.question.encode()).hexdigest()[:16]
+            sg_pre = await self._safeguard.pre_query(query_hash, sg_ctx)
+            steps.append(
+                StepTrace(
+                    name="pre_query_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_pre.allowed},
+                )
             )
-            return result.content, result.model
+            return not sg_pre.allowed
         except Exception as exc:
-            log.warning(
-                "llm_primary_failed",
-                model=self._llm_config.provider,
-                error=str(exc),
+            log.error("pre_query_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="pre_query_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
             )
-
-        # Fallback model
-        if self._llm_config.fallback_model:
-            try:
-                result = await asyncio.wait_for(
-                    self._llm.complete(messages, model=self._llm_config.fallback_model),
-                    timeout=timeout_s,
-                )
-                return result.content, result.model
-            except Exception as exc:
-                log.warning(
-                    "llm_fallback_failed",
-                    model=self._llm_config.fallback_model,
-                    error=str(exc),
-                )
-
-        # Context-only: return chunks without LLM synthesis
-        log.info("llm_context_only", model=self._llm_config.provider)
-        return None, self._llm_config.provider
+            return False
 
     async def execute(
         self,
@@ -202,6 +273,24 @@ class SimpleQueryPipeline:
         t_total = time.monotonic()
         response_id = uuid4()
         steps: list[StepTrace] = []
+
+        # Pre-query safeguard (ARCH-049)
+        if await self._run_pre_query_safeguard(query, steps):
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            return QueryResponse(
+                response_id=response_id,
+                answer=None,
+                sources=[],
+                conversation_id=query.conversation_id,
+            ), trace
 
         # Step 1: Embed query
         t0 = time.monotonic()
@@ -245,21 +334,48 @@ class SimpleQueryPipeline:
             )
         )
 
-        # Sources from filtered results (each gets a unique citation_id)
-        sources = [
-            SourceRef(
-                doc_id=r.document_id,
-                chunk_id=r.chunk_id,
-                score=r.score,
-                snippet=r.text_snippet,
-                citation_id=uuid4(),
-                document_version=r.document_version,
+        # Post-retrieval safeguard (DEBT-003)
+        safeguard_blocked = False
+        if filtered:
+            t0 = time.monotonic()
+            sg_ctx_post = SafeguardContext(
+                namespace=query.namespace,
+                conversation_id=query.conversation_id,
             )
-            for r in filtered
-        ]
+            try:
+                query_hash = hashlib.sha256(query.question.encode()).hexdigest()[:16]
+                sg_post = await self._safeguard.post_retrieval(
+                    query_hash, filtered, sg_ctx_post
+                )
+                if not sg_post.allowed:
+                    filtered = []
+                    safeguard_blocked = True
+                elif sg_post.filtered_ids:
+                    excluded = set(sg_post.filtered_ids)
+                    filtered = [r for r in filtered if r.chunk_id not in excluded]
+                steps.append(
+                    StepTrace(
+                        name="post_retrieval_safeguard",
+                        duration_ms=_elapsed_ms(t0),
+                        metadata={
+                            "allowed": sg_post.allowed,
+                            "filtered_out": len(sg_post.filtered_ids or []),
+                            "remaining": len(filtered),
+                        },
+                    )
+                )
+            except Exception as exc:
+                log.error("post_retrieval_safeguard_failed", error=str(exc))
+                steps.append(
+                    StepTrace(
+                        name="post_retrieval_safeguard",
+                        duration_ms=_elapsed_ms(t0),
+                        metadata={"skipped": True, "error": str(exc)},
+                    )
+                )
 
-        # No relevant context → skip LLM, return early
-        if no_relevant_context:
+        # No relevant context or safeguard blocked → skip LLM, return early
+        if no_relevant_context or safeguard_blocked:
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -279,7 +395,8 @@ class SimpleQueryPipeline:
                 answer=None,
                 sources=[],
                 conversation_id=query.conversation_id,
-                no_relevant_context=True,
+                context_only=safeguard_blocked,
+                no_relevant_context=no_relevant_context,
             ), trace
 
         # Step 4: Build prompt
@@ -343,6 +460,19 @@ class SimpleQueryPipeline:
             )
         )
 
+        # Sources from budget-selected chunks only (not all filtered)
+        sources = [
+            SourceRef(
+                doc_id=r.document_id,
+                chunk_id=r.chunk_id,
+                score=r.score,
+                snippet=r.text_snippet,
+                citation_id=uuid4(),
+                document_version=r.document_version,
+            )
+            for r in selected_chunks
+        ]
+
         # Step 5: LLM call with graceful degradation
         t0 = time.monotonic()
         answer, llm_model = await self._call_llm_with_fallback(messages)
@@ -360,18 +490,28 @@ class SimpleQueryPipeline:
             namespace=query.namespace,
             conversation_id=query.conversation_id,
         )
-        sg_result = await self._safeguard.pre_response(answer or "", sg_ctx)
-        if not sg_result.allowed:
-            answer = None
-        elif sg_result.modified_content is not None:
-            answer = sg_result.modified_content
-        steps.append(
-            StepTrace(
-                name="safeguard",
-                duration_ms=_elapsed_ms(t0),
-                metadata={"allowed": sg_result.allowed},
+        try:
+            sg_result = await self._safeguard.pre_response(answer or "", sg_ctx)
+            if not sg_result.allowed:
+                answer = None
+            elif sg_result.modified_content is not None:
+                answer = sg_result.modified_content
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_result.allowed},
+                )
             )
-        )
+        except Exception as exc:
+            log.error("pre_response_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
 
         # Save conversation turn
         if query.conversation_id is not None:
@@ -398,7 +538,7 @@ class SimpleQueryPipeline:
             duration_ms=total_ms,
             llm_model=llm_model,
             chunks_retrieved=len(filtered),
-            # No query text or response text (REQ-051)
+            pipeline="simple",
         )
 
         return QueryResponse(
@@ -415,9 +555,35 @@ class SimpleQueryPipeline:
         return self._stream(query)
 
     async def _stream(self, query: QueryRequest) -> AsyncGenerator[QueryChunk, None]:
-        """Async generator for streaming response (SSE)."""
-        # Steps 1-3: embed, search, filter
+        """Async generator for streaming response (SSE) with trace emission (DEBT-002)."""
+
+        t_total = time.monotonic()
+        response_id = uuid4()
+        steps: list[StepTrace] = []
+
+        # Pre-query safeguard (ARCH-049)
+        if await self._run_pre_query_safeguard(query, steps):
+            yield QueryChunk(type="sources", data=[])
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            yield QueryChunk(type="trace", data=_trace_to_dict(trace))
+            yield QueryChunk(type="done", data="")
+            return
+
+        # Step 1: Embed query
+        t0 = time.monotonic()
         dense = await self._embedding.embed_query(query.question)
+        steps.append(StepTrace(name="embed_query", duration_ms=_elapsed_ms(t0)))
+
+        # Step 2: Vector search
+        t0 = time.monotonic()
         results = await self._vector_store.search(
             namespace=query.namespace,
             query_embedding=QueryEmbedding(dense=dense),
@@ -425,19 +591,106 @@ class SimpleQueryPipeline:
             search_mode=query.search_mode,
             filters=query.filters,
         )
+        steps.append(
+            StepTrace(
+                name="vector_search",
+                duration_ms=_elapsed_ms(t0),
+                metadata={"retrieved": len(results)},
+            )
+        )
+
+        # Step 3: Retrieval filter
+        t0 = time.monotonic()
         filtered = _apply_retrieval_filter(
             results,
             min_score=self._config.min_relevance_score,
             dedup_enabled=self._config.chunk_dedup_enabled,
         )
         no_relevant_context = len(results) > 0 and len(filtered) == 0
+        steps.append(
+            StepTrace(
+                name="retrieval_filter",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "before": len(results),
+                    "after": len(filtered),
+                    "no_relevant_context": no_relevant_context,
+                },
+            )
+        )
 
         if no_relevant_context or not filtered:
             yield QueryChunk(type="sources", data=[])
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            yield QueryChunk(type="trace", data=_trace_to_dict(trace))
+            yield QueryChunk(type="done", data="")
+            return
+
+        # Post-retrieval safeguard (DEBT-003)
+        safeguard_blocked = False
+        t0 = time.monotonic()
+        sg_ctx = SafeguardContext(
+            namespace=query.namespace,
+            conversation_id=query.conversation_id,
+        )
+        try:
+            query_hash = hashlib.sha256(query.question.encode()).hexdigest()[:16]
+            sg_result = await self._safeguard.post_retrieval(
+                query_hash, filtered, sg_ctx
+            )
+            if not sg_result.allowed:
+                filtered = []
+                safeguard_blocked = True
+            elif sg_result.filtered_ids:
+                excluded = set(sg_result.filtered_ids)
+                filtered = [r for r in filtered if r.chunk_id not in excluded]
+            steps.append(
+                StepTrace(
+                    name="post_retrieval_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={
+                        "allowed": sg_result.allowed,
+                        "filtered_out": len(sg_result.filtered_ids or []),
+                        "remaining": len(filtered),
+                    },
+                )
+            )
+        except Exception as exc:
+            log.error("post_retrieval_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="post_retrieval_safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
+
+        # Safeguard blocked all results → early return
+        if safeguard_blocked:
+            yield QueryChunk(type="sources", data=[])
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            yield QueryChunk(type="trace", data=_trace_to_dict(trace))
             yield QueryChunk(type="done", data="")
             return
 
         # Step 4: Build prompt (with token budget allocation, ARCH-055)
+        t0 = time.monotonic()
         history: list[dict[str, Any]] = []
         if query.conversation_id is not None:
             history = await self._conversation_store.get_history(query.conversation_id)
@@ -483,8 +736,20 @@ class SimpleQueryPipeline:
                 content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
             )
         )
+        steps.append(
+            StepTrace(
+                name="build_prompt",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "prompt_version": self._renderer.prompt_version,
+                    "chunks_in_prompt": len(selected_chunks),
+                    "history_turns_in_prompt": len(selected_history),
+                },
+            )
+        )
 
         # Step 5: Stream LLM tokens
+        t0 = time.monotonic()
         full_answer_parts: list[str] = []
         try:
             token_stream = await self._llm.stream(
@@ -494,22 +759,65 @@ class SimpleQueryPipeline:
                 if chunk.content:
                     full_answer_parts.append(chunk.content)
                     yield QueryChunk(type="token", data=chunk.content)
+            steps.append(
+                StepTrace(
+                    name="llm_stream",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"model": self._llm_config.provider},
+                )
+            )
         except Exception as exc:
             log.warning("stream_llm_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="llm_stream",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"error": str(exc)},
+                )
+            )
             yield QueryChunk(type="error", data="LLM unavailable")
+            trace = QueryTrace(
+                response_id=response_id,
+                steps=steps,
+                total_duration_ms=_elapsed_ms(t_total),
+                chunks_retrieved=[
+                    ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
+                ],
+                llm_model=self._llm_config.provider,
+                prompt_version=self._renderer.prompt_version,
+                created_at=datetime.now(UTC),
+            )
+            yield QueryChunk(type="trace", data=_trace_to_dict(trace))
+            yield QueryChunk(type="done", data="")
             return
 
         full_answer = "".join(full_answer_parts) or None
 
         # Step 6: Safeguard pre_response (post-stream, on accumulated answer)
-        sg_ctx = SafeguardContext(
-            namespace=query.namespace,
-            conversation_id=query.conversation_id,
-        )
-        sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
-        if not sg_result.allowed:
-            log.warning("stream_safeguard_blocked", namespace=query.namespace)
-            full_answer = None
+        t0 = time.monotonic()
+        try:
+            sg_result = await self._safeguard.pre_response(full_answer or "", sg_ctx)
+            if not sg_result.allowed:
+                log.warning("stream_safeguard_blocked", namespace=query.namespace)
+                full_answer = None
+            elif sg_result.modified_content is not None:
+                full_answer = sg_result.modified_content
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"allowed": sg_result.allowed},
+                )
+            )
+        except Exception as exc:
+            log.error("pre_response_safeguard_failed", error=str(exc))
+            steps.append(
+                StepTrace(
+                    name="safeguard",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata={"skipped": True, "error": str(exc)},
+                )
+            )
 
         # Save conversation turn
         if query.conversation_id is not None and full_answer:
@@ -517,7 +825,7 @@ class SimpleQueryPipeline:
                 query.conversation_id, query.question, full_answer
             )
 
-        # Yield sources + done
+        # Yield sources (only budget-selected chunks)
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -527,7 +835,27 @@ class SimpleQueryPipeline:
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
             }
-            for r in filtered
+            for r in selected_chunks
         ]
         yield QueryChunk(type="sources", data=sources_data)
+
+        # Emit trace before done (DEBT-002)
+        trace = QueryTrace(
+            response_id=response_id,
+            steps=steps,
+            total_duration_ms=_elapsed_ms(t_total),
+            chunks_retrieved=[
+                ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
+            ],
+            llm_model=self._llm_config.provider,
+            prompt_version=self._renderer.prompt_version,
+            created_at=datetime.now(UTC),
+        )
+        log.info(
+            "query_stream_complete",
+            response_id=str(response_id),
+            duration_ms=trace.total_duration_ms,
+            pipeline="simple",
+        )
+        yield QueryChunk(type="trace", data=_trace_to_dict(trace))
         yield QueryChunk(type="done", data="")

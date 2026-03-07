@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -30,9 +29,7 @@ def _make_app(*, admin_token: str = "test-admin-token") -> FastAPI:
 
     # Mock key store
     key_store = AsyncMock()
-    admin_key_info = ApiKeyInfo(
-        key_id=uuid4(), scopes=["admin"], rate_limit_rpm=None
-    )
+    admin_key_info = ApiKeyInfo(key_id=uuid4(), scopes=["admin"], rate_limit_rpm=None)
     non_admin_key_info = ApiKeyInfo(
         key_id=uuid4(), scopes=["query"], rate_limit_rpm=None
     )

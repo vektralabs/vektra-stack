@@ -151,7 +151,11 @@ def app(registry):
     """Per-test FastAPI app with admin router, UI router, AuditMiddleware, RequestIdMiddleware."""
     from vektra_admin.api import router
     from vektra_admin.middleware import AuditMiddleware
-    from vektra_admin.ui import get_static_files, register_ui_exception_handlers, ui_router
+    from vektra_admin.ui import (
+        get_static_files,
+        register_ui_exception_handlers,
+        ui_router,
+    )
 
     class RequestIdMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):

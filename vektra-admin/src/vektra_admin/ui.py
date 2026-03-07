@@ -59,7 +59,9 @@ class _AdminRedirect(Exception):
     registered on the app via ``register_admin_exception_handlers()``.
     """
 
-    def __init__(self, url: str = "/admin/login", *, clear_cookie: bool = False) -> None:
+    def __init__(
+        self, url: str = "/admin/login", *, clear_cookie: bool = False
+    ) -> None:
         self.url = url
         self.clear_cookie = clear_cookie
 
@@ -329,7 +331,10 @@ async def keys_create(
         context={
             "keys": keys,
             "token": token,
-            "flash": {"type": "success", "message": f"Key created. Save this now: {plaintext}"},
+            "flash": {
+                "type": "success",
+                "message": f"Key created. Save this now: {plaintext}",
+            },
         },
     )
 
@@ -408,7 +413,9 @@ async def namespaces_page(
     """Render the namespace management page."""
     _info, token = auth
     namespaces = await _load_namespaces(session)
-    return _render(request, "namespaces.html", token, active="namespaces", namespaces=namespaces)
+    return _render(
+        request, "namespaces.html", token, active="namespaces", namespaces=namespaces
+    )
 
 
 @ui_router.post("/namespaces/create", response_class=HTMLResponse)
@@ -420,8 +427,8 @@ async def namespaces_create(
     """Create a new namespace, return updated table partial."""
     _info, token = auth
     form = await request.form()
-    name = form.get("name", "").strip()
-    display_name = form.get("display_name", "").strip() or None
+    name = str(form.get("name", "")).strip()
+    display_name = str(form.get("display_name", "")).strip() or None
 
     if not name:
         raise HTTPException(status_code=422, detail="Namespace name is required")
@@ -556,7 +563,9 @@ async def _load_audit_entries(
     """Load audit log entries with cursor-based pagination and filters."""
     from datetime import datetime
 
-    stmt = select(AuditLogOrm).order_by(AuditLogOrm.created_at.desc(), AuditLogOrm.id.desc())
+    stmt = select(AuditLogOrm).order_by(
+        AuditLogOrm.created_at.desc(), AuditLogOrm.id.desc()
+    )
 
     # Cursor-based pagination using created_at + id tiebreaker
     cursor_ts = params.get("cursor_ts")

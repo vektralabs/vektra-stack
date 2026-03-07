@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Namespaces - Vektra admin{% endblock %}
+{% block content %}
+<h2>Namespaces</h2>
+
+<details>
+  <summary>Create new namespace</summary>
+  <form hx-post="/admin/namespaces/create" hx-target="#namespaces-table" hx-swap="innerHTML">
+    <label for="name">Name (ID)</label>
+    <input type="text" id="name" name="name" placeholder="e.g. my-project" required>
+    <label for="display_name">Display name (optional)</label>
+    <input type="text" id="display_name" name="display_name" placeholder="My Project">
+    <button type="submit">Create namespace</button>
+  </form>
+</details>
+
+<div id="namespaces-table">
+  {% include "partials/namespaces_table.html" %}
+</div>
+{% endblock %}

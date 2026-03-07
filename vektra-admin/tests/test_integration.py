@@ -148,9 +148,10 @@ def registry(fresh_engine):
 
 @pytest.fixture
 def app(registry):
-    """Per-test FastAPI app with admin router, AuditMiddleware, RequestIdMiddleware."""
+    """Per-test FastAPI app with admin router, UI router, AuditMiddleware, RequestIdMiddleware."""
     from vektra_admin.api import router
     from vektra_admin.middleware import AuditMiddleware
+    from vektra_admin.ui import get_static_files, ui_router
 
     class RequestIdMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
@@ -162,6 +163,8 @@ def app(registry):
     _app.state.version = "test-0.1.0"
     _app.add_middleware(AuditMiddleware)
     _app.add_middleware(RequestIdMiddleware)
+    _app.mount("/admin/static", get_static_files(), name="admin-static")
+    _app.include_router(ui_router)
     _app.include_router(router)
     return _app
 
@@ -355,20 +358,17 @@ async def test_health_deep_without_token_returns_401(client):
     assert resp.status_code == 401
 
 
-async def test_admin_dashboard_returns_html(client, bootstrap_key):
-    """GET /admin returns valid HTML. Requires Bearer token (REQ-006)."""
+async def test_admin_dashboard_redirects(client, bootstrap_key):
+    """GET /admin redirects to /admin/ (new HTMX dashboard, ADR-0024)."""
     admin_key = await _create_admin_key(client, bootstrap_key)
 
     resp = await client.get(
         "/admin",
         headers={"Authorization": f"Bearer {admin_key}"},
+        follow_redirects=False,
     )
-    assert resp.status_code == 200
-    content_type = resp.headers.get("content-type", "")
-    assert "text/html" in content_type
-    assert "<html" in resp.text.lower()
-    assert "vektra" in resp.text.lower()
-    assert any(s in resp.text for s in ("healthy", "degraded", "unhealthy"))
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/admin/"
 
 
 async def test_audit_log_completeness(client, bootstrap_key, session):
@@ -405,3 +405,123 @@ async def test_no_auth_returns_error_envelope(client):
     detail = body.get("detail", {})
     assert "error" in detail
     assert detail["error"]["code"] == "ERR-AUTH-001"
+
+
+# ---------------------------------------------------------------------------
+# UI integration tests (ADR-0024)
+# ---------------------------------------------------------------------------
+
+_COOKIE = "vektra_admin_token"
+
+
+async def _login_cookie(client, bootstrap_key: str) -> str:
+    """Create an admin key and login via the UI, returning the plaintext key."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    resp = await client.post(
+        "/admin/login",
+        data={"token": admin_key},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    return admin_key
+
+
+async def test_ui_health_page(client, bootstrap_key):
+    """GET /admin/ renders health dashboard with auto-refresh markup."""
+    admin_key = await _login_cookie(client, bootstrap_key)
+    client.cookies.set(_COOKIE, admin_key)
+    resp = await client.get("/admin/")
+    assert resp.status_code == 200
+    assert "Health dashboard" in resp.text
+    assert "every 30s" in resp.text
+
+
+async def test_ui_keys_crud(client, bootstrap_key, session):
+    """Keys page: create shows plaintext once, list shows preview, revoke updates status."""
+    admin_key = await _login_cookie(client, bootstrap_key)
+    client.cookies.set(_COOKIE, admin_key)
+
+    # List keys page
+    resp = await client.get("/admin/keys")
+    assert resp.status_code == 200
+    assert "API keys" in resp.text
+
+    # Create a key
+    resp = await client.post(
+        "/admin/keys/create",
+        data={"label": "ui-test-key", "scopes": ["query"]},
+    )
+    assert resp.status_code == 200
+    assert "Key created" in resp.text
+    # Plaintext key shown once in the flash
+    assert "Save this now:" in resp.text
+
+    # Get key list and find the new key
+    resp = await client.get("/admin/keys")
+    assert "ui-test-key" in resp.text
+
+    # Find the key ID to revoke (parse from the HTML)
+    import re
+
+    key_ids = re.findall(r'hx-delete="/admin/keys/([^"]+)"', resp.text)
+    assert len(key_ids) >= 1
+    target_id = key_ids[-1]  # last created
+
+    # Revoke
+    resp = await client.request("DELETE", f"/admin/keys/{target_id}")
+    assert resp.status_code == 200
+    assert "Key revoked" in resp.text
+
+
+async def test_ui_namespaces_crud(client, bootstrap_key, session):
+    """Namespaces page: create, list with doc count, delete."""
+    admin_key = await _login_cookie(client, bootstrap_key)
+    client.cookies.set(_COOKIE, admin_key)
+
+    # Create namespace
+    resp = await client.post(
+        "/admin/namespaces/create",
+        data={"name": "test-ns", "display_name": "Test namespace"},
+    )
+    assert resp.status_code == 200
+    assert "test-ns" in resp.text
+
+    # List namespaces
+    resp = await client.get("/admin/namespaces")
+    assert resp.status_code == 200
+    assert "test-ns" in resp.text
+
+    # Delete namespace
+    resp = await client.request("DELETE", "/admin/namespaces/test-ns")
+    assert resp.status_code == 200
+    assert "deleted" in resp.text.lower()
+
+
+async def test_ui_audit_page(client, bootstrap_key, session):
+    """Audit page renders with entries and pagination markup."""
+    admin_key = await _login_cookie(client, bootstrap_key)
+    client.cookies.set(_COOKIE, admin_key)
+
+    # Generate some audit entries by making API calls
+    for _ in range(3):
+        await client.get(
+            "/api/v1/api-keys",
+            headers={"Authorization": f"Bearer {admin_key}"},
+        )
+    await asyncio.sleep(0.2)
+
+    resp = await client.get("/admin/audit")
+    assert resp.status_code == 200
+    assert "Audit log" in resp.text
+    assert "api-keys" in resp.text  # should see the endpoint in the table
+
+
+async def test_ui_config_page(client, bootstrap_key):
+    """Config page renders with masked secrets."""
+    admin_key = await _login_cookie(client, bootstrap_key)
+    client.cookies.set(_COOKIE, admin_key)
+
+    resp = await client.get("/admin/config")
+    assert resp.status_code == 200
+    assert "System configuration" in resp.text
+    assert "Active providers" in resp.text

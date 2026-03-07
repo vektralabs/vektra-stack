@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Config - Vektra admin{% endblock %}
+{% block content %}
+<h2>System configuration</h2>
+
+<h3>Environment variables</h3>
+<table>
+  <thead>
+    <tr><th>Variable</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    {% for var in env_vars %}
+    <tr>
+      <td><code>{{ var.key }}</code></td>
+      <td class="config-value">{{ var.value }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2">No VEKTRA_* environment variables set</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Active providers</h3>
+<table>
+  <thead>
+    <tr><th>Category</th><th>Name</th></tr>
+  </thead>
+  <tbody>
+    {% for p in providers %}
+    <tr>
+      <td>{{ p.category }}</td>
+      <td>{{ p.name }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2">No providers registered</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

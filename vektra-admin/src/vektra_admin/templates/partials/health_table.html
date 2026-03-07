@@ -1,0 +1,17 @@
+<table>
+  <thead>
+    <tr><th>Component</th><th>Status</th><th>Latency</th><th>Message</th></tr>
+  </thead>
+  <tbody>
+    {% for c in health.components %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td><span class="status-{{ c.status }}">{{ c.status }}</span></td>
+      <td>{{ c.latency_ms if c.latency_ms is not none else "-" }} ms</td>
+      <td>{{ c.message or "" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No health checks registered</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

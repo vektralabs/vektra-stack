@@ -12,7 +12,6 @@ as authentication (once only) or a valid admin-scoped Bearer token.
 
 from __future__ import annotations
 
-import html as _html
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -26,7 +25,6 @@ from fastapi import (
     Request,
     Response,
 )
-from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
@@ -441,60 +439,7 @@ async def revoke_api_key(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/admin", response_class=HTMLResponse)
-async def admin_dashboard(
-    request: Request,
-    _key: ApiKeyInfo = Depends(require_scope("admin")),
-) -> HTMLResponse:
-    """Minimal HTML dashboard showing current health status. Requires admin scope."""
-    registry = getattr(request.app.state, "registry", None)
-    version = getattr(request.app.state, "version", "unknown")
-
-    _, deep = await _health.check_all(registry, version)
-
-    status_color = {
-        "healthy": "#2d8a4e",
-        "degraded": "#b8860b",
-        "unhealthy": "#cc3333",
-    }.get(deep.status, "#666")
-
-    _e = _html.escape
-    rows = "".join(
-        f"<tr>"
-        f"<td>{_e(c.name)}</td>"
-        f"<td style='color:{status_color if c.status == deep.status else '#666'}'>{_e(c.status)}</td>"
-        f"<td>{c.latency_ms if c.latency_ms is not None else '-'} ms</td>"
-        f"<td>{_e(c.message or '')}</td>"
-        f"</tr>"
-        for c in deep.components
-    )
-
-    safe_version = _e(str(version))
-    safe_status = _e(deep.status)
-    safe_timestamp = _e(str(deep.timestamp))
-
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Vektra health</title>
-<style>
-  body {{ font-family: monospace; margin: 2rem; background: #f5f5f5; color: #222; }}
-  h1 {{ font-size: 1.2rem; }}
-  .status {{ color: {status_color}; font-weight: bold; font-size: 1.1rem; }}
-  table {{ border-collapse: collapse; width: 100%; max-width: 700px; }}
-  th, td {{ border: 1px solid #ccc; padding: 0.4rem 0.8rem; text-align: left; }}
-  th {{ background: #e0e0e0; }}
-</style>
-</head>
-<body>
-<h1>Vektra {safe_version}</h1>
-<p>Status: <span class="status">{safe_status}</span> &mdash; {safe_timestamp}</p>
-<table>
-<tr><th>Component</th><th>Status</th><th>Latency</th><th>Message</th></tr>
-{rows if rows else "<tr><td colspan='4'>No health checks registered</td></tr>"}
-</table>
-</body>
-</html>"""
-
-    return HTMLResponse(content=html, status_code=200)
+@router.get("/admin")
+async def admin_dashboard_redirect() -> Response:
+    """Redirect legacy /admin to the new HTMX dashboard (ADR-0024)."""
+    return Response(status_code=302, headers={"Location": "/admin/"})

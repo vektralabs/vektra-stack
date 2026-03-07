@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vektra admin - Login</title>
+  <link rel="stylesheet" href="/admin/static/pico.min.css">
+  <link rel="stylesheet" href="/admin/static/admin.css">
+</head>
+<body>
+  <main class="container" style="max-width: 400px; margin-top: 10vh;">
+    <article>
+      <header>
+        <h2>Vektra admin</h2>
+      </header>
+      {% if "error" in request.query_params %}
+      <div class="flash flash-error">
+        {% if request.query_params.get("error") == "invalid" %}
+          Invalid token or insufficient permissions (admin scope required).
+        {% elif request.query_params.get("error") == "missing" %}
+          Please enter a token.
+        {% else %}
+          Service unavailable. Try again later.
+        {% endif %}
+      </div>
+      {% endif %}
+      <form method="post" action="/admin/login">
+        <label for="token">API token (admin scope)</label>
+        <input type="password" id="token" name="token" placeholder="Paste your admin API key" required autofocus>
+        <button type="submit">Login</button>
+      </form>
+      <footer>
+        <small>Vektra {{ version }}</small>
+      </footer>
+    </article>
+  </main>
+</body>
+</html>

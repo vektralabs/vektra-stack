@@ -23,6 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import and_ as sa_and
+from sqlalchemy import or_ as sa_or
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,13 +51,35 @@ ui_router = APIRouter(prefix="/admin", tags=["admin-ui"])
 _COOKIE_NAME = "vektra_admin_token"
 
 
+class _AdminRedirect(Exception):
+    """Raised in auth dependencies to trigger a browser redirect.
+
+    HTTPException with 303 doesn't produce a proper redirect response that
+    browsers follow. This custom exception is caught by an exception handler
+    registered on the app via ``register_admin_exception_handlers()``.
+    """
+
+    def __init__(self, url: str = "/admin/login", *, clear_cookie: bool = False) -> None:
+        self.url = url
+        self.clear_cookie = clear_cookie
+
+
+async def _handle_admin_redirect(
+    request: Request, exc: _AdminRedirect
+) -> RedirectResponse:
+    response = RedirectResponse(url=exc.url, status_code=303)
+    if exc.clear_cookie:
+        response.delete_cookie(_COOKIE_NAME)
+    return response
+
+
 async def _get_admin_token(request: Request) -> str:
     """Extract admin token from cookie or query parameter."""
     token = request.cookies.get(_COOKIE_NAME)
     if not token:
         token = request.query_params.get("token")
     if not token:
-        raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
+        raise _AdminRedirect()
     return token
 
 
@@ -78,9 +102,7 @@ async def _require_admin_ui(
 
     info = await key_store.lookup_by_token(token)
     if info is None or "admin" not in info.scopes:
-        response = RedirectResponse(url="/admin/login", status_code=303)
-        response.delete_cookie(_COOKIE_NAME)
-        raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
+        raise _AdminRedirect(clear_cookie=True)
 
     request.state.key_id = info.key_id
     return info, token
@@ -536,17 +558,35 @@ async def _load_audit_entries(
 
     stmt = select(AuditLogOrm).order_by(AuditLogOrm.created_at.desc(), AuditLogOrm.id.desc())
 
-    # Cursor-based pagination
-    cursor = params.get("cursor")
+    # Cursor-based pagination using created_at + id tiebreaker
+    cursor_ts = params.get("cursor_ts")
+    cursor_id = params.get("cursor_id")
     direction = params.get("direction", "older")
-    if cursor:
+    if cursor_ts and cursor_id:
         from uuid import UUID
 
-        cursor_uuid = UUID(cursor)
+        cursor_dt = datetime.fromisoformat(cursor_ts)
+        cursor_uuid = UUID(cursor_id)
         if direction == "older":
-            stmt = stmt.where(AuditLogOrm.id < cursor_uuid)
+            stmt = stmt.where(
+                sa_or(
+                    AuditLogOrm.created_at < cursor_dt,
+                    sa_and(
+                        AuditLogOrm.created_at == cursor_dt,
+                        AuditLogOrm.id < cursor_uuid,
+                    ),
+                )
+            )
         else:
-            stmt = stmt.where(AuditLogOrm.id > cursor_uuid)
+            stmt = stmt.where(
+                sa_or(
+                    AuditLogOrm.created_at > cursor_dt,
+                    sa_and(
+                        AuditLogOrm.created_at == cursor_dt,
+                        AuditLogOrm.id > cursor_uuid,
+                    ),
+                )
+            )
 
     # Filters
     endpoint_filter = params.get("endpoint")
@@ -648,3 +688,11 @@ async def config_page(
 def get_static_files() -> StaticFiles:
     """Return the StaticFiles app for /admin/static."""
     return StaticFiles(directory=str(_STATIC_DIR))
+
+
+def register_ui_exception_handlers(app: Any) -> None:
+    """Register custom exception handlers needed by the admin UI.
+
+    Call this after ``app.include_router(ui_router)``.
+    """
+    app.add_exception_handler(_AdminRedirect, _handle_admin_redirect)

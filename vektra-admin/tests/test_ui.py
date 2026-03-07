@@ -11,9 +11,9 @@ from httpx import ASGITransport, AsyncClient
 
 from vektra_admin.ui import (
     _COOKIE_NAME,
-    _SECRET_KEYWORDS,
     _mask_value,
     get_static_files,
+    register_ui_exception_handlers,
     ui_router,
 )
 from vektra_shared.auth import ApiKeyInfo
@@ -55,6 +55,7 @@ def _make_app(*, admin_token: str = "test-admin-token") -> FastAPI:
     # Mount UI router and static files
     app.mount("/admin/static", get_static_files(), name="admin-static")
     app.include_router(ui_router)
+    register_ui_exception_handlers(app)
 
     return app
 

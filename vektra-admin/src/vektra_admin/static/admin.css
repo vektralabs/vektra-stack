@@ -84,4 +84,7 @@ tr.revoked td {
 .config-value {
   font-family: monospace;
   font-size: 0.9em;
+  max-width: 400px;
+  overflow-wrap: break-word;
+  word-break: break-all;
 }

@@ -17,9 +17,9 @@
     <tr><th>Metric</th><th>Value</th></tr>
   </thead>
   <tbody>
-    <tr><td>RSS</td><td>{{ memory.rss_mb }} MB</td></tr>
-    <tr><td>VMS</td><td>{{ memory.vms_mb }} MB</td></tr>
-    <tr><td>Percent</td><td>{{ memory.percent }}%</td></tr>
+    <tr><td>RSS</td><td>{{ "%.1f"|format(memory.rss_mb) }} MB</td></tr>
+    <tr><td>VMS</td><td>{{ "%.1f"|format(memory.vms_mb) }} MB</td></tr>
+    <tr><td>Percent</td><td>{{ "%.1f"|format(memory.percent) }}%</td></tr>
   </tbody>
 </table>
 {% endblock %}

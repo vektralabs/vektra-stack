@@ -26,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import and_ as sa_and
 from sqlalchemy import or_ as sa_or
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_admin import health as _health
@@ -349,7 +350,10 @@ async def keys_revoke(
     from datetime import UTC, datetime
     from uuid import UUID
 
-    uid = UUID(key_id)
+    try:
+        uid = UUID(key_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid key ID format")
     result = await session.execute(select(ApiKeyOrm).where(ApiKeyOrm.id == uid))
     row = result.scalar_one_or_none()
     if row is None:
@@ -460,7 +464,26 @@ async def namespaces_delete(
         raise HTTPException(status_code=404, detail="Namespace not found")
 
     await session.delete(ns)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        namespaces = await _load_namespaces(session)
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/namespaces_table.html",
+            context={
+                "namespaces": namespaces,
+                "flash": {
+                    "type": "error",
+                    "message": (
+                        f"Cannot delete namespace '{ns_id}': "
+                        "it contains documents or other dependent records. "
+                        "Remove them first."
+                    ),
+                },
+            },
+        )
 
     namespaces = await _load_namespaces(session)
     return templates.TemplateResponse(
@@ -567,28 +590,32 @@ async def _load_audit_entries(
     if cursor_ts and cursor_id:
         from uuid import UUID
 
-        cursor_dt = datetime.fromisoformat(cursor_ts)
-        cursor_uuid = UUID(cursor_id)
-        if direction == "older":
-            stmt = stmt.where(
-                sa_or(
-                    AuditLogOrm.created_at < cursor_dt,
-                    sa_and(
-                        AuditLogOrm.created_at == cursor_dt,
-                        AuditLogOrm.id < cursor_uuid,
-                    ),
-                )
-            )
+        try:
+            cursor_dt = datetime.fromisoformat(cursor_ts)
+            cursor_uuid = UUID(cursor_id)
+        except ValueError:
+            pass  # ignore malformed cursor, show first page
         else:
-            stmt = stmt.where(
-                sa_or(
-                    AuditLogOrm.created_at > cursor_dt,
-                    sa_and(
-                        AuditLogOrm.created_at == cursor_dt,
-                        AuditLogOrm.id > cursor_uuid,
-                    ),
+            if direction == "older":
+                stmt = stmt.where(
+                    sa_or(
+                        AuditLogOrm.created_at < cursor_dt,
+                        sa_and(
+                            AuditLogOrm.created_at == cursor_dt,
+                            AuditLogOrm.id < cursor_uuid,
+                        ),
+                    )
                 )
-            )
+            else:
+                stmt = stmt.where(
+                    sa_or(
+                        AuditLogOrm.created_at > cursor_dt,
+                        sa_and(
+                            AuditLogOrm.created_at == cursor_dt,
+                            AuditLogOrm.id > cursor_uuid,
+                        ),
+                    )
+                )
 
     # Filters
     endpoint_filter = params.get("endpoint")
@@ -656,6 +683,8 @@ _SECRET_KEYWORDS = {
     "DATABASE",
     "DSN",
     "CREDENTIAL",
+    "URL",
+    "CONNECTION",
 }
 
 

@@ -3,7 +3,7 @@
 Mounts at application root (/ prefix). Provides:
   - Health endpoints (two-tier model, REQ-025)
   - API key CRUD (REQ-020, REQ-023)
-  - Health dashboard HTML (GET /admin)
+  - Admin dashboard redirect (GET /admin -> /admin/)
   - Prometheus metrics are mounted by infra-app-entrypoint (starlette-prometheus).
 
 Bootstrap auth (REQ-021, REQ-036): POST /api-keys accepts the bootstrap env-var key
@@ -444,4 +444,4 @@ async def revoke_api_key(
 @router.get("/admin")
 async def admin_dashboard_redirect() -> Response:
     """Redirect legacy /admin to the new HTMX dashboard (ADR-0024)."""
-    return Response(status_code=302, headers={"Location": "/admin/"})
+    return Response(status_code=308, headers={"Location": "/admin/"})

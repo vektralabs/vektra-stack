@@ -373,7 +373,7 @@ async def test_admin_dashboard_redirects(client, bootstrap_key):
         headers={"Authorization": f"Bearer {admin_key}"},
         follow_redirects=False,
     )
-    assert resp.status_code == 302
+    assert resp.status_code == 308
     assert resp.headers["location"] == "/admin/"
 
 

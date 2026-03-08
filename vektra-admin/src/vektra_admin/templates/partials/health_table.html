@@ -7,7 +7,7 @@
     <tr>
       <td>{{ c.name }}</td>
       <td><span class="status-{{ c.status }}">{{ c.status }}</span></td>
-      <td>{{ c.latency_ms if c.latency_ms is not none else "-" }} ms</td>
+      <td>{% if c.latency_ms is not none %}{{ c.latency_ms }} ms{% else %}-{% endif %}</td>
       <td>{{ c.message or "" }}</td>
     </tr>
     {% else %}

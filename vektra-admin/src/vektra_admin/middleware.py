@@ -71,6 +71,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
         # Namespace set by RLSMiddleware (may be None for admin keys)
         namespace: str | None = getattr(request.state, "rls_namespace", None)
 
+        # Derive action from HTTP method + path
+        action = _derive_action(request.method, path)
+
         # Write audit log with a dedicated session (independent of request lifecycle)
         task = asyncio.create_task(
             _write_audit(
@@ -80,12 +83,39 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
                 request_id=request_id,
                 namespace=namespace,
+                action=action,
             )
         )
         _audit_tasks.add(task)
         task.add_done_callback(_audit_tasks.discard)
 
         return response
+
+
+_METHOD_VERBS = {
+    "GET": "read",
+    "POST": "create",
+    "PUT": "update",
+    "PATCH": "update",
+    "DELETE": "delete",
+}
+
+
+def _derive_action(method: str, path: str) -> str:
+    """Derive a human-readable action from HTTP method and path.
+
+    Examples: "create_ingest", "read_health", "delete_api-keys".
+    """
+    verb = _METHOD_VERBS.get(method.upper(), method.lower())
+    # Use the last meaningful path segment (strip /api/v1/ prefix and IDs)
+    segments = [s for s in path.strip("/").split("/") if s and not _is_uuid_like(s)]
+    resource = segments[-1] if segments else "unknown"
+    return f"{verb}_{resource}"
+
+
+def _is_uuid_like(segment: str) -> bool:
+    """Check if a path segment looks like a UUID (32 hex chars with hyphens)."""
+    return len(segment) == 36 and segment.count("-") == 4
 
 
 async def _write_audit(
@@ -96,6 +126,7 @@ async def _write_audit(
     status_code: int,
     request_id: UUID,
     namespace: str | None = None,
+    action: str | None = None,
 ) -> None:
     """Write one audit_log row using an independent session.
 
@@ -123,6 +154,7 @@ async def _write_audit(
                 method=method,
                 status_code=status_code,
                 request_id=request_id,
+                action=action,
                 log_metadata=metadata,
             )
             session.add(entry)

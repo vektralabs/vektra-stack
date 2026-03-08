@@ -162,6 +162,8 @@ async def health(
                 raise HTTPException(
                     status_code=http_status_for(err), detail=err.to_envelope()
                 )
+            # Expose key_id for AuditMiddleware (CR55)
+            request.state.key_id = info.key_id
         except ValueError:
             raise HTTPException(status_code=503, detail="Service initializing")
 

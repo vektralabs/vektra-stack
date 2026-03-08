@@ -443,7 +443,9 @@ class PgvectorProvider:
         chunk_stmt = (
             select(func.count())
             .select_from(DocumentChunkOrm)
+            .join(SourceDocumentOrm, SourceDocumentOrm.id == DocumentChunkOrm.document_id)
             .where(DocumentChunkOrm.index_version == self._active_index_version)
+            .where(SourceDocumentOrm.deleted_at.is_(None))
         )
 
         if namespace:

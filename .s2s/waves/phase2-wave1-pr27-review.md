@@ -26,10 +26,10 @@
 | M3 | core | `api.py:401,440` | Feedback namespace not validated against key scope | FIXED |
 | M4 | core | `conversation.py:244` | `clear()` hard-deletes, bypassing GDPR retention | WONTFIX (InMemory dev/test only) |
 | M5 | admin | `api.py:459-493` | XSS in HTML dashboard (unescaped component data) | FIXED |
-| M6 | admin | `quotas.py:88` | Chunk quota counts orphaned chunks from soft-deleted documents | DEFER (Wave 3) |
+| M6 | admin | `quotas.py:88` | Chunk quota counts orphaned chunks from soft-deleted documents | FIXED (Wave 3) |
 | M7 | admin | `quotas.py:44-104` | Quota check is TOCTOU (soft limit only, document as known limitation) | WONTFIX |
 | M8 | admin | `rls.py:80-93` | `set_rls_namespace` silently no-ops on wrong session type | FIXED |
-| M9 | index | `pgvector.py:438-460` | `namespace_stats` chunk count includes soft-deleted doc chunks | DEFER (Wave 3) |
+| M9 | index | `pgvector.py:438-460` | `namespace_stats` chunk count includes soft-deleted doc chunks | FIXED (Wave 3) |
 | M10 | index | `qdrant.py:83-110` | `ensure_collection` TOCTOU on startup (catch "already exists") | DEFER (infra-phase2, Wave 5) |
 | M11 | index | `fastembed_bm25.py:26-47` | Global sparse model singleton not thread-safe (needs Lock) | DEFER (Wave 5) |
 | M12 | index | `reindex.py:71-182` | Reindex runs in BackgroundTasks, not arq (lost on restart) | WONTFIX |
@@ -220,7 +220,7 @@ All DEFER items now have a wave assignment or are explicitly marked opportunisti
 | Target | Items | Description |
 |--------|-------|-------------|
 | Wave 2 (core-pipeline-v2 + admin-ui) | CR48, CR51, M15, M17, M20, CR55, OD1, NP24 | Pipeline rollback, IntegrityError, chunking metadata, deletion_reason, audit action, deep-health key_id, error text, lazy dense embedding |
-| Wave 3 (component-analytics) | M6, M9 | Quota/stats counting soft-deleted documents |
+| Wave 3 (component-analytics) | ~~M6, M9~~ | ~~Quota/stats counting soft-deleted documents~~ FIXED |
 | Wave 5 (infra-phase2) | CR2, M10/CR28, CR38, CR41, CR42, CR44, M19, M1, M11/NP13, M13, M14, M18, CR6, CR37, CR49, OD2, OD5, NP23 | ASGI middleware, Qdrant TOCTOU/schema, reindex, RLS, turn_count, thread-safety, batch atomicity, PII redactor, cleanup pattern, auth hardening, raw_filters, JOIN namespace, Qdrant config cleanup |
 | Opportunistic / Phase 3 | CR7, CR43, CR59, L1-L9, L11-L13, MN1-MN8, NP1-NP22 | Test isolation, test assertions, parent chunk UUID, LOW improvements, test/style nitpicks |
 

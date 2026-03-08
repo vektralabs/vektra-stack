@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-app"]
+members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-app"]
 
 # PyTorch CPU-only index for CI and development (no NVIDIA CUDA packages).
 # Only used by packages with an explicit source override (explicit = true).
@@ -115,9 +115,9 @@ root_packages = [
     "vektra_core",
     "vektra_ingest",
     "vektra_index",
+    "vektra_analytics",
     "vektra_app",
-    # vektra_analytics and vektra_learn added when their packages are created
-    # (component-analytics Wave 3, component-learn Wave 4)
+    # vektra_learn added when its package is created (component-learn Wave 4)
 ]
 include_external_packages = true
 
@@ -151,15 +151,20 @@ type = "forbidden"
 source_modules = ["vektra_index"]
 forbidden_modules = ["vektra_admin", "vektra_core", "vektra_ingest", "vektra_analytics", "vektra_learn"]
 
-# Contracts for vektra_analytics and vektra_learn are added when their
-# packages are created (component-analytics Wave 3, component-learn Wave 4).
+[[tool.importlinter.contracts]]
+name = "vektra_analytics must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_analytics"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_learn"]
+
+# Contract for vektra_learn added when its package is created (component-learn Wave 4).
 # The forbidden_modules entries in existing contracts already prevent
-# other components from importing them.
+# other components from importing it.
 
 [[tool.importlinter.contracts]]
 name = "No component shall import the app entrypoint"
 type = "forbidden"
-source_modules = ["vektra_shared", "vektra_admin", "vektra_core", "vektra_ingest", "vektra_index"]
+source_modules = ["vektra_shared", "vektra_admin", "vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics"]
 forbidden_modules = ["vektra_app"]
 
 # ---------------------------------------------------------------------------

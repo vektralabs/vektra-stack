@@ -11,6 +11,7 @@
 #   Wave 0: completed (shared-protocols-phase2, database-phase2)
 #   Wave 1: completed (core-conversations, admin-enforcement, index-hybrid, ingest-phase2)
 #   Wave 2: completed (core-pipeline-v2, admin-ui)
+#   Wave 3: completed (component-analytics)
 version: "1.0"
 
 matrix:
@@ -292,8 +293,8 @@ matrix:
   - req: REQ-051
     title: "Operator privacy: no conversation content access"
     arch: "ARCH-031; ARCH-041"
-    plan_task: "20260217-component-core:pipeline"
-    test: ""
+    plan_task: "20260217-component-core:pipeline; 20260301-component-analytics:api"
+    test: "vektra-analytics/tests/test_service.py; vektra-analytics/tests/test_api.py"
 
   - req: REQ-052
     title: "EmbeddingProvider Protocol"
@@ -346,8 +347,8 @@ matrix:
   - req: REQ-060
     title: "QueryTrace for RAG observability"
     arch: "ARCH-041"
-    plan_task: "20260217-component-core:pipeline"
-    test: ""
+    plan_task: "20260217-component-core:pipeline; 20260301-component-analytics:service"
+    test: "vektra-analytics/tests/test_service.py; vektra-analytics/tests/test_api.py"
 
   - req: REQ-061
     title: "EventEmitter interface"

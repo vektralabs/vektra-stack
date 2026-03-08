@@ -8,6 +8,7 @@ vektra_* packages (ADR-0005).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
@@ -52,11 +53,11 @@ class QueryTraceOrm(Base):
         ForeignKey("namespaces.id"),
         nullable=False,
     )
-    steps: Mapped[dict] = mapped_column(
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     total_duration_ms: Mapped[int] = mapped_column(INTEGER, nullable=False)
-    chunks_retrieved: Mapped[dict] = mapped_column(
+    chunks_retrieved: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     llm_model: Mapped[str] = mapped_column(String(255), nullable=False)

@@ -36,12 +36,16 @@ class MetricsResponse(BaseModel):
 
 
 class AnalyticsService:
-    """QueryTrace storage, retrieval, and metrics aggregation."""
+    """QueryTrace storage, retrieval, and metrics aggregation.
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    Methods take an explicit AsyncSession parameter (one session per request).
+    The service instance is stateless and safe to store as a singleton in
+    app.state. Session lifecycle is managed by the API dependency layer.
+    """
 
-    async def store_trace(self, trace: QueryTrace, namespace: str = "default") -> None:
+    async def store_trace(
+        self, session: AsyncSession, trace: QueryTrace, namespace: str
+    ) -> None:
         """Persist a QueryTrace to the database."""
         orm = QueryTraceOrm(
             response_id=trace.response_id,
@@ -59,7 +63,6 @@ class AnalyticsService:
             prompt_version=trace.prompt_version,
             created_at=trace.created_at,
         )
-        session = self._session
         session.add(orm)
         await session.flush()
         log.info(
@@ -68,9 +71,10 @@ class AnalyticsService:
             namespace=namespace,
         )
 
-    async def get_trace(self, response_id: UUID) -> QueryTrace | None:
+    async def get_trace(
+        self, session: AsyncSession, response_id: UUID
+    ) -> QueryTrace | None:
         """Retrieve a single trace by response_id."""
-        session = self._session
         stmt = select(QueryTraceOrm).where(QueryTraceOrm.response_id == response_id)
         result = await session.execute(stmt)
         row = result.scalar_one_or_none()
@@ -80,6 +84,7 @@ class AnalyticsService:
 
     async def list_traces(
         self,
+        session: AsyncSession,
         namespace: str | None = None,
         from_dt: datetime | None = None,
         to_dt: datetime | None = None,
@@ -89,7 +94,6 @@ class AnalyticsService:
         offset: int = 0,
     ) -> list[QueryTrace]:
         """List traces with optional filters, ordered by created_at desc."""
-        session = self._session
         stmt = select(QueryTraceOrm).order_by(QueryTraceOrm.created_at.desc())
 
         if namespace is not None:
@@ -110,12 +114,12 @@ class AnalyticsService:
 
     async def get_metrics(
         self,
+        session: AsyncSession,
         namespace: str | None = None,
         from_dt: datetime | None = None,
         to_dt: datetime | None = None,
     ) -> MetricsResponse:
         """Compute aggregated metrics for the given time window."""
-        session = self._session
 
         # Base filter
         conditions = []
@@ -214,16 +218,11 @@ class AnalyticsService:
             return 0.0
         return round(sum(max_scores) / len(max_scores), 4)
 
-    async def delete_before(self, cutoff: datetime) -> int:
+    async def delete_before(self, session: AsyncSession, cutoff: datetime) -> int:
         """Delete traces older than the cutoff date. Returns count deleted."""
-        session = self._session
-        stmt = (
-            delete(QueryTraceOrm)
-            .where(QueryTraceOrm.created_at < cutoff)
-            .returning(QueryTraceOrm.id)
-        )
+        stmt = delete(QueryTraceOrm).where(QueryTraceOrm.created_at < cutoff)
         result = await session.execute(stmt)
-        count = len(result.all())
+        count = result.rowcount
         log.info("traces_deleted", count=count, cutoff=cutoff.isoformat())
         return count
 

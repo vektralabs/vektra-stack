@@ -101,6 +101,10 @@ ERR_AUTH_004 = "ERR-AUTH-004"  # Rate limit exceeded
 # Quota errors (ARCH-047)
 ERR_QUOTA_001 = "ERR-QUOTA-001"  # Namespace quota exceeded
 
+# Analytics errors (ARCH-041)
+ERR_ANALYTICS_001 = "ERR-ANALYTICS-001"  # Analytics service not available
+ERR_ANALYTICS_002 = "ERR-ANALYTICS-002"  # Trace not found
+
 
 # ---------------------------------------------------------------------------
 # HTTP status mapping helpers
@@ -121,6 +125,7 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_QUOTA_001: 422,
     ERR_INGEST_002: 413,  # Payload Too Large
     ERR_QUERY_003: 422,
+    ERR_ANALYTICS_002: 404,
 }
 
 

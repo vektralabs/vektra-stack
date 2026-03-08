@@ -85,10 +85,10 @@ class TestStoreTrace:
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
+        svc = AnalyticsService()
         trace = _make_trace()
 
-        await svc.store_trace(trace, namespace="test-ns")
+        await svc.store_trace(session, trace, namespace="test-ns")
 
         session.add.assert_called_once()
         session.flush.assert_awaited_once()
@@ -101,19 +101,15 @@ class TestStoreTrace:
         assert len(orm.steps) == 3
         assert len(orm.chunks_retrieved) == 2
 
-    async def test_store_trace_default_namespace(self):
-        session = AsyncMock()
-        session.flush = AsyncMock()
+    async def test_store_trace_requires_namespace(self):
+        """namespace has no default - callers must provide it explicitly."""
+        import inspect
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
-        trace = _make_trace()
-
-        await svc.store_trace(trace)
-
-        orm = session.add.call_args[0][0]
-        assert orm.namespace_id == "default"
+        sig = inspect.signature(AnalyticsService.store_trace)
+        param = sig.parameters["namespace"]
+        assert param.default is inspect.Parameter.empty
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +129,8 @@ class TestGetTrace:
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
-        trace = await svc.get_trace(rid)
+        svc = AnalyticsService()
+        trace = await svc.get_trace(session, rid)
 
         assert trace is not None
         assert trace.response_id == rid
@@ -152,8 +148,8 @@ class TestGetTrace:
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
-        trace = await svc.get_trace(uuid4())
+        svc = AnalyticsService()
+        trace = await svc.get_trace(session, uuid4())
 
         assert trace is None
 
@@ -177,8 +173,8 @@ class TestListTraces:
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
-        traces = await svc.list_traces(limit=10)
+        svc = AnalyticsService()
+        traces = await svc.list_traces(session, limit=10)
 
         assert len(traces) == 2
         assert traces[0].total_duration_ms == 100
@@ -194,8 +190,8 @@ class TestListTraces:
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
-        traces = await svc.list_traces()
+        svc = AnalyticsService()
+        traces = await svc.list_traces(session)
 
         assert traces == []
 
@@ -258,8 +254,8 @@ class TestGetMetrics:
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
-        metrics = await svc.get_metrics()
+        svc = AnalyticsService()
+        metrics = await svc.get_metrics(session)
 
         assert metrics.total_queries == 10
         assert metrics.avg_latency_ms == 250.5
@@ -297,8 +293,8 @@ class TestGetMetrics:
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
-        metrics = await svc.get_metrics()
+        svc = AnalyticsService()
+        metrics = await svc.get_metrics(session)
 
         assert metrics.total_queries == 0
         assert metrics.avg_latency_ms == 0.0
@@ -317,15 +313,14 @@ class TestDeleteBefore:
     async def test_delete_before_returns_count(self):
         session = AsyncMock()
         result_mock = MagicMock()
-        # Simulate 3 deleted rows
-        result_mock.all.return_value = [MagicMock(), MagicMock(), MagicMock()]
+        result_mock.rowcount = 3
         session.execute = AsyncMock(return_value=result_mock)
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
+        svc = AnalyticsService()
         cutoff = datetime.now(UTC) - timedelta(days=30)
-        count = await svc.delete_before(cutoff)
+        count = await svc.delete_before(session, cutoff)
 
         assert count == 3
         session.execute.assert_awaited_once()
@@ -333,14 +328,14 @@ class TestDeleteBefore:
     async def test_delete_before_none_deleted(self):
         session = AsyncMock()
         result_mock = MagicMock()
-        result_mock.all.return_value = []
+        result_mock.rowcount = 0
         session.execute = AsyncMock(return_value=result_mock)
 
         from vektra_analytics.service import AnalyticsService
 
-        svc = AnalyticsService(session)
+        svc = AnalyticsService()
         cutoff = datetime.now(UTC) - timedelta(days=30)
-        count = await svc.delete_before(cutoff)
+        count = await svc.delete_before(session, cutoff)
 
         assert count == 0
 

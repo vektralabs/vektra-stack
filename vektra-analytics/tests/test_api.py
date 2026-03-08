@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from vektra_analytics.api import router
+from vektra_analytics.api import _get_session, router
 from vektra_analytics.service import AnalyticsService, MetricsResponse
 from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.registry import ProviderRegistry
@@ -50,6 +50,12 @@ def _make_app(
 
     if service is not None:
         app.state.analytics_service = service
+
+    # Override session dependency with a no-op mock (service is fully mocked)
+    async def _mock_session():
+        return AsyncMock()
+
+    app.dependency_overrides[_get_session] = _mock_session
 
     return app
 
@@ -182,6 +188,9 @@ class TestListTraces:
 
         resp = client.get("/api/v1/traces", headers=_auth_headers())
         assert resp.status_code == 503
+        data = resp.json()
+        assert "error" in data["detail"]
+        assert data["detail"]["error"]["code"] == "ERR-ANALYTICS-001"
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +223,9 @@ class TestGetTrace:
 
         resp = client.get(f"/api/v1/traces/{uuid4()}", headers=_auth_headers())
         assert resp.status_code == 404
+        data = resp.json()
+        assert "error" in data["detail"]
+        assert data["detail"]["error"]["code"] == "ERR-ANALYTICS-002"
 
     def test_get_trace_invalid_uuid(self):
         svc = _mock_service()

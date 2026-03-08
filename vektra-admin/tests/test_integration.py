@@ -55,6 +55,7 @@ def _docker_available() -> bool:
 # (asyncio_default_fixture_loop_scope=module in pyproject.toml); forcing tests
 # to the same loop keeps asyncpg connections consistent across setup/test/teardown.
 pytestmark = [
+    pytest.mark.integration,
     pytest.mark.skipif(
         not _docker_available(),
         reason="Docker not available - skipping integration tests",

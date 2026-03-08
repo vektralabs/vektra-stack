@@ -172,6 +172,7 @@ forbidden_modules = ["vektra_app"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
+markers = ["integration: integration tests requiring Docker (excluded from ci-unit)"]
 
 [tool.coverage.run]
 source = [

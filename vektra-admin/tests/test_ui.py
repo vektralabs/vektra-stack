@@ -194,22 +194,14 @@ async def test_auth_via_cookie():
     assert "Health dashboard" in resp.text
 
 
-async def test_auth_via_query_param():
-    """Admin pages accessible with ?token= query parameter."""
-    app = _make_app()
-    with patch("vektra_admin.ui._health") as mock_health:
-        mock_health.check_all = AsyncMock(
-            return_value=(
-                MagicMock(status="healthy"),
-                MagicMock(status="healthy", timestamp="2026-03-06", components=[]),
-            )
+async def test_query_param_token_rejected():
+    """Query param token no longer grants access (cookie-only auth)."""
+    async with _client() as client:
+        resp = await client.get(
+            "/admin/?token=test-admin-token", follow_redirects=False
         )
-        mock_health.check_memory = MagicMock(
-            return_value=MagicMock(rss_mb=100.0, vms_mb=200.0, percent=5.0)
-        )
-        async with _client(app) as client:
-            resp = await client.get("/admin/?token=test-admin-token")
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert "/admin/login" in resp.headers["location"]
 
 
 async def test_auth_invalid_token_redirects():

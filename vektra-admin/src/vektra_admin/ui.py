@@ -1,15 +1,15 @@
 """HTMX + Jinja2 admin UI router (ADR-0024, ARCH-062).
 
 Serves the admin dashboard pages at /admin/*. All pages require admin scope
-via cookie or query parameter. Route handlers call service functions directly
-(no HTTP round-trips) and pass plain dicts to Jinja2 templates. No business
-logic lives in templates.
+via HttpOnly cookie. Route handlers call service functions directly (no HTTP
+round-trips) and pass plain dicts to Jinja2 templates. No business logic
+lives in templates.
 
 Authentication flow:
 - GET /admin/login renders a form with token input
 - POST /admin/login validates token, sets HttpOnly cookie, redirects
-- All /admin/* routes read token from cookie or ?token= query parameter
-- HTMX requests propagate token via hx-headers on the body element
+- All /admin/* routes read token from cookie only (no query param)
+- HTMX requests send cookie automatically (same-origin XHR)
 """
 
 from __future__ import annotations
@@ -76,10 +76,12 @@ async def _handle_admin_redirect(
 
 
 async def _get_admin_token(request: Request) -> str:
-    """Extract admin token from cookie or query parameter."""
+    """Extract admin token from HttpOnly cookie.
+
+    Query parameter auth was removed to prevent token leakage via browser
+    history, server logs, and Referer headers. Use POST /admin/login instead.
+    """
     token = request.cookies.get(_COOKIE_NAME)
-    if not token:
-        token = request.query_params.get("token")
     if not token:
         raise _AdminRedirect()
     return token
@@ -88,8 +90,8 @@ async def _get_admin_token(request: Request) -> str:
 async def _require_admin_ui(
     request: Request,
     token: str = Depends(_get_admin_token),
-) -> tuple[ApiKeyInfo, str]:
-    """Validate admin token and return (key_info, token) tuple.
+) -> ApiKeyInfo:
+    """Validate admin token and return key info.
 
     Redirects to login page if token is missing or invalid.
     """
@@ -107,13 +109,12 @@ async def _require_admin_ui(
         raise _AdminRedirect(clear_cookie=True)
 
     request.state.key_id = info.key_id
-    return info, token
+    return info
 
 
 def _render(
     request: Request,
     template_name: str,
-    token: str,
     *,
     active: str = "",
     **context: Any,
@@ -124,7 +125,6 @@ def _render(
         request=request,
         name=template_name,
         context={
-            "token": token,
             "version": version,
             "active": active,
             **context,
@@ -197,10 +197,10 @@ async def logout(request: Request) -> Response:
 @ui_router.get("/", response_class=HTMLResponse)
 async def health_dashboard(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
 ) -> HTMLResponse:
     """Render the health dashboard page."""
-    _info, token = auth
+    _info = auth
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 
@@ -210,7 +210,6 @@ async def health_dashboard(
     return _render(
         request,
         "health.html",
-        token,
         active="health",
         health=deep,
         memory=memory,
@@ -220,10 +219,10 @@ async def health_dashboard(
 @ui_router.get("/partials/health", response_class=HTMLResponse)
 async def health_partial(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
 ) -> HTMLResponse:
     """HTMX partial: health table for polling refresh."""
-    _info, token = auth
+    _info = auth
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 
@@ -232,7 +231,7 @@ async def health_partial(
     return templates.TemplateResponse(
         request=request,
         name="partials/health_table.html",
-        context={"health": deep, "token": token},
+        context={"health": deep},
     )
 
 
@@ -244,11 +243,11 @@ async def health_partial(
 @ui_router.get("/keys", response_class=HTMLResponse)
 async def keys_page(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Render the API keys management page."""
-    _info, token = auth
+    _info = auth
     result = await session.execute(select(ApiKeyOrm))
     rows = result.scalars().all()
     keys = [
@@ -264,17 +263,17 @@ async def keys_page(
         }
         for row in rows
     ]
-    return _render(request, "keys.html", token, active="keys", keys=keys)
+    return _render(request, "keys.html", active="keys", keys=keys)
 
 
 @ui_router.post("/keys/create", response_class=HTMLResponse)
 async def keys_create(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Create a new API key, return updated keys table partial with flash."""
-    _info, token = auth
+    _info = auth
     form = await request.form()
 
     label = form.get("label", "") or None
@@ -330,7 +329,6 @@ async def keys_create(
         name="partials/keys_table.html",
         context={
             "keys": keys,
-            "token": token,
             "flash": {
                 "type": "success",
                 "message": f"Key created. Save this now: {plaintext}",
@@ -343,11 +341,11 @@ async def keys_create(
 async def keys_revoke(
     key_id: str,
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Revoke an API key, return updated keys table partial."""
-    _info, token = auth
+    _info = auth
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -393,7 +391,6 @@ async def keys_revoke(
         name="partials/keys_table.html",
         context={
             "keys": keys,
-            "token": token,
             "flash": {"type": "success", "message": "Key revoked."},
         },
     )
@@ -407,25 +404,25 @@ async def keys_revoke(
 @ui_router.get("/namespaces", response_class=HTMLResponse)
 async def namespaces_page(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Render the namespace management page."""
-    _info, token = auth
+    _info = auth
     namespaces = await _load_namespaces(session)
     return _render(
-        request, "namespaces.html", token, active="namespaces", namespaces=namespaces
+        request, "namespaces.html", active="namespaces", namespaces=namespaces
     )
 
 
 @ui_router.post("/namespaces/create", response_class=HTMLResponse)
 async def namespaces_create(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Create a new namespace, return updated table partial."""
-    _info, token = auth
+    _info = auth
     form = await request.form()
     name = str(form.get("name", "")).strip()
     display_name = str(form.get("display_name", "")).strip() or None
@@ -443,7 +440,6 @@ async def namespaces_create(
         name="partials/namespaces_table.html",
         context={
             "namespaces": namespaces,
-            "token": token,
             "flash": {"type": "success", "message": f"Namespace '{name}' created."},
         },
     )
@@ -453,11 +449,11 @@ async def namespaces_create(
 async def namespaces_delete(
     ns_id: str,
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Delete a namespace, return updated table partial."""
-    _info, token = auth
+    _info = auth
     result = await session.execute(select(NamespaceOrm).where(NamespaceOrm.id == ns_id))
     ns = result.scalar_one_or_none()
     if ns is None:
@@ -472,7 +468,6 @@ async def namespaces_delete(
         name="partials/namespaces_table.html",
         context={
             "namespaces": namespaces,
-            "token": token,
             "flash": {"type": "success", "message": f"Namespace '{ns_id}' deleted."},
         },
     )
@@ -518,16 +513,15 @@ _AUDIT_PAGE_SIZE = 50
 @ui_router.get("/audit", response_class=HTMLResponse)
 async def audit_page(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Render the audit log page."""
-    _info, token = auth
+    _info = auth
     entries, has_older = await _load_audit_entries(session, request.query_params)
     return _render(
         request,
         "audit.html",
-        token,
         active="audit",
         entries=entries,
         has_older=has_older,
@@ -538,11 +532,11 @@ async def audit_page(
 @ui_router.get("/partials/audit", response_class=HTMLResponse)
 async def audit_partial(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """HTMX partial: audit log rows for pagination."""
-    _info, token = auth
+    _info = auth
     entries, has_older = await _load_audit_entries(session, request.query_params)
     return templates.TemplateResponse(
         request=request,
@@ -551,7 +545,6 @@ async def audit_partial(
             "entries": entries,
             "has_older": has_older,
             "params": dict(request.query_params),
-            "token": token,
         },
     )
 
@@ -604,15 +597,28 @@ async def _load_audit_entries(
 
     status_filter = params.get("status_code")
     if status_filter:
-        stmt = stmt.where(AuditLogOrm.status_code == int(status_filter))
+        try:
+            stmt = stmt.where(AuditLogOrm.status_code == int(status_filter))
+        except ValueError:
+            pass  # ignore invalid status_code filter
 
     date_start = params.get("date_start")
     if date_start:
-        stmt = stmt.where(AuditLogOrm.created_at >= datetime.fromisoformat(date_start))
+        try:
+            stmt = stmt.where(
+                AuditLogOrm.created_at >= datetime.fromisoformat(date_start)
+            )
+        except ValueError:
+            pass  # ignore invalid date format
 
     date_end = params.get("date_end")
     if date_end:
-        stmt = stmt.where(AuditLogOrm.created_at <= datetime.fromisoformat(date_end))
+        try:
+            stmt = stmt.where(
+                AuditLogOrm.created_at <= datetime.fromisoformat(date_end)
+            )
+        except ValueError:
+            pass  # ignore invalid date format
 
     # Fetch one extra to detect if there are more pages
     stmt = stmt.limit(_AUDIT_PAGE_SIZE + 1)
@@ -642,7 +648,15 @@ async def _load_audit_entries(
 # Config page (GET /admin/config)
 # ---------------------------------------------------------------------------
 
-_SECRET_KEYWORDS = {"KEY", "SECRET", "PASSWORD", "TOKEN"}
+_SECRET_KEYWORDS = {
+    "KEY",
+    "SECRET",
+    "PASSWORD",
+    "TOKEN",
+    "DATABASE",
+    "DSN",
+    "CREDENTIAL",
+}
 
 
 def _mask_value(key: str, value: str) -> str:
@@ -656,10 +670,10 @@ def _mask_value(key: str, value: str) -> str:
 @ui_router.get("/config", response_class=HTMLResponse)
 async def config_page(
     request: Request,
-    auth: tuple[ApiKeyInfo, str] = Depends(_require_admin_ui),
+    auth: ApiKeyInfo = Depends(_require_admin_ui),
 ) -> HTMLResponse:
     """Render the system config page (read-only)."""
-    _info, token = auth
+    _info = auth
 
     # Collect VEKTRA_* env vars
     env_vars = sorted(
@@ -682,7 +696,6 @@ async def config_page(
     return _render(
         request,
         "config.html",
-        token,
         active="config",
         env_vars=env_vars,
         providers=providers,

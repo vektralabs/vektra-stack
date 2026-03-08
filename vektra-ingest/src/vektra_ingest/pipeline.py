@@ -307,6 +307,7 @@ async def run_ingest(
             await session.commit()
         except IntegrityError as exc:
             await session.rollback()
+            doc_id = None  # row was rolled back; prevent cleanup of non-existent doc
             if "uq_source_documents_filename" in str(exc):
                 raise IngestConflictError(filename, namespace) from exc
             raise

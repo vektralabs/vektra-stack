@@ -94,7 +94,10 @@ class AnalyticsService:
         offset: int = 0,
     ) -> list[QueryTrace]:
         """List traces with optional filters, ordered by created_at desc."""
-        stmt = select(QueryTraceOrm).order_by(QueryTraceOrm.created_at.desc())
+        stmt = select(QueryTraceOrm).order_by(
+            QueryTraceOrm.created_at.desc(),
+            QueryTraceOrm.response_id.desc(),
+        )
 
         if namespace is not None:
             stmt = stmt.where(QueryTraceOrm.namespace_id == namespace)
@@ -163,12 +166,15 @@ class AnalyticsService:
             session, conditions
         )
 
+        # Effective period (prefer explicit window, fall back to data range)
+        period_start = from_dt or first_at
+        period_end = to_dt or last_at
+
         # Queries per hour
         queries_per_hour: float = 0.0
-        if total > 0 and first_at and last_at and first_at != last_at:
-            span_hours = (last_at - first_at).total_seconds() / 3600.0
-            if span_hours > 0:
-                queries_per_hour = total / span_hours
+        if total > 0 and period_start and period_end and period_end > period_start:
+            span_hours = (period_end - period_start).total_seconds() / 3600.0
+            queries_per_hour = total / span_hours
 
         # Model distribution
         model_stmt = (
@@ -190,8 +196,8 @@ class AnalyticsService:
             avg_retrieval_score=avg_retrieval_score,
             queries_per_hour=round(queries_per_hour, 2),
             model_distribution=model_distribution,
-            period_start=from_dt or first_at or now,
-            period_end=to_dt or last_at or now,
+            period_start=period_start or now,
+            period_end=period_end or now,
         )
 
     async def _compute_avg_retrieval_score(

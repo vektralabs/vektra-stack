@@ -89,7 +89,8 @@ async def check_namespace_quota(
         count_result = await session.execute(
             text(
                 "SELECT count(*) FROM document_chunks dc "
-                "JOIN source_documents sd ON sd.id = dc.document_id "
+                "JOIN source_documents sd "
+                "ON sd.id = dc.document_id AND sd.namespace_id = dc.namespace_id "
                 "WHERE dc.namespace_id = :ns AND sd.deleted_at IS NULL"
             ),
             {"ns": namespace_id},

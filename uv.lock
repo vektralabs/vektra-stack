@@ -4963,6 +4963,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "psutil" },
+    { name = "pydantic" },
     { name = "python-multipart" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
@@ -4985,6 +4986,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "psutil", specifier = ">=5.9" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.0" },
@@ -5005,6 +5007,7 @@ version = "0.2.0.dev0"
 source = { editable = "vektra-analytics" }
 dependencies = [
     { name = "fastapi" },
+    { name = "pydantic" },
     { name = "sqlalchemy" },
     { name = "structlog" },
     { name = "vektra-shared" },
@@ -5020,6 +5023,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "vektra-shared", editable = "vektra-shared" },
@@ -5087,6 +5091,7 @@ dependencies = [
     { name = "litellm" },
     { name = "presidio-analyzer" },
     { name = "presidio-anonymizer" },
+    { name = "pydantic" },
     { name = "rerankers", extra = ["flashrank"] },
     { name = "structlog" },
     { name = "vektra-shared" },
@@ -5106,6 +5111,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.40" },
     { name = "presidio-analyzer", specifier = ">=2.2" },
     { name = "presidio-anonymizer", specifier = ">=2.2" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "rerankers", extras = ["flashrank"], specifier = ">=0.5" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "vektra-shared", editable = "vektra-shared" },
@@ -5126,6 +5132,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "pgvector" },
+    { name = "pydantic" },
     { name = "sentence-transformers" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
@@ -5155,6 +5162,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastembed", marker = "extra == 'sparse'", specifier = ">=0.4" },
     { name = "pgvector", specifier = ">=0.3" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.12" },
     { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },

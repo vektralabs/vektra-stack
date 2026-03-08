@@ -372,9 +372,8 @@ class TestOrmToTrace:
     def test_handles_none_steps_and_chunks(self):
         from vektra_analytics.service import _orm_to_trace
 
-        orm = _make_orm(steps=None, chunks=None)
-        # steps and chunks might be None from DB
-        orm.steps = None
+        orm = _make_orm()
+        orm.steps = None  # simulate DB returning NULL
         orm.chunks_retrieved = None
         trace = _orm_to_trace(orm)
 

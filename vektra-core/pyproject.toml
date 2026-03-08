@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "vektra-shared",
     "fastapi>=0.115",
+    "pydantic>=2.0",
     "litellm>=1.40",
     "jinja2>=3.1",
     "structlog>=24.0",

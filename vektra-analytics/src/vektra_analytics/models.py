@@ -70,4 +70,5 @@ class QueryTraceOrm(Base):
         CheckConstraint("total_duration_ms >= 0", name="ck_query_traces_duration"),
         Index("ix_query_traces_namespace", "namespace_id"),
         Index("ix_query_traces_created", "created_at"),
+        Index("ix_query_traces_steps_gin", "steps", postgresql_using="gin"),
     )

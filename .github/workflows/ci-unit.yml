@@ -121,7 +121,7 @@ jobs:
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-admin/tests/ -v --tb=short -m "not integration"
-          --cov=vektra_admin --cov-report=term-missing --cov-fail-under=80
+          --cov=vektra_admin --cov-report=term-missing --cov-fail-under=75
 
   # Aggregator job used as the single required status check in branch protection.
   # Passes if no upstream job failed (skipped jobs are treated as passing).

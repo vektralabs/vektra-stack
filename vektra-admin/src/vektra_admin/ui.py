@@ -491,7 +491,7 @@ async def _load_namespaces(session: AsyncSession) -> list[dict[str, Any]]:
             "SELECT n.id, n.display_name, n.created_at, "
             "COUNT(sd.id) AS doc_count "
             "FROM namespaces n "
-            "LEFT JOIN source_documents sd ON sd.namespace = n.id "
+            "LEFT JOIN source_documents sd ON sd.namespace_id = n.id AND sd.deleted_at IS NULL "
             "GROUP BY n.id "
             "ORDER BY n.created_at DESC"
         )

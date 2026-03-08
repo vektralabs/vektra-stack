@@ -13,6 +13,8 @@ dependencies = [
     "structlog>=24.0",
     "psutil>=5.9",
     "cachetools>=5.3",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
 ]
 
 [build-system]
@@ -26,6 +28,7 @@ packages = ["src/vektra_admin"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
+markers = ["integration: integration tests requiring Docker (excluded from ci-unit)"]
 
 [tool.uv.sources]
 vektra-shared = { workspace = true }

@@ -1,0 +1,32 @@
+{% if flash is defined and flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Display name</th>
+      <th>Documents</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for ns in namespaces %}
+    <tr>
+      <td><code>{{ ns.id }}</code></td>
+      <td>{{ ns.display_name or "-" }}</td>
+      <td>{{ ns.doc_count }}</td>
+      <td>{{ ns.created_at.strftime("%Y-%m-%d %H:%M") if ns.created_at else "-" }}</td>
+      <td>
+        <button hx-delete="/admin/namespaces/{{ ns.id }}"
+                hx-target="#namespaces-table"
+                hx-swap="innerHTML"
+                hx-confirm="Delete namespace '{{ ns.id }}'? This cannot be undone.">Delete</button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No namespaces found</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

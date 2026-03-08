@@ -303,7 +303,14 @@ async def run_ingest(
 
         # Commit the source_document so the VectorStoreProvider (which uses
         # its own session) can reference it via FK (document_chunks.document_id).
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            doc_id = None  # row was rolled back; prevent cleanup of non-existent doc
+            if "uq_source_documents_filename" in str(exc):
+                raise IngestConflictError(filename, namespace) from exc
+            raise
         if on_phase is not None:
             await on_phase("extracting", None)
 
@@ -507,7 +514,7 @@ async def _cleanup_document(doc_id: UUID) -> None:
                 .where(SourceDocumentOrm.id == doc_id)
                 .values(
                     deleted_at=datetime.now(UTC),
-                    deletion_reason="user_request",
+                    deletion_reason="pipeline_failure",
                 )
             )
             await session.commit()

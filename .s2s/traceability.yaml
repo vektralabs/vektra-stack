@@ -10,6 +10,7 @@
 # Phase 2 wave completion:
 #   Wave 0: completed (shared-protocols-phase2, database-phase2)
 #   Wave 1: completed (core-conversations, admin-enforcement, index-hybrid, ingest-phase2)
+#   Wave 2: completed (core-pipeline-v2, admin-ui)
 version: "1.0"
 
 matrix:
@@ -39,8 +40,8 @@ matrix:
   - req: REQ-004
     title: "WF-ADMIN-001: System health check workflow"
     arch: "ARCH-022; ARCH-027"
-    plan_task: "20260217-component-admin:health"
-    test: ""
+    plan_task: "20260217-component-admin:health; 20260301-admin-ui:health-dashboard"
+    test: "vektra-admin/tests/test_ui.py::test_health_page_renders_components; vektra-admin/tests/test_ui.py::test_health_partial_returns_table"
 
   - req: REQ-005
     title: "WF-INT-001: End-to-end MVP validation workflow"
@@ -51,8 +52,8 @@ matrix:
   - req: REQ-006
     title: "Phase 1 admin capabilities (consolidated)"
     arch: "ARCH-020; ARCH-022; ARCH-023"
-    plan_task: "20260217-component-admin:api"
-    test: ""
+    plan_task: "20260217-component-admin:api; 20260301-admin-ui:all-pages"
+    test: "vektra-admin/tests/test_ui.py; vektra-admin/tests/test_integration.py::test_ui_health_page; vektra-admin/tests/test_integration.py::test_ui_keys_crud; vektra-admin/tests/test_integration.py::test_ui_namespaces_crud; vektra-admin/tests/test_integration.py::test_ui_audit_page; vektra-admin/tests/test_integration.py::test_ui_config_page"
 
   - req: REQ-007
     title: "Phase 1 interaction mode: API + shell scripts"
@@ -118,7 +119,7 @@ matrix:
     title: "API key authentication for all components"
     arch: "ARCH-020; ARCH-023"
     plan_task: "20260217-component-shared:auth"
-    test: "vektra-shared/tests/test_auth.py; vektra-admin/tests/test_ttlcache.py"
+    test: "vektra-shared/tests/test_auth.py; vektra-admin/tests/test_ttlcache.py; vektra-admin/tests/test_ui.py::test_login_valid_token_sets_cookie; vektra-admin/tests/test_ui.py::test_login_invalid_token_redirects_with_error"
 
   - req: REQ-020
     title: "API key management via admin component"
@@ -135,8 +136,8 @@ matrix:
   - req: REQ-022
     title: "API key audit logging"
     arch: "ARCH-041"
-    plan_task: "20260217-component-admin:audit"
-    test: "vektra-ingest/tests/test_api.py"
+    plan_task: "20260217-component-admin:audit; 20260301-admin-ui:audit-page"
+    test: "vektra-ingest/tests/test_api.py; vektra-admin/tests/test_integration.py::test_ui_audit_page"
 
   - req: REQ-023
     title: "API key table schema with scope support"
@@ -153,8 +154,8 @@ matrix:
   - req: REQ-025
     title: "Health endpoint authentication: two-tier model"
     arch: "ARCH-022"
-    plan_task: "20260217-component-admin:health"
-    test: ""
+    plan_task: "20260217-component-admin:health; 20260301-admin-ui:auth-dependency"
+    test: "vektra-admin/tests/test_ui.py::test_unauthenticated_redirects_to_login; vektra-admin/tests/test_ui.py::test_auth_via_cookie; vektra-admin/tests/test_ui.py::test_auth_via_query_param; vektra-admin/tests/test_ui.py::test_auth_invalid_token_redirects"
 
   - req: REQ-026
     title: "Acceptance criteria structure standard"

@@ -225,17 +225,21 @@ async def search(
         active_index_version=_VS_CONFIG.active_index_version
     )
 
-    # Embed the query (dense)
-    try:
-        dense_vector = await embedding_provider.embed_query(body.query)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail={"error": {"message": f"Embedding failed: {exc}"}}
-        ) from exc
+    # Embed the query (dense) - skip for SPARSE-only mode (NP24)
+    dense_vector: list[float] = []
+    effective_mode = body.search_mode
+
+    if body.search_mode in (SearchMode.DENSE, SearchMode.HYBRID):
+        try:
+            dense_vector = await embedding_provider.embed_query(body.query)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"message": f"Embedding failed: {exc}"}},
+            ) from exc
 
     # Embed the query (sparse) - only when SparseEmbeddingProvider is available
     sparse_vector = None
-    effective_mode = body.search_mode
 
     if body.search_mode in (SearchMode.SPARSE, SearchMode.HYBRID):
         sparse_provider = getattr(request.app.state, "sparse_embedding_provider", None)
@@ -253,6 +257,16 @@ async def search(
                 body.search_mode.value,
             )
             effective_mode = SearchMode.DENSE
+
+    # If sparse fallback to DENSE, compute dense embedding now (NP24)
+    if effective_mode == SearchMode.DENSE and not dense_vector:
+        try:
+            dense_vector = await embedding_provider.embed_query(body.query)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"message": f"Embedding failed: {exc}"}},
+            ) from exc
 
     query_embedding = QueryEmbedding(dense=dense_vector, sparse=sparse_vector)
 

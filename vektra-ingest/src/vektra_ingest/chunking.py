@@ -75,11 +75,13 @@ class FixedSizeChunking:
         # Accumulate all tokens + carry forward the first element's metadata
         all_tokens: list[int] = []
         first_metadata: dict[str, Any] = {}
+        source_element_types: set[str] = set()
 
         async for element in elements:
             tokens = enc.encode(element.text)
             if not all_tokens and tokens:
                 first_metadata = dict(element.metadata)
+            source_element_types.add(element.element_type.value)
             all_tokens.extend(tokens)
 
         if not all_tokens:
@@ -110,6 +112,7 @@ class FixedSizeChunking:
                     **first_metadata,
                     "chunk_index": chunk_index,
                     "token_count": len(chunk_tokens),
+                    "source_element_types": sorted(source_element_types),
                 },
             )
 

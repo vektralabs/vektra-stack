@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}API keys - Vektra admin{% endblock %}
+{% block content %}
+<h2>API keys</h2>
+
+<details>
+  <summary>Create new key</summary>
+  <form hx-post="/admin/keys/create" hx-target="#keys-table" hx-swap="innerHTML">
+    <label for="label">Label</label>
+    <input type="text" id="label" name="label" placeholder="Optional label">
+    <fieldset>
+      <legend>Scopes</legend>
+      <label><input type="checkbox" name="scopes" value="admin"> admin</label>
+      <label><input type="checkbox" name="scopes" value="ingest"> ingest</label>
+      <label><input type="checkbox" name="scopes" value="query"> query</label>
+    </fieldset>
+    <button type="submit">Create key</button>
+  </form>
+</details>
+
+<div id="keys-table">
+  {% include "partials/keys_table.html" %}
+</div>
+{% endblock %}

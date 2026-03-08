@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Health - Vektra admin{% endblock %}
+{% block content %}
+<h2>Health dashboard</h2>
+<p>Status: <span class="status-{{ health.status }}">{{ health.status }}</span> - {{ health.timestamp }}</p>
+
+<div id="health-table"
+     hx-get="/admin/partials/health"
+     hx-trigger="every 30s"
+     hx-swap="innerHTML">
+  {% include "partials/health_table.html" %}
+</div>
+
+<h3>Memory</h3>
+<table>
+  <thead>
+    <tr><th>Metric</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>RSS</td><td>{{ "%.1f"|format(memory.rss_mb) }} MB</td></tr>
+    <tr><td>VMS</td><td>{{ "%.1f"|format(memory.vms_mb) }} MB</td></tr>
+    <tr><td>Percent</td><td>{{ "%.1f"|format(memory.percent) }}%</td></tr>
+  </tbody>
+</table>
+{% endblock %}

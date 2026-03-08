@@ -1,0 +1,25 @@
+{% for entry in entries %}
+<tr>
+  <td>{{ entry.created_at.strftime("%Y-%m-%d %H:%M:%S") if entry.created_at else "-" }}</td>
+  <td><code>{{ entry.key_id[:8] }}...</code></td>
+  <td>{{ entry.method }}</td>
+  <td>{{ entry.endpoint }}</td>
+  <td>{{ entry.status_code }}</td>
+  <td>{{ entry.action or "-" }}</td>
+</tr>
+{% else %}
+<tr><td colspan="6">No audit entries found</td></tr>
+{% endfor %}
+{% if entries %}
+<tr>
+  <td colspan="6">
+    <div class="pagination">
+      {% if has_older %}
+      <button hx-get="/admin/partials/audit?cursor_ts={{ entries[-1].created_at.isoformat() }}&cursor_id={{ entries[-1].id }}&direction=older{% for k, v in params.items() if k not in ['cursor_ts', 'cursor_id', 'direction'] %}&{{ k }}={{ v }}{% endfor %}"
+              hx-target="#audit-rows"
+              hx-swap="innerHTML">Older</button>
+      {% endif %}
+    </div>
+  </td>
+</tr>
+{% endif %}

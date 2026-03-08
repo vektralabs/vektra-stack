@@ -397,12 +397,20 @@ def create_app() -> FastAPI:
 
     # --- Routers ---
     from vektra_admin.api import router as admin_router
+    from vektra_admin.ui import (
+        get_static_files,
+        register_ui_exception_handlers,
+        ui_router,
+    )
     from vektra_core.api import router as core_router
     from vektra_index.api import router as index_router
     from vektra_index.reindex import router as reindex_router
     from vektra_ingest.api import router as ingest_router
 
     app.include_router(admin_router)
+    app.include_router(ui_router)
+    app.mount("/admin/static", get_static_files(), name="admin-static")
+    register_ui_exception_handlers(app)
     app.include_router(core_router)
     app.include_router(ingest_router)
     app.include_router(index_router)

@@ -45,7 +45,7 @@ ui_router = APIRouter(prefix="/admin", tags=["admin-ui"])
 
 
 # ---------------------------------------------------------------------------
-# Auth dependency: cookie or query parameter
+# Auth dependency: HttpOnly cookie
 # ---------------------------------------------------------------------------
 
 _COOKIE_NAME = "vektra_admin_token"
@@ -200,7 +200,7 @@ async def health_dashboard(
     auth: ApiKeyInfo = Depends(_require_admin_ui),
 ) -> HTMLResponse:
     """Render the health dashboard page."""
-    _info = auth
+
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 
@@ -222,7 +222,7 @@ async def health_partial(
     auth: ApiKeyInfo = Depends(_require_admin_ui),
 ) -> HTMLResponse:
     """HTMX partial: health table for polling refresh."""
-    _info = auth
+
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 
@@ -247,7 +247,7 @@ async def keys_page(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Render the API keys management page."""
-    _info = auth
+
     result = await session.execute(select(ApiKeyOrm))
     rows = result.scalars().all()
     keys = [
@@ -273,7 +273,7 @@ async def keys_create(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Create a new API key, return updated keys table partial with flash."""
-    _info = auth
+
     form = await request.form()
 
     label = form.get("label", "") or None
@@ -345,7 +345,7 @@ async def keys_revoke(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Revoke an API key, return updated keys table partial."""
-    _info = auth
+
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -408,7 +408,7 @@ async def namespaces_page(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Render the namespace management page."""
-    _info = auth
+
     namespaces = await _load_namespaces(session)
     return _render(
         request, "namespaces.html", active="namespaces", namespaces=namespaces
@@ -422,7 +422,7 @@ async def namespaces_create(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Create a new namespace, return updated table partial."""
-    _info = auth
+
     form = await request.form()
     name = str(form.get("name", "")).strip()
     display_name = str(form.get("display_name", "")).strip() or None
@@ -453,7 +453,7 @@ async def namespaces_delete(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Delete a namespace, return updated table partial."""
-    _info = auth
+
     result = await session.execute(select(NamespaceOrm).where(NamespaceOrm.id == ns_id))
     ns = result.scalar_one_or_none()
     if ns is None:
@@ -517,7 +517,7 @@ async def audit_page(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Render the audit log page."""
-    _info = auth
+
     entries, has_older = await _load_audit_entries(session, request.query_params)
     return _render(
         request,
@@ -536,7 +536,7 @@ async def audit_partial(
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """HTMX partial: audit log rows for pagination."""
-    _info = auth
+
     entries, has_older = await _load_audit_entries(session, request.query_params)
     return templates.TemplateResponse(
         request=request,
@@ -673,7 +673,6 @@ async def config_page(
     auth: ApiKeyInfo = Depends(_require_admin_ui),
 ) -> HTMLResponse:
     """Render the system config page (read-only)."""
-    _info = auth
 
     # Collect VEKTRA_* env vars
     env_vars = sorted(

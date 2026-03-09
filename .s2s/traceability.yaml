@@ -12,6 +12,7 @@
 #   Wave 1: completed (core-conversations, admin-enforcement, index-hybrid, ingest-phase2)
 #   Wave 2: completed (core-pipeline-v2, admin-ui)
 #   Wave 3: completed (component-analytics)
+#   Wave 4: completed (component-learn)
 version: "1.0"
 
 matrix:
@@ -275,8 +276,8 @@ matrix:
   - req: REQ-048
     title: "Namespace support for document isolation"
     arch: "ARCH-007; ARCH-047; ARCH-058"
-    plan_task: "20260217-infra-database:namespaces-table"
-    test: "vektra-index/tests/test_integration.py"
+    plan_task: "20260217-infra-database:namespaces-table; 20260301-component-learn:query"
+    test: "vektra-index/tests/test_integration.py; vektra-learn/tests/test_query.py"
 
   - req: REQ-049
     title: "Multi-turn conversation context"
@@ -287,8 +288,8 @@ matrix:
   - req: REQ-050
     title: "Pluggable vector store backend"
     arch: "ARCH-029; ARCH-035; ARCH-051; ARCH-052; ARCH-053"
-    plan_task: "20260217-component-shared:protocols"
-    test: "vektra-shared/tests/test_protocols.py; vektra-index/tests/test_qdrant_provider.py; vektra-index/tests/test_pgvector_hybrid.py; vektra-index/tests/test_fastembed_bm25.py"
+    plan_task: "20260217-component-shared:protocols; 20260301-component-learn:query"
+    test: "vektra-shared/tests/test_protocols.py; vektra-index/tests/test_qdrant_provider.py; vektra-index/tests/test_pgvector_hybrid.py; vektra-index/tests/test_fastembed_bm25.py; vektra-learn/tests/test_query.py"
 
   - req: REQ-051
     title: "Operator privacy: no conversation content access"
@@ -365,8 +366,8 @@ matrix:
   - req: REQ-063
     title: "Chunk metadata filtering"
     arch: "ARCH-044"
-    plan_task: "20260217-component-index:pgvector-provider"
-    test: "vektra-index/tests/test_pgvector_unit.py"
+    plan_task: "20260217-component-index:pgvector-provider; 20260301-component-learn:query"
+    test: "vektra-index/tests/test_pgvector_unit.py; vektra-learn/tests/test_query.py"
 
   - req: REQ-064
     title: "Zero-downtime reindex via index_version"

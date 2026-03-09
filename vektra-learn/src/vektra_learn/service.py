@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 import jwt
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,9 +31,9 @@ log = structlog.get_logger(__name__)
 
 
 class EnrollmentRequest(BaseModel):
-    student_id: str
-    course_id: str
-    namespace: str
+    student_id: str = Field(min_length=1, max_length=255)
+    course_id: str = Field(min_length=1, max_length=255)
+    namespace: str = Field(min_length=1, max_length=64)
     metadata: dict[str, Any] = {}
 
 
@@ -47,9 +47,9 @@ class EnrollmentResponse(BaseModel):
 
 
 class TokenRequest(BaseModel):
-    student_id: str
-    course_id: str
-    expires_in: int = 3600  # seconds, default 1 hour
+    student_id: str = Field(min_length=1, max_length=255)
+    course_id: str = Field(min_length=1, max_length=255)
+    expires_in: int = Field(default=3600, gt=0, le=86400)  # 1 hour default, max 24h
 
 
 class TokenResponse(BaseModel):
@@ -58,8 +58,8 @@ class TokenResponse(BaseModel):
 
 
 class ContentIngestRequest(BaseModel):
-    course_id: str
-    namespace: str
+    course_id: str = Field(min_length=1, max_length=255)
+    namespace: str = Field(min_length=1, max_length=64)
     document_url: str | None = None
     metadata: dict[str, Any] = {}
 

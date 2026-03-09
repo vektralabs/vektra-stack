@@ -5047,9 +5047,11 @@ dependencies = [
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vektra-admin" },
+    { name = "vektra-analytics" },
     { name = "vektra-core" },
     { name = "vektra-index" },
     { name = "vektra-ingest" },
+    { name = "vektra-learn" },
     { name = "vektra-shared" },
 ]
 
@@ -5068,9 +5070,11 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "vektra-admin", editable = "vektra-admin" },
+    { name = "vektra-analytics", editable = "vektra-analytics" },
     { name = "vektra-core", editable = "vektra-core" },
     { name = "vektra-index", editable = "vektra-index" },
     { name = "vektra-ingest", editable = "vektra-ingest" },
+    { name = "vektra-learn", editable = "vektra-learn" },
     { name = "vektra-shared", editable = "vektra-shared" },
 ]
 

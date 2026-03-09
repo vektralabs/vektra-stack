@@ -78,7 +78,7 @@ def configure_structlog() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ARCH-057: 8-step startup validation
+# ARCH-057: 11-step startup validation (Phase 2)
 # ---------------------------------------------------------------------------
 
 
@@ -415,7 +415,7 @@ async def _step_11_qdrant_check(settings: VektraSettings) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Run the 8-step startup validation, then yield for serving."""
+    """Run the 11-step startup validation, then yield for serving."""
     start_time = time.monotonic()
     configure_structlog()
 
@@ -591,11 +591,19 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(learn_router)
 
-    # Chatbot widget static files (served at /static/vektra-chat.js)
+    # Chatbot widget static files (served at /static/learn/vektra-chat.js)
     from fastapi.staticfiles import StaticFiles
 
-    widget_path = Path(__file__).parent.parent.parent / "vektra-learn" / "static"
-    if widget_path.exists():
+    # In editable installs __file__ lives at vektra-app/src/vektra_app/main.py
+    # (4 parents to workspace root).  In non-editable Docker installs
+    # __file__ is inside site-packages, so we also check /app/vektra-learn/static
+    # (the path used in the Dockerfile COPY --from=widget-builder).
+    _workspace_root = Path(__file__).resolve().parent.parent.parent.parent
+    _docker_widget = Path("/app/vektra-learn/static")
+    widget_path = _workspace_root / "vektra-learn" / "static"
+    if not widget_path.is_dir() and _docker_widget.is_dir():
+        widget_path = _docker_widget
+    if widget_path.is_dir():
         app.mount(
             "/static/learn",
             StaticFiles(directory=str(widget_path)),

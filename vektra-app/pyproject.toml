@@ -10,6 +10,8 @@ dependencies = [
     "vektra-core",
     "vektra-ingest",
     "vektra-index",
+    "vektra-analytics",
+    "vektra-learn",
     "uvicorn[standard]>=0.30",
     "starlette-prometheus>=0.10",
     "structlog>=24.0",
@@ -34,6 +36,8 @@ vektra-admin = { workspace = true }
 vektra-core = { workspace = true }
 vektra-ingest = { workspace = true }
 vektra-index = { workspace = true }
+vektra-analytics = { workspace = true }
+vektra-learn = { workspace = true }
 
 [dependency-groups]
 dev = [

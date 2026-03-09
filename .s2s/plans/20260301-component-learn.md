@@ -1,7 +1,7 @@
 # Implementation Plan: vektra-learn - LMS-agnostic e-learning API and chatbot widget
 
 **ID**: 20260301-component-learn
-**Status**: pending
+**Status**: in_progress
 **Branch**: N/A
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
@@ -305,9 +305,9 @@ Communication with vektra-core (query pipeline) and vektra-ingest (content trigg
 
 ### Component scaffold (3 tasks)
 
-- [ ] Create `vektra-learn/` directory with `pyproject.toml`, `README.md`, `src/vektra_learn/__init__.py`
-- [ ] Add `vektra-learn` to root `pyproject.toml`: workspace members, import-linter contracts, ruff isort known-first-party, coverage source. Note: shared-protocols-phase2 (Wave 0) may have already added import-linter contracts, isort, and coverage entries - verify and skip if present.
-- [ ] Create Alembic migration `0004_learn_tables.py` with `revision = "0004"`, `down_revision = "0003"` for `enrollments` and `dashboard_tokens` tables. database-phase2 does NOT include these tables; this plan owns them.
+- [x] Create `vektra-learn/` directory with `pyproject.toml`, `README.md`, `src/vektra_learn/__init__.py`
+- [x] Add `vektra-learn` to root `pyproject.toml`: workspace members, import-linter contracts, ruff isort known-first-party, coverage source. isort and coverage entries were already present from Wave 0; added workspace member, import-linter contract, and coverage omit for api.py.
+- [x] Create Alembic migration `0005_learn_tables.py` with `revision = "0005"`, `down_revision = "0004"` for `enrollments` and `dashboard_tokens` tables (0004 was already taken by hybrid_search).
 
 ### Backend API (6 tasks)
 

@@ -23,6 +23,7 @@ members = [
     "vektra-core",
     "vektra-index",
     "vektra-ingest",
+    "vektra-learn",
     "vektra-shared",
 ]
 
@@ -4986,7 +4987,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "psutil", specifier = ">=5.9" },
-    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.0" },
@@ -5023,7 +5024,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "vektra-shared", editable = "vektra-shared" },
@@ -5111,7 +5112,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.40" },
     { name = "presidio-analyzer", specifier = ">=2.2" },
     { name = "presidio-anonymizer", specifier = ">=2.2" },
-    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "rerankers", extras = ["flashrank"], specifier = ">=0.5" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "vektra-shared", editable = "vektra-shared" },
@@ -5162,7 +5163,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastembed", marker = "extra == 'sparse'", specifier = ">=0.4" },
     { name = "pgvector", specifier = ">=0.3" },
-    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.12" },
     { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
@@ -5242,6 +5243,43 @@ dev = [
 ]
 
 [[package]]
+name = "vektra-learn"
+version = "0.2.0.dev0"
+source = { editable = "vektra-learn" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "pydantic" },
+    { name = "pyjwt" },
+    { name = "sqlalchemy" },
+    { name = "structlog" },
+    { name = "vektra-shared" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "pyjwt", specifier = ">=2.8" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "structlog", specifier = ">=24.0" },
+    { name = "vektra-shared", editable = "vektra-shared" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=1.0" },
+]
+
+[[package]]
 name = "vektra-shared"
 version = "0.2.0.dev0"
 source = { editable = "vektra-shared" }
@@ -5268,7 +5306,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.0" },

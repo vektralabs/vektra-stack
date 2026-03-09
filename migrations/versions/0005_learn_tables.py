@@ -46,7 +46,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
         sa.Column(
-            "metadata",
+            "enrollment_metadata",
             sa.dialects.postgresql.JSONB(),
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),

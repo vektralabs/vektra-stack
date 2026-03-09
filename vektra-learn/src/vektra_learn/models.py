@@ -42,7 +42,7 @@ class EnrollmentOrm(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
     metadata_: Mapped[dict[str, Any]] = mapped_column(
-        "metadata",
+        "enrollment_metadata",
         JSONB,
         nullable=False,
         server_default=text("'{}'::jsonb"),

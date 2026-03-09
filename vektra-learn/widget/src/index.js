@@ -48,7 +48,7 @@ import { ChatUI } from "./chat-ui.js";
     onSend(question) {
       const msgEl = ui.createStreamMessage();
 
-      client.queryStream(question, {
+      client.query(question, {
         onToken(tokenText) {
           ui.appendToken(msgEl, tokenText);
         },

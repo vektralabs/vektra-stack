@@ -87,7 +87,7 @@ class TestTokenEndpoint:
 
 
 class TestJWTValidation:
-    def test_valid_token_decoded(self):
+    async def test_valid_token_decoded(self):
         service = LearnService(jwt_secret=JWT_SECRET)
         token = pyjwt.encode(
             {
@@ -98,10 +98,10 @@ class TestJWTValidation:
             JWT_SECRET,
             algorithm="HS256",
         )
-        payload = service.validate_token(token)
+        payload = await service.validate_token(token)
         assert payload["sub"] == "s1"
 
-    def test_expired_token_rejected(self):
+    async def test_expired_token_rejected(self):
         service = LearnService(jwt_secret=JWT_SECRET)
         token = pyjwt.encode(
             {
@@ -113,9 +113,9 @@ class TestJWTValidation:
             algorithm="HS256",
         )
         with pytest.raises(pyjwt.ExpiredSignatureError):
-            service.validate_token(token)
+            await service.validate_token(token)
 
-    def test_wrong_secret_rejected(self):
+    async def test_wrong_secret_rejected(self):
         service = LearnService(jwt_secret=JWT_SECRET)
         token = pyjwt.encode(
             {
@@ -127,7 +127,7 @@ class TestJWTValidation:
             algorithm="HS256",
         )
         with pytest.raises(pyjwt.InvalidSignatureError):
-            service.validate_token(token)
+            await service.validate_token(token)
 
 
 # ---------------------------------------------------------------------------

@@ -116,7 +116,7 @@ async def _validate_dashboard_token(
 
     service = _get_service(request)
     try:
-        payload = service.validate_token(credentials.credentials)
+        payload = await service.validate_token(credentials.credentials)
     except jwt.InvalidTokenError as exc:
         err = ErrorResponse(
             category=ErrorCategory.PERMANENT,
@@ -251,6 +251,8 @@ async def course_query(
     req: CourseQueryRequest,
     request: Request,
     token_payload: dict = Depends(_validate_dashboard_token),
+    service: LearnService = Depends(_get_service),
+    session: AsyncSession = Depends(_get_session),
 ) -> CourseQueryResponse:
     """Course-scoped RAG query authenticated via JWT dashboard token.
 
@@ -261,32 +263,18 @@ async def course_query(
     student_id = token_payload.get("sub", "")
 
     # Look up namespace from enrollment
-    service = _get_service(request)
-    factory = getattr(request.app.state, "db_session_factory", None)
-    if factory is None:
+    enrollments = await service.list_enrollments(
+        session, course_id=course_id, student_id=student_id, limit=1
+    )
+    if not enrollments:
         err = ErrorResponse(
-            category=ErrorCategory.TRANSIENT,
-            code=ERR_LEARN_001,
-            message="Database session not configured.",
-            remediation="The service may be starting up. Try again shortly.",
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_002,
+            message=f"No enrollment found for student '{student_id}' in course '{course_id}'.",
+            remediation="Ensure the student is enrolled before querying.",
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-
-    async with factory() as session:
-        enrollments = await service.list_enrollments(
-            session, course_id=course_id, student_id=student_id, limit=1
-        )
-        if not enrollments:
-            err = ErrorResponse(
-                category=ErrorCategory.PERMANENT,
-                code=ERR_LEARN_002,
-                message=f"No enrollment found for student '{student_id}' in course '{course_id}'.",
-                remediation="Ensure the student is enrolled before querying.",
-            )
-            raise HTTPException(
-                status_code=http_status_for(err), detail=err.to_envelope()
-            )
-        namespace = enrollments[0].namespace
+    namespace = enrollments[0].namespace
 
     # Build course-scoped query and delegate to pipeline
     query_req = build_course_query(req, namespace=namespace, course_id=course_id)

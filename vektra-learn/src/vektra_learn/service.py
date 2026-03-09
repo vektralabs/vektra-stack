@@ -7,6 +7,7 @@ instance is stateless and safe to store as a singleton in app.state.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -174,9 +175,11 @@ class LearnService:
         )
         return TokenResponse(token=token, expires_at=expires_at)
 
-    def validate_token(self, token: str) -> dict[str, Any]:
+    async def validate_token(self, token: str) -> dict[str, Any]:
         """Validate and decode a JWT. Raises jwt.InvalidTokenError on failure."""
-        return jwt.decode(token, self._jwt_secret, algorithms=["HS256"])
+        return await asyncio.to_thread(
+            jwt.decode, token, self._jwt_secret, algorithms=["HS256"]
+        )
 
     # -- Content ingestion trigger -----------------------------------------
 

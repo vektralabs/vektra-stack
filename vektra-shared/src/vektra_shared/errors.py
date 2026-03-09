@@ -105,6 +105,12 @@ ERR_QUOTA_001 = "ERR-QUOTA-001"  # Namespace quota exceeded
 ERR_ANALYTICS_001 = "ERR-ANALYTICS-001"  # Analytics service not available
 ERR_ANALYTICS_002 = "ERR-ANALYTICS-002"  # Trace not found
 
+# Learn errors (e-learning vertical)
+ERR_LEARN_001 = "ERR-LEARN-001"  # Learn service not available
+ERR_LEARN_002 = "ERR-LEARN-002"  # Enrollment not found
+ERR_LEARN_003 = "ERR-LEARN-003"  # Invalid or expired dashboard token
+ERR_LEARN_004 = "ERR-LEARN-004"  # Duplicate enrollment
+
 
 # ---------------------------------------------------------------------------
 # HTTP status mapping helpers
@@ -126,6 +132,9 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_INGEST_002: 413,  # Payload Too Large
     ERR_QUERY_003: 422,
     ERR_ANALYTICS_002: 404,
+    ERR_LEARN_002: 404,
+    ERR_LEARN_003: 401,
+    ERR_LEARN_004: 409,
 }
 
 

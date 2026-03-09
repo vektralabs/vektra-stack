@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-app"]
+members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-app"]
 
 # PyTorch CPU-only index for CI and development (no NVIDIA CUDA packages).
 # Only used by packages with an explicit source override (explicit = true).
@@ -117,7 +117,7 @@ root_packages = [
     "vektra_index",
     "vektra_analytics",
     "vektra_app",
-    # vektra_learn added when its package is created (component-learn Wave 4)
+    "vektra_learn",
 ]
 include_external_packages = true
 
@@ -157,14 +157,16 @@ type = "forbidden"
 source_modules = ["vektra_analytics"]
 forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_learn"]
 
-# Contract for vektra_learn added when its package is created (component-learn Wave 4).
-# The forbidden_modules entries in existing contracts already prevent
-# other components from importing it.
+[[tool.importlinter.contracts]]
+name = "vektra_learn must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_learn"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_app"]
 
 [[tool.importlinter.contracts]]
 name = "No component shall import the app entrypoint"
 type = "forbidden"
-source_modules = ["vektra_shared", "vektra_admin", "vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics"]
+source_modules = ["vektra_shared", "vektra_admin", "vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn"]
 forbidden_modules = ["vektra_app"]
 
 # ---------------------------------------------------------------------------
@@ -202,6 +204,7 @@ omit = [
     "*/vektra_admin/api.py",
     "*/vektra_admin/keystore.py",
     "*/vektra_admin/middleware.py",
+    "*/vektra_learn/api.py",
 ]
 
 [tool.coverage.report]

@@ -126,7 +126,7 @@ Before generating Phase 2 plans:
 
 | # | Plan | Title | Tasks | Status |
 |---|------|-------|-------|--------|
-| 10 | [component-learn](20260301-component-learn.md) | LMS-agnostic API, chatbot widget | 18 | pending |
+| 10 | [component-learn](20260301-component-learn.md) | LMS-agnostic API, chatbot widget | 18 | completed |
 
 ---
 

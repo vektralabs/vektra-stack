@@ -1,4 +1,4 @@
-"""Unit tests for the learn API router: auth enforcement, request/response format, JWT validation."""
+"""Service-layer smoke tests for learn endpoints: enrollment, tokens, JWT, content, error codes."""
 
 from __future__ import annotations
 
@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 import jwt as pyjwt
 import pytest
 
-from vektra_learn.service import LearnService
+from vektra_learn.service import (
+    ContentIngestRequest,
+    EnrollmentRequest,
+    LearnService,
+    TokenRequest,
+)
 
 JWT_SECRET = "test-secret-key-for-api-tests!!x"  # 33 bytes for HS256
 
@@ -25,8 +30,6 @@ class TestEnrollmentEndpoints:
         session.add = MagicMock()
         session.flush = AsyncMock()
         svc = LearnService(jwt_secret=JWT_SECRET)
-
-        from vektra_learn.service import EnrollmentRequest
 
         req = EnrollmentRequest(student_id="s1", course_id="CS101", namespace="default")
         result = await svc.create_enrollment(session, req)
@@ -48,8 +51,6 @@ class TestTokenEndpoint:
         session = MagicMock()
         session.add = MagicMock()
         session.flush = AsyncMock()
-
-        from vektra_learn.service import TokenRequest
 
         req = TokenRequest(student_id="s1", course_id="CS101")
         result = await service.generate_token(session, req)
@@ -117,7 +118,6 @@ class TestJWTValidation:
 class TestContentIngest:
     def test_build_metadata_includes_course_id(self):
         service = LearnService(jwt_secret=JWT_SECRET)
-        from vektra_learn.service import ContentIngestRequest
 
         req = ContentIngestRequest(course_id="CS101", namespace="ns")
         metadata = service.build_ingest_metadata(req)

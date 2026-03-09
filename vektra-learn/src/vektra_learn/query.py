@@ -1,8 +1,8 @@
-"""Course-scoped query wrapper for the e-learning vertical.
+"""Course-scoped query adapter for the e-learning vertical.
 
-Validates a JWT token, extracts course context (course_id, namespace),
-and delegates to the QueryPipeline with namespace and metadata filters.
-This is a thin adapter that adds course scoping to the existing pipeline.
+Provides helpers to build namespace-scoped QueryRequest objects with
+course_id metadata filters, and to convert QueryResponse to the
+course-facing response shape. JWT validation is handled by api.py.
 """
 
 from __future__ import annotations

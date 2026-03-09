@@ -464,6 +464,13 @@ class VektraSettings(BaseSettings):
     port: int = Field(8000, alias="VEKTRA_PORT")
     startup_llm_check: bool = Field(True, alias="VEKTRA_STARTUP_LLM_CHECK")
 
+    # Learn (e-learning vertical, optional)
+    learn_jwt_secret: str | None = Field(
+        None,
+        alias="VEKTRA_LEARN_JWT_SECRET",
+        description="JWT signing secret for dashboard tokens. Required when vektra-learn is active.",
+    )
+
     # Observability / retention
     audit_retention_days: int = Field(90, alias="VEKTRA_AUDIT_RETENTION_DAYS")
     retention_days: int | None = Field(None, alias="VEKTRA_RETENTION_DAYS")

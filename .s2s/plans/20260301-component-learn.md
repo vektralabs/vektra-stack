@@ -1,7 +1,7 @@
 # Implementation Plan: vektra-learn - LMS-agnostic e-learning API and chatbot widget
 
 **ID**: 20260301-component-learn
-**Status**: in_progress
+**Status**: completed
 **Branch**: N/A
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
@@ -311,27 +311,27 @@ Communication with vektra-core (query pipeline) and vektra-ingest (content trigg
 
 ### Backend API (6 tasks)
 
-- [ ] Implement `vektra_learn/models.py` with EnrollmentOrm and DashboardTokenOrm (SQLAlchemy ORM)
-- [ ] Implement `vektra_learn/service.py` with LearnService: create_enrollment, list_enrollments, delete_enrollment, trigger_ingest, generate_token, validate_token
-- [ ] Implement `vektra_learn/query.py` with course-scoped query wrapper: validates JWT, extracts course context, delegates to query pipeline with namespace and metadata filters
-- [ ] Implement `vektra_learn/api.py` with FastAPI router for all /api/v1/learn/* endpoints
-- [ ] Add auth dependencies: admin/ingest scope for management endpoints, JWT validation for query endpoint
-- [ ] Configure `VEKTRA_LEARN_JWT_SECRET` in VektraSettings (vektra_shared/config.py) as optional, only required when vektra-learn is active
+- [x] Implement `vektra_learn/models.py` with EnrollmentOrm and DashboardTokenOrm (SQLAlchemy ORM)
+- [x] Implement `vektra_learn/service.py` with LearnService: create_enrollment, list_enrollments, delete_enrollment, trigger_ingest, generate_token, validate_token
+- [x] Implement `vektra_learn/query.py` with course-scoped query wrapper: validates JWT, extracts course context, delegates to query pipeline with namespace and metadata filters
+- [x] Implement `vektra_learn/api.py` with FastAPI router for all /api/v1/learn/* endpoints
+- [x] Add auth dependencies: admin/ingest scope for management endpoints, JWT validation for query endpoint
+- [x] Configure `VEKTRA_LEARN_JWT_SECRET` in VektraSettings (vektra_shared/config.py) as optional, only required when vektra-learn is active
 
 ### Chatbot widget (5 tasks)
 
-- [ ] Create `vektra-learn/widget/` directory with `package.json` and `esbuild.config.mjs`
-- [ ] Implement `widget/src/index.js`: script tag attribute parsing, widget initialization, DOM injection
-- [ ] Implement `widget/src/chat-ui.js`: floating button, expandable panel, message list, input field, send button, SSE streaming display, source citations
-- [ ] Implement `widget/src/api-client.js`: fetch-based REST client for POST /api/v1/learn/query with SSE parsing, conversation_id tracking
-- [ ] Implement `widget/src/styles.js`: CSS-in-JS string for chat panel styling, light/dark theme support, responsive layout
+- [x] Create `vektra-learn/widget/` directory with `package.json` and `esbuild.config.mjs`
+- [x] Implement `widget/src/index.js`: script tag attribute parsing, widget initialization, DOM injection
+- [x] Implement `widget/src/chat-ui.js`: floating button, expandable panel, message list, input field, send button, SSE streaming display, source citations
+- [x] Implement `widget/src/api-client.js`: fetch-based REST client for POST /api/v1/learn/query with SSE parsing, conversation_id tracking
+- [x] Implement `widget/src/styles.js`: CSS-in-JS string for chat panel styling, light/dark theme support, responsive layout
 
 ### Build and tests (4 tasks)
 
-- [ ] Build the widget: `cd widget && npm install && npm run build`, verify `static/vektra-chat.js` output is a single minified file
-- [ ] Write unit tests for LearnService: enrollment CRUD, token generation/validation, content trigger delegation
-- [ ] Write unit tests for API router: auth enforcement, request/response format, JWT validation
-- [ ] Write unit tests for course-scoped query wrapper: namespace injection, metadata filter application
+- [x] Build the widget: `cd widget && npm install && npm run build`, verify `static/vektra-chat.js` output is a single minified file (10.2 KB)
+- [x] Write unit tests for LearnService: enrollment CRUD, token generation/validation, content trigger delegation (15 tests)
+- [x] Write unit tests for API router: auth enforcement, request/response format, JWT validation (10 tests)
+- [x] Write unit tests for course-scoped query wrapper: namespace injection, metadata filter application (8 tests)
 
 ## Acceptance Criteria
 
@@ -366,4 +366,4 @@ The widget build step must be added to the Dockerfile in infra-phase2. This requ
 
 ## Notes
 
-<!-- Progress notes during implementation -->
+- 2026-03-09: All 18 tasks completed. Migration is 0005 (not 0004 as originally planned, since 0004 was taken by hybrid_search). 34 unit tests passing. Widget bundle 10.2 KB. Error codes ERR-LEARN-001 through ERR-LEARN-004 added to shared errors.

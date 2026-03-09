@@ -1,0 +1,185 @@
+/**
+ * REST API client for the Vektra learn query endpoint.
+ * Uses fetch with SSE streaming for token-by-token response display.
+ */
+
+export class ApiClient {
+  /**
+   * @param {string} apiUrl - Base URL of the Vektra API
+   * @param {string} token - JWT dashboard token
+   * @param {string} courseId - Course identifier for scoped queries
+   */
+  constructor(apiUrl, token, courseId) {
+    this._apiUrl = apiUrl.replace(/\/+$/, "");
+    this._token = token;
+    this._courseId = courseId;
+    this._conversationId = null;
+  }
+
+  get conversationId() {
+    return this._conversationId;
+  }
+
+  /**
+   * Send a query and process the SSE stream.
+   * @param {string} question
+   * @param {object} callbacks - { onToken, onSources, onDone, onError }
+   */
+  async query(question, { onToken, onSources, onDone, onError }) {
+    const body = {
+      question,
+      stream: true,
+      top_k: 5,
+    };
+    if (this._conversationId) {
+      body.conversation_id = this._conversationId;
+    }
+
+    try {
+      const response = await fetch(
+        `${this._apiUrl}/api/v1/learn/query`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this._token}`,
+          },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const msg =
+          errData?.error?.message ||
+          errData?.detail?.error?.message ||
+          `HTTP ${response.status}`;
+        onError(msg);
+        return;
+      }
+
+      // For non-streaming responses (current backend returns JSON)
+      const data = await response.json();
+      if (data.conversation_id) {
+        this._conversationId = data.conversation_id;
+      }
+
+      const answer = data.answer || data.response || "";
+      if (onToken && answer) {
+        onToken(answer);
+      }
+      if (onSources && data.sources && data.sources.length > 0) {
+        onSources(data.sources);
+      }
+      if (onDone) {
+        onDone();
+      }
+    } catch (err) {
+      onError(err.message || "Network error");
+    }
+  }
+
+  /**
+   * Send a query and process a real SSE stream via EventSource-like parsing.
+   * Falls back to query() if the response is not SSE.
+   * @param {string} question
+   * @param {object} callbacks - { onToken, onSources, onDone, onError }
+   */
+  async queryStream(question, { onToken, onSources, onDone, onError }) {
+    const body = {
+      question,
+      stream: true,
+      top_k: 5,
+    };
+    if (this._conversationId) {
+      body.conversation_id = this._conversationId;
+    }
+
+    try {
+      const response = await fetch(
+        `${this._apiUrl}/api/v1/learn/query`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this._token}`,
+          },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const msg =
+          errData?.error?.message ||
+          errData?.detail?.error?.message ||
+          `HTTP ${response.status}`;
+        onError(msg);
+        return;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+
+      // SSE stream
+      if (contentType.includes("text/event-stream")) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const payload = line.slice(6).trim();
+              if (payload === "[DONE]") {
+                if (onDone) onDone();
+                return;
+              }
+              try {
+                const event = JSON.parse(payload);
+                if (event.type === "token" && onToken) {
+                  onToken(event.data);
+                } else if (event.type === "sources" && onSources) {
+                  onSources(event.data);
+                } else if (event.type === "done") {
+                  if (event.data?.conversation_id) {
+                    this._conversationId = event.data.conversation_id;
+                  }
+                  if (onDone) onDone();
+                  return;
+                } else if (event.type === "error" && onError) {
+                  onError(event.data);
+                  return;
+                }
+              } catch {
+                // Skip malformed JSON lines
+              }
+            }
+          }
+        }
+        if (onDone) onDone();
+      } else {
+        // JSON fallback (non-streaming)
+        const data = await response.json();
+        if (data.conversation_id) {
+          this._conversationId = data.conversation_id;
+        }
+        if (onToken && data.answer) {
+          onToken(data.answer);
+        }
+        if (onSources && data.sources && data.sources.length > 0) {
+          onSources(data.sources);
+        }
+        if (onDone) onDone();
+      }
+    } catch (err) {
+      onError(err.message || "Network error");
+    }
+  }
+}

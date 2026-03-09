@@ -71,7 +71,7 @@ class ContentIngestResponse(BaseModel):
 
 def _get_service(request: Request) -> LearnService:
     """Retrieve LearnService from app state."""
-    svc = getattr(request.app.state, "learn_service", None)
+    svc: LearnService | None = getattr(request.app.state, "learn_service", None)
     if svc is None or not isinstance(svc, LearnService):
         err = ErrorResponse(
             category=ErrorCategory.TRANSIENT,

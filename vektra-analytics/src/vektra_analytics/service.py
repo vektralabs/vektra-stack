@@ -9,6 +9,7 @@ content is stored.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -203,7 +204,7 @@ class AnalyticsService:
     async def _compute_avg_retrieval_score(
         self,
         session: AsyncSession,
-        conditions: list,
+        conditions: list[Any],
     ) -> float:
         """Compute mean of max chunk score per trace using application logic.
 
@@ -228,7 +229,7 @@ class AnalyticsService:
         """Delete traces older than the cutoff date. Returns count deleted."""
         stmt = delete(QueryTraceOrm).where(QueryTraceOrm.created_at < cutoff)
         result = await session.execute(stmt)
-        count = result.rowcount
+        count: int = result.rowcount or 0  # type: ignore[attr-defined]
         log.info("traces_deleted", count=count, cutoff=cutoff.isoformat())
         return count
 

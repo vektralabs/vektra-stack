@@ -136,7 +136,7 @@ class LearnService:
         """Delete an enrollment by ID. Returns True if deleted, False if not found."""
         stmt = delete(EnrollmentOrm).where(EnrollmentOrm.id == enrollment_id)
         result = await session.execute(stmt)
-        deleted = result.rowcount > 0
+        deleted: bool = (result.rowcount or 0) > 0  # type: ignore[attr-defined]
         if deleted:
             log.info("enrollment_deleted", enrollment_id=str(enrollment_id))
         return deleted

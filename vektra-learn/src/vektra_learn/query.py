@@ -53,7 +53,7 @@ def build_course_query(
         conversation_id=req.conversation_id,
         top_k=req.top_k,
         stream=req.stream,
-        filters={"course_id": course_id},
+        filters={"course_id": course_id},  # type: ignore[arg-type]
     )
 
 

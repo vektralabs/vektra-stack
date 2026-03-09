@@ -212,7 +212,11 @@ class TestValidateToken:
     def test_validates_valid_token(self):
         svc = _make_service()
         token = pyjwt.encode(
-            {"sub": "s1", "course_id": "CS101", "exp": datetime.now(UTC) + timedelta(hours=1)},
+            {
+                "sub": "s1",
+                "course_id": "CS101",
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
             JWT_SECRET,
             algorithm="HS256",
         )
@@ -223,7 +227,11 @@ class TestValidateToken:
     def test_rejects_expired_token(self):
         svc = _make_service()
         token = pyjwt.encode(
-            {"sub": "s1", "course_id": "CS101", "exp": datetime.now(UTC) - timedelta(hours=1)},
+            {
+                "sub": "s1",
+                "course_id": "CS101",
+                "exp": datetime.now(UTC) - timedelta(hours=1),
+            },
             JWT_SECRET,
             algorithm="HS256",
         )
@@ -233,7 +241,11 @@ class TestValidateToken:
     def test_rejects_wrong_secret(self):
         svc = _make_service()
         token = pyjwt.encode(
-            {"sub": "s1", "course_id": "CS101", "exp": datetime.now(UTC) + timedelta(hours=1)},
+            {
+                "sub": "s1",
+                "course_id": "CS101",
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
             "wrong-secret-that-is-32-bytes!!x",
             algorithm="HS256",
         )

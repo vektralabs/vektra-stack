@@ -29,9 +29,7 @@ class TestEnrollmentEndpoints:
 
         from vektra_learn.service import EnrollmentRequest
 
-        req = EnrollmentRequest(
-            student_id="s1", course_id="CS101", namespace="default"
-        )
+        req = EnrollmentRequest(student_id="s1", course_id="CS101", namespace="default")
         result = await svc.create_enrollment(session, req)
 
         assert result.student_id == "s1"
@@ -92,7 +90,11 @@ class TestJWTValidation:
     def test_valid_token_decoded(self):
         service = LearnService(jwt_secret=JWT_SECRET)
         token = pyjwt.encode(
-            {"sub": "s1", "course_id": "CS101", "exp": datetime.now(UTC) + timedelta(hours=1)},
+            {
+                "sub": "s1",
+                "course_id": "CS101",
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
             JWT_SECRET,
             algorithm="HS256",
         )
@@ -102,7 +104,11 @@ class TestJWTValidation:
     def test_expired_token_rejected(self):
         service = LearnService(jwt_secret=JWT_SECRET)
         token = pyjwt.encode(
-            {"sub": "s1", "course_id": "CS101", "exp": datetime.now(UTC) - timedelta(hours=1)},
+            {
+                "sub": "s1",
+                "course_id": "CS101",
+                "exp": datetime.now(UTC) - timedelta(hours=1),
+            },
             JWT_SECRET,
             algorithm="HS256",
         )
@@ -112,7 +118,11 @@ class TestJWTValidation:
     def test_wrong_secret_rejected(self):
         service = LearnService(jwt_secret=JWT_SECRET)
         token = pyjwt.encode(
-            {"sub": "s1", "course_id": "CS101", "exp": datetime.now(UTC) + timedelta(hours=1)},
+            {
+                "sub": "s1",
+                "course_id": "CS101",
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
             "wrong-secret-that-is-32-bytes!!x",
             algorithm="HS256",
         )

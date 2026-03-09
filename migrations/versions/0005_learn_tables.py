@@ -51,7 +51,9 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
-        sa.UniqueConstraint("student_id", "course_id", name="uq_enrollment_student_course"),
+        sa.UniqueConstraint(
+            "student_id", "course_id", name="uq_enrollment_student_course"
+        ),
     )
 
     # Dashboard token: short-lived JWT for widget auth

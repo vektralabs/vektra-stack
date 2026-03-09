@@ -7,6 +7,7 @@ The query endpoint authenticates via JWT dashboard token (not API key).
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Any
 from uuid import UUID
 
 import jwt
@@ -60,7 +61,7 @@ class ContentIngestResponse(BaseModel):
     status: str
     namespace: str
     course_id: str
-    metadata: dict
+    metadata: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +101,7 @@ async def _get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
 async def _validate_dashboard_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> dict:
+) -> dict[str, Any]:
     """Validate a JWT dashboard token for the query endpoint.
 
     Returns the decoded payload containing sub (student_id), course_id.
@@ -250,7 +251,7 @@ async def generate_token(
 async def course_query(
     req: CourseQueryRequest,
     request: Request,
-    token_payload: dict = Depends(_validate_dashboard_token),
+    token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
     service: LearnService = Depends(_get_service),
     session: AsyncSession = Depends(_get_session),
 ) -> CourseQueryResponse:

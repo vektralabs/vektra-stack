@@ -177,6 +177,10 @@ export function buildStyles(theme) {
   outline: none;
   font-family: inherit;
 }
+.vektra-chat-input:focus-visible {
+  outline: 2px solid ${t.primary};
+  outline-offset: -1px;
+}
 .vektra-chat-input::placeholder {
   color: ${t.textSecondary};
 }

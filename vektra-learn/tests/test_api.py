@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 import jwt as pyjwt
 import pytest
@@ -36,26 +35,6 @@ class TestEnrollmentEndpoints:
         assert result.course_id == "CS101"
         assert result.namespace == "default"
         session.add.assert_called_once()
-
-
-class TestListEnrollments:
-    async def test_list_returns_items(self):
-        service = LearnService(jwt_secret=JWT_SECRET)
-        service.list_enrollments = AsyncMock(return_value=["enrollment-mock"])
-
-        session = AsyncMock()
-        result = await service.list_enrollments(session)
-        assert len(result) == 1
-
-
-class TestDeleteEnrollment:
-    async def test_delete_calls_service(self):
-        service = LearnService(jwt_secret=JWT_SECRET)
-        service.delete_enrollment = AsyncMock(return_value=True)
-
-        session = AsyncMock()
-        result = await service.delete_enrollment(session, uuid4())
-        assert result is True
 
 
 # ---------------------------------------------------------------------------

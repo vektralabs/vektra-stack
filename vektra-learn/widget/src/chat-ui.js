@@ -12,6 +12,7 @@ const I18N = {
     send: "Send",
     sources: "Sources:",
     error: "An error occurred. Please try again.",
+    close: "Close",
   },
   it: {
     title: "Assistente del corso",
@@ -19,6 +20,7 @@ const I18N = {
     send: "Invia",
     sources: "Fonti:",
     error: "Si è verificato un errore. Riprova.",
+    close: "Chiudi",
   },
 };
 
@@ -61,7 +63,7 @@ export class ChatUI {
     this._panel.innerHTML = `
       <div class="vektra-chat-header">
         <span class="vektra-chat-header-title">${this._lang.title}</span>
-        <button class="vektra-chat-close" aria-label="Close">&times;</button>
+        <button class="vektra-chat-close" aria-label="${this._lang.close}">&times;</button>
       </div>
       <div class="vektra-chat-messages"></div>
       <div class="vektra-chat-input-area">

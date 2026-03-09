@@ -158,7 +158,9 @@ class LearnService:
         }
         token = jwt.encode(payload, self._jwt_secret, algorithm="HS256")
 
-        # Store token hash for audit/revocation
+        # Store token hash for audit trail only; revocation checks the
+        # JWT expiry claim (validate_token). The hash enables future
+        # revocation-list lookup without storing the raw token.
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         orm = DashboardTokenOrm(
             student_id=req.student_id,

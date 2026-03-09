@@ -29,7 +29,7 @@ export class ApiClient {
   async query(question, { onToken, onSources, onDone, onError }) {
     const body = {
       question,
-      stream: true,
+      stream: false,
       top_k: 5,
     };
     if (this._conversationId) {

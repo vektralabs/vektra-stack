@@ -18,7 +18,7 @@ import { ApiClient } from "./api-client.js";
 import { ChatUI } from "./chat-ui.js";
 
 (function () {
-  // Find the current script tag to read data-* attributes
+  // Capture the script tag synchronously (before DOMContentLoaded)
   const scripts = document.querySelectorAll('script[src*="vektra-chat"]');
   const scriptTag = scripts[scripts.length - 1];
 
@@ -40,29 +40,38 @@ import { ChatUI } from "./chat-ui.js";
     return;
   }
 
-  const client = new ApiClient(apiUrl, token, courseId);
+  function init() {
+    const client = new ApiClient(apiUrl, token, courseId);
 
-  const ui = new ChatUI({
-    theme,
-    language,
-    onSend(question) {
-      const msgEl = ui.createStreamMessage();
+    const ui = new ChatUI({
+      theme,
+      language,
+      onSend(question) {
+        const msgEl = ui.createStreamMessage();
 
-      client.query(question, {
-        onToken(tokenText) {
-          ui.appendToken(msgEl, tokenText);
-        },
-        onSources(sources) {
-          ui.addSources(msgEl, sources);
-        },
-        onDone() {
-          ui.doneSending();
-        },
-        onError(errMsg) {
-          ui.showError(errMsg);
-          ui.doneSending();
-        },
-      });
-    },
-  });
+        client.query(question, {
+          onToken(tokenText) {
+            ui.appendToken(msgEl, tokenText);
+          },
+          onSources(sources) {
+            ui.addSources(msgEl, sources);
+          },
+          onDone() {
+            ui.doneSending();
+          },
+          onError(errMsg) {
+            ui.showError(errMsg);
+            ui.doneSending();
+          },
+        });
+      },
+    });
+  }
+
+  // Wait for DOM to be ready before creating UI elements
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();

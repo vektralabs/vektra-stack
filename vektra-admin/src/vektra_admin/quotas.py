@@ -87,7 +87,12 @@ async def check_namespace_quota(
     # Check chunk quota (raw SQL to avoid cross-module imports)
     if quota_chunks is not None and new_chunks > 0:
         count_result = await session.execute(
-            text("SELECT count(*) FROM document_chunks WHERE namespace_id = :ns"),
+            text(
+                "SELECT count(*) FROM document_chunks dc "
+                "JOIN source_documents sd "
+                "ON sd.id = dc.document_id AND sd.namespace_id = dc.namespace_id "
+                "WHERE dc.namespace_id = :ns AND sd.deleted_at IS NULL"
+            ),
             {"ns": namespace_id},
         )
         current_chunks = count_result.scalar_one()

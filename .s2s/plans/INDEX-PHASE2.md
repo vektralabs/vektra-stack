@@ -118,7 +118,7 @@ Before generating Phase 2 plans:
 
 | # | Plan | Title | Tasks | Status |
 |---|------|-------|-------|--------|
-| 9 | [component-analytics](20260301-component-analytics.md) | QueryTrace storage, metrics, reporting API | 12 | pending |
+| 9 | [component-analytics](20260301-component-analytics.md) | QueryTrace storage, metrics, reporting API | 12 | completed |
 
 ---
 

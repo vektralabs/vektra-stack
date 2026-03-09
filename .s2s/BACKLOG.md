@@ -287,6 +287,42 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 ---
 
+### FEAT-001: Audit log expandable detail rows
+
+**Status**: draft | **Priority**: low | **Created**: 2026-03-08
+**Origin**: first Docker smoke test of admin UI (PR #29)
+
+**Context**: The audit log table in `/admin/audit` displays 6 columns (timestamp, key_id, method, endpoint, status_code, action). Two additional fields are stored but not shown: `request_id` (UUID for log correlation) and `metadata` (JSONB with action-specific context like namespace, filename, document_id, error_code, chunk_count). Adding a click-to-expand detail row would surface this information without cluttering the table. Proposal emerged during initial testing and needs further analysis to determine scope, UX approach, and whether it justifies the added complexity.
+
+**Traceability**: REQ-022, ARCH-062, ADR-0024
+
+**Acceptance Criteria** (tentative, pending evaluation):
+- [ ] Clicking an audit row expands an inline detail section (HTMX partial or `<details>`)
+- [ ] Detail shows: full key_id, request_id, and metadata key-value pairs
+- [ ] Metadata rendered as formatted key-value list (not raw JSON)
+- [ ] Empty metadata (`{}`) shows "No additional details" or similar
+- [ ] Works with cursor pagination (expanded state need not survive page navigation)
+
+---
+
+### FEAT-002: Admin UI edit forms for namespaces and API keys
+
+**Status**: draft | **Priority**: low | **Created**: 2026-03-08
+**Origin**: first Docker smoke test of admin UI (PR #29)
+
+**Context**: The admin UI supports create/delete for namespaces and keys, but not editing existing records. Several DB-backed fields are already writable via the REST API but have no UI: namespace quotas (`quota_chunks`, `quota_documents`), retention policy (`retention_days`), namespace config (JSONB), and per-key rate limit (`rate_limit_rpm`). In a production scenario, an operator would need SSH or API calls to adjust these values. Proposal emerged during initial testing and needs further analysis to determine which fields are worth exposing, UX design for the edit forms, and validation requirements.
+
+**Traceability**: REQ-006, REQ-048, ARCH-062, ADR-0024
+
+**Acceptance Criteria** (tentative, pending evaluation):
+- [ ] Namespace edit form: retention_days, quota_chunks, quota_documents, display_name
+- [ ] API key edit form: rate_limit_rpm, label
+- [ ] Inline edit or modal pattern consistent with existing HTMX approach
+- [ ] Validation feedback on invalid values (e.g., negative retention)
+- [ ] Corresponding REST API endpoints exist (verify or create as needed)
+
+---
+
 ### TECH-004: Add unique indexes for idempotent ingest (TOCTOU mitigation)
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-02-20
@@ -569,6 +605,8 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 | ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
 | ~~TECH-003 (Phase 2 plans)~~ | ~~After DOCS-007~~ | Done (PR #21 + PR #22, 11 plans, 168 tasks) |
+| FEAT-001 (audit detail rows) | Post-Phase 2 or spare time | Draft, needs evaluation |
+| FEAT-002 (namespace/key edit) | Post-Phase 2 or spare time | Draft, needs evaluation |
 | TECH-004 (unique indexes) | Anytime (infra-database done) | Alembic migration ready |
 | ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
 | DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |

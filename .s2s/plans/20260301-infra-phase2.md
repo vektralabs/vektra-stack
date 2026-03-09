@@ -257,29 +257,29 @@ This is explicitly optional (EX-004). Implement only if time permits after all r
 
 ### App entrypoint (3 tasks)
 
-- [ ] Update `_step_5_register_providers()` in `vektra_app/main.py` to register: SparseEmbeddingProvider (conditional), QdrantVectorStoreProvider (conditional), AnalyticsService, LearnService (conditional), AdvancedQueryPipeline
-- [ ] Update `create_app()` to include analytics_router, learn_router (conditional), and StaticFiles mount for chatbot widget
-- [ ] Add startup validation steps for new providers: analytics DB connectivity, learn JWT secret check (when learn_enabled), Qdrant connectivity (when vector_store_backend == "qdrant")
+- [x] Update `_step_5_register_providers()` in `vektra_app/main.py` to register: SparseEmbeddingProvider (conditional), QdrantVectorStoreProvider (conditional), AnalyticsService, LearnService (conditional), AdvancedQueryPipeline
+- [x] Update `create_app()` to include analytics_router, learn_router (conditional), and StaticFiles mount for chatbot widget
+- [x] Add startup validation steps for new providers: analytics DB connectivity, learn JWT secret check (when learn_enabled), Qdrant connectivity (when vector_store_backend == "qdrant")
 
 ### Docker Compose (2 tasks)
 
-- [ ] Add TEI service with profile `tei`, healthcheck, and memory limit (1G)
-- [ ] Update vektra service memory limit from 2G to 3G (ARCH-064), add Qdrant healthcheck to existing placeholder service
+- [x] Add TEI service with profile `tei`, healthcheck, and memory limit (1G)
+- [x] Update vektra service memory limit from 2G to 3G (ARCH-064), add Qdrant healthcheck to existing placeholder service
 
 ### Dockerfile (2 tasks)
 
-- [ ] Add Node.js widget-builder stage, copy built `vektra-chat.js` to runtime image
-- [ ] Add `INSTALL_UNSTRUCTURED` build arg for optional Tesseract and Poppler system dependencies, add new workspace member pyproject.toml and src copies
+- [x] Add Node.js widget-builder stage, copy built `vektra-chat.js` to runtime image
+- [x] Add `INSTALL_UNSTRUCTURED` build arg for optional Tesseract and Poppler system dependencies, add new workspace member pyproject.toml and src copies
 
 ### CI (2 tasks)
 
-- [ ] Add `test-analytics` and `test-learn` jobs to `ci-unit.yml` with path filters, update `ci-gate` needs list
-- [ ] Update `lint.yml` mypy command to include `vektra_analytics` and `vektra_learn` source paths
+- [x] Add `test-analytics` and `test-learn` jobs to `ci-unit.yml` with path filters, update `ci-gate` needs list
+- [x] Update `lint.yml` mypy command to include `vektra_analytics` and `vektra_learn` source paths
 
 ### Makefile and workspace (2 tasks)
 
-- [ ] Update `test` target in Makefile to include vektra-analytics and vektra-learn test paths, add `reindex` and `batch-ingest` targets
-- [ ] Verify `uv sync --dev --frozen` resolves correctly with all 8 workspace members, fix any dependency conflicts
+- [x] Update `test` target in Makefile to include vektra-analytics and vektra-learn test paths, add `reindex` and `batch-ingest` targets
+- [x] Verify `uv sync --dev --frozen` resolves correctly with all 8 workspace members, fix any dependency conflicts
 
 ### Performance baselines - optional (1 task)
 

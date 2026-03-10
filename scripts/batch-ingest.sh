@@ -77,11 +77,12 @@ FAILED=0
 for file in "${FILES[@]}"; do
   FILENAME=$(basename "$file")
   printf "  %-40s " "$FILENAME"
-  if "$SCRIPT_DIR/ingest.sh" "$file" "$NAMESPACE" > /dev/null 2>&1; then
+  if output=$("$SCRIPT_DIR/ingest.sh" "$file" "$NAMESPACE" 2>&1); then
     echo "OK"
     SUCCESS=$((SUCCESS + 1))
   else
     echo "FAILED"
+    echo "${output}" | sed 's/^/    /' >&2
     FAILED=$((FAILED + 1))
   fi
 done

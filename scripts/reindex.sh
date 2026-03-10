@@ -45,11 +45,16 @@ fi
 
 # ---- trigger reindex ----
 echo "Triggering reindex for namespace '${NAMESPACE}'..."
+JSON_BODY=$(python3 -c "
+import json, sys
+print(json.dumps({'namespace': sys.argv[1]}))
+" "$NAMESPACE")
+
 RESP=$(curl -sf -w "\n%{http_code}" \
   -X POST \
   -H "Authorization: Bearer ${VEKTRA_API_KEY}" \
   -H "Content-Type: application/json" \
-  -d "{\"namespace\": \"${NAMESPACE}\"}" \
+  -d "$JSON_BODY" \
   "${BASE_URL}/api/v1/reindex") || {
   echo "Error: reindex request failed" >&2
   exit 1

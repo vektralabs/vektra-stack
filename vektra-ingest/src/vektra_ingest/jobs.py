@@ -237,16 +237,22 @@ async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
         log.error("cleanup_failed", error=str(exc))
 
 
+
 # ---------------------------------------------------------------------------
 # Worker settings factory
 # ---------------------------------------------------------------------------
 
 
-def get_worker_settings(registry: Any) -> Any:
+def get_worker_settings(
+    registry: Any,
+    extra_cron_jobs: list[Any] | None = None,
+) -> Any:
     """Return arq WorkerSettings for the vektra-worker process.
 
     Args:
         registry: ProviderRegistry populated by worker startup.
+        extra_cron_jobs: Additional arq cron jobs (e.g., analytics cleanup)
+            injected by the app entrypoint to avoid cross-module imports.
 
     The worker process (CMD_TARGET=worker in the same Docker image) calls this
     after init_db() and provider registration.
@@ -256,9 +262,14 @@ def get_worker_settings(registry: Any) -> Any:
     async def on_startup(ctx: dict[str, Any]) -> None:
         ctx["registry"] = registry
 
+    all_cron_jobs = [
+        cron(cleanup_soft_deleted_task, hour=3, minute=0),
+        *(extra_cron_jobs or []),
+    ]
+
     class WorkerSettings:
         functions = [ingest_document_task]
-        cron_jobs = [cron(cleanup_soft_deleted_task, hour=3, minute=0)]
+        cron_jobs = all_cron_jobs
         on_startup = on_startup
         redis_settings = None  # uses REDIS_URL env var via arq default
 

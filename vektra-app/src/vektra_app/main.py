@@ -176,9 +176,15 @@ async def _step_5_register_providers(
     registry.register("safeguard", "default", safeguard)
 
     # --- Event emitter ---
-    from vektra_shared.events import NoOpEventEmitter
+    from vektra_shared.config import WebhookConfig
+    from vektra_shared.events import NoOpEventEmitter, WebhookEventEmitter
 
-    event_emitter = NoOpEventEmitter()
+    webhook_config = WebhookConfig()
+    if webhook_config.url:
+        event_emitter = WebhookEventEmitter(config=webhook_config)
+        log.info("event_emitter_registered", type="webhook", url=webhook_config.url)
+    else:
+        event_emitter = NoOpEventEmitter()
     registry.register("event_emitter", "default", event_emitter)
     registry.register("events", "default", event_emitter)
 
@@ -273,6 +279,11 @@ async def _step_5_register_providers(
         learn_service = LearnService(jwt_secret=settings.learn_jwt_secret)
         registry.register("learn", "default", learn_service)
         log.info("learn_service_registered")
+
+    # --- Ingest pipeline (cross-module access via registry) ---
+    from vektra_ingest.pipeline import run_ingest
+
+    registry.register("ingest", "default", run_ingest)
 
     # --- Health checks ---
     registry.register("health", "llm", llm_provider.health_check)

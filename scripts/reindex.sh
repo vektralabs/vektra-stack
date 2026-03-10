@@ -98,8 +98,8 @@ while [ "$ELAPSED" -lt "$POLL_TIMEOUT" ]; do
   printf "  [%3ds] status: %s  progress: %s\n" "$ELAPSED" "$STATUS" "$PROCESSED"
   case "$STATUS" in
     completed|complete|done)
-      echo "Reindex completed (progress tracking only - skeleton implementation)."
-      echo "When full reindex is implemented, set VEKTRA_ACTIVE_INDEX_VERSION=${TARGET_VERSION} and restart."
+      echo "Reindex completed successfully."
+      echo "To activate the new index: set VEKTRA_ACTIVE_INDEX_VERSION=${TARGET_VERSION} and restart."
       exit 0
       ;;
     failed|error)

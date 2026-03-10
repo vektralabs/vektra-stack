@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
+import httpx
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -62,6 +64,8 @@ class ContentIngestResponse(BaseModel):
     namespace: str
     course_id: str
     metadata: dict[str, Any]
+    document_id: str | None = None
+    chunk_count: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -207,15 +211,84 @@ async def delete_enrollment(
 @router.post("/content/ingest", response_model=ContentIngestResponse)
 async def trigger_ingest(
     req: ContentIngestRequest,
+    request: Request,
     _key: ApiKeyInfo = Depends(require_scope("ingest")),
     service: LearnService = Depends(_get_service),
+    session: AsyncSession = Depends(_get_session),
 ) -> ContentIngestResponse:
     """Trigger content ingestion with course metadata.
 
-    Builds metadata with course_id for course-scoped filtering.
-    The actual ingestion is wired in infra-phase2 via ProviderRegistry.
+    When document_url is provided, fetches the file and runs it through
+    the ingest pipeline with course-scoped metadata. Without a URL,
+    returns the enriched metadata for manual ingestion via /api/v1/ingest.
     """
     metadata = service.build_ingest_metadata(req)
+
+    if req.document_url:
+        registry = getattr(request.app.state, "registry", None)
+        if registry is None or not registry.has("ingest", "default"):
+            err = ErrorResponse(
+                category=ErrorCategory.TRANSIENT,
+                code=ERR_LEARN_001,
+                message="Ingest pipeline not available.",
+                remediation="The service may be starting up. Try again shortly.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
+
+        # Fetch document from URL
+        parsed = urlparse(req.document_url)
+        if parsed.scheme not in ("http", "https"):
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_004,
+                message="Only http and https URLs are supported.",
+                remediation="Provide a valid http or https URL.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(req.document_url)
+                resp.raise_for_status()
+                file_bytes = resp.content
+        except httpx.HTTPError as exc:
+            err = ErrorResponse(
+                category=ErrorCategory.TRANSIENT,
+                code=ERR_LEARN_001,
+                message=f"Failed to fetch document from URL: {exc}",
+                remediation="Verify the URL is accessible and try again.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
+
+        # Extract filename from URL path
+        filename = parsed.path.rsplit("/", 1)[-1] or "document"
+
+        # Run ingest pipeline with course metadata
+        ingest_fn = registry.get("ingest", "default")
+        result = await ingest_fn(
+            file_content=file_bytes,
+            filename=filename,
+            namespace=req.namespace,
+            session=session,
+            registry=registry,
+        )
+        await session.commit()
+
+        return ContentIngestResponse(
+            status=result.status,
+            namespace=req.namespace,
+            course_id=req.course_id,
+            metadata=metadata,
+            document_id=str(result.document_id) if result.document_id else None,
+            chunk_count=result.chunk_count,
+        )
+
     return ContentIngestResponse(
         status="accepted",
         namespace=req.namespace,

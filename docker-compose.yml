@@ -108,6 +108,8 @@ services:
     profiles:
       - tei
     command: --model-id sentence-transformers/all-MiniLM-L6-v2 --port 8080
+    volumes:
+      - vektra_tei_cache:/data
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -125,3 +127,4 @@ volumes:
   vektra_pgdata:
   vektra_ollama:
   vektra_qdrant:
+  vektra_tei_cache:

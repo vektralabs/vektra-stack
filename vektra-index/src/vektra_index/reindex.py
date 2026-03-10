@@ -73,7 +73,7 @@ async def run_reindex(
     namespace: str,
     source_version: int,
     target_version: int,
-    registry: Any = None,
+    registry: Any,
 ) -> None:
     """Background reindex job: re-embed all chunks under a new index version.
 
@@ -135,10 +135,12 @@ async def run_reindex(
             )
             doc_ids = [row[0] for row in doc_result.all()]
 
-            # Get embedding provider from registry
-            embedding_provider = (
-                registry.get("embedding", "default") if registry else None
-            )
+            # Get embedding provider from registry (required)
+            if registry is None:
+                raise RuntimeError("ProviderRegistry is required for reindex")
+            embedding_provider = registry.get("embedding", "default")
+            if embedding_provider is None:
+                raise RuntimeError("No embedding provider registered for reindex")
 
             # PgvectorProvider with target version for storing new chunks
             target_pgvector = PgvectorProvider(active_index_version=target_version)
@@ -163,10 +165,16 @@ async def run_reindex(
                 )
                 existing_chunks = chunk_result.all()
 
-                if existing_chunks and embedding_provider is not None:
+                if existing_chunks:
                     # Re-embed chunk texts
                     texts = [row.content for row in existing_chunks]
                     embeddings = await embedding_provider.embed_documents(texts)
+
+                    if len(embeddings) != len(texts):
+                        raise RuntimeError(
+                            f"Embedding count mismatch: got {len(embeddings)}, "
+                            f"expected {len(texts)} for document {doc_id}"
+                        )
 
                     # Build ChunkEmbedding objects with target version metadata
                     chunk_embeddings = []
@@ -275,6 +283,12 @@ async def trigger_reindex(
     # Read current active index version from config
     vs_config = VectorStoreConfig()
     source_version = vs_config.active_index_version
+
+    if body.target_index_version == source_version:
+        raise HTTPException(
+            status_code=400,
+            detail="target_index_version must differ from the active index version",
+        )
 
     job_id = uuid4()
     job = ReindexJobOrm(

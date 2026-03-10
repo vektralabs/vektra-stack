@@ -109,9 +109,7 @@ class TestRunReindex:
 
         # Mock embedding provider
         mock_embedding = AsyncMock()
-        mock_embedding.embed_documents = AsyncMock(
-            return_value=[[0.1] * 384]
-        )
+        mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
         mock_registry = MagicMock()
         mock_registry.get = MagicMock(return_value=mock_embedding)
 
@@ -159,6 +157,11 @@ class TestRunReindex:
 
         mock_factory = MagicMock(side_effect=make_session_ctx)
 
+        mock_embedding = AsyncMock()
+        mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+        mock_registry = MagicMock()
+        mock_registry.get = MagicMock(return_value=mock_embedding)
+
         with patch(
             "vektra_shared.db.get_session_factory",
             return_value=mock_factory,
@@ -168,6 +171,7 @@ class TestRunReindex:
                 namespace="default",
                 source_version=1,
                 target_version=2,
+                registry=mock_registry,
             )
 
         assert call_count == 2

@@ -6,6 +6,7 @@
 #   docker compose up -d                        # core stack
 #   docker compose --profile local-llm up -d    # + Ollama for local LLM
 #   docker compose --profile qdrant up -d       # + Qdrant (Phase 2)
+#   docker compose --profile tei up -d          # + TEI embeddings (Phase 2)
 # ==========================================================================
 
 services:

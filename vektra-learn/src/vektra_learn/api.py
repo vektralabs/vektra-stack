@@ -6,6 +6,8 @@ The query endpoint authenticates via JWT dashboard token (not API key).
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from collections.abc import AsyncGenerator
 from typing import Any
 from urllib.parse import urlparse
@@ -52,6 +54,24 @@ _bearer = HTTPBearer(auto_error=False)
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
+
+def _validate_url_not_private(url: str) -> None:
+    """Block requests to private/reserved IP ranges (SSRF mitigation)."""
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL has no hostname")
+    try:
+        addr_info = socket.getaddrinfo(
+            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve hostname: {exc}") from exc
+    for _family, _type, _proto, _canonname, sockaddr in addr_info:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+            raise ValueError(f"URL resolves to private/reserved address: {ip}")
 
 
 class EnrollmentListResponse(BaseModel):
@@ -245,6 +265,19 @@ async def trigger_ingest(
                 code=ERR_LEARN_004,
                 message="Only http and https URLs are supported.",
                 remediation="Provide a valid http or https URL.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
+
+        try:
+            _validate_url_not_private(req.document_url)
+        except ValueError as exc:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_004,
+                message=f"Blocked URL: {exc}",
+                remediation="Provide a publicly accessible URL.",
             )
             raise HTTPException(
                 status_code=http_status_for(err), detail=err.to_envelope()

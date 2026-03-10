@@ -134,7 +134,7 @@ Before generating Phase 2 plans:
 
 | # | Plan | Title | Tasks | Status |
 |---|------|-------|-------|--------|
-| 11 | [infra-phase2](20260301-infra-phase2.md) | App entrypoint, Docker, CI | 12 | pending |
+| 11 | [infra-phase2](20260301-infra-phase2.md) | App entrypoint, Docker, CI | 12 | in_progress |
 
 ---
 

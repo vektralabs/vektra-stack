@@ -57,29 +57,61 @@ class TestReindexModels:
 class TestRunReindex:
     @pytest.mark.asyncio
     async def test_run_reindex_updates_progress(self):
-        """Verify that run_reindex updates job status."""
+        """Verify that run_reindex re-embeds chunks and updates job status."""
         from vektra_index.reindex import run_reindex
 
         job_id = uuid4()
+        doc1_id = uuid4()
+        doc2_id = uuid4()
+
+        # Mock chunk rows returned by the chunk query
+        mock_chunk1 = MagicMock(
+            content="hello world",
+            chunk_metadata={"document_id": str(doc1_id)},
+            element_type="text",
+            content_format="text",
+            position=0,
+            sparse_vector=None,
+        )
+        mock_chunk2 = MagicMock(
+            content="goodbye world",
+            chunk_metadata={"document_id": str(doc2_id)},
+            element_type="text",
+            content_format="text",
+            position=0,
+            sparse_vector=None,
+        )
 
         mock_session = AsyncMock()
         execute_results = [
             MagicMock(),  # update status to running
             MagicMock(**{"scalar_one.return_value": 2}),  # count
             MagicMock(),  # update total_documents
-            MagicMock(**{"all.return_value": [(uuid4(),), (uuid4(),)]}),  # doc query
+            MagicMock(**{"all.return_value": [(doc1_id,), (doc2_id,)]}),  # doc query
+            MagicMock(**{"all.return_value": [mock_chunk1]}),  # chunks for doc 1
+            MagicMock(),  # pgvector store flush (doc 1)
             MagicMock(),  # update progress doc 1
+            MagicMock(**{"all.return_value": [mock_chunk2]}),  # chunks for doc 2
+            MagicMock(),  # pgvector store flush (doc 2)
             MagicMock(),  # update progress doc 2
             MagicMock(),  # update completed
         ]
         mock_session.execute = AsyncMock(side_effect=execute_results)
         mock_session.commit = AsyncMock()
+        mock_session.add = MagicMock()
+        mock_session.flush = AsyncMock()
 
         mock_session_ctx = AsyncMock()
         mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
 
         mock_factory = MagicMock(return_value=mock_session_ctx)
+
+        # Mock embedding provider
+        mock_embedding = AsyncMock()
+        mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+        mock_registry = MagicMock()
+        mock_registry.get = MagicMock(return_value=mock_embedding)
 
         with patch(
             "vektra_shared.db.get_session_factory",
@@ -90,8 +122,11 @@ class TestRunReindex:
                 namespace="default",
                 source_version=1,
                 target_version=2,
+                registry=mock_registry,
             )
 
+        # Verify embedding was called for both documents
+        assert mock_embedding.embed_documents.call_count == 2
         assert mock_session.execute.call_count >= 4
         assert mock_session.commit.call_count >= 4
 
@@ -122,6 +157,11 @@ class TestRunReindex:
 
         mock_factory = MagicMock(side_effect=make_session_ctx)
 
+        mock_embedding = AsyncMock()
+        mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+        mock_registry = MagicMock()
+        mock_registry.get = MagicMock(return_value=mock_embedding)
+
         with patch(
             "vektra_shared.db.get_session_factory",
             return_value=mock_factory,
@@ -131,6 +171,7 @@ class TestRunReindex:
                 namespace="default",
                 source_version=1,
                 target_version=2,
+                registry=mock_registry,
             )
 
         assert call_count == 2

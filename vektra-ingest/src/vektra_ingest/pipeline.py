@@ -134,6 +134,7 @@ async def run_ingest(
     session: AsyncSession,
     registry: Any,  # ProviderRegistry - typed loosely to avoid circular import
     on_phase: Callable[[str, int | None], Awaitable[None]] | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> IngestResult:
     """Execute the full document ingestion pipeline.
 
@@ -154,6 +155,8 @@ async def run_ingest(
         session: AsyncSession for source_documents + ingest_jobs writes.
         registry: ProviderRegistry providing "embedding" and "vector_store".
         on_phase: Optional progress callback (phase_name, percentage).
+        extra_metadata: Additional metadata to merge into each chunk's metadata.
+            Used by learn vertical to attach course_id for ARCH-044 JSONB filtering.
 
     Raises:
         IngestConflictError: Concurrent duplicate filename insert (TOCTOU, → 409).
@@ -368,6 +371,7 @@ async def run_ingest(
             )
 
         # Build ChunkEmbedding objects with document_id in metadata
+        _extra = extra_metadata or {}
         chunk_embeddings = [
             ChunkEmbedding(
                 chunk_id=f"{doc_id}_{i}",
@@ -375,6 +379,7 @@ async def run_ingest(
                 dense=embedding,
                 metadata={
                     **chunk.metadata,
+                    **_extra,
                     "document_id": str(doc_id),
                     "content_type": content_type,
                     "element_type": chunk.element_type.value,

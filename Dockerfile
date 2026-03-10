@@ -1,12 +1,27 @@
 # ==========================================================================
 # Vektra platform - multi-stage Docker build
 # ==========================================================================
+# Three stages: widget-builder (Node.js) -> builder (Python) -> runtime.
 # Single image: CMD_TARGET=server (default) or CMD_TARGET=migrate.
 # See docker/entrypoint.sh for command dispatch.
+#
+# Build args:
+#   INSTALL_UNSTRUCTURED=true  - add Tesseract OCR + Poppler for PDF OCR
 # ==========================================================================
 
 # --------------------------------------------------------------------------
-# Stage 1: builder - install dependencies with uv
+# Stage 1: widget builder - compile chatbot JS bundle (Node.js)
+# --------------------------------------------------------------------------
+FROM node:22-slim AS widget-builder
+
+WORKDIR /widget
+COPY vektra-learn/widget/package.json vektra-learn/widget/package-lock.json* ./
+RUN npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts
+COPY vektra-learn/widget/ ./
+RUN node esbuild.config.mjs
+
+# --------------------------------------------------------------------------
+# Stage 2: builder - install dependencies with uv
 # --------------------------------------------------------------------------
 FROM python:3.12-slim AS builder
 
@@ -55,9 +70,17 @@ COPY vektra-app/src vektra-app/src
 RUN uv sync --frozen --no-editable --no-dev
 
 # --------------------------------------------------------------------------
-# Stage 2: runtime - minimal production image
+# Stage 3: runtime - minimal production image
 # --------------------------------------------------------------------------
 FROM python:3.12-slim AS runtime
+
+# Optional: install Tesseract OCR and Poppler for Unstructured extractor
+ARG INSTALL_UNSTRUCTURED=false
+RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
+    apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-eng poppler-utils \
+    && rm -rf /var/lib/apt/lists/*; \
+fi
 
 # Runtime system dependencies:
 #   libmagic1  - content type detection via python-magic (vektra-ingest)
@@ -77,6 +100,9 @@ COPY --from=builder /app/.venv /app/.venv
 # Alembic migrations (run via entrypoint: CMD_TARGET=migrate)
 COPY alembic.ini /app/alembic.ini
 COPY migrations/ /app/migrations/
+
+# Chatbot widget bundle (built in widget-builder stage)
+COPY --from=widget-builder /static/vektra-chat.js /app/vektra-learn/static/vektra-chat.js
 
 # Entrypoint script (dispatches server / migrate)
 COPY docker/entrypoint.sh /app/entrypoint.sh

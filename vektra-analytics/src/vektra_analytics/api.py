@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -37,9 +38,9 @@ class TraceResponse(BaseModel):
     """Single QueryTrace serialized for the API."""
 
     response_id: UUID
-    steps: list[dict]
+    steps: list[dict[str, Any]]
     total_duration_ms: int
-    chunks_retrieved: list[dict]
+    chunks_retrieved: list[dict[str, Any]]
     llm_model: str
     prompt_version: str
     created_at: datetime
@@ -81,7 +82,7 @@ def _trace_to_response(t: QueryTrace) -> TraceResponse:
 
 def _get_service(request: Request) -> AnalyticsService:
     """Retrieve AnalyticsService from app state."""
-    svc = getattr(request.app.state, "analytics_service", None)
+    svc: AnalyticsService | None = getattr(request.app.state, "analytics_service", None)
     if svc is None or not isinstance(svc, AnalyticsService):
         err = ErrorResponse(
             category=ErrorCategory.TRANSIENT,

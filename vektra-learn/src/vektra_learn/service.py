@@ -136,7 +136,7 @@ class LearnService:
         """Delete an enrollment by ID. Returns True if deleted, False if not found."""
         stmt = delete(EnrollmentOrm).where(EnrollmentOrm.id == enrollment_id)
         result = await session.execute(stmt)
-        deleted = result.rowcount > 0
+        deleted: bool = (result.rowcount or 0) > 0  # type: ignore[attr-defined]
         if deleted:
             log.info("enrollment_deleted", enrollment_id=str(enrollment_id))
         return deleted
@@ -189,8 +189,8 @@ class LearnService:
         """Build chunk metadata for course-scoped ingestion.
 
         Merges course_id into the metadata dict so that course-scoped queries
-        can filter via ARCH-044 JSONB filtering. The actual ingestion call
-        is wired in infra-phase2 (via ProviderRegistry, not a direct import).
+        can filter via ARCH-044 JSONB filtering. The ingestion endpoint passes
+        this metadata via extra_metadata to the ingest pipeline.
         """
         metadata = dict(req.metadata)
         metadata["course_id"] = req.course_id

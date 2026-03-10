@@ -33,7 +33,7 @@ endif
 # Targets
 # --------------------------------------------------------------------------
 
-.PHONY: help up down health ingest query demo logs test lint
+.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { \
@@ -74,6 +74,8 @@ test: ## Run unit tests with coverage
 		vektra-core/tests/ \
 		vektra-ingest/tests/ \
 		vektra-index/tests/ \
+		vektra-analytics/tests/ \
+		vektra-learn/tests/ \
 		-v --tb=short -m "not integration"
 
 lint: ## Run linters (ruff + mypy + import-linter)
@@ -84,5 +86,15 @@ lint: ## Run linters (ruff + mypy + import-linter)
 		vektra-admin/src/vektra_admin \
 		vektra-core/src/vektra_core \
 		vektra-ingest/src/vektra_ingest \
-		vektra-index/src/vektra_index
+		vektra-index/src/vektra_index \
+		vektra-analytics/src/vektra_analytics \
+		vektra-learn/src/vektra_learn
 	uv run lint-imports
+
+reindex: ## Trigger zero-downtime reindex: make reindex VER=2 [NS=default]
+	$(if $(VER),,$(error VER is required. Usage: make reindex VER=2 [NS=default]))
+	@scripts/reindex.sh "$(VER)" "$(or $(NS),default)"
+
+batch-ingest: ## Batch ingest files: make batch-ingest DIR=path/to/docs [NS=default]
+	$(if $(DIR),,$(error DIR is required. Usage: make batch-ingest DIR=path/to/docs))
+	@scripts/batch-ingest.sh "$(DIR)" "$(or $(NS),default)"

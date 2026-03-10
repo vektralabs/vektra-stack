@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Vektra zero-downtime reindex script
-# Usage: scripts/reindex.sh [NAMESPACE]
+# Usage: scripts/reindex.sh TARGET_VERSION [NAMESPACE]
 set -euo pipefail
 
 BASE_URL="${VEKTRA_API_URL:-http://localhost:${VEKTRA_PORT:-8000}}"
@@ -15,12 +15,13 @@ for arg in "$@"; do
       exit 0
       ;;
     -h|--help)
-      echo "Usage: scripts/reindex.sh [NAMESPACE]"
+      echo "Usage: scripts/reindex.sh TARGET_VERSION [NAMESPACE]"
       echo ""
       echo "Trigger a zero-downtime reindex job."
       echo ""
       echo "Arguments:"
-      echo "  NAMESPACE   Target namespace (default: 'default')"
+      echo "  TARGET_VERSION   Target index version (required, integer >= 1)"
+      echo "  NAMESPACE        Target namespace (default: 'default')"
       echo ""
       echo "Environment:"
       echo "  VEKTRA_API_URL   Base URL (default: http://localhost:8000)"
@@ -29,26 +30,38 @@ for arg in "$@"; do
       ;;
     --invalid-*|--*)
       echo "Error: unknown argument '$arg'" >&2
-      echo "Usage: scripts/reindex.sh [NAMESPACE]" >&2
+      echo "Usage: scripts/reindex.sh TARGET_VERSION [NAMESPACE]" >&2
       exit 1
       ;;
   esac
 done
 
-NAMESPACE="${1:-default}"
+TARGET_VERSION="${1:-}"
+NAMESPACE="${2:-default}"
 
 # ---- validation ----
+if [ -z "$TARGET_VERSION" ]; then
+  echo "Error: TARGET_VERSION argument is required" >&2
+  echo "Usage: scripts/reindex.sh TARGET_VERSION [NAMESPACE]" >&2
+  exit 1
+fi
+
+if ! [[ "$TARGET_VERSION" =~ ^[0-9]+$ ]] || [ "$TARGET_VERSION" -lt 1 ]; then
+  echo "Error: TARGET_VERSION must be an integer >= 1" >&2
+  exit 1
+fi
+
 if [ -z "${VEKTRA_API_KEY:-}" ]; then
   echo "Error: VEKTRA_API_KEY environment variable is required" >&2
   exit 1
 fi
 
 # ---- trigger reindex ----
-echo "Triggering reindex for namespace '${NAMESPACE}'..."
+echo "Triggering reindex for namespace '${NAMESPACE}' (target version: ${TARGET_VERSION})..."
 JSON_BODY=$(python3 -c "
 import json, sys
-print(json.dumps({'namespace': sys.argv[1]}))
-" "$NAMESPACE")
+print(json.dumps({'namespace': sys.argv[1], 'target_index_version': int(sys.argv[2])}))
+" "$NAMESPACE" "$TARGET_VERSION")
 
 RESP=$(curl -sf -w "\n%{http_code}" \
   -X POST \
@@ -81,12 +94,12 @@ while [ "$ELAPSED" -lt "$POLL_TIMEOUT" ]; do
     -H "Authorization: Bearer ${VEKTRA_API_KEY}" \
     "${BASE_URL}/api/v1/reindex/${JOB_ID}/status") || continue
   STATUS=$(echo "$STATUS_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
-  PROGRESS=$(echo "$STATUS_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('progress','?'))" 2>/dev/null || echo "?")
-  printf "  [%3ds] status: %s  progress: %s\n" "$ELAPSED" "$STATUS" "$PROGRESS"
+  PROCESSED=$(echo "$STATUS_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"{d['processed_documents']}/{d['total_documents']}\")" 2>/dev/null || echo "?")
+  printf "  [%3ds] status: %s  progress: %s\n" "$ELAPSED" "$STATUS" "$PROCESSED"
   case "$STATUS" in
     completed|complete|done)
-      echo "Reindex completed successfully."
-      echo "Update VEKTRA_ACTIVE_INDEX_VERSION and restart to switch to the new index."
+      echo "Reindex completed (progress tracking only - skeleton implementation)."
+      echo "When full reindex is implemented, set VEKTRA_ACTIVE_INDEX_VERSION=${TARGET_VERSION} and restart."
       exit 0
       ;;
     failed|error)

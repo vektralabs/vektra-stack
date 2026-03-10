@@ -91,8 +91,9 @@ lint: ## Run linters (ruff + mypy + import-linter)
 		vektra-learn/src/vektra_learn
 	uv run lint-imports
 
-reindex: ## Trigger zero-downtime reindex
-	@scripts/reindex.sh
+reindex: ## Trigger zero-downtime reindex: make reindex VER=2 [NS=default]
+	$(if $(VER),,$(error VER is required. Usage: make reindex VER=2 [NS=default]))
+	@scripts/reindex.sh "$(VER)" "$(or $(NS),default)"
 
 batch-ingest: ## Batch ingest files: make batch-ingest DIR=path/to/docs [NS=default]
 	$(if $(DIR),,$(error DIR is required. Usage: make batch-ingest DIR=path/to/docs))

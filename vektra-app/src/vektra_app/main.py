@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, MutableMapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import FastAPI, Request
@@ -38,6 +39,14 @@ from vektra_shared.startup import (
 )
 
 log = structlog.get_logger(__name__)
+
+
+def _redact_url(url: str) -> str:
+    """Return scheme://hostname:port only, stripping credentials and path."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}"
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +173,11 @@ async def _step_5_register_providers(
         registry.register("vector_store", "qdrant", qdrant_provider)
         # Override pgvector adapter for health checks
         vector_store_adapter = qdrant_provider  # type: ignore[assignment]
-        log.info("vector_store_registered", provider="qdrant", url=settings.qdrant_url)
+        log.info(
+            "vector_store_registered",
+            provider="qdrant",
+            url=_redact_url(settings.qdrant_url),
+        )
 
     # --- Safeguard (Phase 2: configurable mode) ---
     from vektra_core.safeguards import create_safeguard
@@ -182,7 +195,11 @@ async def _step_5_register_providers(
     webhook_config = WebhookConfig()
     if webhook_config.url:
         event_emitter = WebhookEventEmitter(config=webhook_config)
-        log.info("event_emitter_registered", type="webhook", url=webhook_config.url)
+        log.info(
+            "event_emitter_registered",
+            type="webhook",
+            url=_redact_url(webhook_config.url),
+        )
     else:
         event_emitter = NoOpEventEmitter()
     registry.register("event_emitter", "default", event_emitter)
@@ -380,14 +397,12 @@ async def _step_10_learn_check(
             remediation="Check logs for LearnService initialization errors.",
         )
     if len(settings.learn_jwt_secret) < 32:
-        log.warning(
-            "startup_step",
+        raise StartupValidationError(
             step="learn_check",
-            status="warning",
-            message="VEKTRA_LEARN_JWT_SECRET is shorter than 32 characters.",
+            detail="VEKTRA_LEARN_JWT_SECRET must be at least 32 characters.",
+            remediation="Set a longer JWT secret for production security.",
         )
-    else:
-        log.info("startup_step", step="learn_check", status="ok")
+    log.info("startup_step", step="learn_check", status="ok")
 
 
 async def _step_11_qdrant_check(settings: VektraSettings) -> None:

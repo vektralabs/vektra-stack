@@ -237,7 +237,6 @@ async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
         log.error("cleanup_failed", error=str(exc))
 
 
-
 # ---------------------------------------------------------------------------
 # Worker settings factory
 # ---------------------------------------------------------------------------

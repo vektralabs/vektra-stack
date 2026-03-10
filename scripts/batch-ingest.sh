@@ -82,7 +82,7 @@ for file in "${FILES[@]}"; do
     SUCCESS=$((SUCCESS + 1))
   else
     echo "FAILED"
-    echo "${output}" | sed 's/^/    /' >&2
+    echo "    ${output//$'\n'/$'\n'    }" >&2
     FAILED=$((FAILED + 1))
   fi
 done

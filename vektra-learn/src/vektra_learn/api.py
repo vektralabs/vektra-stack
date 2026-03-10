@@ -56,8 +56,14 @@ _bearer = HTTPBearer(auto_error=False)
 # ---------------------------------------------------------------------------
 
 
-def _validate_url_not_private(url: str) -> None:
-    """Block requests to private/reserved IP ranges (SSRF mitigation)."""
+def _resolve_and_validate_url(url: str) -> tuple[str, str]:
+    """Resolve DNS once, validate IPs, return (safe_url, hostname).
+
+    Prevents DNS rebinding by resolving the hostname to an IP, validating
+    that the IP is not private/reserved, then building a URL that connects
+    directly to the validated IP. The original hostname is returned so
+    the caller can set the Host header for virtual-host routing.
+    """
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname:
@@ -68,10 +74,22 @@ def _validate_url_not_private(url: str) -> None:
         )
     except socket.gaierror as exc:
         raise ValueError(f"Cannot resolve hostname: {exc}") from exc
+    if not addr_info:
+        raise ValueError(f"Cannot resolve hostname: {hostname}")
+
+    # Validate ALL resolved addresses (not just the first)
     for _family, _type, _proto, _canonname, sockaddr in addr_info:
         ip = ipaddress.ip_address(sockaddr[0])
         if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
             raise ValueError(f"URL resolves to private/reserved address: {ip}")
+
+    # Use first resolved IP to build a safe URL (prevents DNS rebinding)
+    validated_ip = addr_info[0][4][0]
+    port = f":{parsed.port}" if parsed.port else ""
+    path = parsed.path or "/"
+    query = f"?{parsed.query}" if parsed.query else ""
+    safe_url = f"{parsed.scheme}://{validated_ip}{port}{path}{query}"
+    return safe_url, hostname
 
 
 class EnrollmentListResponse(BaseModel):
@@ -271,7 +289,7 @@ async def trigger_ingest(
             )
 
         try:
-            _validate_url_not_private(req.document_url)
+            safe_url, original_host = _resolve_and_validate_url(req.document_url)
         except ValueError as exc:
             err = ErrorResponse(
                 category=ErrorCategory.PERMANENT,
@@ -284,8 +302,10 @@ async def trigger_ingest(
             )
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(req.document_url)
+            async with httpx.AsyncClient(
+                timeout=30.0, verify=parsed.scheme == "https"
+            ) as client:
+                resp = await client.get(safe_url, headers={"Host": original_host})
                 resp.raise_for_status()
                 file_bytes = resp.content
         except httpx.HTTPError as exc:

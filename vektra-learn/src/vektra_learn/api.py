@@ -269,7 +269,7 @@ async def trigger_ingest(
         # Extract filename from URL path
         filename = parsed.path.rsplit("/", 1)[-1] or "document"
 
-        # Run ingest pipeline with course metadata
+        # Run ingest pipeline with course metadata attached to chunks
         ingest_fn = registry.get("ingest", "default")
         result = await ingest_fn(
             file_content=file_bytes,
@@ -277,6 +277,7 @@ async def trigger_ingest(
             namespace=req.namespace,
             session=session,
             registry=registry,
+            extra_metadata=metadata,
         )
         await session.commit()
 

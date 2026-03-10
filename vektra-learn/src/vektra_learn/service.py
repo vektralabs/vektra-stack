@@ -189,8 +189,8 @@ class LearnService:
         """Build chunk metadata for course-scoped ingestion.
 
         Merges course_id into the metadata dict so that course-scoped queries
-        can filter via ARCH-044 JSONB filtering. The actual ingestion call
-        is wired in infra-phase2 (via ProviderRegistry, not a direct import).
+        can filter via ARCH-044 JSONB filtering. The ingestion endpoint passes
+        this metadata via extra_metadata to the ingest pipeline.
         """
         metadata = dict(req.metadata)
         metadata["course_id"] = req.course_id

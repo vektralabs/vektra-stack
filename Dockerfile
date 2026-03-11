@@ -67,7 +67,9 @@ COPY vektra-app/src vektra-app/src
 
 # Build and install workspace packages (non-editable: packages are placed
 # in site-packages, no source dirs needed at runtime).
-RUN uv sync --frozen --no-editable --no-dev
+# Include optional extras for Phase 2 vector store and sparse search support.
+RUN uv sync --frozen --no-editable --no-dev \
+    && uv pip install qdrant-client'>=1.12' fastembed'>=0.4'
 
 # --------------------------------------------------------------------------
 # Stage 3: runtime - minimal production image

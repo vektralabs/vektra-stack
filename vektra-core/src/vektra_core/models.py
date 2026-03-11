@@ -36,6 +36,20 @@ class Base(DeclarativeBase):
     pass
 
 
+class NamespaceOrm(Base):
+    """ORM mapping for the namespaces table.
+
+    Required by SQLAlchemy's FK resolution: ConversationOrm and FeedbackOrm
+    reference namespaces.id; without this model the ORM cannot determine
+    flush ordering and raises NoReferencedTableError.
+    """
+
+    __tablename__ = "namespaces"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class ConversationOrm(Base):
     """ORM mapping for conversations table (ARCH-031, REQ-049).
 

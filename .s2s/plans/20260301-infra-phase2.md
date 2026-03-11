@@ -1,7 +1,7 @@
 # Implementation Plan: infra-phase2 - App entrypoint, Docker, CI updates
 
 **ID**: 20260301-infra-phase2
-**Status**: in_progress
+**Status**: completed
 **Branch**: feat/phase2-wave5-infra
 **Created**: 2026-03-01T14:30:09Z
 **Updated**: 2026-03-01T14:30:09Z
@@ -287,17 +287,17 @@ This is explicitly optional (EX-004). Implement only if time permits after all r
 
 ## Acceptance Criteria
 
-- [ ] Application starts successfully with all Phase 2 providers registered (AnalyticsService, LearnService, AdvancedQueryPipeline)
-- [ ] `docker compose up -d` starts the core stack (vektra + postgres) within 60 seconds (NFR-004)
-- [ ] `docker compose --profile qdrant up -d` starts with Qdrant as vector store backend
-- [ ] `docker compose --profile tei up -d` starts with TEI as embedding provider
-- [ ] Dockerfile builds successfully with `INSTALL_UNSTRUCTURED=true` and includes Tesseract
-- [ ] Dockerfile builds the chatbot widget via Node.js builder stage
-- [ ] CI runs unit tests for vektra-analytics and vektra-learn on relevant path changes
-- [ ] CI lint job type-checks vektra_analytics and vektra_learn with mypy
-- [ ] `uv sync --dev --frozen` resolves all 8 workspace members without errors
-- [ ] Makefile `test` target runs all component tests including analytics and learn
-- [ ] Application memory usage stays below 3.5GB under Phase 2 full-featured configuration (ARCH-064)
+- [x] Application starts successfully with all Phase 2 providers registered (AnalyticsService, LearnService, AdvancedQueryPipeline)
+- [x] `docker compose up -d` starts the core stack (vektra + postgres) within 60 seconds (NFR-004)
+- [x] `docker compose --profile qdrant up -d` starts with Qdrant as vector store backend (fixed in PR #34)
+- [x] `docker compose --profile tei up -d` starts with TEI as embedding provider
+- [x] Dockerfile builds successfully with `INSTALL_UNSTRUCTURED=true` and includes Tesseract
+- [x] Dockerfile builds the chatbot widget via Node.js builder stage
+- [x] CI runs unit tests for vektra-analytics and vektra-learn on relevant path changes
+- [x] CI lint job type-checks vektra_analytics and vektra_learn with mypy
+- [x] `uv sync --dev --frozen` resolves all 8 workspace members without errors
+- [x] Makefile `test` target runs all component tests including analytics and learn
+- [x] Application memory usage stays below 3.5GB under Phase 2 full-featured configuration (ARCH-064)
 
 ## Testing Approach
 

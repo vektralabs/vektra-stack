@@ -44,8 +44,11 @@ def test_all_startup_steps_logged() -> None:
     logs = _container_logs()
     assert logs, "No container logs found (is the stack running?)"
 
-    missing = [step for step in _STARTUP_STEPS if step not in logs]
-    assert not missing, f"Startup steps not found in container logs: {missing}"
+    cursor = 0
+    for step in _STARTUP_STEPS:
+        idx = logs.find(step, cursor)
+        assert idx != -1, f"Startup step not found in order in container logs: {step}"
+        cursor = idx + len(step)
 
 
 def test_startup_complete_logged() -> None:

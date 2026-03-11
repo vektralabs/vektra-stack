@@ -1,6 +1,6 @@
 """Startup validation tests (ARCH-057).
 
-Verifies the 8-step startup validation sequence by inspecting container logs
+Verifies the 11-step startup validation sequence by inspecting container logs
 from the running Docker Compose stack.
 
 The graceful config failure test runs a separate container instance with
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import subprocess
 
-# All 8 ARCH-057 startup step names in execution order
+# All 11 ARCH-057 startup step names in execution order
 _STARTUP_STEPS = [
     "config_validation",
     "database_connectivity",
@@ -23,6 +23,9 @@ _STARTUP_STEPS = [
     "embedding_warmup",
     "llm_connectivity",
     "template_loading",
+    "analytics_check",
+    "learn_check",
+    "qdrant_check",
 ]
 
 
@@ -37,7 +40,7 @@ def _container_logs() -> str:
 
 
 def test_all_startup_steps_logged() -> None:
-    """All 8 ARCH-057 startup steps appear in container log output."""
+    """All 11 ARCH-057 startup steps appear in container log output."""
     logs = _container_logs()
     assert logs, "No container logs found (is the stack running?)"
 

@@ -69,7 +69,7 @@ COPY vektra-app/src vektra-app/src
 # in site-packages, no source dirs needed at runtime).
 # Include optional extras for Phase 2 vector store and sparse search support.
 RUN uv sync --frozen --no-editable --no-dev \
-    && uv pip install qdrant-client'>=1.12' fastembed'>=0.4'
+    && uv pip install 'qdrant-client==1.17.0' 'fastembed==0.7.4'
 
 # --------------------------------------------------------------------------
 # Stage 3: runtime - minimal production image

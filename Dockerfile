@@ -73,7 +73,8 @@ ARG INSTALL_UNSTRUCTURED=false
 RUN uv sync --frozen --no-editable --no-dev \
     && uv pip install 'qdrant-client==1.17.0' 'fastembed==0.7.4' \
     && if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
-       uv pip install 'unstructured[pdf]>=0.15' 'pi-heif' 'sentence-transformers' 'torch' 'torchvision' --reinstall; \
+       uv pip install 'torch' 'torchvision' --index-url https://download.pytorch.org/whl/cpu --reinstall \
+       && uv pip install 'unstructured[pdf]>=0.15' 'pi-heif' 'sentence-transformers' --reinstall; \
     fi
 
 # --------------------------------------------------------------------------

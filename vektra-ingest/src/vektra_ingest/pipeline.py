@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import structlog
 from sqlalchemy import select, update
@@ -383,7 +383,7 @@ async def run_ingest(
         _extra = extra_metadata or {}
         chunk_embeddings = [
             ChunkEmbedding(
-                chunk_id=f"{doc_id}_{i}",
+                chunk_id=str(uuid5(doc_id, str(i))),
                 text=chunk.text,
                 dense=embedding,
                 metadata={

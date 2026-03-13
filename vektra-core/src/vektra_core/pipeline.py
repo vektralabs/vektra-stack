@@ -321,7 +321,7 @@ class SimpleQueryPipeline:
             min_score=self._config.min_relevance_score,
             dedup_enabled=self._config.chunk_dedup_enabled,
         )
-        no_relevant_context = len(results) > 0 and len(filtered) == 0
+        no_relevant_context = len(filtered) == 0
         steps.append(
             StepTrace(
                 name="retrieval_filter",
@@ -606,7 +606,7 @@ class SimpleQueryPipeline:
             min_score=self._config.min_relevance_score,
             dedup_enabled=self._config.chunk_dedup_enabled,
         )
-        no_relevant_context = len(results) > 0 and len(filtered) == 0
+        no_relevant_context = len(filtered) == 0
         steps.append(
             StepTrace(
                 name="retrieval_filter",

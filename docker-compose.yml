@@ -39,7 +39,10 @@ services:
   # Phase 2: add redis + vektra-worker for separate arq worker scaling.
   # --------------------------------------------------------------------------
   vektra:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_UNSTRUCTURED: ${INSTALL_UNSTRUCTURED:-false}
     image: vektra-stack
     environment:
       CMD_TARGET: server

@@ -24,7 +24,9 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -112,7 +114,8 @@ async def ingest(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile,
-    namespace: str = "default",
+    namespace: str = Query("default"),
+    namespace_form: str = Form(None),
     session: AsyncSession = Depends(get_session),
     key_info: ApiKeyInfo = Depends(require_scope("ingest")),
 ) -> Any:
@@ -120,7 +123,7 @@ async def ingest(
 
     Accepts multipart/form-data with:
     - file: the document to ingest (PDF, DOCX, PPTX)
-    - namespace: target namespace (query param, default "default")
+    - namespace: target namespace (query param or form field, default "default")
 
     Returns:
     - 200 + {document_id, chunk_count, status} for sync path (<= 10MB)
@@ -128,6 +131,10 @@ async def ingest(
     - 409 for same filename with different content (REQ-033)
     - 413 for file too large (ERR-INGEST-002)
     """
+    # Form field overrides query param when explicitly provided
+    if namespace_form is not None:
+        namespace = namespace_form
+
     ingest_config = IngestConfig()
     max_bytes = ingest_config.max_file_size_mb * 1024 * 1024
 

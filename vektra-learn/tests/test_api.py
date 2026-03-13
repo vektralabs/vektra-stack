@@ -27,6 +27,7 @@ class TestEnrollmentEndpoints:
     async def test_create_enrollment_service_call(self):
         """Test enrollment creation through the service directly."""
         session = MagicMock()
+        session.execute = AsyncMock()
         session.add = MagicMock()
         session.flush = AsyncMock()
         svc = LearnService(jwt_secret=JWT_SECRET)

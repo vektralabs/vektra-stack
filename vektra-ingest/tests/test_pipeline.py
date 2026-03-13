@@ -239,7 +239,7 @@ async def test_filename_match_creates_new_version():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.version == 2
     assert result.supersedes_id == old_doc_id
     # Old chunks were deleted
@@ -377,7 +377,7 @@ async def test_successful_ingest_returns_indexed():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.document_id == doc_id
     assert result.chunk_count == 3
     mock_vs.store.assert_called_once()
@@ -616,7 +616,7 @@ async def test_document_indexed_event_emitted():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
 
     # Check document.indexed event was emitted
     emit_calls = [

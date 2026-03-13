@@ -186,13 +186,29 @@ async def create_enrollment(
     """Register a student enrollment."""
     try:
         enrollment = await service.create_enrollment(session, req)
-    except IntegrityError:
-        err = ErrorResponse(
-            category=ErrorCategory.PERMANENT,
-            code=ERR_LEARN_004,
-            message=f"Enrollment already exists for student '{req.student_id}' in course '{req.course_id}'.",
-            remediation="Use GET /api/v1/learn/enrollments to check existing enrollments.",
-        )
+    except IntegrityError as exc:
+        exc_str = str(exc).lower()
+        if "uq_enrollment_student_course" in exc_str:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_004,
+                message=f"Enrollment already exists for student '{req.student_id}' in course '{req.course_id}'.",
+                remediation="Use GET /api/v1/learn/enrollments to check existing enrollments.",
+            )
+        elif "namespaces" in exc_str or "foreign key" in exc_str:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_002,
+                message=f"Namespace '{req.namespace}' does not exist.",
+                remediation="Create the namespace via the admin dashboard before enrolling students.",
+            )
+        else:
+            err = ErrorResponse(
+                category=ErrorCategory.TRANSIENT,
+                code=ERR_LEARN_001,
+                message=f"Failed to create enrollment: {exc}",
+                remediation="Check the request data and try again.",
+            )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
     await session.commit()
     return enrollment
@@ -303,7 +319,9 @@ async def trigger_ingest(
 
         try:
             async with httpx.AsyncClient(
-                timeout=30.0, verify=parsed.scheme == "https"
+                timeout=30.0,
+                verify=parsed.scheme == "https",
+                follow_redirects=True,
             ) as client:
                 resp = await client.get(safe_url, headers={"Host": original_host})
                 resp.raise_for_status()

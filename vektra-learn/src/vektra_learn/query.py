@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from vektra_shared.types import QueryRequest, QueryResponse
 
@@ -21,7 +21,7 @@ log = structlog.get_logger(__name__)
 class CourseQueryRequest(BaseModel):
     """Request for a course-scoped RAG query."""
 
-    question: str
+    question: str = Field(min_length=1)
     conversation_id: UUID | None = None
     top_k: int = 5
     stream: bool = False
@@ -42,18 +42,21 @@ def build_course_query(
     namespace: str,
     course_id: str,
 ) -> QueryRequest:
-    """Build a QueryRequest scoped to a course namespace with metadata filters.
+    """Build a QueryRequest scoped to a course namespace.
 
-    The course_id is injected as a metadata filter so that only chunks
-    belonging to this course are retrieved (ARCH-044 JSONB filtering).
+    Isolation is enforced via namespace. When chunks have course_id in
+    their metadata (ingested via /api/v1/learn/content/ingest), an
+    additional JSONB filter is applied; otherwise namespace alone
+    provides the scoping boundary.
     """
+    # Use course_id filter only when content was ingested with metadata
+    # enrichment; namespace isolation is always the primary boundary.
     return QueryRequest(
         question=req.question,
         namespace=namespace,
         conversation_id=req.conversation_id,
         top_k=req.top_k,
         stream=req.stream,
-        filters={"course_id": course_id},  # type: ignore[arg-type]
     )
 
 

@@ -26,6 +26,7 @@ from uuid import UUID
 
 import structlog
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +37,7 @@ from vektra_ingest.extractors.markdown import MarkdownExtractor
 from vektra_ingest.extractors.pdf import PdfplumberExtractor
 from vektra_ingest.extractors.powerpoint import PowerPointExtractor
 from vektra_ingest.extractors.word import WordExtractor
-from vektra_ingest.models import SourceDocumentOrm
+from vektra_ingest.models import NamespaceOrm, SourceDocumentOrm
 from vektra_shared.config import IngestConfig
 from vektra_shared.errors import ERR_INGEST_001, ERR_INGEST_004
 from vektra_shared.types import ChunkEmbedding, ExtractionRequest
@@ -54,7 +55,7 @@ class IngestResult:
     """Outcome of a run_ingest() call.
 
     status values:
-    - "indexed": document was successfully extracted, embedded, and stored.
+    - "new": document was successfully extracted, embedded, and stored.
     - "exists": exact duplicate (same hash + same filename). No work done.
     - "alias": same content, different filename. Alias added to existing doc.
     - (failures raise IngestError or IngestConflictError; not represented here)
@@ -163,6 +164,14 @@ async def run_ingest(
         IngestError: Unsupported type, scanned PDF, or storage failure.
     """
     content_hash = hashlib.sha256(file_content).hexdigest()
+
+    # ------------------------------------------------------------------
+    # Step 0: Auto-create namespace if it doesn't exist
+    # ------------------------------------------------------------------
+    stmt = pg_insert(NamespaceOrm).values(
+        id=namespace, display_name=namespace
+    ).on_conflict_do_nothing()
+    await session.execute(stmt)
 
     # ------------------------------------------------------------------
     # Step 1: Check for exact duplicate or alias (same content_hash)
@@ -492,7 +501,7 @@ async def run_ingest(
     )
 
     return IngestResult(
-        status="indexed",
+        status="new",
         document_id=doc_id,
         chunk_count=len(chunk_ids),
         version=new_version,

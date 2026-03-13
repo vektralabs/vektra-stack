@@ -139,7 +139,7 @@ async def test_reingest_creates_new_version():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.document_id == new_doc_id
     assert result.version == 2
     assert result.supersedes_id == old_doc_id
@@ -278,7 +278,7 @@ async def test_new_file_gets_version_1():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.version == 1
     assert result.supersedes_id is None
 
@@ -454,7 +454,7 @@ async def test_old_doc_soft_deleted_with_superseded_reason():
     mock_vs.delete.assert_called_once_with("default", [str(old_doc_id)])
 
     # The result should reflect the new version
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.version == 2
 
 

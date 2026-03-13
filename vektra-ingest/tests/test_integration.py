@@ -244,7 +244,7 @@ async def test_full_ingest_returns_indexed(session, registry):
         registry=registry,
     )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.document_id is not None
     assert result.chunk_count is not None
     assert result.chunk_count >= 1
@@ -284,7 +284,7 @@ async def test_duplicate_detection_exact_match(session, registry):
         session=session,
         registry=registry,
     )
-    assert result1.status == "indexed"
+    assert result1.status == "new"
 
     # Second ingest: same content + same filename → exists
     result2 = await run_ingest(
@@ -323,7 +323,7 @@ async def test_alias_same_content_different_filename(session, registry):
         session=session,
         registry=registry,
     )
-    assert result1.status == "indexed"
+    assert result1.status == "new"
 
     result2 = await run_ingest(
         file_content=pdf_bytes,
@@ -364,7 +364,7 @@ async def test_filename_reingest_creates_new_version(session, registry):
         session=session,
         registry=registry,
     )
-    assert result1.status == "indexed"
+    assert result1.status == "new"
     assert result1.version == 1
 
     # Re-ingest with different content → creates version 2
@@ -375,7 +375,7 @@ async def test_filename_reingest_creates_new_version(session, registry):
         session=session,
         registry=registry,
     )
-    assert result2.status == "indexed"
+    assert result2.status == "new"
     assert result2.version == 2
     assert result2.supersedes_id == result1.document_id
     assert result2.document_id != result1.document_id

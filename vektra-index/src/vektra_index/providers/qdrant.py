@@ -161,8 +161,19 @@ class QdrantVectorStoreProvider:
                 points=points,
                 wait=True,
             )
+        except TimeoutError:
+            # On timeout, Qdrant may have already persisted the points.
+            # Compensating delete would cause data loss. Log and re-raise
+            # so the caller can retry (idempotent via deterministic IDs).
+            logger.warning(
+                "qdrant_store_timeout, skipping compensating delete for %d points "
+                "(upsert may have succeeded server-side)",
+                len(point_ids),
+            )
+            raise
         except Exception:
-            # Compensating delete on partial failure (ARCH-052)
+            # Non-timeout error: Qdrant explicitly rejected the batch.
+            # Safe to run compensating delete (ARCH-052).
             logger.warning(
                 "qdrant_store_failed, executing compensating delete for %d points",
                 len(point_ids),

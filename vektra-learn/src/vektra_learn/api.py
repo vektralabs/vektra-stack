@@ -325,7 +325,7 @@ async def trigger_ingest(
             current_host = original_host
             async with httpx.AsyncClient(
                 timeout=30.0,
-                verify=parsed.scheme == "https",
+                verify=True,
                 follow_redirects=False,
             ) as client:
                 for _ in range(max_redirects + 1):
@@ -337,6 +337,16 @@ async def trigger_ingest(
                     break
                 resp.raise_for_status()
                 file_bytes = resp.content
+        except ValueError as exc:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_004,
+                message=f"Blocked redirect URL: {exc}",
+                remediation="Ensure redirect targets are publicly accessible URLs.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
         except httpx.HTTPError as exc:
             err = ErrorResponse(
                 category=ErrorCategory.TRANSIENT,

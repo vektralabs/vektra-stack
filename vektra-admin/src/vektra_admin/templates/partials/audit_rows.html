@@ -15,7 +15,7 @@
   <td colspan="6">
     <div class="pagination">
       {% if has_older %}
-      <button hx-get="/admin/partials/audit?cursor_ts={{ entries[-1].created_at.isoformat() }}&cursor_id={{ entries[-1].id }}&direction=older{% for k, v in params.items() if k not in ['cursor_ts', 'cursor_id', 'direction'] %}&{{ k }}={{ v }}{% endfor %}"
+      <button hx-get="/admin/partials/audit?cursor_ts={{ entries[-1].created_at.strftime('%Y-%m-%dT%H:%M:%S') }}&cursor_id={{ entries[-1].id }}&direction=older{% for k, v in params.items() if k not in ['cursor_ts', 'cursor_id', 'direction'] %}&{{ k }}={{ v }}{% endfor %}"
               hx-target="#audit-rows"
               hx-swap="innerHTML">Older</button>
       {% endif %}

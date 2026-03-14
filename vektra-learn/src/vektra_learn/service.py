@@ -87,9 +87,11 @@ class LearnService:
     ) -> EnrollmentResponse:
         """Create a new student-course enrollment."""
         # Auto-create namespace if it doesn't exist
-        stmt = pg_insert(NamespaceOrm).values(
-            id=req.namespace, display_name=req.namespace
-        ).on_conflict_do_nothing()
+        stmt = (
+            pg_insert(NamespaceOrm)
+            .values(id=req.namespace, display_name=req.namespace)
+            .on_conflict_do_nothing()
+        )
         await session.execute(stmt)
 
         now = datetime.now(UTC)

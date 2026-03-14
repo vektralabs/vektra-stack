@@ -122,6 +122,9 @@ async def test_dedup_alias_different_filename():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
+        elif call_count == 1:
             # First query: by content_hash → finds existing
             mock_result.scalar_one_or_none.return_value = existing
         else:
@@ -172,9 +175,12 @@ async def test_filename_match_creates_new_version():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
+        elif call_count == 1:
             # content_hash query → no match (different content)
             mock_result.scalar_one_or_none.return_value = None
-        elif call_count == 1:
+        elif call_count == 2:
             # filename query → finds existing doc
             mock_result.scalar_one_or_none.return_value = existing_doc
         else:

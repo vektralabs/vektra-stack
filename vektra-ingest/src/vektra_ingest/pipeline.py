@@ -168,9 +168,11 @@ async def run_ingest(
     # ------------------------------------------------------------------
     # Step 0: Auto-create namespace if it doesn't exist
     # ------------------------------------------------------------------
-    stmt = pg_insert(NamespaceOrm).values(
-        id=namespace, display_name=namespace
-    ).on_conflict_do_nothing()
+    stmt = (
+        pg_insert(NamespaceOrm)
+        .values(id=namespace, display_name=namespace)
+        .on_conflict_do_nothing()
+    )
     await session.execute(stmt)
 
     # ------------------------------------------------------------------

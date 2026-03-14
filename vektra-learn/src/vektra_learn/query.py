@@ -40,17 +40,14 @@ class CourseQueryResponse(BaseModel):
 def build_course_query(
     req: CourseQueryRequest,
     namespace: str,
-    course_id: str,
+    course_id: str,  # retained for API compatibility
 ) -> QueryRequest:
     """Build a QueryRequest scoped to a course namespace.
 
-    Isolation is enforced via namespace. When chunks have course_id in
-    their metadata (ingested via /api/v1/learn/content/ingest), an
-    additional JSONB filter is applied; otherwise namespace alone
-    provides the scoping boundary.
+    Isolation is enforced via namespace alone. The course_id parameter
+    is retained for API compatibility but currently unused; metadata-based
+    filtering may be re-enabled in a future release.
     """
-    # Use course_id filter only when content was ingested with metadata
-    # enrichment; namespace isolation is always the primary boundary.
     return QueryRequest(
         question=req.question,
         namespace=namespace,

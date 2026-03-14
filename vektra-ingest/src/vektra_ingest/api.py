@@ -115,7 +115,9 @@ async def ingest(
     background_tasks: BackgroundTasks,
     file: UploadFile,
     namespace: str = Query("default"),
-    namespace_form: str = Form(None),
+    namespace_form: str | None = Form(
+        None, description="Target namespace (overrides query param)"
+    ),
     session: AsyncSession = Depends(get_session),
     key_info: ApiKeyInfo = Depends(require_scope("ingest")),
 ) -> Any:

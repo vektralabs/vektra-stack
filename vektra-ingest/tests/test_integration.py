@@ -217,7 +217,7 @@ def _make_real_pdf() -> bytes:
 
 
 async def test_full_ingest_returns_indexed(session, registry):
-    """Full PDF ingest stores chunks and returns status='indexed'."""
+    """Full PDF ingest stores chunks and returns status='new'."""
     from sqlalchemy import text
 
     from vektra_ingest.pipeline import run_ingest

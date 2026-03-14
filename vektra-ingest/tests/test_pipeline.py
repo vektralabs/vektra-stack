@@ -299,8 +299,8 @@ async def test_unsupported_content_type_raises_ingest_error():
 
 
 @pytest.mark.asyncio
-async def test_successful_ingest_returns_indexed():
-    """Full ingest with mocked providers returns IngestResult(status='indexed')."""
+async def test_successful_ingest_returns_new():
+    """Full ingest with mocked providers returns IngestResult(status='new')."""
     from vektra_ingest.pipeline import run_ingest
 
     doc_id = uuid4()

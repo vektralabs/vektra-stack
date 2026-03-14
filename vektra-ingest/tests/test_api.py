@@ -551,15 +551,12 @@ async def test_batch_delete_returns_deleted_and_not_found():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
-            # Step 0: auto-create namespace (pg upsert) -> no-op
-            pass
-        elif call_count == 1:
             # First doc found
             mock_result.scalar_one_or_none.return_value = existing_doc
-        elif call_count == 2:
+        elif call_count == 1:
             # update statement (returns no scalar)
             mock_result.scalar_one_or_none.return_value = None
-        elif call_count == 3:
+        elif call_count == 2:
             # Second doc not found
             mock_result.scalar_one_or_none.return_value = None
         call_count += 1

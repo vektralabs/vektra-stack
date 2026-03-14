@@ -73,8 +73,9 @@ async def verify_key(plaintext: str, key_hash: str) -> bool:
     # Cache miss: run argon2id verification in a thread (CPU-bound)
     result = await asyncio.to_thread(_verify_sync, key_hash, plaintext)
 
-    with _cache_lock:
-        _verify_cache[cache_key] = result
+    if result:
+        with _cache_lock:
+            _verify_cache[cache_key] = True
 
     return result
 

@@ -122,7 +122,7 @@ async def test_ingest_admin_scope_allowed():
         from vektra_ingest.pipeline import IngestResult
 
         mock_ingest.return_value = IngestResult(
-            status="indexed", document_id=uuid4(), chunk_count=5
+            status="new", document_id=uuid4(), chunk_count=5
         )
 
         async with AsyncClient(
@@ -182,7 +182,7 @@ async def test_sync_ingest_returns_200_with_document_id():
         from vektra_ingest.pipeline import IngestResult
 
         mock_ingest.return_value = IngestResult(
-            status="indexed", document_id=doc_id, chunk_count=7
+            status="new", document_id=doc_id, chunk_count=7
         )
 
         async with AsyncClient(
@@ -198,7 +198,7 @@ async def test_sync_ingest_returns_200_with_document_id():
     body = resp.json()
     assert body["document_id"] == str(doc_id)
     assert body["chunk_count"] == 7
-    assert body["status"] == "indexed"
+    assert body["status"] == "new"
 
 
 @pytest.mark.asyncio

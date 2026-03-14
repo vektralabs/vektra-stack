@@ -17,10 +17,11 @@ import jwt
 import structlog
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vektra_learn.models import DashboardTokenOrm, EnrollmentOrm
+from vektra_learn.models import DashboardTokenOrm, EnrollmentOrm, NamespaceOrm
 
 log = structlog.get_logger(__name__)
 
@@ -85,6 +86,14 @@ class LearnService:
         self, session: AsyncSession, req: EnrollmentRequest
     ) -> EnrollmentResponse:
         """Create a new student-course enrollment."""
+        # Auto-create namespace if it doesn't exist
+        stmt = (
+            pg_insert(NamespaceOrm)
+            .values(id=req.namespace, display_name=req.namespace)
+            .on_conflict_do_nothing()
+        )
+        await session.execute(stmt)
+
         now = datetime.now(UTC)
         enrollment_id = uuid4()
         orm = EnrollmentOrm(

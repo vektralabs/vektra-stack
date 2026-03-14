@@ -186,13 +186,31 @@ async def create_enrollment(
     """Register a student enrollment."""
     try:
         enrollment = await service.create_enrollment(session, req)
-    except IntegrityError:
-        err = ErrorResponse(
-            category=ErrorCategory.PERMANENT,
-            code=ERR_LEARN_004,
-            message=f"Enrollment already exists for student '{req.student_id}' in course '{req.course_id}'.",
-            remediation="Use GET /api/v1/learn/enrollments to check existing enrollments.",
+    except IntegrityError as exc:
+        pgcode = getattr(exc.orig, "sqlstate", None) or getattr(
+            exc.orig, "pgcode", None
         )
+        if pgcode == "23505":
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_004,
+                message=f"Enrollment already exists for student '{req.student_id}' in course '{req.course_id}'.",
+                remediation="Use GET /api/v1/learn/enrollments to check existing enrollments.",
+            )
+        elif pgcode == "23503":
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_002,
+                message=f"Namespace '{req.namespace}' does not exist.",
+                remediation="Create the namespace via the admin dashboard before enrolling students.",
+            )
+        else:
+            err = ErrorResponse(
+                category=ErrorCategory.TRANSIENT,
+                code=ERR_LEARN_001,
+                message="Failed to create enrollment.",
+                remediation="Check the request data and try again.",
+            )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
     await session.commit()
     return enrollment
@@ -302,12 +320,33 @@ async def trigger_ingest(
             )
 
         try:
+            max_redirects = 5
+            current_url = safe_url
+            current_host = original_host
             async with httpx.AsyncClient(
-                timeout=30.0, verify=parsed.scheme == "https"
+                timeout=30.0,
+                verify=True,
+                follow_redirects=False,
             ) as client:
-                resp = await client.get(safe_url, headers={"Host": original_host})
+                for _ in range(max_redirects + 1):
+                    resp = await client.get(current_url, headers={"Host": current_host})
+                    if resp.is_redirect:
+                        location = resp.headers.get("location", "")
+                        current_url, current_host = _resolve_and_validate_url(location)
+                        continue
+                    break
                 resp.raise_for_status()
                 file_bytes = resp.content
+        except ValueError as exc:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_004,
+                message=f"Blocked redirect URL: {exc}",
+                remediation="Ensure redirect targets are publicly accessible URLs.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
         except httpx.HTTPError as exc:
             err = ErrorResponse(
                 category=ErrorCategory.TRANSIENT,

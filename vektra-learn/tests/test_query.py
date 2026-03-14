@@ -20,12 +20,15 @@ class TestBuildCourseQuery:
         assert query.namespace == "corso-ml-2026"
         assert query.question == "What is ML?"
 
-    def test_injects_course_id_filter(self):
+    def test_namespace_provides_isolation(self):
+        """Course isolation relies on namespace, not metadata filters."""
         req = CourseQueryRequest(question="What is ML?")
         query = build_course_query(req, namespace="ns", course_id="CS101")
 
-        assert query.filters is not None
-        assert query.filters["course_id"] == "CS101"
+        # Namespace is the primary isolation boundary
+        assert query.namespace == "ns"
+        # No JSONB filter — compatible with both direct ingest and learn ingest
+        assert query.filters is None
 
     def test_preserves_conversation_id(self):
         cid = uuid4()

@@ -47,6 +47,7 @@ def _make_enrollment_orm(
 class TestCreateEnrollment:
     async def test_creates_enrollment(self):
         session = MagicMock()
+        session.execute = AsyncMock()
         session.add = MagicMock()
         session.flush = AsyncMock()
         svc = _make_service()
@@ -66,6 +67,7 @@ class TestCreateEnrollment:
 
     async def test_creates_enrollment_with_metadata(self):
         session = MagicMock()
+        session.execute = AsyncMock()
         session.add = MagicMock()
         session.flush = AsyncMock()
         svc = _make_service()
@@ -84,6 +86,7 @@ class TestCreateEnrollment:
 
     async def test_duplicate_enrollment_raises_integrity_error(self):
         session = MagicMock()
+        session.execute = AsyncMock()
         session.add = MagicMock()
         session.flush = AsyncMock(side_effect=IntegrityError("", None, None))
         session.rollback = AsyncMock()

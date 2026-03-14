@@ -85,9 +85,12 @@ async def test_reingest_creates_new_version():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
+        elif call_count == 1:
             # Step 1: content_hash query -> no match (different content)
             mock_result.scalar_one_or_none.return_value = None
-        elif call_count == 1:
+        elif call_count == 2:
             # Step 2: filename query -> finds existing doc (version 1)
             mock_result.scalar_one_or_none.return_value = existing_doc
         else:
@@ -139,7 +142,7 @@ async def test_reingest_creates_new_version():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.document_id == new_doc_id
     assert result.version == 2
     assert result.supersedes_id == old_doc_id
@@ -172,8 +175,11 @@ async def test_reingest_version_3():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
-            mock_result.scalar_one_or_none.return_value = None
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
         elif call_count == 1:
+            mock_result.scalar_one_or_none.return_value = None
+        elif call_count == 2:
             mock_result.scalar_one_or_none.return_value = existing_doc
         else:
             mock_result.scalar_one_or_none.return_value = None
@@ -278,7 +284,7 @@ async def test_new_file_gets_version_1():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.version == 1
     assert result.supersedes_id is None
 
@@ -302,8 +308,11 @@ async def test_superseded_event_emitted():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
-            mock_result.scalar_one_or_none.return_value = None
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
         elif call_count == 1:
+            mock_result.scalar_one_or_none.return_value = None
+        elif call_count == 2:
             mock_result.scalar_one_or_none.return_value = existing_doc
         else:
             mock_result.scalar_one_or_none.return_value = None
@@ -394,8 +403,11 @@ async def test_old_doc_soft_deleted_with_superseded_reason():
         executed_stmts.append(stmt)
         mock_result = MagicMock()
         if call_count == 0:
-            mock_result.scalar_one_or_none.return_value = None
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
         elif call_count == 1:
+            mock_result.scalar_one_or_none.return_value = None
+        elif call_count == 2:
             mock_result.scalar_one_or_none.return_value = existing_doc
         else:
             mock_result.scalar_one_or_none.return_value = None
@@ -454,7 +466,7 @@ async def test_old_doc_soft_deleted_with_superseded_reason():
     mock_vs.delete.assert_called_once_with("default", [str(old_doc_id)])
 
     # The result should reflect the new version
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.version == 2
 
 

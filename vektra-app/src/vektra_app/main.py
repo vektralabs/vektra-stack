@@ -417,6 +417,13 @@ async def _step_11_qdrant_check(settings: VektraSettings) -> None:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{settings.qdrant_url}/healthz")
             if resp.status_code == 200:
+                # Ensure collection exists on startup
+                from vektra_shared.registry import ProviderRegistry
+
+                registry = ProviderRegistry.instance()
+                provider = registry.get("vector_store", "qdrant")
+                if hasattr(provider, "ensure_collection"):
+                    await provider.ensure_collection()
                 log.info("startup_step", step="qdrant_check", status="ok")
             else:
                 log.warning(

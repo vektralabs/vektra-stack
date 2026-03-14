@@ -122,6 +122,9 @@ async def test_dedup_alias_different_filename():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
+        elif call_count == 1:
             # First query: by content_hash → finds existing
             mock_result.scalar_one_or_none.return_value = existing
         else:
@@ -172,9 +175,12 @@ async def test_filename_match_creates_new_version():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
+        elif call_count == 1:
             # content_hash query → no match (different content)
             mock_result.scalar_one_or_none.return_value = None
-        elif call_count == 1:
+        elif call_count == 2:
             # filename query → finds existing doc
             mock_result.scalar_one_or_none.return_value = existing_doc
         else:
@@ -239,7 +245,7 @@ async def test_filename_match_creates_new_version():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.version == 2
     assert result.supersedes_id == old_doc_id
     # Old chunks were deleted
@@ -293,8 +299,8 @@ async def test_unsupported_content_type_raises_ingest_error():
 
 
 @pytest.mark.asyncio
-async def test_successful_ingest_returns_indexed():
-    """Full ingest with mocked providers returns IngestResult(status='indexed')."""
+async def test_successful_ingest_returns_new():
+    """Full ingest with mocked providers returns IngestResult(status='new')."""
     from vektra_ingest.pipeline import run_ingest
 
     doc_id = uuid4()
@@ -377,7 +383,7 @@ async def test_successful_ingest_returns_indexed():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.document_id == doc_id
     assert result.chunk_count == 3
     mock_vs.store.assert_called_once()
@@ -616,7 +622,7 @@ async def test_document_indexed_event_emitted():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
 
     # Check document.indexed event was emitted
     emit_calls = [

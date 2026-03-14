@@ -68,8 +68,14 @@ COPY vektra-app/src vektra-app/src
 # Build and install workspace packages (non-editable: packages are placed
 # in site-packages, no source dirs needed at runtime).
 # Include optional extras for Phase 2 vector store and sparse search support.
+# When INSTALL_UNSTRUCTURED=true, also install the Unstructured PDF extractor.
+ARG INSTALL_UNSTRUCTURED=false
 RUN uv sync --frozen --no-editable --no-dev \
-    && uv pip install 'qdrant-client==1.17.0' 'fastembed==0.7.4'
+    && uv pip install 'qdrant-client==1.17.0' 'fastembed==0.7.4' \
+    && if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
+       uv pip install 'torch' 'torchvision' --index-url https://download.pytorch.org/whl/cpu --reinstall \
+       && uv pip install 'unstructured[pdf]>=0.15' 'pi-heif' 'sentence-transformers' --reinstall; \
+    fi
 
 # --------------------------------------------------------------------------
 # Stage 3: runtime - minimal production image
@@ -88,7 +94,7 @@ fi
 #   libmagic1  - content type detection via python-magic (vektra-ingest)
 #   curl       - Docker HEALTHCHECK against /health endpoint
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmagic1 curl \
+    && apt-get install -y --no-install-recommends libmagic1 curl libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user (uid 1000)

@@ -207,7 +207,7 @@ async def test_execute_no_relevant_context():
 
 
 async def test_execute_empty_vector_results():
-    """Empty vector search → no_relevant_context=False (different: empty search, not below threshold)."""
+    """Empty vector search → no_relevant_context=True (no chunks to answer from)."""
     vector_store = AsyncMock()
     vector_store.search = AsyncMock(return_value=[])
 
@@ -215,10 +215,9 @@ async def test_execute_empty_vector_results():
     query = QueryRequest(question="Who?")
     response, _trace = await pipeline.execute(query)
 
-    # Empty index: no results retrieved at all → no_relevant_context=False but sources=[]
-    assert response.no_relevant_context is False
-    # LLM is still called (with empty context)
-    assert response.answer == "The answer."
+    # Empty index: no results at all → no_relevant_context=True, LLM not called
+    assert response.no_relevant_context is True
+    assert response.answer is None
 
 
 async def test_execute_graceful_degradation_timeout():

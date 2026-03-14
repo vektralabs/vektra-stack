@@ -93,20 +93,27 @@ class QdrantVectorStoreProvider:
         if self._collection_name in existing:
             return
 
-        await self._client.create_collection(
-            collection_name=self._collection_name,
-            vectors_config={
-                "dense": models.VectorParams(
-                    size=self._dense_dimensions,
-                    distance=models.Distance.COSINE,
-                ),
-            },
-            sparse_vectors_config={
-                "sparse": models.SparseVectorParams(
-                    modifier=models.Modifier.IDF,
-                ),
-            },
-        )
+        try:
+            await self._client.create_collection(
+                collection_name=self._collection_name,
+                vectors_config={
+                    "dense": models.VectorParams(
+                        size=self._dense_dimensions,
+                        distance=models.Distance.COSINE,
+                    ),
+                },
+                sparse_vectors_config={
+                    "sparse": models.SparseVectorParams(
+                        modifier=models.Modifier.IDF,
+                    ),
+                },
+            )
+        except Exception:
+            # Race: another replica may have created it between our check and create.
+            collections = await self._client.get_collections()
+            if self._collection_name not in {c.name for c in collections.collections}:
+                raise
+            return
         logger.info("Created Qdrant collection: %s", self._collection_name)
 
     async def store(

@@ -91,7 +91,7 @@ lint: ## Run linters (ruff + mypy + import-linter)
 		vektra-learn/src/vektra_learn
 	uv run lint-imports
 
-reindex: ## Trigger zero-downtime reindex: make reindex VER=2 [NS=default]
+reindex: ## Create reindex job (skeleton): make reindex VER=2 [NS=default]
 	$(if $(VER),,$(error VER is required. Usage: make reindex VER=2 [NS=default]))
 	@scripts/reindex.sh "$(VER)" "$(or $(NS),default)"
 

@@ -84,7 +84,7 @@ def _apply_retrieval_filter(
             already-selected chunk (keeping higher-scoring ones by processing
             in score-descending order).
 
-    Returns results in score-descending order when dedup is enabled.
+    Returns results in score-descending order.
     """
     filtered = [r for r in results if r.score >= min_score]
 

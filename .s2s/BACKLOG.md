@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-28
+**Updated**: 2026-03-14
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -54,21 +54,16 @@
 
 ---
 
-### DEBT-003: `post_retrieval` safeguard trust boundary not called
+### DEBT-003: ~~`post_retrieval` safeguard trust boundary not called~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-19
-**Blocked by**: Phase 2 (PassthroughSafeguard covers Phase 1)
-**PR #2 review**: Confirmed as deferred. Adding the boundary requires calling `post_retrieval` in both `execute()` and `_stream()` after retrieval filter, plus implementing chunk filtering via `SafeguardResult.filtered_ids`. Acceptable for Phase 1 with PassthroughSafeguard. Comment 2833984647.
-
-**Context**: ARCH-049 defines 3 SafeguardHook trust boundary points: `pre_query` (called in `api.py`), `post_retrieval` (not called anywhere), `pre_response` (called in `pipeline.execute()` and `pipeline._stream()`). The middle boundary - triggered after chunks are retrieved and before the prompt is built - is entirely absent. This means chunk-level PII filtering or namespace isolation checks are not enforced.
-
-**Traceability**: ARCH-049 (safeguard content modification), REQ-044, vektra_shared/protocols.py SafeguardHook
+**Status**: completed | **Priority**: low | **Created**: 2026-02-19 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 2 (core-pipeline-v2) — post_retrieval called in both execute() and _stream(), PresidioPIISafeguard implements chunk filtering
 
 **Acceptance Criteria**:
-- [ ] `pipeline.execute()` calls `safeguard.post_retrieval(chunk_ids, sg_ctx)` after retrieval filter, before build_prompt
-- [ ] `pipeline._stream()` calls the same boundary
-- [ ] SafeguardHook Protocol documents the expected signature for `post_retrieval`
-- [ ] PassthroughSafeguard implements `post_retrieval` as a no-op
+- [x] `pipeline.execute()` calls `safeguard.post_retrieval(chunk_ids, sg_ctx)` after retrieval filter, before build_prompt
+- [x] `pipeline._stream()` calls the same boundary
+- [x] SafeguardHook Protocol documents the expected signature for `post_retrieval`
+- [x] PassthroughSafeguard implements `post_retrieval` as a no-op
 
 ---
 
@@ -137,22 +132,17 @@
 
 ---
 
-### DEBT-008: LRU cache stores plaintext API keys in memory
+### DEBT-008: ~~LRU cache stores plaintext API keys in memory~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-28
-**Blocked by**: Phase 2
-**Origin**: PR #2 review, CodeRabbit comment 2867565397
-
-**Context**: `verify_key()` in `vektra_admin/keys.py` uses `functools.lru_cache(maxsize=512)` keyed by `(key_hash, plaintext)`. The plaintext API key remains in the Python heap for the entire process lifetime (or until LRU eviction). `functools.lru_cache` is size-bounded only, not TTL-bounded. While the plaintext is already in memory during each request (Authorization header), the cache extends exposure from request-scoped to process-scoped. Replace with `cachetools.TTLCache` (e.g. TTL=300s, maxsize=512) to limit temporal exposure.
-
-**Traceability**: REQ-023, ARCH-023, PR #2 comment 2867565397
+**Status**: completed | **Priority**: low | **Created**: 2026-02-28 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 1 (admin-enforcement) — replaced lru_cache with cachetools.TTLCache (300s TTL, maxsize 512). PR #38 further improved: only cache True (successful) verifications to prevent cache poisoning.
 
 **Acceptance Criteria**:
-- [ ] Replace `functools.lru_cache` with `cachetools.TTLCache` in `_cached_verify`
-- [ ] TTL configured via constant (default 300s)
-- [ ] Cache key uses `(key_hash, plaintext)` as before (or hash-based fingerprint)
-- [ ] Unit test verifies cache expiration after TTL
-- [ ] `cachetools` added to vektra-admin dependencies
+- [x] Replace `functools.lru_cache` with `cachetools.TTLCache` in `_cached_verify`
+- [x] TTL configured via constant (default 300s)
+- [x] Cache key uses `(key_hash, plaintext)` as before
+- [x] Unit test verifies cache expiration after TTL
+- [x] `cachetools` added to vektra-admin dependencies
 
 ---
 
@@ -462,6 +452,87 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 ---
 
+### DEBT-009: Scope sys.modules mock in test_qdrant_provider.py
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Major (test_qdrant_provider.py:25-32)
+
+**Context**: `test_qdrant_provider.py` injects a mock `qdrant_client` module into `sys.modules` at module level. This mutation persists for the entire pytest session. If another test file imports the real `qdrant_client`, it will get the mock instead, causing silent failures. Today no other test does this, but adding one would trigger the bug without any obvious cause. Fix: use `monkeypatch.setitem(sys.modules, ...)` in a fixture.
+
+**Traceability**: vektra-index/tests/test_qdrant_provider.py
+
+**Acceptance Criteria**:
+- [ ] sys.modules patching scoped to test via monkeypatch or patch.dict
+- [ ] Tests still pass with the scoped mock
+
+---
+
+### DEBT-010: Harden reindex.sh error handling
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Major (reindex.sh:66-85, 93-97)
+
+**Context**: `scripts/reindex.sh` has two robustness gaps: (1) The trigger request uses `curl -f` which collapses 4xx/5xx into a generic error, masking validation failures. (2) The polling loop retries on all failures including permanent errors (401, 404), and masks malformed JSON with `?` fallbacks. The reindex API is a skeleton today (tracks progress without executing re-embedding), but these gaps will matter when the API becomes functional.
+
+**Traceability**: scripts/reindex.sh, ARCH-045
+
+**Acceptance Criteria**:
+- [ ] Trigger: use `curl -sS` (not `-f`), check HTTP status explicitly, fail loud on 4xx
+- [ ] Polling: retry only on transient errors (5xx), fail immediately on 4xx
+- [ ] JSON parsing: validate required fields (job_id, status), fail loud on missing
+
+---
+
+### DEBT-011: Route vektra-index REST API through ProviderRegistry
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Major (index/api.py:147-167, 244-259)
+
+**Context**: The REST routes in `vektra-index/src/vektra_index/api.py` instantiate `PgvectorProvider` directly instead of resolving via ProviderRegistry. When `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, the query pipeline (vektra-core) correctly uses Qdrant via Registry, but the index REST endpoints (`/search`, `/stats`, `/documents`, `/health`) still hit pgvector. This causes a data/behavior mismatch if an operator calls these endpoints directly. Also, the sparse embedding lookup uses `app.state.sparse_embedding_provider` instead of the Registry.
+
+**Traceability**: ARCH-039 (ProviderRegistry), vektra-index/src/vektra_index/api.py
+
+**Acceptance Criteria**:
+- [ ] Index API routes resolve vector store provider via ProviderRegistry
+- [ ] Sparse embedding resolved via `registry.get("sparse_embedding", "default")`
+- [ ] `/search`, `/stats`, `/health` reflect the configured provider (not always pgvector)
+- [ ] Tests cover both pgvector and qdrant provider resolution paths
+
+---
+
+### DEBT-012: Add filter key validation at SearchRequest API layer
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Minor (pgvector.py:321-338)
+
+**Context**: `SearchRequest.filters` accepts arbitrary `dict[str, Any]` from client requests and passes keys directly to JSONB path construction in `_apply_filters`. SQLAlchemy's JSONB operator prevents SQL injection, but validating keys (e.g., alphanumeric + underscore pattern) at the API layer provides defense-in-depth and clearer error messages for malformed requests.
+
+**Traceability**: ARCH-044, vektra-index/src/vektra_index/providers/pgvector.py
+
+**Acceptance Criteria**:
+- [ ] Filter keys validated against allowlist pattern (e.g., `^[A-Za-z0-9_]+$`)
+- [ ] Invalid keys rejected with 400 error and clear message
+- [ ] Validation applied at API/parsing layer, not inside provider
+
+---
+
+### DEBT-013: Change admin logout to POST with CSRF token
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Minor (base.html:22)
+
+**Context**: `/admin/logout` uses a GET request (`<a href="/admin/logout">`). GET endpoints with side effects (clearing session cookie) are vulnerable to CSRF. Risk is low today (admin dashboard is internal, HttpOnly same-origin cookie), but becomes relevant if the dashboard is exposed on public networks in Phase 3 multi-tenant deployments. Fix: change to POST form with CSRF token, update the server-side handler to accept only POST.
+
+**Traceability**: ARCH-062, vektra-admin/src/vektra_admin/templates/base.html, ui.py
+
+**Acceptance Criteria**:
+- [ ] Logout uses POST form with CSRF token in template
+- [ ] Server-side handler accepts only POST
+- [ ] CSRF token generation/validation mechanism added (or HTMX pattern)
+- [ ] Test verifies GET /admin/logout returns 405
+
+---
+
 ## In Progress
 
 <!-- Move items here when work begins -->
@@ -610,8 +681,15 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 | FEAT-002 (namespace/key edit) | Post-Phase 2 or spare time | Draft, needs evaluation |
 | TECH-004 (unique indexes) | Anytime (infra-database done) | Alembic migration ready |
 | ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
-| DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |
-| DEBT-003 (post_retrieval hook) | Phase 2 | PassthroughSafeguard covers Phase 1 |
-| DEBT-004 (budget ordering) | Phase 2 | Pgvector returns score-desc in practice |
-| DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |
-| DEBT-008 (LRU plaintext cache) | Phase 2 | Replace lru_cache with TTLCache |
+| DEBT-002 (stream trace) | Phase 2+ | Observability gap, not blocking |
+| ~~DEBT-003 (post_retrieval hook)~~ | ~~Phase 2~~ | Completed in core-pipeline-v2 |
+| ~~DEBT-004 (budget ordering)~~ | ~~Phase 2~~ | Completed in core-pipeline-v2 |
+| DEBT-005 (disconnect cancel) | Phase 2+ | uvicorn handles it implicitly |
+| DEBT-006 (ingest phase tracking) | Phase 2+ | Monitoring gap, not blocking |
+| DEBT-007 (audit on ingest failure) | Phase 2+ | Needs investigation |
+| ~~DEBT-008 (LRU plaintext cache)~~ | ~~Phase 2~~ | Completed: TTLCache + only-True caching |
+| DEBT-009 (test sys.modules scope) | Low | Test isolation improvement |
+| DEBT-010 (reindex.sh hardening) | Low | Script robustness, reindex is skeleton |
+| DEBT-011 (index API via Registry) | Medium | Architectural: data mismatch when Qdrant active |
+| DEBT-012 (filter key validation) | Low | Defense-in-depth, JSONB already safe |
+| DEBT-013 (POST logout CSRF) | Low | Security best practice for Phase 3 |

@@ -72,19 +72,20 @@
 
 ---
 
-### DEBT-004: Budget allocator input ordering unenforced
+### DEBT-004: ~~Budget allocator input ordering unenforced~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-19
-**Blocked by**: Phase 2 (pgvector returns score-descending results, so convention holds in Phase 1)
+**Status**: completed | **Priority**: low | **Created**: 2026-02-19 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 2 (core-pipeline-v2) — explicit sort in all 3 pipeline paths + test coverage
 
 **Context**: `allocate_token_budget` docstring states that `chunks` must be passed in score-descending order ("sorted by score descending"). In `pipeline.execute()`, `chunk_inputs` is built from `filtered`, which is in original retrieval position order (not score order). This works in Phase 1 because PgvectorProvider returns results score-descending, but the VectorStoreProvider Protocol does not guarantee ordering. If a Phase 2 provider (e.g., Qdrant) returns results in a different order, the budget allocator may skip high-scoring chunks and include low-scoring ones.
 
 **Traceability**: ARCH-055, vektra_core/budget.py, vektra_core/pipeline.py:287, VectorStoreProvider Protocol
 
 **Acceptance Criteria**:
-- [ ] Either: `pipeline.execute()` sorts `filtered` by score descending before constructing `chunk_inputs` and remaps indices correctly
-- [ ] Or: VectorStoreProvider Protocol documents that `search()` results must be score-descending, and all implementations enforce it
-- [ ] `test_budget.py` covers unsorted-input scenario to verify behavior
+- [x] `pipeline.execute()` sorts `filtered` by score descending before constructing `chunk_inputs`
+- [x] `pipeline._stream()` sorts identically
+- [x] `advanced_pipeline._build_prompt()` sorts identically (covers both execute and stream)
+- [x] `test_budget.py` covers unsorted-input scenario (`test_unsorted_input_selects_front_items`)
 
 ---
 
@@ -323,10 +324,10 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 ---
 
-### TECH-004: Add unique indexes for idempotent ingest (TOCTOU mitigation)
+### TECH-004: ~~Add unique indexes for idempotent ingest (TOCTOU mitigation)~~
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-02-20
-**Blocked by**: None (infra-database completed, Alembic available)
+**Status**: completed | **Priority**: medium | **Created**: 2026-02-20 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 0 (migration 0002_phase2_tables.py) + pipeline IntegrityError handling
 **Origin**: PR #2 review, comment 2834065202 (CodeRabbit)
 
 **Context**: `run_ingest()` checks for duplicate filename+namespace via SELECT before INSERT. Without a unique partial index (`WHERE deleted_at IS NULL`), concurrent requests can both pass the check and insert duplicate documents (TOCTOU window). The fix requires a partial unique index on `(namespace_id, filename) WHERE deleted_at IS NULL` plus `IntegrityError` handling as a fallback. Deferred because it requires an Alembic migration (infra-database plan, Wave 5).
@@ -334,9 +335,9 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 **Traceability**: REQ-033, ARCH-052, PR #2 comment 2834065202
 
 **Acceptance Criteria**:
-- [ ] Alembic migration adds `CREATE UNIQUE INDEX ... ON source_documents (namespace_id, filename) WHERE deleted_at IS NULL`
-- [ ] `run_ingest()` catches `IntegrityError` from duplicate insert and raises `IngestConflictError`
-- [ ] Integration test verifies concurrent duplicate ingest returns 409
+- [x] Alembic migration adds `CREATE UNIQUE INDEX ... ON source_documents (namespace_id, filename) WHERE deleted_at IS NULL`
+- [x] `run_ingest()` catches `IntegrityError` from duplicate insert and raises `IngestConflictError`
+- [ ] Integration test verifies concurrent duplicate ingest returns 409 (deferred, not blocking)
 
 ---
 

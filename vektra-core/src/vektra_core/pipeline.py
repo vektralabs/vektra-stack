@@ -83,6 +83,8 @@ def _apply_retrieval_filter(
     Step 2: If dedup_enabled, remove chunks with >80% token overlap with any
             already-selected chunk (keeping higher-scoring ones by processing
             in score-descending order).
+
+    Returns results in score-descending order.
     """
     filtered = [r for r in results if r.score >= min_score]
 
@@ -99,9 +101,7 @@ def _apply_retrieval_filter(
         if not is_dup:
             kept.append(candidate)
 
-    # Restore stable order (by original position in results)
-    order = {r.chunk_id: i for i, r in enumerate(results)}
-    return sorted(kept, key=lambda r: order.get(r.chunk_id, 0))
+    return kept
 
 
 # ---------------------------------------------------------------------------

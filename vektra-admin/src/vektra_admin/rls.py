@@ -67,9 +67,10 @@ async def _resolve_namespace(request: Request) -> str | None:
             body = await request.body()
             if body:
                 data = json.loads(body)
-                ns = data.get("namespace")
-                if isinstance(ns, str):
-                    return ns
+                if isinstance(data, dict):
+                    ns = data.get("namespace")
+                    if isinstance(ns, str):
+                        return ns
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
 

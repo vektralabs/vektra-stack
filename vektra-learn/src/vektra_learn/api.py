@@ -187,7 +187,9 @@ async def create_enrollment(
     try:
         enrollment = await service.create_enrollment(session, req)
     except IntegrityError as exc:
-        pgcode = getattr(exc.orig, "pgcode", None)
+        pgcode = getattr(exc.orig, "sqlstate", None) or getattr(
+            exc.orig, "pgcode", None
+        )
         if pgcode == "23505":
             err = ErrorResponse(
                 category=ErrorCategory.PERMANENT,
@@ -206,7 +208,7 @@ async def create_enrollment(
             err = ErrorResponse(
                 category=ErrorCategory.TRANSIENT,
                 code=ERR_LEARN_001,
-                message=f"Failed to create enrollment: {exc}",
+                message="Failed to create enrollment.",
                 remediation="Check the request data and try again.",
             )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
@@ -318,12 +320,21 @@ async def trigger_ingest(
             )
 
         try:
+            max_redirects = 5
+            current_url = safe_url
+            current_host = original_host
             async with httpx.AsyncClient(
                 timeout=30.0,
                 verify=parsed.scheme == "https",
-                follow_redirects=True,
+                follow_redirects=False,
             ) as client:
-                resp = await client.get(safe_url, headers={"Host": original_host})
+                for _ in range(max_redirects + 1):
+                    resp = await client.get(current_url, headers={"Host": current_host})
+                    if resp.is_redirect:
+                        location = resp.headers.get("location", "")
+                        current_url, current_host = _resolve_and_validate_url(location)
+                        continue
+                    break
                 resp.raise_for_status()
                 file_bytes = resp.content
         except httpx.HTTPError as exc:

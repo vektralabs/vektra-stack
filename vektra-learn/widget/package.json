@@ -4,6 +4,6 @@
     "build": "node esbuild.config.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.24"
+    "esbuild": "^0.25"
   }
 }

@@ -1,0 +1,40 @@
+{% if flash is defined and flash %}
+<div class="flash flash-{{ flash.type }}">{{ flash.message }}</div>
+{% endif %}
+<table>
+  <thead>
+    <tr>
+      <th>Preview</th>
+      <th>Label</th>
+      <th>Scopes</th>
+      <th>Created</th>
+      <th>Last used</th>
+      <th>Expires</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for key in keys %}
+    <tr{% if key.revoked %} class="revoked"{% endif %}>
+      <td><code>...{{ key.key_preview }}</code></td>
+      <td>{{ key.label or "-" }}</td>
+      <td>{% for s in key.scopes %}<span class="scope-tag">{{ s }}</span>{% endfor %}</td>
+      <td>{{ key.created_at.strftime("%Y-%m-%d %H:%M") if key.created_at else "-" }}</td>
+      <td>{{ key.last_used_at.strftime("%Y-%m-%d %H:%M") if key.last_used_at else "-" }}</td>
+      <td>{{ key.expires_at.strftime("%Y-%m-%d %H:%M") if key.expires_at else "never" }}</td>
+      <td>{% if key.revoked %}<span class="status-unhealthy">revoked</span>{% else %}<span class="status-healthy">active</span>{% endif %}</td>
+      <td>
+        {% if not key.revoked %}
+        <button hx-delete="/admin/keys/{{ key.id }}"
+                hx-target="#keys-table"
+                hx-swap="innerHTML"
+                hx-confirm="Revoke this key?">Revoke</button>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8">No API keys found</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

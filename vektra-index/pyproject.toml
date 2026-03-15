@@ -1,18 +1,23 @@
 [project]
 name = "vektra-index"
-version = "0.1.0"
+version = "0.2.0"
 description = "Vector store abstraction and semantic search for the Vektra platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "vektra-shared",
     "fastapi>=0.115",
+    "pydantic>=2,<3",
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
     "sentence-transformers>=3.0",
     "torch>=2.2.0",
     "pgvector>=0.3",
 ]
+
+[project.optional-dependencies]
+sparse = ["fastembed>=0.4"]
+qdrant = ["qdrant-client>=1.12"]
 
 [build-system]
 requires = ["hatchling"]
@@ -25,6 +30,7 @@ packages = ["src/vektra_index"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
+markers = ["integration: integration tests requiring Docker (excluded from ci-unit)"]
 
 [tool.uv.sources]
 vektra-shared = { workspace = true }

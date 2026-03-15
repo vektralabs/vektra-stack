@@ -30,10 +30,13 @@ def _docker_available() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _docker_available(),
-    reason="Docker not available - skipping integration tests",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not _docker_available(),
+        reason="Docker not available - skipping integration tests",
+    ),
+]
 
 
 @pytest.fixture(scope="module")

@@ -50,6 +50,15 @@ def _make_app(key_store=None, scopes: list[str] | None = None):
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         session.execute = AsyncMock(return_value=mock_result)
+
+        # Handle ORM add + refresh pattern (batch ingest creates IngestJobOrm)
+        session.add = MagicMock()  # sync method, not async
+
+        async def _refresh(obj):
+            if hasattr(obj, "id") and obj.id is None:
+                obj.id = uuid4()
+
+        session.refresh = _refresh
         yield session
 
     app.dependency_overrides[get_session] = _mock_get_session
@@ -113,7 +122,7 @@ async def test_ingest_admin_scope_allowed():
         from vektra_ingest.pipeline import IngestResult
 
         mock_ingest.return_value = IngestResult(
-            status="indexed", document_id=uuid4(), chunk_count=5
+            status="new", document_id=uuid4(), chunk_count=5
         )
 
         async with AsyncClient(
@@ -173,7 +182,7 @@ async def test_sync_ingest_returns_200_with_document_id():
         from vektra_ingest.pipeline import IngestResult
 
         mock_ingest.return_value = IngestResult(
-            status="indexed", document_id=doc_id, chunk_count=7
+            status="new", document_id=doc_id, chunk_count=7
         )
 
         async with AsyncClient(
@@ -189,7 +198,7 @@ async def test_sync_ingest_returns_200_with_document_id():
     body = resp.json()
     assert body["document_id"] == str(doc_id)
     assert body["chunk_count"] == 7
-    assert body["status"] == "indexed"
+    assert body["status"] == "new"
 
 
 @pytest.mark.asyncio
@@ -264,6 +273,79 @@ async def test_sync_ingest_scanned_pdf_returns_422():
 
     assert resp.status_code == 422
     assert resp.json()["detail"]["error"]["code"] == "ERR-INGEST-003"
+
+
+# ---------------------------------------------------------------------------
+# Audit log on error paths (DEBT-007)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_audit_log_written_on_409_conflict():
+    """409 Conflict response writes audit log with error action (DEBT-007)."""
+    app = _make_app()
+
+    with (
+        patch("vektra_ingest.api.run_ingest") as mock_ingest,
+        patch(
+            "vektra_ingest.api._write_audit_log_direct", new_callable=AsyncMock
+        ) as mock_audit,
+    ):
+        from vektra_ingest.exceptions import IngestConflictError
+
+        mock_ingest.side_effect = IngestConflictError(
+            filename="doc.pdf", namespace="default"
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post(
+                "/api/v1/ingest",
+                files={"file": ("doc.pdf", _make_pdf_file())},
+                headers={"Authorization": "Bearer token"},
+            )
+
+    assert resp.status_code == 409
+    mock_audit.assert_called_once()
+    call_kwargs = mock_audit.call_args.kwargs
+    assert call_kwargs["status_code"] == 409
+    assert call_kwargs["action"] == "ingest_error"
+
+
+@pytest.mark.asyncio
+async def test_audit_log_written_on_422_ingest_error():
+    """422 IngestError response writes audit log with error action (DEBT-007)."""
+    app = _make_app()
+
+    with (
+        patch("vektra_ingest.api.run_ingest") as mock_ingest,
+        patch(
+            "vektra_ingest.api._write_audit_log_direct", new_callable=AsyncMock
+        ) as mock_audit,
+    ):
+        from vektra_ingest.exceptions import IngestError
+
+        mock_ingest.side_effect = IngestError(
+            error_code="ERR-INGEST-003",
+            message="Scanned PDF detected.",
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post(
+                "/api/v1/ingest",
+                files={"file": ("scanned.pdf", _make_pdf_file())},
+                headers={"Authorization": "Bearer token"},
+            )
+
+    assert resp.status_code == 422
+    mock_audit.assert_called_once()
+    call_kwargs = mock_audit.call_args.kwargs
+    assert call_kwargs["status_code"] == 422
+    assert call_kwargs["action"] == "ingest_error"
+    assert call_kwargs["log_metadata"]["error_code"] == "ERR-INGEST-003"
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +426,199 @@ async def test_job_status_returns_job():
     # Even if session mock doesn't work perfectly in FastAPI Depends context,
     # check the endpoint exists and returns 200 or 404
     assert resp.status_code in (200, 404, 500)
+
+
+# ---------------------------------------------------------------------------
+# Batch ingest (POST /api/v1/ingest/batch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_batch_ingest_returns_202_with_job_ids():
+    """Multiple files → 202 with array of {job_id, filename, status}."""
+    app = _make_app()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            "/api/v1/ingest/batch",
+            files=[
+                ("files", ("doc1.pdf", b"%PDF-1.4 aaa", "application/pdf")),
+                ("files", ("doc2.pdf", b"%PDF-1.4 bbb", "application/pdf")),
+            ],
+            headers={"Authorization": "Bearer token"},
+        )
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert len(body) == 2
+    assert body[0]["filename"] == "doc1.pdf"
+    assert body[0]["status"] == "pending"
+    assert body[0]["job_id"] is not None
+    assert body[1]["filename"] == "doc2.pdf"
+    assert body[1]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_batch_ingest_oversized_file_rejected():
+    """Files exceeding max size are reported as 'rejected' in the response."""
+    import os
+
+    os.environ["VEKTRA_MAX_FILE_SIZE_MB"] = "1"
+
+    app = _make_app()
+    small_file = b"%PDF-1.4 " + b"x" * 100
+    big_file = b"%PDF-1.4 " + b"x" * (2 * 1024 * 1024)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            "/api/v1/ingest/batch",
+            files=[
+                ("files", ("small.pdf", small_file, "application/pdf")),
+                ("files", ("big.pdf", big_file, "application/pdf")),
+            ],
+            headers={"Authorization": "Bearer token"},
+        )
+
+    del os.environ["VEKTRA_MAX_FILE_SIZE_MB"]
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert len(body) == 2
+
+    # First file accepted
+    assert body[0]["status"] == "pending"
+    assert body[0]["job_id"] is not None
+
+    # Second file rejected (too large)
+    assert body[1]["status"] == "rejected"
+    assert body[1]["job_id"] is None
+    assert "exceeds maximum" in body[1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_batch_ingest_no_files_returns_422():
+    """Empty batch request → 422."""
+    app = _make_app()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            "/api/v1/ingest/batch",
+            headers={"Authorization": "Bearer token"},
+        )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_batch_ingest_no_token_returns_401():
+    """Batch ingest without auth token → 401."""
+    app = _make_app()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            "/api/v1/ingest/batch",
+            files=[("files", ("doc.pdf", b"data", "application/pdf"))],
+        )
+
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Batch delete (DELETE /api/v1/documents/batch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_returns_deleted_and_not_found():
+    """Mix of existing and non-existing IDs → correct categorization."""
+    existing_id = uuid4()
+    missing_id = uuid4()
+
+    existing_doc = MagicMock()
+    existing_doc.id = existing_id
+
+    call_count = 0
+
+    async def _execute(stmt, *args, **kwargs):
+        nonlocal call_count
+        mock_result = MagicMock()
+        if call_count == 0:
+            # First doc found
+            mock_result.scalar_one_or_none.return_value = existing_doc
+        elif call_count == 1:
+            # update statement (returns no scalar)
+            mock_result.scalar_one_or_none.return_value = None
+        elif call_count == 2:
+            # Second doc not found
+            mock_result.scalar_one_or_none.return_value = None
+        call_count += 1
+        return mock_result
+
+    key_store = _make_key_store("test", scopes=["admin"])
+    app = _make_app(key_store=key_store)
+
+    from vektra_shared.db import get_session
+
+    async def _session_dep():
+        session = AsyncMock()
+        session.execute = _execute
+        session.commit = AsyncMock()
+        yield session
+
+    app.dependency_overrides[get_session] = _session_dep
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.request(
+            "DELETE",
+            "/api/v1/documents/batch",
+            json={
+                "document_ids": [str(existing_id), str(missing_id)],
+                "namespace": "default",
+            },
+            headers={"Authorization": "Bearer admintoken"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert str(existing_id) in body["deleted"]
+    assert str(missing_id) in body["not_found"]
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_requires_admin_scope():
+    """Batch delete with ingest scope → 403."""
+    key_store = _make_key_store("test", scopes=["ingest"])
+    app = _make_app(key_store=key_store)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.request(
+            "DELETE",
+            "/api/v1/documents/batch",
+            json={
+                "document_ids": [str(uuid4())],
+                "namespace": "default",
+            },
+            headers={"Authorization": "Bearer token"},
+        )
+
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Job status endpoint
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

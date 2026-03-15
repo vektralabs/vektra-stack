@@ -3,10 +3,10 @@
 # Software Requirements Specification
 
 **Project**: Vektra
-**Version**: 1.5.0
+**Version**: 1.6.0
 **Date**: 2026-02-18
 **Sessions**: 20260129-specs-vektra (baseline), 20260201-specs-vektra-integration (merged)
-**Corrections**: Manual gap closure v1.2 (REQ-048/049), v1.3 (REQ-050/051, EX-009 to EX-012, path fixes), v1.4 (architectural review: REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019), v1.4.1 (consistency review: OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases, EX-014 ref), v1.5.0 (docs-008: REQ-066 no_relevant_context)
+**Corrections**: Manual gap closure v1.2 (REQ-048/049), v1.3 (REQ-050/051, EX-009 to EX-012, path fixes), v1.4 (architectural review: REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019), v1.4.1 (consistency review: OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases, EX-014 ref), v1.5.0 (docs-008: REQ-066 no_relevant_context), v1.6.0 (Phase 2 delivery status annotations)
 
 ## 1. Introduction
 
@@ -18,14 +18,20 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 **In scope (Phase 1)**:
 - vektra-core: RAG engine, LLM abstraction, conversation management, safeguards
-- vektra-ingest: Document processing pipeline - PDF, Word, PPT (OCR deferred to Phase 2)
+- vektra-ingest: Document processing pipeline - PDF, Word, PPT
 - vektra-index: Vector store abstraction, embedding, semantic search
 - vektra-admin: System administration interface - minimal Phase 1, full Phase 2
 
+**Delivered in Phase 2 (v0.2.0)**:
+- vektra-core: Advanced pipeline, persistent conversations, query rewriting, reranking, safeguard hooks
+- vektra-ingest: OCR via Unstructured, dual chunking, document versioning, batch operations
+- vektra-index: Hybrid search (dense+sparse), Qdrant vector store provider
+- vektra-analytics: QueryTrace storage, metrics aggregation, reporting API
+- vektra-learn: E-learning vertical backend (LMS-agnostic), chatbot widget
+- vektra-admin: Full dashboard (HTMX + Jinja2), RLS enforcement, rate limiting
+
 **Out of scope**:
-- vektra-analytics: Metrics aggregation, reporting API, alerting (Phase 2)
-- vektra-learn: E-learning vertical backend, LMS-agnostic (Phase 2)
-- vektra-moodle: PHP plugin - separate repo (Phase 2)
+- vektra-moodle: PHP plugin - separate repo (Phase 2, not started)
 - vektra-sdk-py: Python SDK - separate repo (Phase 3)
 - vektra-sdk-js: JavaScript SDK - separate repo (Phase 3)
 
@@ -161,7 +167,7 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
 
 ### REQ-016: Phase 1 input constraints
 - **Priority**: must
-- **Description**: Explicit input constraints for Phase 1 APIs: file size: max 50MB (configurable via VEKTRA_MAX_FILE_SIZE_MB), query text: max 4000 characters, supported PDF types: text-based PDFs (scanned/OCR deferred to Phase 2), encrypted PDFs: rejected with ERR-INGEST-001, chunk size: 1000 tokens (configurable via VEKTRA_CHUNK_SIZE), chunk overlap: 200 tokens (configurable via VEKTRA_CHUNK_OVERLAP). Scanned PDF detection: PDF classified as scanned if text extraction yields < 100 characters per page (average of first 5 pages). Detection occurs before chunking (fail fast). Rejected with ERR-INGEST-003.
+- **Description**: Explicit input constraints for Phase 1 APIs: file size: max 50MB (configurable via VEKTRA_MAX_FILE_SIZE_MB), query text: max 4000 characters, supported PDF types: text-based PDFs (Phase 1), scanned PDFs via OCR with UnstructuredExtractor (Phase 2), encrypted PDFs: rejected with ERR-INGEST-001, chunk size: 1000 tokens (configurable via VEKTRA_CHUNK_SIZE), chunk overlap: 200 tokens (configurable via VEKTRA_CHUNK_OVERLAP). Scanned PDF detection: PDF classified as scanned if text extraction yields < 100 characters per page (average of first 5 pages). Detection occurs before chunking (fail fast). Rejected with ERR-INGEST-003.
 - **Acceptance Criteria**:
   - [ ] Oversized PDF rejected with ERR-INGEST-002 and size limit in message
   - [ ] Long query rejected with ERR-QUERY-003 and limit in message
@@ -235,9 +241,9 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - [ ] Key hash uses argon2id algorithm
   - [ ] Tokens may have multiple scopes (REQ-031)
 
-### REQ-024: Phase 1 scope enforcement
+### REQ-024: Scope enforcement
 - **Priority**: must
-- **Description**: Phase 1 scope enforcement uses REQ-031 scope terminology (admin, ingest, query). Phase 1 enforcement behavior: 'admin' scope grants access to all endpoints (superset of all permissions), 'ingest' scope can be stored in key but enforcement deferred to Phase 2, 'query' scope can be stored in key but enforcement deferred to Phase 2, unknown scope rejected with 403. This is a deliberate simplification: Phase 1 has one user type (Platform Operator) who needs full access. Phase 2 will enforce granular scopes.
+- **Description**: Scope enforcement uses REQ-031 scope terminology (admin, ingest, query). Phase 1 enforcement behavior: 'admin' scope grants access to all endpoints (superset of all permissions), 'ingest' and 'query' scopes stored but not enforced, unknown scope rejected with 403. Phase 2 (implemented): granular scope enforcement via require_scope() middleware — 'ingest' keys restricted to ingest endpoints, 'query' keys restricted to query endpoints.
 - **Acceptance Criteria**:
   - [ ] Enforcement logic uses 'admin', 'ingest', 'query' scopes per REQ-031
   - [ ] All keys with 'admin' scope can access all endpoints
@@ -805,17 +811,17 @@ Vector store and metadata database encryption delegated to PostgreSQL native enc
 ## 5. Out of Scope
 
 - **EX-001**: CLI deferred to Phase 2 - Dedicated CLI tool (vektra-cli or similar) is explicitly out of scope for Phase 1. CLI becomes a candidate when SDK users (secondary audience) become a priority.
-- **EX-002**: OCR and scanned PDF support deferred to Phase 2 - Optical character recognition (OCR) for scanned PDFs is excluded. Text-extractable PDFs only. Detection via REQ-016 threshold (<100 chars/page average).
+- **EX-002**: ~~OCR and scanned PDF support deferred to Phase 2~~ [Phase 2: implemented via UnstructuredExtractor with Tesseract OCR] - Optical character recognition (OCR) for scanned PDFs is excluded. Text-extractable PDFs only. Detection via REQ-016 threshold (<100 chars/page average).
 - **EX-003**: Automatic retry and circuit breakers deferred to Phase 2 - Phase 1 does not implement automatic retry, circuit breakers, or resilience patterns. Error detection and classification are in scope (BR-001, BR-002). Retry responsibility is on the caller.
 - **EX-004**: CI performance baselines deferred to Phase 2 - Automated CI pipeline performance regression detection is deferred. Phase 1 defines performance targets (REQ-017) but does not enforce them via automated baseline comparison.
-- **EX-005**: Batch operations deferred to Phase 2 - Batch ingestion (ingest multiple documents in single request) and batch deletion are excluded. Single-document operations only.
-- **EX-006**: Multi-tenant isolation deferred to Phase 2 - Phase 1 operates as single-tenant deployment. Multi-tenant data isolation, per-tenant namespacing, and tenant-scoped API keys are excluded.
-- **EX-007**: Analytics and reporting deferred to Phase 2 - vektra-analytics component (query metrics, usage dashboards, alerting) is excluded. Audit logging (REQ-022) provides raw data; aggregation and visualization deferred.
+- **EX-005**: ~~Batch operations deferred to Phase 2~~ [Phase 2: implemented - batch delete API] - Batch ingestion (ingest multiple documents in single request) and batch deletion are excluded. Single-document operations only.
+- **EX-006**: ~~Multi-tenant isolation deferred to Phase 2~~ [Phase 2: implemented - RLS policies, namespace isolation, per-key scope enforcement] - Phase 1 operates as single-tenant deployment. Multi-tenant data isolation, per-tenant namespacing, and tenant-scoped API keys are excluded.
+- **EX-007**: ~~Analytics and reporting deferred to Phase 2~~ [Phase 2: implemented - vektra-analytics component] - vektra-analytics component (query metrics, usage dashboards, alerting) is excluded. Audit logging (REQ-022) provides raw data; aggregation and visualization deferred.
 - **EX-008**: SDKs deferred to Phase 3 - Python SDK (vektra-sdk-py) and JavaScript SDK (vektra-sdk-js) are excluded from Phase 1 and Phase 2. SDK development targets Phase 3 when external developer adoption becomes priority.
-- **EX-009**: Markdown ingestion deferred to Phase 2 - Markdown file extraction is excluded from Phase 1. PDF, Word, and PowerPoint cover primary use cases. Markdown support is low complexity and can be added in Phase 2 if needed.
+- **EX-009**: ~~Markdown ingestion deferred to Phase 2~~ [Phase 2: implemented - markdown extractor] - Markdown file extraction is excluded from Phase 1. PDF, Word, and PowerPoint cover primary use cases. Markdown support is low complexity and can be added in Phase 2 if needed.
 - **EX-010**: Granular ingest APIs deferred to Phase 2 - Separate APIs for extract, clean, and chunk steps are excluded. Phase 1 provides atomic POST /ingest only. Granular APIs may be added in Phase 2 for advanced debugging and custom pipelines.
-- **EX-011**: Ingest event emission deferred to Phase 2 - Event emission for monitoring and retry orchestration is excluded. Phase 1 uses polling (GET /ingest/jobs/{id}/status). Webhook/event-based notifications may be added in Phase 2 for n8n integration.
-- **EX-012**: Multiple chunking strategies deferred to Phase 2 - Phase 1 supports only fixed-size chunking (REQ-016) behind ChunkingStrategy Protocol (REQ-054). Semantic chunking, dual-strategy chunking (text + table preservation), and parent-child hierarchy are deferred to Phase 2 as implementation swaps.
+- **EX-011**: ~~Ingest event emission deferred to Phase 2~~ [Phase 2: implemented - LogEventEmitter] - Event emission for monitoring and retry orchestration is excluded. Phase 1 uses polling (GET /ingest/jobs/{id}/status). Webhook/event-based notifications may be added in Phase 2 for n8n integration.
+- **EX-012**: ~~Multiple chunking strategies deferred to Phase 2~~ [Phase 2: implemented - DualStrategyChunking] - Phase 1 supports only fixed-size chunking (REQ-016) behind ChunkingStrategy Protocol (REQ-054). Semantic chunking, dual-strategy chunking (text + table preservation), and parent-child hierarchy are deferred to Phase 2 as implementation swaps.
 - **EX-013**: LlamaIndex not adopted for Phase 1-2 - RAG pipeline features (hybrid search, reranking, query routing) are implemented directly behind QueryPipeline Protocol (REQ-053). LlamaIndex not adopted due to version instability (v0.14 breaking changes), ~150-200 MB dependency footprint, debugging opacity, and abstraction mismatch with Vektra's Protocol-based design. RAG quality evaluation addressed by standalone frameworks (RAGAS or DeepEval) rather than LlamaIndex built-in evaluators. Reassessment for Phase 3+ if sub-question decomposition or agentic RAG features are needed.
 - **EX-014**: NeMo Guardrails excluded from Phase 2 baseline - NeMo Guardrails excluded from default SafeguardHook (REQ-044) implementation due to heavy footprint. Presidio for PII detection is accepted for Phase 2. For query and output guardrails, lighter alternatives (keyword filtering + embedding-based classification) should be evaluated before committing to NeMo.
 
@@ -826,9 +832,9 @@ Vector store and metadata database encryption delegated to PostgreSQL native enc
 - **OQ-014**: Confidence scoring algorithm basis - Algorithm for response confidence scores needs research. Factors: chunk relevance scores, coverage of query terms, source diversity. Deferred to Phase 2 spike.
 - **OQ-015**: ~~Safeguard hook points specification~~ - **Resolved**: SafeguardHook Protocol fully defined in architecture.md section 8.3 with signatures for pre_query(), post_retrieval(), pre_response(). See REQ-044.
 - **OQ-016**: File storage encryption scope - Encryption at rest for ingested files depends on vektra-ingest storage architecture. Deferred to design phase.
-- **OQ-017**: ORM/database layer selection - SQLAlchemy 2.0 async (with asyncpg) vs SQLModel. Both support repository pattern and Alembic migrations. Decision needed before implementation start, to be documented as ADR.
-- **OQ-018**: UI architecture for admin and learn chatbot - Phase 2 requires admin UI and chatbot widget. Options: SPA (React/Vue) vs server-side (HTMX/Jinja2) for admin; standalone JS widget vs npm package for chatbot. Decision deferred to Phase 2 design.
-- **OQ-019**: Phase 2 hardware minimum - Phase 2 full-featured (e5-large + cross-encoder + Presidio) estimated at ~2.9GB application + ~512MB PostgreSQL = ~3.4GB. Recommendation: document 8GB RAM / 4 CPU as Phase 2 target. Phase 2 with only hybrid search + reranking (without e5-large) can stay within 4GB. Phase 1 stays at 4GB / 2 CPU per NFR-006.
+- ~~**OQ-017**: ORM/database layer selection~~ - **Resolved**: ADR-0022 (SQLAlchemy 2.0 async with asyncpg).
+- ~~**OQ-018**: UI architecture for admin and learn chatbot~~ - **Resolved**: ADR-0024 (HTMX + Jinja2 server-side for admin), ADR-0025 (backend-served JS bundle for chatbot widget).
+- ~~**OQ-019**: Phase 2 hardware minimum~~ - **Resolved**: ARCH-064 (8GB RAM / 4 CPU formalized as Phase 2 minimum).
 
 ---
 *Generated by Spec2Ship /s2s:specs*
@@ -836,4 +842,4 @@ Vector store and metadata database encryption delegated to PostgreSQL native enc
 *Manual corrections: 2026-02-01 (REQ-048, REQ-049, citation format, path alignment)*
 *Architectural review: 2026-02-06 (REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019, REQ-043/048/050 amended)*
 *Consistency review: 2026-02-06 (OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases clarified, EX-014 ref added)*
-*Artifacts: 60 functional requirements, 13 NFRs, 5 business rules, 14 exclusions, 7 open questions (1 resolved)*
+*Artifacts: 60 functional requirements, 13 NFRs, 5 business rules, 14 exclusions (7 resolved in Phase 2), 7 open questions (4 resolved)*

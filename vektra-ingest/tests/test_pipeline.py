@@ -122,6 +122,9 @@ async def test_dedup_alias_different_filename():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
+        elif call_count == 1:
             # First query: by content_hash → finds existing
             mock_result.scalar_one_or_none.return_value = existing
         else:
@@ -149,20 +152,22 @@ async def test_dedup_alias_different_filename():
 
 
 # ---------------------------------------------------------------------------
-# Deduplication: filename conflict
+# Document versioning (Phase 2): same filename, different content → new version
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_filename_conflict_raises_error():
-    """Different content_hash + same filename → IngestConflictError (→ 409)."""
-    from vektra_ingest.exceptions import IngestConflictError
+async def test_filename_match_creates_new_version():
+    """Different content_hash + same filename → version increment (Phase 2)."""
     from vektra_ingest.pipeline import run_ingest
 
-    conflicting_doc = MagicMock()
-    conflicting_doc.id = uuid4()
-    conflicting_doc.filename = "doc.pdf"
-    conflicting_doc.filename_aliases = []
+    old_doc_id = uuid4()
+    new_doc_id = uuid4()
+
+    existing_doc = MagicMock()
+    existing_doc.id = old_doc_id
+    existing_doc.filename = "doc.pdf"
+    existing_doc.version = 1
 
     call_count = 0
 
@@ -170,33 +175,81 @@ async def test_filename_conflict_raises_error():
         nonlocal call_count
         mock_result = MagicMock()
         if call_count == 0:
+            # Step 0: auto-create namespace (pg upsert) -> no-op
+            pass
+        elif call_count == 1:
             # content_hash query → no match (different content)
             mock_result.scalar_one_or_none.return_value = None
-        elif call_count == 1:
-            # filename query → finds conflict
-            mock_result.scalar_one_or_none.return_value = conflicting_doc
+        elif call_count == 2:
+            # filename query → finds existing doc
+            mock_result.scalar_one_or_none.return_value = existing_doc
         else:
             mock_result.scalar_one_or_none.return_value = None
         call_count += 1
         return mock_result
 
+    added_docs: list = []
+
+    def _session_add(obj):
+        added_docs.append(obj)
+
+    async def _flush_side_effect():
+        for obj in added_docs:
+            if not hasattr(obj, "_id_set"):
+                obj.id = new_doc_id
+                obj._id_set = True
+
     session = AsyncMock()
     session.execute = _execute
+    session.add = _session_add
+    session.flush = AsyncMock(side_effect=_flush_side_effect)
     session.commit = AsyncMock()
-    session.rollback = AsyncMock()
 
-    registry, _, _ = _make_registry()
+    registry, mock_embedding, mock_vs = _make_registry()
+    mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+    mock_vs.store = AsyncMock(return_value=["chunk-1"])
+    mock_vs.delete = AsyncMock(return_value=3)
 
-    with pytest.raises(IngestConflictError) as exc_info:
-        await run_ingest(
-            file_content=b"completely different content",
-            filename="doc.pdf",
-            namespace="default",
-            session=session,
-            registry=registry,
-        )
+    async def _fake_extract(req):
+        async def _gen():
+            yield DocumentChunk(text="new chunk content", element_type=ElementType.TEXT)
 
-    assert "doc.pdf" in str(exc_info.value)
+        return _gen()
+
+    async def _fake_chunk(elements):
+        async def _gen():
+            async for e in elements:
+                yield e
+
+        return _gen()
+
+    mock_extractor = MagicMock()
+    mock_extractor.extract = _fake_extract
+
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
+            with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
+                mc = MagicMock()
+                mc.chunk = _fake_chunk
+                mock_cc.return_value = mc
+
+                result = await run_ingest(
+                    file_content=b"completely different content",
+                    filename="doc.pdf",
+                    namespace="default",
+                    session=session,
+                    registry=registry,
+                )
+
+    assert result.status == "new"
+    assert result.version == 2
+    assert result.supersedes_id == old_doc_id
+    # Old chunks were deleted
+    mock_vs.delete.assert_awaited_once_with("default", [str(old_doc_id)])
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +299,8 @@ async def test_unsupported_content_type_raises_ingest_error():
 
 
 @pytest.mark.asyncio
-async def test_successful_ingest_returns_indexed():
-    """Full ingest with mocked providers returns IngestResult(status='indexed')."""
+async def test_successful_ingest_returns_new():
+    """Full ingest with mocked providers returns IngestResult(status='new')."""
     from vektra_ingest.pipeline import run_ingest
 
     doc_id = uuid4()
@@ -330,7 +383,7 @@ async def test_successful_ingest_returns_indexed():
                     registry=registry,
                 )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.document_id == doc_id
     assert result.chunk_count == 3
     mock_vs.store.assert_called_once()
@@ -417,3 +470,243 @@ async def test_storage_failure_triggers_cleanup():
 
     assert exc_info.value.error_code == "ERR-INGEST-004"
     mock_cleanup.assert_called_once_with(doc_id)
+
+
+# ---------------------------------------------------------------------------
+# Phase tracking callback (DEBT-006)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_phase_callback_called_in_sequence():
+    """on_phase callback is called with extracting, chunking, embedding in order."""
+    from vektra_ingest.pipeline import run_ingest
+
+    doc_id = uuid4()
+
+    session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=mock_result)
+
+    added_docs: list = []
+
+    def _session_add(obj):
+        added_docs.append(obj)
+
+    async def _flush_side_effect():
+        for obj in added_docs:
+            obj.id = doc_id
+
+    session.add = _session_add
+    session.flush = AsyncMock(side_effect=_flush_side_effect)
+    session.commit = AsyncMock()
+
+    registry, mock_embedding, mock_vs = _make_registry()
+    mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+    mock_vs.store = AsyncMock(return_value=["chunk-1"])
+
+    async def _fake_extract(req):
+        async def _gen():
+            yield DocumentChunk(text="some text", element_type=ElementType.TEXT)
+
+        return _gen()
+
+    async def _fake_chunk(elements):
+        async def _gen():
+            async for e in elements:
+                yield e
+
+        return _gen()
+
+    mock_extractor = MagicMock()
+    mock_extractor.extract = _fake_extract
+
+    phases: list[tuple[str, int | None]] = []
+
+    async def _on_phase(phase: str, percentage: int | None) -> None:
+        phases.append((phase, percentage))
+
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
+            with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
+                mc = MagicMock()
+                mc.chunk = _fake_chunk
+                mock_cc.return_value = mc
+
+                await run_ingest(
+                    file_content=b"%PDF-1.4 fake",
+                    filename="test.pdf",
+                    namespace="default",
+                    session=session,
+                    registry=registry,
+                    on_phase=_on_phase,
+                )
+
+    assert phases == [("extracting", None), ("chunking", None), ("embedding", 50)]
+
+
+# ---------------------------------------------------------------------------
+# Event emission (T27-T28)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_document_indexed_event_emitted():
+    """document.indexed event is emitted on successful ingest."""
+    from vektra_ingest.pipeline import run_ingest
+
+    doc_id = uuid4()
+
+    session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=mock_result)
+
+    added_docs: list = []
+
+    def _session_add(obj):
+        added_docs.append(obj)
+
+    async def _flush_side_effect():
+        for obj in added_docs:
+            obj.id = doc_id
+
+    session.add = _session_add
+    session.flush = AsyncMock(side_effect=_flush_side_effect)
+    session.commit = AsyncMock()
+
+    mock_events = AsyncMock()
+    mock_events.emit = AsyncMock()
+
+    registry, mock_embedding, mock_vs = _make_registry(events=mock_events)
+    mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+    mock_vs.store = AsyncMock(return_value=["chunk-1"])
+
+    async def _fake_extract(req):
+        async def _gen():
+            yield DocumentChunk(text="some text", element_type=ElementType.TEXT)
+
+        return _gen()
+
+    async def _fake_chunk(elements):
+        async def _gen():
+            async for e in elements:
+                yield e
+
+        return _gen()
+
+    mock_extractor = MagicMock()
+    mock_extractor.extract = _fake_extract
+
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
+            with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
+                mc = MagicMock()
+                mc.chunk = _fake_chunk
+                mock_cc.return_value = mc
+
+                result = await run_ingest(
+                    file_content=b"%PDF-1.4 fake",
+                    filename="test.pdf",
+                    namespace="default",
+                    session=session,
+                    registry=registry,
+                )
+
+    assert result.status == "new"
+
+    # Check document.indexed event was emitted
+    emit_calls = [
+        c for c in mock_events.emit.call_args_list if c.args[0] == "document.indexed"
+    ]
+    assert len(emit_calls) == 1
+    payload = emit_calls[0].args[1]
+    assert payload["document_id"] == str(doc_id)
+    assert payload["namespace"] == "default"
+    assert payload["chunk_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_storage_failure_raises_ingest_error():
+    """Storage failure wraps exception as IngestError."""
+    from vektra_ingest.exceptions import IngestError
+    from vektra_ingest.pipeline import run_ingest
+
+    doc_id = uuid4()
+
+    session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=mock_result)
+
+    added_docs: list = []
+
+    def _session_add(obj):
+        added_docs.append(obj)
+
+    async def _flush_side_effect():
+        for obj in added_docs:
+            obj.id = doc_id
+
+    session.add = _session_add
+    session.flush = AsyncMock(side_effect=_flush_side_effect)
+    session.commit = AsyncMock()
+
+    mock_events = AsyncMock()
+    mock_events.emit = AsyncMock()
+
+    mock_vs = AsyncMock()
+    mock_vs.store = AsyncMock(side_effect=RuntimeError("storage failed"))
+
+    registry, mock_embedding, _ = _make_registry(
+        vector_store=mock_vs, events=mock_events
+    )
+    mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
+
+    async def _fake_extract(req):
+        async def _gen():
+            yield DocumentChunk(text="some text", element_type=ElementType.TEXT)
+
+        return _gen()
+
+    async def _fake_chunk(elements):
+        async def _gen():
+            async for e in elements:
+                yield e
+
+        return _gen()
+
+    mock_extractor = MagicMock()
+    mock_extractor.extract = _fake_extract
+
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
+            with patch("vektra_ingest.pipeline.FixedSizeChunking") as mock_cc:
+                mc = MagicMock()
+                mc.chunk = _fake_chunk
+                mock_cc.return_value = mc
+
+                with patch(
+                    "vektra_ingest.pipeline._cleanup_document", new_callable=AsyncMock
+                ):
+                    with pytest.raises(IngestError):
+                        await run_ingest(
+                            file_content=b"%PDF-1.4 fake",
+                            filename="test.pdf",
+                            namespace="default",
+                            session=session,
+                            registry=registry,
+                        )

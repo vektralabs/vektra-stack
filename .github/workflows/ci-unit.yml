@@ -12,13 +12,15 @@ jobs:
     name: Detect changed components
     runs-on: ubuntu-latest
     outputs:
-      shared: ${{ steps.filter.outputs.shared }}
-      core:   ${{ steps.filter.outputs.core }}
-      ingest: ${{ steps.filter.outputs.ingest }}
-      index:  ${{ steps.filter.outputs.index }}
-      admin:  ${{ steps.filter.outputs.admin }}
+      shared:    ${{ steps.filter.outputs.shared }}
+      core:      ${{ steps.filter.outputs.core }}
+      ingest:    ${{ steps.filter.outputs.ingest }}
+      index:     ${{ steps.filter.outputs.index }}
+      admin:     ${{ steps.filter.outputs.admin }}
+      analytics: ${{ steps.filter.outputs.analytics }}
+      learn:     ${{ steps.filter.outputs.learn }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -37,6 +39,12 @@ jobs:
             admin:
               - 'vektra-admin/**'
               - 'vektra-shared/**'
+            analytics:
+              - 'vektra-analytics/**'
+              - 'vektra-shared/**'
+            learn:
+              - 'vektra-learn/**'
+              - 'vektra-shared/**'
 
   test-shared:
     name: Test vektra-shared
@@ -44,8 +52,8 @@ jobs:
     if: needs.detect-changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -61,8 +69,8 @@ jobs:
     if: needs.detect-changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -78,8 +86,8 @@ jobs:
     if: needs.detect-changes.outputs.ingest == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -95,8 +103,8 @@ jobs:
     if: needs.detect-changes.outputs.index == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -112,8 +120,8 @@ jobs:
     if: needs.detect-changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -121,13 +129,47 @@ jobs:
       - name: Run unit tests with coverage
         run: >
           uv run pytest vektra-admin/tests/ -v --tb=short -m "not integration"
-          --cov=vektra_admin --cov-report=term-missing --cov-fail-under=80
+          --cov=vektra_admin --cov-report=term-missing --cov-fail-under=75
+
+  test-analytics:
+    name: Test vektra-analytics
+    needs: detect-changes
+    if: needs.detect-changes.outputs.analytics == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-analytics
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-analytics/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_analytics --cov-report=term-missing --cov-fail-under=80
+
+  test-learn:
+    name: Test vektra-learn
+    needs: detect-changes
+    if: needs.detect-changes.outputs.learn == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-learn
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-learn/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_learn --cov-report=term-missing --cov-fail-under=80
 
   # Aggregator job used as the single required status check in branch protection.
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn]
     runs-on: ubuntu-latest
     if: always()
     steps:

@@ -1,0 +1,90 @@
+/* Vektra admin dashboard - custom styles */
+
+/* Status badges */
+.status-healthy {
+  color: #2d8a4e;
+  font-weight: bold;
+}
+
+.status-degraded {
+  color: #b8860b;
+  font-weight: bold;
+}
+
+.status-unhealthy {
+  color: #cc3333;
+  font-weight: bold;
+}
+
+.status-unknown {
+  color: #666;
+  font-weight: bold;
+}
+
+/* Flash messages */
+.flash {
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.flash-success {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.flash-error {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.flash-info {
+  background: #d1ecf1;
+  color: #0c5460;
+  border: 1px solid #bee5eb;
+}
+
+/* Key display (shown once after creation) */
+.key-display {
+  font-family: monospace;
+  background: #f8f9fa;
+  padding: 0.5rem 1rem;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+/* Revoked/inactive row styling */
+tr.revoked td {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+/* Pagination controls */
+.pagination {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+/* Scope tags */
+.scope-tag {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+  background: #e9ecef;
+  margin-right: 0.25rem;
+}
+
+/* Config table: mask column */
+.config-value {
+  font-family: monospace;
+  font-size: 0.9em;
+  max-width: 400px;
+  overflow-wrap: break-word;
+  word-break: break-all;
+}

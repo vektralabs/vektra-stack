@@ -95,7 +95,7 @@ class SourceDocumentOrm(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "deletion_reason IS NULL OR deletion_reason IN ('user_request','superseded','expired')",
+            "deletion_reason IS NULL OR deletion_reason IN ('user_request','superseded','expired','pipeline_failure')",
             name="ck_source_documents_deletion_reason",
         ),
     )

@@ -10,7 +10,7 @@
 
 Copy-paste this as the first message in every implementation session:
 
-> Read `.s2s/plans/INDEX.md`. Find the `in_progress` plan, or the first `pending` plan in the lowest-numbered wave. Read the full plan file. If any tasks are already checked `[x]`, read the corresponding source files to understand what was actually implemented before continuing. Then proceed with the first unchecked `[ ]` task.
+> Read `.s2s/plans/INDEX-PHASE1.md`. Find the `in_progress` plan, or the first `pending` plan in the lowest-numbered wave. Read the full plan file. If any tasks are already checked `[x]`, read the corresponding source files to understand what was actually implemented before continuing. Then proceed with the first unchecked `[ ]` task.
 
 That's all that's needed. The plan file contains the full context for that component. CONTEXT.md (loaded automatically via CLAUDE.md) covers the overall architecture.
 

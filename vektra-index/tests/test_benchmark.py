@@ -32,10 +32,13 @@ def _docker_available() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _docker_available(),
-    reason="Docker not available - skipping benchmark",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not _docker_available(),
+        reason="Docker not available - skipping benchmark",
+    ),
+]
 
 CHUNK_COUNT = 10_000
 QUERY_COUNT = 100

@@ -5,7 +5,8 @@
 # Usage:
 #   docker compose up -d                        # core stack
 #   docker compose --profile local-llm up -d    # + Ollama for local LLM
-#   docker compose --profile qdrant up -d       # + Qdrant (Phase 2)
+#   docker compose --profile qdrant up -d       # + Qdrant vector store
+#   docker compose --profile tei up -d          # + TEI embeddings server
 # ==========================================================================
 
 services:
@@ -38,7 +39,10 @@ services:
   # Phase 2: add redis + vektra-worker for separate arq worker scaling.
   # --------------------------------------------------------------------------
   vektra:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_UNSTRUCTURED: ${INSTALL_UNSTRUCTURED:-false}
     image: vektra-stack
     environment:
       CMD_TARGET: server
@@ -54,7 +58,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 3G
 
   # --------------------------------------------------------------------------
   # Ollama - local LLM inference (optional, activated via profile)
@@ -79,7 +83,7 @@ services:
           memory: 4G
 
   # --------------------------------------------------------------------------
-  # Qdrant - Phase 2 vector store alternative (placeholder)
+  # Qdrant - Phase 2 vector store alternative (optional, activated via profile)
   # --------------------------------------------------------------------------
   qdrant:
     image: qdrant/qdrant:v1.17.0
@@ -89,6 +93,35 @@ services:
       - vektra_qdrant:/qdrant/storage
     ports:
       - "127.0.0.1:6333:6333"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # --------------------------------------------------------------------------
+  # TEI - Hugging Face Text Embeddings Inference (optional, activated via profile)
+  # --------------------------------------------------------------------------
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
+    profiles:
+      - tei
+    command: --model-id sentence-transformers/all-MiniLM-L6-v2 --port 8080
+    volumes:
+      - vektra_tei_cache:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -98,3 +131,4 @@ volumes:
   vektra_pgdata:
   vektra_ollama:
   vektra_qdrant:
+  vektra_tei_cache:

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Audit log - Vektra admin{% endblock %}
+{% block content %}
+<h2>Audit log</h2>
+
+<details>
+  <summary>Filters</summary>
+  <form hx-get="/admin/partials/audit" hx-target="#audit-rows" hx-swap="innerHTML">
+    <div class="grid">
+      <div>
+        <label for="date_start">From</label>
+        <input type="datetime-local" id="date_start" name="date_start"
+               value="{{ params.get('date_start', '') }}">
+      </div>
+      <div>
+        <label for="date_end">To</label>
+        <input type="datetime-local" id="date_end" name="date_end"
+               value="{{ params.get('date_end', '') }}">
+      </div>
+      <div>
+        <label for="endpoint">Endpoint</label>
+        <input type="text" id="endpoint" name="endpoint" placeholder="/api/v1/..."
+               value="{{ params.get('endpoint', '') }}">
+      </div>
+      <div>
+        <label for="status_code">Status code</label>
+        <input type="number" id="status_code" name="status_code" placeholder="200"
+               value="{{ params.get('status_code', '') }}">
+      </div>
+    </div>
+    <button type="submit">Apply filters</button>
+  </form>
+</details>
+
+<table>
+  <thead>
+    <tr>
+      <th>Timestamp</th>
+      <th>Key ID</th>
+      <th>Method</th>
+      <th>Endpoint</th>
+      <th>Status</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody id="audit-rows">
+    {% include "partials/audit_rows.html" %}
+  </tbody>
+</table>
+{% endblock %}

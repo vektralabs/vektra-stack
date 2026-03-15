@@ -3,12 +3,13 @@
 All VEKTRA_* environment variables are declared here. This is the single
 source of truth for operator documentation and startup validation (ARCH-057 step 1).
 
-37 variables total: 35 VEKTRA_* + 2 external (OPENAI_API_KEY, ANTHROPIC_API_KEY).
+48 variables total: 46 VEKTRA_* + 2 external (OPENAI_API_KEY, ANTHROPIC_API_KEY).
+Phase 2 additions: RewriteConfig (2), RerankConfig (4), WebhookConfig (3), IngestConfig (+2).
 """
 
 from __future__ import annotations
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,8 +50,6 @@ class LLMConfig(BaseSettings):
 class EmbeddingConfig(BaseSettings):
     """Embedding provider configuration (ARCH-035, ADR-0013)."""
 
-    model_config = SettingsConfigDict(env_prefix="VEKTRA_", extra="ignore")
-
     embedding_provider: str = Field(
         "sentence-transformers",
         alias="VEKTRA_EMBEDDING_PROVIDER",
@@ -89,6 +88,70 @@ class VectorStoreConfig(BaseSettings):
         1,
         alias="VEKTRA_ACTIVE_INDEX_VERSION",
         description="Active index version for search queries. Change after re-embedding for zero-downtime reindex.",
+    )
+    qdrant_url: str = Field(
+        "http://localhost:6333",
+        alias="VEKTRA_QDRANT_URL",
+        description="Qdrant server URL. Only used when vector_store_provider='qdrant'.",
+    )
+    qdrant_api_key: str | None = Field(
+        None,
+        alias="VEKTRA_QDRANT_API_KEY",
+        description="Qdrant API key for authenticated access. Optional.",
+    )
+    qdrant_collection: str = Field(
+        "vektra",
+        alias="VEKTRA_QDRANT_COLLECTION",
+        description="Qdrant collection name.",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
+
+
+class RewriteConfig(BaseSettings):
+    """Conversational query rewriting configuration (ADR-0023, ARCH-061)."""
+
+    enabled: bool = Field(
+        True,
+        alias="VEKTRA_QUERY_REWRITE_ENABLED",
+        description="Enable conversational query rewriting in AdvancedQueryPipeline.",
+    )
+    model: str | None = Field(
+        None,
+        alias="VEKTRA_QUERY_REWRITE_MODEL",
+        description="Override LLM model for the rewrite step. Falls back to primary model.",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
+
+
+class RerankConfig(BaseSettings):
+    """Reranking configuration for AdvancedQueryPipeline (ARCH-061)."""
+
+    enabled: bool = Field(
+        True,
+        alias="VEKTRA_RERANK_ENABLED",
+        description="Enable reranking in AdvancedQueryPipeline.",
+    )
+    provider: str = Field(
+        "flashrank",
+        alias="VEKTRA_RERANK_PROVIDER",
+        description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere'.",
+    )
+    model: str | None = Field(
+        None,
+        alias="VEKTRA_RERANK_MODEL",
+        description="Provider-specific reranking model name.",
+    )
+    top_k: int = Field(
+        5,
+        ge=1,
+        alias="VEKTRA_RERANK_TOP_K",
+        description="Final top-k results after reranking.",
     )
 
     model_config = SettingsConfigDict(
@@ -129,6 +192,36 @@ class QueryPipelineConfig(BaseSettings):
         alias="VEKTRA_PROMPT_TEMPLATES_DIR",
         description="Directory for Jinja2 templates (system.j2, context.j2, conversation.j2). Falls back to built-in defaults.",
     )
+    rewrite: RewriteConfig = Field(default_factory=RewriteConfig)
+    rerank: RerankConfig = Field(default_factory=RerankConfig)
+
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True
+    )
+
+
+class WebhookConfig(BaseSettings):
+    """Webhook event emitter configuration (ARCH-038).
+
+    All fields optional: webhook disabled when url is None.
+    """
+
+    url: str | None = Field(
+        None,
+        alias="VEKTRA_WEBHOOK_URL",
+        description="Webhook endpoint URL for event delivery.",
+    )
+    secret: str | None = Field(
+        None,
+        alias="VEKTRA_WEBHOOK_SECRET",
+        description="HMAC-SHA256 signing secret for webhook payloads.",
+    )
+    timeout_seconds: float = Field(
+        5.0,
+        gt=0,
+        alias="VEKTRA_WEBHOOK_TIMEOUT",
+        description="HTTP timeout in seconds for webhook delivery.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
@@ -163,10 +256,29 @@ class IngestConfig(BaseSettings):
         alias="VEKTRA_DOCUMENT_EXTRACTOR",
         description="DocumentExtractor implementation: 'pdfplumber' (Phase 1), 'unstructured' (Phase 2).",
     )
+    table_split: bool = Field(
+        False,
+        alias="VEKTRA_TABLE_SPLIT",
+        description="Allow splitting table elements across chunks. Phase 2 dual-strategy.",
+    )
+    parent_child_levels: int = Field(
+        0,
+        ge=0,
+        alias="VEKTRA_PARENT_CHILD_LEVELS",
+        description="Parent-child hierarchy depth. 0=disabled.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
     )
+
+    @model_validator(mode="after")
+    def validate_dual_strategy(self) -> IngestConfig:
+        if self.chunking_strategy == "dual" and self.parent_child_levels < 1:
+            raise ValueError(
+                "parent_child_levels must be >= 1 when chunking_strategy is 'dual'"
+            )
+        return self
 
 
 class SecurityConfig(BaseSettings):
@@ -181,6 +293,12 @@ class SecurityConfig(BaseSettings):
         "passthrough",
         alias="VEKTRA_SAFEGUARD_MODE",
         description="SafeguardHook implementation: 'passthrough' (Phase 1), 'presidio', 'guardrails-ai' (Phase 2).",
+    )
+    pii_chunk_threshold: int = Field(
+        3,
+        ge=1,
+        alias="VEKTRA_PII_CHUNK_THRESHOLD",
+        description="PII entity count threshold per chunk for post_retrieval filtering. Presidio mode only.",
     )
     env: str = Field(
         "development",
@@ -218,6 +336,7 @@ class ObservabilityConfig(BaseSettings):
     )
     retention_days: int | None = Field(
         None,
+        ge=1,
         alias="VEKTRA_RETENTION_DAYS",
         description="Soft-deleted record retention period. Phase 2: arq cleanup job.",
     )
@@ -268,11 +387,12 @@ class ExternalApiKeys(BaseSettings):
 
 
 class VektraSettings(BaseSettings):
-    """Root settings: aggregates all VEKTRA_* env vars plus external keys.
+    """Root settings: Phase 1 flat aggregation of VEKTRA_* env vars.
 
-    All 37 variables (35 VEKTRA_* + 2 external) are represented here.
-    Sub-configs provide logical grouping with defaults; this class is the
-    single entry point for ARCH-057 step 1 validation.
+    Contains 37 variables (35 VEKTRA_* + 2 external) from Phase 1.
+    Phase 2 additions (RewriteConfig, RerankConfig, WebhookConfig,
+    IngestConfig extensions) are validated by their respective sub-configs
+    when the consuming component instantiates them.
     """
 
     # Database
@@ -310,6 +430,9 @@ class VektraSettings(BaseSettings):
     # Vector store
     vector_store_provider: str = Field("pgvector", alias="VEKTRA_VECTOR_STORE_PROVIDER")
     active_index_version: int = Field(1, alias="VEKTRA_ACTIVE_INDEX_VERSION")
+    qdrant_url: str = Field("http://localhost:6333", alias="VEKTRA_QDRANT_URL")
+    qdrant_api_key: str | None = Field(None, alias="VEKTRA_QDRANT_API_KEY")
+    qdrant_collection: str = Field("vektra", alias="VEKTRA_QDRANT_COLLECTION")
 
     # Query pipeline
     query_pipeline: str = Field("simple", alias="VEKTRA_QUERY_PIPELINE")
@@ -333,12 +456,20 @@ class VektraSettings(BaseSettings):
     # Security / auth
     admin_bootstrap_key: str | None = Field(None, alias="VEKTRA_ADMIN_BOOTSTRAP_KEY")
     safeguard_mode: str = Field("passthrough", alias="VEKTRA_SAFEGUARD_MODE")
+    pii_chunk_threshold: int = Field(3, alias="VEKTRA_PII_CHUNK_THRESHOLD")
     env: str = Field("development", alias="VEKTRA_ENV")
     multi_tenant: bool = Field(False, alias="VEKTRA_MULTI_TENANT")
 
     # Server
     port: int = Field(8000, alias="VEKTRA_PORT")
     startup_llm_check: bool = Field(True, alias="VEKTRA_STARTUP_LLM_CHECK")
+
+    # Learn (e-learning vertical, optional)
+    learn_jwt_secret: str | None = Field(
+        None,
+        alias="VEKTRA_LEARN_JWT_SECRET",
+        description="JWT signing secret for dashboard tokens. Required when vektra-learn is active.",
+    )
 
     # Observability / retention
     audit_retention_days: int = Field(90, alias="VEKTRA_AUDIT_RETENTION_DAYS")

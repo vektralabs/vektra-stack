@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Vektra admin{% endblock %}</title>
+  <link rel="stylesheet" href="/admin/static/pico.min.css">
+  <link rel="stylesheet" href="/admin/static/admin.css">
+  <script src="/admin/static/htmx.min.js"></script>
+</head>
+<body>
+  <nav class="container-fluid">
+    <ul>
+      <li><strong>Vektra admin</strong></li>
+    </ul>
+    <ul>
+      <li><a href="/admin/"{% if active == "health" %} aria-current="page"{% endif %}>Health</a></li>
+      <li><a href="/admin/keys"{% if active == "keys" %} aria-current="page"{% endif %}>API keys</a></li>
+      <li><a href="/admin/namespaces"{% if active == "namespaces" %} aria-current="page"{% endif %}>Namespaces</a></li>
+      <li><a href="/admin/audit"{% if active == "audit" %} aria-current="page"{% endif %}>Audit log</a></li>
+      <li><a href="/admin/config"{% if active == "config" %} aria-current="page"{% endif %}>Config</a></li>
+      <li><a href="/admin/logout">Logout</a></li>
+    </ul>
+  </nav>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="container">
+    <small>Vektra {{ version }}</small>
+  </footer>
+</body>
+</html>

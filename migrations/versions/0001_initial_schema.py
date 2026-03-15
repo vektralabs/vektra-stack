@@ -112,7 +112,7 @@ def upgrade() -> None:
 
             CONSTRAINT ck_source_documents_deletion_reason
                 CHECK (deletion_reason IS NULL OR deletion_reason IN
-                       ('user_request', 'superseded', 'expired'))
+                       ('user_request', 'superseded', 'expired', 'pipeline_failure'))
         )
     """)
 

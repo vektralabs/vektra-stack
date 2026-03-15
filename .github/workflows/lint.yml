@@ -10,9 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -33,7 +33,9 @@ jobs:
             vektra-admin/src/vektra_admin \
             vektra-core/src/vektra_core \
             vektra-ingest/src/vektra_ingest \
-            vektra-index/src/vektra_index
+            vektra-index/src/vektra_index \
+            vektra-analytics/src/vektra_analytics \
+            vektra-learn/src/vektra_learn
 
       - name: import-linter (boundary check)
         run: uv run lint-imports

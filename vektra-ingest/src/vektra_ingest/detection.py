@@ -22,6 +22,8 @@ _EXT_MAP: dict[str, str] = {
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".doc": "application/msword",
     ".ppt": "application/vnd.ms-powerpoint",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
 }
 
 
@@ -46,6 +48,18 @@ def detect_content_type(content: bytes, filename: str = "") -> str:
         sample = content[:8192]
         mime = magic.from_buffer(sample, mime=True)
         if mime:
+            # libmagic returns text/plain for formats like Markdown that lack
+            # distinctive magic bytes.  Prefer the extension map when the
+            # detected type is generic text/plain and we have a known extension.
+            if mime == "text/plain" and filename:
+                ext = os.path.splitext(filename.lower())[1]
+                if ext in _EXT_MAP:
+                    log.debug(
+                        "override_text_plain_by_extension",
+                        filename=filename,
+                        ext=ext,
+                    )
+                    return _EXT_MAP[ext]
             return mime
         log.warning("magic_empty_result", filename=filename)
     except ImportError:

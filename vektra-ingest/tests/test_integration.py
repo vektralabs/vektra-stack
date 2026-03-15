@@ -41,6 +41,7 @@ def _docker_available() -> bool:
 
 
 pytestmark = [
+    pytest.mark.integration,
     pytest.mark.skipif(
         not _docker_available(),
         reason="Docker not available - skipping integration tests",
@@ -216,7 +217,7 @@ def _make_real_pdf() -> bytes:
 
 
 async def test_full_ingest_returns_indexed(session, registry):
-    """Full PDF ingest stores chunks and returns status='indexed'."""
+    """Full PDF ingest stores chunks and returns status='new'."""
     from sqlalchemy import text
 
     from vektra_ingest.pipeline import run_ingest
@@ -243,7 +244,7 @@ async def test_full_ingest_returns_indexed(session, registry):
         registry=registry,
     )
 
-    assert result.status == "indexed"
+    assert result.status == "new"
     assert result.document_id is not None
     assert result.chunk_count is not None
     assert result.chunk_count >= 1
@@ -283,7 +284,7 @@ async def test_duplicate_detection_exact_match(session, registry):
         session=session,
         registry=registry,
     )
-    assert result1.status == "indexed"
+    assert result1.status == "new"
 
     # Second ingest: same content + same filename → exists
     result2 = await run_ingest(
@@ -322,7 +323,7 @@ async def test_alias_same_content_different_filename(session, registry):
         session=session,
         registry=registry,
     )
-    assert result1.status == "indexed"
+    assert result1.status == "new"
 
     result2 = await run_ingest(
         file_content=pdf_bytes,
@@ -336,11 +337,10 @@ async def test_alias_same_content_different_filename(session, registry):
     assert result2.alias_count == 1
 
 
-async def test_filename_conflict_raises_error(session, registry):
-    """Different content + same filename → IngestConflictError (→ 409)."""
+async def test_filename_reingest_creates_new_version(session, registry):
+    """Different content + same filename → version increment (Phase 2)."""
     from sqlalchemy import text
 
-    from vektra_ingest.exceptions import IngestConflictError
     from vektra_ingest.pipeline import run_ingest
 
     namespace = f"ns-{uuid4().hex[:8]}"
@@ -357,22 +357,25 @@ async def test_filename_conflict_raises_error(session, registry):
     pdf2 = pdf1 + b"  extra bytes making it different"
 
     # Ingest first document
-    await run_ingest(
+    result1 = await run_ingest(
         file_content=pdf1,
         filename="report.pdf",
         namespace=namespace,
         session=session,
         registry=registry,
     )
+    assert result1.status == "new"
+    assert result1.version == 1
 
-    # Try to ingest different content with same filename
-    with pytest.raises(IngestConflictError) as exc_info:
-        await run_ingest(
-            file_content=pdf2,
-            filename="report.pdf",  # same name, different content
-            namespace=namespace,
-            session=session,
-            registry=registry,
-        )
-
-    assert "report.pdf" in str(exc_info.value)
+    # Re-ingest with different content → creates version 2
+    result2 = await run_ingest(
+        file_content=pdf2,
+        filename="report.pdf",  # same name, different content
+        namespace=namespace,
+        session=session,
+        registry=registry,
+    )
+    assert result2.status == "new"
+    assert result2.version == 2
+    assert result2.supersedes_id == result1.document_id
+    assert result2.document_id != result1.document_id

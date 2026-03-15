@@ -35,7 +35,7 @@ async def test_task_marks_job_processing_then_indexed():
     ctx = {"registry": registry}
 
     indexed_result = IngestResult(
-        status="indexed",
+        status="new",
         document_id=uuid4(),
         chunk_count=10,
     )

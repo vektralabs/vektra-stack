@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
-from vektra_core.conversation import ConversationStore
+from vektra_core.conversation import InMemoryConversationStore
 from vektra_core.pipeline import (
     SimpleQueryPipeline,
     _apply_retrieval_filter,
@@ -12,6 +12,7 @@ from vektra_core.pipeline import (
 from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.types import (
+    CompletionChunk,
     CompletionResponse,
     QueryRequest,
     SafeguardResult,
@@ -88,6 +89,7 @@ def _make_pipeline(
         safeguard = AsyncMock()
         safeguard.pre_response = AsyncMock(return_value=SafeguardResult(allowed=True))
         safeguard.pre_query = AsyncMock(return_value=SafeguardResult(allowed=True))
+        safeguard.post_retrieval = AsyncMock(return_value=SafeguardResult(allowed=True))
 
     return SimpleQueryPipeline(
         embedding=embedding,
@@ -95,7 +97,7 @@ def _make_pipeline(
         llm=llm,
         llm_config=llm_config or _make_llm_config(),
         safeguard=safeguard,
-        conversation_store=ConversationStore(max_turns=10),
+        conversation_store=InMemoryConversationStore(max_turns=10),
         renderer=TemplateRenderer(),
         pipeline_config=pipeline_config or _make_pipeline_config(),
     )
@@ -175,9 +177,13 @@ async def test_execute_returns_response_and_trace():
     assert response.answer == "The answer."
     assert len(response.sources) == 1
     assert trace.response_id == response.response_id
-    assert len(trace.steps) == 6  # embed, search, filter, build_prompt, llm, safeguard
+    assert (
+        len(trace.steps) == 8
+    )  # pre_query, embed, search, filter, post_retrieval, build_prompt, llm, safeguard
     step_names = [s.name for s in trace.steps]
+    assert "pre_query_safeguard" in step_names
     assert "embed_query" in step_names
+    assert "post_retrieval_safeguard" in step_names
     assert "llm_call" in step_names
     assert "safeguard" in step_names
 
@@ -201,7 +207,7 @@ async def test_execute_no_relevant_context():
 
 
 async def test_execute_empty_vector_results():
-    """Empty vector search → no_relevant_context=False (different: empty search, not below threshold)."""
+    """Empty vector search → no_relevant_context=True (no chunks to answer from)."""
     vector_store = AsyncMock()
     vector_store.search = AsyncMock(return_value=[])
 
@@ -209,10 +215,9 @@ async def test_execute_empty_vector_results():
     query = QueryRequest(question="Who?")
     response, _trace = await pipeline.execute(query)
 
-    # Empty index: no results retrieved at all → no_relevant_context=False but sources=[]
-    assert response.no_relevant_context is False
-    # LLM is still called (with empty context)
-    assert response.answer == "The answer."
+    # Empty index: no results at all → no_relevant_context=True, LLM not called
+    assert response.no_relevant_context is True
+    assert response.answer is None
 
 
 async def test_execute_graceful_degradation_timeout():
@@ -334,7 +339,7 @@ async def test_execute_saves_conversation_turn():
     vector_store = AsyncMock()
     vector_store.search = AsyncMock(return_value=results)
 
-    conv_store = ConversationStore()
+    conv_store = InMemoryConversationStore()
     pipeline = _make_pipeline(vector_store=vector_store)
     pipeline._conversation_store = conv_store
 
@@ -346,3 +351,118 @@ async def test_execute_saves_conversation_turn():
     assert len(history) == 1
     assert history[0]["question"] == "Q1?"
     assert history[0]["answer"] == "The answer."
+
+
+async def test_execute_post_retrieval_blocked():
+    """When post_retrieval returns allowed=False, pipeline clears results and skips LLM."""
+    results = [_make_search_result(0.8, "sensitive context")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    safeguard = AsyncMock()
+    safeguard.pre_query = AsyncMock(return_value=SafeguardResult(allowed=True))
+    safeguard.post_retrieval = AsyncMock(
+        return_value=SafeguardResult(allowed=False, reason="blocked by policy")
+    )
+    safeguard.pre_response = AsyncMock(return_value=SafeguardResult(allowed=True))
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    llm.complete = AsyncMock()
+
+    pipeline = _make_pipeline(vector_store=vector_store, safeguard=safeguard, llm=llm)
+    query = QueryRequest(question="Show me PII")
+    response, trace = await pipeline.execute(query)
+
+    # Pipeline should produce empty-context response (no LLM call)
+    assert response.answer is None
+    assert response.sources == []
+    # LLM not called because filtered is empty after blocked post_retrieval
+    llm.complete.assert_not_awaited()
+    # Trace records allowed=False
+    sg_steps = [s for s in trace.steps if s.name == "post_retrieval_safeguard"]
+    assert len(sg_steps) == 1
+    assert sg_steps[0].metadata.get("allowed") is False
+
+
+# ---------------------------------------------------------------------------
+# Streaming tests (_stream / execute_stream)
+# ---------------------------------------------------------------------------
+
+
+async def _collect_stream(pipeline, query):
+    """Helper: collect all chunks from execute_stream into a list."""
+    stream = await pipeline.execute_stream(query)
+    return [chunk async for chunk in stream]
+
+
+async def test_stream_happy_path():
+    """Stream yields token, sources, trace, done events."""
+    results = [_make_search_result(0.8, "relevant context about RAG")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+
+    async def _mock_stream_gen():
+        for text in ["Hello", " world"]:
+            yield CompletionChunk(content=text)
+
+    llm.stream = AsyncMock(return_value=_mock_stream_gen())
+
+    pipeline = _make_pipeline(vector_store=vector_store, llm=llm)
+    query = QueryRequest(question="What is RAG?")
+    chunks = await _collect_stream(pipeline, query)
+
+    types = [c.type for c in chunks]
+    assert "token" in types
+    assert "sources" in types
+    assert "trace" in types
+    assert types[-1] == "done"
+
+    token_chunks = [c for c in chunks if c.type == "token"]
+    assert "".join(c.data for c in token_chunks) == "Hello world"
+
+
+async def test_stream_no_relevant_context():
+    """Stream with all chunks below threshold yields empty sources + trace + done."""
+    results = [_make_search_result(0.1, "low score")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(**{"VEKTRA_MIN_RELEVANCE_SCORE": 0.5}),
+    )
+    query = QueryRequest(question="Something")
+    chunks = await _collect_stream(pipeline, query)
+
+    types = [c.type for c in chunks]
+    assert types == ["sources", "trace", "done"]
+    assert chunks[0].data == []
+
+
+async def test_stream_llm_error_yields_error_and_done():
+    """When LLM stream fails, yield error + trace + done."""
+    results = [_make_search_result(0.9, "good context")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+
+    async def _failing_stream():
+        raise ConnectionError("LLM down")
+        yield  # make it an async generator
+
+    llm.stream = AsyncMock(return_value=_failing_stream())
+
+    pipeline = _make_pipeline(vector_store=vector_store, llm=llm)
+    query = QueryRequest(question="Test")
+    chunks = await _collect_stream(pipeline, query)
+
+    types = [c.type for c in chunks]
+    assert "error" in types
+    assert "trace" in types
+    assert types[-1] == "done"

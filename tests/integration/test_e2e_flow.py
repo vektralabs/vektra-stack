@@ -78,7 +78,7 @@ class TestE2EFlow:
         body = resp.json()
         assert "document_id" in body
         assert body["chunk_count"] is not None and body["chunk_count"] > 0
-        assert body["status"] in ("indexed", "completed", "complete")
+        assert body["status"] in ("new", "indexed", "completed", "complete")
 
         # Stash document_id for later assertions
         self.__class__._document_id = body["document_id"]

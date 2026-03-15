@@ -18,22 +18,26 @@ so it can include key_id and request_id from the request context).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import structlog
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vektra_ingest.chunking import FixedSizeChunking
+from vektra_ingest.chunking import DualStrategyChunking, FixedSizeChunking
 from vektra_ingest.detection import detect_content_type
 from vektra_ingest.exceptions import IngestConflictError, IngestError
+from vektra_ingest.extractors.markdown import MarkdownExtractor
 from vektra_ingest.extractors.pdf import PdfplumberExtractor
 from vektra_ingest.extractors.powerpoint import PowerPointExtractor
 from vektra_ingest.extractors.word import WordExtractor
-from vektra_ingest.models import SourceDocumentOrm
+from vektra_ingest.models import NamespaceOrm, SourceDocumentOrm
 from vektra_shared.config import IngestConfig
 from vektra_shared.errors import ERR_INGEST_001, ERR_INGEST_004
 from vektra_shared.types import ChunkEmbedding, ExtractionRequest
@@ -51,7 +55,7 @@ class IngestResult:
     """Outcome of a run_ingest() call.
 
     status values:
-    - "indexed": document was successfully extracted, embedded, and stored.
+    - "new": document was successfully extracted, embedded, and stored.
     - "exists": exact duplicate (same hash + same filename). No work done.
     - "alias": same content, different filename. Alias added to existing doc.
     - (failures raise IngestError or IngestConflictError; not represented here)
@@ -61,6 +65,8 @@ class IngestResult:
     document_id: UUID | None = None
     chunk_count: int | None = None
     alias_count: int | None = None  # only set when status="alias"
+    version: int = 1  # document version (REQ-056)
+    supersedes_id: UUID | None = None  # previous version's document_id
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -70,16 +76,39 @@ class IngestResult:
 
 
 def _build_extractor_registry() -> dict[str, Any]:
-    """Build content_type → extractor mapping for all supported types."""
+    """Build content_type → extractor mapping for all supported types.
+
+    When VEKTRA_DOCUMENT_EXTRACTOR=unstructured and the package is installed,
+    UnstructuredExtractor handles application/pdf instead of PdfplumberExtractor.
+    """
+    config = IngestConfig()
+
     registry: dict[str, Any] = {}
     extractors: list[Any] = [
         PdfplumberExtractor(),
         WordExtractor(),
         PowerPointExtractor(),
+        MarkdownExtractor(),
     ]
     for extractor in extractors:
         for mime_type in extractor.supported_types():
             registry[mime_type] = extractor
+
+    # Override PDF extractor when Unstructured is configured
+    if config.document_extractor == "unstructured":
+        try:
+            from vektra_ingest.extractors.unstructured import UnstructuredExtractor
+
+            unstructured_ext = UnstructuredExtractor()
+            for mime_type in unstructured_ext.supported_types():
+                registry[mime_type] = unstructured_ext
+            log.info("extractor_registry", pdf_extractor="unstructured")
+        except ImportError:
+            log.warning(
+                "extractor_registry_fallback",
+                reason="unstructured package not installed, falling back to pdfplumber",
+            )
+
     return registry
 
 
@@ -105,6 +134,8 @@ async def run_ingest(
     namespace: str,
     session: AsyncSession,
     registry: Any,  # ProviderRegistry - typed loosely to avoid circular import
+    on_phase: Callable[[str, int | None], Awaitable[None]] | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> IngestResult:
     """Execute the full document ingestion pipeline.
 
@@ -124,12 +155,25 @@ async def run_ingest(
         namespace: Target namespace ID.
         session: AsyncSession for source_documents + ingest_jobs writes.
         registry: ProviderRegistry providing "embedding" and "vector_store".
+        on_phase: Optional progress callback (phase_name, percentage).
+        extra_metadata: Additional metadata to merge into each chunk's metadata.
+            Used by learn vertical to attach course_id for ARCH-044 JSONB filtering.
 
     Raises:
-        IngestConflictError: Same filename, different content hash (→ 409).
+        IngestConflictError: Concurrent duplicate filename insert (TOCTOU, → 409).
         IngestError: Unsupported type, scanned PDF, or storage failure.
     """
     content_hash = hashlib.sha256(file_content).hexdigest()
+
+    # ------------------------------------------------------------------
+    # Step 0: Auto-create namespace if it doesn't exist
+    # ------------------------------------------------------------------
+    stmt = (
+        pg_insert(NamespaceOrm)
+        .values(id=namespace, display_name=namespace)
+        .on_conflict_do_nothing()
+    )
+    await session.execute(stmt)
 
     # ------------------------------------------------------------------
     # Step 1: Check for exact duplicate or alias (same content_hash)
@@ -151,7 +195,12 @@ async def run_ingest(
                 document_id=str(existing.id),
                 namespace=namespace,
             )
-            return IngestResult(status="exists", document_id=existing.id)
+            return IngestResult(
+                status="exists",
+                document_id=existing.id,
+                version=existing.version,
+                supersedes_id=existing.supersedes_id,
+            )
 
         # Same content, different filename → add alias (BR-005)
         aliases: list[str] = list(existing.filename_aliases or [])
@@ -173,11 +222,23 @@ async def run_ingest(
             status="alias",
             document_id=existing.id,
             alias_count=len(aliases),
+            version=existing.version,
+            supersedes_id=existing.supersedes_id,
         )
 
     # ------------------------------------------------------------------
-    # Step 2: Check for filename conflict (different content, same name)
+    # Step 2: Check for filename match (different content, same name)
+    #
+    # Phase 2 versioning: instead of 409 Conflict, create a new version.
+    # Soft-delete old document (reason="superseded") and proceed with
+    # ingestion. Old chunks are hard-deleted only after the new version
+    # is successfully stored (Step 7b). IngestConflictError is still
+    # raised for TOCTOU race conditions (unique partial index / TECH-004).
     # ------------------------------------------------------------------
+    new_version = 1
+    supersedes_id: UUID | None = None
+    old_version: int | None = None
+
     result = await session.execute(
         select(SourceDocumentOrm).where(
             SourceDocumentOrm.namespace_id == namespace,
@@ -185,48 +246,88 @@ async def run_ingest(
             SourceDocumentOrm.deleted_at.is_(None),
         )
     )
-    name_conflict = result.scalar_one_or_none()
-    if name_conflict is not None:
-        raise IngestConflictError(filename=filename, namespace=namespace)
+    existing_by_name = result.scalar_one_or_none()
+    if existing_by_name is not None:
+        new_version = existing_by_name.version + 1
+        supersedes_id = existing_by_name.id
+        old_version = existing_by_name.version
 
-    # ------------------------------------------------------------------
-    # Step 3: Detect content type
-    # ------------------------------------------------------------------
-    content_type = detect_content_type(file_content, filename)
-
-    # ------------------------------------------------------------------
-    # Step 4: Dispatch to DocumentExtractor
-    # ------------------------------------------------------------------
-    extractor = _get_extractor(content_type)
-    if extractor is None:
-        raise IngestError(
-            error_code=ERR_INGEST_001,
-            message=f"Unsupported content type: '{content_type}'. "
-            f"Supported: PDF, DOCX, PPTX.",
+        log.info(
+            "ingest_version_increment",
+            old_document_id=str(existing_by_name.id),
+            old_version=existing_by_name.version,
+            new_version=new_version,
+            namespace=namespace,
+            filename=filename,
         )
 
-    # ------------------------------------------------------------------
-    # Step 5: Create source_document record (flush for UUID, don't commit yet)
-    # ------------------------------------------------------------------
-    doc = SourceDocumentOrm(
-        namespace_id=namespace,
-        filename=filename,
-        content_hash=content_hash,
-        content_type=content_type,
-        file_size_bytes=len(file_content),
-    )
-    session.add(doc)
-    await session.flush()  # assigns doc.id without committing
-    doc_id: UUID = doc.id
-
-    # Commit the source_document so the VectorStoreProvider (which uses its
-    # own session) can reference it via FK (document_chunks.document_id).
-    await session.commit()
+        # Soft-delete the old document
+        await session.execute(
+            update(SourceDocumentOrm)
+            .where(SourceDocumentOrm.id == existing_by_name.id)
+            .values(
+                deleted_at=datetime.now(UTC),
+                deletion_reason="superseded",
+            )
+        )
+        await session.commit()
+        # Old chunks remain in vector store until new ingest succeeds.
+        # They won't appear in search (JOIN excludes soft-deleted docs).
 
     # ------------------------------------------------------------------
-    # Steps 6-7: Extract → Chunk → Embed → Store
+    # Steps 3-7: Detect → Extract → Chunk → Embed → Store
+    #
+    # Wrapped in a single try/except so that any failure after the
+    # superseded document was soft-deleted (Step 2) triggers
+    # _restore_superseded_document to undo the soft-delete.
     # ------------------------------------------------------------------
+    doc_id: UUID | None = None
     try:
+        # Step 3: Detect content type
+        content_type = detect_content_type(file_content, filename)
+
+        # Step 4: Dispatch to DocumentExtractor
+        extractor = _get_extractor(content_type)
+        if extractor is None:
+            raise IngestError(
+                error_code=ERR_INGEST_001,
+                message=f"Unsupported content type: '{content_type}'. "
+                f"Supported: PDF, DOCX, PPTX, Markdown.",
+            )
+
+        # Step 5: Create source_document record
+        doc = SourceDocumentOrm(
+            namespace_id=namespace,
+            filename=filename,
+            content_hash=content_hash,
+            content_type=content_type,
+            file_size_bytes=len(file_content),
+            version=new_version,
+            supersedes_id=supersedes_id,
+        )
+        session.add(doc)
+        try:
+            await session.flush()  # assigns doc.id without committing
+        except IntegrityError as exc:
+            await session.rollback()
+            if "uq_source_documents_filename" in str(exc):
+                raise IngestConflictError(filename, namespace) from exc
+            raise
+        doc_id = doc.id
+
+        # Commit the source_document so the VectorStoreProvider (which uses
+        # its own session) can reference it via FK (document_chunks.document_id).
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            doc_id = None  # row was rolled back; prevent cleanup of non-existent doc
+            if "uq_source_documents_filename" in str(exc):
+                raise IngestConflictError(filename, namespace) from exc
+            raise
+        if on_phase is not None:
+            await on_phase("extracting", None)
+
         extraction_req = ExtractionRequest(
             content=file_content,
             content_type=content_type,
@@ -234,11 +335,22 @@ async def run_ingest(
         )
         elements_iter = await extractor.extract(extraction_req)
 
+        if on_phase is not None:
+            await on_phase("chunking", None)
+
         ingest_config = IngestConfig()
-        chunker = FixedSizeChunking(
-            chunk_size=ingest_config.chunk_size,
-            chunk_overlap=ingest_config.chunk_overlap,
-        )
+        chunker: FixedSizeChunking | DualStrategyChunking
+        if ingest_config.chunking_strategy == "dual":
+            chunker = DualStrategyChunking(
+                text_chunk_size=ingest_config.chunk_size,
+                text_chunk_overlap=ingest_config.chunk_overlap,
+                parent_chunk_size=ingest_config.chunk_size * 3,
+            )
+        else:
+            chunker = FixedSizeChunking(
+                chunk_size=ingest_config.chunk_size,
+                chunk_overlap=ingest_config.chunk_overlap,
+            )
         chunks_iter = await chunker.chunk(elements_iter)
 
         # Collect all chunks
@@ -251,6 +363,9 @@ async def run_ingest(
                 error_code=ERR_INGEST_001,
                 message="No extractable text found in document.",
             )
+
+        if on_phase is not None:
+            await on_phase("embedding", 50)
 
         # Embed
         embedding_provider = registry.get("embedding", "default")
@@ -267,13 +382,15 @@ async def run_ingest(
             )
 
         # Build ChunkEmbedding objects with document_id in metadata
+        _extra = extra_metadata or {}
         chunk_embeddings = [
             ChunkEmbedding(
-                chunk_id=f"{doc_id}_{i}",
+                chunk_id=str(uuid5(doc_id, str(i))),
                 text=chunk.text,
                 dense=embedding,
                 metadata={
                     **chunk.metadata,
+                    **_extra,
                     "document_id": str(doc_id),
                     "content_type": content_type,
                     "element_type": chunk.element_type.value,
@@ -287,9 +404,13 @@ async def run_ingest(
         vector_store = registry.get("vector_store", "default")
         chunk_ids = await vector_store.store(namespace, chunk_embeddings)
 
-    except (IngestError, IngestConflictError):
-        # These are expected errors - still need to clean up the source_document
-        await _cleanup_document(doc_id)
+    except (IngestError, IngestConflictError) as exc:
+        # These are expected errors - clean up if doc was already persisted
+        if doc_id is not None:
+            await _cleanup_document(doc_id)
+        if supersedes_id is not None:
+            await _restore_superseded_document(supersedes_id)
+        _emit_failed_event(registry, doc_id, namespace, filename, exc)
         raise
     except Exception as exc:
         log.error(
@@ -298,11 +419,46 @@ async def run_ingest(
             namespace=namespace,
             error=str(exc),
         )
-        await _cleanup_document(doc_id)
-        raise IngestError(
+        if doc_id is not None:
+            await _cleanup_document(doc_id)
+        if supersedes_id is not None:
+            await _restore_superseded_document(supersedes_id)
+        ingest_err = IngestError(
             error_code=ERR_INGEST_004,
             message=f"Storage failed: {exc}",
-        ) from exc
+        )
+        _emit_failed_event(registry, doc_id, namespace, filename, ingest_err)
+        raise ingest_err from exc
+
+    # ------------------------------------------------------------------
+    # Step 7b: Finalize superseded document (only after successful store)
+    # ------------------------------------------------------------------
+    if supersedes_id is not None:
+        # Hard-delete old chunks (best-effort, old doc already soft-deleted)
+        try:
+            await vector_store.delete(namespace, [str(supersedes_id)])
+        except Exception as exc:
+            log.warning(
+                "ingest_old_chunks_delete_failed",
+                old_document_id=str(supersedes_id),
+                error=str(exc),
+            )
+
+        # Emit document.superseded event (best-effort)
+        try:
+            events = registry.get("events", "default")
+            await events.emit(
+                "document.superseded",
+                {
+                    "document_id": str(supersedes_id),
+                    "namespace": namespace,
+                    "filename": filename,
+                    "old_version": old_version,
+                    "new_version": new_version,
+                },
+            )
+        except Exception:
+            pass  # emitter not registered or delivery failed
 
     # ------------------------------------------------------------------
     # Step 8: Update chunk_count
@@ -334,8 +490,8 @@ async def run_ingest(
                 "filename": filename,
             },
         )
-    except ValueError:
-        pass  # events emitter not registered
+    except Exception:
+        pass  # emitter not registered or delivery failed
 
     log.info(
         "ingest_complete",
@@ -347,9 +503,11 @@ async def run_ingest(
     )
 
     return IngestResult(
-        status="indexed",
+        status="new",
         document_id=doc_id,
         chunk_count=len(chunk_ids),
+        version=new_version,
+        supersedes_id=supersedes_id,
     )
 
 
@@ -372,7 +530,7 @@ async def _cleanup_document(doc_id: UUID) -> None:
                 .where(SourceDocumentOrm.id == doc_id)
                 .values(
                     deleted_at=datetime.now(UTC),
-                    deletion_reason="user_request",
+                    deletion_reason="pipeline_failure",
                 )
             )
             await session.commit()
@@ -382,3 +540,63 @@ async def _cleanup_document(doc_id: UUID) -> None:
             document_id=str(doc_id),
             error=str(exc),
         )
+
+
+async def _restore_superseded_document(old_doc_id: UUID) -> None:
+    """Restore a superseded document after new version ingest failed.
+
+    Clears the soft-delete so the old version becomes active again.
+    Uses its own session (same pattern as _cleanup_document).
+    """
+    import vektra_shared.db as _shared_db
+
+    if _shared_db._session_factory is None:
+        log.error("restore_failed_no_session_factory", document_id=str(old_doc_id))
+        return
+
+    try:
+        async with _shared_db._session_factory() as session:
+            await session.execute(
+                update(SourceDocumentOrm)
+                .where(SourceDocumentOrm.id == old_doc_id)
+                .values(deleted_at=None, deletion_reason=None)
+            )
+            await session.commit()
+        log.info("superseded_document_restored", document_id=str(old_doc_id))
+    except Exception as exc:
+        log.error(
+            "restore_superseded_failed",
+            document_id=str(old_doc_id),
+            error=str(exc),
+        )
+
+
+def _emit_failed_event(
+    registry: Any,
+    doc_id: UUID | None,
+    namespace: str,
+    filename: str,
+    error: Exception,
+) -> None:
+    """Best-effort emit document.failed event (fire-and-forget)."""
+    try:
+        events = registry.get("events", "default")
+        import asyncio
+
+        error_code = getattr(error, "error_code", "ERR-INGEST-004")
+        error_message = getattr(error, "message", str(error))
+
+        asyncio.get_running_loop().create_task(
+            events.emit(
+                "document.failed",
+                {
+                    "document_id": str(doc_id) if doc_id else None,
+                    "namespace": namespace,
+                    "filename": filename,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                },
+            )
+        )
+    except Exception:
+        pass  # emitter not registered or delivery failed

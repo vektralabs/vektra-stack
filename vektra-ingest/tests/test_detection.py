@@ -68,6 +68,23 @@ def test_detect_fallback_on_exception():
     assert result == "application/octet-stream"
 
 
+def test_detect_overrides_text_plain_with_known_extension():
+    """When magic returns text/plain for a .md file, use extension map instead."""
+    from vektra_ingest.detection import detect_content_type
+
+    mock_magic = MagicMock()
+    mock_magic.from_buffer.return_value = "text/plain"
+
+    with patch.dict("sys.modules", {"magic": mock_magic}):
+        assert detect_content_type(b"# Heading", "notes.md") == "text/markdown"
+        assert detect_content_type(b"# Heading", "notes.markdown") == "text/markdown"
+
+    # Non-mapped extensions should still return text/plain
+    mock_magic.from_buffer.return_value = "text/plain"
+    with patch.dict("sys.modules", {"magic": mock_magic}):
+        assert detect_content_type(b"hello", "file.txt") == "text/plain"
+
+
 def test_detect_uses_first_8kb():
     """Only first 8KB of content is sampled for detection."""
     from vektra_ingest.detection import detect_content_type

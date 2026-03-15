@@ -1,19 +1,19 @@
-"""Unit tests for ConversationStore (REQ-049)."""
+"""Unit tests for InMemoryConversationStore (REQ-049)."""
 
 import asyncio
 from uuid import uuid4
 
-from vektra_core.conversation import ConversationStore
+from vektra_core.conversation import InMemoryConversationStore
 
 
 async def test_get_history_empty_for_new_id():
-    store = ConversationStore(max_turns=5)
+    store = InMemoryConversationStore(max_turns=5)
     history = await store.get_history(uuid4())
     assert history == []
 
 
 async def test_add_and_get_history():
-    store = ConversationStore(max_turns=5)
+    store = InMemoryConversationStore(max_turns=5)
     cid = uuid4()
     await store.add_turn(cid, "What is RAG?", "RAG is retrieval-augmented generation.")
     await store.add_turn(cid, "How does it work?", "It combines search with LLM.")
@@ -26,7 +26,7 @@ async def test_add_and_get_history():
 
 
 async def test_max_turns_prunes_oldest():
-    store = ConversationStore(max_turns=3)
+    store = InMemoryConversationStore(max_turns=3)
     cid = uuid4()
     for i in range(5):
         await store.add_turn(cid, f"Q{i}", f"A{i}")
@@ -39,7 +39,7 @@ async def test_max_turns_prunes_oldest():
 
 
 async def test_add_turn_with_none_answer():
-    store = ConversationStore()
+    store = InMemoryConversationStore()
     cid = uuid4()
     await store.add_turn(cid, "Is this allowed?", None)
     history = await store.get_history(cid)
@@ -47,7 +47,7 @@ async def test_add_turn_with_none_answer():
 
 
 async def test_clear_removes_history():
-    store = ConversationStore()
+    store = InMemoryConversationStore()
     cid = uuid4()
     await store.add_turn(cid, "Hello", "Hi")
     await store.clear(cid)
@@ -55,7 +55,7 @@ async def test_clear_removes_history():
 
 
 async def test_independent_conversations():
-    store = ConversationStore(max_turns=10)
+    store = InMemoryConversationStore(max_turns=10)
     cid1, cid2 = uuid4(), uuid4()
     await store.add_turn(cid1, "Question A", "Answer A")
     await store.add_turn(cid2, "Question B", "Answer B")
@@ -67,7 +67,7 @@ async def test_independent_conversations():
 
 async def test_concurrent_add_is_safe():
     """Multiple coroutines adding turns concurrently should not lose data."""
-    store = ConversationStore(max_turns=50)
+    store = InMemoryConversationStore(max_turns=50)
     cid = uuid4()
 
     async def add_turns(start: int) -> None:

@@ -14,7 +14,7 @@ See [LICENSE](LICENSE) for the full text.
 
 ## Governance Model: BDFL-transitional
 
-During **Phase 1** (MVP development), Vektra follows a Benevolent Dictator For Life (BDFL) model:
+During **Phases 1 and 2** (core development), Vektra follows a Benevolent Dictator For Life (BDFL) model:
 - Final decision authority rests with the project founder
 - Decisions are made transparently with community input via GitHub Discussions
 - This model enables rapid iteration without governance overhead
@@ -22,7 +22,7 @@ During **Phase 1** (MVP development), Vektra follows a Benevolent Dictator For L
 **Transition criteria**: The project will transition to a maintainer committee when:
 - There are 3+ active maintainers with 6+ months of consistent contribution
 - The contributor base has grown beyond the founding team
-- Phase 1 is complete and interfaces have stabilized
+- Core interfaces have stabilized (Phase 1 complete, Phase 2 in progress)
 
 ## Contributor Ladder
 

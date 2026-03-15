@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-28
+**Updated**: 2026-03-14
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -54,37 +54,33 @@
 
 ---
 
-### DEBT-003: `post_retrieval` safeguard trust boundary not called
+### DEBT-003: ~~`post_retrieval` safeguard trust boundary not called~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-19
-**Blocked by**: Phase 2 (PassthroughSafeguard covers Phase 1)
-**PR #2 review**: Confirmed as deferred. Adding the boundary requires calling `post_retrieval` in both `execute()` and `_stream()` after retrieval filter, plus implementing chunk filtering via `SafeguardResult.filtered_ids`. Acceptable for Phase 1 with PassthroughSafeguard. Comment 2833984647.
-
-**Context**: ARCH-049 defines 3 SafeguardHook trust boundary points: `pre_query` (called in `api.py`), `post_retrieval` (not called anywhere), `pre_response` (called in `pipeline.execute()` and `pipeline._stream()`). The middle boundary - triggered after chunks are retrieved and before the prompt is built - is entirely absent. This means chunk-level PII filtering or namespace isolation checks are not enforced.
-
-**Traceability**: ARCH-049 (safeguard content modification), REQ-044, vektra_shared/protocols.py SafeguardHook
+**Status**: completed | **Priority**: low | **Created**: 2026-02-19 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 2 (core-pipeline-v2) — post_retrieval called in both execute() and _stream(), PresidioPIISafeguard implements chunk filtering
 
 **Acceptance Criteria**:
-- [ ] `pipeline.execute()` calls `safeguard.post_retrieval(chunk_ids, sg_ctx)` after retrieval filter, before build_prompt
-- [ ] `pipeline._stream()` calls the same boundary
-- [ ] SafeguardHook Protocol documents the expected signature for `post_retrieval`
-- [ ] PassthroughSafeguard implements `post_retrieval` as a no-op
+- [x] `pipeline.execute()` calls `safeguard.post_retrieval(chunk_ids, sg_ctx)` after retrieval filter, before build_prompt
+- [x] `pipeline._stream()` calls the same boundary
+- [x] SafeguardHook Protocol documents the expected signature for `post_retrieval`
+- [x] PassthroughSafeguard implements `post_retrieval` as a no-op
 
 ---
 
-### DEBT-004: Budget allocator input ordering unenforced
+### DEBT-004: ~~Budget allocator input ordering unenforced~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-19
-**Blocked by**: Phase 2 (pgvector returns score-descending results, so convention holds in Phase 1)
+**Status**: completed | **Priority**: low | **Created**: 2026-02-19 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 2 (core-pipeline-v2) — explicit sort in all 3 pipeline paths + test coverage
 
 **Context**: `allocate_token_budget` docstring states that `chunks` must be passed in score-descending order ("sorted by score descending"). In `pipeline.execute()`, `chunk_inputs` is built from `filtered`, which is in original retrieval position order (not score order). This works in Phase 1 because PgvectorProvider returns results score-descending, but the VectorStoreProvider Protocol does not guarantee ordering. If a Phase 2 provider (e.g., Qdrant) returns results in a different order, the budget allocator may skip high-scoring chunks and include low-scoring ones.
 
 **Traceability**: ARCH-055, vektra_core/budget.py, vektra_core/pipeline.py:287, VectorStoreProvider Protocol
 
 **Acceptance Criteria**:
-- [ ] Either: `pipeline.execute()` sorts `filtered` by score descending before constructing `chunk_inputs` and remaps indices correctly
-- [ ] Or: VectorStoreProvider Protocol documents that `search()` results must be score-descending, and all implementations enforce it
-- [ ] `test_budget.py` covers unsorted-input scenario to verify behavior
+- [x] `pipeline.execute()` sorts `filtered` by score descending before constructing `chunk_inputs`
+- [x] `pipeline._stream()` sorts identically
+- [x] `advanced_pipeline._build_prompt()` sorts identically (covers both execute and stream)
+- [x] `test_budget.py` covers unsorted-input scenario (`test_unsorted_input_selects_front_items`)
 
 ---
 
@@ -136,22 +132,17 @@
 
 ---
 
-### DEBT-008: LRU cache stores plaintext API keys in memory
+### DEBT-008: ~~LRU cache stores plaintext API keys in memory~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-28
-**Blocked by**: Phase 2
-**Origin**: PR #2 review, CodeRabbit comment 2867565397
-
-**Context**: `verify_key()` in `vektra_admin/keys.py` uses `functools.lru_cache(maxsize=512)` keyed by `(key_hash, plaintext)`. The plaintext API key remains in the Python heap for the entire process lifetime (or until LRU eviction). `functools.lru_cache` is size-bounded only, not TTL-bounded. While the plaintext is already in memory during each request (Authorization header), the cache extends exposure from request-scoped to process-scoped. Replace with `cachetools.TTLCache` (e.g. TTL=300s, maxsize=512) to limit temporal exposure.
-
-**Traceability**: REQ-023, ARCH-023, PR #2 comment 2867565397
+**Status**: completed | **Priority**: low | **Created**: 2026-02-28 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 1 (admin-enforcement) — replaced lru_cache with cachetools.TTLCache (300s TTL, maxsize 512). PR #38 further improved: only cache True (successful) verifications to prevent cache poisoning.
 
 **Acceptance Criteria**:
-- [ ] Replace `functools.lru_cache` with `cachetools.TTLCache` in `_cached_verify`
-- [ ] TTL configured via constant (default 300s)
-- [ ] Cache key uses `(key_hash, plaintext)` as before (or hash-based fingerprint)
-- [ ] Unit test verifies cache expiration after TTL
-- [ ] `cachetools` added to vektra-admin dependencies
+- [x] Replace `functools.lru_cache` with `cachetools.TTLCache` in `_cached_verify`
+- [x] TTL configured via constant (default 300s)
+- [x] Cache key uses `(key_hash, plaintext)` as before
+- [x] Unit test verifies cache expiration after TTL
+- [x] `cachetools` added to vektra-admin dependencies
 
 ---
 
@@ -222,30 +213,28 @@ Specific items to address at the roundtable:
 
 ---
 
-### DOCS-007: Resolve Phase 2 open questions before /s2s:design Phase 2
+### DOCS-007: ~~Resolve Phase 2 open questions~~
 
-**Status**: planned | **Priority**: low (now) → high (before Phase 2 design) | **Created**: 2026-02-17
-**Blocked by**: Phase 1 completion
+**Status**: completed | **Priority**: high | **Created**: 2026-02-17 | **Completed**: 2026-03-01
+**Resolved in**: ADR-0024, ADR-0025, ARCH-062/063/064
 
-**Context**: Two open questions from requirements.md are deferred to Phase 2 design but need resolution before the Phase 2 design roundtable can run:
+**Context**: Two open questions from requirements.md resolved before Phase 2 planning.
 
 **OQ-018** (learn-ui + admin-ui architecture):
-- Is the chatbot widget a standalone npm package or served by the backend?
-- Is admin a separate SPA or integrated into vektra-core?
-- Decision affects vektra-learn component structure and deployment model
+- Admin UI: HTMX + Jinja2 server-side rendering (ADR-0024, ARCH-062). Phase 3: migrate to separate SPA.
+- Chatbot widget: self-contained JS bundle served by vektra-learn (ADR-0025, ARCH-063). Phase 3: extract to npm package.
+- Design constraints documented for Phase 3 migration (no business logic in templates, REST API only, self-contained widget).
 
 **OQ-019** (Phase 2 hardware minimum):
-- Recommendation already exists (8GB RAM / 4 CPU, OQ-019 in architecture.md)
-- Needs formal sign-off and propagation into Phase 2 NFRs
-- Decision affects vektra-learn and vektra-analytics RAM allocation planning
+- 8GB RAM / 4 CPU formalized as Phase 2 minimum (ARCH-064). Requirements.md is closed; formalization in architecture.md instead of NFR-014.
 
-**Traceability**: requirements.md OQ-018, OQ-019, architecture.md CONTEXT.md
+**Traceability**: requirements.md OQ-018/OQ-019, architecture.md v1.10, CONTEXT.md, ADR-0024, ADR-0025
 
 **Acceptance Criteria**:
-- [ ] OQ-018: architecture decision recorded (ADR or ARCH entry) for widget deployment model
-- [ ] OQ-018: architecture decision recorded for admin-ui deployment model
-- [ ] OQ-019: Phase 2 hardware NFR formally added to requirements.md (NFR-014 or similar)
-- [ ] Both OQs marked as resolved in requirements.md and CONTEXT.md updated
+- [x] OQ-018: architecture decision recorded (ADR-0025, ARCH-063) for widget deployment model
+- [x] OQ-018: architecture decision recorded (ADR-0024, ARCH-062) for admin-ui deployment model
+- [x] OQ-019: Phase 2 hardware target formalized in architecture.md (ARCH-064)
+- [x] Both OQs marked as resolved in CONTEXT.md
 
 ---
 
@@ -265,36 +254,70 @@ Specific items to address at the roundtable:
 
 ---
 
-### TECH-003: Phase 2 design roundtable (/s2s:design Phase 2)
+### TECH-003: Phase 2 implementation plans
 
-**Status**: planned | **Priority**: low (now) → high (after Phase 1 stable) | **Created**: 2026-02-17
-**Blocked by**: Phase 1 completion, DOCS-007
+**Status**: done | **Priority**: high | **Created**: 2026-02-17 | **Updated**: 2026-03-01
+**Blocked by**: none (DOCS-007 resolved)
+**Completed**: PR #21 (scoping plan), PR #22 (11 detailed plans, 168 tasks, codebase-validated)
 
-**Context**: Phase 1 uses a modular monolith design. Phase 2 introduces: vektra-analytics, vektra-learn, vektra-admin (full), hybrid search, persistent conversation storage, full scope enforcement, OAuth/OIDC, Qdrant as optional vector store. A full /s2s:design roundtable is needed before any Phase 2 implementation begins. DOCS-007 must be resolved first (UI architecture decisions feed the Phase 2 component design).
+**Context**: Phase 2 requirements and architecture are already formalized in the existing documents: requirements.md contains 44 Phase 2 references (EX-xxx exclusions, Phase 2 deferrals), architecture.md contains 115+ Phase 2 references (ARCH decisions with Phase 2 annotations, ADR-0014 AdvancedQueryPipeline, ADR-0023 query rewriting, ADR-0024/0025 UI decisions, etc.). A full `/s2s:design` roundtable is NOT needed. Only implementation plans via `/s2s:plan` are required.
 
-Key Phase 2 topics for the roundtable:
-- vektra-learn component structure and LMS adapter interface
-- vektra-analytics: QueryTrace storage, reporting API, alerting triggers
-- Hybrid search: BM25/SPLADE via SparseEmbeddingProvider, Qdrant as VectorStoreProvider
-- Persistent conversation storage with pgcrypto encryption (ADR-0011)
-- Full API key scope enforcement (REQ-024 Phase 2)
-- RLS binding activation (ADR-0009 feature flag)
-- Phase 2 hardware profile: 8GB / 4CPU minimum
+Plan generation follows a three-phase approach (lesson learned from Phase 1):
+1. Scoping plan: map features to work groups, define wave structure with provides/requires
+2. Dependency validation: SPV L1 + L3 checks before detailed plans
+3. Detailed plans: per-component plans with provides/requires from the start
 
-**Traceability**: architecture.md section 11.3, requirements.md EX-xxx items, ADR-0009, ADR-0011
+**Traceability**: architecture.md section 11.3, requirements.md EX-xxx items, ADR-0009, ADR-0011, ADR-0024, ADR-0025, plans/INDEX-PHASE2.md
 
 **Acceptance Criteria**:
-- [ ] Phase 2 architecture document updated (or new architecture.md v2.0)
-- [ ] New ADRs for Phase 2 decisions (target: ADR-0024+, ADR-0023 already exists)
-- [ ] Phase 2 requirements reviewed and promoted from EX-xxx to REQ-xxx
-- [ ] Phase 2 validation scenarios drafted (new /s2s:specs + /s2s:design cycle)
+- [x] DOCS-007 resolved (OQ-018, OQ-019)
+- [x] Scoping plan generated and validated (SPV L1 + L3 pass)
+- [x] Detailed plans generated with provides/requires YAML front-matter
+- [x] INDEX-PHASE2.md populated with wave structure and dependency graph
+- [x] New ADRs created as needed during planning (ADR-0024, ADR-0025)
 
 ---
 
-### TECH-004: Add unique indexes for idempotent ingest (TOCTOU mitigation)
+### FEAT-001: Audit log expandable detail rows
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-02-20
-**Blocked by**: None (infra-database completed, Alembic available)
+**Status**: draft | **Priority**: low | **Created**: 2026-03-08
+**Origin**: first Docker smoke test of admin UI (PR #29)
+
+**Context**: The audit log table in `/admin/audit` displays 6 columns (timestamp, key_id, method, endpoint, status_code, action). Two additional fields are stored but not shown: `request_id` (UUID for log correlation) and `metadata` (JSONB with action-specific context like namespace, filename, document_id, error_code, chunk_count). Adding a click-to-expand detail row would surface this information without cluttering the table. Proposal emerged during initial testing and needs further analysis to determine scope, UX approach, and whether it justifies the added complexity.
+
+**Traceability**: REQ-022, ARCH-062, ADR-0024
+
+**Acceptance Criteria** (tentative, pending evaluation):
+- [ ] Clicking an audit row expands an inline detail section (HTMX partial or `<details>`)
+- [ ] Detail shows: full key_id, request_id, and metadata key-value pairs
+- [ ] Metadata rendered as formatted key-value list (not raw JSON)
+- [ ] Empty metadata (`{}`) shows "No additional details" or similar
+- [ ] Works with cursor pagination (expanded state need not survive page navigation)
+
+---
+
+### FEAT-002: Admin UI edit forms for namespaces and API keys
+
+**Status**: draft | **Priority**: low | **Created**: 2026-03-08
+**Origin**: first Docker smoke test of admin UI (PR #29)
+
+**Context**: The admin UI supports create/delete for namespaces and keys, but not editing existing records. Several DB-backed fields are already writable via the REST API but have no UI: namespace quotas (`quota_chunks`, `quota_documents`), retention policy (`retention_days`), namespace config (JSONB), and per-key rate limit (`rate_limit_rpm`). In a production scenario, an operator would need SSH or API calls to adjust these values. Proposal emerged during initial testing and needs further analysis to determine which fields are worth exposing, UX design for the edit forms, and validation requirements.
+
+**Traceability**: REQ-006, REQ-048, ARCH-062, ADR-0024
+
+**Acceptance Criteria** (tentative, pending evaluation):
+- [ ] Namespace edit form: retention_days, quota_chunks, quota_documents, display_name
+- [ ] API key edit form: rate_limit_rpm, label
+- [ ] Inline edit or modal pattern consistent with existing HTMX approach
+- [ ] Validation feedback on invalid values (e.g., negative retention)
+- [ ] Corresponding REST API endpoints exist (verify or create as needed)
+
+---
+
+### TECH-004: ~~Add unique indexes for idempotent ingest (TOCTOU mitigation)~~
+
+**Status**: completed | **Priority**: medium | **Created**: 2026-02-20 | **Completed**: 2026-03-01
+**Resolved in**: Phase 2 Wave 0 (migration 0002_phase2_tables.py) + pipeline IntegrityError handling
 **Origin**: PR #2 review, comment 2834065202 (CodeRabbit)
 
 **Context**: `run_ingest()` checks for duplicate filename+namespace via SELECT before INSERT. Without a unique partial index (`WHERE deleted_at IS NULL`), concurrent requests can both pass the check and insert duplicate documents (TOCTOU window). The fix requires a partial unique index on `(namespace_id, filename) WHERE deleted_at IS NULL` plus `IntegrityError` handling as a fallback. Deferred because it requires an Alembic migration (infra-database plan, Wave 5).
@@ -302,9 +325,9 @@ Key Phase 2 topics for the roundtable:
 **Traceability**: REQ-033, ARCH-052, PR #2 comment 2834065202
 
 **Acceptance Criteria**:
-- [ ] Alembic migration adds `CREATE UNIQUE INDEX ... ON source_documents (namespace_id, filename) WHERE deleted_at IS NULL`
-- [ ] `run_ingest()` catches `IntegrityError` from duplicate insert and raises `IngestConflictError`
-- [ ] Integration test verifies concurrent duplicate ingest returns 409
+- [x] Alembic migration adds `CREATE UNIQUE INDEX ... ON source_documents (namespace_id, filename) WHERE deleted_at IS NULL`
+- [x] `run_ingest()` catches `IntegrityError` from duplicate insert and raises `IngestConflictError`
+- [ ] Integration test verifies concurrent duplicate ingest returns 409 (deferred, not blocking)
 
 ---
 
@@ -426,6 +449,87 @@ Key Phase 2 topics for the roundtable:
 - [ ] 5+ issues labeled "good first issue"
 - [ ] Each issue has clear scope and acceptance criteria
 - [ ] Mix of docs, tests, and small features
+
+---
+
+### DEBT-009: Scope sys.modules mock in test_qdrant_provider.py
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Major (test_qdrant_provider.py:25-32)
+
+**Context**: `test_qdrant_provider.py` injects a mock `qdrant_client` module into `sys.modules` at module level. This mutation persists for the entire pytest session. If another test file imports the real `qdrant_client`, it will get the mock instead, causing silent failures. Today no other test does this, but adding one would trigger the bug without any obvious cause. Fix: use `monkeypatch.setitem(sys.modules, ...)` in a fixture.
+
+**Traceability**: vektra-index/tests/test_qdrant_provider.py
+
+**Acceptance Criteria**:
+- [ ] sys.modules patching scoped to test via monkeypatch or patch.dict
+- [ ] Tests still pass with the scoped mock
+
+---
+
+### DEBT-010: Harden reindex.sh error handling
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Major (reindex.sh:66-85, 93-97)
+
+**Context**: `scripts/reindex.sh` has two robustness gaps: (1) The trigger request uses `curl -f` which collapses 4xx/5xx into a generic error, masking validation failures. (2) The polling loop retries on all failures including permanent errors (401, 404), and masks malformed JSON with `?` fallbacks. The reindex API is a skeleton today (tracks progress without executing re-embedding), but these gaps will matter when the API becomes functional.
+
+**Traceability**: scripts/reindex.sh, ARCH-045
+
+**Acceptance Criteria**:
+- [ ] Trigger: use `curl -sS` (not `-f`), check HTTP status explicitly, fail loud on 4xx
+- [ ] Polling: retry only on transient errors (5xx), fail immediately on 4xx
+- [ ] JSON parsing: validate required fields (job_id, status), fail loud on missing
+
+---
+
+### DEBT-011: Route vektra-index REST API through ProviderRegistry
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Major (index/api.py:147-167, 244-259)
+
+**Context**: The REST routes in `vektra-index/src/vektra_index/api.py` instantiate `PgvectorProvider` directly instead of resolving via ProviderRegistry. When `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, the query pipeline (vektra-core) correctly uses Qdrant via Registry, but the index REST endpoints (`/search`, `/stats`, `/documents`, `/health`) still hit pgvector. This causes a data/behavior mismatch if an operator calls these endpoints directly. Also, the sparse embedding lookup uses `app.state.sparse_embedding_provider` instead of the Registry.
+
+**Traceability**: ARCH-039 (ProviderRegistry), vektra-index/src/vektra_index/api.py
+
+**Acceptance Criteria**:
+- [ ] Index API routes resolve vector store provider via ProviderRegistry
+- [ ] Sparse embedding resolved via `registry.get("sparse_embedding", "default")`
+- [ ] `/search`, `/stats`, `/health` reflect the configured provider (not always pgvector)
+- [ ] Tests cover both pgvector and qdrant provider resolution paths
+
+---
+
+### DEBT-012: Add filter key validation at SearchRequest API layer
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Minor (pgvector.py:321-338)
+
+**Context**: `SearchRequest.filters` accepts arbitrary `dict[str, Any]` from client requests and passes keys directly to JSONB path construction in `_apply_filters`. SQLAlchemy's JSONB operator prevents SQL injection, but validating keys (e.g., alphanumeric + underscore pattern) at the API layer provides defense-in-depth and clearer error messages for malformed requests.
+
+**Traceability**: ARCH-044, vektra-index/src/vektra_index/providers/pgvector.py
+
+**Acceptance Criteria**:
+- [ ] Filter keys validated against allowlist pattern (e.g., `^[A-Za-z0-9_]+$`)
+- [ ] Invalid keys rejected with 400 error and clear message
+- [ ] Validation applied at API/parsing layer, not inside provider
+
+---
+
+### DEBT-013: Change admin logout to POST with CSRF token
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-14
+**Origin**: PR #38 review, CodeRabbit Minor (base.html:22)
+
+**Context**: `/admin/logout` uses a GET request (`<a href="/admin/logout">`). GET endpoints with side effects (clearing session cookie) are vulnerable to CSRF. Risk is low today (admin dashboard is internal, HttpOnly same-origin cookie), but becomes relevant if the dashboard is exposed on public networks in Phase 3 multi-tenant deployments. Fix: change to POST form with CSRF token, update the server-side handler to accept only POST.
+
+**Traceability**: ARCH-062, vektra-admin/src/vektra_admin/templates/base.html, ui.py
+
+**Acceptance Criteria**:
+- [ ] Logout uses POST form with CSRF token in template
+- [ ] Server-side handler accepts only POST
+- [ ] CSRF token generation/validation mechanism added (or HTMX pattern)
+- [ ] Test verifies GET /admin/logout returns 405
 
 ---
 
@@ -568,15 +672,24 @@ Key Phase 2 topics for the roundtable:
 | DOCS-004 (traceability tables) | After first Phase 1 milestone | Accuracy requires real code |
 | DOCS-005 (roundtable QA+BA) | After first sprint | Need tests to compare against |
 | ~~DOCS-006 (n8n workflow)~~ | ~~Anytime during Phase 1~~ | Done (Wave 7, PR #10) |
-| DOCS-007 (Phase 2 OQs) | Before Phase 2 design | OQ-018 + OQ-019 unresolved |
+| ~~DOCS-007 (Phase 2 OQs)~~ | ~~Before Phase 2 design~~ | Done (ADR-0024, ADR-0025, ARCH-064) |
 | ~~DOCS-008 (no_relevant_context REQ)~~ | ~~Before Phase 1 SRS close~~ | Done (REQ-066 in SRS v1.5.0) |
 | ~~TECH-001 (uv workspace)~~ | ~~Before coding~~ | Done (Wave 0) |
 | TECH-002 (good-first-issue) | Before announcement | Community readiness |
-| TECH-003 (Phase 2 design roundtable) | After Phase 1 stable + DOCS-007 | Full /s2s:design for Phase 2 |
+| ~~TECH-003 (Phase 2 plans)~~ | ~~After DOCS-007~~ | Done (PR #21 + PR #22, 11 plans, 168 tasks) |
+| FEAT-001 (audit detail rows) | Post-Phase 2 or spare time | Draft, needs evaluation |
+| FEAT-002 (namespace/key edit) | Post-Phase 2 or spare time | Draft, needs evaluation |
 | TECH-004 (unique indexes) | Anytime (infra-database done) | Alembic migration ready |
 | ~~DEBT-001 (stream budget)~~ | ~~Phase 2~~ | Fixed in PR #2 review (e527ce1) |
-| DEBT-002 (stream trace) | Phase 2 | Observability gap, not blocking |
-| DEBT-003 (post_retrieval hook) | Phase 2 | PassthroughSafeguard covers Phase 1 |
-| DEBT-004 (budget ordering) | Phase 2 | Pgvector returns score-desc in practice |
-| DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |
-| DEBT-008 (LRU plaintext cache) | Phase 2 | Replace lru_cache with TTLCache |
+| DEBT-002 (stream trace) | Phase 2+ | Observability gap, not blocking |
+| ~~DEBT-003 (post_retrieval hook)~~ | ~~Phase 2~~ | Completed in core-pipeline-v2 |
+| ~~DEBT-004 (budget ordering)~~ | ~~Phase 2~~ | Completed in core-pipeline-v2 |
+| DEBT-005 (disconnect cancel) | Phase 2+ | uvicorn handles it implicitly |
+| DEBT-006 (ingest phase tracking) | Phase 2+ | Monitoring gap, not blocking |
+| DEBT-007 (audit on ingest failure) | Phase 2+ | Needs investigation |
+| ~~DEBT-008 (LRU plaintext cache)~~ | ~~Phase 2~~ | Completed: TTLCache + only-True caching |
+| DEBT-009 (test sys.modules scope) | Low | Test isolation improvement |
+| DEBT-010 (reindex.sh hardening) | Low | Script robustness, reindex is skeleton |
+| DEBT-011 (index API via Registry) | Medium | Architectural: data mismatch when Qdrant active |
+| DEBT-012 (filter key validation) | Low | Defense-in-depth, JSONB already safe |
+| DEBT-013 (POST logout CSRF) | Low | Security best practice for Phase 3 |

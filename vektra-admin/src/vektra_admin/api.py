@@ -3,7 +3,7 @@
 Mounts at application root (/ prefix). Provides:
   - Health endpoints (two-tier model, REQ-025)
   - API key CRUD (REQ-020, REQ-023)
-  - Health dashboard HTML (GET /admin)
+  - Admin dashboard redirect (GET /admin -> /admin/)
   - Prometheus metrics are mounted by infra-app-entrypoint (starlette-prometheus).
 
 Bootstrap auth (REQ-021, REQ-036): POST /api-keys accepts the bootstrap env-var key
@@ -25,9 +25,8 @@ from fastapi import (
     Request,
     Response,
 )
-from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +91,14 @@ async def _require_any_token(
 class CreateKeyRequest(BaseModel):
     label: str | None = None
     scopes: list[str] | None = None  # defaults to ["admin"] if not provided
+    expires_at: datetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def _expires_at_must_be_timezone_aware(cls, v: datetime | None) -> datetime | None:
+        if v is not None and v.tzinfo is None:
+            raise ValueError("expires_at must include timezone info")
+        return v
 
 
 class CreateKeyResponse(BaseModel):
@@ -111,6 +118,7 @@ class KeyListItem(BaseModel):
     created_at: datetime
     last_used_at: datetime | None
     revoked: bool
+    expires_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -143,18 +151,21 @@ async def health(
             raise HTTPException(
                 status_code=http_status_for(err), detail=err.to_envelope()
             )
-        # Validate token (best-effort; use same registry pattern)
-        if registry is not None:
-            try:
-                key_store = registry.get("key_store", "default")
-                info = await key_store.lookup_by_token(credentials.credentials)
-                if info is None:
-                    err = auth_invalid_token()
-                    raise HTTPException(
-                        status_code=http_status_for(err), detail=err.to_envelope()
-                    )
-            except ValueError:
-                pass  # key_store not yet registered during startup probe
+        # Validate token; fail closed if registry/key_store unavailable
+        if registry is None:
+            raise HTTPException(status_code=503, detail="Service initializing")
+        try:
+            key_store = registry.get("key_store", "default")
+            info = await key_store.lookup_by_token(credentials.credentials)
+            if info is None:
+                err = auth_invalid_token()
+                raise HTTPException(
+                    status_code=http_status_for(err), detail=err.to_envelope()
+                )
+            # Expose key_id for AuditMiddleware (CR55)
+            request.state.key_id = info.key_id
+        except ValueError:
+            raise HTTPException(status_code=503, detail="Service initializing")
 
         status_code = 503 if deep.status == "unhealthy" else 200
         return Response(
@@ -269,6 +280,16 @@ async def create_api_key(
         )
         raise HTTPException(status_code=422, detail=err.to_envelope())
 
+    # --- Validate expires_at ---
+    if body.expires_at is not None and body.expires_at <= datetime.now(UTC):
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-004",
+            message="expires_at must be in the future.",
+            remediation="Provide a future UTC timestamp or omit expires_at.",
+        )
+        raise HTTPException(status_code=422, detail=err.to_envelope())
+
     # --- Generate and persist key ---
     plaintext, key_hash, key_preview = generate_key()
 
@@ -277,6 +298,7 @@ async def create_api_key(
         key_preview=key_preview,
         label=body.label,
         scopes=requested_scopes,
+        expires_at=body.expires_at,
     )
     session.add(new_key)
 
@@ -295,6 +317,7 @@ async def create_api_key(
                 key_hash=key_hash,
                 key_preview=key_preview,
                 scopes=requested_scopes,
+                expires_at=new_key.expires_at,
             )
         except ValueError:
             pass  # key_store not yet registered (e.g. during tests)
@@ -348,6 +371,7 @@ async def list_api_keys(
             created_at=row.created_at,
             last_used_at=row.last_used_at,
             revoked=row.revoked_at is not None,
+            expires_at=row.expires_at,
         )
         for row in rows
     ]
@@ -417,55 +441,7 @@ async def revoke_api_key(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/admin", response_class=HTMLResponse)
-async def admin_dashboard(
-    request: Request,
-    _key: ApiKeyInfo = Depends(_require_any_token),
-) -> HTMLResponse:
-    """Minimal HTML dashboard showing current health status. Requires any Bearer token."""
-    registry = getattr(request.app.state, "registry", None)
-    version = getattr(request.app.state, "version", "unknown")
-
-    _, deep = await _health.check_all(registry, version)
-
-    status_color = {
-        "healthy": "#2d8a4e",
-        "degraded": "#b8860b",
-        "unhealthy": "#cc3333",
-    }.get(deep.status, "#666")
-
-    rows = "".join(
-        f"<tr>"
-        f"<td>{c.name}</td>"
-        f"<td style='color:{status_color if c.status == deep.status else '#666'}'>{c.status}</td>"
-        f"<td>{c.latency_ms if c.latency_ms is not None else '-'} ms</td>"
-        f"<td>{c.message or ''}</td>"
-        f"</tr>"
-        for c in deep.components
-    )
-
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Vektra health</title>
-<style>
-  body {{ font-family: monospace; margin: 2rem; background: #f5f5f5; color: #222; }}
-  h1 {{ font-size: 1.2rem; }}
-  .status {{ color: {status_color}; font-weight: bold; font-size: 1.1rem; }}
-  table {{ border-collapse: collapse; width: 100%; max-width: 700px; }}
-  th, td {{ border: 1px solid #ccc; padding: 0.4rem 0.8rem; text-align: left; }}
-  th {{ background: #e0e0e0; }}
-</style>
-</head>
-<body>
-<h1>Vektra {version}</h1>
-<p>Status: <span class="status">{deep.status}</span> &mdash; {deep.timestamp}</p>
-<table>
-<tr><th>Component</th><th>Status</th><th>Latency</th><th>Message</th></tr>
-{rows if rows else "<tr><td colspan='4'>No health checks registered</td></tr>"}
-</table>
-</body>
-</html>"""
-
-    return HTMLResponse(content=html, status_code=200)
+@router.get("/admin")
+async def admin_dashboard_redirect() -> Response:
+    """Redirect legacy /admin to the new HTMX dashboard (ADR-0024)."""
+    return Response(status_code=308, headers={"Location": "/admin/"})

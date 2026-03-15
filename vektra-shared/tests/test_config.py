@@ -5,7 +5,15 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from vektra_shared.config import LLMConfig, QueryPipelineConfig, VektraSettings
+from vektra_shared.config import (
+    IngestConfig,
+    LLMConfig,
+    QueryPipelineConfig,
+    RerankConfig,
+    RewriteConfig,
+    VektraSettings,
+    WebhookConfig,
+)
 
 
 class TestLLMConfig:
@@ -47,6 +55,100 @@ class TestQueryPipelineConfig:
         assert cfg.chunk_dedup_enabled is True
         assert cfg.response_token_reserve == 1024
         assert cfg.prompt_templates_dir is None
+
+
+class TestRewriteConfig:
+    def test_defaults(self) -> None:
+        cfg = RewriteConfig()
+        assert cfg.enabled is True
+        assert cfg.model is None
+
+    def test_env_var_override(self) -> None:
+        cfg = RewriteConfig(
+            VEKTRA_QUERY_REWRITE_ENABLED=False,
+            VEKTRA_QUERY_REWRITE_MODEL="ollama/llama3",
+        )
+        assert cfg.enabled is False
+        assert cfg.model == "ollama/llama3"
+
+
+class TestRerankConfig:
+    def test_defaults(self) -> None:
+        cfg = RerankConfig()
+        assert cfg.enabled is True
+        assert cfg.provider == "flashrank"
+        assert cfg.model is None
+        assert cfg.top_k == 5
+
+    def test_env_var_override(self) -> None:
+        cfg = RerankConfig(
+            VEKTRA_RERANK_ENABLED=False,
+            VEKTRA_RERANK_PROVIDER="cohere",
+            VEKTRA_RERANK_MODEL="rerank-english-v3.0",
+            VEKTRA_RERANK_TOP_K=10,
+        )
+        assert cfg.enabled is False
+        assert cfg.provider == "cohere"
+        assert cfg.model == "rerank-english-v3.0"
+        assert cfg.top_k == 10
+
+
+class TestWebhookConfig:
+    def test_defaults(self) -> None:
+        cfg = WebhookConfig()
+        assert cfg.url is None
+        assert cfg.secret is None
+        assert cfg.timeout_seconds == 5.0
+
+    def test_all_fields_set(self) -> None:
+        cfg = WebhookConfig(
+            VEKTRA_WEBHOOK_URL="https://example.com/hook",
+            VEKTRA_WEBHOOK_SECRET="my-secret",
+            VEKTRA_WEBHOOK_TIMEOUT=10.0,
+        )
+        assert cfg.url == "https://example.com/hook"
+        assert cfg.secret == "my-secret"
+        assert cfg.timeout_seconds == 10.0
+
+
+class TestIngestConfigDualStrategy:
+    def test_fixed_strategy_default_passes(self) -> None:
+        cfg = IngestConfig()
+        assert cfg.chunking_strategy == "fixed"
+        assert cfg.parent_child_levels == 0
+        assert cfg.table_split is False
+
+    def test_fixed_strategy_with_zero_levels_passes(self) -> None:
+        cfg = IngestConfig(
+            VEKTRA_CHUNKING_STRATEGY="fixed",
+            VEKTRA_PARENT_CHILD_LEVELS=0,
+        )
+        assert cfg.parent_child_levels == 0
+
+    def test_dual_strategy_with_valid_levels_passes(self) -> None:
+        cfg = IngestConfig(
+            VEKTRA_CHUNKING_STRATEGY="dual",
+            VEKTRA_PARENT_CHILD_LEVELS=2,
+        )
+        assert cfg.chunking_strategy == "dual"
+        assert cfg.parent_child_levels == 2
+
+    def test_dual_strategy_with_zero_levels_raises(self) -> None:
+        with pytest.raises(ValidationError, match="parent_child_levels"):
+            IngestConfig(
+                VEKTRA_CHUNKING_STRATEGY="dual",
+                VEKTRA_PARENT_CHILD_LEVELS=0,
+            )
+
+
+class TestQueryPipelineConfigNested:
+    def test_rewrite_and_rerank_defaults(self) -> None:
+        cfg = QueryPipelineConfig()
+        assert cfg.rewrite.enabled is True
+        assert cfg.rewrite.model is None
+        assert cfg.rerank.enabled is True
+        assert cfg.rerank.provider == "flashrank"
+        assert cfg.rerank.top_k == 5
 
 
 class TestVektraSettings:

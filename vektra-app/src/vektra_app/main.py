@@ -1,7 +1,8 @@
 """Vektra application entrypoint (ARCH-001, ARCH-015, ARCH-057).
 
 Assembles all component routers, middleware, and providers into a single
-FastAPI application. Runs the 8-step startup validation sequence.
+FastAPI application. Runs the startup validation sequence (11 steps in
+Phase 2, extended from the original 8).
 
 This is the ONLY module that imports from all vektra_* components.
 """
@@ -11,10 +12,11 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, MutableMapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import FastAPI, Request
@@ -39,14 +41,24 @@ from vektra_shared.startup import (
 log = structlog.get_logger(__name__)
 
 
+def _redact_url(url: str) -> str:
+    """Return scheme://hostname:port only, stripping credentials and path."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}"
+
+
 # ---------------------------------------------------------------------------
 # Structlog configuration (ARCH-013)
 # ---------------------------------------------------------------------------
 
 
 def _pii_redactor(
-    _logger: Any, method_name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    _logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
     """Strip PII-sensitive fields from WARNING+ log events."""
     if method_name in ("warning", "error", "critical"):
         for key in ("query", "question", "answer", "response_text"):
@@ -75,7 +87,7 @@ def configure_structlog() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ARCH-057: 8-step startup validation
+# ARCH-057: 11-step startup validation (Phase 2)
 # ---------------------------------------------------------------------------
 
 
@@ -133,16 +145,63 @@ async def _step_5_register_providers(
     registry.register("vector_store", "default", vector_store_adapter)
     registry.register("vector_store", "pgvector", vector_store_adapter)
 
-    # --- Safeguard ---
-    from vektra_shared.safeguards import PassthroughSafeguard
+    # --- Sparse embedding (Phase 2, conditional) ---
+    sparse_provider = None
+    if settings.sparse_embedding_provider:
+        from vektra_index.providers.fastembed_bm25 import FastEmbedBM25Provider
 
-    safeguard = PassthroughSafeguard()
+        model_name = settings.sparse_embedding_model or "Qdrant/bm25"
+        sparse_provider = FastEmbedBM25Provider(model_name=model_name)
+        registry.register("sparse_embedding", "default", sparse_provider)
+        log.info(
+            "sparse_embedding_registered",
+            provider=settings.sparse_embedding_provider,
+            model=model_name,
+        )
+
+    # --- Qdrant vector store (Phase 2, conditional) ---
+    if settings.vector_store_provider == "qdrant":
+        from vektra_index.providers.qdrant import QdrantVectorStoreProvider
+
+        qdrant_provider = QdrantVectorStoreProvider(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
+            collection_name=settings.qdrant_collection,
+            active_index_version=settings.active_index_version,
+        )
+        registry.register("vector_store", "default", qdrant_provider)
+        registry.register("vector_store", "qdrant", qdrant_provider)
+        # Override pgvector adapter for health checks
+        vector_store_adapter = qdrant_provider  # type: ignore[assignment]
+        log.info(
+            "vector_store_registered",
+            provider="qdrant",
+            url=_redact_url(settings.qdrant_url),
+        )
+
+    # --- Safeguard (Phase 2: configurable mode) ---
+    from vektra_core.safeguards import create_safeguard
+
+    safeguard = create_safeguard(
+        settings.safeguard_mode,
+        pii_chunk_threshold=settings.pii_chunk_threshold,
+    )
     registry.register("safeguard", "default", safeguard)
 
     # --- Event emitter ---
-    from vektra_shared.events import NoOpEventEmitter
+    from vektra_shared.config import WebhookConfig
+    from vektra_shared.events import NoOpEventEmitter, WebhookEventEmitter
 
-    event_emitter = NoOpEventEmitter()
+    webhook_config = WebhookConfig()
+    if webhook_config.url:
+        event_emitter = WebhookEventEmitter(config=webhook_config)
+        log.info(
+            "event_emitter_registered",
+            type="webhook",
+            url=_redact_url(webhook_config.url),
+        )
+    else:
+        event_emitter = NoOpEventEmitter()
     registry.register("event_emitter", "default", event_emitter)
     registry.register("events", "default", event_emitter)
 
@@ -155,30 +214,93 @@ async def _step_5_register_providers(
         await key_store.load_from_db(session)
     registry.register("key_store", "default", key_store)
 
-    # --- Query pipeline ---
-    from vektra_core.conversation import ConversationStore
-    from vektra_core.pipeline import SimpleQueryPipeline
+    # --- Conversation store ---
+    from vektra_core.conversation import (
+        InMemoryConversationStore,
+        PersistentConversationStore,
+    )
     from vektra_core.templates import TemplateRenderer
 
-    conversation_store = ConversationStore(
-        max_turns=settings.max_conversation_turns,
-    )
+    conversation_store: InMemoryConversationStore | PersistentConversationStore
+    if settings.conversation_key:
+        conversation_store = PersistentConversationStore(
+            session_factory=get_session_factory(),
+            encryption_key=settings.conversation_key,
+            max_turns=settings.max_conversation_turns,
+        )
+        log.info("conversation_store_selected", backend="persistent")
+    else:
+        conversation_store = InMemoryConversationStore(
+            max_turns=settings.max_conversation_turns,
+        )
+        log.warning(
+            "conversation_store_selected",
+            backend="in_memory",
+            persistence="disabled",
+        )
+
+    # --- Reranker (Phase 2, conditional) ---
+    from vektra_core.reranker import create_reranker
+
+    pipeline_config = QueryPipelineConfig()
+    reranker = create_reranker(pipeline_config.rerank)
+
+    # --- Query pipeline (Phase 2: select simple or advanced) ---
     templates_dir = (
         Path(settings.prompt_templates_dir) if settings.prompt_templates_dir else None
     )
     renderer = TemplateRenderer(templates_dir=templates_dir)
-    pipeline_config = QueryPipelineConfig()
-    pipeline = SimpleQueryPipeline(
-        embedding=embedding_provider,
-        vector_store=vector_store_adapter,
-        llm=llm_provider,
-        llm_config=llm_config,
-        safeguard=safeguard,
-        conversation_store=conversation_store,
-        renderer=renderer,
-        pipeline_config=pipeline_config,
-    )
+
+    if settings.query_pipeline == "advanced":
+        from vektra_core.advanced_pipeline import AdvancedQueryPipeline
+
+        pipeline = AdvancedQueryPipeline(
+            embedding=embedding_provider,
+            vector_store=vector_store_adapter,
+            llm=llm_provider,
+            llm_config=llm_config,
+            safeguard=safeguard,
+            conversation_store=conversation_store,
+            renderer=renderer,
+            pipeline_config=pipeline_config,
+            sparse_embedding=sparse_provider,
+            reranker=reranker,
+        )
+        log.info("query_pipeline_selected", pipeline="advanced")
+    else:
+        from vektra_core.pipeline import SimpleQueryPipeline
+
+        pipeline = SimpleQueryPipeline(
+            embedding=embedding_provider,
+            vector_store=vector_store_adapter,
+            llm=llm_provider,
+            llm_config=llm_config,
+            safeguard=safeguard,
+            conversation_store=conversation_store,
+            renderer=renderer,
+            pipeline_config=pipeline_config,
+        )
+        log.info("query_pipeline_selected", pipeline="simple")
     registry.register("query_pipeline", "default", pipeline)
+
+    # --- Analytics service ---
+    from vektra_analytics.service import AnalyticsService
+
+    analytics_service = AnalyticsService()
+    registry.register("analytics", "default", analytics_service)
+
+    # --- Learn service (conditional) ---
+    if settings.learn_jwt_secret:
+        from vektra_learn.service import LearnService
+
+        learn_service = LearnService(jwt_secret=settings.learn_jwt_secret)
+        registry.register("learn", "default", learn_service)
+        log.info("learn_service_registered")
+
+    # --- Ingest pipeline (cross-module access via registry) ---
+    from vektra_ingest.pipeline import run_ingest
+
+    registry.register("ingest", "default", run_ingest)
 
     # --- Health checks ---
     registry.register("health", "llm", llm_provider.health_check)
@@ -249,6 +371,76 @@ async def _step_8_template_check(settings: VektraSettings) -> None:
         ) from exc
 
 
+async def _step_9_analytics_check(registry: ProviderRegistry) -> None:
+    """ARCH-057 step 9 (Phase 2): verify analytics service is registered."""
+    if not registry.has("analytics", "default"):
+        raise StartupValidationError(
+            step="analytics_check",
+            detail="AnalyticsService not registered in ProviderRegistry.",
+            remediation="This is a bug in the startup sequence. File an issue.",
+        )
+    log.info("startup_step", step="analytics_check", status="ok")
+
+
+async def _step_10_learn_check(
+    settings: VektraSettings, registry: ProviderRegistry
+) -> None:
+    """ARCH-057 step 10 (Phase 2): verify learn JWT secret when learn is active."""
+    if not settings.learn_jwt_secret:
+        log.info("startup_step", step="learn_check", status="skipped")
+        return
+
+    if not registry.has("learn", "default"):
+        raise StartupValidationError(
+            step="learn_check",
+            detail="VEKTRA_LEARN_JWT_SECRET is set but LearnService failed to register.",
+            remediation="Check logs for LearnService initialization errors.",
+        )
+    if len(settings.learn_jwt_secret) < 32:
+        raise StartupValidationError(
+            step="learn_check",
+            detail="VEKTRA_LEARN_JWT_SECRET must be at least 32 characters.",
+            remediation="Set a longer JWT secret for production security.",
+        )
+    log.info("startup_step", step="learn_check", status="ok")
+
+
+async def _step_11_qdrant_check(settings: VektraSettings) -> None:
+    """ARCH-057 step 11 (Phase 2): Qdrant connectivity check (conditional)."""
+    if settings.vector_store_provider != "qdrant":
+        log.info("startup_step", step="qdrant_check", status="skipped")
+        return
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{settings.qdrant_url}/healthz")
+            if resp.status_code == 200:
+                # Ensure collection exists on startup
+                from vektra_shared.registry import ProviderRegistry
+
+                registry = ProviderRegistry.instance()
+                provider = registry.get("vector_store", "qdrant")
+                if hasattr(provider, "ensure_collection"):
+                    await provider.ensure_collection()
+                log.info("startup_step", step="qdrant_check", status="ok")
+            else:
+                log.warning(
+                    "startup_step",
+                    step="qdrant_check",
+                    status="degraded",
+                    http_status=resp.status_code,
+                )
+    except Exception as exc:
+        log.warning(
+            "startup_step",
+            step="qdrant_check",
+            status="warning",
+            error=str(exc),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Lifespan: startup + shutdown
 # ---------------------------------------------------------------------------
@@ -256,7 +448,7 @@ async def _step_8_template_check(settings: VektraSettings) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Run the 8-step startup validation, then yield for serving."""
+    """Run the 11-step startup validation, then yield for serving."""
     start_time = time.monotonic()
     configure_structlog()
 
@@ -295,6 +487,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ("embedding_warmup", lambda: _step_6_embedding_warmup(registry)),
         ("llm_connectivity", lambda: _step_7_llm_check(settings, registry)),
         ("template_loading", lambda: _step_8_template_check(settings)),
+        ("analytics_check", lambda: _step_9_analytics_check(registry)),
+        ("learn_check", lambda: _step_10_learn_check(settings, registry)),
+        ("qdrant_check", lambda: _step_11_qdrant_check(settings)),
     ]
 
     step_1_ms = int((time.monotonic() - start_time) * 1000)
@@ -315,6 +510,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     app.state.registry = registry
     app.state.version = __version__
+
+    # Expose db_session_factory and services for analytics/learn routers
+    from vektra_shared.db import get_session_factory as _get_sf
+
+    app.state.db_session_factory = _get_sf()
+    app.state.analytics_service = registry.get("analytics", "default")
+    if registry.has("learn", "default"):
+        app.state.learn_service = registry.get("learn", "default")
 
     yield
 
@@ -355,8 +558,28 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=str(request_id))
 
-        response = await call_next(request)
+        response: Response = await call_next(request)
         response.headers["X-Request-ID"] = str(request_id)
+        return response
+
+
+class RateLimitHeaderMiddleware(BaseHTTPMiddleware):
+    """Copy X-RateLimit-* headers from request.state to the response.
+
+    The require_scope() dependency stores rate limit headers in
+    request.state.rate_limit_headers (dict) after evaluating limits.
+    This middleware propagates them to the HTTP response so clients
+    see remaining quota on successful (non-429) responses too.
+    """
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        response: Response = await call_next(request)
+        rl_headers: dict[str, str] | None = getattr(
+            request.state, "rate_limit_headers", None
+        )
+        if rl_headers:
+            for header_name, header_value in rl_headers.items():
+                response.headers[header_name] = header_value
         return response
 
 
@@ -378,14 +601,47 @@ def create_app() -> FastAPI:
 
     # --- Routers ---
     from vektra_admin.api import router as admin_router
+    from vektra_admin.ui import (
+        get_static_files,
+        register_ui_exception_handlers,
+        ui_router,
+    )
+    from vektra_analytics.api import router as analytics_router
     from vektra_core.api import router as core_router
     from vektra_index.api import router as index_router
+    from vektra_index.reindex import router as reindex_router
     from vektra_ingest.api import router as ingest_router
+    from vektra_learn.api import router as learn_router
 
     app.include_router(admin_router)
+    app.include_router(ui_router)
+    app.mount("/admin/static", get_static_files(), name="admin-static")
+    register_ui_exception_handlers(app)
     app.include_router(core_router)
     app.include_router(ingest_router)
     app.include_router(index_router)
+    app.include_router(reindex_router)
+    app.include_router(analytics_router)
+    app.include_router(learn_router)
+
+    # Chatbot widget static files (served at /static/learn/vektra-chat.js)
+    from fastapi.staticfiles import StaticFiles
+
+    # In editable installs __file__ lives at vektra-app/src/vektra_app/main.py
+    # (4 parents to workspace root).  In non-editable Docker installs
+    # __file__ is inside site-packages, so we also check /app/vektra-learn/static
+    # (the path used in the Dockerfile COPY --from=widget-builder).
+    _workspace_root = Path(__file__).resolve().parent.parent.parent.parent
+    _docker_widget = Path("/app/vektra-learn/static")
+    widget_path = _workspace_root / "vektra-learn" / "static"
+    if not widget_path.is_dir() and _docker_widget.is_dir():
+        widget_path = _docker_widget
+    if widget_path.is_dir():
+        app.mount(
+            "/static/learn",
+            StaticFiles(directory=str(widget_path)),
+            name="learn-static",
+        )
 
     # --- Middleware (LIFO: last added = outermost = runs first) ---
 
@@ -406,12 +662,15 @@ def create_app() -> FastAPI:
     app.add_middleware(PrometheusMiddleware)
     app.add_route("/metrics", metrics_view)
 
-    # 3. Audit middleware (after auth so key_id is in request.state)
+    # 3. Rate limit response headers (copies X-RateLimit-* from request.state)
+    app.add_middleware(RateLimitHeaderMiddleware)
+
+    # 4. Audit middleware (after auth so key_id is in request.state)
     from vektra_admin.middleware import AuditMiddleware
 
     app.add_middleware(AuditMiddleware)
 
-    # 4. Correlation ID (outermost - sets request_id before anything else)
+    # 5. Correlation ID (outermost - sets request_id before anything else)
     app.add_middleware(CorrelationIdMiddleware)
 
     # --- Global exception handler ---

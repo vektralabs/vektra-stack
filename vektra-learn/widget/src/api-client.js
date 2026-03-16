@@ -26,7 +26,7 @@ export class ApiClient {
    * @param {string} question
    * @param {object} callbacks - { onToken, onSources, onDone, onError, onNoRelevantContext }
    */
-  async query(question, { onToken, onSources, onDone, onError }) {
+  async query(question, { onToken, onSources, onDone, onError, onNoRelevantContext }) {
     const body = {
       question,
       stream: false,

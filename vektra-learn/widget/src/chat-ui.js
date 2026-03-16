@@ -181,15 +181,29 @@ export class ChatUI {
 
     const container = document.createElement("div");
     container.className = "vektra-chat-sources";
-    container.innerHTML = `<strong>${this._lang.sources}</strong>`;
+
+    const toggle = document.createElement("button");
+    toggle.className = "vektra-chat-sources-toggle";
+    toggle.textContent = `${this._lang.sources} (${sources.length})`;
+    toggle.setAttribute("aria-expanded", "false");
+    container.appendChild(toggle);
+
+    const list = document.createElement("div");
+    list.className = "vektra-chat-sources-list";
 
     for (const src of sources) {
       const item = document.createElement("div");
       item.className = "vektra-chat-source-item";
       const score = typeof src.score === "number" ? src.score.toFixed(2) : "?";
       item.textContent = `${src.snippet || src.chunk_id || "Source"} (${score})`;
-      container.appendChild(item);
+      list.appendChild(item);
     }
+
+    container.appendChild(list);
+    toggle.addEventListener("click", () => {
+      const expanded = list.classList.toggle("open");
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    });
 
     msgEl.appendChild(container);
     this._scrollToBottom();

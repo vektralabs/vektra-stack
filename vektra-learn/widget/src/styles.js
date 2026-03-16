@@ -153,6 +153,25 @@ export function buildStyles(theme) {
   font-size: 12px;
   color: ${t.textSecondary};
 }
+.vektra-chat-sources-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: ${t.primary};
+  font-size: 12px;
+  padding: 0;
+  font-family: inherit;
+}
+.vektra-chat-sources-toggle:hover {
+  text-decoration: underline;
+}
+.vektra-chat-sources-list {
+  display: none;
+  margin-top: 4px;
+}
+.vektra-chat-sources-list.open {
+  display: block;
+}
 .vektra-chat-source-item {
   margin-top: 4px;
 }

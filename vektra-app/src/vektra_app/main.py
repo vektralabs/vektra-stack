@@ -518,6 +518,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.analytics_service = registry.get("analytics", "default")
     if registry.has("learn", "default"):
         app.state.learn_service = registry.get("learn", "default")
+        app.state.learn_require_enrollment = settings.learn_require_enrollment
 
     yield
 

@@ -210,6 +210,31 @@ class TestGenerateToken:
         assert delta.total_seconds() < 65
         assert delta.total_seconds() > 55
 
+    async def test_token_includes_namespace_when_provided(self):
+        session = MagicMock()
+        session.add = MagicMock()
+        session.flush = AsyncMock()
+        svc = _make_service()
+
+        req = TokenRequest(student_id="s1", course_id="CS101", namespace="shared-ns")
+        result = await svc.generate_token(session, req)
+
+        payload = pyjwt.decode(result.token, JWT_SECRET, algorithms=["HS256"])
+        assert payload["namespace"] == "shared-ns"
+        assert payload["course_id"] == "CS101"
+
+    async def test_token_omits_namespace_when_none(self):
+        session = MagicMock()
+        session.add = MagicMock()
+        session.flush = AsyncMock()
+        svc = _make_service()
+
+        req = TokenRequest(student_id="s1", course_id="CS101")
+        result = await svc.generate_token(session, req)
+
+        payload = pyjwt.decode(result.token, JWT_SECRET, algorithms=["HS256"])
+        assert "namespace" not in payload
+
 
 class TestValidateToken:
     async def test_validates_valid_token(self):

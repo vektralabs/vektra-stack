@@ -464,11 +464,46 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 ## In Progress
 
-<!-- Move items here when work begins -->
+### FEAT-003: Optional enrollment — trust external identity providers for learn queries
+
+**Status**: in_progress | **Priority**: high | **Created**: 2026-03-16
+**Origin**: Moodle integration experience (vektra-moodle plugin)
+
+**Context**: The learn module currently requires a Vektra enrollment record for every student+course pair before allowing queries. This creates friction in LMS integrations where the LMS already manages enrollment and authorization. The JWT is signed server-side with the admin API key, contains `student_id` + `course_id`, and has short TTL (1h default). By the time a query arrives with a valid JWT, the student is already authorized by the upstream system.
+
+**Implementation**: `VEKTRA_LEARN_REQUIRE_ENROLLMENT` flag (default `true`). When `false`, the learn query endpoint skips enrollment lookup and derives namespace from the JWT (`namespace` claim or `course_id` fallback). Token generation accepts an optional `namespace` field to override the convention.
+
+**Traceability**: REQ-031, ADR-0010, ADR-0025, ARCH-063
+
+**Acceptance Criteria**:
+- [x] `VEKTRA_LEARN_REQUIRE_ENROLLMENT` flag added to VektraSettings (default `true`)
+- [x] Token generation accepts optional `namespace` in TokenRequest
+- [x] JWT payload includes `namespace` when provided
+- [x] Query endpoint: when flag=false, derive namespace from JWT `namespace` field or fallback to `course_id`
+- [x] Query endpoint: when flag=true, current enrollment-based behavior unchanged
+- [x] Conversation history and audit log still capture `student_id` from JWT
+- [x] Tests cover both paths (enrollment required vs optional)
+- [x] `.env.example` updated
 
 ---
 
 ## Completed
+
+### BUG-009: ~~Ingest should auto-create namespace if it doesn't exist~~
+
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-16 | **Completed**: 2026-03-16
+**Origin**: Integration testing (2026-03-13), Moodle integration (2026-03-16)
+**Resolved in**: Already implemented in Phase 2 — `run_ingest()` (pipeline.py:169-176) uses `pg_insert(...).on_conflict_do_nothing()`. `LearnService.create_enrollment()` uses the same pattern.
+
+**Traceability**: REQ-033, ARCH-047
+
+**Acceptance Criteria**:
+- [x] `POST /api/v1/ingest` auto-creates namespace row if not found
+- [x] `POST /api/v1/learn/content/ingest` does the same (calls `run_ingest()`)
+- [x] Auto-created namespace has empty config, no quotas
+- [x] If namespace already exists, no-op (idempotent)
+
+---
 
 ### BUG-007: Ingest error responses not using ErrorResponse envelopes
 

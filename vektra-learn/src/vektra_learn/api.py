@@ -425,23 +425,36 @@ async def course_query(
 
     Extracts course_id and namespace from the token, scopes the query
     to the course, and delegates to the query pipeline.
+
+    When VEKTRA_LEARN_REQUIRE_ENROLLMENT is false, enrollment lookup is
+    skipped and namespace is derived from the JWT (namespace claim or
+    course_id fallback). This supports LMS integrations where enrollment
+    is managed externally.
     """
     course_id = token_payload.get("course_id", "")
     student_id = token_payload.get("sub", "")
 
-    # Look up namespace from enrollment
-    enrollments = await service.list_enrollments(
-        session, course_id=course_id, student_id=student_id, limit=1
+    require_enrollment = getattr(
+        request.app.state, "learn_require_enrollment", True
     )
-    if not enrollments:
-        err = ErrorResponse(
-            category=ErrorCategory.PERMANENT,
-            code=ERR_LEARN_002,
-            message=f"No enrollment found for student '{student_id}' in course '{course_id}'.",
-            remediation="Ensure the student is enrolled before querying.",
+
+    if require_enrollment:
+        # Look up namespace from enrollment
+        enrollments = await service.list_enrollments(
+            session, course_id=course_id, student_id=student_id, limit=1
         )
-        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-    namespace = enrollments[0].namespace
+        if not enrollments:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_002,
+                message=f"No enrollment found for student '{student_id}' in course '{course_id}'.",
+                remediation="Ensure the student is enrolled before querying.",
+            )
+            raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+        namespace = enrollments[0].namespace
+    else:
+        # Trust JWT: use explicit namespace claim, or fall back to course_id
+        namespace = token_payload.get("namespace") or course_id
 
     # Build course-scoped query and delegate to pipeline
     query_req = build_course_query(req, namespace=namespace, course_id=course_id)

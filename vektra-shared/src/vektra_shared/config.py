@@ -470,6 +470,11 @@ class VektraSettings(BaseSettings):
         alias="VEKTRA_LEARN_JWT_SECRET",
         description="JWT signing secret for dashboard tokens. Required when vektra-learn is active.",
     )
+    learn_require_enrollment: bool = Field(
+        True,
+        alias="VEKTRA_LEARN_REQUIRE_ENROLLMENT",
+        description="Require Vektra enrollment record for learn queries. Set to false when an external LMS manages enrollment and authorization.",
+    )
 
     # Observability / retention
     audit_retention_days: int = Field(90, alias="VEKTRA_AUDIT_RETENTION_DAYS")

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import jwt as pyjwt
 import pytest
+from fastapi import HTTPException
 
 from vektra_learn.service import (
     ContentIngestRequest,
     EnrollmentRequest,
+    EnrollmentResponse,
     LearnService,
     TokenRequest,
 )
@@ -144,6 +147,159 @@ class TestErrorCodes:
         assert ERR_LEARN_003 == "ERR-LEARN-003"
         assert ERR_LEARN_004 == "ERR-LEARN-004"
 
+
+# ---------------------------------------------------------------------------
+# Query endpoint: enrollment required vs optional
+# ---------------------------------------------------------------------------
+
+
+class TestCourseQueryEnrollmentMode:
+    """Test namespace resolution with enrollment required (default) vs optional."""
+
+    async def test_query_with_enrollment_required_and_enrolled(self):
+        """When enrollment is required and exists, namespace comes from enrollment."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        req = CourseQueryRequest(question="What is ML?")
+
+        # Mock request with app.state
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = True
+        mock_pipeline = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response_id = uuid4()
+        mock_response.answer = "ML is..."
+        mock_response.sources = []
+        mock_response.conversation_id = None
+        mock_response.no_relevant_context = False
+        mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_pipeline
+        mock_app.state.registry = mock_registry
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        # Mock service
+        enrollment = EnrollmentResponse(
+            id=uuid4(),
+            student_id="s1",
+            course_id="CS101",
+            namespace="custom-ns",
+            enrolled_at=datetime.now(UTC),
+            metadata={},
+        )
+        service = MagicMock()
+        service.list_enrollments = AsyncMock(return_value=[enrollment])
+
+        session = AsyncMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        await course_query(req, mock_request, token_payload, service, session)
+
+        # Verify enrollment was queried
+        service.list_enrollments.assert_awaited_once()
+        # Verify pipeline used namespace from enrollment
+        call_args = mock_pipeline.execute.call_args[0][0]
+        assert call_args.namespace == "custom-ns"
+
+    async def test_query_with_enrollment_required_and_not_enrolled(self):
+        """When enrollment is required but missing, returns 404."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        req = CourseQueryRequest(question="What is ML?")
+
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = True
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        service = MagicMock()
+        service.list_enrollments = AsyncMock(return_value=[])
+
+        session = AsyncMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await course_query(req, mock_request, token_payload, service, session)
+        assert exc_info.value.status_code == 404
+
+    async def test_query_without_enrollment_uses_course_id_as_namespace(self):
+        """When enrollment is not required and JWT has no namespace, use course_id."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        req = CourseQueryRequest(question="What is ML?")
+
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = False
+        mock_pipeline = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response_id = uuid4()
+        mock_response.answer = "ML is..."
+        mock_response.sources = []
+        mock_response.conversation_id = None
+        mock_response.no_relevant_context = False
+        mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_pipeline
+        mock_app.state.registry = mock_registry
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        service = MagicMock()
+        session = AsyncMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        await course_query(req, mock_request, token_payload, service, session)
+
+        # Enrollment should NOT be queried
+        service.list_enrollments.assert_not_called()
+        # Pipeline should use course_id as namespace
+        call_args = mock_pipeline.execute.call_args[0][0]
+        assert call_args.namespace == "CS101"
+
+    async def test_query_without_enrollment_uses_jwt_namespace(self):
+        """When enrollment is not required and JWT has namespace, use it."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        req = CourseQueryRequest(question="What is ML?")
+
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = False
+        mock_pipeline = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response_id = uuid4()
+        mock_response.answer = "ML is..."
+        mock_response.sources = []
+        mock_response.conversation_id = None
+        mock_response.no_relevant_context = False
+        mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_pipeline
+        mock_app.state.registry = mock_registry
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        service = MagicMock()
+        session = AsyncMock()
+        token_payload = {"sub": "s1", "course_id": "CS101", "namespace": "shared-materials"}
+
+        await course_query(req, mock_request, token_payload, service, session)
+
+        # Pipeline should use JWT namespace, not course_id
+        call_args = mock_pipeline.execute.call_args[0][0]
+        assert call_args.namespace == "shared-materials"
+
+
+# ---------------------------------------------------------------------------
+# Error codes
+# ---------------------------------------------------------------------------
+
+
+class TestErrorStatusCodes:
     def test_learn_error_status_codes(self):
         from vektra_shared.errors import (
             ERR_LEARN_002,

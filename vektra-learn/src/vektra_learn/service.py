@@ -50,6 +50,11 @@ class EnrollmentResponse(BaseModel):
 class TokenRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=255)
     course_id: str = Field(min_length=1, max_length=255)
+    namespace: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Override namespace in JWT. When omitted, course_id is used as namespace convention.",
+    )
     expires_in: int = Field(default=3600, gt=0, le=86400)  # 1 hour default, max 24h
 
 
@@ -159,12 +164,14 @@ class LearnService:
         now = datetime.now(UTC)
         expires_at = now + timedelta(seconds=req.expires_in)
 
-        payload = {
+        payload: dict[str, Any] = {
             "sub": req.student_id,
             "course_id": req.course_id,
             "iat": int(now.timestamp()),
             "exp": int(expires_at.timestamp()),
         }
+        if req.namespace is not None:
+            payload["namespace"] = req.namespace
         token = jwt.encode(payload, self._jwt_secret, algorithm="HS256")
 
         # Store token hash for audit trail only; revocation checks the

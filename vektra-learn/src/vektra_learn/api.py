@@ -431,12 +431,19 @@ async def course_query(
     course_id fallback). This supports LMS integrations where enrollment
     is managed externally.
     """
-    course_id = token_payload.get("course_id", "")
+    course_id = token_payload.get("course_id")
     student_id = token_payload.get("sub", "")
 
-    require_enrollment = getattr(
-        request.app.state, "learn_require_enrollment", True
-    )
+    if not course_id:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_003,
+            message="Dashboard token is missing 'course_id' claim.",
+            remediation="Request a new dashboard token with a valid 'course_id'.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    require_enrollment = getattr(request.app.state, "learn_require_enrollment", True)
 
     if require_enrollment:
         # Look up namespace from enrollment
@@ -450,7 +457,9 @@ async def course_query(
                 message=f"No enrollment found for student '{student_id}' in course '{course_id}'.",
                 remediation="Ensure the student is enrolled before querying.",
             )
-            raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
         namespace = enrollments[0].namespace
     else:
         # Trust JWT: use explicit namespace claim, or fall back to course_id

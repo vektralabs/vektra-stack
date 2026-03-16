@@ -156,6 +156,26 @@ class TestErrorCodes:
 class TestCourseQueryEnrollmentMode:
     """Test namespace resolution with enrollment required (default) vs optional."""
 
+    async def test_query_rejects_token_without_course_id(self):
+        """When course_id is missing from JWT, returns 401."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        req = CourseQueryRequest(question="What is ML?")
+
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = False
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        service = MagicMock()
+        session = AsyncMock()
+        token_payload = {"sub": "s1"}  # no course_id
+
+        with pytest.raises(HTTPException) as exc_info:
+            await course_query(req, mock_request, token_payload, service, session)
+        assert exc_info.value.status_code == 401
+
     async def test_query_with_enrollment_required_and_enrolled(self):
         """When enrollment is required and exists, namespace comes from enrollment."""
         from vektra_learn.api import course_query
@@ -285,7 +305,11 @@ class TestCourseQueryEnrollmentMode:
 
         service = MagicMock()
         session = AsyncMock()
-        token_payload = {"sub": "s1", "course_id": "CS101", "namespace": "shared-materials"}
+        token_payload = {
+            "sub": "s1",
+            "course_id": "CS101",
+            "namespace": "shared-materials",
+        }
 
         await course_query(req, mock_request, token_payload, service, session)
 

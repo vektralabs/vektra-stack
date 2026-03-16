@@ -11,6 +11,8 @@ const I18N = {
     placeholder: "Ask a question...",
     send: "Send",
     sources: "Sources:",
+    noRelevantContext:
+      "I couldn't find relevant information in the course materials for this question.",
     error: "An error occurred. Please try again.",
     close: "Close",
   },
@@ -19,6 +21,8 @@ const I18N = {
     placeholder: "Fai una domanda...",
     send: "Invia",
     sources: "Fonti:",
+    noRelevantContext:
+      "Non ho trovato informazioni rilevanti nei materiali del corso per questa domanda.",
     error: "Si è verificato un errore. Riprova.",
     close: "Chiudi",
   },
@@ -202,6 +206,14 @@ export class ChatUI {
     msg.textContent = message || this._lang.error;
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
+  }
+
+  /**
+   * Return the localized "no relevant context" message.
+   * @returns {string}
+   */
+  noRelevantContextMessage() {
+    return this._lang.noRelevantContext;
   }
 
   /**

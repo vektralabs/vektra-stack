@@ -464,6 +464,54 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 ## In Progress
 
+### BUG-010: Learn query endpoint does not auto-create conversation on first query
+
+**Status**: in_progress | **Priority**: high | **Created**: 2026-03-16
+**Origin**: Moodle integration testing (2026-03-16)
+
+**Context**: The learn query endpoint (`POST /api/v1/learn/query`) passes `conversation_id` through to the pipeline unchanged. When the widget sends the first query without a `conversation_id` (which is the normal flow), the pipeline receives `None`, skips history retrieval and turn saving, and returns `conversation_id: null`. The widget receives `null` and has nothing to save — so the second query also has no `conversation_id`. Result: **every query is a single-turn query with no conversation continuity**.
+
+REQ-049 states: "Response includes conversation_id for client to maintain continuity." The learn query endpoint should auto-generate a `conversation_id` (UUID) on the first query when the client doesn't provide one, save the turn, and return the ID so the widget can reuse it.
+
+The core API (`POST /api/v1/query`) has the same design — it's documented as "If conversation_id omitted, single-turn query" — but for the learn widget UX, multi-turn is the expected default behavior.
+
+**Traceability**: REQ-049, ADR-0025, ARCH-063
+
+**Acceptance Criteria**:
+- [ ] `course_query()` generates a `uuid4()` conversation_id when the request omits it
+- [ ] The generated ID is passed to the pipeline, which creates the conversation and saves the first turn
+- [ ] The response includes the generated `conversation_id`
+- [ ] Subsequent queries from the widget include the `conversation_id` and get history context
+- [ ] When `conversation_id` IS provided by the client, behavior unchanged
+- [ ] Test covers both paths (auto-generated vs client-provided)
+
+---
+
+### FEAT-004: Widget conversation lifecycle improvements
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-16
+**Origin**: Moodle integration testing (2026-03-16)
+**Depends on**: BUG-010
+
+**Context**: After BUG-010 is fixed, the widget will support multi-turn conversations within a single page load. However, the `conversation_id` lives only in JS memory (`ApiClient._conversationId`) and is lost on page refresh, navigation, or tab close. Additionally, there is no explicit way for the user to start a fresh conversation. These are UX improvements to evaluate for the learn chatbot widget.
+
+**Areas to evaluate**:
+- **Persist conversation_id across page refresh**: use `sessionStorage` (scoped to tab) so refresh doesn't break the conversation. New tab = new conversation.
+- **Persist across same-course navigation**: if the student navigates between pages of the same course, the widget could maintain continuity via `sessionStorage` keyed by course_id.
+- **"New chat" button**: add a button in the widget header to explicitly reset the conversation. Clears `_conversationId` and message history in DOM.
+- **Token expiry vs conversation continuity**: when the JWT expires (1h default) and Moodle generates a new one, the conversation_id is not in the JWT — so old conversations remain accessible. Decide if this is desired or if token refresh should start a new conversation.
+- **Max idle timeout**: consider auto-starting a new conversation after N minutes of inactivity (e.g. 30min), even if the page stays open.
+
+**Traceability**: REQ-049, ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative, pending evaluation):
+- [ ] conversation_id survives page refresh within same tab
+- [ ] "New chat" button available in widget header
+- [ ] Decision documented on token expiry behavior
+- [ ] Decision documented on idle timeout behavior
+
+---
+
 ### FEAT-003: Optional enrollment — trust external identity providers for learn queries
 
 **Status**: in_progress | **Priority**: high | **Created**: 2026-03-16

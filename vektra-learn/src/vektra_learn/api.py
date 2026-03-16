@@ -11,7 +11,7 @@ import socket
 from collections.abc import AsyncGenerator
 from typing import Any
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import jwt
@@ -464,6 +464,13 @@ async def course_query(
     else:
         # Trust JWT: use explicit namespace claim, or fall back to course_id
         namespace = token_payload.get("namespace") or course_id
+
+    # Auto-generate conversation_id for multi-turn continuity (BUG-010).
+    # The widget sends the first query without a conversation_id; we create
+    # one server-side so the pipeline saves the turn and the response carries
+    # the ID back to the client for subsequent queries.
+    if req.conversation_id is None:
+        req = req.model_copy(update={"conversation_id": uuid4()})
 
     # Build course-scoped query and delegate to pipeline
     query_req = build_course_query(req, namespace=namespace, course_id=course_id)

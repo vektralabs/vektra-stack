@@ -319,6 +319,83 @@ class TestCourseQueryEnrollmentMode:
 
 
 # ---------------------------------------------------------------------------
+# Conversation auto-creation (BUG-010)
+# ---------------------------------------------------------------------------
+
+
+class TestConversationAutoCreation:
+    """Test that course_query auto-generates conversation_id when omitted."""
+
+    async def test_auto_generates_conversation_id_when_omitted(self):
+        """First query without conversation_id gets one auto-generated."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        req = CourseQueryRequest(question="What is ML?")
+        assert req.conversation_id is None
+
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = False
+        mock_pipeline = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response_id = uuid4()
+        mock_response.answer = "ML is..."
+        mock_response.sources = []
+        mock_response.conversation_id = uuid4()
+        mock_response.no_relevant_context = False
+        mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_pipeline
+        mock_app.state.registry = mock_registry
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        service = MagicMock()
+        session = AsyncMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        await course_query(req, mock_request, token_payload, service, session)
+
+        # Pipeline should have received a non-None conversation_id
+        call_args = mock_pipeline.execute.call_args[0][0]
+        assert call_args.conversation_id is not None
+
+    async def test_preserves_client_provided_conversation_id(self):
+        """When client provides conversation_id, use it as-is."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        existing_id = uuid4()
+        req = CourseQueryRequest(question="Follow up", conversation_id=existing_id)
+
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = False
+        mock_pipeline = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response_id = uuid4()
+        mock_response.answer = "Sure..."
+        mock_response.sources = []
+        mock_response.conversation_id = existing_id
+        mock_response.no_relevant_context = False
+        mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_pipeline
+        mock_app.state.registry = mock_registry
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        service = MagicMock()
+        session = AsyncMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        await course_query(req, mock_request, token_payload, service, session)
+
+        # Pipeline should have received the exact conversation_id provided
+        call_args = mock_pipeline.execute.call_args[0][0]
+        assert call_args.conversation_id == existing_id
+
+
+# ---------------------------------------------------------------------------
 # Error codes
 # ---------------------------------------------------------------------------
 

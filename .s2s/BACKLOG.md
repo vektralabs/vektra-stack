@@ -462,7 +462,57 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 ---
 
+### FEAT-005: LLM fallback for no-context queries (greetings, courtesies, off-topic)
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-17
+**Origin**: Moodle integration testing — greetings like "ciao", "buongiorno" trigger `no_relevant_context` and produce empty/unhelpful responses
+
+**Context**: Both `SimpleQueryPipeline` and `AdvancedQueryPipeline` short-circuit when no chunks pass the relevance threshold (`min_relevance_score`): they return `answer: null` + `no_relevant_context: true` without ever calling the LLM. This is correct for retrieval quality (ARCH-056, REQ-066) — the system should not hallucinate answers from non-relevant chunks.
+
+However, for the learn chatbot widget (and any conversational interface), this creates a poor UX for:
+- **Greetings and courtesies**: "ciao", "buongiorno", "come stai?" — the assistant should acknowledge and redirect to course materials
+- **Meta questions**: "chi sei?", "cosa puoi fare?" — the assistant should explain its role
+- **Off-topic but harmless**: "che ore sono?" — the assistant should politely decline
+
+The existing **query rewriting** (ADR-0023, `AdvancedQueryPipeline`) only activates when conversation history exists and resolves pronoun references — it does not help with greetings.
+
+The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) could catch prompt injection and abusive content at the `pre_query` stage, but with `VEKTRA_SAFEGUARD_MODE=passthrough` they are no-ops. Even with safeguards active, they filter/block — they don't generate friendly responses.
+
+**Proposed approach**: When `no_relevant_context` is detected, instead of short-circuiting, invoke the LLM with a modified system prompt that instructs it to respond to greetings, explain its role, and redirect to course-related questions — without fabricating information from missing context. This keeps the retrieval quality gate intact while allowing the LLM to handle conversational basics.
+
+**Alternatives considered**:
+- **Intent classification pre-retrieval**: separate LLM call to classify intent before retrieval. More precise but adds latency and cost for every query.
+- **Client-side pattern matching**: widget detects greetings and responds locally. Fragile, language-dependent, doesn't help other clients.
+
+**Traceability**: ARCH-056, REQ-066, ADR-0021, ADR-0025
+
+**Acceptance Criteria** (tentative):
+- [ ] Greetings/courtesies receive a friendly response acknowledging the user and explaining the assistant's role
+- [ ] Off-topic queries receive a polite redirect to course-related questions
+- [ ] The LLM is NOT given fabricated context — it knows no relevant chunks were found
+- [ ] Retrieval quality gate unchanged — `no_relevant_context` flag still set in QueryTrace
+- [ ] Safeguard hooks still apply (pre_query can block before LLM call)
+- [ ] Works with both SimpleQueryPipeline and AdvancedQueryPipeline
+- [ ] System prompt for no-context fallback is configurable via Jinja2 template
+
+---
+
 ## In Progress
+
+### BUG-011: Ingest pipeline does not generate sparse embeddings for hybrid search
+
+**Status**: in_progress | **Priority**: high | **Created**: 2026-03-17
+**Origin**: RAG tuning testing — combo B (hybrid search with BM25)
+
+**Context**: The `SparseEmbeddingProvider` (fastembed-bm25) is correctly registered at startup and the Qdrant collection is created with sparse vector support (`sparse` named vector with IDF modifier). However, the ingest pipeline (`vektra_ingest/pipeline.py` `run_ingest()`) only calls the dense `EmbeddingProvider.embed_documents()` and constructs `ChunkEmbedding` objects without the `sparse` field. The `ChunkEmbedding` dataclass already supports `sparse: SparseVector | None = None` and the Qdrant provider correctly stores sparse vectors when present (`qdrant.py:138-142`). The gap is solely in the ingest pipeline: it doesn't call `SparseEmbeddingProvider.embed_documents()`.
+
+The `AdvancedQueryPipeline` correctly calls `SparseEmbeddingProvider.embed_query()` at query time (step 2: `sparse_embed`), but finds no sparse vectors in the stored points, making hybrid search effectively dense-only.
+
+**Traceability**: ARCH-053, ADR-0021
+
+**Fix**: Add sparse embedding generation in `run_ingest()` between dense embedding and `ChunkEmbedding` construction. Check `registry.has("sparse_embedding", "default")`, call `embed_documents(texts)`, pass results as `sparse=` parameter.
+
+---
 
 ### BUG-010: Learn query endpoint does not auto-create conversation on first query
 

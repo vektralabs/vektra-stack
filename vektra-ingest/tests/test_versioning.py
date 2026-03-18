@@ -41,6 +41,7 @@ def _make_registry(*, embedding=None, vector_store=None, events=None):
         raise ValueError(f"Unknown category: {category}")
 
     mock_reg.get.side_effect = _get
+    mock_reg.has.return_value = False
     return mock_reg, default_embedding, default_vs
 
 

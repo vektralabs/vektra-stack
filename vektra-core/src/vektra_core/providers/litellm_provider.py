@@ -109,7 +109,7 @@ class LitellmProvider:
                 litellm.acompletion(
                     model=self._config.provider,
                     messages=[{"role": "user", "content": "ping"}],
-                    max_tokens=1,
+                    max_tokens=5,
                 ),
                 timeout=5.0,
             )

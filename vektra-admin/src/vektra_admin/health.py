@@ -115,22 +115,41 @@ async def _call_health_check(
 async def check_all(
     registry: Any, version: str
 ) -> tuple[ShallowHealthResponse, DeepHealthResponse]:
-    """Run all registered health checks and return both shallow and deep responses."""
+    """Run all registered health checks and return both shallow and deep responses.
+
+    The shallow (unauthenticated) check excludes the LLM component because:
+    - It makes a paid API call on every probe (Docker health checks run every 10s)
+    - External LLM availability shouldn't determine infrastructure health
+    - LLM health is still available on-demand via GET /health/llm
+    The deep (authenticated) check includes all components.
+    """
     import asyncio
 
-    names = registry.list("health")
-    tasks = [_call_health_check(name, registry.get("health", name)) for name in names]
-    components: list[ComponentHealth] = await asyncio.gather(*tasks)
-
-    overall = _aggregate_status([c.status for c in components])
+    # Shallow: infrastructure only (exclude LLM)
+    infra_names = [n for n in registry.list("health") if n != "llm"]
+    infra_tasks = [
+        _call_health_check(name, registry.get("health", name)) for name in infra_names
+    ]
+    infra_components: list[ComponentHealth] = await asyncio.gather(*infra_tasks)
+    shallow_status = _aggregate_status([c.status for c in infra_components])
     ts = datetime.now(UTC).isoformat()
+    shallow = ShallowHealthResponse(status=shallow_status, timestamp=ts)
 
-    shallow = ShallowHealthResponse(status=overall, timestamp=ts)
+    # Deep: all components including LLM
+    all_names = registry.list("health")
+    extra_names = [n for n in all_names if n not in infra_names]
+    extra_tasks = [
+        _call_health_check(name, registry.get("health", name)) for name in extra_names
+    ]
+    extra_components: list[ComponentHealth] = await asyncio.gather(*extra_tasks)
+    all_components = list(infra_components) + list(extra_components)
+    deep_status = _aggregate_status([c.status for c in all_components])
+
     deep = DeepHealthResponse(
-        status=overall,
+        status=deep_status,
         timestamp=ts,
         version=version,
-        components=list(components),
+        components=all_components,
     )
     return shallow, deep
 

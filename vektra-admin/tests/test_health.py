@@ -62,8 +62,34 @@ async def test_check_all_aggregates_correctly():
 
     shallow, deep = await check_all(registry, version="0.1.0")
 
+    # Shallow excludes LLM, so only embedding (degraded) is checked
     assert shallow.status == "degraded"
+    # Deep includes all components
     assert deep.status == "degraded"
+    assert len(deep.components) == 2
+
+
+async def test_check_all_shallow_excludes_llm():
+    """Shallow health check should not include LLM (external paid API)."""
+
+    async def unhealthy_llm():
+        return HealthStatus(status="unhealthy", message="api key expired")
+
+    async def healthy_embedding():
+        return HealthStatus(status="healthy", latency_ms=2)
+
+    registry = MagicMock()
+    registry.list.return_value = ["llm", "embedding"]
+    registry.get.side_effect = lambda cat, name: (
+        unhealthy_llm if name == "llm" else healthy_embedding
+    )
+
+    shallow, deep = await check_all(registry, version="0.1.0")
+
+    # Shallow should be healthy (LLM excluded)
+    assert shallow.status == "healthy"
+    # Deep should be unhealthy (LLM included)
+    assert deep.status == "unhealthy"
     assert len(deep.components) == 2
 
 

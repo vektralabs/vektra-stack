@@ -405,7 +405,9 @@ async def _step_10_learn_check(
     log.info("startup_step", step="learn_check", status="ok")
 
 
-async def _step_11_qdrant_check(settings: VektraSettings) -> None:
+async def _step_11_qdrant_check(
+    settings: VektraSettings, registry: ProviderRegistry
+) -> None:
     """ARCH-057 step 11 (Phase 2): Qdrant connectivity check (conditional)."""
     if settings.vector_store_provider != "qdrant":
         log.info("startup_step", step="qdrant_check", status="skipped")
@@ -418,9 +420,6 @@ async def _step_11_qdrant_check(settings: VektraSettings) -> None:
             resp = await client.get(f"{settings.qdrant_url}/healthz")
             if resp.status_code == 200:
                 # Ensure collection exists on startup
-                from vektra_shared.registry import ProviderRegistry
-
-                registry = ProviderRegistry.instance()
                 provider = registry.get("vector_store", "qdrant")
                 if hasattr(provider, "ensure_collection"):
                     await provider.ensure_collection()
@@ -489,7 +488,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ("template_loading", lambda: _step_8_template_check(settings)),
         ("analytics_check", lambda: _step_9_analytics_check(registry)),
         ("learn_check", lambda: _step_10_learn_check(settings, registry)),
-        ("qdrant_check", lambda: _step_11_qdrant_check(settings)),
+        ("qdrant_check", lambda: _step_11_qdrant_check(settings, registry)),
     ]
 
     step_1_ms = int((time.monotonic() - start_time) * 1000)

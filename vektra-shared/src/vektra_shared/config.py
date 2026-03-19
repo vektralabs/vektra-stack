@@ -26,6 +26,11 @@ class LLMConfig(BaseSettings):
         alias="VEKTRA_LLM_API_KEY",
         description="API key for the LLM provider. Not needed for Ollama.",
     )
+    api_base: str | None = Field(
+        None,
+        alias="VEKTRA_LLM_API_BASE",
+        description="Custom API base URL for OpenAI-compatible providers (e.g., vLLM).",
+    )
     fallback_model: str | None = Field(
         None,
         alias="VEKTRA_LLM_FALLBACK_MODEL",
@@ -409,6 +414,7 @@ class VektraSettings(BaseSettings):
         description="LLM model identifier in litellm format.",
     )
     llm_api_key: str | None = Field(None, alias="VEKTRA_LLM_API_KEY")
+    llm_api_base: str | None = Field(None, alias="VEKTRA_LLM_API_BASE")
     llm_fallback_model: str | None = Field(None, alias="VEKTRA_LLM_FALLBACK_MODEL")
     llm_fallback_timeout_ms: int = Field(60000, alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS")
     llm_context_only_enabled: bool = Field(
@@ -516,6 +522,7 @@ class VektraSettings(BaseSettings):
             {
                 "VEKTRA_LLM_PROVIDER": self.llm_provider,
                 "VEKTRA_LLM_API_KEY": self.llm_api_key,
+                "VEKTRA_LLM_API_BASE": self.llm_api_base,
                 "VEKTRA_LLM_FALLBACK_MODEL": self.llm_fallback_model,
                 "VEKTRA_LLM_FALLBACK_TIMEOUT_MS": self.llm_fallback_timeout_ms,
                 "VEKTRA_LLM_CONTEXT_ONLY_ENABLED": self.llm_context_only_enabled,

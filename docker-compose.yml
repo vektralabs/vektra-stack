@@ -70,7 +70,7 @@ services:
     volumes:
       - vektra_ollama:/root/.ollama
     ports:
-      - "127.0.0.1:11434:11434"
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:11434/api/tags"]
       interval: 30s
@@ -92,7 +92,7 @@ services:
     volumes:
       - vektra_qdrant:/qdrant/storage
     ports:
-      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:6333/healthz"]
       interval: 10s
@@ -115,7 +115,7 @@ services:
     volumes:
       - vektra_tei_cache:/data
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${TEI_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s

@@ -636,6 +636,30 @@ The document name is stored in the documents table at ingest time. The query pip
 
 ---
 
+### FEAT-013: Relevant snippet extraction for source citations
+
+**Status**: draft | **Priority**: low | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - source snippets show the start of the chunk, not the relevant passage
+
+**Context**: Source citations include a `snippet` field which is currently the beginning of the chunk text, truncated to a fixed length. The semantic or lexical match that caused the chunk to be selected may be anywhere in the chunk (middle, end), making the snippet preview uninformative. For example, a chunk matched on "fiscalita' internazionale" might show a snippet starting with "eta' invece che su se stessi..." which gives no useful context.
+
+**Proposed approach**: extract the most relevant portion of the chunk relative to the query. Options:
+
+1. **Keyword proximity**: find the position of query terms (or their stems) in the chunk text and extract a window around the highest-density region. Simple, fast, works for lexical matches. Similar to how search engines generate result snippets.
+2. **Embedding similarity on sub-segments**: split the chunk into overlapping windows, compute similarity of each window to the query embedding, pick the highest-scoring window. More accurate for semantic matches but adds compute cost.
+3. **Hybrid**: keyword proximity first (fast), fall back to start-of-chunk if no terms found (e.g., pure semantic match with no lexical overlap).
+
+Approach 1 (keyword proximity) is the best cost/benefit trade-off for a first implementation.
+
+**Traceability**: REQ-055 (citation traceability), ADR-0025
+
+**Acceptance Criteria** (tentative):
+- [ ] Snippet shows the most query-relevant portion of the chunk, not just the beginning
+- [ ] Extraction adds negligible latency (<5ms per source)
+- [ ] Falls back to start-of-chunk if no query terms are found in the chunk
+
+---
+
 ### FEAT-009: Widget token auto-refresh on expiry
 
 **Status**: draft | **Priority**: high | **Created**: 2026-03-20

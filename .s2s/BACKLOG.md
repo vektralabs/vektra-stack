@@ -534,21 +534,60 @@ The widget is deliberately vanilla JS with zero dependencies (ADR-0025). Adding 
 - A course may need domain-specific instructions ("when discussing legal cases, always cite the article number")
 - Info about the course, the professor, office hours, exam dates, etc.
 
-**Proposed approach**: Per-namespace prompt templates that layer on top of global ones:
+**Proposed approach**: Two complementary sources of template variables, plus per-namespace template override.
+
+### Template variable sources
+
+**A. Dynamic metadata via JWT claims (preferred for LMS integrations)**:
+The upstream system (Moodle, or any LMS/application) passes metadata in the token generation request. Vektra includes them as JWT claims. At query time, the pipeline extracts the claims and injects them as Jinja2 variables. This requires no storage in Vektra - data comes from the source system at each page load and is always up to date.
+
+Flow: `LMS page load -> read course/instructor info -> POST /learn/tokens { ..., metadata: { course_name, instructor, ... } } -> JWT claims -> query -> pipeline extracts claims -> template variables`
+
+This is LMS-agnostic: any system that calls the token endpoint can pass arbitrary key-value metadata. Moodle, Canvas, custom apps - all use the same mechanism.
+
+**B. Static metadata in Vektra database (fallback for non-LMS use cases)**:
+For namespaces not backed by an LMS (e.g., standalone knowledge bases, internal tools), metadata is stored in the namespace entity (ARCH-047) and managed via admin API. The pipeline reads namespace metadata at query time.
+
+**C. Merge strategy**: dynamic JWT claims take precedence over static DB metadata. Both are merged and passed to the Jinja2 context. A template can use variables from either source transparently.
+
+### Per-namespace template override
 
 1. **Resolution order**: namespace-specific template > global override (`VEKTRA_PROMPT_TEMPLATES_DIR`) > built-in default. If a namespace defines only `system.j2`, the global `context.j2` and `conversation.j2` still apply.
-2. **Storage**: namespace metadata in the database (already supported via ARCH-047 namespace entity). A `prompt_overrides` field or a dedicated `namespace_templates` table. Alternatively, a convention-based directory structure (`{PROMPT_TEMPLATES_DIR}/{namespace}/system.j2`).
+2. **Storage**: namespace templates stored in the database (via admin API) or as files in a convention-based directory structure (`{PROMPT_TEMPLATES_DIR}/{namespace}/system.j2`).
 3. **Management**: API endpoints for CRUD on namespace prompt templates (admin scope). In the learn vertical, the Moodle plugin or admin UI could expose this to course coordinators.
-4. **Template variables**: expose namespace metadata, course info, and any custom key-value pairs to the Jinja2 context so templates can reference `{{ course_name }}`, `{{ instructor }}`, etc.
 
-**Not in scope**: per-student templates (would be per-namespace only). Runtime template editing by students (admin/instructor only).
+### Example
+
+A Moodle plugin sends metadata at token generation:
+```json
+{ "student_id": "jdoe", "course_id": "calc-201", "metadata": {
+    "course_name": "Advanced Calculus",
+    "instructor": "Prof. Rossi",
+    "custom_instructions": "Guide students step by step, do not solve exercises directly."
+}}
+```
+
+The namespace `calc-201` has a custom `system.j2`:
+```jinja2
+You are the teaching assistant for {{ course_name }}, taught by {{ instructor }}.
+{{ custom_instructions }}
+Answer based on the provided context. Do not invent information.
+```
+
+If no custom template exists, the global system.j2 still has access to the same variables (they just won't be referenced unless the template uses them).
+
+**Not in scope**: per-student templates (per-namespace only). Runtime template editing by students (admin/instructor only).
 
 **Traceability**: ARCH-054, ADR-0020, ARCH-047 (namespace as first-class entity)
 
 **Acceptance Criteria** (tentative):
+- [ ] Token generation endpoint accepts optional `metadata` dict (arbitrary key-value pairs)
+- [ ] Metadata included as JWT claims, extracted at query time
+- [ ] Namespace can store static metadata in database (admin API)
+- [ ] JWT claims override DB metadata on key collision
+- [ ] All metadata available as Jinja2 template variables
 - [ ] Namespace can define custom system.j2 that overrides the global one
 - [ ] Missing namespace templates fall back to global, then built-in
-- [ ] Namespace metadata (custom key-value pairs) available as Jinja2 variables
 - [ ] API endpoints for managing namespace prompt templates (admin scope)
 - [ ] Existing global `VEKTRA_PROMPT_TEMPLATES_DIR` continues to work unchanged
 

@@ -616,6 +616,87 @@ This makes troubleshooting difficult: the admin sees "active" but students see n
 
 ---
 
+### FEAT-009: Widget token auto-refresh on expiry
+
+**Status**: draft | **Priority**: high | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - "invalid or expired dashboard token" after ~1h session
+
+**Context**: The JWT dashboard token has a 1h TTL (default). The token is generated server-side by the Moodle plugin (or any LMS) at page load and embedded in the widget via `data-token` attribute. Once expired, all subsequent queries fail with "signature has expired". The user must manually reload the page to get a fresh token.
+
+The widget stores the token as `this._token` (set once in constructor) and has no refresh mechanism. The problem is that token generation requires a server-side call with the admin API key (which the browser must never see), so the widget cannot generate a new token by itself.
+
+**Proposed approach**: a callback-based refresh mechanism:
+
+1. **Widget detects 401/token expired**: on receiving an auth error from the query endpoint, the widget invokes a configurable `onTokenExpired` callback instead of showing an error.
+2. **Host system provides refresh**: the Moodle plugin (or any host) registers a callback that fetches a new token server-side (e.g., AJAX call to a Moodle endpoint that calls Vektra's token API) and returns it to the widget.
+3. **Widget retries the query**: after receiving the fresh token, the widget updates `this._token` and retries the failed query transparently.
+4. **Fallback**: if no callback is registered or the refresh fails, show a user-friendly message ("Session expired, please reload the page").
+
+For Moodle specifically, the plugin would expose a lightweight AJAX endpoint (`/blocks/vektra/ajax.php`) that generates a new token using the stored API key, avoiding a full page reload.
+
+**Traceability**: ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget detects token expiry (401 response) and invokes `onTokenExpired` callback
+- [ ] If callback returns a new token, widget retries the failed query transparently
+- [ ] If no callback or refresh fails, user sees "session expired, reload page" message
+- [ ] Token refresh is invisible to the user (no UI interruption)
+- [ ] Host integration documented (Moodle plugin example)
+
+---
+
+### FEAT-010: Enable SSE streaming in widget
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - responses arrive as a single block, no progressive rendering
+
+**Context**: The widget's api-client.js already has a complete SSE streaming parser (lines 65-107) with `onToken`, `onSources`, `onDone` callbacks. The chat-ui.js has `createStreamMessage()` and `appendToken()` methods that progressively append text to the DOM. However, the query is sent with `stream: false` (hardcoded, line 33), so all responses arrive as a single JSON blob.
+
+Enabling streaming requires only changing `stream: false` to `stream: true`. The widget code is already wired for it. The backend learn query endpoint delegates to the query pipeline which supports `execute_stream()` (REQ-053).
+
+**Interaction with FEAT-007 (Markdown rendering)**: with streaming enabled, Markdown must be rendered incrementally. Two approaches: (a) accumulate tokens and re-render the full message on each token (simple, may flicker), (b) apply Markdown only when a paragraph/block boundary is detected (smoother but more complex). This is a FEAT-007 concern, not a blocker for enabling streaming.
+
+**Traceability**: REQ-053, ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget sends `stream: true` in query requests
+- [ ] Tokens appear progressively in the chat bubble as they arrive
+- [ ] Sources rendered after streaming completes
+- [ ] conversation_id captured from the `done` SSE event
+- [ ] Error handling works for mid-stream failures
+- [ ] No regression in non-streaming fallback (server returns JSON if streaming unavailable)
+
+---
+
+### FEAT-011: Per-course usage analytics for instructors (learn vertical)
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - no visibility into how students use the chatbot
+
+**Context**: vektra-analytics exists as a Phase 2 component for platform-level metrics (EX-007, deferred from Phase 1). However, it is oriented toward the Platform Operator persona with aggregate metrics, and REQ-051 explicitly prevents access to conversation content. There is no per-course/per-namespace analytics view accessible to instructors.
+
+For the e-learning vertical, instructors need to understand:
+- How many students are using the chatbot and how often
+- Which topics/questions are most common (aggregate, not per-student)
+- What percentage of queries result in `no_relevant_context` (indicates gaps in course materials)
+- Peak usage times (before exams, after lectures)
+- Average conversation length
+
+This does not violate REQ-051 if data is aggregated (no individual conversations exposed). The data source is QueryTrace (REQ-060) which already captures timing, chunk IDs, scores, and the no_relevant_context flag per query.
+
+**Proposed approach**: extend vektra-analytics with a per-namespace aggregation layer. Expose via API (admin or instructor-scoped token). In the learn vertical, surface through a simple dashboard (could be a Moodle page via the plugin, or the vektra admin UI).
+
+**Traceability**: EX-007, REQ-022, REQ-051, REQ-060, ARCH-062
+
+**Acceptance Criteria** (tentative):
+- [ ] Per-namespace query count, unique students, avg turns per conversation
+- [ ] no_relevant_context rate per namespace (material gap indicator)
+- [ ] Time-series data (daily/weekly granularity)
+- [ ] Accessible via API with namespace-scoped authorization
+- [ ] No individual conversation content exposed (REQ-051 compliance)
+
+---
+
 ## In Progress
 
 ### BUG-011: Ingest pipeline does not generate sparse embeddings for hybrid search

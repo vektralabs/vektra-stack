@@ -497,6 +497,29 @@ The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) c
 
 ---
 
+### FEAT-006: Widget error feedback when Vektra API is unreachable
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing on remote machine (2026-03-20)
+
+**Context**: When the chatbot widget JS (`vektra-chat.js`) cannot reach the Vektra API (missing SSH tunnel, CORS misconfiguration, Vektra container down), the floating chat button silently fails to appear. No error is shown to the user or the admin. The Moodle block still displays "AI Assistant is active" because the server-side token generation succeeded (PHP runs inside Docker, reaches Vektra on the internal network), but the browser-side widget cannot load or connect.
+
+This makes troubleshooting difficult: the admin sees "active" but students see nothing. The root cause (network/CORS/port) is invisible without opening browser dev tools.
+
+**Proposed approach**: The widget JS should detect load/connection failures and surface them:
+- If the script loads but cannot reach the API (fetch error, CORS block): show a subtle error state in the chat button or a dismissible banner
+- If the script itself fails to load (network error): the Moodle plugin could add a `<noscript>`-style fallback or an `onerror` handler on the script tag to display an admin-visible message
+
+**Traceability**: ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget shows visible feedback when Vektra API is unreachable from the browser
+- [ ] Admin users see a diagnostic message (not just silent failure)
+- [ ] Normal users see a non-technical "assistant unavailable" message
+- [ ] No false positives during normal page load latency
+
+---
+
 ## In Progress
 
 ### BUG-011: Ingest pipeline does not generate sparse embeddings for hybrid search

@@ -497,6 +497,30 @@ The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) c
 
 ---
 
+### FEAT-007: Markdown rendering in widget chat messages
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing (2026-03-20)
+
+**Context**: The learn chatbot widget (`vektra-chat.js`) renders all messages as plain text via `textContent`. LLM responses typically contain Markdown formatting (bold, italic, lists, code blocks, headings) which is displayed as raw syntax. This makes responses harder to read, especially for structured answers with bullet points or code examples.
+
+The widget is deliberately vanilla JS with zero dependencies (ADR-0025). Adding Markdown rendering requires either a lightweight library (e.g., `marked`, ~7KB minified) or a minimal custom parser for the most common patterns.
+
+**Scope**: only assistant messages need rendering. User messages stay as plain text. Sources section is already structured HTML.
+
+**Security**: rendered HTML must be sanitized to prevent XSS. The LLM output is not user-controlled but defense in depth applies. Use a sanitizer or restrict to a safe subset of HTML tags.
+
+**Traceability**: ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Assistant messages render bold, italic, lists (ordered/unordered), code inline/blocks, and headings
+- [ ] User messages remain plain text
+- [ ] Streaming tokens render progressively (Markdown applied incrementally or on completion)
+- [ ] Output is sanitized against XSS
+- [ ] Widget bundle size increase is documented and reasonable (<10KB)
+
+---
+
 ### FEAT-006: Widget error feedback when Vektra API is unreachable
 
 **Status**: draft | **Priority**: medium | **Created**: 2026-03-20

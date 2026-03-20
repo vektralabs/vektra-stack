@@ -191,11 +191,30 @@ export class ChatUI {
     const list = document.createElement("div");
     list.className = "vektra-chat-sources-list";
 
-    for (const src of sources) {
+    for (const [i, src] of sources.entries()) {
       const item = document.createElement("div");
       item.className = "vektra-chat-source-item";
       const score = typeof src.score === "number" ? src.score.toFixed(2) : "?";
-      item.textContent = `${src.snippet || src.chunk_id || "Source"} (${score})`;
+      const label = src.document_name || src.chunk_id || "Source";
+      const snippet = src.snippet ? src.snippet.trim().slice(0, 120) : "";
+
+      const num = document.createElement("span");
+      num.className = "vektra-chat-source-num";
+      num.textContent = `[${i + 1}]`;
+      item.appendChild(num);
+
+      const text = document.createElement("span");
+      text.className = "vektra-chat-source-text";
+      text.textContent = `${label} (${score})`;
+      item.appendChild(text);
+
+      if (snippet) {
+        const snip = document.createElement("div");
+        snip.className = "vektra-chat-source-snippet";
+        snip.textContent = snippet.length < 120 ? snippet : snippet + "\u2026";
+        item.appendChild(snip);
+      }
+
       list.appendChild(item);
     }
 

@@ -173,7 +173,25 @@ export function buildStyles(theme) {
   display: block;
 }
 .vektra-chat-source-item {
-  margin-top: 4px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 2px solid ${t.border};
+  font-size: 12px;
+  line-height: 1.4;
+}
+.vektra-chat-source-num {
+  font-weight: 600;
+  color: ${t.primary};
+  margin-right: 4px;
+}
+.vektra-chat-source-text {
+  color: ${t.text};
+}
+.vektra-chat-source-snippet {
+  color: ${t.textSecondary};
+  font-size: 11px;
+  margin-top: 2px;
+  font-style: italic;
 }
 
 .vektra-chat-input-area {

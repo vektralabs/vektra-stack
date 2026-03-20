@@ -616,6 +616,26 @@ This makes troubleshooting difficult: the admin sees "active" but students see n
 
 ---
 
+### FEAT-012: Include document name in query source citations
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - sources show chunk_id (UUID) instead of document name
+
+**Context**: The learn query response includes source citations with `doc_id`, `chunk_id`, `score`, and `snippet`. The widget renders these as `[1] chunk_id (score)` with a snippet preview. The `chunk_id` is a UUID which is meaningless to the user. The original document filename (e.g., "Escapologia Fiscale - 59 segreti.pdf") is not included in the source data.
+
+The document name is stored in the documents table at ingest time. The query pipeline retrieves chunks from the vector store which carry `document_id` in their metadata, but the pipeline does not join back to the documents table to resolve the filename before returning sources.
+
+**Proposed approach**: when building the `sources` list in the query response, resolve `document_id` to the document's original filename. Include as `document_name` field in each source object. The widget already handles this field (falls back to chunk_id if absent).
+
+**Traceability**: REQ-055 (response and citation traceability), ADR-0025
+
+**Acceptance Criteria** (tentative):
+- [ ] Each source in query response includes `document_name` (original filename)
+- [ ] Widget displays document name as primary label instead of chunk_id
+- [ ] No additional query latency (batch resolve or pre-join, not N+1)
+
+---
+
 ### FEAT-009: Widget token auto-refresh on expiry
 
 **Status**: draft | **Priority**: high | **Created**: 2026-03-20

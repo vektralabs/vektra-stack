@@ -692,6 +692,57 @@ The API still returns sources in the response regardless of the flag (useful for
 
 ---
 
+### FEAT-015: A/B testing support — RAG vs LLM-only via group-based namespace routing
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: instructor requirement to compare RAG-assisted vs LLM-only chatbot effectiveness with student groups
+
+**Context**: An instructor wants to run a controlled experiment: one group of students uses the chatbot with RAG (retrieval + LLM), another group uses LLM-only (no course materials in context). This enables measuring the impact of RAG on learning outcomes, answer quality, and student satisfaction.
+
+Moodle natively supports course groups. The Vektra platform already isolates data by namespace. Combining these two concepts enables A/B testing without pipeline modifications.
+
+### Phase 1: namespace-based routing (works with FEAT-005)
+
+Use two namespace variants for the same course:
+- `esc-100-rag`: normal pipeline, course materials ingested
+- `esc-100-direct`: empty namespace (no documents), relies on FEAT-005 (LLM fallback for no-context queries) to respond via LLM without retrieval grounding
+
+The Moodle plugin reads the student's group membership and maps it to the appropriate namespace variant in the token request. The pipeline behaves identically for both - the difference is only in whether the namespace has ingested content.
+
+**Required pieces**:
+1. **Moodle plugin**: read student group via Moodle groups API, pass group-derived namespace in token request metadata
+2. **Per-course config in Moodle**: instructor maps groups to namespace variants (e.g., "Group A -> esc-100-rag, Group B -> esc-100-direct")
+3. **FEAT-005 (prerequisite)**: LLM fallback when no_relevant_context, so the LLM-only group gets meaningful responses instead of "no information found"
+4. **FEAT-011 (complementary)**: per-namespace analytics to compare metrics between the two groups
+
+**Advantages**: no pipeline changes needed, analytics comparison is natural (per-namespace), works today once FEAT-005 is implemented.
+
+**Limitation**: the LLM-only group still goes through retrieval (which finds nothing), adding unnecessary latency.
+
+### Phase 2: explicit `skip_retrieval` namespace flag
+
+A per-namespace setting that instructs the pipeline to skip the retrieval step entirely. The LLM receives only the system prompt (potentially customized per-namespace via FEAT-008) without any context injection.
+
+This removes the unnecessary retrieval latency for LLM-only namespaces and makes the intent explicit in the configuration. The pipeline checks the flag before the retrieve step and jumps directly to prompt construction.
+
+**Traceability**: ARCH-056, ADR-0025, FEAT-005, FEAT-008, FEAT-011
+
+**Acceptance Criteria** (tentative):
+
+Phase 1 (namespace routing):
+- [ ] Moodle plugin reads student group and derives namespace variant
+- [ ] Per-course block config: instructor maps groups to namespace variants
+- [ ] Empty namespace + FEAT-005 produces meaningful LLM-only responses
+- [ ] Per-namespace analytics (FEAT-011) enable group comparison
+
+Phase 2 (skip_retrieval flag):
+- [ ] Per-namespace `skip_retrieval` boolean setting
+- [ ] Pipeline skips retrieve + rerank steps when flag is true
+- [ ] System prompt still applied (customizable via FEAT-008)
+- [ ] QueryTrace records that retrieval was skipped (not "no results found")
+
+---
+
 ### FEAT-009: Widget token auto-refresh on expiry
 
 **Status**: draft | **Priority**: high | **Created**: 2026-03-20

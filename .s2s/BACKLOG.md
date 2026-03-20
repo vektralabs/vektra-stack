@@ -521,6 +521,39 @@ The widget is deliberately vanilla JS with zero dependencies (ADR-0025). Adding 
 
 ---
 
+### FEAT-008: Per-namespace prompt template customization
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - generic system prompt not suitable for diverse course contexts
+
+**Context**: The current prompt template system (ARCH-054, ADR-0020) supports only global customization via `VEKTRA_PROMPT_TEMPLATES_DIR`. All namespaces share the same system.j2, context.j2, and conversation.j2. This is limiting for the e-learning vertical where each course (namespace) may have different needs:
+
+- A professor wants a specific greeting or tone ("you are the teaching assistant for Advanced Calculus, taught by Prof. Rossi")
+- A course requires answers in a specific language regardless of the student's UI language
+- Some courses want the assistant to refuse certain question types (e.g., "do not solve exercises directly, guide the student step by step")
+- A course may need domain-specific instructions ("when discussing legal cases, always cite the article number")
+- Info about the course, the professor, office hours, exam dates, etc.
+
+**Proposed approach**: Per-namespace prompt templates that layer on top of global ones:
+
+1. **Resolution order**: namespace-specific template > global override (`VEKTRA_PROMPT_TEMPLATES_DIR`) > built-in default. If a namespace defines only `system.j2`, the global `context.j2` and `conversation.j2` still apply.
+2. **Storage**: namespace metadata in the database (already supported via ARCH-047 namespace entity). A `prompt_overrides` field or a dedicated `namespace_templates` table. Alternatively, a convention-based directory structure (`{PROMPT_TEMPLATES_DIR}/{namespace}/system.j2`).
+3. **Management**: API endpoints for CRUD on namespace prompt templates (admin scope). In the learn vertical, the Moodle plugin or admin UI could expose this to course coordinators.
+4. **Template variables**: expose namespace metadata, course info, and any custom key-value pairs to the Jinja2 context so templates can reference `{{ course_name }}`, `{{ instructor }}`, etc.
+
+**Not in scope**: per-student templates (would be per-namespace only). Runtime template editing by students (admin/instructor only).
+
+**Traceability**: ARCH-054, ADR-0020, ARCH-047 (namespace as first-class entity)
+
+**Acceptance Criteria** (tentative):
+- [ ] Namespace can define custom system.j2 that overrides the global one
+- [ ] Missing namespace templates fall back to global, then built-in
+- [ ] Namespace metadata (custom key-value pairs) available as Jinja2 variables
+- [ ] API endpoints for managing namespace prompt templates (admin scope)
+- [ ] Existing global `VEKTRA_PROMPT_TEMPLATES_DIR` continues to work unchanged
+
+---
+
 ### FEAT-006: Widget error feedback when Vektra API is unreachable
 
 **Status**: draft | **Priority**: medium | **Created**: 2026-03-20

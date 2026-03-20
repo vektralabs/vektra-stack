@@ -660,6 +660,38 @@ Approach 1 (keyword proximity) is the best cost/benefit trade-off for a first im
 
 ---
 
+### FEAT-014: Configurable source citation visibility
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - source citations may not be appropriate for all courses
+
+**Context**: The widget always displays source citations (document/chunk reference, relevance score, snippet) below each assistant response. Some instructors may prefer to hide them:
+
+- Raw chunk text and filenames may confuse students or expose internal naming conventions
+- Relevance scores are technical and meaningless to most students
+- Some courses may use the chatbot as a conversational tutor where citations break the flow
+- Compliance or IP reasons may require hiding the source material references
+
+**Proposed approach**: a `show_sources` boolean flag configurable at two levels:
+
+1. **Global default**: platform-level setting (e.g., `VEKTRA_LEARN_SHOW_SOURCES=true` env var or admin config). Default: `true` (current behavior).
+2. **Per-namespace override**: stored as namespace metadata (FEAT-008) or passed as JWT claim by the LMS. Takes precedence over the global default.
+
+The flag is passed to the widget either as a `data-show-sources` attribute on the script tag (set by the host plugin based on course config) or included in the token/query response. The widget simply skips rendering the sources section when disabled.
+
+The API still returns sources in the response regardless of the flag (useful for analytics, debugging, QueryTrace). The visibility is a presentation concern handled by the widget.
+
+**Traceability**: ADR-0025, ARCH-063, FEAT-008
+
+**Acceptance Criteria** (tentative):
+- [ ] Global `show_sources` setting with default `true`
+- [ ] Per-namespace override (metadata or JWT claim)
+- [ ] Widget hides sources section when flag is `false`
+- [ ] API response still includes sources regardless (no data loss)
+- [ ] Moodle plugin exposes the setting in per-course block configuration
+
+---
+
 ### FEAT-009: Widget token auto-refresh on expiry
 
 **Status**: draft | **Priority**: high | **Created**: 2026-03-20

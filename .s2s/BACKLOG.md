@@ -660,6 +660,45 @@ Approach 1 (keyword proximity) is the best cost/benefit trade-off for a first im
 
 ---
 
+### FEAT-016: White-label widget customization (name, colors, branding)
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: vertical deployment requirements - universities and organizations need chatbot with their own branding
+
+**Context**: The widget currently supports only `theme` (light/dark) and `language` (en/it) as visual customization. Everything else is hardcoded: title ("Course Assistant"), primary color (#2563eb blue), icon (speech bubble emoji), and no welcome message. ADR-0025 defines the `data-*` attribute contract as the configuration API, and the "configuration over fork" principle requires that customization happens via config, not code changes.
+
+For vertical deployments (e.g., a university running Vektra for their students), the chatbot should be brandable to match the institution's identity. The same applies to any organization deploying Vektra as infrastructure behind their own product.
+
+**Proposed customization points** (all via `data-*` attributes and/or JWT claims via FEAT-008):
+
+| Attribute | Default | Example |
+|-----------|---------|---------|
+| `data-title` | "Course Assistant" / i18n | "Assistente DEH-ALMA" |
+| `data-primary-color` | `#2563eb` | `#8B0000` (university red) |
+| `data-icon` | speech bubble emoji | URL to institution logo |
+| `data-welcome-message` | (none) | "Ciao! Sono l'assistente del corso." |
+| `data-powered-by` | (none) | "Powered by Vektra" or hidden |
+
+**Implementation approach**:
+1. **Widget**: read additional `data-*` attributes, apply as CSS custom properties for colors, override title/icon from attributes. Minimal code change since styles already use template variables.
+2. **Per-namespace config**: branding stored as namespace metadata (FEAT-008) or passed via JWT claims. The host plugin (Moodle or other) reads them and sets the `data-*` attributes on the script tag.
+3. **Fallback chain**: `data-*` attribute > namespace metadata > global default > hardcoded. Consistent with FEAT-008 merge strategy.
+
+**Interaction with Phase 3 npm extraction**: the `data-*` API is the stable contract between phases (ADR-0025). Adding more attributes is backward-compatible. The npm package would expose the same config.
+
+**Traceability**: ADR-0025, ARCH-063, FEAT-008
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget title configurable via `data-title`
+- [ ] Primary color configurable via `data-primary-color` (button, links, accents)
+- [ ] Icon/logo configurable via `data-icon` (URL or emoji)
+- [ ] Optional welcome message on first open via `data-welcome-message`
+- [ ] All customization points available via namespace metadata / JWT claims (FEAT-008)
+- [ ] Missing attributes fall back to current defaults (no breaking change)
+- [ ] Light/dark theme still works with custom primary color
+
+---
+
 ### FEAT-014: Configurable source citation visibility
 
 **Status**: draft | **Priority**: medium | **Created**: 2026-03-20

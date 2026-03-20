@@ -667,14 +667,29 @@ The core API (`POST /api/v1/query`) has the same design — it's documented as "
 **Areas to evaluate**:
 - **Persist conversation_id across page refresh**: use `sessionStorage` (scoped to tab) so refresh doesn't break the conversation. New tab = new conversation.
 - **Persist across same-course navigation**: if the student navigates between pages of the same course, the widget could maintain continuity via `sessionStorage` keyed by course_id.
+- **Reload message history on page load**: when a persisted conversation_id is found in sessionStorage, fetch the conversation turns from the API and render them in the chat panel before the user types anything. This restores the visual context of the previous conversation.
 - **"New chat" button**: add a button in the widget header to explicitly reset the conversation. Clears `_conversationId` and message history in DOM.
 - **Token expiry vs conversation continuity**: when the JWT expires (1h default) and Moodle generates a new one, the conversation_id is not in the JWT — so old conversations remain accessible. Decide if this is desired or if token refresh should start a new conversation.
 - **Max idle timeout**: consider auto-starting a new conversation after N minutes of inactivity (e.g. 30min), even if the page stays open.
 
+### API requirement: conversation turn retrieval
+
+The backend stores conversation turns in the database (used for multi-turn query rewriting) but does not currently expose them via API. `GET /conversations/{id}` returns only metadata (turn_count, title, timestamps), not the messages.
+
+**Needed**: `GET /api/v1/conversations/{conversation_id}/turns` endpoint that returns the list of turns (question + answer pairs). The JWT already contains student_id and course_id, so the endpoint can verify the requester owns the conversation. This endpoint is a prerequisite for history reload in the widget.
+
+**Current state of conversation storage**:
+- Turns are saved by the query pipeline after each successful response
+- `GET /conversations/{id}` exists but returns only `ConversationMetadata` (id, namespace_id, turn_count, title, created_at, updated_at)
+- No endpoint to retrieve the actual turn content (question/answer pairs)
+
 **Traceability**: REQ-049, ADR-0025, ARCH-063
 
 **Acceptance Criteria** (tentative, pending evaluation):
-- [ ] conversation_id survives page refresh within same tab
+- [ ] `GET /conversations/{id}/turns` endpoint returns ordered list of question/answer pairs
+- [ ] Endpoint validates JWT ownership (student_id + namespace match)
+- [ ] conversation_id survives page refresh within same tab (sessionStorage)
+- [ ] Widget reloads and renders previous messages on page load when conversation_id is found
 - [ ] "New chat" button available in widget header
 - [ ] Decision documented on token expiry behavior
 - [ ] Decision documented on idle timeout behavior

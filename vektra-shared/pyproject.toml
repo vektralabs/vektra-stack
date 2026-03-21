@@ -1,6 +1,6 @@
 [project]
 name = "vektra-shared"
-version = "0.2.0-dev"
+version = "0.3.0"
 description = "Shared protocols and types for the Vektra platform"
 readme = "README.md"
 requires-python = ">=3.12"

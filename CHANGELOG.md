@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-03-21
+
+E-learning vertical refinements, widget UX improvements, and Phase 2 stabilization.
+
+### Added
+
+- **vektra-learn**: optional enrollment mode (`VEKTRA_LEARN_REQUIRE_ENROLLMENT`) for LMS integrations where enrollment sync is not yet configured
+- **vektra-learn**: collapsible source citations in chatbot widget with accessibility (aria-controls, focus-visible)
+- **vektra-learn**: i18n support for source fallback labels (en/it)
+- **vektra-core**: `VEKTRA_LLM_API_BASE` config for OpenAI-compatible providers (vLLM, etc.)
+- **vektra-ingest**: sparse embedding count validation (fail-fast, consistent with dense path)
+- **docker-compose**: parameterized host ports for optional services (Qdrant, TEI)
+
+### Fixed
+
+- **vektra-learn**: auto-generate conversation_id for multi-turn continuity (BUG-010)
+- **vektra-learn**: validate course_id claim in JWT before namespace resolution
+- **vektra-learn**: show fallback message when no relevant context found
+- **vektra-learn**: destructure onNoRelevantContext callback in widget API client
+- **vektra-ingest**: generate sparse embeddings for hybrid search (BUG-011)
+- **vektra-admin**: guard uninitialized registry in health check (prevents 500 during startup)
+- **vektra-core**: pass registry to qdrant_check startup validation step (ARCH-057)
+- **widget**: fix snippet truncation and ellipsis detection
+- **widget**: improve source citation readability
+
+### Changed
+
+- Default configuration updated to Combo D (RAG tuning report winning config): advanced pipeline, paraphrase-multilingual-MiniLM-L12-v2 embeddings, 2048 response token reserve, 60s fallback timeout
+- Streaming responses now emit QueryTrace via SSE (DEBT-002)
+- post_retrieval safeguard boundary now called in both execute and stream paths (DEBT-003)
+
+### Security
+
+- API key verification uses TTLCache instead of plaintext LRU cache (DEBT-008)
+
+## [0.2.0] - 2026-03-15
+
+Phase 2: advanced RAG pipeline, multi-tenant isolation, hybrid search, analytics, admin UI, and e-learning vertical.
+
+### Added
+
+- **vektra-shared**: SparseEmbeddingProvider and SparseVector protocols, WebhookEventEmitter, Phase 2 config fields (rewrite, rerank, webhook, learn)
+- **vektra-core**: AdvancedQueryPipeline with query rewriting, cross-encoder reranking, and hybrid search routing; Presidio-based PII safeguard with content modification; persistent conversations with pgcrypto encryption; feedback and citation-feedback APIs; streaming QueryTrace
+- **vektra-ingest**: OCR support via Unstructured extractor; dual-strategy chunking (text + table preservation); batch ingestion and deletion; Markdown extraction; document version tracking; phase-aware job lifecycle
+- **vektra-index**: Qdrant vector store provider; BM25 sparse embeddings via fastembed; hybrid search (dense + sparse); reindex API with atomic version switching
+- **vektra-admin**: PostgreSQL RLS enforcement for namespace isolation; scope checking (admin/ingest/query/monitor); rate-limiting middleware; TTL cache for key verification; HTMX + Jinja2 admin dashboard (ADR-0024) with health, keys, namespaces, and audit views
+- **vektra-analytics**: QueryTrace storage and retrieval; per-namespace metrics aggregation; retention cleanup
+- **vektra-learn**: LMS-agnostic API for enrollment, token generation, and course-scoped queries; JWT-based course isolation; chatbot widget as backend-served JS bundle (ADR-0025)
+- **Infrastructure**: TEI and Qdrant Docker Compose profiles; reindex and batch-ingest operator scripts; 11-step startup validation sequence (ARCH-057)
+- **Database**: 4 new migrations (Phase 2 tables, RLS policies, hybrid search columns, learn tables)
+- **ADRs**: ADR-0022 (SQLAlchemy async), ADR-0023 (query rewriting), ADR-0024 (admin UI), ADR-0025 (learn widget)
+
+### Fixed
+
+- Safeguard pre_query/post_retrieval/pre_response boundaries fully wired
+- Conversation persistence made best-effort (non-blocking)
+- Qdrant collection creation race condition handled
+- Namespace binding enforced on stats and reindex endpoints
+- Audit pagination cursor with microsecond precision
+- Non-object JSON guard in RLS namespace resolution
+
+### Changed
+
+- Embedding model default: all-MiniLM-L6-v2 to paraphrase-multilingual-MiniLM-L12-v2
+- Query pipeline default: simple to advanced
+- pydantic capped to <3 across all components
+
 ## [0.1.0] - 2026-02-27
 
 Phase 1 MVP: from `git clone` to first RAG query in under 30 minutes.

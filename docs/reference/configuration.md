@@ -107,9 +107,9 @@ These are standard provider environment variables recognized by litellm. `VEKTRA
 |----------|------|---------|-------------|
 | `VEKTRA_ADMIN_BOOTSTRAP_KEY` | str | - | Single-use credential for creating the first API key. Consumed after first use. |
 | `VEKTRA_ENV` | str | `development` | Environment mode. In `production`, non-TLS connections are rejected. |
-| `VEKTRA_SAFEGUARD_MODE` | str | `passthrough` | Safeguard implementation: `passthrough` (Phase 1), `presidio`, `guardrails-ai` (Phase 2) |
-| `VEKTRA_MULTI_TENANT` | bool | `false` | Activate PostgreSQL RLS binding. Phase 1: false (application-level namespace filtering). |
-| `VEKTRA_CONVERSATION_KEY` | str | - | Symmetric encryption key for conversation content. Phase 2 only. |
+| `VEKTRA_SAFEGUARD_MODE` | str | `passthrough` | Safeguard implementation: `passthrough`, `presidio`, `guardrails-ai` |
+| `VEKTRA_MULTI_TENANT` | bool | `false` | Activate PostgreSQL RLS binding for namespace isolation |
+| `VEKTRA_CONVERSATION_KEY` | str | - | Symmetric encryption key for conversation content |
 | `VEKTRA_PII_CHUNK_THRESHOLD` | int | `3` | PII entity count threshold per chunk for post_retrieval filtering. Presidio mode only. |
 
 ## Webhooks
@@ -134,7 +134,7 @@ These are standard provider environment variables recognized by litellm. `VEKTRA
 | `VEKTRA_MAX_CONVERSATION_TURNS` | int | `10` | Maximum conversation history turns retained per conversation |
 | `VEKTRA_AUDIT_RETENTION_DAYS` | int | `90` | Audit log retention period in days |
 | `VEKTRA_RETENTION_DAYS` | int | - | Soft-deleted record retention period (cleanup job) |
-| `VEKTRA_ANALYTICS_RETENTION_DAYS` | int | - | QueryTrace storage retention days. Phase 2 only. |
+| `VEKTRA_ANALYTICS_RETENTION_DAYS` | int | - | QueryTrace storage retention days |
 | `VEKTRA_EVAL_MODE` | bool | `false` | Enable temporary text capture for batch RAG evaluation (staging only) |
 
 ## Server
@@ -161,9 +161,9 @@ These are standard provider environment variables recognized by litellm. `VEKTRA
 
 | Category | Count |
 |----------|-------|
-| VEKTRA_* variables (across VektraSettings + Phase 2 sub-configs) | 53 |
+| VEKTRA_* variables (across VektraSettings + sub-configs) | 53 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
 | **Total documented** | **57** |
 
-The 53 VEKTRA_* variables are declared across `VektraSettings` (Phase 1 flat aggregation) and Phase 2 sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Phase 2 sub-configs are validated independently at startup, not aggregated into VektraSettings. Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
+The 53 VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.

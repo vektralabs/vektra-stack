@@ -44,7 +44,7 @@ Every error response uses this shape:
 | Code | Category | HTTP | Message | Remediation |
 |------|----------|------|---------|-------------|
 | ERR-AUTH-001 | PERMANENT | 401 | Token is missing, malformed, unrecognized, or revoked | Include a valid API key as Bearer token. Create a new key via POST /api/v1/api-keys if revoked. |
-| ERR-AUTH-002 | PERMANENT | 401 | Token has expired | Refresh or create a new API key. (Phase 2, reserved.) |
+| ERR-AUTH-002 | PERMANENT | 401 | Token has expired | Refresh or create a new API key. (Reserved, not yet enforced.) |
 | ERR-AUTH-003 | PERMANENT | 403 | Insufficient scope for requested operation | Use an API key with the required scope, or request one from your administrator. |
 
 ### Ingest errors

@@ -100,6 +100,8 @@ _METHOD_VERBS = {
     "DELETE": "delete",
 }
 
+_HELPER_TAILS = frozenset({"create", "delete", "revoke", "update"})
+
 
 def _derive_action(method: str, path: str) -> str:
     """Derive a human-readable action from HTTP method and path.
@@ -110,8 +112,7 @@ def _derive_action(method: str, path: str) -> str:
     verb = _METHOD_VERBS.get(method.upper(), method.lower())
     # Use the last meaningful path segment (strip /api/v1/ prefix and IDs)
     segments = [s for s in path.strip("/").split("/") if s and not _is_uuid_like(s)]
-    _helper_segments = {"create", "delete", "revoke", "update"}
-    if len(segments) >= 2 and segments[-1] in _helper_segments:
+    if len(segments) >= 2 and segments[-1] in _HELPER_TAILS:
         resource = segments[-2]
     else:
         resource = segments[-1] if segments else "unknown"

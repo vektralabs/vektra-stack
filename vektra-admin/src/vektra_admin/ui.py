@@ -441,8 +441,11 @@ async def namespaces_create(
     session.add(ns)
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
+        pgcode = getattr(getattr(exc, "orig", None), "pgcode", None)
+        if pgcode != "23505":
+            raise
         namespaces = await _load_namespaces(session)
         return templates.TemplateResponse(
             request=request,

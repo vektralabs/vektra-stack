@@ -43,15 +43,14 @@ class TestTTLCacheHitMiss:
             assert _verify_cache[(key_hash, plaintext)] is True
 
     @pytest.mark.asyncio
-    async def test_cache_populated_for_failed_verify(self):
-        """Failed verifications should also be cached (False value)."""
+    async def test_failed_verify_not_cached(self):
+        """Failed verifications should NOT be cached (prevents cache poisoning)."""
         _, key_hash, _ = generate_key()
         wrong_token = "wrong_token_abc"
         await verify_key(wrong_token, key_hash)
 
         with _cache_lock:
-            assert (key_hash, wrong_token) in _verify_cache
-            assert _verify_cache[(key_hash, wrong_token)] is False
+            assert (key_hash, wrong_token) not in _verify_cache
 
     @pytest.mark.asyncio
     async def test_cache_hit_returns_same_result(self):

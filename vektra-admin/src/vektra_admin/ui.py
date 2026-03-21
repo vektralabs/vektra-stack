@@ -183,8 +183,11 @@ async def login_submit(request: Request) -> Response:
 
 
 @ui_router.get("/logout")
-async def logout(request: Request) -> Response:
-    """Clear cookie and redirect to login."""
+async def logout(
+    request: Request,
+    _auth: ApiKeyInfo = Depends(_require_admin_ui),
+) -> Response:
+    """Clear cookie and redirect to login (authenticated for audit trail)."""
     response = RedirectResponse(url="/admin/login", status_code=303)
     response.delete_cookie(_COOKIE_NAME)
     return response
@@ -436,7 +439,22 @@ async def namespaces_create(
 
     ns = NamespaceOrm(id=name, display_name=display_name)
     session.add(ns)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        namespaces = await _load_namespaces(session)
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/namespaces_table.html",
+            context={
+                "namespaces": namespaces,
+                "flash": {
+                    "type": "error",
+                    "message": f"Namespace '{name}' already exists.",
+                },
+            },
+        )
 
     namespaces = await _load_namespaces(session)
     return templates.TemplateResponse(

@@ -220,7 +220,7 @@ class PgvectorProvider:
             ), 0.0)
         """)
 
-        score_col = sparse_score_sql.columns(score=Float).label("score")
+        score_col = sparse_score_sql.columns(score=Float).c.score.label("score")
 
         stmt = (
             select(

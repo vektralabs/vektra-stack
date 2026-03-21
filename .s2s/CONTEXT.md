@@ -46,7 +46,7 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 ## Cross-Cutting Concerns
 
 <!-- Populated by /s2s:design -->
-- **Authentication**: API key authentication with argon2id hashing, scoped permissions (admin/ingest/query per REQ-031, multiple scopes per key). Single trust boundary at vektra-core gateway. Rate limiting slot in middleware (Phase 2 enforcement). See [ADR-0010](decisions/ADR-0010-authentication-gateway.md).
+- **Authentication**: API key authentication with argon2id hashing, scoped permissions (admin/ingest/query per REQ-031, multiple scopes per key). Single trust boundary at vektra-core gateway. Rate limiting enforced via per-key RPM in middleware. See [ADR-0010](decisions/ADR-0010-authentication-gateway.md).
 - **Authorization**: Namespace isolation via PostgreSQL RLS policies. Application-level filtering for Phase 1, RLS binding via feature flag for multi-tenant activation. Namespace as first-class entity with metadata (ARCH-047). See [ADR-0009](decisions/ADR-0009-namespace-isolation-rls.md).
 - **Logging**: structlog with JSON output, PII redaction processors. Correlation ID propagation across sync calls and arq jobs. OpenTelemetry spans at module boundaries. QueryTrace (ARCH-041) for RAG-specific observability, separate from audit log.
 - **Monitoring**: Prometheus metrics on /metrics via starlette-prometheus. Hierarchical health endpoints (GET /health, GET /health/{component}). Memory observability via GET /health/memory.
@@ -60,18 +60,18 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 
 | Component | Role | Phase |
 |-----------|------|-------|
-| vektra-core | RAG engine, LLM abstraction, conversation management, safeguards | 1 |
-| vektra-ingest | Document processing pipeline (PDF, OCR, PPT, Word) | 1 |
-| vektra-index | Vector store abstraction, embedding, semantic search | 1 |
-| vektra-analytics | Metrics aggregation, reporting API, alerting | 2 |
-| vektra-learn | E-learning vertical backend (LMS-agnostic) | 2 |
-| vektra-admin | System administration interface | 1 (minimal), 2 (full) |
+| vektra-core | RAG engine, LLM abstraction, conversation management, safeguards, advanced pipeline | 1, 2 |
+| vektra-ingest | Document processing pipeline (PDF, OCR, PPT, Word), versioning, batch ops | 1, 2 |
+| vektra-index | Vector store abstraction, embedding, hybrid search (dense+sparse) | 1, 2 |
+| vektra-analytics | QueryTrace storage, metrics aggregation, reporting API | 2 (completed) |
+| vektra-learn | E-learning vertical backend (LMS-agnostic), chatbot widget | 2 (completed) |
+| vektra-admin | System administration interface (HTMX + Jinja2 dashboard) | 1 (minimal), 2 (full) |
 
 ### Separate repositories
 
 | Component | Role | Reason | Phase |
 |-----------|------|--------|-------|
-| vektra-moodle | Moodle LMS adapter (PHP plugin) | PHP, Moodle Plugin Directory, different lifecycle | 2 |
+| vektra-moodle | Moodle LMS adapter (PHP plugin) | PHP, Moodle Plugin Directory, different lifecycle | 2 (not started) |
 | vektra-sdk-py | Python SDK | Published to PyPI, independent versioning | 3 |
 | vektra-sdk-js | JavaScript/TypeScript SDK | Published to npm, independent versioning | 3 |
 
@@ -103,12 +103,12 @@ vektra-moodle ──────────────── (integrates learn
 
 See [requirements.md](requirements.md) for the complete Software Requirements Specification.
 
-**Key Phase 1 deliverables**:
+**Key deliverables**:
 - 60 approved functional requirements (REQ-001 to REQ-065, some IDs unused)
 - 5 business rules
 - 13 non-functional requirements (8 HARD, 5 TARGET)
-- 14 explicit exclusions (Phase 2/3 deferrals)
-- 7 open questions (1 resolved, remainder deferred to design or Phase 2)
+- 14 explicit exclusions (7 resolved in Phase 2, 7 remaining for Phase 3+)
+- 7 open questions (4 resolved)
 
 **Primary user persona**: Platform Operator (DevOps/platform teams)
 **MVP exit criterion**: 30 minutes from git clone to successful query
@@ -119,7 +119,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 **Architectural style**: Modular monolith for Phase 1. Single deployable container with internal package boundaries. See [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md).
 
-**Deployment**: Docker Compose stack: vektra + postgres (always), ollama (profile: local-llm), qdrant (profile: qdrant, Phase 2). See [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md), [ADR-0012](decisions/ADR-0012-docker-compose-spec.md).
+**Deployment**: Docker Compose stack: vektra + postgres (always), ollama (profile: local-llm), qdrant (profile: qdrant). See [ADR-0004](decisions/ADR-0004-minimal-docker-compose-stack.md), [ADR-0012](decisions/ADR-0012-docker-compose-spec.md).
 
 **Key technology choices**:
 - Web framework: FastAPI 0.115+ with Pydantic v2
@@ -127,20 +127,20 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - Embeddings: sentence-transformers (all-MiniLM-L6-v2) via EmbeddingProvider Protocol
 - Vector store: pgvector (PostgreSQL extension) via VectorStoreProvider Protocol
 - Background tasks: arq with PostgreSQL job persistence
-- PDF extraction: pdfplumber (Phase 1), Unstructured (Phase 2) via DocumentExtractor Protocol
+- PDF extraction: pdfplumber (default), Unstructured (optional, INSTALL_UNSTRUCTURED=true) via DocumentExtractor Protocol
 - Content type detection: python-magic (magic bytes)
 - ORM: SQLAlchemy 2.0 async with asyncpg (ORM models internal to modules, Pydantic models as public API)
 
 **Protocol interfaces** (9 defined in vektra_shared):
 - LLMProvider: multi-provider LLM abstraction with graceful degradation
 - EmbeddingProvider: shared embedding generation with asymmetric model support
-- SparseEmbeddingProvider: sparse vector generation for hybrid search (ARCH-053). Phase 1: not registered. Phase 2: BM25 or SPLADE via fastembed
-- VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning, raw_filters escape hatch, full-store contract (ARCH-051), provider-specific atomicity (ARCH-052). Phase 2 candidate: Qdrant
-- DocumentExtractor: PDF, Word, PowerPoint extraction with extended element classification (10 ElementType values)
-- ChunkingStrategy: pluggable chunking (fixed-size Phase 1, dual-strategy Phase 2)
-- QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace. Phase 2: AdvancedQueryPipeline with query rewriting (ARCH-061), reranking, hybrid search
+- SparseEmbeddingProvider: sparse vector generation for hybrid search (ARCH-053). Phase 1: not registered. Phase 2: FastEmbedBM25Provider via fastembed
+- VectorStoreProvider: pluggable vector store with SearchMode, metadata filtering, index versioning, raw_filters escape hatch, full-store contract (ARCH-051), provider-specific atomicity (ARCH-052). Phase 2: QdrantVectorStoreProvider with native DENSE/SPARSE/HYBRID
+- DocumentExtractor: PDF, Word, PowerPoint extraction with extended element classification (10 ElementType values). Phase 2: UnstructuredExtractor with OCR support
+- ChunkingStrategy: pluggable chunking. FixedSizeChunking (Phase 1), DualStrategyChunking with semantic splitting (Phase 2)
+- QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace. Phase 2: AdvancedQueryPipeline with query rewriting (ARCH-061), reranking, hybrid search (implemented)
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
-- EventEmitter: internal event hooks (NoOp Phase 1, webhooks Phase 2)
+- EventEmitter: internal event hooks. NoOpEventEmitter (Phase 1), LogEventEmitter (Phase 2)
 
 **Key decisions** (64 total, 25 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1
@@ -173,4 +173,4 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 ---
 
-*Last updated: 2026-03-01*
+*Last updated: 2026-03-14*

@@ -35,6 +35,28 @@ logger = logging.getLogger(__name__)
 _RRF_K = 60
 
 
+def _is_timeout(exc: BaseException) -> bool:
+    """Detect timeout-like exceptions from qdrant-client (HTTP or gRPC).
+
+    qdrant-client wraps transport exceptions:
+    - HTTP: ResponseHandlingException with httpx.TimeoutException as .source
+    - gRPC: grpc.aio.AioRpcError with DEADLINE_EXCEEDED status
+    Python's built-in TimeoutError is also caught as a safety net.
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    # HTTP transport: ResponseHandlingException wrapping httpx timeout
+    exc_type = type(exc).__name__
+    if exc_type == "ResponseHandlingException":
+        source = getattr(exc, "source", None)
+        return source is not None and "timeout" in type(source).__name__.lower()
+    # gRPC transport: AioRpcError with DEADLINE_EXCEEDED
+    if exc_type == "AioRpcError":
+        code = getattr(exc, "code", lambda: None)()
+        return code is not None and str(code) == "StatusCode.DEADLINE_EXCEEDED"
+    return False
+
+
 def _import_qdrant() -> Any:
     """Import qdrant_client with a clear error message if missing."""
     try:
@@ -93,20 +115,27 @@ class QdrantVectorStoreProvider:
         if self._collection_name in existing:
             return
 
-        await self._client.create_collection(
-            collection_name=self._collection_name,
-            vectors_config={
-                "dense": models.VectorParams(
-                    size=self._dense_dimensions,
-                    distance=models.Distance.COSINE,
-                ),
-            },
-            sparse_vectors_config={
-                "sparse": models.SparseVectorParams(
-                    modifier=models.Modifier.IDF,
-                ),
-            },
-        )
+        try:
+            await self._client.create_collection(
+                collection_name=self._collection_name,
+                vectors_config={
+                    "dense": models.VectorParams(
+                        size=self._dense_dimensions,
+                        distance=models.Distance.COSINE,
+                    ),
+                },
+                sparse_vectors_config={
+                    "sparse": models.SparseVectorParams(
+                        modifier=models.Modifier.IDF,
+                    ),
+                },
+            )
+        except Exception:
+            # Race: another replica may have created it between our check and create.
+            collections = await self._client.get_collections()
+            if self._collection_name not in {c.name for c in collections.collections}:
+                raise
+            return
         logger.info("Created Qdrant collection: %s", self._collection_name)
 
     async def store(
@@ -161,8 +190,20 @@ class QdrantVectorStoreProvider:
                 points=points,
                 wait=True,
             )
-        except Exception:
-            # Compensating delete on partial failure (ARCH-052)
+        except Exception as exc:
+            if _is_timeout(exc):
+                # On timeout, Qdrant may have already persisted the points.
+                # Compensating delete would cause data loss. Log and re-raise
+                # so the caller can retry (idempotent via deterministic IDs).
+                logger.warning(
+                    "qdrant_store_timeout, skipping compensating delete for %d points "
+                    "(upsert may have succeeded server-side)",
+                    len(point_ids),
+                )
+                raise
+
+            # Non-timeout error: Qdrant explicitly rejected the batch.
+            # Safe to run compensating delete (ARCH-052).
             logger.warning(
                 "qdrant_store_failed, executing compensating delete for %d points",
                 len(point_ids),

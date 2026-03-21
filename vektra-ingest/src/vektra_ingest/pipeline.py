@@ -386,6 +386,14 @@ async def run_ingest(
         if registry.has("sparse_embedding", "default"):
             sparse_provider = registry.get("sparse_embedding", "default")
             sparse_vectors = await sparse_provider.embed_documents(texts)
+            if len(sparse_vectors) != len(all_chunks):
+                raise IngestError(
+                    error_code=ERR_INGEST_004,
+                    message=(
+                        f"Sparse embedding count mismatch: got {len(sparse_vectors)} "
+                        f"embeddings for {len(all_chunks)} chunks."
+                    ),
+                )
 
         # Build ChunkEmbedding objects with document_id in metadata
         _extra = extra_metadata or {}

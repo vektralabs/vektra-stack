@@ -82,6 +82,10 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ADMIN-002 | vektra-admin | 404 | API key not found |
 | ERR-ADMIN-003 | vektra-admin | 409 | API key already revoked |
 | ERR-SAFEGUARD-001 | vektra-core | 400 | Query blocked by safeguard pre-check |
+| ERR-LEARN-001 | vektra-learn | 503 | Learn service unavailable or pipeline not configured |
+| ERR-LEARN-002 | vektra-learn | 404 | No enrollment found for student in course |
+| ERR-LEARN-003 | vektra-learn | 401 | Dashboard token missing required course_id claim |
+| ERR-LEARN-004 | vektra-learn | 422 | Invalid learn request (missing fields, bad format) |
 
 ## Adding new error codes
 

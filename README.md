@@ -84,7 +84,7 @@ See [ROADMAP.md](ROADMAP.md) for the full development plan.
 | Phase | Focus | Status |
 |-------|-------|--------|
 | Phase 1 | MVP (core + ingest + index + minimal admin) | Complete |
-| Phase 2 | Verticals (learn + moodle + analytics) | Planned |
+| Phase 2 | Verticals (learn + moodle + analytics) | Complete |
 | Phase 3 | Ecosystem (SDKs, plugins) | Planned |
 
 ## Documentation

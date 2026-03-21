@@ -19,7 +19,8 @@ uv run pre-commit install
 
 # Run all unit tests
 uv run pytest vektra-shared/tests/ vektra-core/tests/ vektra-ingest/tests/ \
-              vektra-index/tests/ vektra-admin/tests/ -v -m "not integration"
+              vektra-index/tests/ vektra-admin/tests/ vektra-analytics/tests/ \
+              vektra-learn/tests/ -v -m "not integration"
 ```
 
 ## Development tools
@@ -174,15 +175,18 @@ Two AI reviewers comment on PRs automatically:
 
 ## Module boundaries
 
-The five components are strictly isolated. Cross-component imports are enforced by
+The eight components are strictly isolated. Cross-component imports are enforced by
 import-linter and will fail CI:
 
 ```text
-vektra_shared  ←  everything may import this
-vektra_core    ←  no imports from admin/ingest/index
-vektra_ingest  ←  no imports from admin/core/index
-vektra_index   ←  no imports from admin/core/ingest
-vektra_admin   ←  no imports from core/ingest/index
+vektra_shared     <-  everything may import this
+vektra_core       <-  no imports from admin/ingest/index/analytics/learn
+vektra_ingest     <-  no imports from admin/core/index/analytics/learn
+vektra_index      <-  no imports from admin/core/ingest/analytics/learn
+vektra_admin      <-  no imports from core/ingest/index/analytics/learn
+vektra_analytics  <-  no imports from core/ingest/index/admin/learn
+vektra_learn      <-  no imports from core/ingest/index/admin/analytics
+vektra_app        <-  may import all (assembly layer)
 ```
 
 If a component needs functionality from another, it should go through a Protocol interface

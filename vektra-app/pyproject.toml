@@ -1,6 +1,6 @@
 [project]
 name = "vektra-app"
-version = "0.2.0-dev"
+version = "0.3.0"
 description = "FastAPI application assembly and startup validation (ARCH-015, ARCH-057)"
 readme = "README.md"
 requires-python = ">=3.12"

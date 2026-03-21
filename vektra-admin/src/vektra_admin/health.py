@@ -125,6 +125,15 @@ async def check_all(
     """
     import asyncio
 
+    # Guard: registry may be None during startup (health probe before init completes)
+    if registry is None:
+        ts = datetime.now(UTC).isoformat()
+        shallow = ShallowHealthResponse(status="degraded", timestamp=ts)
+        deep = DeepHealthResponse(
+            status="degraded", timestamp=ts, version=version, components=[]
+        )
+        return shallow, deep
+
     # Shallow: infrastructure only (exclude LLM)
     infra_names = [n for n in registry.list("health") if n != "llm"]
     infra_tasks = [

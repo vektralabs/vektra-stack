@@ -193,8 +193,8 @@ export class ChatUI {
 
     const list = document.createElement("div");
     list.className = "vektra-chat-sources-list";
-    this._sourcesSeq = (this._sourcesSeq || 0) + 1;
-    const listId = `vektra-sources-${this._sourcesSeq}`;
+    ChatUI._sourcesSeq = (ChatUI._sourcesSeq || 0) + 1;
+    const listId = `vektra-sources-${ChatUI._sourcesSeq}`;
     list.id = listId;
     toggle.setAttribute("aria-controls", listId);
 

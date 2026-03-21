@@ -165,6 +165,11 @@ export function buildStyles(theme) {
 .vektra-chat-sources-toggle:hover {
   text-decoration: underline;
 }
+.vektra-chat-sources-toggle:focus-visible {
+  outline: 2px solid ${t.primary};
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 .vektra-chat-sources-list {
   display: none;
   margin-top: 4px;

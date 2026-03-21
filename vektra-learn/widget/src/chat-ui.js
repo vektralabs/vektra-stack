@@ -183,6 +183,7 @@ export class ChatUI {
     container.className = "vektra-chat-sources";
 
     const toggle = document.createElement("button");
+    toggle.type = "button";
     toggle.className = "vektra-chat-sources-toggle";
     toggle.textContent = `${this._lang.sources} (${sources.length})`;
     toggle.setAttribute("aria-expanded", "false");
@@ -190,6 +191,9 @@ export class ChatUI {
 
     const list = document.createElement("div");
     list.className = "vektra-chat-sources-list";
+    const listId = `vektra-sources-${Date.now().toString(36)}`;
+    list.id = listId;
+    toggle.setAttribute("aria-controls", listId);
 
     for (const [i, src] of sources.entries()) {
       const item = document.createElement("div");

@@ -107,7 +107,7 @@ class LitellmProvider:
             yield CompletionChunk(content=content, done=finish is not None)
 
     async def health_check(self) -> HealthStatus:
-        """Probe the primary model with a 1-token completion (5-second timeout)."""
+        """Probe the primary model with a short completion (5-second timeout)."""
         start = time.monotonic()
         try:
             await asyncio.wait_for(

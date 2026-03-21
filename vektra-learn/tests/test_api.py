@@ -175,6 +175,7 @@ class TestCourseQueryEnrollmentMode:
         with pytest.raises(HTTPException) as exc_info:
             await course_query(req, mock_request, token_payload, service, session)
         assert exc_info.value.status_code == 401
+        assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-003"
 
     async def test_query_with_enrollment_required_and_enrolled(self):
         """When enrollment is required and exists, namespace comes from enrollment."""
@@ -244,6 +245,7 @@ class TestCourseQueryEnrollmentMode:
         with pytest.raises(HTTPException) as exc_info:
             await course_query(req, mock_request, token_payload, service, session)
         assert exc_info.value.status_code == 404
+        assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-002"
 
     async def test_query_without_enrollment_uses_course_id_as_namespace(self):
         """When enrollment is not required and JWT has no namespace, use course_id."""
@@ -354,11 +356,13 @@ class TestConversationAutoCreation:
         session = AsyncMock()
         token_payload = {"sub": "s1", "course_id": "CS101"}
 
-        await course_query(req, mock_request, token_payload, service, session)
+        result = await course_query(req, mock_request, token_payload, service, session)
 
         # Pipeline should have received a non-None conversation_id
         call_args = mock_pipeline.execute.call_args[0][0]
         assert call_args.conversation_id is not None
+        # Return value should carry the conversation_id back to the client
+        assert result.conversation_id == mock_response.conversation_id
 
     async def test_preserves_client_provided_conversation_id(self):
         """When client provides conversation_id, use it as-is."""
@@ -388,11 +392,13 @@ class TestConversationAutoCreation:
         session = AsyncMock()
         token_payload = {"sub": "s1", "course_id": "CS101"}
 
-        await course_query(req, mock_request, token_payload, service, session)
+        result = await course_query(req, mock_request, token_payload, service, session)
 
         # Pipeline should have received the exact conversation_id provided
         call_args = mock_pipeline.execute.call_args[0][0]
         assert call_args.conversation_id == existing_id
+        # Return value should carry the same conversation_id
+        assert result.conversation_id == existing_id
 
 
 # ---------------------------------------------------------------------------

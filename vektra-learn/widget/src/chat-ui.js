@@ -196,7 +196,10 @@ export class ChatUI {
       item.className = "vektra-chat-source-item";
       const score = typeof src.score === "number" ? src.score.toFixed(2) : "?";
       const label = src.document_name || src.chunk_id || "Source";
-      const snippet = src.snippet ? src.snippet.trim().slice(0, 120) : "";
+      const rawSnippet = typeof src.snippet === "string" ? src.snippet.trim() : "";
+      const maxLen = 120;
+      const snippet = rawSnippet.slice(0, maxLen);
+      const truncated = rawSnippet.length > maxLen;
 
       const num = document.createElement("span");
       num.className = "vektra-chat-source-num";
@@ -211,7 +214,7 @@ export class ChatUI {
       if (snippet) {
         const snip = document.createElement("div");
         snip.className = "vektra-chat-source-snippet";
-        snip.textContent = snippet.length < 120 ? snippet : snippet + "\u2026";
+        snip.textContent = truncated ? snippet + "\u2026" : snippet;
         item.appendChild(snip);
       }
 

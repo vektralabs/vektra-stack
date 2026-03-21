@@ -53,7 +53,7 @@ def _is_timeout(exc: BaseException) -> bool:
     # gRPC transport: AioRpcError with DEADLINE_EXCEEDED
     if exc_type == "AioRpcError":
         code = getattr(exc, "code", lambda: None)()
-        return code is not None and str(code) == "StatusCode.DEADLINE_EXCEEDED"
+        return code is not None and "DEADLINE_EXCEEDED" in str(code)
     return False
 
 

@@ -62,6 +62,7 @@ case "${FILENAME##*.}" in
   pdf)  CONTENT_TYPE="application/pdf" ;;
   docx) CONTENT_TYPE="application/vnd.openxmlformats-officedocument.wordprocessingml.document" ;;
   pptx) CONTENT_TYPE="application/vnd.openxmlformats-officedocument.presentationml.presentation" ;;
+  md)   CONTENT_TYPE="text/markdown" ;;
   *)    CONTENT_TYPE="application/octet-stream" ;;
 esac
 

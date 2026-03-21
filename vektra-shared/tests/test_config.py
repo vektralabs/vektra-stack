@@ -22,7 +22,7 @@ class TestLLMConfig:
         assert cfg.provider == "ollama/llama3"
         assert cfg.api_key is None
         assert cfg.fallback_model is None
-        assert cfg.fallback_timeout_ms == 30000
+        assert cfg.fallback_timeout_ms == 60000
         assert cfg.context_only_enabled is True
 
     def test_all_fields(self) -> None:
@@ -162,7 +162,7 @@ class TestVektraSettings:
     def test_defaults_with_required_only(self) -> None:
         s = self._make()
         assert s.llm_provider == "ollama/llama3"
-        assert s.embedding_model == "all-MiniLM-L6-v2"
+        assert s.embedding_model == "paraphrase-multilingual-MiniLM-L12-v2"
         assert s.port == 8000
 
     def test_context_chunk_ratio_valid(self) -> None:

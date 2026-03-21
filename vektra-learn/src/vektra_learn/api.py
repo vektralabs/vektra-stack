@@ -11,7 +11,7 @@ import socket
 from collections.abc import AsyncGenerator
 from typing import Any
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import jwt
@@ -425,23 +425,52 @@ async def course_query(
 
     Extracts course_id and namespace from the token, scopes the query
     to the course, and delegates to the query pipeline.
+
+    When VEKTRA_LEARN_REQUIRE_ENROLLMENT is false, enrollment lookup is
+    skipped and namespace is derived from the JWT (namespace claim or
+    course_id fallback). This supports LMS integrations where enrollment
+    is managed externally.
     """
-    course_id = token_payload.get("course_id", "")
+    course_id = token_payload.get("course_id")
     student_id = token_payload.get("sub", "")
 
-    # Look up namespace from enrollment
-    enrollments = await service.list_enrollments(
-        session, course_id=course_id, student_id=student_id, limit=1
-    )
-    if not enrollments:
+    if not course_id:
         err = ErrorResponse(
             category=ErrorCategory.PERMANENT,
-            code=ERR_LEARN_002,
-            message=f"No enrollment found for student '{student_id}' in course '{course_id}'.",
-            remediation="Ensure the student is enrolled before querying.",
+            code=ERR_LEARN_003,
+            message="Dashboard token is missing 'course_id' claim.",
+            remediation="Request a new dashboard token with a valid 'course_id'.",
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
-    namespace = enrollments[0].namespace
+
+    require_enrollment = getattr(request.app.state, "learn_require_enrollment", True)
+
+    if require_enrollment:
+        # Look up namespace from enrollment
+        enrollments = await service.list_enrollments(
+            session, course_id=course_id, student_id=student_id, limit=1
+        )
+        if not enrollments:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_002,
+                message=f"No enrollment found for student '{student_id}' in course '{course_id}'.",
+                remediation="Ensure the student is enrolled before querying.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
+        namespace = enrollments[0].namespace
+    else:
+        # Trust JWT: use explicit namespace claim, or fall back to course_id
+        namespace = token_payload.get("namespace") or course_id
+
+    # Auto-generate conversation_id for multi-turn continuity (BUG-010).
+    # The widget sends the first query without a conversation_id; we create
+    # one server-side so the pipeline saves the turn and the response carries
+    # the ID back to the client for subsequent queries.
+    if req.conversation_id is None:
+        req = req.model_copy(update={"conversation_id": uuid4()})
 
     # Build course-scoped query and delegate to pipeline
     query_req = build_course_query(req, namespace=namespace, course_id=course_id)

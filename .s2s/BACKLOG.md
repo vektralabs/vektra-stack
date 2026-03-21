@@ -462,13 +462,527 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 
 ---
 
+### FEAT-005: LLM fallback for no-context queries (greetings, courtesies, off-topic)
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-17
+**Origin**: Moodle integration testing — greetings like "ciao", "buongiorno" trigger `no_relevant_context` and produce empty/unhelpful responses
+
+**Context**: Both `SimpleQueryPipeline` and `AdvancedQueryPipeline` short-circuit when no chunks pass the relevance threshold (`min_relevance_score`): they return `answer: null` + `no_relevant_context: true` without ever calling the LLM. This is correct for retrieval quality (ARCH-056, REQ-066) — the system should not hallucinate answers from non-relevant chunks.
+
+However, for the learn chatbot widget (and any conversational interface), this creates a poor UX for:
+- **Greetings and courtesies**: "ciao", "buongiorno", "come stai?" — the assistant should acknowledge and redirect to course materials
+- **Meta questions**: "chi sei?", "cosa puoi fare?" — the assistant should explain its role
+- **Off-topic but harmless**: "che ore sono?" — the assistant should politely decline
+
+The existing **query rewriting** (ADR-0023, `AdvancedQueryPipeline`) only activates when conversation history exists and resolves pronoun references — it does not help with greetings.
+
+The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) could catch prompt injection and abusive content at the `pre_query` stage, but with `VEKTRA_SAFEGUARD_MODE=passthrough` they are no-ops. Even with safeguards active, they filter/block — they don't generate friendly responses.
+
+**Proposed approach**: When `no_relevant_context` is detected, instead of short-circuiting, invoke the LLM with a modified system prompt that instructs it to respond to greetings, explain its role, and redirect to course-related questions — without fabricating information from missing context. This keeps the retrieval quality gate intact while allowing the LLM to handle conversational basics.
+
+**Alternatives considered**:
+- **Intent classification pre-retrieval**: separate LLM call to classify intent before retrieval. More precise but adds latency and cost for every query.
+- **Client-side pattern matching**: widget detects greetings and responds locally. Fragile, language-dependent, doesn't help other clients.
+
+**Traceability**: ARCH-056, REQ-066, ADR-0021, ADR-0025
+
+**Acceptance Criteria** (tentative):
+- [ ] Greetings/courtesies receive a friendly response acknowledging the user and explaining the assistant's role
+- [ ] Off-topic queries receive a polite redirect to course-related questions
+- [ ] The LLM is NOT given fabricated context — it knows no relevant chunks were found
+- [ ] Retrieval quality gate unchanged — `no_relevant_context` flag still set in QueryTrace
+- [ ] Safeguard hooks still apply (pre_query can block before LLM call)
+- [ ] Works with both SimpleQueryPipeline and AdvancedQueryPipeline
+- [ ] System prompt for no-context fallback is configurable via Jinja2 template
+
+---
+
+### FEAT-007: Markdown rendering in widget chat messages
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing (2026-03-20)
+
+**Context**: The learn chatbot widget (`vektra-chat.js`) renders all messages as plain text via `textContent`. LLM responses typically contain Markdown formatting (bold, italic, lists, code blocks, headings) which is displayed as raw syntax. This makes responses harder to read, especially for structured answers with bullet points or code examples.
+
+The widget is deliberately vanilla JS with zero dependencies (ADR-0025). Adding Markdown rendering requires either a lightweight library (e.g., `marked`, ~7KB minified) or a minimal custom parser for the most common patterns.
+
+**Scope**: only assistant messages need rendering. User messages stay as plain text. Sources section is already structured HTML.
+
+**Security**: rendered HTML must be sanitized to prevent XSS. The LLM output is not user-controlled but defense in depth applies. Use a sanitizer or restrict to a safe subset of HTML tags.
+
+**Traceability**: ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Assistant messages render bold, italic, lists (ordered/unordered), code inline/blocks, and headings
+- [ ] User messages remain plain text
+- [ ] Streaming tokens render progressively (Markdown applied incrementally or on completion)
+- [ ] Output is sanitized against XSS
+- [ ] Widget bundle size increase is documented and reasonable (<10KB)
+
+---
+
+### FEAT-008: Per-namespace prompt template customization
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - generic system prompt not suitable for diverse course contexts
+
+**Context**: The current prompt template system (ARCH-054, ADR-0020) supports only global customization via `VEKTRA_PROMPT_TEMPLATES_DIR`. All namespaces share the same system.j2, context.j2, and conversation.j2. This is limiting for the e-learning vertical where each course (namespace) may have different needs:
+
+- A professor wants a specific greeting or tone ("you are the teaching assistant for Advanced Calculus, taught by Prof. Rossi")
+- A course requires answers in a specific language regardless of the student's UI language
+- Some courses want the assistant to refuse certain question types (e.g., "do not solve exercises directly, guide the student step by step")
+- A course may need domain-specific instructions ("when discussing legal cases, always cite the article number")
+- Info about the course, the professor, office hours, exam dates, etc.
+
+**Proposed approach**: Two complementary sources of template variables, plus per-namespace template override.
+
+### Template variable sources
+
+**A. Dynamic metadata via JWT claims (preferred for LMS integrations)**:
+The upstream system (Moodle, or any LMS/application) passes metadata in the token generation request. Vektra includes them as JWT claims. At query time, the pipeline extracts the claims and injects them as Jinja2 variables. This requires no storage in Vektra - data comes from the source system at each page load and is always up to date.
+
+Flow: `LMS page load -> read course/instructor info -> POST /learn/tokens { ..., metadata: { course_name, instructor, ... } } -> JWT claims -> query -> pipeline extracts claims -> template variables`
+
+This is LMS-agnostic: any system that calls the token endpoint can pass arbitrary key-value metadata. Moodle, Canvas, custom apps - all use the same mechanism.
+
+**B. Static metadata in Vektra database (fallback for non-LMS use cases)**:
+For namespaces not backed by an LMS (e.g., standalone knowledge bases, internal tools), metadata is stored in the namespace entity (ARCH-047) and managed via admin API. The pipeline reads namespace metadata at query time.
+
+**C. Merge strategy**: dynamic JWT claims take precedence over static DB metadata. Both are merged and passed to the Jinja2 context. A template can use variables from either source transparently.
+
+### Per-namespace template override
+
+1. **Resolution order**: namespace-specific template > global override (`VEKTRA_PROMPT_TEMPLATES_DIR`) > built-in default. If a namespace defines only `system.j2`, the global `context.j2` and `conversation.j2` still apply.
+2. **Storage**: namespace templates stored in the database (via admin API) or as files in a convention-based directory structure (`{PROMPT_TEMPLATES_DIR}/{namespace}/system.j2`).
+3. **Management**: API endpoints for CRUD on namespace prompt templates (admin scope). In the learn vertical, the Moodle plugin or admin UI could expose this to course coordinators.
+
+### Example
+
+A Moodle plugin sends metadata at token generation:
+```json
+{ "student_id": "jdoe", "course_id": "calc-201", "metadata": {
+    "course_name": "Advanced Calculus",
+    "instructor": "Prof. Rossi",
+    "custom_instructions": "Guide students step by step, do not solve exercises directly."
+}}
+```
+
+The namespace `calc-201` has a custom `system.j2`:
+```jinja2
+You are the teaching assistant for {{ course_name }}, taught by {{ instructor }}.
+{{ custom_instructions }}
+Answer based on the provided context. Do not invent information.
+```
+
+If no custom template exists, the global system.j2 still has access to the same variables (they just won't be referenced unless the template uses them).
+
+**Not in scope**: per-student templates (per-namespace only). Runtime template editing by students (admin/instructor only).
+
+**Traceability**: ARCH-054, ADR-0020, ARCH-047 (namespace as first-class entity)
+
+**Acceptance Criteria** (tentative):
+- [ ] Token generation endpoint accepts optional `metadata` dict (arbitrary key-value pairs)
+- [ ] Metadata included as JWT claims, extracted at query time
+- [ ] Namespace can store static metadata in database (admin API)
+- [ ] JWT claims override DB metadata on key collision
+- [ ] All metadata available as Jinja2 template variables
+- [ ] Namespace can define custom system.j2 that overrides the global one
+- [ ] Missing namespace templates fall back to global, then built-in
+- [ ] API endpoints for managing namespace prompt templates (admin scope)
+- [ ] Existing global `VEKTRA_PROMPT_TEMPLATES_DIR` continues to work unchanged
+
+---
+
+### FEAT-006: Widget error feedback when Vektra API is unreachable
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing on remote machine (2026-03-20)
+
+**Context**: When the chatbot widget JS (`vektra-chat.js`) cannot reach the Vektra API (missing SSH tunnel, CORS misconfiguration, Vektra container down), the floating chat button silently fails to appear. No error is shown to the user or the admin. The Moodle block still displays "AI Assistant is active" because the server-side token generation succeeded (PHP runs inside Docker, reaches Vektra on the internal network), but the browser-side widget cannot load or connect.
+
+This makes troubleshooting difficult: the admin sees "active" but students see nothing. The root cause (network/CORS/port) is invisible without opening browser dev tools.
+
+**Proposed approach**: The widget JS should detect load/connection failures and surface them:
+- If the script loads but cannot reach the API (fetch error, CORS block): show a subtle error state in the chat button or a dismissible banner
+- If the script itself fails to load (network error): the Moodle plugin could add a `<noscript>`-style fallback or an `onerror` handler on the script tag to display an admin-visible message
+
+**Traceability**: ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget shows visible feedback when Vektra API is unreachable from the browser
+- [ ] Admin users see a diagnostic message (not just silent failure)
+- [ ] Normal users see a non-technical "assistant unavailable" message
+- [ ] No false positives during normal page load latency
+
+---
+
+### FEAT-012: Include document name in query source citations
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - sources show chunk_id (UUID) instead of document name
+
+**Context**: The learn query response includes source citations with `doc_id`, `chunk_id`, `score`, and `snippet`. The widget renders these as `[1] chunk_id (score)` with a snippet preview. The `chunk_id` is a UUID which is meaningless to the user. The original document filename (e.g., "Escapologia Fiscale - 59 segreti.pdf") is not included in the source data.
+
+The document name is stored in the documents table at ingest time. The query pipeline retrieves chunks from the vector store which carry `document_id` in their metadata, but the pipeline does not join back to the documents table to resolve the filename before returning sources.
+
+**Proposed approach**: when building the `sources` list in the query response, resolve `document_id` to the document's original filename. Include as `document_name` field in each source object. The widget already handles this field (falls back to chunk_id if absent).
+
+**Traceability**: REQ-055 (response and citation traceability), ADR-0025
+
+**Acceptance Criteria** (tentative):
+- [ ] Each source in query response includes `document_name` (original filename)
+- [ ] Widget displays document name as primary label instead of chunk_id
+- [ ] No additional query latency (batch resolve or pre-join, not N+1)
+
+---
+
+### FEAT-013: Relevant snippet extraction for source citations
+
+**Status**: draft | **Priority**: low | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - source snippets show the start of the chunk, not the relevant passage
+
+**Context**: Source citations include a `snippet` field which is currently the beginning of the chunk text, truncated to a fixed length. The semantic or lexical match that caused the chunk to be selected may be anywhere in the chunk (middle, end), making the snippet preview uninformative. For example, a chunk matched on "fiscalita' internazionale" might show a snippet starting with "eta' invece che su se stessi..." which gives no useful context.
+
+**Proposed approach**: extract the most relevant portion of the chunk relative to the query. Options:
+
+1. **Keyword proximity**: find the position of query terms (or their stems) in the chunk text and extract a window around the highest-density region. Simple, fast, works for lexical matches. Similar to how search engines generate result snippets.
+2. **Embedding similarity on sub-segments**: split the chunk into overlapping windows, compute similarity of each window to the query embedding, pick the highest-scoring window. More accurate for semantic matches but adds compute cost.
+3. **Hybrid**: keyword proximity first (fast), fall back to start-of-chunk if no terms found (e.g., pure semantic match with no lexical overlap).
+
+Approach 1 (keyword proximity) is the best cost/benefit trade-off for a first implementation.
+
+**Traceability**: REQ-055 (citation traceability), ADR-0025
+
+**Acceptance Criteria** (tentative):
+- [ ] Snippet shows the most query-relevant portion of the chunk, not just the beginning
+- [ ] Extraction adds negligible latency (<5ms per source)
+- [ ] Falls back to start-of-chunk if no query terms are found in the chunk
+
+---
+
+### FEAT-016: White-label widget customization (name, colors, branding)
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: vertical deployment requirements - universities and organizations need chatbot with their own branding
+
+**Context**: The widget currently supports only `theme` (light/dark) and `language` (en/it) as visual customization. Everything else is hardcoded: title ("Course Assistant"), primary color (#2563eb blue), icon (speech bubble emoji), and no welcome message. ADR-0025 defines the `data-*` attribute contract as the configuration API, and the "configuration over fork" principle requires that customization happens via config, not code changes.
+
+For vertical deployments (e.g., a university running Vektra for their students), the chatbot should be brandable to match the institution's identity. The same applies to any organization deploying Vektra as infrastructure behind their own product.
+
+**Proposed customization points** (all via `data-*` attributes and/or JWT claims via FEAT-008):
+
+| Attribute | Default | Example |
+|-----------|---------|---------|
+| `data-title` | "Course Assistant" / i18n | "Assistente DEH-ALMA" |
+| `data-primary-color` | `#2563eb` | `#8B0000` (university red) |
+| `data-icon` | speech bubble emoji | URL to institution logo |
+| `data-welcome-message` | (none) | "Ciao! Sono l'assistente del corso." |
+| `data-powered-by` | (none) | "Powered by Vektra" or hidden |
+
+**Implementation approach**:
+1. **Widget**: read additional `data-*` attributes, apply as CSS custom properties for colors, override title/icon from attributes. Minimal code change since styles already use template variables.
+2. **Per-namespace config**: branding stored as namespace metadata (FEAT-008) or passed via JWT claims. The host plugin (Moodle or other) reads them and sets the `data-*` attributes on the script tag.
+3. **Fallback chain**: `data-*` attribute > namespace metadata > global default > hardcoded. Consistent with FEAT-008 merge strategy.
+
+**Interaction with Phase 3 npm extraction**: the `data-*` API is the stable contract between phases (ADR-0025). Adding more attributes is backward-compatible. The npm package would expose the same config.
+
+**Traceability**: ADR-0025, ARCH-063, FEAT-008
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget title configurable via `data-title`
+- [ ] Primary color configurable via `data-primary-color` (button, links, accents)
+- [ ] Icon/logo configurable via `data-icon` (URL or emoji)
+- [ ] Optional welcome message on first open via `data-welcome-message`
+- [ ] All customization points available via namespace metadata / JWT claims (FEAT-008)
+- [ ] Missing attributes fall back to current defaults (no breaking change)
+- [ ] Light/dark theme still works with custom primary color
+
+---
+
+### FEAT-014: Configurable source citation visibility
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - source citations may not be appropriate for all courses
+
+**Context**: The widget always displays source citations (document/chunk reference, relevance score, snippet) below each assistant response. Some instructors may prefer to hide them:
+
+- Raw chunk text and filenames may confuse students or expose internal naming conventions
+- Relevance scores are technical and meaningless to most students
+- Some courses may use the chatbot as a conversational tutor where citations break the flow
+- Compliance or IP reasons may require hiding the source material references
+
+**Proposed approach**: a `show_sources` boolean flag configurable at two levels:
+
+1. **Global default**: platform-level setting (e.g., `VEKTRA_LEARN_SHOW_SOURCES=true` env var or admin config). Default: `true` (current behavior).
+2. **Per-namespace override**: stored as namespace metadata (FEAT-008) or passed as JWT claim by the LMS. Takes precedence over the global default.
+
+The flag is passed to the widget either as a `data-show-sources` attribute on the script tag (set by the host plugin based on course config) or included in the token/query response. The widget simply skips rendering the sources section when disabled.
+
+The API still returns sources in the response regardless of the flag (useful for analytics, debugging, QueryTrace). The visibility is a presentation concern handled by the widget.
+
+**Traceability**: ADR-0025, ARCH-063, FEAT-008
+
+**Acceptance Criteria** (tentative):
+- [ ] Global `show_sources` setting with default `true`
+- [ ] Per-namespace override (metadata or JWT claim)
+- [ ] Widget hides sources section when flag is `false`
+- [ ] API response still includes sources regardless (no data loss)
+- [ ] Moodle plugin exposes the setting in per-course block configuration
+
+---
+
+### FEAT-015: A/B testing support — RAG vs LLM-only via group-based namespace routing
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: instructor requirement to compare RAG-assisted vs LLM-only chatbot effectiveness with student groups
+
+**Context**: An instructor wants to run a controlled experiment: one group of students uses the chatbot with RAG (retrieval + LLM), another group uses LLM-only (no course materials in context). This enables measuring the impact of RAG on learning outcomes, answer quality, and student satisfaction.
+
+Moodle natively supports course groups. The Vektra platform already isolates data by namespace. Combining these two concepts enables A/B testing without pipeline modifications.
+
+### Phase 1: namespace-based routing (works with FEAT-005)
+
+Use two namespace variants for the same course:
+- `esc-100-rag`: normal pipeline, course materials ingested
+- `esc-100-direct`: empty namespace (no documents), relies on FEAT-005 (LLM fallback for no-context queries) to respond via LLM without retrieval grounding
+
+The Moodle plugin reads the student's group membership and maps it to the appropriate namespace variant in the token request. The pipeline behaves identically for both - the difference is only in whether the namespace has ingested content.
+
+**Required pieces**:
+1. **Moodle plugin**: read student group via Moodle groups API, pass group-derived namespace in token request metadata
+2. **Per-course config in Moodle**: instructor maps groups to namespace variants (e.g., "Group A -> esc-100-rag, Group B -> esc-100-direct")
+3. **FEAT-005 (prerequisite)**: LLM fallback when no_relevant_context, so the LLM-only group gets meaningful responses instead of "no information found"
+4. **FEAT-011 (complementary)**: per-namespace analytics to compare metrics between the two groups
+
+**Advantages**: no pipeline changes needed, analytics comparison is natural (per-namespace), works today once FEAT-005 is implemented.
+
+**Limitation**: the LLM-only group still goes through retrieval (which finds nothing), adding unnecessary latency.
+
+### Phase 2: explicit `skip_retrieval` namespace flag
+
+A per-namespace setting that instructs the pipeline to skip the retrieval step entirely. The LLM receives only the system prompt (potentially customized per-namespace via FEAT-008) without any context injection.
+
+This removes the unnecessary retrieval latency for LLM-only namespaces and makes the intent explicit in the configuration. The pipeline checks the flag before the retrieve step and jumps directly to prompt construction.
+
+**Traceability**: ARCH-056, ADR-0025, FEAT-005, FEAT-008, FEAT-011
+
+**Acceptance Criteria** (tentative):
+
+Phase 1 (namespace routing):
+- [ ] Moodle plugin reads student group and derives namespace variant
+- [ ] Per-course block config: instructor maps groups to namespace variants
+- [ ] Empty namespace + FEAT-005 produces meaningful LLM-only responses
+- [ ] Per-namespace analytics (FEAT-011) enable group comparison
+
+Phase 2 (skip_retrieval flag):
+- [ ] Per-namespace `skip_retrieval` boolean setting
+- [ ] Pipeline skips retrieve + rerank steps when flag is true
+- [ ] System prompt still applied (customizable via FEAT-008)
+- [ ] QueryTrace records that retrieval was skipped (not "no results found")
+
+---
+
+### FEAT-009: Widget token auto-refresh on expiry
+
+**Status**: draft | **Priority**: high | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - "invalid or expired dashboard token" after ~1h session
+
+**Context**: The JWT dashboard token has a 1h TTL (default). The token is generated server-side by the Moodle plugin (or any LMS) at page load and embedded in the widget via `data-token` attribute. Once expired, all subsequent queries fail with "signature has expired". The user must manually reload the page to get a fresh token.
+
+The widget stores the token as `this._token` (set once in constructor) and has no refresh mechanism. The problem is that token generation requires a server-side call with the admin API key (which the browser must never see), so the widget cannot generate a new token by itself.
+
+**Proposed approach**: a callback-based refresh mechanism:
+
+1. **Widget detects 401/token expired**: on receiving an auth error from the query endpoint, the widget invokes a configurable `onTokenExpired` callback instead of showing an error.
+2. **Host system provides refresh**: the Moodle plugin (or any host) registers a callback that fetches a new token server-side (e.g., AJAX call to a Moodle endpoint that calls Vektra's token API) and returns it to the widget.
+3. **Widget retries the query**: after receiving the fresh token, the widget updates `this._token` and retries the failed query transparently.
+4. **Fallback**: if no callback is registered or the refresh fails, show a user-friendly message ("Session expired, please reload the page").
+
+For Moodle specifically, the plugin would expose a lightweight AJAX endpoint (`/blocks/vektra/ajax.php`) that generates a new token using the stored API key, avoiding a full page reload.
+
+**Traceability**: ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget detects token expiry (401 response) and invokes `onTokenExpired` callback
+- [ ] If callback returns a new token, widget retries the failed query transparently
+- [ ] If no callback or refresh fails, user sees "session expired, reload page" message
+- [ ] Token refresh is invisible to the user (no UI interruption)
+- [ ] Host integration documented (Moodle plugin example)
+
+---
+
+### FEAT-010: Enable SSE streaming in widget
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - responses arrive as a single block, no progressive rendering
+
+**Context**: The widget's api-client.js already has a complete SSE streaming parser (lines 65-107) with `onToken`, `onSources`, `onDone` callbacks. The chat-ui.js has `createStreamMessage()` and `appendToken()` methods that progressively append text to the DOM. However, the query is sent with `stream: false` (hardcoded, line 33), so all responses arrive as a single JSON blob.
+
+Enabling streaming requires only changing `stream: false` to `stream: true`. The widget code is already wired for it. The backend learn query endpoint delegates to the query pipeline which supports `execute_stream()` (REQ-053).
+
+**Interaction with FEAT-007 (Markdown rendering)**: with streaming enabled, Markdown must be rendered incrementally. Two approaches: (a) accumulate tokens and re-render the full message on each token (simple, may flicker), (b) apply Markdown only when a paragraph/block boundary is detected (smoother but more complex). This is a FEAT-007 concern, not a blocker for enabling streaming.
+
+**Traceability**: REQ-053, ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative):
+- [ ] Widget sends `stream: true` in query requests
+- [ ] Tokens appear progressively in the chat bubble as they arrive
+- [ ] Sources rendered after streaming completes
+- [ ] conversation_id captured from the `done` SSE event
+- [ ] Error handling works for mid-stream failures
+- [ ] No regression in non-streaming fallback (server returns JSON if streaming unavailable)
+
+---
+
+### FEAT-011: Per-course usage analytics for instructors (learn vertical)
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Origin**: Moodle integration testing - no visibility into how students use the chatbot
+
+**Context**: vektra-analytics exists as a Phase 2 component for platform-level metrics (EX-007, deferred from Phase 1). However, it is oriented toward the Platform Operator persona with aggregate metrics, and REQ-051 explicitly prevents access to conversation content. There is no per-course/per-namespace analytics view accessible to instructors.
+
+For the e-learning vertical, instructors need to understand:
+- How many students are using the chatbot and how often
+- Which topics/questions are most common (aggregate, not per-student)
+- What percentage of queries result in `no_relevant_context` (indicates gaps in course materials)
+- Peak usage times (before exams, after lectures)
+- Average conversation length
+
+This does not violate REQ-051 if data is aggregated (no individual conversations exposed). The data source is QueryTrace (REQ-060) which already captures timing, chunk IDs, scores, and the no_relevant_context flag per query.
+
+**Proposed approach**: extend vektra-analytics with a per-namespace aggregation layer. Expose via API (admin or instructor-scoped token). In the learn vertical, surface through a simple dashboard (could be a Moodle page via the plugin, or the vektra admin UI).
+
+**Traceability**: EX-007, REQ-022, REQ-051, REQ-060, ARCH-062
+
+**Acceptance Criteria** (tentative):
+- [ ] Per-namespace query count, unique students, avg turns per conversation
+- [ ] no_relevant_context rate per namespace (material gap indicator)
+- [ ] Time-series data (daily/weekly granularity)
+- [ ] Accessible via API with namespace-scoped authorization
+- [ ] No individual conversation content exposed (REQ-051 compliance)
+
+---
+
 ## In Progress
 
-<!-- Move items here when work begins -->
+### BUG-011: Ingest pipeline does not generate sparse embeddings for hybrid search
+
+**Status**: in_progress | **Priority**: high | **Created**: 2026-03-17
+**Origin**: RAG tuning testing — combo B (hybrid search with BM25)
+
+**Context**: The `SparseEmbeddingProvider` (fastembed-bm25) is correctly registered at startup and the Qdrant collection is created with sparse vector support (`sparse` named vector with IDF modifier). However, the ingest pipeline (`vektra_ingest/pipeline.py` `run_ingest()`) only calls the dense `EmbeddingProvider.embed_documents()` and constructs `ChunkEmbedding` objects without the `sparse` field. The `ChunkEmbedding` dataclass already supports `sparse: SparseVector | None = None` and the Qdrant provider correctly stores sparse vectors when present (`qdrant.py:138-142`). The gap is solely in the ingest pipeline: it doesn't call `SparseEmbeddingProvider.embed_documents()`.
+
+The `AdvancedQueryPipeline` correctly calls `SparseEmbeddingProvider.embed_query()` at query time (step 2: `sparse_embed`), but finds no sparse vectors in the stored points, making hybrid search effectively dense-only.
+
+**Traceability**: ARCH-053, ADR-0021
+
+**Fix**: Add sparse embedding generation in `run_ingest()` between dense embedding and `ChunkEmbedding` construction. Check `registry.has("sparse_embedding", "default")`, call `embed_documents(texts)`, pass results as `sparse=` parameter.
+
+---
+
+### BUG-010: Learn query endpoint does not auto-create conversation on first query
+
+**Status**: in_progress | **Priority**: high | **Created**: 2026-03-16
+**Origin**: Moodle integration testing (2026-03-16)
+
+**Context**: The learn query endpoint (`POST /api/v1/learn/query`) passes `conversation_id` through to the pipeline unchanged. When the widget sends the first query without a `conversation_id` (which is the normal flow), the pipeline receives `None`, skips history retrieval and turn saving, and returns `conversation_id: null`. The widget receives `null` and has nothing to save — so the second query also has no `conversation_id`. Result: **every query is a single-turn query with no conversation continuity**.
+
+REQ-049 states: "Response includes conversation_id for client to maintain continuity." The learn query endpoint should auto-generate a `conversation_id` (UUID) on the first query when the client doesn't provide one, save the turn, and return the ID so the widget can reuse it.
+
+The core API (`POST /api/v1/query`) has the same design — it's documented as "If conversation_id omitted, single-turn query" — but for the learn widget UX, multi-turn is the expected default behavior.
+
+**Traceability**: REQ-049, ADR-0025, ARCH-063
+
+**Acceptance Criteria**:
+- [ ] `course_query()` generates a `uuid4()` conversation_id when the request omits it
+- [ ] The generated ID is passed to the pipeline, which creates the conversation and saves the first turn
+- [ ] The response includes the generated `conversation_id`
+- [ ] Subsequent queries from the widget include the `conversation_id` and get history context
+- [ ] When `conversation_id` IS provided by the client, behavior unchanged
+- [ ] Test covers both paths (auto-generated vs client-provided)
+
+---
+
+### FEAT-004: Widget conversation lifecycle improvements
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-03-16
+**Origin**: Moodle integration testing (2026-03-16)
+**Depends on**: BUG-010
+
+**Context**: After BUG-010 is fixed, the widget will support multi-turn conversations within a single page load. However, the `conversation_id` lives only in JS memory (`ApiClient._conversationId`) and is lost on page refresh, navigation, or tab close. Additionally, there is no explicit way for the user to start a fresh conversation. These are UX improvements to evaluate for the learn chatbot widget.
+
+**Areas to evaluate**:
+- **Persist conversation_id across page refresh**: use `sessionStorage` (scoped to tab) so refresh doesn't break the conversation. New tab = new conversation.
+- **Persist across same-course navigation**: if the student navigates between pages of the same course, the widget could maintain continuity via `sessionStorage` keyed by course_id.
+- **Reload message history on page load**: when a persisted conversation_id is found in sessionStorage, fetch the conversation turns from the API and render them in the chat panel before the user types anything. This restores the visual context of the previous conversation.
+- **"New chat" button**: add a button in the widget header to explicitly reset the conversation. Clears `_conversationId` and message history in DOM.
+- **Token expiry vs conversation continuity**: when the JWT expires (1h default) and Moodle generates a new one, the conversation_id is not in the JWT — so old conversations remain accessible. Decide if this is desired or if token refresh should start a new conversation.
+- **Max idle timeout**: consider auto-starting a new conversation after N minutes of inactivity (e.g. 30min), even if the page stays open.
+
+### API requirement: conversation turn retrieval
+
+The backend stores conversation turns in the database (used for multi-turn query rewriting) but does not currently expose them via API. `GET /conversations/{id}` returns only metadata (turn_count, title, timestamps), not the messages.
+
+**Needed**: `GET /api/v1/conversations/{conversation_id}/turns` endpoint that returns the list of turns (question + answer pairs). The JWT already contains student_id and course_id, so the endpoint can verify the requester owns the conversation. This endpoint is a prerequisite for history reload in the widget.
+
+**Current state of conversation storage**:
+- Turns are saved by the query pipeline after each successful response
+- `GET /conversations/{id}` exists but returns only `ConversationMetadata` (id, namespace_id, turn_count, title, created_at, updated_at)
+- No endpoint to retrieve the actual turn content (question/answer pairs)
+
+**Traceability**: REQ-049, ADR-0025, ARCH-063
+
+**Acceptance Criteria** (tentative, pending evaluation):
+- [ ] `GET /conversations/{id}/turns` endpoint returns ordered list of question/answer pairs
+- [ ] Endpoint validates JWT ownership (student_id + namespace match)
+- [ ] conversation_id survives page refresh within same tab (sessionStorage)
+- [ ] Widget reloads and renders previous messages on page load when conversation_id is found
+- [ ] "New chat" button available in widget header
+- [ ] Decision documented on token expiry behavior
+- [ ] Decision documented on idle timeout behavior
+
+---
+
+### FEAT-003: Optional enrollment — trust external identity providers for learn queries
+
+**Status**: in_progress | **Priority**: high | **Created**: 2026-03-16
+**Origin**: Moodle integration experience (vektra-moodle plugin)
+
+**Context**: The learn module currently requires a Vektra enrollment record for every student+course pair before allowing queries. This creates friction in LMS integrations where the LMS already manages enrollment and authorization. The JWT is signed server-side with the admin API key, contains `student_id` + `course_id`, and has short TTL (1h default). By the time a query arrives with a valid JWT, the student is already authorized by the upstream system.
+
+**Implementation**: `VEKTRA_LEARN_REQUIRE_ENROLLMENT` flag (default `true`). When `false`, the learn query endpoint skips enrollment lookup and derives namespace from the JWT (`namespace` claim or `course_id` fallback). Token generation accepts an optional `namespace` field to override the convention.
+
+**Traceability**: REQ-031, ADR-0010, ADR-0025, ARCH-063
+
+**Acceptance Criteria**:
+- [x] `VEKTRA_LEARN_REQUIRE_ENROLLMENT` flag added to VektraSettings (default `true`)
+- [x] Token generation accepts optional `namespace` in TokenRequest
+- [x] JWT payload includes `namespace` when provided
+- [x] Query endpoint: when flag=false, derive namespace from JWT `namespace` field or fallback to `course_id`
+- [x] Query endpoint: when flag=true, current enrollment-based behavior unchanged
+- [x] Conversation history and audit log still capture `student_id` from JWT
+- [x] Tests cover both paths (enrollment required vs optional)
+- [x] `.env.example` updated
 
 ---
 
 ## Completed
+
+### BUG-009: ~~Ingest should auto-create namespace if it doesn't exist~~
+
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-16 | **Completed**: 2026-03-16
+**Origin**: Integration testing (2026-03-13), Moodle integration (2026-03-16)
+**Resolved in**: Already implemented in Phase 2 — `run_ingest()` (pipeline.py:169-176) uses `pg_insert(...).on_conflict_do_nothing()`. `LearnService.create_enrollment()` uses the same pattern.
+
+**Traceability**: REQ-033, ARCH-047
+
+**Acceptance Criteria**:
+- [x] `POST /api/v1/ingest` auto-creates namespace row if not found
+- [x] `POST /api/v1/learn/content/ingest` does the same (calls `run_ingest()`)
+- [x] Auto-created namespace has empty config, no quotas
+- [x] If namespace already exists, no-op (idempotent)
+
+---
 
 ### BUG-007: Ingest error responses not using ErrorResponse envelopes
 

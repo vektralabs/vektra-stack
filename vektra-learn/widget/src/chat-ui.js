@@ -11,6 +11,7 @@ const I18N = {
     placeholder: "Ask a question...",
     send: "Send",
     sources: "Sources:",
+    sourceFallback: "Source",
     noRelevantContext:
       "I couldn't find relevant information in the course materials for this question.",
     error: "An error occurred. Please try again.",
@@ -21,6 +22,7 @@ const I18N = {
     placeholder: "Fai una domanda...",
     send: "Invia",
     sources: "Fonti:",
+    sourceFallback: "Fonte",
     noRelevantContext:
       "Non ho trovato informazioni rilevanti nei materiali del corso per questa domanda.",
     error: "Si è verificato un errore. Riprova.",
@@ -191,7 +193,8 @@ export class ChatUI {
 
     const list = document.createElement("div");
     list.className = "vektra-chat-sources-list";
-    const listId = `vektra-sources-${Date.now().toString(36)}`;
+    this._sourcesSeq = (this._sourcesSeq || 0) + 1;
+    const listId = `vektra-sources-${this._sourcesSeq}`;
     list.id = listId;
     toggle.setAttribute("aria-controls", listId);
 
@@ -199,7 +202,7 @@ export class ChatUI {
       const item = document.createElement("div");
       item.className = "vektra-chat-source-item";
       const score = typeof src.score === "number" ? src.score.toFixed(2) : "?";
-      const label = src.document_name || src.chunk_id || "Source";
+      const label = src.document_name || src.chunk_id || this._lang.sourceFallback;
       const rawSnippet = typeof src.snippet === "string" ? src.snippet.trim() : "";
       const maxLen = 120;
       const snippet = rawSnippet.slice(0, maxLen);

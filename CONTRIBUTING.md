@@ -112,7 +112,7 @@ git config --global commit.gpgsign true
 #    Settings > SSH and GPG keys > New SSH key (select type for each)
 
 # 3. (Optional) Enable local signature verification
-echo "your@email.com $(cat ~/.ssh/<your-key>.pub)" > ~/.ssh/allowed_signers
+echo "$(git config user.email) $(cat ~/.ssh/<your-key>.pub)" > ~/.ssh/allowed_signers
 git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
 
 # 4. Test

@@ -49,7 +49,7 @@ Phase 2: advanced RAG pipeline, multi-tenant isolation, hybrid search, analytics
 - **vektra-core**: AdvancedQueryPipeline with query rewriting, cross-encoder reranking, and hybrid search routing; Presidio-based PII safeguard with content modification; persistent conversations with pgcrypto encryption; feedback and citation-feedback APIs; streaming QueryTrace
 - **vektra-ingest**: OCR support via Unstructured extractor; dual-strategy chunking (text + table preservation); batch ingestion and deletion; Markdown extraction; document version tracking; phase-aware job lifecycle
 - **vektra-index**: Qdrant vector store provider; BM25 sparse embeddings via fastembed; hybrid search (dense + sparse); reindex API with atomic version switching
-- **vektra-admin**: PostgreSQL RLS enforcement for namespace isolation; scope checking (admin/ingest/query/monitor); rate limiting middleware; TTL cache for key verification; HTMX + Jinja2 admin dashboard (ADR-0024) with health, keys, namespaces, and audit views
+- **vektra-admin**: PostgreSQL RLS enforcement for namespace isolation; scope checking (admin/ingest/query/monitor); rate-limiting middleware; TTL cache for key verification; HTMX + Jinja2 admin dashboard (ADR-0024) with health, keys, namespaces, and audit views
 - **vektra-analytics**: QueryTrace storage and retrieval; per-namespace metrics aggregation; retention cleanup
 - **vektra-learn**: LMS-agnostic API for enrollment, token generation, and course-scoped queries; JWT-based course isolation; chatbot widget as backend-served JS bundle (ADR-0025)
 - **Infrastructure**: TEI and Qdrant Docker Compose profiles; reindex and batch-ingest operator scripts; 11-step startup validation sequence (ARCH-057)

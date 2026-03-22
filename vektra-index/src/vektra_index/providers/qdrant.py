@@ -135,7 +135,10 @@ class QdrantVectorStoreProvider:
             collections = await self._client.get_collections()
             if self._collection_name not in {c.name for c in collections.collections}:
                 raise
-            logger.debug("Qdrant collection %s already exists (race resolved)", self._collection_name)
+            logger.debug(
+                "Qdrant collection %s already exists (race resolved)",
+                self._collection_name,
+            )
             return
         logger.info("Created Qdrant collection: %s", self._collection_name)
 

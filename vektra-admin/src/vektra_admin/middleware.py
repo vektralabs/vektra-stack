@@ -106,13 +106,15 @@ _HELPER_TAILS = frozenset({"create", "delete", "revoke", "update"})
 def _derive_action(method: str, path: str) -> str:
     """Derive a human-readable action from HTTP method and path.
 
-    Examples: "create_ingest", "read_health", "delete_api-keys".
-    Skips helper tails like /create, /revoke to avoid "create_create".
+    Examples: "create_ingest", "read_health", "delete_api-keys", "revoke_api-keys".
+    When the path ends with a helper tail (/create, /revoke, /delete, /update),
+    use the tail as the verb instead of the HTTP method to preserve intent.
     """
     verb = _METHOD_VERBS.get(method.upper(), method.lower())
     # Use the last meaningful path segment (strip /api/v1/ prefix and IDs)
     segments = [s for s in path.strip("/").split("/") if s and not _is_uuid_like(s)]
     if len(segments) >= 2 and segments[-1] in _HELPER_TAILS:
+        verb = segments[-1]
         resource = segments[-2]
     else:
         resource = segments[-1] if segments else "unknown"

@@ -352,6 +352,10 @@ class AdvancedQueryPipeline:
                     )
                 )
 
+        # Recheck: post_retrieval safeguard may have filtered all chunks
+        if not no_relevant_context and not filtered:
+            no_relevant_context = True
+
         return steps, filtered, no_relevant_context, effective_query, history
 
     def _build_prompt(
@@ -520,11 +524,15 @@ class AdvancedQueryPipeline:
                 )
             )
 
-        # Save conversation turn
+        # Save conversation turn (best-effort: DB failure should not turn
+        # a successful query into a 500)
         if query.conversation_id is not None:
-            await self._conversation_store.add_turn(
-                query.conversation_id, query.question, answer
-            )
+            try:
+                await self._conversation_store.add_turn(
+                    query.conversation_id, query.question, answer
+                )
+            except Exception as exc:
+                log.warning("conversation_turn_store_failed", error=str(exc))
 
         total_ms = _elapsed_ms(t_total)
         trace = QueryTrace(
@@ -682,11 +690,14 @@ class AdvancedQueryPipeline:
                 )
             )
 
-        # Save conversation turn
+        # Save conversation turn (best-effort)
         if query.conversation_id is not None and full_answer:
-            await self._conversation_store.add_turn(
-                query.conversation_id, query.question, full_answer
-            )
+            try:
+                await self._conversation_store.add_turn(
+                    query.conversation_id, query.question, full_answer
+                )
+            except Exception as exc:
+                log.warning("conversation_turn_store_failed", error=str(exc))
 
         # Yield sources (only budget-selected chunks, not all filtered)
         sources_data = [

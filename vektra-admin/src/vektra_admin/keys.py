@@ -22,7 +22,7 @@ from cachetools import TTLCache
 # Single PasswordHasher instance (argon2id, default time_cost=3, memory_cost=65536)
 _ph = PasswordHasher()
 
-# TTLCache: maps (key_hash, plaintext_key) -> True (verified) or False (failed).
+# TTLCache: maps (key_hash, plaintext_key) -> True (verified only).
 # Max 300s TTL limits plaintext key exposure in memory (DEBT-008).
 # Cache size 512 is generous for a single-process deployment.
 _CACHE_SIZE = 512
@@ -73,8 +73,9 @@ async def verify_key(plaintext: str, key_hash: str) -> bool:
     # Cache miss: run argon2id verification in a thread (CPU-bound)
     result = await asyncio.to_thread(_verify_sync, key_hash, plaintext)
 
-    with _cache_lock:
-        _verify_cache[cache_key] = result
+    if result:
+        with _cache_lock:
+            _verify_cache[cache_key] = True
 
     return result
 

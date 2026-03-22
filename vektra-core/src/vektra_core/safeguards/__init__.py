@@ -1,7 +1,7 @@
 """Safeguard factory for selecting SafeguardHook implementations.
 
-Phase 1: PassthroughSafeguard (no-op, from vektra_shared).
-Phase 2: PresidioPIISafeguard (Presidio-based PII anonymization).
+PassthroughSafeguard (no-op, from vektra_shared).
+PresidioPIISafeguard (Presidio-based PII anonymization).
 """
 
 from __future__ import annotations

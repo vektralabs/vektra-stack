@@ -55,24 +55,29 @@ class RLSMiddleware(BaseHTTPMiddleware):
 
 
 async def _resolve_namespace(request: Request) -> str | None:
-    """Extract namespace from request body or query params."""
-    # Query param (for GET requests)
-    namespace = request.query_params.get("namespace")
-    if namespace:
-        return namespace
+    """Extract namespace from request body or query params.
 
-    # JSON body (for POST requests)
+    For write methods (POST/PUT/PATCH) the body takes precedence over
+    query params to prevent a crafted ``?namespace=`` from overriding
+    the payload namespace in multi-tenant mode.
+    """
+    # JSON body first for write methods (prevents query-param override)
     if request.method in ("POST", "PUT", "PATCH"):
         try:
             body = await request.body()
             if body:
                 data = json.loads(body)
-                ns = data.get("namespace")
-                if isinstance(ns, str):
-                    return ns
-                return None
+                if isinstance(data, dict):
+                    ns = data.get("namespace")
+                    if isinstance(ns, str):
+                        return ns
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
+
+    # Query param (safe for GET; fallback for POST without body namespace)
+    namespace = request.query_params.get("namespace")
+    if namespace:
+        return namespace
 
     return None
 

@@ -21,7 +21,7 @@ for arg in "$@"; do
       echo "  DIR         Directory containing documents (required)"
       echo "  NAMESPACE   Target namespace (default: 'default')"
       echo ""
-      echo "Supported formats: .pdf, .docx, .pptx"
+      echo "Supported formats: .pdf, .docx, .pptx, .md"
       echo ""
       echo "Environment:"
       echo "  VEKTRA_API_URL   Base URL (default: http://localhost:8000)"
@@ -61,10 +61,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FILES=()
 while IFS= read -r -d '' file; do
   FILES+=("$file")
-done < <(find "$DIR" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.docx" -o -name "*.pptx" \) -print0 | sort -z)
+done < <(find "$DIR" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.docx" -o -name "*.pptx" -o -name "*.md" \) -print0 | sort -z)
 
 if [ ${#FILES[@]} -eq 0 ]; then
-  echo "No supported files (.pdf, .docx, .pptx) found in $DIR"
+  echo "No supported files (.pdf, .docx, .pptx, .md) found in $DIR"
   exit 0
 fi
 

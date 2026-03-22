@@ -50,8 +50,8 @@ class TestResolveNamespace:
         assert result == "ns-456"
 
     @pytest.mark.asyncio
-    async def test_query_param_takes_precedence(self):
-        """Query param is checked before body."""
+    async def test_body_takes_precedence_over_query_param(self):
+        """For write methods, body namespace takes precedence over query param."""
         import json
 
         body = json.dumps({"namespace": "body-ns"}).encode()
@@ -61,7 +61,35 @@ class TestResolveNamespace:
             body=body,
         )
         result = await _resolve_namespace(request)
+        assert result == "body-ns"
+
+    @pytest.mark.asyncio
+    async def test_get_uses_query_param_over_body(self):
+        """For GET requests, query param is used (body not read)."""
+        import json
+
+        body = json.dumps({"namespace": "body-ns"}).encode()
+        request = _make_request(
+            method="GET",
+            query_params={"namespace": "query-ns"},
+            body=body,
+        )
+        result = await _resolve_namespace(request)
         assert result == "query-ns"
+
+    @pytest.mark.asyncio
+    async def test_post_without_body_falls_back_to_query_param(self):
+        """POST without body namespace falls back to query param."""
+        import json
+
+        body = json.dumps({"other_field": "value"}).encode()
+        request = _make_request(
+            method="POST",
+            query_params={"namespace": "fallback-ns"},
+            body=body,
+        )
+        result = await _resolve_namespace(request)
+        assert result == "fallback-ns"
 
     @pytest.mark.asyncio
     async def test_no_namespace_returns_none(self):

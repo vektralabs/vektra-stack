@@ -191,6 +191,7 @@ class LearnService:
             "dashboard_token_generated",
             student_id=req.student_id,
             course_id=req.course_id,
+            namespace=req.namespace or req.course_id,
         )
         return TokenResponse(token=token, expires_at=expires_at)
 

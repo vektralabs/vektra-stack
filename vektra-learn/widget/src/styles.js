@@ -146,6 +146,54 @@ export function buildStyles(theme) {
   border-bottom-left-radius: 4px;
 }
 
+.vektra-chat-msg.assistant p {
+  margin: 0 0 8px 0;
+}
+.vektra-chat-msg.assistant p:last-child {
+  margin-bottom: 0;
+}
+.vektra-chat-msg.assistant h3,
+.vektra-chat-msg.assistant h4,
+.vektra-chat-msg.assistant h5 {
+  margin: 12px 0 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.vektra-chat-msg.assistant ul,
+.vektra-chat-msg.assistant ol {
+  margin: 4px 0 8px 0;
+  padding-left: 20px;
+}
+.vektra-chat-msg.assistant li {
+  margin-bottom: 2px;
+}
+.vektra-chat-msg.assistant code {
+  background: ${t.bgSecondary};
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+.vektra-chat-msg.assistant pre {
+  background: ${t.bgSecondary};
+  padding: 8px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.vektra-chat-msg.assistant pre code {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+}
+.vektra-chat-msg.assistant a {
+  color: ${t.primary};
+  text-decoration: underline;
+}
+.vektra-chat-msg.assistant strong {
+  font-weight: 600;
+}
+
 .vektra-chat-sources {
   margin-top: 8px;
   padding-top: 8px;

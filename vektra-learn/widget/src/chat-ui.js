@@ -3,6 +3,7 @@
  * Vanilla DOM manipulation, no framework dependencies.
  */
 
+import { renderMarkdown } from "./markdown.js";
 import { buildStyles } from "./styles.js";
 
 const I18N = {
@@ -148,7 +149,11 @@ export class ChatUI {
   addMessage(role, text) {
     const msg = document.createElement("div");
     msg.className = `vektra-chat-msg ${role}`;
-    msg.textContent = text;
+    if (role === "assistant") {
+      msg.innerHTML = renderMarkdown(text);
+    } else {
+      msg.textContent = text;
+    }
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
     return msg;
@@ -156,7 +161,7 @@ export class ChatUI {
 
   /**
    * Create an empty assistant message for streaming tokens.
-   * @returns {HTMLElement}
+   * @returns {{ el: HTMLElement, rawText: string }}
    */
   createStreamMessage() {
     const msg = document.createElement("div");
@@ -164,25 +169,27 @@ export class ChatUI {
     msg.textContent = "";
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
-    return msg;
+    return { el: msg, rawText: "" };
   }
 
   /**
-   * Append a token to a streaming message element.
-   * @param {HTMLElement} msgEl
+   * Append a token to a streaming message and re-render markdown.
+   * @param {{ el: HTMLElement, rawText: string }} stream
    * @param {string} token
    */
-  appendToken(msgEl, token) {
-    msgEl.textContent += token;
+  appendToken(stream, token) {
+    stream.rawText += token;
+    stream.el.innerHTML = renderMarkdown(stream.rawText);
     this._scrollToBottom();
   }
 
   /**
    * Add source citations below the last assistant message.
-   * @param {HTMLElement} msgEl
+   * @param {HTMLElement|{el: HTMLElement}} msgOrStream - message element or stream object
    * @param {Array} sources
    */
-  addSources(msgEl, sources) {
+  addSources(msgOrStream, sources) {
+    const msgEl = msgOrStream.el || msgOrStream;
     if (!sources || sources.length === 0) return;
 
     const container = document.createElement("div");

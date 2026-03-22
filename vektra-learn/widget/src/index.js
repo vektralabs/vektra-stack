@@ -47,17 +47,17 @@ import { ChatUI } from "./chat-ui.js";
       theme,
       language,
       onSend(question) {
-        const msgEl = ui.createStreamMessage();
+        const stream = ui.createStreamMessage();
 
         client.query(question, {
           onToken(tokenText) {
-            ui.appendToken(msgEl, tokenText);
+            ui.appendToken(stream, tokenText);
           },
           onSources(sources) {
-            ui.addSources(msgEl, sources);
+            ui.addSources(stream, sources);
           },
           onNoRelevantContext() {
-            ui.appendToken(msgEl, ui.noRelevantContextMessage());
+            ui.appendToken(stream, ui.noRelevantContextMessage());
           },
           onDone() {
             ui.doneSending();

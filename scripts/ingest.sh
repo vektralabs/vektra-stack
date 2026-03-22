@@ -20,7 +20,7 @@ for arg in "$@"; do
       echo "Ingest a document into Vektra."
       echo ""
       echo "Arguments:"
-      echo "  FILE        Path to the document (PDF, DOCX, PPTX)"
+      echo "  FILE        Path to the document (PDF, DOCX, PPTX, MD)"
       echo "  NAMESPACE   Target namespace (default: 'default')"
       echo ""
       echo "Environment:"
@@ -62,7 +62,7 @@ case "${FILENAME##*.}" in
   pdf)  CONTENT_TYPE="application/pdf" ;;
   docx) CONTENT_TYPE="application/vnd.openxmlformats-officedocument.wordprocessingml.document" ;;
   pptx) CONTENT_TYPE="application/vnd.openxmlformats-officedocument.presentationml.presentation" ;;
-  md)   CONTENT_TYPE="text/markdown" ;;
+  md|markdown) CONTENT_TYPE="text/markdown" ;;
   *)    CONTENT_TYPE="application/octet-stream" ;;
 esac
 

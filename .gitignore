@@ -24,6 +24,7 @@ logs/
 .env.*.local
 .claude/settings.local.json
 CLAUDE.local.md
+docker-compose.ports.yml
 
 # Build outputs
 dist/

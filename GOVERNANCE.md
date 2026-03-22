@@ -22,7 +22,7 @@ During **Phases 1 and 2** (core development), Vektra follows a Benevolent Dictat
 **Transition criteria**: The project will transition to a maintainer committee when:
 - There are 3+ active maintainers with 6+ months of consistent contribution
 - The contributor base has grown beyond the founding team
-- Core interfaces have stabilized (Phase 1 complete, Phase 2 in progress)
+- Core interfaces have stabilized (Phase 1 complete, Phase 2 complete)
 
 ## Contributor Ladder
 

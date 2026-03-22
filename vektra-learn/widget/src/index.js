@@ -56,6 +56,9 @@ import { ChatUI } from "./chat-ui.js";
           onSources(sources) {
             ui.addSources(msgEl, sources);
           },
+          onNoRelevantContext() {
+            ui.appendToken(msgEl, ui.noRelevantContextMessage());
+          },
           onDone() {
             ui.doneSending();
           },

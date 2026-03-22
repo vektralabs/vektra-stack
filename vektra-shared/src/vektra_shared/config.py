@@ -26,13 +26,18 @@ class LLMConfig(BaseSettings):
         alias="VEKTRA_LLM_API_KEY",
         description="API key for the LLM provider. Not needed for Ollama.",
     )
+    api_base: str | None = Field(
+        None,
+        alias="VEKTRA_LLM_API_BASE",
+        description="Custom API base URL for OpenAI-compatible providers (e.g., vLLM).",
+    )
     fallback_model: str | None = Field(
         None,
         alias="VEKTRA_LLM_FALLBACK_MODEL",
         description="Fallback model used when primary model times out.",
     )
     fallback_timeout_ms: int = Field(
-        30000,
+        60000,
         alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS",
         description="Timeout in ms before switching to fallback model.",
     )
@@ -56,7 +61,7 @@ class EmbeddingConfig(BaseSettings):
         description="EmbeddingProvider implementation. Phase 2 option: 'tei'.",
     )
     embedding_model: str = Field(
-        "all-MiniLM-L6-v2",
+        "paraphrase-multilingual-MiniLM-L12-v2",
         alias="VEKTRA_EMBEDDING_MODEL",
         description="Embedding model name within the selected provider.",
     )
@@ -163,7 +168,7 @@ class QueryPipelineConfig(BaseSettings):
     """Query pipeline configuration (ARCH-055, ARCH-056, ADR-0021)."""
 
     query_pipeline: str = Field(
-        "simple",
+        "advanced",
         alias="VEKTRA_QUERY_PIPELINE",
         description="QueryPipeline implementation: 'simple' (Phase 1), 'advanced' (Phase 2).",
     )
@@ -178,7 +183,7 @@ class QueryPipelineConfig(BaseSettings):
         description="Enable overlap deduplication for adjacent chunks from the same document.",
     )
     response_token_reserve: int = Field(
-        1024,
+        2048,
         alias="VEKTRA_RESPONSE_TOKEN_RESERVE",
         description="Tokens reserved for LLM response generation (ARCH-055).",
     )
@@ -237,12 +242,12 @@ class IngestConfig(BaseSettings):
         description="ChunkingStrategy implementation: 'fixed' (Phase 1), 'dual' (Phase 2).",
     )
     chunk_size: int = Field(
-        1000,
+        500,
         alias="VEKTRA_CHUNK_SIZE",
         description="Token count per chunk for fixed-size chunking.",
     )
     chunk_overlap: int = Field(
-        200,
+        100,
         alias="VEKTRA_CHUNK_OVERLAP",
         description="Token overlap between adjacent chunks.",
     )
@@ -409,8 +414,9 @@ class VektraSettings(BaseSettings):
         description="LLM model identifier in litellm format.",
     )
     llm_api_key: str | None = Field(None, alias="VEKTRA_LLM_API_KEY")
+    llm_api_base: str | None = Field(None, alias="VEKTRA_LLM_API_BASE")
     llm_fallback_model: str | None = Field(None, alias="VEKTRA_LLM_FALLBACK_MODEL")
-    llm_fallback_timeout_ms: int = Field(30000, alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS")
+    llm_fallback_timeout_ms: int = Field(60000, alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS")
     llm_context_only_enabled: bool = Field(
         True, alias="VEKTRA_LLM_CONTEXT_ONLY_ENABLED"
     )
@@ -419,7 +425,9 @@ class VektraSettings(BaseSettings):
     embedding_provider: str = Field(
         "sentence-transformers", alias="VEKTRA_EMBEDDING_PROVIDER"
     )
-    embedding_model: str = Field("all-MiniLM-L6-v2", alias="VEKTRA_EMBEDDING_MODEL")
+    embedding_model: str = Field(
+        "paraphrase-multilingual-MiniLM-L12-v2", alias="VEKTRA_EMBEDDING_MODEL"
+    )
     sparse_embedding_provider: str | None = Field(
         None, alias="VEKTRA_SPARSE_EMBEDDING_PROVIDER"
     )
@@ -435,17 +443,17 @@ class VektraSettings(BaseSettings):
     qdrant_collection: str = Field("vektra", alias="VEKTRA_QDRANT_COLLECTION")
 
     # Query pipeline
-    query_pipeline: str = Field("simple", alias="VEKTRA_QUERY_PIPELINE")
+    query_pipeline: str = Field("advanced", alias="VEKTRA_QUERY_PIPELINE")
     min_relevance_score: float = Field(0.3, alias="VEKTRA_MIN_RELEVANCE_SCORE")
     chunk_dedup_enabled: bool = Field(True, alias="VEKTRA_CHUNK_DEDUP_ENABLED")
-    response_token_reserve: int = Field(1024, alias="VEKTRA_RESPONSE_TOKEN_RESERVE")
+    response_token_reserve: int = Field(2048, alias="VEKTRA_RESPONSE_TOKEN_RESERVE")
     context_chunk_ratio: float = Field(0.6, alias="VEKTRA_CONTEXT_CHUNK_RATIO")
     prompt_templates_dir: str | None = Field(None, alias="VEKTRA_PROMPT_TEMPLATES_DIR")
 
     # Ingest
     chunking_strategy: str = Field("fixed", alias="VEKTRA_CHUNKING_STRATEGY")
-    chunk_size: int = Field(1000, alias="VEKTRA_CHUNK_SIZE")
-    chunk_overlap: int = Field(200, alias="VEKTRA_CHUNK_OVERLAP")
+    chunk_size: int = Field(500, alias="VEKTRA_CHUNK_SIZE")
+    chunk_overlap: int = Field(100, alias="VEKTRA_CHUNK_OVERLAP")
     max_file_size_mb: int = Field(50, alias="VEKTRA_MAX_FILE_SIZE_MB")
     document_extractor: str = Field("pdfplumber", alias="VEKTRA_DOCUMENT_EXTRACTOR")
 
@@ -469,6 +477,11 @@ class VektraSettings(BaseSettings):
         None,
         alias="VEKTRA_LEARN_JWT_SECRET",
         description="JWT signing secret for dashboard tokens. Required when vektra-learn is active.",
+    )
+    learn_require_enrollment: bool = Field(
+        True,
+        alias="VEKTRA_LEARN_REQUIRE_ENROLLMENT",
+        description="Require Vektra enrollment record for learn queries. Set to false when an external LMS manages enrollment and authorization.",
     )
 
     # Observability / retention
@@ -509,6 +522,7 @@ class VektraSettings(BaseSettings):
             {
                 "VEKTRA_LLM_PROVIDER": self.llm_provider,
                 "VEKTRA_LLM_API_KEY": self.llm_api_key,
+                "VEKTRA_LLM_API_BASE": self.llm_api_base,
                 "VEKTRA_LLM_FALLBACK_MODEL": self.llm_fallback_model,
                 "VEKTRA_LLM_FALLBACK_TIMEOUT_MS": self.llm_fallback_timeout_ms,
                 "VEKTRA_LLM_CONTEXT_ONLY_ENABLED": self.llm_context_only_enabled,

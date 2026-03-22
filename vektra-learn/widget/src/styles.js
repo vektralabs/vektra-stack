@@ -153,8 +153,50 @@ export function buildStyles(theme) {
   font-size: 12px;
   color: ${t.textSecondary};
 }
-.vektra-chat-source-item {
+.vektra-chat-sources-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: ${t.primary};
+  font-size: 12px;
+  padding: 0;
+  font-family: inherit;
+}
+.vektra-chat-sources-toggle:hover {
+  text-decoration: underline;
+}
+.vektra-chat-sources-toggle:focus-visible {
+  outline: 2px solid ${t.primary};
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.vektra-chat-sources-list {
+  display: none;
   margin-top: 4px;
+}
+.vektra-chat-sources-list.open {
+  display: block;
+}
+.vektra-chat-source-item {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 2px solid ${t.border};
+  font-size: 12px;
+  line-height: 1.4;
+}
+.vektra-chat-source-num {
+  font-weight: 600;
+  color: ${t.primary};
+  margin-right: 4px;
+}
+.vektra-chat-source-text {
+  color: ${t.text};
+}
+.vektra-chat-source-snippet {
+  color: ${t.textSecondary};
+  font-size: 11px;
+  margin-top: 2px;
+  font-style: italic;
 }
 
 .vektra-chat-input-area {

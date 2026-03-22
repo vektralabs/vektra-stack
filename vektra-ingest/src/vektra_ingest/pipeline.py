@@ -40,7 +40,7 @@ from vektra_ingest.extractors.word import WordExtractor
 from vektra_ingest.models import NamespaceOrm, SourceDocumentOrm
 from vektra_shared.config import IngestConfig
 from vektra_shared.errors import ERR_INGEST_001, ERR_INGEST_004
-from vektra_shared.types import ChunkEmbedding, ExtractionRequest
+from vektra_shared.types import ChunkEmbedding, ExtractionRequest, SparseVector
 
 log = structlog.get_logger(__name__)
 
@@ -367,7 +367,7 @@ async def run_ingest(
         if on_phase is not None:
             await on_phase("embedding", 50)
 
-        # Embed
+        # Embed (dense)
         embedding_provider = registry.get("embedding", "default")
         texts = [c.text for c in all_chunks]
         embeddings = await embedding_provider.embed_documents(texts)
@@ -381,6 +381,20 @@ async def run_ingest(
                 ),
             )
 
+        # Embed (sparse) — generate BM25/SPLADE vectors if provider registered
+        sparse_vectors: list[SparseVector | None] = [None] * len(all_chunks)
+        if registry.has("sparse_embedding", "default"):
+            sparse_provider = registry.get("sparse_embedding", "default")
+            sparse_vectors = await sparse_provider.embed_documents(texts)
+            if len(sparse_vectors) != len(all_chunks):
+                raise IngestError(
+                    error_code=ERR_INGEST_004,
+                    message=(
+                        f"Sparse embedding count mismatch: got {len(sparse_vectors)} "
+                        f"embeddings for {len(all_chunks)} chunks."
+                    ),
+                )
+
         # Build ChunkEmbedding objects with document_id in metadata
         _extra = extra_metadata or {}
         chunk_embeddings = [
@@ -388,6 +402,7 @@ async def run_ingest(
                 chunk_id=str(uuid5(doc_id, str(i))),
                 text=chunk.text,
                 dense=embedding,
+                sparse=sparse,
                 metadata={
                     **chunk.metadata,
                     **_extra,
@@ -397,7 +412,9 @@ async def run_ingest(
                     "position": i,
                 },
             )
-            for i, (chunk, embedding) in enumerate(zip(all_chunks, embeddings))
+            for i, (chunk, embedding, sparse) in enumerate(
+                zip(all_chunks, embeddings, sparse_vectors)
+            )
         ]
 
         # Store via VectorStoreProvider (manages its own session internally)

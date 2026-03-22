@@ -24,9 +24,9 @@ export class ApiClient {
   /**
    * Send a query with SSE streaming support and JSON fallback.
    * @param {string} question
-   * @param {object} callbacks - { onToken, onSources, onDone, onError }
+   * @param {object} callbacks - { onToken, onSources, onDone, onError, onNoRelevantContext }
    */
-  async query(question, { onToken, onSources, onDone, onError }) {
+  async query(question, { onToken, onSources, onDone, onError, onNoRelevantContext }) {
     const body = {
       question,
       stream: false,
@@ -111,7 +111,9 @@ export class ApiClient {
         if (data.conversation_id) {
           this._conversationId = data.conversation_id;
         }
-        if (onToken && data.answer) {
+        if (data.no_relevant_context && onNoRelevantContext) {
+          onNoRelevantContext();
+        } else if (onToken && data.answer) {
           onToken(data.answer);
         }
         if (onSources && data.sources && data.sources.length > 0) {

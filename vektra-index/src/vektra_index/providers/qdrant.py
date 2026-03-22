@@ -53,7 +53,7 @@ def _is_timeout(exc: BaseException) -> bool:
     # gRPC transport: AioRpcError with DEADLINE_EXCEEDED
     if exc_type == "AioRpcError":
         code = getattr(exc, "code", lambda: None)()
-        return code is not None and str(code) == "StatusCode.DEADLINE_EXCEEDED"
+        return code is not None and "DEADLINE_EXCEEDED" in str(code)
     return False
 
 
@@ -135,6 +135,10 @@ class QdrantVectorStoreProvider:
             collections = await self._client.get_collections()
             if self._collection_name not in {c.name for c in collections.collections}:
                 raise
+            logger.debug(
+                "Qdrant collection %s already exists (race resolved)",
+                self._collection_name,
+            )
             return
         logger.info("Created Qdrant collection: %s", self._collection_name)
 

@@ -39,18 +39,19 @@ def test_create_presidio():
     assert isinstance(sg, PresidioPIISafeguard)
 
 
-def test_create_unknown_raises():
-    with pytest.raises(ValueError, match="Unsupported safeguard mode"):
-        create_safeguard("nonexistent")
+def test_create_unknown_falls_back():
+    sg = create_safeguard("nonexistent")
+    assert isinstance(sg, PassthroughSafeguard)
 
 
-def test_create_presidio_raises_on_import_error():
+def test_create_presidio_falls_back_on_import_error():
     with patch(
         "vektra_core.safeguards.presidio.PresidioPIISafeguard",
         side_effect=ImportError("no presidio"),
     ):
-        with pytest.raises(ImportError):
-            create_safeguard("presidio")
+        # Force reimport by clearing the cached import
+        sg = create_safeguard("presidio")
+        assert isinstance(sg, PassthroughSafeguard)
 
 
 # ---------------------------------------------------------------------------

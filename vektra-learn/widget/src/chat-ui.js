@@ -11,6 +11,9 @@ const I18N = {
     placeholder: "Ask a question...",
     send: "Send",
     sources: "Sources:",
+    sourceFallback: "Source",
+    noRelevantContext:
+      "I couldn't find relevant information in the course materials for this question.",
     error: "An error occurred. Please try again.",
     close: "Close",
   },
@@ -19,6 +22,9 @@ const I18N = {
     placeholder: "Fai una domanda...",
     send: "Invia",
     sources: "Fonti:",
+    sourceFallback: "Fonte",
+    noRelevantContext:
+      "Non ho trovato informazioni rilevanti nei materiali del corso per questa domanda.",
     error: "Si è verificato un errore. Riprova.",
     close: "Chiudi",
   },
@@ -177,15 +183,56 @@ export class ChatUI {
 
     const container = document.createElement("div");
     container.className = "vektra-chat-sources";
-    container.innerHTML = `<strong>${this._lang.sources}</strong>`;
 
-    for (const src of sources) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "vektra-chat-sources-toggle";
+    toggle.textContent = `${this._lang.sources} (${sources.length})`;
+    toggle.setAttribute("aria-expanded", "false");
+    container.appendChild(toggle);
+
+    const list = document.createElement("div");
+    list.className = "vektra-chat-sources-list";
+    ChatUI._sourcesSeq = (ChatUI._sourcesSeq || 0) + 1;
+    const listId = `vektra-sources-${ChatUI._sourcesSeq}`;
+    list.id = listId;
+    toggle.setAttribute("aria-controls", listId);
+
+    for (const [i, src] of sources.entries()) {
       const item = document.createElement("div");
       item.className = "vektra-chat-source-item";
       const score = typeof src.score === "number" ? src.score.toFixed(2) : "?";
-      item.textContent = `${src.snippet || src.chunk_id || "Source"} (${score})`;
-      container.appendChild(item);
+      const label = src.document_name || src.chunk_id || this._lang.sourceFallback;
+      const rawSnippet = typeof src.snippet === "string" ? src.snippet.trim() : "";
+      const maxLen = 120;
+      const snippet = rawSnippet.slice(0, maxLen);
+      const truncated = rawSnippet.length > maxLen;
+
+      const num = document.createElement("span");
+      num.className = "vektra-chat-source-num";
+      num.textContent = `[${i + 1}]`;
+      item.appendChild(num);
+
+      const text = document.createElement("span");
+      text.className = "vektra-chat-source-text";
+      text.textContent = `${label} (${score})`;
+      item.appendChild(text);
+
+      if (snippet) {
+        const snip = document.createElement("div");
+        snip.className = "vektra-chat-source-snippet";
+        snip.textContent = truncated ? snippet + "\u2026" : snippet;
+        item.appendChild(snip);
+      }
+
+      list.appendChild(item);
     }
+
+    container.appendChild(list);
+    toggle.addEventListener("click", () => {
+      const expanded = list.classList.toggle("open");
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    });
 
     msgEl.appendChild(container);
     this._scrollToBottom();
@@ -202,6 +249,14 @@ export class ChatUI {
     msg.textContent = message || this._lang.error;
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
+  }
+
+  /**
+   * Return the localized "no relevant context" message.
+   * @returns {string}
+   */
+  noRelevantContextMessage() {
+    return this._lang.noRelevantContext;
   }
 
   /**

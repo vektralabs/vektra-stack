@@ -1,7 +1,7 @@
 """Safeguard factory for selecting SafeguardHook implementations.
 
-Phase 1: PassthroughSafeguard (no-op, from vektra_shared).
-Phase 2: PresidioPIISafeguard (Presidio-based PII anonymization).
+PassthroughSafeguard (no-op, from vektra_shared).
+PresidioPIISafeguard (Presidio-based PII anonymization).
 """
 
 from __future__ import annotations
@@ -26,14 +26,20 @@ def create_safeguard(mode: str, *, pii_chunk_threshold: int = 3) -> SafeguardHoo
     """
     normalized = mode.strip().lower()
 
-    if normalized == "passthrough":
-        return PassthroughSafeguard()
-
     if normalized == "presidio":
-        from vektra_core.safeguards.presidio import PresidioPIISafeguard
+        try:
+            from vektra_core.safeguards.presidio import PresidioPIISafeguard
 
-        return PresidioPIISafeguard(pii_chunk_threshold=pii_chunk_threshold)
+            return PresidioPIISafeguard(pii_chunk_threshold=pii_chunk_threshold)
+        except Exception as exc:
+            log.warning(
+                "safeguard_presidio_unavailable",
+                error=str(exc),
+                fallback="passthrough",
+            )
+            return PassthroughSafeguard()
 
-    raise ValueError(
-        f"Unsupported safeguard mode: '{mode}'. Valid modes: 'passthrough', 'presidio'."
-    )
+    if normalized != "passthrough":
+        log.warning("safeguard_unknown_mode", mode=mode, fallback="passthrough")
+
+    return PassthroughSafeguard()

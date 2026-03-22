@@ -19,7 +19,8 @@ uv run pre-commit install
 
 # Run all unit tests
 uv run pytest vektra-shared/tests/ vektra-core/tests/ vektra-ingest/tests/ \
-              vektra-index/tests/ vektra-admin/tests/ -v -m "not integration"
+              vektra-index/tests/ vektra-admin/tests/ vektra-analytics/tests/ \
+              vektra-learn/tests/ -v -m "not integration"
 ```
 
 ## Development tools
@@ -95,6 +96,34 @@ chore(ci): add path filtering to unit test workflow
 All commits must be signed off with a DCO (`git commit -s`). This certifies you have the
 right to submit the code under the project's license.
 
+## Commit signing
+
+Branch protection on `develop` and `main` requires **cryptographically signed commits**.
+GitHub will block all merge types (merge, squash, rebase) if any source commit is unsigned.
+
+**Set up before your first commit** (recovering unsigned commits is painful):
+
+```bash
+# 1. Configure git to sign with your SSH key
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/<your-key>.pub
+git config --global commit.gpgsign true
+
+# 2. Register the key on GitHub as BOTH Authentication AND Signing key
+#    Settings > SSH and GPG keys > New SSH key (select type for each)
+
+# 3. (Optional) Enable local signature verification
+echo "$(git config user.email) $(cat ~/.ssh/<your-key>.pub)" > ~/.ssh/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+
+# 4. Test
+git commit --allow-empty -m "chore: verify signing setup"
+git log --show-signature -1   # should show "Good ssh signature"
+```
+
+**Remote servers without browser**: use `gh auth login --with-token` and add the
+`admin:ssh_signing_key` scope upfront to avoid needing browser-based re-auth later.
+
 ## PR workflow
 
 1. Create a branch: `git checkout -b feat/core-streaming`
@@ -146,15 +175,18 @@ Two AI reviewers comment on PRs automatically:
 
 ## Module boundaries
 
-The five components are strictly isolated. Cross-component imports are enforced by
+The eight components are strictly isolated. Cross-component imports are enforced by
 import-linter and will fail CI:
 
 ```text
-vektra_shared  ←  everything may import this
-vektra_core    ←  no imports from admin/ingest/index
-vektra_ingest  ←  no imports from admin/core/index
-vektra_index   ←  no imports from admin/core/ingest
-vektra_admin   ←  no imports from core/ingest/index
+vektra_shared     <-  everything may import this
+vektra_core       <-  no imports from admin/ingest/index/analytics/learn
+vektra_ingest     <-  no imports from admin/core/index/analytics/learn
+vektra_index      <-  no imports from admin/core/ingest/analytics/learn
+vektra_admin      <-  no imports from core/ingest/index/analytics/learn
+vektra_analytics  <-  no imports from core/ingest/index/admin/learn
+vektra_learn      <-  no imports from core/ingest/index/admin/analytics
+vektra_app        <-  may import all (assembly layer)
 ```
 
 If a component needs functionality from another, it should go through a Protocol interface
@@ -181,5 +213,5 @@ By participating in this project you agree to abide by our [Code of Conduct](COD
 
 ---
 
-*Last updated: 2026-02-27. Contribution guidelines derived from roundtable session
+*Last updated: 2026-03-21. Contribution guidelines derived from roundtable session
 20260128-roundtable-vektra (REQ-016, REQ-011) and CI/CD setup discussion 20260219.*

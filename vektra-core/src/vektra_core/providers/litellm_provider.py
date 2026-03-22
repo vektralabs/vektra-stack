@@ -37,6 +37,9 @@ class LitellmProvider:
 
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
+        self._base_kwargs: dict[str, Any] = {}
+        if config.api_base:
+            self._base_kwargs["api_base"] = config.api_base
 
     @property
     def model_name(self) -> str:
@@ -56,6 +59,7 @@ class LitellmProvider:
             messages=[{"role": m.role, "content": m.content} for m in messages],
             temperature=temperature,
             max_tokens=max_tokens,
+            **self._base_kwargs,
             **kwargs,
         )
         choice = response.choices[0]
@@ -93,6 +97,7 @@ class LitellmProvider:
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
+            **self._base_kwargs,
             **kwargs,
         )
         async for chunk in response:
@@ -102,14 +107,15 @@ class LitellmProvider:
             yield CompletionChunk(content=content, done=finish is not None)
 
     async def health_check(self) -> HealthStatus:
-        """Probe the primary model with a 1-token completion (5-second timeout)."""
+        """Probe the primary model with a short completion (5-second timeout)."""
         start = time.monotonic()
         try:
             await asyncio.wait_for(
                 litellm.acompletion(
                     model=self._config.provider,
                     messages=[{"role": "user", "content": "ping"}],
-                    max_tokens=1,
+                    max_tokens=5,
+                    **self._base_kwargs,
                 ),
                 timeout=5.0,
             )

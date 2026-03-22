@@ -66,9 +66,13 @@ class TestResolveNamespace:
     @pytest.mark.asyncio
     async def test_get_uses_query_param_over_body(self):
         """For GET requests, query param is used (body not read)."""
+        import json
+
+        body = json.dumps({"namespace": "body-ns"}).encode()
         request = _make_request(
             method="GET",
             query_params={"namespace": "query-ns"},
+            body=body,
         )
         result = await _resolve_namespace(request)
         assert result == "query-ns"

@@ -677,8 +677,12 @@ class SimpleQueryPipeline:
                 )
             )
 
+        # Recheck: post_retrieval safeguard may have filtered all chunks
+        if not no_relevant_context and not filtered:
+            no_relevant_context = True
+
         # Safeguard blocked all results → early return
-        if safeguard_blocked:
+        if safeguard_blocked or no_relevant_context:
             yield QueryChunk(type="sources", data=[])
             trace = QueryTrace(
                 response_id=response_id,

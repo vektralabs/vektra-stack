@@ -31,17 +31,25 @@ export function renderMarkdown(text) {
   const lines = html.split("\n");
   const output = [];
   let inList = null; // "ul" | "ol" | null
+  let inPre = false;
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
 
-    // Skip lines inside <pre> blocks (already processed)
-    if (line.includes("<pre>") || line.includes("</pre>")) {
+    // Track <pre> blocks: pass through without block-level processing
+    if (line.includes("<pre>")) {
       if (inList) {
         output.push(`</${inList}>`);
         inList = null;
       }
+      inPre = true;
       output.push(line);
+      if (line.includes("</pre>")) inPre = false;
+      continue;
+    }
+    if (inPre) {
+      output.push(line);
+      if (line.includes("</pre>")) inPre = false;
       continue;
     }
 

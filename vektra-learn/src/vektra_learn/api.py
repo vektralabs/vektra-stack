@@ -51,7 +51,9 @@ router = APIRouter(prefix="/api/v1/learn", tags=["learn"])
 
 
 async def _learn_sse_generator(
-    stream: AsyncGenerator[Any, None], request: Request
+    stream: AsyncGenerator[Any, None],
+    request: Request,
+    conversation_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Format QueryChunk events as SSE lines for learn endpoint."""
     try:
@@ -65,6 +67,11 @@ async def _learn_sse_generator(
                 payload = json.dumps({"type": chunk.type, "data": chunk.data})
                 yield f"data: {payload}\n\n"
             elif chunk.type == "done":
+                if conversation_id:
+                    meta = json.dumps(
+                        {"type": "done", "data": {"conversation_id": conversation_id}}
+                    )
+                    yield f"data: {meta}\n\n"
                 yield "data: [DONE]\n\n"
     finally:
         await stream.aclose()
@@ -522,7 +529,7 @@ async def course_query(
     if req.stream:
         stream_iter = await pipeline.execute_stream(query_req)
         return StreamingResponse(
-            _learn_sse_generator(stream_iter, request),
+            _learn_sse_generator(stream_iter, request, str(query_req.conversation_id)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

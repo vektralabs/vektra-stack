@@ -69,6 +69,38 @@ import { ChatUI } from "./chat-ui.js";
         });
       },
     });
+
+    // Check API connectivity on startup and show status if unreachable
+    let retryTimer = null;
+
+    async function checkConnection() {
+      const healthy = await client.checkHealth();
+      if (healthy) {
+        ui.setConnectionStatus(null);
+        if (retryTimer) {
+          clearInterval(retryTimer);
+          retryTimer = null;
+        }
+      } else {
+        ui.setConnectionStatus("unavailable");
+        // Retry every 30s until connection is restored
+        if (!retryTimer) {
+          retryTimer = setInterval(async () => {
+            ui.setConnectionStatus("reconnecting");
+            const ok = await client.checkHealth();
+            if (ok) {
+              ui.setConnectionStatus(null);
+              clearInterval(retryTimer);
+              retryTimer = null;
+            } else {
+              ui.setConnectionStatus("unavailable");
+            }
+          }, 30000);
+        }
+      }
+    }
+
+    checkConnection();
   }
 
   // Wait for DOM to be ready before creating UI elements

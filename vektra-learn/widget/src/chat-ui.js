@@ -15,6 +15,8 @@ const I18N = {
     noRelevantContext:
       "I couldn't find relevant information in the course materials for this question.",
     error: "An error occurred. Please try again.",
+    unavailable: "The assistant is currently unavailable. Please try again later.",
+    reconnecting: "Reconnecting...",
     close: "Close",
   },
   it: {
@@ -26,6 +28,8 @@ const I18N = {
     noRelevantContext:
       "Non ho trovato informazioni rilevanti nei materiali del corso per questa domanda.",
     error: "Si è verificato un errore. Riprova.",
+    unavailable: "L'assistente non è al momento disponibile. Riprova più tardi.",
+    reconnecting: "Riconnessione...",
     close: "Chiudi",
   },
 };
@@ -249,6 +253,33 @@ export class ChatUI {
     msg.textContent = message || this._lang.error;
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
+  }
+
+  /**
+   * Show or hide a connection status banner at the top of the messages area.
+   * @param {"unavailable"|"reconnecting"|null} status - null to clear
+   */
+  setConnectionStatus(status) {
+    // Remove existing banner if any
+    const existing = this._panel.querySelector(".vektra-chat-status");
+    if (existing) existing.remove();
+
+    if (!status) {
+      this._inputEl.disabled = false;
+      this._sendBtn.disabled = false;
+      return;
+    }
+
+    const banner = document.createElement("div");
+    banner.className = "vektra-chat-status";
+    banner.textContent = this._lang[status] || status;
+    this._messagesEl.insertBefore(banner, this._messagesEl.firstChild);
+
+    // Disable input when unavailable
+    if (status === "unavailable") {
+      this._inputEl.disabled = true;
+      this._sendBtn.disabled = true;
+    }
   }
 
   /**

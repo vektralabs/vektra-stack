@@ -199,6 +199,16 @@ export function buildStyles(theme) {
   font-style: italic;
 }
 
+.vektra-chat-status {
+  padding: 8px 12px;
+  background: #fef2c0;
+  color: #92400e;
+  font-size: 13px;
+  text-align: center;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
 .vektra-chat-input-area {
   display: flex;
   align-items: center;

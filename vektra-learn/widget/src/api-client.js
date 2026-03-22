@@ -22,6 +22,22 @@ export class ApiClient {
   }
 
   /**
+   * Check if the Vektra API is reachable.
+   * @returns {Promise<boolean>}
+   */
+  async checkHealth() {
+    try {
+      const resp = await fetch(`${this._apiUrl}/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(5000),
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Send a query with SSE streaming support and JSON fallback.
    * @param {string} question
    * @param {object} callbacks - { onToken, onSources, onDone, onError, onNoRelevantContext }

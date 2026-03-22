@@ -16,7 +16,6 @@ from uuid import UUID, uuid4
 
 import httpx
 import jwt
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -47,8 +46,6 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
-
-log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/learn", tags=["learn"])
 

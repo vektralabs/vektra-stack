@@ -11,6 +11,7 @@
  *     data-token="eyJ..."
  *     data-theme="light"
  *     data-language="en"
+ *     data-token-refresh-url="/my-app/refresh-token"
  *   ></script>
  */
 

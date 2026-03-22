@@ -249,11 +249,12 @@ export function buildStyles(theme) {
 
 .vektra-chat-status {
   padding: 8px 12px;
-  background: #fef2c0;
-  color: #92400e;
+  background: ${t.bgSecondary};
+  color: ${t.textSecondary};
   font-size: 13px;
   text-align: center;
   border-radius: 6px;
+  border: 1px solid ${t.border};
   margin-bottom: 8px;
 }
 

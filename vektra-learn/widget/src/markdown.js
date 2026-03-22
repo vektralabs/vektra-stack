@@ -119,10 +119,12 @@ function renderInline(text) {
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       // Italic
       .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-      // Links
-      .replace(
-        /\[([^\]]+)\]\(([^)]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener">$1</a>'
-      )
+      // Links (only http/https to prevent javascript: XSS)
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => {
+        if (/^https?:\/\//i.test(url)) {
+          return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
+        }
+        return `${label} (${url})`;
+      })
   );
 }

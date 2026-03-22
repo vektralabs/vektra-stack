@@ -9,11 +9,6 @@ export class ApiClient {
    * @param {string} apiUrl - Base URL of the Vektra API
    * @param {string} token - JWT dashboard token
    * @param {string} courseId - Course identifier for scoped queries
-   */
-  /**
-   * @param {string} apiUrl - Base URL of the Vektra API
-   * @param {string} token - JWT dashboard token
-   * @param {string} courseId - Course identifier for scoped queries
    * @param {object} [opts]
    * @param {function} [opts.onTokenExpired] - async callback returning a new token string
    * @param {string} [opts.tokenRefreshUrl] - URL to fetch a new token (POST, returns {token})

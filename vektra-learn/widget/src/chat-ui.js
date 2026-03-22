@@ -284,8 +284,8 @@ export class ChatUI {
     banner.textContent = this._lang[status] || status;
     this._messagesEl.insertBefore(banner, this._messagesEl.firstChild);
 
-    // Disable input when unavailable
-    if (status === "unavailable") {
+    // Disable input when unavailable or session expired
+    if (status === "unavailable" || status === "sessionExpired") {
       this._inputEl.disabled = true;
       this._sendBtn.disabled = true;
     }

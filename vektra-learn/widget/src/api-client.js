@@ -45,7 +45,7 @@ export class ApiClient {
   async query(question, { onToken, onSources, onDone, onError, onNoRelevantContext }) {
     const body = {
       question,
-      stream: false,
+      stream: true,
       top_k: 5,
     };
     if (this._conversationId) {
@@ -82,6 +82,7 @@ export class ApiClient {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let receivedTokens = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -95,18 +96,33 @@ export class ApiClient {
             if (line.startsWith("data: ")) {
               const payload = line.slice(6).trim();
               if (payload === "[DONE]") {
+                if (!receivedTokens && onNoRelevantContext) {
+                  onNoRelevantContext();
+                }
                 if (onDone) onDone();
                 return;
+              }
+              // Plain text tokens (not JSON)
+              if (!payload.startsWith("{")) {
+                if (onToken) {
+                  onToken(payload);
+                  receivedTokens = true;
+                }
+                continue;
               }
               try {
                 const event = JSON.parse(payload);
                 if (event.type === "token" && onToken) {
                   onToken(event.data);
+                  receivedTokens = true;
                 } else if (event.type === "sources" && onSources) {
                   onSources(event.data);
                 } else if (event.type === "done") {
                   if (event.data?.conversation_id) {
                     this._conversationId = event.data.conversation_id;
+                  }
+                  if (!receivedTokens && onNoRelevantContext) {
+                    onNoRelevantContext();
                   }
                   if (onDone) onDone();
                   return;

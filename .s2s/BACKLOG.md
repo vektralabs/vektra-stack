@@ -37,9 +37,9 @@
 
 ---
 
-### DEBT-002: `_stream()` emits no QueryTrace
+### DEBT-002: ~~`_stream()` emits no QueryTrace~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Status**: completed | **Priority**: low | **Created**: 2026-02-19 | **Completed**: 2026-03-22 (v0.3.0)
 **Blocked by**: Phase 2
 **PR #2 review**: Confirmed as deferred. Fixing requires collecting step timings across the async generator lifecycle, which is a structural change. Comments 2833984647, nitpick pipeline.py:414-437.
 
@@ -54,9 +54,9 @@
 
 ---
 
-### DEBT-003: `post_retrieval` safeguard trust boundary not called
+### DEBT-003: ~~`post_retrieval` safeguard trust boundary not called~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-19
+**Status**: completed | **Priority**: low | **Created**: 2026-02-19 | **Completed**: 2026-03-22 (v0.3.0)
 **Blocked by**: Phase 2 (PassthroughSafeguard covers Phase 1)
 **PR #2 review**: Confirmed as deferred. Adding the boundary requires calling `post_retrieval` in both `execute()` and `_stream()` after retrieval filter, plus implementing chunk filtering via `SafeguardResult.filtered_ids`. Acceptable for Phase 1 with PassthroughSafeguard. Comment 2833984647.
 
@@ -137,9 +137,9 @@
 
 ---
 
-### DEBT-008: LRU cache stores plaintext API keys in memory
+### DEBT-008: ~~LRU cache stores plaintext API keys in memory~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-02-28
+**Status**: completed | **Priority**: low | **Created**: 2026-02-28 | **Completed**: 2026-03-22 (v0.3.0)
 **Blocked by**: Phase 2
 **Origin**: PR #2 review, CodeRabbit comment 2867565397
 
@@ -865,9 +865,9 @@ This does not violate REQ-051 if data is aggregated (no individual conversations
 
 ## In Progress
 
-### BUG-011: Ingest pipeline does not generate sparse embeddings for hybrid search
+### BUG-011: ~~Ingest pipeline does not generate sparse embeddings for hybrid search~~
 
-**Status**: in_progress | **Priority**: high | **Created**: 2026-03-17
+**Status**: completed | **Priority**: high | **Created**: 2026-03-17 | **Completed**: 2026-03-22 (v0.3.0)
 **Origin**: RAG tuning testing — combo B (hybrid search with BM25)
 
 **Context**: The `SparseEmbeddingProvider` (fastembed-bm25) is correctly registered at startup and the Qdrant collection is created with sparse vector support (`sparse` named vector with IDF modifier). However, the ingest pipeline (`vektra_ingest/pipeline.py` `run_ingest()`) only calls the dense `EmbeddingProvider.embed_documents()` and constructs `ChunkEmbedding` objects without the `sparse` field. The `ChunkEmbedding` dataclass already supports `sparse: SparseVector | None = None` and the Qdrant provider correctly stores sparse vectors when present (`qdrant.py:138-142`). The gap is solely in the ingest pipeline: it doesn't call `SparseEmbeddingProvider.embed_documents()`.
@@ -880,9 +880,9 @@ The `AdvancedQueryPipeline` correctly calls `SparseEmbeddingProvider.embed_query
 
 ---
 
-### BUG-010: Learn query endpoint does not auto-create conversation on first query
+### BUG-010: ~~Learn query endpoint does not auto-create conversation on first query~~
 
-**Status**: in_progress | **Priority**: high | **Created**: 2026-03-16
+**Status**: completed | **Priority**: high | **Created**: 2026-03-16 | **Completed**: 2026-03-22 (v0.3.0)
 **Origin**: Moodle integration testing (2026-03-16)
 
 **Context**: The learn query endpoint (`POST /api/v1/learn/query`) passes `conversation_id` through to the pipeline unchanged. When the widget sends the first query without a `conversation_id` (which is the normal flow), the pipeline receives `None`, skips history retrieval and turn saving, and returns `conversation_id: null`. The widget receives `null` and has nothing to save — so the second query also has no `conversation_id`. Result: **every query is a single-turn query with no conversation continuity**.
@@ -945,7 +945,7 @@ The backend stores conversation turns in the database (used for multi-turn query
 
 ### FEAT-003: Optional enrollment — trust external identity providers for learn queries
 
-**Status**: in_progress | **Priority**: high | **Created**: 2026-03-16
+**Status**: completed | **Priority**: high | **Created**: 2026-03-16 | **Completed**: 2026-03-22 (v0.3.0)
 **Origin**: Moodle integration experience (vektra-moodle plugin)
 
 **Context**: The learn module currently requires a Vektra enrollment record for every student+course pair before allowing queries. This creates friction in LMS integrations where the LMS already manages enrollment and authorization. The JWT is signed server-side with the admin API key, contains `student_id` + `course_id`, and has short TTL (1h default). By the time a query arrives with a valid JWT, the student is already authorized by the upstream system.

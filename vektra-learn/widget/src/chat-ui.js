@@ -18,6 +18,7 @@ const I18N = {
     error: "An error occurred. Please try again.",
     unavailable: "The assistant is currently unavailable. Please try again later.",
     reconnecting: "Reconnecting...",
+    sessionExpired: "Your session has expired. Please reload the page.",
     close: "Close",
   },
   it: {
@@ -31,6 +32,7 @@ const I18N = {
     error: "Si è verificato un errore. Riprova.",
     unavailable: "L'assistente non è al momento disponibile. Riprova più tardi.",
     reconnecting: "Riconnessione...",
+    sessionExpired: "La sessione è scaduta. Ricarica la pagina.",
     close: "Chiudi",
   },
 };

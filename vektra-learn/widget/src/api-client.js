@@ -10,11 +10,27 @@ export class ApiClient {
    * @param {string} token - JWT dashboard token
    * @param {string} courseId - Course identifier for scoped queries
    */
-  constructor(apiUrl, token, courseId) {
+  /**
+   * @param {string} apiUrl - Base URL of the Vektra API
+   * @param {string} token - JWT dashboard token
+   * @param {string} courseId - Course identifier for scoped queries
+   * @param {object} [opts]
+   * @param {function} [opts.onTokenExpired] - async callback returning a new token string
+   * @param {string} [opts.tokenRefreshUrl] - URL to fetch a new token (POST, returns {token})
+   */
+  constructor(apiUrl, token, courseId, opts = {}) {
     this._apiUrl = apiUrl.replace(/\/+$/, "");
     this._token = token;
     this._courseId = courseId;
     this._conversationId = null;
+    this._onTokenExpired = opts.onTokenExpired || null;
+    this._tokenRefreshUrl = opts.tokenRefreshUrl || null;
+    this._refreshing = false;
+  }
+
+  /** Update the token (used after refresh). */
+  setToken(token) {
+    this._token = token;
   }
 
   get conversationId() {
@@ -66,6 +82,14 @@ export class ApiClient {
       );
 
       if (!response.ok) {
+        // Token expired: attempt refresh and retry once
+        if (response.status === 401 && !this._refreshing) {
+          const newToken = await this._refreshToken();
+          if (newToken) {
+            this._token = newToken;
+            return this.query(question, { onToken, onSources, onDone, onError, onNoRelevantContext });
+          }
+        }
         const errData = await response.json().catch(() => ({}));
         const msg =
           errData?.error?.message ||
@@ -155,6 +179,38 @@ export class ApiClient {
       }
     } catch (err) {
       onError(err.message || "Network error");
+    }
+  }
+
+  /**
+   * Attempt to refresh the token via callback or URL.
+   * @returns {Promise<string|null>} new token or null if refresh failed
+   */
+  async _refreshToken() {
+    this._refreshing = true;
+    try {
+      // Callback takes priority
+      if (this._onTokenExpired) {
+        const token = await this._onTokenExpired();
+        return typeof token === "string" && token ? token : null;
+      }
+      // URL-based refresh
+      if (this._tokenRefreshUrl) {
+        const resp = await fetch(this._tokenRefreshUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          return data.token || null;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      this._refreshing = false;
     }
   }
 }

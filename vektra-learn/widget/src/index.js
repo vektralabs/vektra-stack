@@ -32,6 +32,7 @@ import { ChatUI } from "./chat-ui.js";
   const token = scriptTag.getAttribute("data-token");
   const theme = scriptTag.getAttribute("data-theme") || "light";
   const language = scriptTag.getAttribute("data-language") || "en";
+  const tokenRefreshUrl = scriptTag.getAttribute("data-token-refresh-url") || null;
 
   if (!apiUrl || !courseId || !token) {
     console.error(
@@ -41,7 +42,7 @@ import { ChatUI } from "./chat-ui.js";
   }
 
   function init() {
-    const client = new ApiClient(apiUrl, token, courseId);
+    const client = new ApiClient(apiUrl, token, courseId, { tokenRefreshUrl });
 
     const ui = new ChatUI({
       theme,
@@ -63,7 +64,12 @@ import { ChatUI } from "./chat-ui.js";
             ui.doneSending();
           },
           onError(errMsg) {
-            ui.showError(errMsg);
+            // Show session expired message for auth failures
+            if (errMsg && errMsg.includes("HTTP 401")) {
+              ui.setConnectionStatus("sessionExpired");
+            } else {
+              ui.showError(errMsg);
+            }
             ui.doneSending();
           },
         });

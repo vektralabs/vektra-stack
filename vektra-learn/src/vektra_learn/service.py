@@ -52,6 +52,7 @@ class TokenRequest(BaseModel):
     course_id: str = Field(min_length=1, max_length=255)
     namespace: str | None = Field(
         default=None,
+        min_length=1,
         max_length=64,
         description="Override namespace in JWT. When omitted, course_id is used as namespace convention.",
     )

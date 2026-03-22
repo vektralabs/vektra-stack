@@ -24,7 +24,9 @@ def create_safeguard(mode: str, *, pii_chunk_threshold: int = 3) -> SafeguardHoo
     Returns:
         A SafeguardHook implementation.
     """
-    if mode == "presidio":
+    normalized = mode.strip().lower()
+
+    if normalized == "presidio":
         try:
             from vektra_core.safeguards.presidio import PresidioPIISafeguard
 
@@ -37,7 +39,7 @@ def create_safeguard(mode: str, *, pii_chunk_threshold: int = 3) -> SafeguardHoo
             )
             return PassthroughSafeguard()
 
-    if mode != "passthrough":
+    if normalized != "passthrough":
         log.warning("safeguard_unknown_mode", mode=mode, fallback="passthrough")
 
     return PassthroughSafeguard()

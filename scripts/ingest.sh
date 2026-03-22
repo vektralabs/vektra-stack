@@ -20,7 +20,7 @@ for arg in "$@"; do
       echo "Ingest a document into Vektra."
       echo ""
       echo "Arguments:"
-      echo "  FILE        Path to the document (PDF, DOCX, PPTX)"
+      echo "  FILE        Path to the document (PDF, DOCX, PPTX, MD)"
       echo "  NAMESPACE   Target namespace (default: 'default')"
       echo ""
       echo "Environment:"

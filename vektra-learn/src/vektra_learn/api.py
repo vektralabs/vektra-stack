@@ -59,7 +59,8 @@ async def _learn_sse_generator(
             if await request.is_disconnected():
                 break
             if chunk.type == "token":
-                yield f"data: {chunk.data}\n\n"
+                payload = json.dumps({"type": "token", "data": chunk.data})
+                yield f"data: {payload}\n\n"
             elif chunk.type in ("sources", "error", "trace"):
                 payload = json.dumps({"type": chunk.type, "data": chunk.data})
                 yield f"data: {payload}\n\n"

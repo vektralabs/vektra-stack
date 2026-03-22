@@ -113,21 +113,13 @@ export class ApiClient {
 
           for (const line of lines) {
             if (line.startsWith("data: ")) {
-              const payload = line.slice(6).trim();
-              if (payload === "[DONE]") {
+              const payload = line.slice(6);
+              if (payload.trim() === "[DONE]") {
                 if (!receivedTokens && onNoRelevantContext) {
                   onNoRelevantContext();
                 }
                 if (onDone) onDone();
                 return;
-              }
-              // Plain text tokens (not JSON)
-              if (!payload.startsWith("{")) {
-                if (onToken) {
-                  onToken(payload);
-                  receivedTokens = true;
-                }
-                continue;
               }
               try {
                 const event = JSON.parse(payload);

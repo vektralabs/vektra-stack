@@ -4,7 +4,7 @@
  * Output is sanitized: no raw HTML passthrough, only generated tags.
  *
  * Supported: **bold**, *italic*, `inline code`, ```code blocks```,
- * [links](url), # headings (h3-h4), - unordered lists, 1. ordered lists.
+ * [links](url), # headings (h3-h6), - unordered lists, 1. ordered lists.
  */
 
 /**
@@ -146,7 +146,7 @@ function renderInline(text) {
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => {
         if (/^https?:\/\//i.test(url)) {
           const safeUrl = url.replace(/"/g, "&quot;");
-          return `<a href="${safeUrl}" target="_blank" rel="noopener">${label}</a>`;
+          return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`;
         }
         return `${label} (${url})`;
       })

@@ -266,7 +266,7 @@ export class ChatUI {
 
   /**
    * Show or hide a connection status banner at the top of the messages area.
-   * @param {"unavailable"|"reconnecting"|null} status - null to clear
+   * @param {"unavailable"|"reconnecting"|"sessionExpired"|null} status - null to clear
    */
   setConnectionStatus(status) {
     // Remove existing banner if any

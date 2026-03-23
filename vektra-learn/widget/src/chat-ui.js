@@ -50,6 +50,7 @@ export class ChatUI {
     this._onSend = onSend;
     this._isOpen = false;
     this._sending = false;
+    this._status = null; // "unavailable" | "reconnecting" | "sessionExpired" | null
 
     this._injectStyles();
     this._createElements();
@@ -138,8 +139,16 @@ export class ChatUI {
 
   _setSending(sending) {
     this._sending = sending;
-    this._sendBtn.disabled = sending;
-    this._inputEl.disabled = sending;
+    this._updateControlsDisabled();
+  }
+
+  _updateControlsDisabled() {
+    const blocked =
+      this._sending ||
+      this._status === "unavailable" ||
+      this._status === "sessionExpired";
+    this._sendBtn.disabled = blocked;
+    this._inputEl.disabled = blocked;
   }
 
   /**
@@ -273,11 +282,10 @@ export class ChatUI {
     const existing = this._panel.querySelector(".vektra-chat-status");
     if (existing) existing.remove();
 
+    this._status = status;
+
     if (!status) {
-      if (!this._sending) {
-        this._inputEl.disabled = false;
-        this._sendBtn.disabled = false;
-      }
+      this._updateControlsDisabled();
       return;
     }
 
@@ -286,11 +294,7 @@ export class ChatUI {
     banner.textContent = this._lang[status] || status;
     this._messagesEl.insertBefore(banner, this._messagesEl.firstChild);
 
-    // Disable input when unavailable or session expired
-    if (status === "unavailable" || status === "sessionExpired") {
-      this._inputEl.disabled = true;
-      this._sendBtn.disabled = true;
-    }
+    this._updateControlsDisabled();
   }
 
   /**

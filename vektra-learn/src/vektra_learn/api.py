@@ -7,6 +7,7 @@ The query endpoint authenticates via JWT dashboard token (not API key).
 from __future__ import annotations
 
 import ipaddress
+import json
 import socket
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -16,6 +17,7 @@ from uuid import UUID, uuid4
 import httpx
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -23,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_learn.query import (
     CourseQueryRequest,
-    CourseQueryResponse,
     build_course_query,
     pipeline_response_to_course_response,
 )
@@ -47,6 +48,34 @@ from vektra_shared.errors import (
 )
 
 router = APIRouter(prefix="/api/v1/learn", tags=["learn"])
+
+
+async def _learn_sse_generator(
+    stream: AsyncGenerator[Any, None],
+    request: Request,
+    conversation_id: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """Format QueryChunk events as SSE lines for learn endpoint."""
+    try:
+        async for chunk in stream:
+            if await request.is_disconnected():
+                break
+            if chunk.type == "token":
+                payload = json.dumps({"type": "token", "data": chunk.data})
+                yield f"data: {payload}\n\n"
+            elif chunk.type in ("sources", "error", "trace"):
+                payload = json.dumps({"type": chunk.type, "data": chunk.data})
+                yield f"data: {payload}\n\n"
+            elif chunk.type == "done":
+                if conversation_id:
+                    meta = json.dumps(
+                        {"type": "done", "data": {"conversation_id": conversation_id}}
+                    )
+                    yield f"data: {meta}\n\n"
+                yield "data: [DONE]\n\n"
+    finally:
+        await stream.aclose()
+
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -413,14 +442,14 @@ async def generate_token(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/query", response_model=CourseQueryResponse)
+@router.post("/query", response_model=None)
 async def course_query(
     req: CourseQueryRequest,
     request: Request,
     token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
     service: LearnService = Depends(_get_service),
     session: AsyncSession = Depends(_get_session),
-) -> CourseQueryResponse:
+) -> Any:
     """Course-scoped RAG query authenticated via JWT dashboard token.
 
     Extracts course_id and namespace from the token, scopes the query
@@ -496,6 +525,14 @@ async def course_query(
             remediation="The service may be starting up. Try again shortly.",
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    if req.stream:
+        stream_iter = await pipeline.execute_stream(query_req)
+        return StreamingResponse(
+            _learn_sse_generator(stream_iter, request, str(query_req.conversation_id)),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     response, _trace = await pipeline.execute(query_req)
     return pipeline_response_to_course_response(response)

@@ -499,12 +499,17 @@ The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) c
 
 ### FEAT-007: Markdown rendering in widget chat messages
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: in_progress | **Priority**: medium | **Created**: 2026-03-20
 **Origin**: Moodle integration testing (2026-03-20)
 
 **Context**: The learn chatbot widget (`vektra-chat.js`) renders all messages as plain text via `textContent`. LLM responses typically contain Markdown formatting (bold, italic, lists, code blocks, headings) which is displayed as raw syntax. This makes responses harder to read, especially for structured answers with bullet points or code examples.
 
-The widget is deliberately vanilla JS with zero dependencies (ADR-0025). Adding Markdown rendering requires either a lightweight library (e.g., `marked`, ~7KB minified) or a minimal custom parser for the most common patterns.
+The widget is deliberately vanilla JS with zero dependencies (ADR-0025). Adding Markdown rendering requires either a lightweight library or a minimal custom parser for the most common patterns.
+
+**Implementation note**: v0.4.0 uses a minimal built-in parser (~2KB) covering bold, italic, inline code, code blocks, links, headings, and lists. Third-party alternatives to evaluate if richer rendering is needed:
+- **marked** (~40KB min, ~7KB gzip) - full CommonMark, extensible, most popular
+- **snarkdown** (~1KB) - minimal inline-only, no code blocks or lists
+- **markdown-it** (~100KB min) - pluggable, CommonMark compliant, heavy
 
 **Scope**: only assistant messages need rendering. User messages stay as plain text. Sources section is already structured HTML.
 

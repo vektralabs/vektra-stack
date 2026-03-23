@@ -3,6 +3,7 @@
  * Vanilla DOM manipulation, no framework dependencies.
  */
 
+import { renderMarkdown } from "./markdown.js";
 import { buildStyles } from "./styles.js";
 
 const I18N = {
@@ -15,6 +16,9 @@ const I18N = {
     noRelevantContext:
       "I couldn't find relevant information in the course materials for this question.",
     error: "An error occurred. Please try again.",
+    unavailable: "The assistant is currently unavailable. Please try again later.",
+    reconnecting: "Reconnecting...",
+    sessionExpired: "Your session has expired. Please reload the page.",
     close: "Close",
   },
   it: {
@@ -26,6 +30,9 @@ const I18N = {
     noRelevantContext:
       "Non ho trovato informazioni rilevanti nei materiali del corso per questa domanda.",
     error: "Si è verificato un errore. Riprova.",
+    unavailable: "L'assistente non è al momento disponibile. Riprova più tardi.",
+    reconnecting: "Riconnessione...",
+    sessionExpired: "La sessione è scaduta. Ricarica la pagina.",
     close: "Chiudi",
   },
 };
@@ -43,6 +50,7 @@ export class ChatUI {
     this._onSend = onSend;
     this._isOpen = false;
     this._sending = false;
+    this._status = null; // "unavailable" | "reconnecting" | "sessionExpired" | null
 
     this._injectStyles();
     this._createElements();
@@ -131,8 +139,16 @@ export class ChatUI {
 
   _setSending(sending) {
     this._sending = sending;
-    this._sendBtn.disabled = sending;
-    this._inputEl.disabled = sending;
+    this._updateControlsDisabled();
+  }
+
+  _updateControlsDisabled() {
+    const blocked =
+      this._sending ||
+      this._status === "unavailable" ||
+      this._status === "sessionExpired";
+    this._sendBtn.disabled = blocked;
+    this._inputEl.disabled = blocked;
   }
 
   /**
@@ -144,7 +160,11 @@ export class ChatUI {
   addMessage(role, text) {
     const msg = document.createElement("div");
     msg.className = `vektra-chat-msg ${role}`;
-    msg.textContent = text;
+    if (role === "assistant") {
+      msg.innerHTML = renderMarkdown(text);
+    } else {
+      msg.textContent = text;
+    }
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
     return msg;
@@ -152,7 +172,7 @@ export class ChatUI {
 
   /**
    * Create an empty assistant message for streaming tokens.
-   * @returns {HTMLElement}
+   * @returns {{ el: HTMLElement, rawText: string }}
    */
   createStreamMessage() {
     const msg = document.createElement("div");
@@ -160,25 +180,27 @@ export class ChatUI {
     msg.textContent = "";
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
-    return msg;
+    return { el: msg, rawText: "" };
   }
 
   /**
-   * Append a token to a streaming message element.
-   * @param {HTMLElement} msgEl
+   * Append a token to a streaming message and re-render markdown.
+   * @param {{ el: HTMLElement, rawText: string }} stream
    * @param {string} token
    */
-  appendToken(msgEl, token) {
-    msgEl.textContent += token;
+  appendToken(stream, token) {
+    stream.rawText += token;
+    stream.el.innerHTML = renderMarkdown(stream.rawText);
     this._scrollToBottom();
   }
 
   /**
    * Add source citations below the last assistant message.
-   * @param {HTMLElement} msgEl
+   * @param {HTMLElement|{el: HTMLElement}} msgOrStream - message element or stream object
    * @param {Array} sources
    */
-  addSources(msgEl, sources) {
+  addSources(msgOrStream, sources) {
+    const msgEl = msgOrStream.el || msgOrStream;
     if (!sources || sources.length === 0) return;
 
     const container = document.createElement("div");
@@ -249,6 +271,30 @@ export class ChatUI {
     msg.textContent = message || this._lang.error;
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
+  }
+
+  /**
+   * Show or hide a connection status banner at the top of the messages area.
+   * @param {"unavailable"|"reconnecting"|"sessionExpired"|null} status - null to clear
+   */
+  setConnectionStatus(status) {
+    // Remove existing banner if any
+    const existing = this._panel.querySelector(".vektra-chat-status");
+    if (existing) existing.remove();
+
+    this._status = status;
+
+    if (!status) {
+      this._updateControlsDisabled();
+      return;
+    }
+
+    const banner = document.createElement("div");
+    banner.className = "vektra-chat-status";
+    banner.textContent = this._lang[status] || status;
+    this._messagesEl.insertBefore(banner, this._messagesEl.firstChild);
+
+    this._updateControlsDisabled();
   }
 
   /**

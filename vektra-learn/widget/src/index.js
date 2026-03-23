@@ -11,6 +11,7 @@
  *     data-token="eyJ..."
  *     data-theme="light"
  *     data-language="en"
+ *     data-token-refresh-url="/my-app/refresh-token"
  *   ></script>
  */
 
@@ -32,6 +33,7 @@ import { ChatUI } from "./chat-ui.js";
   const token = scriptTag.getAttribute("data-token");
   const theme = scriptTag.getAttribute("data-theme") || "light";
   const language = scriptTag.getAttribute("data-language") || "en";
+  const tokenRefreshUrl = scriptTag.getAttribute("data-token-refresh-url") || null;
 
   if (!apiUrl || !courseId || !token) {
     console.error(
@@ -41,34 +43,71 @@ import { ChatUI } from "./chat-ui.js";
   }
 
   function init() {
-    const client = new ApiClient(apiUrl, token, courseId);
+    const client = new ApiClient(apiUrl, token, courseId, { tokenRefreshUrl });
 
     const ui = new ChatUI({
       theme,
       language,
       onSend(question) {
-        const msgEl = ui.createStreamMessage();
+        const stream = ui.createStreamMessage();
 
         client.query(question, {
           onToken(tokenText) {
-            ui.appendToken(msgEl, tokenText);
+            ui.appendToken(stream, tokenText);
           },
           onSources(sources) {
-            ui.addSources(msgEl, sources);
+            ui.addSources(stream, sources);
           },
           onNoRelevantContext() {
-            ui.appendToken(msgEl, ui.noRelevantContextMessage());
+            ui.appendToken(stream, ui.noRelevantContextMessage());
           },
           onDone() {
             ui.doneSending();
           },
           onError(errMsg) {
-            ui.showError(errMsg);
+            // Show session expired message for auth failures
+            if (errMsg && errMsg.includes("HTTP 401")) {
+              ui.setConnectionStatus("sessionExpired");
+            } else {
+              ui.showError(errMsg);
+            }
             ui.doneSending();
           },
         });
       },
     });
+
+    // Check API connectivity on startup and show status if unreachable
+    let retryTimer = null;
+
+    async function checkConnection() {
+      const healthy = await client.checkHealth();
+      if (healthy) {
+        ui.setConnectionStatus(null);
+        if (retryTimer) {
+          clearInterval(retryTimer);
+          retryTimer = null;
+        }
+      } else {
+        ui.setConnectionStatus("unavailable");
+        // Retry every 30s until connection is restored
+        if (!retryTimer) {
+          retryTimer = setInterval(async () => {
+            ui.setConnectionStatus("reconnecting");
+            const ok = await client.checkHealth();
+            if (ok) {
+              ui.setConnectionStatus(null);
+              clearInterval(retryTimer);
+              retryTimer = null;
+            } else {
+              ui.setConnectionStatus("unavailable");
+            }
+          }, 30000);
+        }
+      }
+    }
+
+    checkConnection();
   }
 
   // Wait for DOM to be ready before creating UI elements

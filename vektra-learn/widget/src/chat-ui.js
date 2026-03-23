@@ -274,8 +274,10 @@ export class ChatUI {
     if (existing) existing.remove();
 
     if (!status) {
-      this._inputEl.disabled = false;
-      this._sendBtn.disabled = false;
+      if (!this._sending) {
+        this._inputEl.disabled = false;
+        this._sendBtn.disabled = false;
+      }
       return;
     }
 

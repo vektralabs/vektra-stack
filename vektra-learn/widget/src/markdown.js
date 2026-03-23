@@ -33,11 +33,21 @@ export function renderMarkdown(text) {
   let inList = null; // "ul" | "ol" | null
   let inPre = false;
 
+  let paraLines = []; // accumulate consecutive text lines into one <p>
+
+  function flushParagraph() {
+    if (paraLines.length > 0) {
+      output.push(`<p>${paraLines.join(" ")}</p>`);
+      paraLines = [];
+    }
+  }
+
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
 
     // Track <pre> blocks: pass through without block-level processing
     if (line.includes("<pre>")) {
+      flushParagraph();
       if (inList) {
         output.push(`</${inList}>`);
         inList = null;
@@ -56,6 +66,7 @@ export function renderMarkdown(text) {
     // Headings
     const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
     if (headingMatch) {
+      flushParagraph();
       if (inList) {
         output.push(`</${inList}>`);
         inList = null;
@@ -68,6 +79,7 @@ export function renderMarkdown(text) {
     // Unordered list items
     const ulMatch = line.match(/^[\s]*[-*]\s+(.+)$/);
     if (ulMatch) {
+      flushParagraph();
       if (inList !== "ul") {
         if (inList) output.push(`</${inList}>`);
         output.push("<ul>");
@@ -80,6 +92,7 @@ export function renderMarkdown(text) {
     // Ordered list items
     const olMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
     if (olMatch) {
+      flushParagraph();
       if (inList !== "ol") {
         if (inList) output.push(`</${inList}>`);
         output.push("<ol>");
@@ -97,15 +110,17 @@ export function renderMarkdown(text) {
 
     // Empty line -> paragraph break
     if (line.trim() === "") {
+      flushParagraph();
       output.push("");
       continue;
     }
 
-    // Regular paragraph line
-    output.push(`<p>${renderInline(line)}</p>`);
+    // Regular text line: accumulate for paragraph grouping
+    paraLines.push(renderInline(line));
   }
 
-  // Close any open list
+  // Flush remaining paragraph and close any open list
+  flushParagraph();
   if (inList) {
     output.push(`</${inList}>`);
   }
@@ -130,7 +145,8 @@ function renderInline(text) {
       // Links (only http/https to prevent javascript: XSS)
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => {
         if (/^https?:\/\//i.test(url)) {
-          return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
+          const safeUrl = url.replace(/"/g, "&quot;");
+          return `<a href="${safeUrl}" target="_blank" rel="noopener">${label}</a>`;
         }
         return `${label} (${url})`;
       })

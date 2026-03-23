@@ -154,7 +154,8 @@ export function buildStyles(theme) {
 }
 .vektra-chat-msg.assistant h3,
 .vektra-chat-msg.assistant h4,
-.vektra-chat-msg.assistant h5 {
+.vektra-chat-msg.assistant h5,
+.vektra-chat-msg.assistant h6 {
   margin: 12px 0 4px 0;
   font-size: 14px;
   font-weight: 600;

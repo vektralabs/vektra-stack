@@ -53,7 +53,8 @@ export class ApiClient {
    * @param {string} question
    * @param {object} callbacks - { onToken, onSources, onDone, onError, onNoRelevantContext }
    */
-  async query(question, { onToken, onSources, onDone, onError, onNoRelevantContext }) {
+  async query(question, callbacks, _retried = false) {
+    const { onToken, onSources, onDone, onError, onNoRelevantContext } = callbacks;
     const body = {
       question,
       stream: true,
@@ -78,18 +79,20 @@ export class ApiClient {
 
       if (!response.ok) {
         // Token expired: attempt refresh and retry once
-        if (response.status === 401 && !this._refreshing) {
+        if (response.status === 401 && !_retried) {
           const newToken = await this._refreshToken();
           if (newToken) {
             this._token = newToken;
-            return this.query(question, { onToken, onSources, onDone, onError, onNoRelevantContext });
+            return this.query(question, callbacks, true);
           }
         }
         const errData = await response.json().catch(() => ({}));
+        const serverMessage =
+          errData?.error?.message || errData?.detail?.error?.message;
         const msg =
-          errData?.error?.message ||
-          errData?.detail?.error?.message ||
-          `HTTP ${response.status}`;
+          response.status === 401
+            ? `HTTP 401${serverMessage ? `: ${serverMessage}` : ""}`
+            : serverMessage || `HTTP ${response.status}`;
         onError(msg);
         return;
       }

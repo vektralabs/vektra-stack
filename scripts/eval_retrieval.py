@@ -66,8 +66,14 @@ def evaluate_question(
     entry: dict,
     top_k: int,
     search_mode: str,
+    use_query: bool = False,
 ) -> QuestionResult:
-    """Run a single search query and compute retrieval metrics."""
+    """Run a single search/query and compute retrieval metrics.
+
+    When use_query=True, calls /api/v1/query (includes reranker) and
+    evaluates on the returned sources. Otherwise calls /api/v1/search
+    (raw vector search, no reranker).
+    """
     question_id = entry["id"]
     question = entry["question"]
     keywords = entry.get("expected_keywords", [])
@@ -76,15 +82,25 @@ def evaluate_question(
     language = entry.get("language", "unknown")
 
     try:
-        resp = client.post(
-            "/api/v1/search",
-            json={
-                "query": question,
-                "namespace": namespace,
-                "top_k": top_k,
-                "search_mode": search_mode,
-            },
-        )
+        if use_query:
+            resp = client.post(
+                "/api/v1/query",
+                json={
+                    "question": question,
+                    "namespace": namespace,
+                    "top_k": top_k,
+                },
+            )
+        else:
+            resp = client.post(
+                "/api/v1/search",
+                json={
+                    "query": question,
+                    "namespace": namespace,
+                    "top_k": top_k,
+                    "search_mode": search_mode,
+                },
+            )
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -101,7 +117,8 @@ def evaluate_question(
             error=str(e),
         )
 
-    results = data.get("results", [])
+    # /api/v1/query returns "sources", /api/v1/search returns "results"
+    results = data.get("sources") or data.get("results") or []
     scores = [r["score"] for r in results]
 
     if not keywords:
@@ -120,8 +137,10 @@ def evaluate_question(
         )
 
     # Compute which chunks are relevant
+    # /api/v1/search uses "text_snippet", /api/v1/query uses "snippet"
     relevant_mask = [
-        chunk_matches_keywords(r.get("text_snippet", ""), keywords) for r in results
+        chunk_matches_keywords(r.get("text_snippet") or r.get("snippet", ""), keywords)
+        for r in results
     ]
     num_relevant = sum(relevant_mask)
     hit = num_relevant > 0
@@ -258,10 +277,9 @@ def main() -> None:
         help="Search mode (default: hybrid)",
     )
     parser.add_argument(
-        "--min-score",
-        type=float,
-        default=None,
-        help="Override VEKTRA_MIN_RELEVANCE_SCORE for this run",
+        "--use-query",
+        action="store_true",
+        help="Use /api/v1/query (with reranker) instead of /api/v1/search",
     )
     args = parser.parse_args()
 
@@ -286,18 +304,24 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Loaded {len(dataset)} questions from {args.dataset}")
-    print(f"API: {api_url}  top_k={args.top_k}  mode={args.search_mode}")
+    mode_info = (
+        "query (with reranker)" if args.use_query else f"search mode={args.search_mode}"
+    )
+    print(f"API: {api_url}  top_k={args.top_k}  {mode_info}")
 
+    timeout = 120.0 if args.use_query else 30.0
     client = httpx.Client(
         base_url=api_url,
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=30.0,
+        timeout=timeout,
     )
 
     results: list[QuestionResult] = []
     t0 = time.monotonic()
     for i, entry in enumerate(dataset):
-        result = evaluate_question(client, entry, args.top_k, args.search_mode)
+        result = evaluate_question(
+            client, entry, args.top_k, args.search_mode, use_query=args.use_query
+        )
         results.append(result)
         status = "HIT" if result.hit else ("ERR" if result.error else "MISS")
         print(f"  [{i + 1}/{len(dataset)}] {entry['id']} {status}", end="")

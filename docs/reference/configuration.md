@@ -34,14 +34,21 @@ If using a cloud provider, also set the corresponding API key (see [LLM provider
 
 ### LLM provider keys
 
-Set one based on your `VEKTRA_LLM_PROVIDER`:
+Use `VEKTRA_LLM_API_KEY` for any provider. It is passed directly to litellm and works with OpenAI, Anthropic, vLLM, and any OpenAI-compatible endpoint.
 
-| Variable | Provider |
-|----------|----------|
-| `OPENAI_API_KEY` | OpenAI (`openai/*`) |
-| `ANTHROPIC_API_KEY` | Anthropic (`anthropic/*`) |
+Provider-specific environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are also recognized by litellm as a fallback, but `VEKTRA_LLM_API_KEY` takes precedence when set.
 
-These are standard provider environment variables recognized by litellm. `VEKTRA_LLM_API_KEY` can also be used as a generic alternative.
+### Using a local vLLM instance
+
+```bash
+VEKTRA_LLM_PROVIDER=openai//models/your-model-name
+VEKTRA_LLM_API_KEY=<vllm-api-key>
+VEKTRA_LLM_API_BASE=http://<vllm-host>:8000/v1
+# For models with thinking mode (e.g. Qwen3.5, DeepSeek-R1), disable it:
+VEKTRA_LLM_EXTRA_BODY={"chat_template_kwargs": {"enable_thinking": false}}
+```
+
+The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35-27b`).
 
 ## Embedding
 

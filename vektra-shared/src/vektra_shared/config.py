@@ -9,6 +9,8 @@ Phase 2 additions: RewriteConfig (2), RerankConfig (4), WebhookConfig (3), Inges
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,6 +32,11 @@ class LLMConfig(BaseSettings):
         None,
         alias="VEKTRA_LLM_API_BASE",
         description="Custom API base URL for OpenAI-compatible providers (e.g., vLLM).",
+    )
+    extra_body: dict[str, Any] | None = Field(
+        None,
+        alias="VEKTRA_LLM_EXTRA_BODY",
+        description="Extra JSON body params passed to the LLM API (e.g., chat_template_kwargs for vLLM).",
     )
     fallback_model: str | None = Field(
         None,
@@ -415,6 +422,7 @@ class VektraSettings(BaseSettings):
     )
     llm_api_key: str | None = Field(None, alias="VEKTRA_LLM_API_KEY")
     llm_api_base: str | None = Field(None, alias="VEKTRA_LLM_API_BASE")
+    llm_extra_body: dict[str, Any] | None = Field(None, alias="VEKTRA_LLM_EXTRA_BODY")
     llm_fallback_model: str | None = Field(None, alias="VEKTRA_LLM_FALLBACK_MODEL")
     llm_fallback_timeout_ms: int = Field(60000, alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS")
     llm_context_only_enabled: bool = Field(
@@ -523,6 +531,7 @@ class VektraSettings(BaseSettings):
                 "VEKTRA_LLM_PROVIDER": self.llm_provider,
                 "VEKTRA_LLM_API_KEY": self.llm_api_key,
                 "VEKTRA_LLM_API_BASE": self.llm_api_base,
+                "VEKTRA_LLM_EXTRA_BODY": self.llm_extra_body,
                 "VEKTRA_LLM_FALLBACK_MODEL": self.llm_fallback_model,
                 "VEKTRA_LLM_FALLBACK_TIMEOUT_MS": self.llm_fallback_timeout_ms,
                 "VEKTRA_LLM_CONTEXT_ONLY_ENABLED": self.llm_context_only_enabled,

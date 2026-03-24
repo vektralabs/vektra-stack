@@ -1,0 +1,5 @@
+{"id": "SEED-IT-01", "question": "Quali sono i diritti inviolabili dell'uomo riconosciuti dalla Costituzione?", "expected_keywords": ["diritti inviolabili", "Art. 2"], "namespace": "default", "category": "factual", "language": "it"}
+{"id": "SEED-IT-02", "question": "Cosa stabilisce l'articolo 3 della Costituzione italiana sull'uguaglianza?", "expected_keywords": ["pari dignit\u00e0 sociale", "senza distinzione"], "namespace": "default", "category": "factual", "language": "it"}
+{"id": "SEED-IT-03", "question": "Qual \u00e8 il rapporto tra lo Stato e la Chiesa cattolica secondo la Costituzione?", "expected_keywords": ["indipendenti e sovrani", "Patti Lateranensi"], "namespace": "default", "category": "reasoning", "language": "it"}
+{"id": "SEED-IT-04", "question": "Come viene regolamentata la libert\u00e0 di stampa?", "expected_keywords": ["stampa", "sequestro", "pubblicazione"], "namespace": "default", "category": "factual", "language": "it"}
+{"id": "SEED-IT-05", "question": "What does the Italian Constitution say about the right to work?", "expected_keywords": ["lavoro", "diritto"], "namespace": "default", "category": "factual", "language": "en"}

@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import jwt
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -46,6 +47,9 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
+
+# Sentinel key_id for learn-originated conversations (JWT auth has no API key).
+_LEARN_SENTINEL_KEY_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 router = APIRouter(prefix="/api/v1/learn", tags=["learn"])
 
@@ -511,7 +515,6 @@ async def course_query(
                 hasattr(conv_store, "ensure_conversation")
                 and req.conversation_id is not None
             ):
-                _LEARN_SENTINEL_KEY_ID = UUID("00000000-0000-0000-0000-000000000000")
                 await conv_store.ensure_conversation(
                     conversation_id=req.conversation_id,
                     namespace_id=namespace,
@@ -520,8 +523,6 @@ async def course_query(
         except ValueError:
             pass  # conversation store not registered
         except Exception as exc:
-            import structlog
-
             structlog.get_logger(__name__).warning(
                 "conversation_create_failed", error=str(exc)
             )

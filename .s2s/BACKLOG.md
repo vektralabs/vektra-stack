@@ -107,6 +107,110 @@
 
 ---
 
+### BUG-015: Reranker scores discarded after reranking — threshold applied to wrong scores
+
+**Status**: planned | **Priority**: critical | **Created**: 2026-03-24
+**Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
+
+**Context**: `RerankerService.rerank()` (reranker.py:54-60) reorders results but returns the original `SearchResult` objects with their cosine similarity scores intact. The flashrank/cross-encoder scores are used only for ordering, then discarded. The `_apply_retrieval_filter` (pipeline.py:100) then applies `VEKTRA_MIN_RELEVANCE_SCORE=0.3` to these original cosine scores, not the reranker scores. The reranker's relevance judgment and the threshold filter are effectively disconnected: a chunk the reranker ranks highly can still be filtered out if its original cosine similarity was below 0.3.
+
+**Root cause**: The reranker implementation (commit dcb0b54, 2026-03-05) was designed to only reorder, not to propagate scores. The test `test_rerank_returns_top_k_in_order` verifies ordering but not score propagation. ADR-0014 and the implementation plan do not specify score handling.
+
+**Traceability**: ARCH-056, ADR-0021, ADR-0014
+
+**Acceptance criteria**:
+- [ ] `RerankerService.rerank()` propagates reranker scores to `SearchResult.score` (or a new field)
+- [ ] `_apply_retrieval_filter` uses the correct score (reranker if available, cosine if not)
+- [ ] Score normalization: all reranker outputs normalized to 0-1 at the reranker boundary
+- [ ] When reranker is disabled, behavior unchanged (cosine scores, same threshold)
+- [ ] Test verifies score values after reranking, not just ordering
+- [ ] Config `VEKTRA_MIN_RELEVANCE_SCORE` description updated to reflect it applies to the active scoring stage
+
+---
+
+### BUG-016: English-only reranker produces random scores on Italian content
+
+**Status**: planned | **Priority**: high | **Created**: 2026-03-24
+**Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
+**Depends on**: BUG-015 (score propagation must work before reranker swap is meaningful)
+
+**Context**: The default reranker model `ms-marco-MiniLM-L-12-v2` (via flashrank) is trained exclusively on English MS MARCO data. Its English-uncased tokenizer splits Italian words into meaningless subword fragments. On Italian text, the reranker produces essentially random relevance scores, potentially degrading retrieval by reordering correctly-retrieved chunks into a worse order.
+
+The choice was made during the hybrid search design phase (2026-02-07) optimizing for deployment constraints (4MB, no GPU, 50ms). Multilingual support was delegated entirely to the embedding model. The RAG tuning campaign (600 queries, 6 combos) held the reranker constant and never evaluated alternatives.
+
+The system must support both Italian and English content/queries (and mixed), so the solution must be multilingual, not Italian-specific.
+
+**Alternatives evaluated** (see analysis doc for full comparison):
+
+| Model | Params | Multilingual | Quality | Memory | Config change only? |
+|-------|--------|-------------|---------|--------|---------------------|
+| bge-reranker-v2-m3 | 568M | 100+ langs, best Mr.TyDi | High | ~1.2GB GPU | Yes |
+| jina-reranker-v2-base-multilingual | 278M | 100+ langs | Good | ~600MB GPU | Yes |
+| ms-marco-MultiBERT-L-12 (flashrank) | ~150M | 100+ langs | Terrible (26.91 NDCG) | ~150MB CPU | Yes, but do not use |
+
+The `rerankers` library already supports cross-encoder backends. No code changes needed:
+```
+VEKTRA_RERANK_PROVIDER=cross-encoder
+VEKTRA_RERANK_MODEL=BAAI/bge-reranker-v2-m3
+```
+
+**Traceability**: ARCH-036, ADR-0021
+
+**Acceptance criteria**:
+- [ ] Default reranker model changed to a multilingual model that supports Italian and English
+- [ ] English-only model remains available via config for English-only deployments
+- [ ] Performance validated on Italian and English test queries (requires eval harness, TECH-002)
+- [ ] Documentation updated (configuration.md, .env.example) with multilingual model guidance
+- [ ] Memory and latency impact documented
+
+---
+
+### TECH-002: RAG evaluation harness
+
+**Status**: planned | **Priority**: high | **Created**: 2026-03-24
+**Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
+
+**Context**: The RAG tuning campaign (2026-03-14-18) used manual testing across 600 queries with qualitative metrics. There is no automated, reproducible way to evaluate retrieval quality when components change (embedding model, reranker, threshold, chunk size). This gap allowed BUG-015 and BUG-016 to go undetected: component interactions were never tested systematically.
+
+**Scope**:
+- 50-question curated dataset (Italian Constitution + at least one English-language source)
+- Two-stage evaluation: retrieval-only (fast, no LLM) and end-to-end (RAGAS metrics)
+- `make eval-retrieval` and `make eval-e2e` targets
+- Paired comparison support (same questions, two configs)
+- JSONL results storage for historical tracking
+
+**Metrics**: context recall (primary), context precision, faithfulness, answer relevancy.
+
+**Traceability**: ARCH-050 (three-tier evaluation strategy), ADR-0019
+
+**Acceptance criteria**:
+- [ ] Curated test dataset with ground truth contexts (JSON, versioned in repo)
+- [ ] `make eval-retrieval` runs retrieval-only evaluation and outputs metrics
+- [ ] `make eval-e2e` runs full pipeline evaluation with RAGAS
+- [ ] Baseline results recorded for current Combo D configuration
+- [ ] Documentation on how to add test questions and run evaluations
+
+---
+
+### DEBT-010: Recalibrate relevance threshold with empirical data
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-24
+**Depends on**: BUG-015, BUG-016, TECH-002
+
+**Context**: `VEKTRA_MIN_RELEVANCE_SCORE=0.3` was set per ADR-0021 for cosine similarity with `all-MiniLM-L6-v2` (Phase 1 embedding model). It was never varied in the tuning campaign and not recalibrated when: (a) the embedding model changed to `paraphrase-multilingual-MiniLM-L12-v2`, (b) hybrid search with RRF was enabled, (c) the reranker was added. Different scoring stages produce different distributions (cosine 0.2-0.8 cluster, flashrank bimodal near 0/1, RRF reciprocal). A single threshold cannot serve all correctly.
+
+Literature consensus: use top-k as primary control, low absolute threshold (0.15-0.2) as safety net. Consider hybrid filtering (absolute minimum + relative percentile).
+
+**Traceability**: ARCH-056, ADR-0021
+
+**Acceptance criteria**:
+- [ ] Threshold tested at 0.1, 0.15, 0.2, 0.25, 0.3 using eval harness (TECH-002)
+- [ ] Optimal threshold determined for the active reranker + embedding model combination
+- [ ] ADR-0021 updated with new calibration data
+- [ ] Configuration supports different thresholds for reranked vs non-reranked modes (or hybrid filter)
+
+---
+
 ### DEBT-009: Debug logging for rewritten queries
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

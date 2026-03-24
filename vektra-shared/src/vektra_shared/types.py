@@ -156,6 +156,7 @@ class SearchResult:
     document_id: UUID
     document_version: int = 1  # from SourceDocument.version (REQ-056)
     metadata: dict[str, Any] = field(default_factory=dict)
+    original_score: float | None = None  # pre-reranker score (BUG-015)
 
 
 @dataclass

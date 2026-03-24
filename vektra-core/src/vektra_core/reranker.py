@@ -2,11 +2,18 @@
 
 Runs cross-encoder or flashrank reranking on vector search results.
 CPU-bound inference is offloaded to a thread via asyncio.to_thread().
+
+Score propagation (BUG-015): reranker scores replace the original vector
+similarity scores on SearchResult.score. The original score is preserved
+in SearchResult.original_score for debugging. Scores are normalized to
+[0, 1] via sigmoid when raw logits are detected (cross-encoder providers).
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import math
 
 import structlog
 
@@ -21,6 +28,15 @@ _PROVIDER_TO_MODEL_TYPE = {
     "cross-encoder": "cross-encoder",
     "cohere": "APIRanker",
 }
+
+
+def _sigmoid(x: float) -> float:
+    """Numerically stable sigmoid for cross-encoder logits."""
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
 
 
 class RerankerService:
@@ -51,11 +67,24 @@ class RerankerService:
             docs=docs,
         )
 
-        # Build a mapping from original doc index to SearchResult
+        # Extract scores and detect whether normalization is needed.
+        # FlashRank produces sigmoid scores in [0, 1]; cross-encoder
+        # produces raw logits that can be negative or > 1.
+        top_items = ranked.results[:top_k]
+        raw_scores = [float(item.score) for item in top_items]
+        needs_sigmoid = any(s < 0.0 or s > 1.0 for s in raw_scores)
+
         reranked: list[SearchResult] = []
-        for item in ranked.results[:top_k]:
+        for item, raw_score in zip(top_items, raw_scores):
             original = results[item.doc_id]
-            reranked.append(original)
+            normalized = _sigmoid(raw_score) if needs_sigmoid else raw_score
+            reranked.append(
+                dataclasses.replace(
+                    original,
+                    score=normalized,
+                    original_score=original.score,
+                )
+            )
 
         return reranked
 

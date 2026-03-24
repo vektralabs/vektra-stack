@@ -1,4 +1,3 @@
-Relevant context from the knowledge base:
-
-{% for chunk in chunks %}[{{ loop.index }}] {{ chunk.text }}
-{% endfor %}
+<context>
+{% for chunk in chunks %}<source id="{{ loop.index }}">{{ chunk.text }}</source>
+{% endfor %}</context>

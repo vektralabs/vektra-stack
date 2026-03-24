@@ -58,6 +58,17 @@ def _elapsed_ms(since: float) -> int:
     return int((time.monotonic() - since) * 1000)
 
 
+def _history_to_messages(history: list[dict[str, str | None]]) -> list[Message]:
+    """Convert conversation history to role-based Message objects."""
+    messages: list[Message] = []
+    for turn in history:
+        messages.append(Message(role="user", content=turn["question"] or ""))
+        messages.append(
+            Message(role="assistant", content=turn["answer"] or "[No response]")
+        )
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # Retrieval filter (ARCH-056)
 # ---------------------------------------------------------------------------
@@ -438,17 +449,13 @@ class SimpleQueryPipeline:
         context_text = self._renderer.render_context(
             [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
         )
-        conv_text = self._renderer.render_conversation(selected_history)
 
         messages: list[Message] = [Message(role="system", content=system_text)]
-        if conv_text.strip():
-            messages.append(
-                Message(role="user", content=f"Previous conversation:\n{conv_text}")
-            )
+        messages.extend(_history_to_messages(selected_history))
         messages.append(
             Message(
                 role="user",
-                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
+                content=f"{context_text}\n\nQuestion: {query.question}",
             )
         )
 
@@ -731,17 +738,13 @@ class SimpleQueryPipeline:
         context_text = self._renderer.render_context(
             [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
         )
-        conv_text = self._renderer.render_conversation(selected_history)
 
         messages: list[Message] = [Message(role="system", content=system_text)]
-        if conv_text.strip():
-            messages.append(
-                Message(role="user", content=f"Previous conversation:\n{conv_text}")
-            )
+        messages.extend(_history_to_messages(selected_history))
         messages.append(
             Message(
                 role="user",
-                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
+                content=f"{context_text}\n\nQuestion: {query.question}",
             )
         )
         steps.append(

@@ -32,6 +32,7 @@ from vektra_core.pipeline import (
     _context_window_impl,
     _count_tokens_impl,
     _elapsed_ms,
+    _history_to_messages,
     _trace_to_dict,
 )
 from vektra_core.reranker import RerankerService
@@ -396,17 +397,13 @@ class AdvancedQueryPipeline:
         context_text = self._renderer.render_context(
             [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
         )
-        conv_text = self._renderer.render_conversation(selected_history)
 
         messages: list[Message] = [Message(role="system", content=system_text)]
-        if conv_text.strip():
-            messages.append(
-                Message(role="user", content=f"Previous conversation:\n{conv_text}")
-            )
+        messages.extend(_history_to_messages(selected_history))
         messages.append(
             Message(
                 role="user",
-                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
+                content=f"{context_text}\n\nQuestion: {query.question}",
             )
         )
 

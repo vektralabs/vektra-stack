@@ -76,8 +76,8 @@ class TestRerankConfig:
     def test_defaults(self) -> None:
         cfg = RerankConfig()
         assert cfg.enabled is True
-        assert cfg.provider == "flashrank"
-        assert cfg.model is None
+        assert cfg.provider == "cross-encoder"
+        assert cfg.model == "BAAI/bge-reranker-v2-m3"
         assert cfg.top_k == 5
 
     def test_env_var_override(self) -> None:
@@ -147,7 +147,7 @@ class TestQueryPipelineConfigNested:
         assert cfg.rewrite.enabled is True
         assert cfg.rewrite.model is None
         assert cfg.rerank.enabled is True
-        assert cfg.rerank.provider == "flashrank"
+        assert cfg.rerank.provider == "cross-encoder"
         assert cfg.rerank.top_k == 5
 
 

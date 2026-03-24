@@ -150,12 +150,12 @@ class RerankConfig(BaseSettings):
         description="Enable reranking in AdvancedQueryPipeline.",
     )
     provider: str = Field(
-        "flashrank",
+        "cross-encoder",
         alias="VEKTRA_RERANK_PROVIDER",
         description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere'.",
     )
     model: str | None = Field(
-        None,
+        "BAAI/bge-reranker-v2-m3",
         alias="VEKTRA_RERANK_MODEL",
         description="Provider-specific reranking model name.",
     )
@@ -180,9 +180,9 @@ class QueryPipelineConfig(BaseSettings):
         description="QueryPipeline implementation: 'simple' (Phase 1), 'advanced' (Phase 2).",
     )
     min_relevance_score: float = Field(
-        0.3,
+        0.15,
         alias="VEKTRA_MIN_RELEVANCE_SCORE",
-        description="Minimum cosine similarity for chunk inclusion (ARCH-056).",
+        description="Minimum relevance score for chunk inclusion (ARCH-056). Safety net filter; top-k is the primary control.",
     )
     chunk_dedup_enabled: bool = Field(
         True,
@@ -452,7 +452,7 @@ class VektraSettings(BaseSettings):
 
     # Query pipeline
     query_pipeline: str = Field("advanced", alias="VEKTRA_QUERY_PIPELINE")
-    min_relevance_score: float = Field(0.3, alias="VEKTRA_MIN_RELEVANCE_SCORE")
+    min_relevance_score: float = Field(0.15, alias="VEKTRA_MIN_RELEVANCE_SCORE")
     chunk_dedup_enabled: bool = Field(True, alias="VEKTRA_CHUNK_DEDUP_ENABLED")
     response_token_reserve: int = Field(2048, alias="VEKTRA_RESPONSE_TOKEN_RESERVE")
     context_chunk_ratio: float = Field(0.6, alias="VEKTRA_CONTEXT_CHUNK_RATIO")

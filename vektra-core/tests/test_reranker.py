@@ -169,10 +169,7 @@ def test_default_model_flashrank():
 
 
 def test_default_model_cross_encoder():
-    assert (
-        _default_model_for_provider("cross-encoder")
-        == "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    )
+    assert _default_model_for_provider("cross-encoder") == "BAAI/bge-reranker-v2-m3"
 
 
 def test_default_model_unknown_provider():

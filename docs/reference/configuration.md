@@ -74,7 +74,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `VEKTRA_QUERY_PIPELINE` | str | `advanced` | Pipeline implementation: `simple`, `advanced` |
-| `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.3` | Minimum cosine similarity for chunk inclusion (0.0-1.0). Chunks below this threshold are filtered out. |
+| `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.15` | Minimum relevance score for chunk inclusion (0.0-1.0). Safety net filter; top-k is the primary control. |
 | `VEKTRA_CHUNK_DEDUP_ENABLED` | bool | `true` | Deduplicate overlapping adjacent chunks from the same document |
 | `VEKTRA_RESPONSE_TOKEN_RESERVE` | int | `2048` | Tokens reserved for LLM response generation |
 | `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | Fraction of context window allocated to retrieved chunks (0.0-1.0) |
@@ -92,8 +92,8 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `VEKTRA_RERANK_ENABLED` | bool | `true` | Enable cross-encoder reranking after retrieval |
-| `VEKTRA_RERANK_PROVIDER` | str | `flashrank` | Reranking provider: `flashrank`, `cross-encoder`, `cohere` |
-| `VEKTRA_RERANK_MODEL` | str | - | Provider-specific reranking model name |
+| `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere` |
+| `VEKTRA_RERANK_MODEL` | str | `BAAI/bge-reranker-v2-m3` | Multilingual reranking model. For English-only lightweight deployments: provider=`flashrank`, model=`ms-marco-MiniLM-L-12-v2` |
 | `VEKTRA_RERANK_TOP_K` | int | `5` | Final top-k results after reranking |
 
 ## Ingestion

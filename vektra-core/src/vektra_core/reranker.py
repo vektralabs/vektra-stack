@@ -125,6 +125,6 @@ def _default_model_for_provider(provider: str) -> str:
     """Return a sensible default model for each provider."""
     defaults = {
         "flashrank": "ms-marco-MiniLM-L-12-v2",
-        "cross-encoder": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        "cross-encoder": "BAAI/bge-reranker-v2-m3",
     }
     return defaults.get(provider, provider)

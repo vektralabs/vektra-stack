@@ -81,6 +81,32 @@
 
 ---
 
+### BUG-014: Conversation rows never created — persistent store silently discards all turns
+
+**Status**: planned | **Priority**: high | **Created**: 2026-03-24
+**Analysis**: `vektra-internal/stack/20260324-conversation-persistence-gap-analysis.md`
+**Reopens**: BUG-010 (marked completed but acceptance criteria #2 not satisfied)
+
+**Context**: `PersistentConversationStore.create_conversation()` exists (conversation.py:123-148) but is never called. The learn endpoint generates a `conversation_id` UUID (BUG-010 fix) and passes it to the pipeline, but no `ConversationOrm` row is created in the database. When the pipeline calls `add_turn()`, it looks up the conversation row, finds nothing, logs `conversation_not_found` at warning level, and returns silently. Result: **zero turns are ever persisted**, multi-turn context is broken (get_history returns empty), and `GET /api/v1/conversations/{id}` returns 404.
+
+**Root cause**: `create_conversation()` requires `namespace_id` and `key_id`, which are available in the API layer but not in the pipeline. `QueryRequest` does not carry auth context. The implementation plan (20260301-core-conversations.md) stated the pipeline should call `create_conversation()`, but the pipeline was never given the required parameters. BUG-010 was closed after adding UUID generation without completing the DB creation step.
+
+**Additional finding (fixed)**: `PersistentConversationStore` was not registered in the `ProviderRegistry`, so `GET /api/v1/conversations/{id}` returned 503 even when the store was initialized. Fixed by adding `registry.register("conversation_store", "default", conversation_store)` in main.py.
+
+**Traceability**: REQ-049, ARCH-031, BUG-010, FEAT-004 (blocked by this)
+
+**Acceptance criteria**:
+- [ ] `POST /api/v1/query`: when `conversation_id` is None, create `ConversationOrm` row with namespace_id and key_id, set ID on request
+- [ ] `POST /api/v1/query`: when `conversation_id` is provided but row doesn't exist, create it (first-use from client-generated ID)
+- [ ] `POST /api/v1/learn/query`: same behavior, deriving key_id from learn service context
+- [ ] `add_turn()` successfully persists turns after conversation creation
+- [ ] `get_history()` returns previous turns for multi-turn queries
+- [ ] `GET /api/v1/conversations/{id}` returns conversation metadata
+- [ ] Verified: `conversations` and `conversation_turns` tables populated after widget queries
+- [ ] Pipeline code unchanged (no auth context leaking into QueryRequest)
+
+---
+
 ### DEBT-009: Debug logging for rewritten queries
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23
@@ -1003,7 +1029,7 @@ The `AdvancedQueryPipeline` correctly calls `SparseEmbeddingProvider.embed_query
 
 ### BUG-010: ~~Learn query endpoint does not auto-create conversation on first query~~
 
-**Status**: completed | **Priority**: high | **Created**: 2026-03-16 | **Completed**: 2026-03-22 (v0.3.0)
+**Status**: completed (partial — DB row creation missing, tracked as BUG-014) | **Priority**: high | **Created**: 2026-03-16 | **Completed**: 2026-03-22 (v0.3.0)
 **Origin**: Moodle integration testing (2026-03-16)
 
 **Context**: The learn query endpoint (`POST /api/v1/learn/query`) passes `conversation_id` through to the pipeline unchanged. When the widget sends the first query without a `conversation_id` (which is the normal flow), the pipeline receives `None`, skips history retrieval and turn saving, and returns `conversation_id: null`. The widget receives `null` and has nothing to save — so the second query also has no `conversation_id`. Result: **every query is a single-turn query with no conversation continuity**.

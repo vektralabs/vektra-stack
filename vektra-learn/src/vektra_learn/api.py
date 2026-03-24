@@ -501,11 +501,33 @@ async def course_query(
     if req.conversation_id is None:
         req = req.model_copy(update={"conversation_id": uuid4()})
 
+    # Ensure conversation row exists for persistent multi-turn (BUG-014).
+    # The learn endpoint uses JWT auth (no API key), so key_id is a sentinel.
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None:
+        try:
+            conv_store = registry.get("conversation_store", "default")
+            if (
+                hasattr(conv_store, "ensure_conversation")
+                and req.conversation_id is not None
+            ):
+                _LEARN_SENTINEL_KEY_ID = UUID("00000000-0000-0000-0000-000000000000")
+                await conv_store.ensure_conversation(
+                    conversation_id=req.conversation_id,
+                    namespace_id=namespace,
+                    key_id=_LEARN_SENTINEL_KEY_ID,
+                )
+        except ValueError:
+            pass  # conversation store not registered
+        except Exception as exc:
+            import structlog
+
+            structlog.get_logger(__name__).warning(
+                "conversation_create_failed", error=str(exc)
+            )
+
     # Build course-scoped query and delegate to pipeline
     query_req = build_course_query(req, namespace=namespace, course_id=course_id)
-
-    # Get pipeline from ProviderRegistry
-    registry = getattr(request.app.state, "registry", None)
     if registry is None:
         err = ErrorResponse(
             category=ErrorCategory.TRANSIENT,

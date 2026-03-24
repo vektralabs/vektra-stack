@@ -239,6 +239,8 @@ async def _step_5_register_providers(
             persistence="disabled",
         )
 
+    registry.register("conversation_store", "default", conversation_store)
+
     # --- Reranker (Phase 2, conditional) ---
     from vektra_core.reranker import create_reranker
 

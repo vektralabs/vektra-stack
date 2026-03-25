@@ -7,6 +7,10 @@ from vektra_core.conversation import InMemoryConversationStore
 from vektra_core.pipeline import (
     SimpleQueryPipeline,
     _apply_retrieval_filter,
+    _context_window_fallback_warned,
+    _context_window_impl,
+    _count_tokens_impl,
+    _token_count_fallback_warned,
     _token_overlap_ratio,
 )
 from vektra_core.templates import TemplateRenderer
@@ -466,3 +470,59 @@ async def test_stream_llm_error_yields_error_and_done():
     assert "error" in types
     assert "trace" in types
     assert types[-1] == "done"
+
+
+# ---------------------------------------------------------------------------
+# _context_window_impl (BUG-017)
+# ---------------------------------------------------------------------------
+
+
+def test_context_window_uses_configured_value():
+    """Configured context_window takes priority over litellm lookup."""
+    result = _context_window_impl("nonexistent/model", configured_window=32768)
+    assert result == 32768
+
+
+def test_context_window_fallback_to_default():
+    """Unknown model without configured window falls back to 4096 with warning."""
+    _context_window_fallback_warned.discard("test/unknown-model-ctx")
+    result = _context_window_impl("test/unknown-model-ctx")
+    assert result == 4096
+    assert "test/unknown-model-ctx" in _context_window_fallback_warned
+
+
+def test_context_window_fallback_warns_once(capsys):
+    """Fallback warning is emitted only once per model."""
+    _context_window_fallback_warned.discard("test/warn-once-model")
+    _context_window_impl("test/warn-once-model")
+    capsys.readouterr()  # clear first warning
+    _context_window_impl("test/warn-once-model")
+    captured = capsys.readouterr()
+    assert "context_window_fallback" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# _count_tokens_impl fallback warning (BUG-017)
+# ---------------------------------------------------------------------------
+
+
+def test_count_tokens_fallback_warns():
+    """Token count fallback emits warning on first use per model."""
+    _token_count_fallback_warned.discard("test/token-fallback-model")
+    mock_llm = MagicMock()
+    mock_llm.count_tokens.side_effect = Exception("unsupported")
+    result = _count_tokens_impl(mock_llm, "test/token-fallback-model", "hello world")
+    assert result == max(1, len("hello world") // 4)
+    assert "test/token-fallback-model" in _token_count_fallback_warned
+
+
+def test_count_tokens_fallback_warns_once(capsys):
+    """Token count fallback warning only once per model."""
+    _token_count_fallback_warned.discard("test/token-once-model")
+    mock_llm = MagicMock()
+    mock_llm.count_tokens.side_effect = Exception("unsupported")
+    _count_tokens_impl(mock_llm, "test/token-once-model", "first")
+    capsys.readouterr()  # clear first warning
+    _count_tokens_impl(mock_llm, "test/token-once-model", "second")
+    captured = capsys.readouterr()
+    assert "token_count_fallback" not in captured.out

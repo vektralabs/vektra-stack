@@ -120,20 +120,50 @@ def _apply_retrieval_filter(
 # ---------------------------------------------------------------------------
 
 
+_token_count_fallback_warned: set[str] = set()
+_context_window_fallback_warned: set[str] = set()
+
+
 def _count_tokens_impl(llm: LLMProvider, model: str, text: str) -> int:
     """Count tokens using the LLM provider, with char/4 fallback."""
     try:
         return llm.count_tokens(text, model)
     except Exception:
+        if model not in _token_count_fallback_warned:
+            _token_count_fallback_warned.add(model)
+            log.warning(
+                "token_count_fallback",
+                model=model,
+                method="char_div_4",
+                hint="Set VEKTRA_LLM_CONTEXT_WINDOW to ensure correct token budget allocation",
+            )
         return max(1, len(text) // 4)
 
 
-def _context_window_impl(model: str) -> int:
-    """Get context window size from litellm, with default fallback."""
+def _context_window_impl(model: str, configured_window: int | None = None) -> int:
+    """Get context window size, with fallback chain and warnings.
+
+    Priority: configured_window (env var) > litellm lookup > default 4096.
+    """
+    if configured_window is not None:
+        return configured_window
+
     try:
-        return litellm.get_max_tokens(model) or _DEFAULT_CONTEXT_WINDOW
+        result = litellm.get_max_tokens(model)
+        if result:
+            return result
     except Exception:
-        return _DEFAULT_CONTEXT_WINDOW
+        pass
+
+    if model not in _context_window_fallback_warned:
+        _context_window_fallback_warned.add(model)
+        log.warning(
+            "context_window_fallback",
+            model=model,
+            default=_DEFAULT_CONTEXT_WINDOW,
+            hint="Model not in litellm registry. Set VEKTRA_LLM_CONTEXT_WINDOW to the correct value",
+        )
+    return _DEFAULT_CONTEXT_WINDOW
 
 
 async def _call_llm_with_fallback_impl(
@@ -237,7 +267,9 @@ class SimpleQueryPipeline:
         return _count_tokens_impl(self._llm, self._llm_config.provider, text)
 
     def _context_window(self) -> int:
-        return _context_window_impl(self._llm_config.provider)
+        return _context_window_impl(
+            self._llm_config.provider, self._llm_config.context_window
+        )
 
     async def _call_llm_with_fallback(
         self,

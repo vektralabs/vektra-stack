@@ -29,6 +29,7 @@ If using a cloud provider, also set the corresponding API key (see [LLM provider
 | `VEKTRA_LLM_API_BASE` | str | - | Custom API base URL for OpenAI-compatible providers (e.g., vLLM, LMStudio) |
 | `VEKTRA_LLM_FALLBACK_MODEL` | str | - | Fallback model when the primary times out |
 | `VEKTRA_LLM_FALLBACK_TIMEOUT_MS` | int | `60000` | Milliseconds before switching to fallback model |
+| `VEKTRA_LLM_CONTEXT_WINDOW` | int | - | Context window size in tokens. Required for models not in litellm's registry (e.g. local vLLM). If unset, litellm lookup with 4096 fallback (warns on fallback) |
 | `VEKTRA_LLM_CONTEXT_ONLY_ENABLED` | bool | `true` | Return raw chunks without LLM synthesis when both models fail |
 | `VEKTRA_STARTUP_LLM_CHECK` | bool | `true` | Test LLM connectivity at startup (warning-only, not fatal) |
 

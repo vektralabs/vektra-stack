@@ -48,6 +48,11 @@ class LLMConfig(BaseSettings):
         alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS",
         description="Timeout in ms before switching to fallback model.",
     )
+    context_window: int | None = Field(
+        None,
+        alias="VEKTRA_LLM_CONTEXT_WINDOW",
+        description="Context window size in tokens. Required for models not in litellm's registry (e.g. local vLLM). If unset, litellm lookup is attempted with a 4096-token fallback.",
+    )
     context_only_enabled: bool = Field(
         True,
         alias="VEKTRA_LLM_CONTEXT_ONLY_ENABLED",

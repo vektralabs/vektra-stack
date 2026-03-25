@@ -46,9 +46,12 @@ Provider-specific environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) 
 VEKTRA_LLM_PROVIDER=openai//models/your-model-name
 VEKTRA_LLM_API_KEY=<vllm-api-key>
 VEKTRA_LLM_API_BASE=http://<vllm-host>:8000/v1
+VEKTRA_LLM_CONTEXT_WINDOW=32768
 # For models with thinking mode (e.g. Qwen3.5, DeepSeek-R1), disable it:
 VEKTRA_LLM_EXTRA_BODY={"chat_template_kwargs": {"enable_thinking": false}}
 ```
+
+In `.env` files (Docker Compose), JSON values do not need quoting. In shell, use single quotes: `VEKTRA_LLM_EXTRA_BODY='{"chat_template_kwargs": {"enable_thinking": false}}'`.
 
 The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35-27b`).
 

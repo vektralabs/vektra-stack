@@ -115,6 +115,7 @@ def evaluate_question(
             precision_at_k=0.0,
             num_retrieved=0,
             num_relevant=0,
+            has_ground_truth=False,
             error=str(e),
         )
 
@@ -269,7 +270,7 @@ def save_results(results: list[QuestionResult], output_path: str) -> None:
             }
             if r.error:
                 row["error"] = r.error
-            f.write(json.dumps(row) + "\n")
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def main() -> None:

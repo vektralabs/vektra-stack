@@ -22,7 +22,7 @@ _QUERY_LATENCY_TARGET_MS = 2000
 _NOTE_THRESHOLD = 1.2  # 20% above target -> note
 _WARN_THRESHOLD = 1.5  # 50% above target -> warn
 
-_NUM_QUERIES = 20
+_NUM_QUERIES = 100
 
 
 def test_query_latency_measurement(api: httpx.Client, admin_key: str) -> None:

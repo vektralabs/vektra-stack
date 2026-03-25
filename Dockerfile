@@ -70,9 +70,10 @@ COPY vektra-app/src vektra-app/src
 # Include optional extras for Phase 2 vector store and sparse search support.
 # When INSTALL_UNSTRUCTURED=true, also install the Unstructured PDF extractor.
 ARG INSTALL_UNSTRUCTURED=false
-RUN uv sync --frozen --no-editable --no-dev --extra sparse --extra qdrant \
-    && if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
+RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
        uv sync --frozen --no-editable --no-dev --extra sparse --extra qdrant --extra ocr; \
+    else \
+       uv sync --frozen --no-editable --no-dev --extra sparse --extra qdrant; \
     fi
 
 # --------------------------------------------------------------------------

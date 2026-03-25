@@ -81,6 +81,216 @@
 
 ---
 
+### BUG-014: Conversation rows never created — persistent store silently discards all turns
+
+**Status**: planned | **Priority**: high | **Created**: 2026-03-24
+**Analysis**: `vektra-internal/stack/20260324-conversation-persistence-gap-analysis.md`
+**Reopens**: BUG-010 (marked completed but acceptance criteria #2 not satisfied)
+
+**Context**: `PersistentConversationStore.create_conversation()` exists (conversation.py:123-148) but is never called. The learn endpoint generates a `conversation_id` UUID (BUG-010 fix) and passes it to the pipeline, but no `ConversationOrm` row is created in the database. When the pipeline calls `add_turn()`, it looks up the conversation row, finds nothing, logs `conversation_not_found` at warning level, and returns silently. Result: **zero turns are ever persisted**, multi-turn context is broken (get_history returns empty), and `GET /api/v1/conversations/{id}` returns 404.
+
+**Root cause**: `create_conversation()` requires `namespace_id` and `key_id`, which are available in the API layer but not in the pipeline. `QueryRequest` does not carry auth context. The implementation plan (20260301-core-conversations.md) stated the pipeline should call `create_conversation()`, but the pipeline was never given the required parameters. BUG-010 was closed after adding UUID generation without completing the DB creation step.
+
+**Additional finding (fixed)**: `PersistentConversationStore` was not registered in the `ProviderRegistry`, so `GET /api/v1/conversations/{id}` returned 503 even when the store was initialized. Fixed by adding `registry.register("conversation_store", "default", conversation_store)` in main.py.
+
+**Traceability**: REQ-049, ARCH-031, BUG-010, FEAT-004 (blocked by this)
+
+**Acceptance criteria**:
+- [ ] `POST /api/v1/query`: when `conversation_id` is None, create `ConversationOrm` row with namespace_id and key_id, set ID on request
+- [ ] `POST /api/v1/query`: when `conversation_id` is provided but row doesn't exist, create it (first-use from client-generated ID)
+- [ ] `POST /api/v1/learn/query`: same behavior, deriving key_id from learn service context
+- [ ] `add_turn()` successfully persists turns after conversation creation
+- [ ] `get_history()` returns previous turns for multi-turn queries
+- [ ] `GET /api/v1/conversations/{id}` returns conversation metadata
+- [ ] Verified: `conversations` and `conversation_turns` tables populated after widget queries
+- [ ] Pipeline code unchanged (no auth context leaking into QueryRequest)
+
+---
+
+### BUG-015: ~~Reranker scores discarded after reranking — threshold applied to wrong scores~~
+
+**Status**: completed | **Priority**: critical | **Created**: 2026-03-24 | **Completed**: 2026-03-25
+**Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
+
+**Context**: `RerankerService.rerank()` (reranker.py:54-60) reorders results but returns the original `SearchResult` objects with their cosine similarity scores intact. The flashrank/cross-encoder scores are used only for ordering, then discarded. The `_apply_retrieval_filter` (pipeline.py:100) then applies `VEKTRA_MIN_RELEVANCE_SCORE=0.3` to these original cosine scores, not the reranker scores. The reranker's relevance judgment and the threshold filter are effectively disconnected: a chunk the reranker ranks highly can still be filtered out if its original cosine similarity was below 0.3.
+
+**Root cause**: The reranker implementation (commit dcb0b54, 2026-03-05) was designed to only reorder, not to propagate scores. The test `test_rerank_returns_top_k_in_order` verifies ordering but not score propagation. ADR-0014 and the implementation plan do not specify score handling.
+
+**Traceability**: ARCH-056, ADR-0021, ADR-0014
+
+**Acceptance criteria**:
+- [ ] `RerankerService.rerank()` propagates reranker scores to `SearchResult.score` (or a new field)
+- [ ] `_apply_retrieval_filter` uses the correct score (reranker if available, cosine if not)
+- [ ] Score normalization: all reranker outputs normalized to 0-1 at the reranker boundary
+- [ ] When reranker is disabled, behavior unchanged (cosine scores, same threshold)
+- [ ] Test verifies score values after reranking, not just ordering
+- [ ] Config `VEKTRA_MIN_RELEVANCE_SCORE` description updated to reflect it applies to the active scoring stage
+
+---
+
+### BUG-016: ~~English-only reranker produces random scores on Italian content~~
+
+**Status**: completed | **Priority**: high | **Created**: 2026-03-24 | **Completed**: 2026-03-25
+**Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
+**Depends on**: BUG-015 (score propagation must work before reranker swap is meaningful)
+
+**Context**: The default reranker model `ms-marco-MiniLM-L-12-v2` (via flashrank) is trained exclusively on English MS MARCO data. Its English-uncased tokenizer splits Italian words into meaningless subword fragments. On Italian text, the reranker produces essentially random relevance scores, potentially degrading retrieval by reordering correctly-retrieved chunks into a worse order.
+
+The choice was made during the hybrid search design phase (2026-02-07) optimizing for deployment constraints (4MB, no GPU, 50ms). Multilingual support was delegated entirely to the embedding model. The RAG tuning campaign (600 queries, 6 combos) held the reranker constant and never evaluated alternatives.
+
+The system must support both Italian and English content/queries (and mixed), so the solution must be multilingual, not Italian-specific.
+
+**Alternatives evaluated** (see analysis doc for full comparison):
+
+| Model | Params | Multilingual | Quality | Memory | Config change only? |
+|-------|--------|-------------|---------|--------|---------------------|
+| bge-reranker-v2-m3 | 568M | 100+ langs, best Mr.TyDi | High | ~1.2GB GPU | Yes |
+| jina-reranker-v2-base-multilingual | 278M | 100+ langs | Good | ~600MB GPU | Yes |
+| ms-marco-MultiBERT-L-12 (flashrank) | ~150M | 100+ langs | Terrible (26.91 NDCG) | ~150MB CPU | Yes, but do not use |
+
+The `rerankers` library already supports cross-encoder backends. No code changes needed:
+```
+VEKTRA_RERANK_PROVIDER=cross-encoder
+VEKTRA_RERANK_MODEL=BAAI/bge-reranker-v2-m3
+```
+
+**Traceability**: ARCH-036, ADR-0021
+
+**Acceptance criteria**:
+- [ ] Default reranker model changed to a multilingual model that supports Italian and English
+- [ ] English-only model remains available via config for English-only deployments
+- [ ] Performance validated on Italian and English test queries (requires eval harness, TECH-002)
+- [ ] Documentation updated (configuration.md, .env.example) with multilingual model guidance
+- [ ] Memory and latency impact documented
+
+---
+
+### TECH-002: ~~RAG evaluation harness~~
+
+**Status**: completed | **Priority**: high | **Created**: 2026-03-24 | **Completed**: 2026-03-25
+**Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
+
+**Context**: The RAG tuning campaign (2026-03-14-18) used manual testing across 600 queries with qualitative metrics. There is no automated, reproducible way to evaluate retrieval quality when components change (embedding model, reranker, threshold, chunk size). This gap allowed BUG-015 and BUG-016 to go undetected: component interactions were never tested systematically.
+
+**Scope**:
+- 50-question curated dataset (Italian Constitution + at least one English-language source)
+- Two-stage evaluation: retrieval-only (fast, no LLM) and end-to-end (RAGAS metrics)
+- `make eval-retrieval` and `make eval-e2e` targets
+- Paired comparison support (same questions, two configs)
+- JSONL results storage for historical tracking
+
+**Metrics**: context recall (primary), context precision, faithfulness, answer relevancy.
+
+**Traceability**: ARCH-050 (three-tier evaluation strategy), ADR-0019
+
+**Acceptance criteria**:
+- [ ] Curated test dataset with ground truth contexts (JSON, versioned in repo)
+- [ ] `make eval-retrieval` runs retrieval-only evaluation and outputs metrics
+- [ ] `make eval-e2e` runs full pipeline evaluation with RAGAS
+- [ ] Baseline results recorded for current Combo D configuration
+- [ ] Documentation on how to add test questions and run evaluations
+
+---
+
+### DEBT-010: ~~Recalibrate relevance threshold with empirical data~~
+
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-24 | **Completed**: 2026-03-25
+**Depends on**: BUG-015, BUG-016, TECH-002
+
+**Context**: `VEKTRA_MIN_RELEVANCE_SCORE=0.3` was set per ADR-0021 for cosine similarity with `all-MiniLM-L6-v2` (Phase 1 embedding model). It was never varied in the tuning campaign and not recalibrated when: (a) the embedding model changed to `paraphrase-multilingual-MiniLM-L12-v2`, (b) hybrid search with RRF was enabled, (c) the reranker was added. Different scoring stages produce different distributions (cosine 0.2-0.8 cluster, flashrank bimodal near 0/1, RRF reciprocal). A single threshold cannot serve all correctly.
+
+Literature consensus: use top-k as primary control, low absolute threshold (0.15-0.2) as safety net. Consider hybrid filtering (absolute minimum + relative percentile).
+
+**Traceability**: ARCH-056, ADR-0021
+
+**Acceptance criteria**:
+- [ ] Threshold tested at 0.1, 0.15, 0.2, 0.25, 0.3 using eval harness (TECH-002)
+- [ ] Optimal threshold determined for the active reranker + embedding model combination
+- [ ] ADR-0021 updated with new calibration data
+- [ ] Configuration supports different thresholds for reranked vs non-reranked modes (or hybrid filter)
+
+---
+
+### BUG-017: ~~Context window fallback silently truncates prompt — most chunks discarded~~
+
+**Status**: completed | **Priority**: high | **Created**: 2026-03-25 | **Completed**: 2026-03-25
+
+**Context**: `_context_window_impl()` (pipeline.py:131-136) calls `litellm.get_max_tokens(model)` to determine the context window. For models not in litellm's registry (all local vLLM models like `openai//models/qwen35-27b`), it silently falls back to `_DEFAULT_CONTEXT_WINDOW = 4096`. With Qwen 3.5 27B (actual context: 32768), this causes the token budget allocator to use only ~900 tokens for chunks instead of ~18000. Result: 5 relevant chunks retrieved, but only 2 fit in the prompt, and the LLM produces an incomplete answer.
+
+**Discovered**: while analyzing conversation `5bf50682` in namespace `ita-100`. User asked "Quali tipi di liberta sono garantiti dalla Costituzione italiana? Elencali tutti con il relativo articolo". Pipeline retrieved 20 candidates, reranker selected 5 (scores 0.78-0.40), threshold kept all 5, but `build_prompt` only included 2 (`chunks_in_prompt: 2`). The answer listed 6 freedoms instead of ~12.
+
+**Root cause**: no logging or warning when `litellm.get_max_tokens()` fails and the fallback kicks in. The `_count_tokens_impl()` fallback (char/4) is similarly silent.
+
+**Proposed fix**:
+1. Add `VEKTRA_LLM_CONTEXT_WINDOW` env var to LLMConfig (optional int, default None)
+2. `_context_window_impl()`: if env var set, use it; else try litellm; on fallback, emit `structlog.warning("context_window_fallback", model=model, default=4096)`
+3. `_count_tokens_impl()`: on fallback, emit `structlog.warning("token_count_fallback", model=model)` (once per model, not per call)
+4. Same pattern for any other fallback/default in the pipeline
+
+**Traceability**: ARCH-055 (token budget allocation)
+
+**Acceptance criteria**:
+- [ ] `VEKTRA_LLM_CONTEXT_WINDOW` env var added, used when set
+- [ ] Warning logged when context window falls back to default
+- [ ] Warning logged when token counting falls back to char/4
+- [ ] Fallback warnings emitted once per model (not per query) to avoid log spam
+- [ ] Documentation updated (configuration.md, .env.example)
+
+---
+
+### BUG-018: SSE streaming path does not return server-generated conversation_id
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-25
+
+**Context**: When a client calls `POST /api/v1/query` with `stream=true` and no `conversation_id`, the server creates a conversation row and passes the ID to the pipeline. However, the SSE event stream never emits this ID back to the client. The non-streaming path returns it in the JSON response (`conversation_id` field), but the streaming path has no equivalent.
+
+A client using SSE without generating its own `conversation_id` cannot discover which ID to use for subsequent turns, breaking multi-turn conversations.
+
+**Current impact**: low. The widget always generates `conversation_id` client-side, so production is unaffected. The bug affects direct API consumers using SSE without pre-generating an ID.
+
+**Proposed fix**: emit the `conversation_id` in the first SSE event (e.g. a `metadata` event before tokens start) or in the `done` event payload.
+
+**Traceability**: BUG-014 (conversation persistence), DEBT-011 (observability gaps)
+
+**Acceptance criteria**:
+- [ ] SSE stream includes `conversation_id` in an event accessible before or after token streaming
+- [ ] Client can extract the ID and use it for follow-up queries
+- [ ] Non-streaming path behavior unchanged
+
+---
+
+### DEBT-011: Conversation and query trace observability gaps
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-25
+**Related**: BUG-018 (SSE conversation_id)
+
+**Context**: Diagnosing a conversation (`5bf50682`, namespace `ita-100`) revealed multiple observability gaps that make post-hoc analysis of query behavior difficult:
+
+1. **No API to read conversation turns**: `GET /api/v1/conversations/{id}` returns metadata (turn_count, namespace, timestamps) but no endpoint exposes the turns themselves. The only way to read them is via direct DB query with `pgp_sym_decrypt()`.
+
+2. **Query trace not persisted for streaming queries**: When `stream=true`, the trace is emitted via SSE but not saved to `query_traces` table. Non-streaming queries also don't persist traces unless the learn service stores them. The only evidence of a streamed query is a single `query_stream_complete` log line with response_id and duration, no step details.
+
+3. **response_id not stored in conversation_turns**: The `response_id` column exists but is never populated, making it impossible to correlate a conversation turn with its query trace.
+
+4. **No admin endpoint for query traces**: Traces can only be retrieved via the learn API (if persisted) or by grepping container logs (which don't survive restarts, see INFRA-005).
+
+**Proposed approach**:
+1. Persist query traces for all queries (not just learn), controlled by a config flag (default: on in development, off in production)
+2. Populate `response_id` in conversation_turns when saving a turn
+3. Add `GET /api/v1/admin/conversations/{id}/turns` endpoint (admin scope) that decrypts and returns turns
+4. Add `GET /api/v1/admin/traces/{response_id}` endpoint for trace lookup
+
+**Traceability**: ARCH-041 (QueryTrace), ADR-0011 (conversation encryption), ADR-0017 (audit/analytics separation)
+
+**Acceptance criteria**:
+- [ ] Query traces persisted to DB for all pipelines (simple + advanced, sync + stream)
+- [ ] `response_id` populated in `conversation_turns` on turn save
+- [ ] Admin endpoint to read decrypted conversation turns
+- [ ] Admin endpoint to retrieve query trace by response_id
+- [ ] Trace persistence configurable (always in dev, opt-in in production)
+
+---
+
 ### DEBT-009: Debug logging for rewritten queries
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23
@@ -1003,7 +1213,7 @@ The `AdvancedQueryPipeline` correctly calls `SparseEmbeddingProvider.embed_query
 
 ### BUG-010: ~~Learn query endpoint does not auto-create conversation on first query~~
 
-**Status**: completed | **Priority**: high | **Created**: 2026-03-16 | **Completed**: 2026-03-22 (v0.3.0)
+**Status**: completed (partial — DB row creation missing, tracked as BUG-014) | **Priority**: high | **Created**: 2026-03-16 | **Completed**: 2026-03-22 (v0.3.0)
 **Origin**: Moodle integration testing (2026-03-16)
 
 **Context**: The learn query endpoint (`POST /api/v1/learn/query`) passes `conversation_id` through to the pipeline unchanged. When the widget sends the first query without a `conversation_id` (which is the normal flow), the pipeline receives `None`, skips history retrieval and turn saving, and returns `conversation_id: null`. The widget receives `null` and has nothing to save — so the second query also has no `conversation_id`. Result: **every query is a single-turn query with no conversation continuity**.
@@ -1250,3 +1460,6 @@ The backend stores conversation turns in the database (used for multi-turn query
 | DEBT-004 (budget ordering) | Phase 2 | Pgvector returns score-desc in practice |
 | DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |
 | DEBT-008 (LRU plaintext cache) | Phase 2 | Replace lru_cache with TTLCache |
+| BUG-017 (context window fallback) | Before next release | Silently truncates prompts with vLLM models |
+| BUG-018 (SSE conversation_id) | Before next release | Streaming clients can't discover server-generated ID |
+| DEBT-011 (conversation observability) | Post-Phase 2 | Cannot diagnose query behavior post-hoc |

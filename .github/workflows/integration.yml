@@ -10,7 +10,7 @@ jobs:
   integration:
     name: Integration tests + NFR gates
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -72,8 +72,8 @@ jobs:
           VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
           STARTUP_MS: ${{ steps.startup.outputs.startup_ms }}
 
-      - name: Query latency measurement (warn only)
-        if: always() && !cancelled()
+      - name: Query latency measurement (warn only, post-merge only)
+        if: always() && !cancelled() && github.event_name == 'push'
         continue-on-error: true
         run: |
           uv run pytest tests/nfr/test_performance.py \

@@ -103,7 +103,9 @@ class AdvancedQueryPipeline:
         return _count_tokens_impl(self._llm, self._llm_config.provider, text)
 
     def _context_window(self) -> int:
-        return _context_window_impl(self._llm_config.provider)
+        return _context_window_impl(
+            self._llm_config.provider, self._llm_config.context_window
+        )
 
     async def _call_llm_with_fallback(
         self,

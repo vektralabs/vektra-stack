@@ -125,17 +125,24 @@ class PersistentConversationStore:
         namespace_id: str,
         key_id: UUID,
         title: str | None = None,
+        conversation_id: UUID | None = None,
     ) -> UUID:
-        """Create a new conversation row. Returns the conversation UUID."""
+        """Create a new conversation row. Returns the conversation UUID.
+
+        If *conversation_id* is provided, uses it as the primary key instead
+        of generating one server-side.  This supports flows where the caller
+        has already allocated an ID (e.g. learn endpoint auto-generation).
+        """
         async with self._session_factory() as session:
+            values: dict[str, Any] = {
+                "namespace_id": namespace_id,
+                "key_id": key_id,
+                "title": title,
+            }
+            if conversation_id is not None:
+                values["id"] = conversation_id
             stmt = (
-                insert(ConversationOrm)
-                .values(
-                    namespace_id=namespace_id,
-                    key_id=key_id,
-                    title=title,
-                )
-                .returning(ConversationOrm.id)
+                insert(ConversationOrm).values(**values).returning(ConversationOrm.id)
             )
             result = await session.execute(stmt)
             conversation_id = result.scalar_one()
@@ -146,6 +153,32 @@ class PersistentConversationStore:
                 namespace_id=namespace_id,
             )
             return conversation_id
+
+    async def ensure_conversation(
+        self,
+        conversation_id: UUID,
+        namespace_id: str,
+        key_id: UUID,
+    ) -> None:
+        """Create the conversation row if it does not already exist.
+
+        Used when the caller provides a conversation_id (e.g. client-generated
+        or learn endpoint auto-generated) and the row may or may not exist yet.
+        """
+        async with self._session_factory() as session:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            stmt = (
+                pg_insert(ConversationOrm)
+                .values(
+                    id=conversation_id,
+                    namespace_id=namespace_id,
+                    key_id=key_id,
+                )
+                .on_conflict_do_nothing(index_elements=["id"])
+            )
+            await session.execute(stmt)
+            await session.commit()
 
     async def get_history(self, conversation_id: UUID) -> list[dict[str, str | None]]:
         """Return decrypted conversation history ordered by turn_number.

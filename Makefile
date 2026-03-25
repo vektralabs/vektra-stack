@@ -33,7 +33,7 @@ endif
 # Targets
 # --------------------------------------------------------------------------
 
-.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest
+.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest eval-retrieval eval-e2e
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { \
@@ -98,3 +98,9 @@ reindex: ## Create reindex job (skeleton): make reindex VER=2 [NS=default]
 batch-ingest: ## Batch ingest files: make batch-ingest DIR=path/to/docs [NS=default]
 	$(if $(DIR),,$(error DIR is required. Usage: make batch-ingest DIR=path/to/docs))
 	@scripts/batch-ingest.sh "$(DIR)" "$(or $(NS),default)"
+
+eval-retrieval: ## Run retrieval-only evaluation (no LLM calls)
+	uv run python scripts/eval_retrieval.py $(EVAL_ARGS)
+
+eval-e2e: ## Run end-to-end RAG evaluation (with LLM calls)
+	uv run python scripts/eval_e2e.py $(EVAL_ARGS)

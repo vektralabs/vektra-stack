@@ -38,8 +38,12 @@ class LitellmProvider:
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
         self._base_kwargs: dict[str, Any] = {}
+        if config.api_key:
+            self._base_kwargs["api_key"] = config.api_key
         if config.api_base:
             self._base_kwargs["api_base"] = config.api_base
+        if config.extra_body:
+            self._base_kwargs["extra_body"] = config.extra_body
 
     @property
     def model_name(self) -> str:

@@ -27,21 +27,33 @@ If using a cloud provider, also set the corresponding API key (see [LLM provider
 | `VEKTRA_LLM_PROVIDER` | str | (required) | LLM model in litellm format |
 | `VEKTRA_LLM_API_KEY` | str | - | API key for the LLM provider. Not needed for Ollama. |
 | `VEKTRA_LLM_API_BASE` | str | - | Custom API base URL for OpenAI-compatible providers (e.g., vLLM, LMStudio) |
+| `VEKTRA_LLM_EXTRA_BODY` | json | - | Extra JSON body passed to litellm (e.g. `{"chat_template_kwargs": {"enable_thinking": false}}` for vLLM thinking models) |
 | `VEKTRA_LLM_FALLBACK_MODEL` | str | - | Fallback model when the primary times out |
 | `VEKTRA_LLM_FALLBACK_TIMEOUT_MS` | int | `60000` | Milliseconds before switching to fallback model |
+| `VEKTRA_LLM_CONTEXT_WINDOW` | int | - | Context window size in tokens. Required for models not in litellm's registry (e.g. local vLLM). If unset, litellm lookup with 4096 fallback (warns on fallback) |
 | `VEKTRA_LLM_CONTEXT_ONLY_ENABLED` | bool | `true` | Return raw chunks without LLM synthesis when both models fail |
 | `VEKTRA_STARTUP_LLM_CHECK` | bool | `true` | Test LLM connectivity at startup (warning-only, not fatal) |
 
 ### LLM provider keys
 
-Set one based on your `VEKTRA_LLM_PROVIDER`:
+Use `VEKTRA_LLM_API_KEY` for any provider. It is passed directly to litellm and works with OpenAI, Anthropic, vLLM, and any OpenAI-compatible endpoint.
 
-| Variable | Provider |
-|----------|----------|
-| `OPENAI_API_KEY` | OpenAI (`openai/*`) |
-| `ANTHROPIC_API_KEY` | Anthropic (`anthropic/*`) |
+Provider-specific environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are also recognized by litellm as a fallback, but `VEKTRA_LLM_API_KEY` takes precedence when set.
 
-These are standard provider environment variables recognized by litellm. `VEKTRA_LLM_API_KEY` can also be used as a generic alternative.
+### Using a local vLLM instance
+
+```bash
+VEKTRA_LLM_PROVIDER=openai//models/your-model-name
+VEKTRA_LLM_API_KEY=<vllm-api-key>
+VEKTRA_LLM_API_BASE=http://<vllm-host>:8000/v1
+VEKTRA_LLM_CONTEXT_WINDOW=32768
+# For models with thinking mode (e.g. Qwen3.5, DeepSeek-R1), disable it:
+VEKTRA_LLM_EXTRA_BODY={"chat_template_kwargs": {"enable_thinking": false}}
+```
+
+In `.env` files (Docker Compose), JSON values do not need quoting. In shell, use single quotes: `VEKTRA_LLM_EXTRA_BODY='{"chat_template_kwargs": {"enable_thinking": false}}'`.
+
+The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35-27b`).
 
 ## Embedding
 
@@ -67,7 +79,7 @@ These are standard provider environment variables recognized by litellm. `VEKTRA
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `VEKTRA_QUERY_PIPELINE` | str | `advanced` | Pipeline implementation: `simple`, `advanced` |
-| `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.3` | Minimum cosine similarity for chunk inclusion (0.0-1.0). Chunks below this threshold are filtered out. |
+| `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.15` | Minimum relevance score for chunk inclusion (0.0-1.0). Safety net filter; top-k is the primary control. |
 | `VEKTRA_CHUNK_DEDUP_ENABLED` | bool | `true` | Deduplicate overlapping adjacent chunks from the same document |
 | `VEKTRA_RESPONSE_TOKEN_RESERVE` | int | `2048` | Tokens reserved for LLM response generation |
 | `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | Fraction of context window allocated to retrieved chunks (0.0-1.0) |
@@ -85,8 +97,8 @@ These are standard provider environment variables recognized by litellm. `VEKTRA
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `VEKTRA_RERANK_ENABLED` | bool | `true` | Enable cross-encoder reranking after retrieval |
-| `VEKTRA_RERANK_PROVIDER` | str | `flashrank` | Reranking provider: `flashrank`, `cross-encoder`, `cohere` |
-| `VEKTRA_RERANK_MODEL` | str | - | Provider-specific reranking model name |
+| `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere` |
+| `VEKTRA_RERANK_MODEL` | str | `BAAI/bge-reranker-v2-m3` | Multilingual reranking model. For English-only lightweight deployments: provider=`flashrank`, model=`ms-marco-MiniLM-L-12-v2` |
 | `VEKTRA_RERANK_TOP_K` | int | `5` | Final top-k results after reranking |
 
 ## Ingestion

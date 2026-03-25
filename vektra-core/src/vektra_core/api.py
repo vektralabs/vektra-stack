@@ -208,10 +208,34 @@ async def query(
     accept = request.headers.get("accept", "")
     use_stream = body.stream or "text/event-stream" in accept
 
+    # Ensure conversation row exists for persistent multi-turn (BUG-014).
+    # The API layer creates the row because it has namespace_id and key_id,
+    # which the pipeline does not (and should not) receive.
+    conversation_id = body.conversation_id
+    try:
+        conv_store = registry.get("conversation_store", "default")
+        if isinstance(conv_store, PersistentConversationStore):
+            if conversation_id is None:
+                conversation_id = await conv_store.create_conversation(
+                    namespace_id=body.namespace,
+                    key_id=_key.key_id,
+                )
+            else:
+                # Client-provided ID: create row if it doesn't exist yet.
+                await conv_store.ensure_conversation(
+                    conversation_id=conversation_id,
+                    namespace_id=body.namespace,
+                    key_id=_key.key_id,
+                )
+    except ValueError:
+        pass  # conversation store not registered (optional)
+    except Exception as exc:
+        log.warning("conversation_create_failed", error=str(exc))
+
     query_req = QueryRequest(
         question=body.question,
         namespace=body.namespace,
-        conversation_id=body.conversation_id,
+        conversation_id=conversation_id,
         top_k=body.top_k,
         stream=use_stream,
     )

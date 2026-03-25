@@ -107,9 +107,9 @@
 
 ---
 
-### BUG-015: Reranker scores discarded after reranking — threshold applied to wrong scores
+### BUG-015: ~~Reranker scores discarded after reranking — threshold applied to wrong scores~~
 
-**Status**: planned | **Priority**: critical | **Created**: 2026-03-24
+**Status**: completed | **Priority**: critical | **Created**: 2026-03-24 | **Completed**: 2026-03-25
 **Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
 
 **Context**: `RerankerService.rerank()` (reranker.py:54-60) reorders results but returns the original `SearchResult` objects with their cosine similarity scores intact. The flashrank/cross-encoder scores are used only for ordering, then discarded. The `_apply_retrieval_filter` (pipeline.py:100) then applies `VEKTRA_MIN_RELEVANCE_SCORE=0.3` to these original cosine scores, not the reranker scores. The reranker's relevance judgment and the threshold filter are effectively disconnected: a chunk the reranker ranks highly can still be filtered out if its original cosine similarity was below 0.3.
@@ -128,9 +128,9 @@
 
 ---
 
-### BUG-016: English-only reranker produces random scores on Italian content
+### BUG-016: ~~English-only reranker produces random scores on Italian content~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-03-24
+**Status**: completed | **Priority**: high | **Created**: 2026-03-24 | **Completed**: 2026-03-25
 **Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
 **Depends on**: BUG-015 (score propagation must work before reranker swap is meaningful)
 
@@ -165,9 +165,9 @@ VEKTRA_RERANK_MODEL=BAAI/bge-reranker-v2-m3
 
 ---
 
-### TECH-002: RAG evaluation harness
+### TECH-002: ~~RAG evaluation harness~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-03-24
+**Status**: completed | **Priority**: high | **Created**: 2026-03-24 | **Completed**: 2026-03-25
 **Analysis**: `vektra-internal/stack/20260324-reranker-threshold-gap-analysis.md`
 
 **Context**: The RAG tuning campaign (2026-03-14-18) used manual testing across 600 queries with qualitative metrics. There is no automated, reproducible way to evaluate retrieval quality when components change (embedding model, reranker, threshold, chunk size). This gap allowed BUG-015 and BUG-016 to go undetected: component interactions were never tested systematically.
@@ -192,9 +192,9 @@ VEKTRA_RERANK_MODEL=BAAI/bge-reranker-v2-m3
 
 ---
 
-### DEBT-010: Recalibrate relevance threshold with empirical data
+### DEBT-010: ~~Recalibrate relevance threshold with empirical data~~
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-24
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-24 | **Completed**: 2026-03-25
 **Depends on**: BUG-015, BUG-016, TECH-002
 
 **Context**: `VEKTRA_MIN_RELEVANCE_SCORE=0.3` was set per ADR-0021 for cosine similarity with `all-MiniLM-L6-v2` (Phase 1 embedding model). It was never varied in the tuning campaign and not recalibrated when: (a) the embedding model changed to `paraphrase-multilingual-MiniLM-L12-v2`, (b) hybrid search with RRF was enabled, (c) the reranker was added. Different scoring stages produce different distributions (cosine 0.2-0.8 cluster, flashrank bimodal near 0/1, RRF reciprocal). A single threshold cannot serve all correctly.
@@ -208,6 +208,33 @@ Literature consensus: use top-k as primary control, low absolute threshold (0.15
 - [ ] Optimal threshold determined for the active reranker + embedding model combination
 - [ ] ADR-0021 updated with new calibration data
 - [ ] Configuration supports different thresholds for reranked vs non-reranked modes (or hybrid filter)
+
+---
+
+### BUG-017: Context window fallback silently truncates prompt — most chunks discarded
+
+**Status**: planned | **Priority**: high | **Created**: 2026-03-25
+
+**Context**: `_context_window_impl()` (pipeline.py:131-136) calls `litellm.get_max_tokens(model)` to determine the context window. For models not in litellm's registry (all local vLLM models like `openai//models/qwen35-27b`), it silently falls back to `_DEFAULT_CONTEXT_WINDOW = 4096`. With Qwen 3.5 27B (actual context: 32768), this causes the token budget allocator to use only ~900 tokens for chunks instead of ~18000. Result: 5 relevant chunks retrieved, but only 2 fit in the prompt, and the LLM produces an incomplete answer.
+
+**Discovered**: while analyzing conversation `5bf50682` in namespace `ita-100`. User asked "Quali tipi di liberta sono garantiti dalla Costituzione italiana? Elencali tutti con il relativo articolo". Pipeline retrieved 20 candidates, reranker selected 5 (scores 0.78-0.40), threshold kept all 5, but `build_prompt` only included 2 (`chunks_in_prompt: 2`). The answer listed 6 freedoms instead of ~12.
+
+**Root cause**: no logging or warning when `litellm.get_max_tokens()` fails and the fallback kicks in. The `_count_tokens_impl()` fallback (char/4) is similarly silent.
+
+**Proposed fix**:
+1. Add `VEKTRA_LLM_CONTEXT_WINDOW` env var to LLMConfig (optional int, default None)
+2. `_context_window_impl()`: if env var set, use it; else try litellm; on fallback, emit `structlog.warning("context_window_fallback", model=model, default=4096)`
+3. `_count_tokens_impl()`: on fallback, emit `structlog.warning("token_count_fallback", model=model)` (once per model, not per call)
+4. Same pattern for any other fallback/default in the pipeline
+
+**Traceability**: ARCH-055 (token budget allocation)
+
+**Acceptance criteria**:
+- [ ] `VEKTRA_LLM_CONTEXT_WINDOW` env var added, used when set
+- [ ] Warning logged when context window falls back to default
+- [ ] Warning logged when token counting falls back to char/4
+- [ ] Fallback warnings emitted once per model (not per query) to avoid log spam
+- [ ] Documentation updated (configuration.md, .env.example)
 
 ---
 
@@ -1380,3 +1407,4 @@ The backend stores conversation turns in the database (used for multi-turn query
 | DEBT-004 (budget ordering) | Phase 2 | Pgvector returns score-desc in practice |
 | DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |
 | DEBT-008 (LRU plaintext cache) | Phase 2 | Replace lru_cache with TTLCache |
+| BUG-017 (context window fallback) | Before next release | Silently truncates prompts with vLLM models |

@@ -238,9 +238,31 @@ Literature consensus: use top-k as primary control, low absolute threshold (0.15
 
 ---
 
+### BUG-018: SSE streaming path does not return server-generated conversation_id
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-25
+
+**Context**: When a client calls `POST /api/v1/query` with `stream=true` and no `conversation_id`, the server creates a conversation row and passes the ID to the pipeline. However, the SSE event stream never emits this ID back to the client. The non-streaming path returns it in the JSON response (`conversation_id` field), but the streaming path has no equivalent.
+
+A client using SSE without generating its own `conversation_id` cannot discover which ID to use for subsequent turns, breaking multi-turn conversations.
+
+**Current impact**: low. The widget always generates `conversation_id` client-side, so production is unaffected. The bug affects direct API consumers using SSE without pre-generating an ID.
+
+**Proposed fix**: emit the `conversation_id` in the first SSE event (e.g. a `metadata` event before tokens start) or in the `done` event payload.
+
+**Traceability**: BUG-014 (conversation persistence), DEBT-011 (observability gaps)
+
+**Acceptance criteria**:
+- [ ] SSE stream includes `conversation_id` in an event accessible before or after token streaming
+- [ ] Client can extract the ID and use it for follow-up queries
+- [ ] Non-streaming path behavior unchanged
+
+---
+
 ### DEBT-011: Conversation and query trace observability gaps
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-25
+**Related**: BUG-018 (SSE conversation_id)
 
 **Context**: Diagnosing a conversation (`5bf50682`, namespace `ita-100`) revealed multiple observability gaps that make post-hoc analysis of query behavior difficult:
 
@@ -1439,4 +1461,5 @@ The backend stores conversation turns in the database (used for multi-turn query
 | DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |
 | DEBT-008 (LRU plaintext cache) | Phase 2 | Replace lru_cache with TTLCache |
 | BUG-017 (context window fallback) | Before next release | Silently truncates prompts with vLLM models |
+| BUG-018 (SSE conversation_id) | Before next release | Streaming clients can't discover server-generated ID |
 | DEBT-011 (conversation observability) | Post-Phase 2 | Cannot diagnose query behavior post-hoc |

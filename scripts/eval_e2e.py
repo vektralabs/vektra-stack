@@ -83,8 +83,9 @@ def evaluate_question(client: httpx.Client, entry: dict, top_k: int) -> E2EResul
             category=category,
             language=language,
             answer=None,
-            no_relevant_context=True,
+            no_relevant_context=False,
             num_sources=0,
+            duration_ms=(time.monotonic() - t0) * 1000,
             error=str(e),
         )
 

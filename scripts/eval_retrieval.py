@@ -37,6 +37,7 @@ class QuestionResult:
     precision_at_k: float  # relevant chunks / total chunks
     num_retrieved: int
     num_relevant: int
+    has_ground_truth: bool = True  # False for entries without expected_keywords
     scores: list[float] = field(default_factory=list)
     error: str | None = None
 
@@ -133,6 +134,7 @@ def evaluate_question(
             precision_at_k=0.0,
             num_retrieved=len(results),
             num_relevant=0,
+            has_ground_truth=False,
             scores=scores,
         )
 
@@ -179,47 +181,61 @@ def print_summary(results: list[QuestionResult], elapsed_s: float) -> None:
         return
 
     valid = [r for r in results if r.error is None]
-    hit_rate = sum(r.hit for r in valid) / evaluated
-    mrr = sum(r.reciprocal_rank for r in valid) / evaluated
-    avg_precision = sum(r.precision_at_k for r in valid) / evaluated
-    avg_retrieved = sum(r.num_retrieved for r in valid) / evaluated
-    avg_relevant = sum(r.num_relevant for r in valid) / evaluated
+    # Separate scored (have ground truth keywords) from unscored (adversarial)
+    scored = [r for r in valid if r.has_ground_truth]
+    unscored = [r for r in valid if not r.has_ground_truth]
 
     print(f"\n{'=' * 60}")
     print("Retrieval evaluation results")
     print(f"{'=' * 60}")
-    print(f"Questions:      {total} ({errors} errors)")
+    print(
+        f"Questions:      {total} ({errors} errors, {len(unscored)} without ground truth)"
+    )
     print(f"Duration:       {elapsed_s:.1f}s ({elapsed_s / total:.2f}s/query)")
-    print("")
-    print(f"Hit rate:       {hit_rate:.1%}")
-    print(f"MRR:            {mrr:.4f}")
-    print(f"Avg precision:  {avg_precision:.4f}")
-    print(f"Avg retrieved:  {avg_retrieved:.1f}")
-    print(f"Avg relevant:   {avg_relevant:.1f}")
 
-    # Breakdown by category
-    categories = sorted(set(r.category for r in valid))
-    if len(categories) > 1:
-        print("\nBy category:")
-        for cat in categories:
-            cat_results = [r for r in valid if r.category == cat]
-            cat_hit = sum(r.hit for r in cat_results) / len(cat_results)
-            cat_mrr = sum(r.reciprocal_rank for r in cat_results) / len(cat_results)
-            print(
-                f"  {cat:<15} hit={cat_hit:.0%}  mrr={cat_mrr:.4f}  n={len(cat_results)}"
-            )
+    if scored:
+        hit_rate = sum(r.hit for r in scored) / len(scored)
+        mrr = sum(r.reciprocal_rank for r in scored) / len(scored)
+        avg_precision = sum(r.precision_at_k for r in scored) / len(scored)
+        avg_retrieved = sum(r.num_retrieved for r in scored) / len(scored)
+        avg_relevant = sum(r.num_relevant for r in scored) / len(scored)
 
-    # Breakdown by language
-    languages = sorted(set(r.language for r in valid))
-    if len(languages) > 1:
-        print("\nBy language:")
-        for lang in languages:
-            lang_results = [r for r in valid if r.language == lang]
-            lang_hit = sum(r.hit for r in lang_results) / len(lang_results)
-            lang_mrr = sum(r.reciprocal_rank for r in lang_results) / len(lang_results)
-            print(
-                f"  {lang:<15} hit={lang_hit:.0%}  mrr={lang_mrr:.4f}  n={len(lang_results)}"
-            )
+        print(f"\nScored ({len(scored)} questions with ground truth):")
+        print(f"  Hit rate:       {hit_rate:.1%}")
+        print(f"  MRR:            {mrr:.4f}")
+        print(f"  Avg precision:  {avg_precision:.4f}")
+        print(f"  Avg retrieved:  {avg_retrieved:.1f}")
+        print(f"  Avg relevant:   {avg_relevant:.1f}")
+    else:
+        print("\nNo scored questions (all entries lack ground truth keywords).")
+
+    # Breakdown by category (scored only)
+    if scored:
+        categories = sorted(set(r.category for r in scored))
+        if len(categories) > 1:
+            print("\n  By category:")
+            for cat in categories:
+                cat_results = [r for r in scored if r.category == cat]
+                cat_hit = sum(r.hit for r in cat_results) / len(cat_results)
+                cat_mrr = sum(r.reciprocal_rank for r in cat_results) / len(cat_results)
+                print(
+                    f"    {cat:<15} hit={cat_hit:.0%}  mrr={cat_mrr:.4f}  n={len(cat_results)}"
+                )
+
+    # Breakdown by language (scored only)
+    if scored:
+        languages = sorted(set(r.language for r in scored))
+        if len(languages) > 1:
+            print("\n  By language:")
+            for lang in languages:
+                lang_results = [r for r in scored if r.language == lang]
+                lang_hit = sum(r.hit for r in lang_results) / len(lang_results)
+                lang_mrr = sum(r.reciprocal_rank for r in lang_results) / len(
+                    lang_results
+                )
+                print(
+                    f"    {lang:<15} hit={lang_hit:.0%}  mrr={lang_mrr:.4f}  n={len(lang_results)}"
+                )
 
     # Score distribution
     all_scores = [s for r in valid for s in r.scores]
@@ -248,6 +264,7 @@ def save_results(results: list[QuestionResult], output_path: str) -> None:
                 "precision_at_k": r.precision_at_k,
                 "num_retrieved": r.num_retrieved,
                 "num_relevant": r.num_relevant,
+                "has_ground_truth": r.has_ground_truth,
                 "scores": r.scores,
             }
             if r.error:

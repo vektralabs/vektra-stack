@@ -238,6 +238,37 @@ Literature consensus: use top-k as primary control, low absolute threshold (0.15
 
 ---
 
+### DEBT-011: Conversation and query trace observability gaps
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-25
+
+**Context**: Diagnosing a conversation (`5bf50682`, namespace `ita-100`) revealed multiple observability gaps that make post-hoc analysis of query behavior difficult:
+
+1. **No API to read conversation turns**: `GET /api/v1/conversations/{id}` returns metadata (turn_count, namespace, timestamps) but no endpoint exposes the turns themselves. The only way to read them is via direct DB query with `pgp_sym_decrypt()`.
+
+2. **Query trace not persisted for streaming queries**: When `stream=true`, the trace is emitted via SSE but not saved to `query_traces` table. Non-streaming queries also don't persist traces unless the learn service stores them. The only evidence of a streamed query is a single `query_stream_complete` log line with response_id and duration, no step details.
+
+3. **response_id not stored in conversation_turns**: The `response_id` column exists but is never populated, making it impossible to correlate a conversation turn with its query trace.
+
+4. **No admin endpoint for query traces**: Traces can only be retrieved via the learn API (if persisted) or by grepping container logs (which don't survive restarts, see INFRA-005).
+
+**Proposed approach**:
+1. Persist query traces for all queries (not just learn), controlled by a config flag (default: on in development, off in production)
+2. Populate `response_id` in conversation_turns when saving a turn
+3. Add `GET /api/v1/admin/conversations/{id}/turns` endpoint (admin scope) that decrypts and returns turns
+4. Add `GET /api/v1/admin/traces/{response_id}` endpoint for trace lookup
+
+**Traceability**: ARCH-041 (QueryTrace), ADR-0011 (conversation encryption), ADR-0017 (audit/analytics separation)
+
+**Acceptance criteria**:
+- [ ] Query traces persisted to DB for all pipelines (simple + advanced, sync + stream)
+- [ ] `response_id` populated in `conversation_turns` on turn save
+- [ ] Admin endpoint to read decrypted conversation turns
+- [ ] Admin endpoint to retrieve query trace by response_id
+- [ ] Trace persistence configurable (always in dev, opt-in in production)
+
+---
+
 ### DEBT-009: Debug logging for rewritten queries
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23
@@ -1408,3 +1439,4 @@ The backend stores conversation turns in the database (used for multi-turn query
 | DEBT-005 (disconnect cancel) | Phase 2 | uvicorn handles it implicitly |
 | DEBT-008 (LRU plaintext cache) | Phase 2 | Replace lru_cache with TTLCache |
 | BUG-017 (context window fallback) | Before next release | Silently truncates prompts with vLLM models |
+| DEBT-011 (conversation observability) | Post-Phase 2 | Cannot diagnose query behavior post-hoc |

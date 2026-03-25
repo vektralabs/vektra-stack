@@ -492,13 +492,14 @@ def test_context_window_fallback_to_default():
 
 
 def test_context_window_fallback_warns_once(capsys):
-    """Fallback warning is emitted only once per model."""
+    """Fallback warning is emitted on first call, silent on second."""
     _context_window_fallback_warned.discard("test/warn-once-model")
     _context_window_impl("test/warn-once-model")
-    capsys.readouterr()  # clear first warning
+    first = capsys.readouterr()
+    assert "context_window_fallback" in first.out
     _context_window_impl("test/warn-once-model")
-    captured = capsys.readouterr()
-    assert "context_window_fallback" not in captured.out
+    second = capsys.readouterr()
+    assert "context_window_fallback" not in second.out
 
 
 # ---------------------------------------------------------------------------
@@ -517,12 +518,13 @@ def test_count_tokens_fallback_warns():
 
 
 def test_count_tokens_fallback_warns_once(capsys):
-    """Token count fallback warning only once per model."""
+    """Token count fallback warning emitted on first call, silent on second."""
     _token_count_fallback_warned.discard("test/token-once-model")
     mock_llm = MagicMock()
     mock_llm.count_tokens.side_effect = Exception("unsupported")
     _count_tokens_impl(mock_llm, "test/token-once-model", "first")
-    capsys.readouterr()  # clear first warning
+    first = capsys.readouterr()
+    assert "token_count_fallback" in first.out
     _count_tokens_impl(mock_llm, "test/token-once-model", "second")
-    captured = capsys.readouterr()
-    assert "token_count_fallback" not in captured.out
+    second = capsys.readouterr()
+    assert "token_count_fallback" not in second.out

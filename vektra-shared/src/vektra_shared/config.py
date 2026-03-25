@@ -50,6 +50,7 @@ class LLMConfig(BaseSettings):
     )
     context_window: int | None = Field(
         None,
+        ge=1,
         alias="VEKTRA_LLM_CONTEXT_WINDOW",
         description="Context window size in tokens. Required for models not in litellm's registry (e.g. local vLLM). If unset, litellm lookup is attempted with a 4096-token fallback.",
     )
@@ -428,6 +429,7 @@ class VektraSettings(BaseSettings):
     llm_api_key: str | None = Field(None, alias="VEKTRA_LLM_API_KEY")
     llm_api_base: str | None = Field(None, alias="VEKTRA_LLM_API_BASE")
     llm_extra_body: dict[str, Any] | None = Field(None, alias="VEKTRA_LLM_EXTRA_BODY")
+    llm_context_window: int | None = Field(None, alias="VEKTRA_LLM_CONTEXT_WINDOW")
     llm_fallback_model: str | None = Field(None, alias="VEKTRA_LLM_FALLBACK_MODEL")
     llm_fallback_timeout_ms: int = Field(60000, alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS")
     llm_context_only_enabled: bool = Field(
@@ -537,6 +539,7 @@ class VektraSettings(BaseSettings):
                 "VEKTRA_LLM_API_KEY": self.llm_api_key,
                 "VEKTRA_LLM_API_BASE": self.llm_api_base,
                 "VEKTRA_LLM_EXTRA_BODY": self.llm_extra_body,
+                "VEKTRA_LLM_CONTEXT_WINDOW": self.llm_context_window,
                 "VEKTRA_LLM_FALLBACK_MODEL": self.llm_fallback_model,
                 "VEKTRA_LLM_FALLBACK_TIMEOUT_MS": self.llm_fallback_timeout_ms,
                 "VEKTRA_LLM_CONTEXT_ONLY_ENABLED": self.llm_context_only_enabled,

@@ -211,9 +211,9 @@ Literature consensus: use top-k as primary control, low absolute threshold (0.15
 
 ---
 
-### BUG-017: Context window fallback silently truncates prompt — most chunks discarded
+### BUG-017: ~~Context window fallback silently truncates prompt — most chunks discarded~~
 
-**Status**: planned | **Priority**: high | **Created**: 2026-03-25
+**Status**: completed | **Priority**: high | **Created**: 2026-03-25 | **Completed**: 2026-03-25
 
 **Context**: `_context_window_impl()` (pipeline.py:131-136) calls `litellm.get_max_tokens(model)` to determine the context window. For models not in litellm's registry (all local vLLM models like `openai//models/qwen35-27b`), it silently falls back to `_DEFAULT_CONTEXT_WINDOW = 4096`. With Qwen 3.5 27B (actual context: 32768), this causes the token budget allocator to use only ~900 tokens for chunks instead of ~18000. Result: 5 relevant chunks retrieved, but only 2 fit in the prompt, and the LLM produces an incomplete answer.
 

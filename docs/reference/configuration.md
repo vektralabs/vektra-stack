@@ -27,6 +27,7 @@ If using a cloud provider, also set the corresponding API key (see [LLM provider
 | `VEKTRA_LLM_PROVIDER` | str | (required) | LLM model in litellm format |
 | `VEKTRA_LLM_API_KEY` | str | - | API key for the LLM provider. Not needed for Ollama. |
 | `VEKTRA_LLM_API_BASE` | str | - | Custom API base URL for OpenAI-compatible providers (e.g., vLLM, LMStudio) |
+| `VEKTRA_LLM_EXTRA_BODY` | json | - | Extra JSON body passed to litellm (e.g. `{"chat_template_kwargs": {"enable_thinking": false}}` for vLLM thinking models) |
 | `VEKTRA_LLM_FALLBACK_MODEL` | str | - | Fallback model when the primary times out |
 | `VEKTRA_LLM_FALLBACK_TIMEOUT_MS` | int | `60000` | Milliseconds before switching to fallback model |
 | `VEKTRA_LLM_CONTEXT_WINDOW` | int | - | Context window size in tokens. Required for models not in litellm's registry (e.g. local vLLM). If unset, litellm lookup with 4096 fallback (warns on fallback) |

@@ -221,6 +221,66 @@ Rules:
 
 ---
 
+### FEAT-021: Optional source citations in responses (per-namespace)
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-03-28
+
+**Context**: in some deployment contexts (academic research, compliance, legal), full transparency with source citations is required. Currently Rule 1 in the system prompt forbids any mention of sources ("Never mention, quote, or allude to sources, documents, context tags, or reference material"). This is correct for the default e-learning use case where the student should not know about the RAG pipeline, but must be optional for contexts where traceability is a requirement.
+
+**Design**: per-namespace setting `citations_enabled` in namespace metadata JSONB (same mechanism as `grounding_mode` in FEAT-020). Default: `false`.
+
+Changes across four layers:
+
+**1. Prompt (system.j2)**: Rule 1 becomes conditional:
+```jinja2
+{% if citations_enabled %}
+1. Cite the sources you used by including [id] references inline, matching
+   the id attributes of the <doc> elements provided. Place citations at
+   the end of the sentence they support. If multiple sources support a
+   claim, list them together, e.g. [1][3].
+{% else %}
+1. Sound like you simply know the answer. Never mention, quote, or allude
+   to sources, documents, context tags, or reference material.
+{% endif %}
+```
+
+**2. Context template (context.j2)**: include document title/filename for meaningful citations:
+```jinja2
+<context>
+{% for chunk in chunks %}
+<doc id="{{ loop.index }}" title="{{ chunk.title }}">{{ chunk.text }}</doc>
+{% endfor %}
+</context>
+```
+The `title` field would contain `filename + page` (e.g., "Costituzione italiana.pdf, p.12"). This metadata already exists in the Qdrant payload (`metadata.source_file`, `metadata.page`), it just needs propagation through `SearchResult` to the template.
+
+**3. Pipeline**: propagate document filename and page into `SearchResult` and `SourceRef`. The data exists in Qdrant payload metadata but is not currently passed through to the prompt or response. Changes:
+- `SearchResult`: add `source_file: str | None` and `page: int | None` fields (or a `title` convenience field)
+- `SourceRef`: add `title: str | None` for the API response (so the widget can render citation tooltips)
+- `TemplateRenderer.render_context()`: accept and pass `title` to the template
+
+**4. Widget (vektra-chat.js)**: render `[1]` references as interactive elements (tooltip or expandable footnote showing source title and snippet). This is a frontend change in the learn chatbot widget and may require corresponding changes in the Moodle plugin.
+
+**Resolution order**: namespace metadata `citations_enabled` > default (`false`).
+
+**Interaction with other features**:
+- FEAT-020 (grounding mode): independent. Citations can be enabled in both strict and hybrid mode.
+- FEAT-019 (prompt observability): citations in the prompt are visible in eval mode traces.
+- Anthropic Citations API: if using Claude as LLM provider, could leverage the native citations API instead of prompt-based citing. Worth evaluating but not blocking.
+
+**Traceability**: ARCH-054 (composable templates), ARCH-047 (namespace metadata), ADR-0025 (chatbot widget)
+
+**Acceptance criteria**:
+- [ ] `citations_enabled` per-namespace setting in namespace metadata JSONB
+- [ ] `system.j2` Rule 1 conditional: cite with `[id]` when enabled, hide sources when disabled
+- [ ] `context.j2` includes document title in `<doc>` elements when citations enabled
+- [ ] Document filename and page propagated through `SearchResult` to template
+- [ ] `SourceRef` includes `title` field in API response
+- [ ] Widget renders `[id]` references as tooltips or footnotes with source info
+- [ ] Default behavior unchanged (citations disabled, Rule 1 hides sources)
+
+---
+
 ### FEAT-017: Parent chunk expansion in query pipeline
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

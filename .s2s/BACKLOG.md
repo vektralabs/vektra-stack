@@ -553,6 +553,30 @@ DEBT-009 addresses debug logging of the rewritten query to structlog. This entry
 
 ---
 
+### DEBT-016: Remove unused conversation.j2 template and render_conversation()
+
+**Status**: planned | **Priority**: low | **Created**: 2026-03-28
+
+**Context**: ARCH-054 designed three composable Jinja2 templates: `system.j2`, `context.j2`, `conversation.j2`. During Phase 1 implementation (Wave 3, commit 7939b22), the pipeline chose to pass history as native chat messages via `_history_to_messages()` (user/assistant role pairs) instead of rendering it as text via `conversation.j2`. This is the correct approach for modern chat models.
+
+As a result, `conversation.j2` and `TemplateRenderer.render_conversation()` are dead code - never called by any pipeline. The template is included in the `prompt_version` SHA-256 hash (ARCH-048) and referenced in architecture docs (ARCH-054) and validation scenarios, but has no runtime effect.
+
+**Options**:
+1. **Remove**: delete `conversation.j2`, remove `render_conversation()`, update ARCH-054 to document "two composable templates". Update `prompt_version` hash to exclude it. Simple cleanup.
+2. **Repurpose**: keep the template for potential use in FEAT-008 (per-namespace prompt customization) where a namespace might want a custom history format. But this conflicts with the native-messages approach which is superior.
+
+**Recommendation**: option 1 (remove). Native messages are the correct pattern and no use case justifies rendering history as text.
+
+**Acceptance criteria**:
+- [ ] `conversation.j2` removed from templates directory
+- [ ] `render_conversation()` removed from `TemplateRenderer`
+- [ ] `_TEMPLATE_NAMES` tuple updated to exclude "conversation"
+- [ ] `prompt_version` hash recomputed (will change, document in changelog)
+- [ ] ARCH-054 and architecture.md updated to reflect two templates
+- [ ] FEAT-008 description updated to not reference conversation.j2
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

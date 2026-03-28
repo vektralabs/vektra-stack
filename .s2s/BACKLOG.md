@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-02-28
+**Updated**: 2026-03-28
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -21,26 +21,6 @@
 ---
 
 ## Planned
-
-### BUG-012: LLM exposes RAG retrieval internals to end users
-
-**Status**: in_progress | **Priority**: high | **Created**: 2026-03-23
-**Branch**: `fix/rag-prompt-structure`
-**Analysis**: `vektra-internal/stack/20260323-rag-prompt-chunk-confusion-analysis.md`
-
-**Context**: the LLM comments on truncated chunks and retrieval mechanics to end users (e.g. "il brano si interrompe a meta frase"). Users have no awareness of the RAG system and these messages are confusing. Root causes: (1) prompt structure allowed chunk/user message confusion, (2) system prompt did not instruct the model to hide retrieval internals, (3) chunks lacked clear structural delimiters.
-
-**Traceability**: ARCH-054 (prompt templates), ARCH-020 (system prompt)
-
-**Acceptance criteria**:
-- [x] Conversation history uses native API roles instead of text labels
-- [x] Chunks wrapped in XML tags (`<context><source>`)
-- [x] System prompt explains context structure to the model
-- [ ] System prompt instructs model to not reference retrieval mechanics to users
-- [ ] System prompt instructs model to handle truncated sources gracefully
-- [ ] Tested on Kalypso with real queries: no RAG internals leakage observed
-
----
 
 ### FEAT-017: Parent chunk expansion in query pipeline
 
@@ -78,32 +58,6 @@
 - [ ] `AdvancedQueryPipeline.execute_stream()` calls `store_trace()` after streaming completes
 - [ ] Trace persistence is best-effort (DB failure does not turn a successful query into a 500)
 - [ ] Verified: `query_traces` table populated after queries
-
----
-
-### BUG-014: Conversation rows never created — persistent store silently discards all turns
-
-**Status**: planned | **Priority**: high | **Created**: 2026-03-24
-**Analysis**: `vektra-internal/stack/20260324-conversation-persistence-gap-analysis.md`
-**Reopens**: BUG-010 (marked completed but acceptance criteria #2 not satisfied)
-
-**Context**: `PersistentConversationStore.create_conversation()` exists (conversation.py:123-148) but is never called. The learn endpoint generates a `conversation_id` UUID (BUG-010 fix) and passes it to the pipeline, but no `ConversationOrm` row is created in the database. When the pipeline calls `add_turn()`, it looks up the conversation row, finds nothing, logs `conversation_not_found` at warning level, and returns silently. Result: **zero turns are ever persisted**, multi-turn context is broken (get_history returns empty), and `GET /api/v1/conversations/{id}` returns 404.
-
-**Root cause**: `create_conversation()` requires `namespace_id` and `key_id`, which are available in the API layer but not in the pipeline. `QueryRequest` does not carry auth context. The implementation plan (20260301-core-conversations.md) stated the pipeline should call `create_conversation()`, but the pipeline was never given the required parameters. BUG-010 was closed after adding UUID generation without completing the DB creation step.
-
-**Additional finding (fixed)**: `PersistentConversationStore` was not registered in the `ProviderRegistry`, so `GET /api/v1/conversations/{id}` returned 503 even when the store was initialized. Fixed by adding `registry.register("conversation_store", "default", conversation_store)` in main.py.
-
-**Traceability**: REQ-049, ARCH-031, BUG-010, FEAT-004 (blocked by this)
-
-**Acceptance criteria**:
-- [ ] `POST /api/v1/query`: when `conversation_id` is None, create `ConversationOrm` row with namespace_id and key_id, set ID on request
-- [ ] `POST /api/v1/query`: when `conversation_id` is provided but row doesn't exist, create it (first-use from client-generated ID)
-- [ ] `POST /api/v1/learn/query`: same behavior, deriving key_id from learn service context
-- [ ] `add_turn()` successfully persists turns after conversation creation
-- [ ] `get_history()` returns previous turns for multi-turn queries
-- [ ] `GET /api/v1/conversations/{id}` returns conversation metadata
-- [ ] Verified: `conversations` and `conversation_turns` tables populated after widget queries
-- [ ] Pipeline code unchanged (no auth context leaking into QueryRequest)
 
 ---
 
@@ -1298,6 +1252,49 @@ The backend stores conversation turns in the database (used for multi-turn query
 ---
 
 ## Completed
+
+### BUG-012: ~~LLM exposes RAG retrieval internals to end users~~
+
+**Status**: completed | **Priority**: high | **Created**: 2026-03-23 | **Completed**: 2026-03-24
+**Branch**: `fix/rag-prompt-structure`
+**Resolved in**: PR #51
+
+**Context**: the LLM commented on truncated chunks and retrieval mechanics to end users. Root causes: prompt structure allowed chunk/user message confusion, system prompt did not instruct the model to hide retrieval internals, chunks lacked clear structural delimiters.
+
+**Traceability**: ARCH-054 (prompt templates), ARCH-020 (system prompt)
+
+**Acceptance criteria**:
+- [x] Conversation history uses native API roles instead of text labels
+- [x] Chunks wrapped in XML tags (`<context><source>`)
+- [x] System prompt explains context structure to the model
+- [x] System prompt instructs model to not reference retrieval mechanics to users
+- [x] System prompt instructs model to handle truncated sources gracefully
+- [x] Tested on Kalypso with real queries: no RAG internals leakage observed
+
+---
+
+### BUG-014: ~~Conversation rows never created — persistent store silently discards all turns~~
+
+**Status**: completed | **Priority**: high | **Created**: 2026-03-24 | **Completed**: 2026-03-25
+**Analysis**: `vektra-internal/stack/20260324-conversation-persistence-gap-analysis.md`
+**Reopens**: BUG-010 (marked completed but acceptance criteria #2 not satisfied)
+**Resolved in**: PR #52
+
+**Context**: `create_conversation()` was never called from API layer. Turns silently discarded, multi-turn broken. Fixed by calling `create_conversation()` in the query endpoint before pipeline execution, and registering `PersistentConversationStore` in the `ProviderRegistry`.
+
+**Traceability**: REQ-049, ARCH-031, BUG-010, FEAT-004 (blocked by this)
+
+**Acceptance criteria**:
+- [x] `POST /api/v1/query`: when `conversation_id` is None, create `ConversationOrm` row with namespace_id and key_id, set ID on request
+- [x] `POST /api/v1/query`: when `conversation_id` is provided but row doesn't exist, create it (first-use from client-generated ID)
+- [x] `POST /api/v1/learn/query`: same behavior, deriving key_id from learn service context
+- [x] `add_turn()` successfully persists turns after conversation creation
+- [x] `get_history()` returns previous turns for multi-turn queries
+- [x] `GET /api/v1/conversations/{id}` returns conversation metadata
+- [x] Verified: `conversations` and `conversation_turns` tables populated after widget queries
+- [x] Pipeline code unchanged (no auth context leaking into QueryRequest)
+
+---
 
 ### BUG-009: ~~Ingest should auto-create namespace if it doesn't exist~~
 

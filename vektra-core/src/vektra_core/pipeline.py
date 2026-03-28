@@ -559,7 +559,10 @@ class SimpleQueryPipeline:
         # Save conversation turn
         if query.conversation_id is not None:
             await self._conversation_store.add_turn(
-                query.conversation_id, query.question, answer
+                query.conversation_id,
+                query.question,
+                answer,
+                response_id=response_id,
             )
 
         total_ms = _elapsed_ms(t_total)
@@ -865,7 +868,10 @@ class SimpleQueryPipeline:
         # Save conversation turn
         if query.conversation_id is not None and full_answer:
             await self._conversation_store.add_turn(
-                query.conversation_id, query.question, full_answer
+                query.conversation_id,
+                query.question,
+                full_answer,
+                response_id=response_id,
             )
 
         # Yield sources (only budget-selected chunks)

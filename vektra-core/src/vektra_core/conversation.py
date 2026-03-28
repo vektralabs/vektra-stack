@@ -39,6 +39,8 @@ class ConversationStore(Protocol):
         conversation_id: UUID,
         question: str,
         answer: str | None,
+        *,
+        response_id: UUID | None = None,
     ) -> None: ...
 
     async def clear(self, conversation_id: UUID) -> None: ...
@@ -76,6 +78,8 @@ class InMemoryConversationStore:
         conversation_id: UUID,
         question: str,
         answer: str | None,
+        *,
+        response_id: UUID | None = None,
     ) -> None:
         """Append a turn and prune to max_turns (oldest removed first)."""
         async with self._lock:
@@ -218,6 +222,8 @@ class PersistentConversationStore:
         conversation_id: UUID,
         question: str,
         answer: str | None,
+        *,
+        response_id: UUID | None = None,
     ) -> None:
         """Encrypt and insert a turn, then prune oldest if exceeding max_turns."""
         async with self._session_factory() as session:
@@ -251,6 +257,7 @@ class PersistentConversationStore:
                 turn_number=turn_number,
                 question=func.pgp_sym_encrypt(question, self._key),
                 answer=encrypted_answer,
+                response_id=response_id,
             )
             await session.execute(insert_stmt)
 
@@ -321,6 +328,56 @@ class PersistentConversationStore:
                 "title": row.title,
                 "deleted_at": row.deleted_at,
             }
+
+    async def get_turns_detail(
+        self, conversation_id: UUID
+    ) -> list[dict[str, Any]] | None:
+        """Return decrypted conversation turns with full metadata (admin use).
+
+        Returns None if conversation not found.
+        """
+        async with self._session_factory() as session:
+            # Check conversation exists
+            check = await session.execute(
+                select(ConversationOrm.id).where(
+                    ConversationOrm.id == conversation_id,
+                )
+            )
+            if check.scalar_one_or_none() is None:
+                return None
+
+            stmt = (
+                select(
+                    ConversationTurnOrm.turn_number,
+                    func.pgp_sym_decrypt(ConversationTurnOrm.question, self._key).label(
+                        "question"
+                    ),
+                    func.pgp_sym_decrypt(ConversationTurnOrm.answer, self._key).label(
+                        "answer"
+                    ),
+                    ConversationTurnOrm.response_id,
+                    ConversationTurnOrm.model,
+                    ConversationTurnOrm.prompt_tokens,
+                    ConversationTurnOrm.completion_tokens,
+                    ConversationTurnOrm.created_at,
+                )
+                .where(ConversationTurnOrm.conversation_id == conversation_id)
+                .order_by(ConversationTurnOrm.turn_number)
+            )
+            result = await session.execute(stmt)
+            return [
+                {
+                    "turn_number": row.turn_number,
+                    "question": row.question,
+                    "answer": row.answer,
+                    "response_id": row.response_id,
+                    "model": row.model,
+                    "prompt_tokens": row.prompt_tokens,
+                    "completion_tokens": row.completion_tokens,
+                    "created_at": row.created_at,
+                }
+                for row in result.all()
+            ]
 
     async def soft_delete(
         self, conversation_id: UUID, namespace: str | None = None

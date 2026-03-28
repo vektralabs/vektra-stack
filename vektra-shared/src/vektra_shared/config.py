@@ -363,6 +363,11 @@ class ObservabilityConfig(BaseSettings):
         alias="VEKTRA_ANALYTICS_RETENTION_DAYS",
         description="QueryTrace storage retention days. Phase 2 only.",
     )
+    analytics_store_traces: bool | None = Field(
+        None,
+        alias="VEKTRA_ANALYTICS_STORE_TRACES",
+        description="Persist QueryTrace to DB. None = auto (on in dev, off in prod).",
+    )
     eval_mode: bool = Field(
         False,
         alias="VEKTRA_EVAL_MODE",
@@ -504,6 +509,9 @@ class VektraSettings(BaseSettings):
     retention_days: int | None = Field(None, alias="VEKTRA_RETENTION_DAYS")
     analytics_retention_days: int | None = Field(
         None, alias="VEKTRA_ANALYTICS_RETENTION_DAYS"
+    )
+    analytics_store_traces: bool | None = Field(
+        None, alias="VEKTRA_ANALYTICS_STORE_TRACES"
     )
     eval_mode: bool = Field(False, alias="VEKTRA_EVAL_MODE")
 

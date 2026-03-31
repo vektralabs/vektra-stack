@@ -572,7 +572,7 @@ async def course_query(
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
-    _store_traces = getattr(request.app.state, "store_traces_enabled", False)
+    _store_traces = getattr(request.app.state, "store_traces_enabled", False) is True
     _analytics_svc = getattr(request.app.state, "analytics_service", None)
     _db_factory = getattr(request.app.state, "db_session_factory", None)
 
@@ -595,7 +595,7 @@ async def course_query(
     response, trace = await pipeline.execute(query_req)
 
     # Persist trace (best-effort, BUG-013)
-    if _store_traces and _analytics_svc and _db_factory:
+    if _store_traces and trace is not None and _analytics_svc and _db_factory:
         try:
             async with _db_factory() as sess:
                 await _analytics_svc.store_trace(sess, trace, namespace=namespace)
@@ -603,7 +603,7 @@ async def course_query(
         except Exception:
             structlog.get_logger(__name__).warning(
                 "trace_store_failed",
-                response_id=str(trace.response_id),
+                response_id=str(trace.response_id) if trace is not None else None,
                 exc_info=True,
             )
 

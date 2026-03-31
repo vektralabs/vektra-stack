@@ -277,7 +277,8 @@ async def query(
                     request.app.state, "db_session_factory", None
                 ),
                 namespace=body.namespace,
-                store_traces=getattr(request.app.state, "store_traces_enabled", False),
+                store_traces=getattr(request.app.state, "store_traces_enabled", False)
+                is True,
             ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -315,7 +316,7 @@ async def query(
     )
 
     # Persist trace (best-effort, BUG-013)
-    if getattr(request.app.state, "store_traces_enabled", False):
+    if getattr(request.app.state, "store_traces_enabled", False) is True:
         try:
             svc = getattr(request.app.state, "analytics_service", None)
             factory = getattr(request.app.state, "db_session_factory", None)

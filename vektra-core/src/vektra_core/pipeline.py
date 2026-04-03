@@ -556,11 +556,17 @@ class SimpleQueryPipeline:
                 )
             )
 
-        # Save conversation turn
+        # Save conversation turn (best-effort)
         if query.conversation_id is not None:
-            await self._conversation_store.add_turn(
-                query.conversation_id, query.question, answer
-            )
+            try:
+                await self._conversation_store.add_turn(
+                    query.conversation_id,
+                    query.question,
+                    answer,
+                    response_id=response_id,
+                )
+            except Exception as exc:
+                log.warning("conversation_turn_store_failed", error=str(exc))
 
         total_ms = _elapsed_ms(t_total)
         trace = QueryTrace(
@@ -862,11 +868,17 @@ class SimpleQueryPipeline:
                 )
             )
 
-        # Save conversation turn
+        # Save conversation turn (best-effort)
         if query.conversation_id is not None and full_answer:
-            await self._conversation_store.add_turn(
-                query.conversation_id, query.question, full_answer
-            )
+            try:
+                await self._conversation_store.add_turn(
+                    query.conversation_id,
+                    query.question,
+                    full_answer,
+                    response_id=response_id,
+                )
+            except Exception as exc:
+                log.warning("conversation_turn_store_failed", error=str(exc))
 
         # Yield sources (only budget-selected chunks)
         sources_data = [

@@ -77,3 +77,14 @@ async def test_concurrent_add_is_safe():
     await asyncio.gather(add_turns(0), add_turns(10), add_turns(20))
     history = await store.get_history(cid)
     assert len(history) == 15
+
+
+async def test_add_turn_accepts_response_id():
+    """add_turn with response_id kwarg does not raise (in-memory ignores it)."""
+    store = InMemoryConversationStore(max_turns=5)
+    cid = uuid4()
+    rid = uuid4()
+    await store.add_turn(cid, "Q1", "A1", response_id=rid)
+    history = await store.get_history(cid)
+    assert len(history) == 1
+    assert history[0]["question"] == "Q1"

@@ -336,6 +336,29 @@ class QueryTrace:
     created_at: datetime
 
 
+def trace_from_dict(data: dict[str, Any]) -> QueryTrace:
+    """Reconstruct QueryTrace from _trace_to_dict() SSE emission format."""
+    return QueryTrace(
+        response_id=UUID(data["response_id"]),
+        steps=[
+            StepTrace(
+                name=s["name"],
+                duration_ms=s["duration_ms"],
+                metadata=s.get("metadata", {}),
+            )
+            for s in data["steps"]
+        ],
+        total_duration_ms=data["total_duration_ms"],
+        chunks_retrieved=[
+            ChunkRef(chunk_id=c["chunk_id"], score=c["score"])
+            for c in data["chunks_retrieved"]
+        ],
+        llm_model=data["llm_model"],
+        prompt_version=data["prompt_version"],
+        created_at=datetime.fromisoformat(data["created_at"]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Document and namespace types
 # ---------------------------------------------------------------------------

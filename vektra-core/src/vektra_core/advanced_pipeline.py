@@ -528,7 +528,10 @@ class AdvancedQueryPipeline:
         if query.conversation_id is not None:
             try:
                 await self._conversation_store.add_turn(
-                    query.conversation_id, query.question, answer
+                    query.conversation_id,
+                    query.question,
+                    answer,
+                    response_id=response_id,
                 )
             except Exception as exc:
                 log.warning("conversation_turn_store_failed", error=str(exc))
@@ -693,7 +696,10 @@ class AdvancedQueryPipeline:
         if query.conversation_id is not None and full_answer:
             try:
                 await self._conversation_store.add_turn(
-                    query.conversation_id, query.question, full_answer
+                    query.conversation_id,
+                    query.question,
+                    full_answer,
+                    response_id=response_id,
                 )
             except Exception as exc:
                 log.warning("conversation_turn_store_failed", error=str(exc))

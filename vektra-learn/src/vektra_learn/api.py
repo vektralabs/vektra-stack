@@ -47,6 +47,7 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
+from vektra_shared.types import trace_from_dict
 
 # Sentinel key_id for learn-originated conversations (JWT auth has no API key).
 _LEARN_SENTINEL_KEY_ID = UUID("00000000-0000-0000-0000-000000000000")
@@ -58,8 +59,14 @@ async def _learn_sse_generator(
     stream: AsyncGenerator[Any, None],
     request: Request,
     conversation_id: str | None = None,
+    *,
+    analytics_service: Any | None = None,
+    db_session_factory: Any | None = None,
+    namespace: str = "default",
+    store_traces: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Format QueryChunk events as SSE lines for learn endpoint."""
+    log = structlog.get_logger(__name__)
     try:
         async for chunk in stream:
             if await request.is_disconnected():
@@ -70,6 +77,22 @@ async def _learn_sse_generator(
             elif chunk.type in ("sources", "error", "trace"):
                 payload = json.dumps({"type": chunk.type, "data": chunk.data})
                 yield f"data: {payload}\n\n"
+                # Persist trace (best-effort, BUG-013)
+                if (
+                    chunk.type == "trace"
+                    and store_traces
+                    and analytics_service
+                    and db_session_factory
+                ):
+                    try:
+                        trace_obj = trace_from_dict(chunk.data)
+                        async with db_session_factory() as sess:
+                            await analytics_service.store_trace(
+                                sess, trace_obj, namespace=namespace
+                            )
+                            await sess.commit()
+                    except Exception:
+                        log.warning("stream_trace_store_failed", exc_info=True)
             elif chunk.type == "done":
                 if conversation_id:
                     meta = json.dumps(
@@ -549,13 +572,39 @@ async def course_query(
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
+    _store_traces = getattr(request.app.state, "store_traces_enabled", False) is True
+    _analytics_svc = getattr(request.app.state, "analytics_service", None)
+    _db_factory = getattr(request.app.state, "db_session_factory", None)
+
     if req.stream:
         stream_iter = await pipeline.execute_stream(query_req)
         return StreamingResponse(
-            _learn_sse_generator(stream_iter, request, str(query_req.conversation_id)),
+            _learn_sse_generator(
+                stream_iter,
+                request,
+                str(query_req.conversation_id),
+                analytics_service=_analytics_svc,
+                db_session_factory=_db_factory,
+                namespace=namespace,
+                store_traces=_store_traces,
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    response, _trace = await pipeline.execute(query_req)
+    response, trace = await pipeline.execute(query_req)
+
+    # Persist trace (best-effort, BUG-013)
+    if _store_traces and trace is not None and _analytics_svc and _db_factory:
+        try:
+            async with _db_factory() as sess:
+                await _analytics_svc.store_trace(sess, trace, namespace=namespace)
+                await sess.commit()
+        except Exception:
+            structlog.get_logger(__name__).warning(
+                "trace_store_failed",
+                response_id=str(trace.response_id) if trace is not None else None,
+                exc_info=True,
+            )
+
     return pipeline_response_to_course_response(response)

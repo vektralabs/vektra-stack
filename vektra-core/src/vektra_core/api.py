@@ -38,6 +38,7 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
+from vektra_shared.namespace import resolve_grounding_mode
 from vektra_shared.types import (
     QueryChunk,
     QueryRequest,
@@ -258,12 +259,23 @@ async def query(
     except Exception as exc:
         log.warning("conversation_create_failed", error=str(exc))
 
+    # Resolve grounding mode: namespace config > env var > default (FEAT-020)
+    db_factory = getattr(request.app.state, "db_session_factory", None)
+    _default_mode = getattr(request.app.state, "grounding_mode_default", "strict")
+    if db_factory:
+        grounding_mode = await resolve_grounding_mode(
+            body.namespace, db_factory, default_mode=_default_mode
+        )
+    else:
+        grounding_mode = _default_mode
+
     query_req = QueryRequest(
         question=body.question,
         namespace=body.namespace,
         conversation_id=conversation_id,
         top_k=body.top_k,
         stream=use_stream,
+        grounding_mode=grounding_mode,
     )
 
     if use_stream:

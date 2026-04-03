@@ -372,7 +372,12 @@ class AdvancedQueryPipeline:
         """Build the LLM prompt with token budget allocation (ARCH-055)."""
         t0 = time.monotonic()
 
-        system_text = self._renderer.render_system(namespace=query.namespace)
+        has_context = len(filtered) > 0
+        system_text = self._renderer.render_system(
+            namespace=query.namespace,
+            grounding_mode=query.grounding_mode,
+            has_context=has_context,
+        )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
 
@@ -396,18 +401,17 @@ class AdvancedQueryPipeline:
         selected_chunks = [filtered[i] for i in selected_chunk_idx]
         selected_history = [history[i] for i in selected_history_idx]
 
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
-        )
+        if selected_chunks:
+            context_text = self._renderer.render_context(
+                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+            )
+            user_content = f"{context_text}\n\nQuestion: {query.question}"
+        else:
+            user_content = f"Question: {query.question}"
 
         messages: list[Message] = [Message(role="system", content=system_text)]
         messages.extend(_history_to_messages(selected_history))
-        messages.append(
-            Message(
-                role="user",
-                content=f"{context_text}\n\nQuestion: {query.question}",
-            )
-        )
+        messages.append(Message(role="user", content=user_content))
 
         step = StepTrace(
             name="build_prompt",
@@ -439,8 +443,8 @@ class AdvancedQueryPipeline:
             history,
         ) = await self._run_pre_llm_steps(query)
 
-        # No relevant context -> skip LLM
-        if no_relevant_context or not filtered:
+        # No relevant context -> skip LLM (strict), continue without context (hybrid)
+        if (no_relevant_context or not filtered) and query.grounding_mode != "hybrid":
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -593,7 +597,7 @@ class AdvancedQueryPipeline:
             history,
         ) = await self._run_pre_llm_steps(query)
 
-        if no_relevant_context or not filtered:
+        if (no_relevant_context or not filtered) and query.grounding_mode != "hybrid":
             yield QueryChunk(type="sources", data=[])
             # Emit trace before done (DEBT-002)
             trace = QueryTrace(

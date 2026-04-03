@@ -115,7 +115,7 @@ Related to DEBT-015 (rewritten query in eval mode) but broader scope: this captu
 
 ### FEAT-020: Configurable prompt grounding mode (strict/hybrid)
 
-**Status**: planned | **Priority**: high | **Created**: 2026-03-28
+**Status**: in_progress | **Priority**: high | **Created**: 2026-03-28 | **Branch**: feat/prompt-grounding-mode
 **Blocks**: BUG-020 (this implements the fix)
 **Research**: `vektra-internal/stack/20260328-rag-prompt-research-multi-turn.md`
 
@@ -642,7 +642,7 @@ DEBT-009 addresses debug logging of the rewritten query to structlog. This entry
 
 ### DEBT-016: Remove unused conversation.j2 template and render_conversation()
 
-**Status**: planned | **Priority**: low | **Created**: 2026-03-28
+**Status**: in_progress | **Priority**: low | **Created**: 2026-03-28 | **Branch**: feat/prompt-grounding-mode
 
 **Context**: ARCH-054 designed three composable Jinja2 templates: `system.j2`, `context.j2`, `conversation.j2`. During Phase 1 implementation (Wave 3, commit 7939b22), the pipeline chose to pass history as native chat messages via `_history_to_messages()` (user/assistant role pairs) instead of rendering it as text via `conversation.j2`. This is the correct approach for modern chat models.
 

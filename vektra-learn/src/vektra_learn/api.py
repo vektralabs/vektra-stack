@@ -47,6 +47,7 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
+from vektra_shared.namespace import resolve_grounding_mode
 from vektra_shared.types import trace_from_dict
 
 # Sentinel key_id for learn-originated conversations (JWT auth has no API key).
@@ -552,6 +553,18 @@ async def course_query(
 
     # Build course-scoped query and delegate to pipeline
     query_req = build_course_query(req, namespace=namespace, course_id=course_id)
+
+    # Resolve grounding mode: namespace config > env var > default (FEAT-020)
+    _db_factory_gm = getattr(request.app.state, "db_session_factory", None)
+    _default_mode = getattr(request.app.state, "grounding_mode_default", "strict")
+    if _db_factory_gm:
+        _gm = await resolve_grounding_mode(
+            namespace, _db_factory_gm, default_mode=_default_mode
+        )
+    else:
+        _gm = _default_mode
+    query_req.grounding_mode = _gm
+
     if registry is None:
         err = ErrorResponse(
             category=ErrorCategory.TRANSIENT,

@@ -126,6 +126,7 @@ async def test_store_trace_called_when_enabled():
     app_state.store_traces_enabled = True
     app_state.analytics_service = mock_svc
     app_state.db_session_factory = mock_factory
+    app_state.grounding_mode_default = "strict"
 
     request = MagicMock()
     request.app.state = app_state
@@ -181,6 +182,8 @@ async def test_store_trace_not_called_when_disabled():
     )
     app_state.store_traces_enabled = False
     app_state.analytics_service = mock_svc
+    app_state.grounding_mode_default = "strict"
+    app_state.db_session_factory = None
 
     request = MagicMock()
     request.app.state = app_state
@@ -241,6 +244,7 @@ async def test_store_trace_failure_does_not_propagate():
     app_state.store_traces_enabled = True
     app_state.analytics_service = mock_svc
     app_state.db_session_factory = mock_factory
+    app_state.grounding_mode_default = "strict"
 
     request = MagicMock()
     request.app.state = app_state

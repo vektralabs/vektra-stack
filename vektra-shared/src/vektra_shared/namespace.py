@@ -40,6 +40,10 @@ async def resolve_grounding_mode(
                 ns_mode = row.get("grounding_mode")
                 if ns_mode in _VALID_GROUNDING_MODES:
                     return str(ns_mode)
-    except Exception:
-        log.debug("grounding_mode_resolution_fallback", namespace=namespace)
+    except Exception as exc:
+        log.debug(
+            "grounding_mode_resolution_fallback",
+            namespace=namespace,
+            error=str(exc),
+        )
     return default_mode

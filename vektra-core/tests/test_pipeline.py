@@ -236,7 +236,7 @@ async def test_execute_no_relevant_context_hybrid_calls_llm():
     response, _trace = await pipeline.execute(query)
 
     assert response.answer is not None
-    llm.complete.assert_called_once()
+    llm.complete.assert_awaited_once()
 
 
 async def test_execute_empty_vector_results():

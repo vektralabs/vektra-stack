@@ -552,6 +552,15 @@ class VektraSettings(BaseSettings):
             raise ValueError(f"min_relevance_score must be between 0 and 1, got {v}")
         return v
 
+    @field_validator("prompt_grounding_mode")
+    @classmethod
+    def validate_prompt_grounding_mode(cls, v: str) -> str:
+        if v not in ("strict", "hybrid"):
+            raise ValueError(
+                f"prompt_grounding_mode must be 'strict' or 'hybrid', got '{v}'"
+            )
+        return v
+
     def as_llm_config(self) -> LLMConfig:
         """Extract LLM-specific sub-config."""
         return LLMConfig.model_validate(

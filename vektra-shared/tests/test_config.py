@@ -202,6 +202,10 @@ class TestVektraSettings:
         with pytest.raises(ValidationError, match="min_relevance_score"):
             self._make(VEKTRA_MIN_RELEVANCE_SCORE=1.1)
 
+    def test_grounding_mode_invalid_at_settings_level(self) -> None:
+        with pytest.raises(ValidationError, match="prompt_grounding_mode"):
+            self._make(VEKTRA_PROMPT_GROUNDING_MODE="invalid")
+
     def test_as_llm_config(self) -> None:
         s = self._make(
             VEKTRA_LLM_API_KEY="sk-test",

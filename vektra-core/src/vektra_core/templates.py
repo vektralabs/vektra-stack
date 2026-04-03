@@ -45,6 +45,8 @@ class TemplateRenderer:
             loader=jinja2.FileSystemLoader(str(search_dir)),
             autoescape=False,
             undefined=jinja2.StrictUndefined,
+            trim_blocks=True,
+            lstrip_blocks=True,
         )
 
         # Compute per-template SHA-256[:8] and the combined prompt_version (ARCH-048)

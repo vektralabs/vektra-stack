@@ -421,8 +421,11 @@ class SimpleQueryPipeline:
         if not no_relevant_context and not filtered:
             no_relevant_context = True
 
-        # No relevant context or safeguard blocked → skip LLM, return early
-        if no_relevant_context or safeguard_blocked:
+        # Safeguard blocked → always skip LLM
+        # No relevant context → skip LLM in strict mode, continue in hybrid (FEAT-020)
+        if safeguard_blocked or (
+            no_relevant_context and query.grounding_mode != "hybrid"
+        ):
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -453,7 +456,12 @@ class SimpleQueryPipeline:
             history = await self._conversation_store.get_history(query.conversation_id)
 
         # Token budget allocation
-        system_text = self._renderer.render_system(namespace=query.namespace)
+        has_context = len(filtered) > 0
+        system_text = self._renderer.render_system(
+            namespace=query.namespace,
+            grounding_mode=query.grounding_mode,
+            has_context=has_context,
+        )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
         # DEBT-004: sort by score descending so budget allocator selects
@@ -478,18 +486,17 @@ class SimpleQueryPipeline:
         selected_chunks = [filtered[i] for i in selected_chunk_idx]
         selected_history = [history[i] for i in selected_history_idx]
 
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
-        )
+        if selected_chunks:
+            context_text = self._renderer.render_context(
+                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+            )
+            user_content = f"{context_text}\n\nQuestion: {query.question}"
+        else:
+            user_content = f"Question: {query.question}"
 
         messages: list[Message] = [Message(role="system", content=system_text)]
         messages.extend(_history_to_messages(selected_history))
-        messages.append(
-            Message(
-                role="user",
-                content=f"{context_text}\n\nQuestion: {query.question}",
-            )
-        )
+        messages.append(Message(role="user", content=user_content))
 
         steps.append(
             StepTrace(
@@ -668,7 +675,7 @@ class SimpleQueryPipeline:
             )
         )
 
-        if no_relevant_context or not filtered:
+        if (no_relevant_context or not filtered) and query.grounding_mode != "hybrid":
             yield QueryChunk(type="sources", data=[])
             trace = QueryTrace(
                 response_id=response_id,
@@ -726,8 +733,10 @@ class SimpleQueryPipeline:
         if not no_relevant_context and not filtered:
             no_relevant_context = True
 
-        # Safeguard blocked all results → early return
-        if safeguard_blocked or no_relevant_context:
+        # Safeguard blocked or no context in strict mode → early return
+        if safeguard_blocked or (
+            no_relevant_context and query.grounding_mode != "hybrid"
+        ):
             yield QueryChunk(type="sources", data=[])
             trace = QueryTrace(
                 response_id=response_id,
@@ -748,7 +757,12 @@ class SimpleQueryPipeline:
         if query.conversation_id is not None:
             history = await self._conversation_store.get_history(query.conversation_id)
 
-        system_text = self._renderer.render_system(namespace=query.namespace)
+        has_context = len(filtered) > 0
+        system_text = self._renderer.render_system(
+            namespace=query.namespace,
+            grounding_mode=query.grounding_mode,
+            has_context=has_context,
+        )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
         # DEBT-004: sort by score descending so budget allocator selects
@@ -773,18 +787,17 @@ class SimpleQueryPipeline:
         selected_chunks = [filtered[i] for i in selected_chunk_idx]
         selected_history = [history[i] for i in selected_history_idx]
 
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
-        )
+        if selected_chunks:
+            context_text = self._renderer.render_context(
+                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+            )
+            user_content = f"{context_text}\n\nQuestion: {query.question}"
+        else:
+            user_content = f"Question: {query.question}"
 
         messages: list[Message] = [Message(role="system", content=system_text)]
         messages.extend(_history_to_messages(selected_history))
-        messages.append(
-            Message(
-                role="user",
-                content=f"{context_text}\n\nQuestion: {query.question}",
-            )
-        )
+        messages.append(Message(role="user", content=user_content))
         steps.append(
             StepTrace(
                 name="build_prompt",

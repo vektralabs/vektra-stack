@@ -210,6 +210,35 @@ async def test_execute_no_relevant_context():
     assert response.sources == []
 
 
+async def test_execute_no_relevant_context_hybrid_calls_llm():
+    """In hybrid mode, LLM is called even when no chunks pass threshold."""
+    results = [_make_search_result(0.1, "irrelevant chunk")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    llm = MagicMock()
+    completion = CompletionResponse(
+        content="I know from my training that...",
+        model="ollama/llama3",
+        prompt_tokens=10,
+        completion_tokens=20,
+        total_tokens=30,
+    )
+    llm.complete = AsyncMock(return_value=completion)
+    llm.count_tokens = MagicMock(return_value=10)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        llm=llm,
+        pipeline_config=_make_pipeline_config(**{"VEKTRA_MIN_RELEVANCE_SCORE": 0.5}),
+    )
+    query = QueryRequest(question="Something specific", grounding_mode="hybrid")
+    response, _trace = await pipeline.execute(query)
+
+    assert response.answer is not None
+    llm.complete.assert_awaited_once()
+
+
 async def test_execute_empty_vector_results():
     """Empty vector search → no_relevant_context=True (no chunks to answer from)."""
     vector_store = AsyncMock()

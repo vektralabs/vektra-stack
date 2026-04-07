@@ -208,7 +208,12 @@ class QueryPipelineConfig(BaseSettings):
     prompt_templates_dir: str | None = Field(
         None,
         alias="VEKTRA_PROMPT_TEMPLATES_DIR",
-        description="Directory for Jinja2 templates (system.j2, context.j2, conversation.j2). Falls back to built-in defaults.",
+        description="Directory for Jinja2 templates (system.j2, context.j2). Falls back to built-in defaults.",
+    )
+    grounding_mode: str = Field(
+        "strict",
+        alias="VEKTRA_PROMPT_GROUNDING_MODE",
+        description="Prompt grounding mode: 'strict' (context + history only) or 'hybrid' (fallback to training data when confident).",
     )
     rewrite: RewriteConfig = Field(default_factory=RewriteConfig)
     rerank: RerankConfig = Field(default_factory=RerankConfig)
@@ -216,6 +221,13 @@ class QueryPipelineConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
     )
+
+    @field_validator("grounding_mode")
+    @classmethod
+    def validate_grounding_mode(cls, v: str) -> str:
+        if v not in ("strict", "hybrid"):
+            raise ValueError(f"grounding_mode must be 'strict' or 'hybrid', got '{v}'")
+        return v
 
 
 class WebhookConfig(BaseSettings):
@@ -469,6 +481,7 @@ class VektraSettings(BaseSettings):
     response_token_reserve: int = Field(2048, alias="VEKTRA_RESPONSE_TOKEN_RESERVE")
     context_chunk_ratio: float = Field(0.6, alias="VEKTRA_CONTEXT_CHUNK_RATIO")
     prompt_templates_dir: str | None = Field(None, alias="VEKTRA_PROMPT_TEMPLATES_DIR")
+    prompt_grounding_mode: str = Field("strict", alias="VEKTRA_PROMPT_GROUNDING_MODE")
 
     # Ingest
     chunking_strategy: str = Field("fixed", alias="VEKTRA_CHUNKING_STRATEGY")
@@ -537,6 +550,15 @@ class VektraSettings(BaseSettings):
     def validate_relevance_score(cls, v: float) -> float:
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"min_relevance_score must be between 0 and 1, got {v}")
+        return v
+
+    @field_validator("prompt_grounding_mode")
+    @classmethod
+    def validate_prompt_grounding_mode(cls, v: str) -> str:
+        if v not in ("strict", "hybrid"):
+            raise ValueError(
+                f"prompt_grounding_mode must be 'strict' or 'hybrid', got '{v}'"
+            )
         return v
 
     def as_llm_config(self) -> LLMConfig:

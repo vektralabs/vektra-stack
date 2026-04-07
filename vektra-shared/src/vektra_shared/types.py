@@ -269,6 +269,7 @@ class QueryRequest:
     search_mode: SearchMode = SearchMode.DENSE
     filters: SearchFilters | None = None
     stream: bool = False
+    grounding_mode: str = "strict"  # "strict" | "hybrid" (FEAT-020)
 
 
 @dataclass

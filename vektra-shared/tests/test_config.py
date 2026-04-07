@@ -55,6 +55,15 @@ class TestQueryPipelineConfig:
         assert cfg.chunk_dedup_enabled is True
         assert cfg.response_token_reserve == 1024
         assert cfg.prompt_templates_dir is None
+        assert cfg.grounding_mode == "strict"
+
+    def test_grounding_mode_hybrid(self) -> None:
+        cfg = QueryPipelineConfig(VEKTRA_PROMPT_GROUNDING_MODE="hybrid")
+        assert cfg.grounding_mode == "hybrid"
+
+    def test_grounding_mode_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="grounding_mode"):
+            QueryPipelineConfig(VEKTRA_PROMPT_GROUNDING_MODE="invalid")
 
 
 class TestRewriteConfig:
@@ -192,6 +201,10 @@ class TestVektraSettings:
     def test_min_relevance_score_above_one_invalid(self) -> None:
         with pytest.raises(ValidationError, match="min_relevance_score"):
             self._make(VEKTRA_MIN_RELEVANCE_SCORE=1.1)
+
+    def test_grounding_mode_invalid_at_settings_level(self) -> None:
+        with pytest.raises(ValidationError, match="prompt_grounding_mode"):
+            self._make(VEKTRA_PROMPT_GROUNDING_MODE="invalid")
 
     def test_as_llm_config(self) -> None:
         s = self._make(

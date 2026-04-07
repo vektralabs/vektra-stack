@@ -215,6 +215,16 @@ class QueryPipelineConfig(BaseSettings):
         alias="VEKTRA_PROMPT_GROUNDING_MODE",
         description="Prompt grounding mode: 'strict' (context + history only) or 'hybrid' (fallback to training data when confident).",
     )
+    eval_mode: bool = Field(
+        False,
+        alias="VEKTRA_EVAL_MODE",
+        description="Capture query/prompt text in traces for batch evaluation. Staging only.",
+    )
+    debug_log_queries: bool = Field(
+        False,
+        alias="VEKTRA_DEBUG_LOG_QUERIES",
+        description="Log original and rewritten query text at debug level. Development only.",
+    )
     rewrite: RewriteConfig = Field(default_factory=RewriteConfig)
     rerank: RerankConfig = Field(default_factory=RerankConfig)
 

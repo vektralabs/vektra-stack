@@ -262,6 +262,8 @@ class SimpleQueryPipeline:
         self._conversation_store = conversation_store
         self._renderer = renderer
         self._config = pipeline_config
+        self._eval_mode = pipeline_config.eval_mode
+        self._debug_log_queries = pipeline_config.debug_log_queries
 
     def _count_tokens(self, text: str) -> int:
         return _count_tokens_impl(self._llm, self._llm_config.provider, text)
@@ -498,15 +500,20 @@ class SimpleQueryPipeline:
         messages.extend(_history_to_messages(selected_history))
         messages.append(Message(role="user", content=user_content))
 
+        build_meta: dict[str, object] = {
+            "prompt_version": self._renderer.prompt_version,
+            "chunks_in_prompt": len(selected_chunks),
+            "history_turns_in_prompt": len(selected_history),
+        }
+        if self._eval_mode:
+            build_meta["messages"] = [
+                {"role": m.role, "content": m.content} for m in messages
+            ]
         steps.append(
             StepTrace(
                 name="build_prompt",
                 duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "prompt_version": self._renderer.prompt_version,
-                    "chunks_in_prompt": len(selected_chunks),
-                    "history_turns_in_prompt": len(selected_history),
-                },
+                metadata=build_meta,
             )
         )
 
@@ -798,38 +805,48 @@ class SimpleQueryPipeline:
         messages: list[Message] = [Message(role="system", content=system_text)]
         messages.extend(_history_to_messages(selected_history))
         messages.append(Message(role="user", content=user_content))
+        stream_build_meta: dict[str, object] = {
+            "prompt_version": self._renderer.prompt_version,
+            "chunks_in_prompt": len(selected_chunks),
+            "history_turns_in_prompt": len(selected_history),
+        }
+        if self._eval_mode:
+            stream_build_meta["messages"] = [
+                {"role": m.role, "content": m.content} for m in messages
+            ]
         steps.append(
             StepTrace(
                 name="build_prompt",
                 duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "prompt_version": self._renderer.prompt_version,
-                    "chunks_in_prompt": len(selected_chunks),
-                    "history_turns_in_prompt": len(selected_history),
-                },
+                metadata=stream_build_meta,
             )
         )
 
         # Step 5: Stream LLM tokens
         t0 = time.monotonic()
         full_answer_parts: list[str] = []
+        llm_model_resolved: str | None = None
         try:
             token_stream = await self._llm.stream(
                 messages, model=self._llm_config.provider
             )
             async for chunk in token_stream:
+                if chunk.model and llm_model_resolved is None:
+                    llm_model_resolved = chunk.model
                 if chunk.content:
                     full_answer_parts.append(chunk.content)
                     yield QueryChunk(type="token", data=chunk.content)
+            llm_model_resolved = llm_model_resolved or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",
                     duration_ms=_elapsed_ms(t0),
-                    metadata={"model": self._llm_config.provider},
+                    metadata={"model": llm_model_resolved},
                 )
             )
         except Exception as exc:
             log.warning("stream_llm_failed", error=str(exc))
+            llm_model_resolved = llm_model_resolved or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",
@@ -845,7 +862,7 @@ class SimpleQueryPipeline:
                 chunks_retrieved=[
                     ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
                 ],
-                llm_model=self._llm_config.provider,
+                llm_model=llm_model_resolved,
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
@@ -915,7 +932,7 @@ class SimpleQueryPipeline:
             chunks_retrieved=[
                 ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
             ],
-            llm_model=self._llm_config.provider,
+            llm_model=llm_model_resolved,
             prompt_version=self._renderer.prompt_version,
             created_at=datetime.now(UTC),
         )

@@ -96,6 +96,8 @@ class AdvancedQueryPipeline:
         self._sparse_embedding = sparse_embedding
         self._reranker = reranker
         self._rewrite_enabled = pipeline_config.rewrite.enabled
+        self._eval_mode = pipeline_config.eval_mode
+        self._debug_log_queries = pipeline_config.debug_log_queries
 
     # -- Helpers (delegating to shared module-level functions) --
 
@@ -150,15 +152,28 @@ class AdvancedQueryPipeline:
             if not rewritten:
                 rewritten = question
 
+            if self._debug_log_queries:
+                log.debug(
+                    "query_rewritten",
+                    original_query=question,
+                    rewritten_query=rewritten,
+                    history_turns=len(history),
+                )
+
             original_hash = hashlib.sha256(question.encode()).hexdigest()[:8]
+            metadata: dict[str, object] = {
+                "original_query_hash": original_hash,
+                "rewritten": True,
+                "history_turns_used": len(history),
+            }
+            if self._eval_mode:
+                metadata["original_query"] = question
+                metadata["rewritten_query"] = rewritten
+
             return rewritten, StepTrace(
                 name="query_rewrite",
                 duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "original_query_hash": original_hash,
-                    "rewritten": True,
-                    "history_turns_used": len(history),
-                },
+                metadata=metadata,
             )
         except Exception as exc:
             log.warning("query_rewrite_failed", error=str(exc))
@@ -276,14 +291,26 @@ class AdvancedQueryPipeline:
         if self._reranker and results:
             t0 = time.monotonic()
             try:
-                results = await self._reranker.rerank(
+                rerank_result = await self._reranker.rerank(
                     effective_query, results, top_k=query.top_k
                 )
+                results = rerank_result.top_k
                 steps.append(
                     StepTrace(
                         name="rerank",
                         duration_ms=_elapsed_ms(t0),
-                        metadata={"after_rerank": len(results)},
+                        metadata={
+                            "after_rerank": len(results),
+                            "candidates_evaluated": len(rerank_result.all_scores),
+                            "scores": [
+                                {
+                                    "chunk_id": cid,
+                                    "reranker_score": rs,
+                                    "original_score": os,
+                                }
+                                for cid, rs, os in rerank_result.all_scores
+                            ],
+                        },
                     )
                 )
             except Exception as exc:
@@ -413,14 +440,19 @@ class AdvancedQueryPipeline:
         messages.extend(_history_to_messages(selected_history))
         messages.append(Message(role="user", content=user_content))
 
+        build_meta: dict[str, object] = {
+            "prompt_version": self._renderer.prompt_version,
+            "chunks_in_prompt": len(selected_chunks),
+            "history_turns_in_prompt": len(selected_history),
+        }
+        if self._eval_mode:
+            build_meta["messages"] = [
+                {"role": m.role, "content": m.content} for m in messages
+            ]
         step = StepTrace(
             name="build_prompt",
             duration_ms=_elapsed_ms(t0),
-            metadata={
-                "prompt_version": self._renderer.prompt_version,
-                "chunks_in_prompt": len(selected_chunks),
-                "history_turns_in_prompt": len(selected_history),
-            },
+            metadata=build_meta,
         )
         return messages, selected_chunks, selected_history, step
 
@@ -622,15 +654,18 @@ class AdvancedQueryPipeline:
         # Step 8: Stream LLM tokens
         t0 = time.monotonic()
         full_answer_parts: list[str] = []
-        llm_model = self._llm_config.provider
+        llm_model: str | None = None
         try:
             token_stream = await self._llm.stream(
                 messages, model=self._llm_config.provider
             )
             async for chunk in token_stream:
+                if chunk.model and llm_model is None:
+                    llm_model = chunk.model
                 if chunk.content:
                     full_answer_parts.append(chunk.content)
                     yield QueryChunk(type="token", data=chunk.content)
+            llm_model = llm_model or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",
@@ -640,6 +675,7 @@ class AdvancedQueryPipeline:
             )
         except Exception as exc:
             log.warning("stream_llm_failed", error=str(exc))
+            llm_model = llm_model or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",

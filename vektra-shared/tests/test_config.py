@@ -65,6 +65,22 @@ class TestQueryPipelineConfig:
         with pytest.raises(ValidationError, match="grounding_mode"):
             QueryPipelineConfig(VEKTRA_PROMPT_GROUNDING_MODE="invalid")
 
+    def test_eval_mode_default_false(self) -> None:
+        cfg = QueryPipelineConfig()
+        assert cfg.eval_mode is False
+
+    def test_debug_log_queries_default_false(self) -> None:
+        cfg = QueryPipelineConfig()
+        assert cfg.debug_log_queries is False
+
+    def test_eval_mode_from_env(self) -> None:
+        cfg = QueryPipelineConfig(VEKTRA_EVAL_MODE=True)
+        assert cfg.eval_mode is True
+
+    def test_debug_log_queries_from_env(self) -> None:
+        cfg = QueryPipelineConfig(VEKTRA_DEBUG_LOG_QUERIES=True)
+        assert cfg.debug_log_queries is True
+
 
 class TestRewriteConfig:
     def test_defaults(self) -> None:

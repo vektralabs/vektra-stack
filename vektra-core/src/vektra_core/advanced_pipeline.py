@@ -295,22 +295,24 @@ class AdvancedQueryPipeline:
                     effective_query, results, top_k=query.top_k
                 )
                 results = rerank_result.top_k
+                rerank_meta: dict[str, object] = {
+                    "after_rerank": len(results),
+                    "candidates_evaluated": len(rerank_result.all_scores),
+                }
+                if self._eval_mode:
+                    rerank_meta["scores"] = [
+                        {
+                            "chunk_id": cid,
+                            "reranker_score": rs,
+                            "original_score": orig,
+                        }
+                        for cid, rs, orig in rerank_result.all_scores
+                    ]
                 steps.append(
                     StepTrace(
                         name="rerank",
                         duration_ms=_elapsed_ms(t0),
-                        metadata={
-                            "after_rerank": len(results),
-                            "candidates_evaluated": len(rerank_result.all_scores),
-                            "scores": [
-                                {
-                                    "chunk_id": cid,
-                                    "reranker_score": rs,
-                                    "original_score": orig,
-                                }
-                                for cid, rs, orig in rerank_result.all_scores
-                            ],
-                        },
+                        metadata=rerank_meta,
                     )
                 )
             except Exception as exc:
@@ -680,7 +682,7 @@ class AdvancedQueryPipeline:
                 StepTrace(
                     name="llm_stream",
                     duration_ms=_elapsed_ms(t0),
-                    metadata={"error": str(exc)},
+                    metadata={"model": llm_model, "error": str(exc)},
                 )
             )
             yield QueryChunk(type="error", data="LLM unavailable")

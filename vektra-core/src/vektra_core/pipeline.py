@@ -851,7 +851,7 @@ class SimpleQueryPipeline:
                 StepTrace(
                     name="llm_stream",
                     duration_ms=_elapsed_ms(t0),
-                    metadata={"error": str(exc)},
+                    metadata={"model": llm_model_resolved, "error": str(exc)},
                 )
             )
             yield QueryChunk(type="error", data="LLM unavailable")

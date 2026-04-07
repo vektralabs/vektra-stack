@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 from vektra_core.advanced_pipeline import AdvancedQueryPipeline
 from vektra_core.conversation import InMemoryConversationStore
-from vektra_core.reranker import RerankerService
+from vektra_core.reranker import RerankerService, RerankResult
 from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.types import (
@@ -284,7 +284,9 @@ async def test_reranking_narrows_results():
 
     # Mock reranker to return only the best result
     reranker = AsyncMock(spec=RerankerService)
-    reranker.rerank = AsyncMock(return_value=[results[2]])
+    reranker.rerank = AsyncMock(
+        return_value=RerankResult(top_k=[results[2]], all_scores=[])
+    )
 
     pipeline = _make_pipeline(vector_store=vector_store, reranker=reranker)
     response, trace = await pipeline.execute(QueryRequest(question="test", top_k=1))

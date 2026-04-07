@@ -306,9 +306,9 @@ class AdvancedQueryPipeline:
                                 {
                                     "chunk_id": cid,
                                     "reranker_score": rs,
-                                    "original_score": os,
+                                    "original_score": orig,
                                 }
-                                for cid, rs, os in rerank_result.all_scores
+                                for cid, rs, orig in rerank_result.all_scores
                             ],
                         },
                     )

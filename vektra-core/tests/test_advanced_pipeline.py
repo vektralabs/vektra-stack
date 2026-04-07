@@ -533,3 +533,136 @@ async def test_stream_no_relevant_context_still_emits_trace():
     types = [c.type for c in chunks]
     assert "trace" in types
     assert "done" in types
+
+
+# ---------------------------------------------------------------------------
+# Eval mode / debug logging (DEBT-015, DEBT-009, FEAT-019)
+# ---------------------------------------------------------------------------
+
+
+async def test_eval_mode_captures_rewritten_query():
+    """With eval_mode=True, query_rewrite trace includes query text (DEBT-015)."""
+    conv_store = InMemoryConversationStore(max_turns=10)
+    cid = uuid4()
+    await conv_store.add_turn(
+        cid, "What is RAG?", "RAG is retrieval-augmented generation."
+    )
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    rewrite_resp = CompletionResponse(
+        content="What is retrieval-augmented generation (RAG)?",
+        model="m",
+        prompt_tokens=10,
+        completion_tokens=10,
+        total_tokens=20,
+    )
+    answer_resp = CompletionResponse(
+        content="RAG combines retrieval and generation.",
+        model="m",
+        prompt_tokens=50,
+        completion_tokens=20,
+        total_tokens=70,
+    )
+    llm.complete = AsyncMock(side_effect=[rewrite_resp, answer_resp])
+
+    results = [_make_search_result(0.8, "RAG context")]
+    vs = AsyncMock()
+    vs.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        llm=llm,
+        vector_store=vs,
+        conversation_store=conv_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=True),
+    )
+    _, trace = await pipeline.execute(
+        QueryRequest(question="Tell me more", conversation_id=cid)
+    )
+
+    rewrite_step = next(s for s in trace.steps if s.name == "query_rewrite")
+    assert rewrite_step.metadata["rewritten"] is True
+    assert "rewritten_query" in rewrite_step.metadata
+    assert "original_query" in rewrite_step.metadata
+    assert rewrite_step.metadata["original_query"] == "Tell me more"
+
+
+async def test_eval_mode_off_excludes_query_text():
+    """With eval_mode=False (default), no query text in rewrite trace."""
+    conv_store = InMemoryConversationStore(max_turns=10)
+    cid = uuid4()
+    await conv_store.add_turn(cid, "Hello", "Hi there.")
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    rewrite_resp = CompletionResponse(
+        content="Rewritten query",
+        model="m",
+        prompt_tokens=10,
+        completion_tokens=10,
+        total_tokens=20,
+    )
+    answer_resp = CompletionResponse(
+        content="Answer.",
+        model="m",
+        prompt_tokens=50,
+        completion_tokens=20,
+        total_tokens=70,
+    )
+    llm.complete = AsyncMock(side_effect=[rewrite_resp, answer_resp])
+
+    results = [_make_search_result(0.8, "context")]
+    vs = AsyncMock()
+    vs.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        llm=llm,
+        vector_store=vs,
+        conversation_store=conv_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=False),
+    )
+    _, trace = await pipeline.execute(
+        QueryRequest(question="Follow up", conversation_id=cid)
+    )
+
+    rewrite_step = next(s for s in trace.steps if s.name == "query_rewrite")
+    assert rewrite_step.metadata["rewritten"] is True
+    assert "rewritten_query" not in rewrite_step.metadata
+    assert "original_query" not in rewrite_step.metadata
+
+
+async def test_eval_mode_captures_prompt_messages():
+    """With eval_mode=True, build_prompt trace includes full messages (FEAT-019)."""
+    results = [_make_search_result(0.8, "context about RAG")]
+    vs = AsyncMock()
+    vs.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        vector_store=vs,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=True),
+    )
+    _, trace = await pipeline.execute(QueryRequest(question="What is RAG?"))
+
+    build_step = next(s for s in trace.steps if s.name == "build_prompt")
+    assert "messages" in build_step.metadata
+    msgs = build_step.metadata["messages"]
+    assert isinstance(msgs, list)
+    assert len(msgs) >= 2  # system + user at minimum
+    assert msgs[0]["role"] == "system"
+    assert msgs[-1]["role"] == "user"
+
+
+async def test_eval_mode_off_excludes_prompt_messages():
+    """With eval_mode=False (default), no messages in build_prompt trace."""
+    results = [_make_search_result(0.8, "context")]
+    vs = AsyncMock()
+    vs.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        vector_store=vs,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=False),
+    )
+    _, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    build_step = next(s for s in trace.steps if s.name == "build_prompt")
+    assert "messages" not in build_step.metadata

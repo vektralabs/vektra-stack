@@ -282,10 +282,17 @@ async def test_reranking_narrows_results():
     vector_store = AsyncMock()
     vector_store.search = AsyncMock(return_value=results)
 
-    # Mock reranker to return only the best result
+    # Mock reranker to return only the best result, with scores for all candidates
     reranker = AsyncMock(spec=RerankerService)
     reranker.rerank = AsyncMock(
-        return_value=RerankResult(top_k=[results[2]], all_scores=[])
+        return_value=RerankResult(
+            top_k=[results[2]],
+            all_scores=[
+                (results[2].chunk_id, 0.95, 0.9),
+                (results[0].chunk_id, 0.60, 0.6),
+                (results[1].chunk_id, 0.20, 0.5),
+            ],
+        )
     )
 
     pipeline = _make_pipeline(vector_store=vector_store, reranker=reranker)
@@ -293,8 +300,9 @@ async def test_reranking_narrows_results():
 
     reranker.rerank.assert_awaited_once()
     assert len(response.sources) == 1
-    step_names = [s.name for s in trace.steps]
-    assert "rerank" in step_names
+    rerank_step = next(s for s in trace.steps if s.name == "rerank")
+    assert rerank_step.metadata["after_rerank"] == 1
+    assert rerank_step.metadata["candidates_evaluated"] == 3
 
 
 async def test_reranking_fallback_on_failure():

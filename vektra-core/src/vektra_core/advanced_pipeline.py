@@ -126,10 +126,17 @@ class AdvancedQueryPipeline:
         t0 = time.monotonic()
 
         if not self._rewrite_enabled or not history:
+            skip_meta: dict[str, object] = {
+                "rewritten": False,
+                "history_turns_used": 0,
+            }
+            if self._eval_mode:
+                skip_meta["original_query"] = question
+                skip_meta["rewritten_query"] = question
             return question, StepTrace(
                 name="query_rewrite",
                 duration_ms=_elapsed_ms(t0),
-                metadata={"rewritten": False, "history_turns_used": 0},
+                metadata=skip_meta,
             )
 
         try:
@@ -177,10 +184,17 @@ class AdvancedQueryPipeline:
             )
         except Exception as exc:
             log.warning("query_rewrite_failed", error=str(exc))
+            err_meta: dict[str, object] = {
+                "rewritten": False,
+                "error": str(exc),
+            }
+            if self._eval_mode:
+                err_meta["original_query"] = question
+                err_meta["rewritten_query"] = question
             return question, StepTrace(
                 name="query_rewrite",
                 duration_ms=_elapsed_ms(t0),
-                metadata={"rewritten": False, "error": str(exc)},
+                metadata=err_meta,
             )
 
     # -- Pre-LLM steps shared between execute() and execute_stream() --

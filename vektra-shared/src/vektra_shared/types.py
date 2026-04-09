@@ -212,6 +212,7 @@ class CompletionChunk:
 
     content: str
     done: bool = False
+    model: str | None = None
 
 
 @dataclass

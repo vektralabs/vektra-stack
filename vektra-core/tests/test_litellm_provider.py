@@ -66,6 +66,7 @@ async def test_stream_yields_chunks():
             chunk.choices[0].delta = MagicMock()
             chunk.choices[0].delta.content = text
             chunk.choices[0].finish_reason = finish
+            chunk.model = "ollama/llama3"
             yield chunk
 
     with patch(
@@ -78,8 +79,36 @@ async def test_stream_yields_chunks():
     assert len(chunks) == 3
     assert chunks[0].content == "Hello"
     assert chunks[0].done is False
+    assert chunks[0].model == "ollama/llama3"
     assert chunks[1].content == " world"
+    assert chunks[1].model == "ollama/llama3"
     assert chunks[2].done is True
+
+
+async def test_stream_model_fallback_when_missing():
+    """When streaming chunks lack .model, fall back to the passed model param."""
+    config = _make_config()
+    provider = LitellmProvider(config)
+    messages = [Message(role="user", content="Hi")]
+
+    async def _fake_stream_no_model(*args, **kwargs):
+        for text, finish in [("hi", None), ("", "stop")]:
+            chunk = MagicMock(spec=["choices"])  # no .model attribute
+            chunk.choices = [MagicMock()]
+            chunk.choices[0].delta = MagicMock()
+            chunk.choices[0].delta.content = text
+            chunk.choices[0].finish_reason = finish
+            yield chunk
+
+    with patch(
+        "vektra_core.providers.litellm_provider.litellm.acompletion",
+        new=AsyncMock(return_value=_fake_stream_no_model()),
+    ):
+        stream = await provider.stream(messages, model="custom/model")
+        chunks = [c async for c in stream]
+
+    # Falls back to the model param since chunks have no .model
+    assert chunks[0].model == "custom/model"
 
 
 async def test_health_check_healthy():

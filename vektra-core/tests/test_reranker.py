@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from vektra_core.reranker import (
     RerankerService,
+    RerankResult,
     _default_model_for_provider,
     _sigmoid,
     create_reranker,
@@ -31,7 +32,9 @@ def _make_result(score: float, text: str = "some text") -> SearchResult:
 async def test_rerank_empty_results():
     service = RerankerService(ranker=MagicMock())
     result = await service.rerank("query", [], top_k=5)
-    assert result == []
+    assert isinstance(result, RerankResult)
+    assert result.top_k == []
+    assert result.all_scores == []
 
 
 async def test_rerank_returns_top_k_in_order():
@@ -51,11 +54,13 @@ async def test_rerank_returns_top_k_in_order():
     mock_ranker.rank.return_value = SimpleNamespace(results=ranked_items)
 
     service = RerankerService(ranker=mock_ranker)
-    reranked = await service.rerank("test query", results, top_k=2)
+    result = await service.rerank("test query", results, top_k=2)
 
-    assert len(reranked) == 2
-    assert reranked[0].chunk_id == results[2].chunk_id  # doc C
-    assert reranked[1].chunk_id == results[0].chunk_id  # doc A
+    assert len(result.top_k) == 2
+    assert result.top_k[0].chunk_id == results[2].chunk_id  # doc C
+    assert result.top_k[1].chunk_id == results[0].chunk_id  # doc A
+    # all_scores includes ALL 3 candidates, not just top_k
+    assert len(result.all_scores) == 3
     mock_ranker.rank.assert_called_once_with(
         query="test query", docs=["doc A", "doc B", "doc C"]
     )
@@ -76,14 +81,16 @@ async def test_rerank_propagates_flashrank_scores():
     mock_ranker.rank.return_value = SimpleNamespace(results=ranked_items)
 
     service = RerankerService(ranker=mock_ranker)
-    reranked = await service.rerank("query", results, top_k=2)
+    result = await service.rerank("query", results, top_k=2)
 
     # Reranker scores replace vector scores
-    assert reranked[0].score == 0.85
-    assert reranked[1].score == 0.40
+    assert result.top_k[0].score == 0.85
+    assert result.top_k[1].score == 0.40
     # Original vector scores preserved
-    assert reranked[0].original_score == 0.3
-    assert reranked[1].original_score == 0.5
+    assert result.top_k[0].original_score == 0.3
+    assert result.top_k[1].original_score == 0.5
+    # all_scores tracks both candidates
+    assert len(result.all_scores) == 2
 
 
 async def test_rerank_normalizes_cross_encoder_logits():
@@ -101,17 +108,21 @@ async def test_rerank_normalizes_cross_encoder_logits():
     mock_ranker.rank.return_value = SimpleNamespace(results=ranked_items)
 
     service = RerankerService(ranker=mock_ranker)
-    reranked = await service.rerank("query", results, top_k=2)
+    result = await service.rerank("query", results, top_k=2)
 
     # Scores normalized via sigmoid
-    assert reranked[0].score == _sigmoid(3.5)
-    assert reranked[1].score == _sigmoid(-2.0)
+    assert result.top_k[0].score == _sigmoid(3.5)
+    assert result.top_k[1].score == _sigmoid(-2.0)
     # Normalized scores are in (0, 1)
-    assert 0.0 < reranked[0].score < 1.0
-    assert 0.0 < reranked[1].score < 1.0
+    assert 0.0 < result.top_k[0].score < 1.0
+    assert 0.0 < result.top_k[1].score < 1.0
     # Original scores preserved
-    assert reranked[0].original_score == 0.6
-    assert reranked[1].original_score == 0.4
+    assert result.top_k[0].original_score == 0.6
+    assert result.top_k[1].original_score == 0.4
+    # all_scores contains sigmoid-normalized values (rounded)
+    assert len(result.all_scores) == 2
+    assert result.all_scores[0][1] == round(_sigmoid(3.5), 4)
+    assert result.all_scores[1][1] == round(_sigmoid(-2.0), 4)
 
 
 async def test_rerank_preserves_metadata():
@@ -132,14 +143,48 @@ async def test_rerank_preserves_metadata():
     mock_ranker.rank.return_value = SimpleNamespace(results=ranked_items)
 
     service = RerankerService(ranker=mock_ranker)
-    reranked = await service.rerank("q", results, top_k=1)
+    result = await service.rerank("q", results, top_k=1)
 
-    assert reranked[0].chunk_id == "chunk-1"
-    assert reranked[0].document_id == doc_id
-    assert reranked[0].document_version == 3
-    assert reranked[0].metadata == {"page": 5}
-    assert reranked[0].score == 0.99
-    assert reranked[0].original_score == 0.7
+    assert result.top_k[0].chunk_id == "chunk-1"
+    assert result.top_k[0].document_id == doc_id
+    assert result.top_k[0].document_version == 3
+    assert result.top_k[0].metadata == {"page": 5}
+    assert result.top_k[0].score == 0.99
+    assert result.top_k[0].original_score == 0.7
+
+
+async def test_all_scores_includes_items_beyond_top_k():
+    """all_scores contains entries for ALL candidates, not just top_k (DEBT-014)."""
+    results = [_make_result(0.5 + i * 0.05, f"doc {i}") for i in range(5)]
+
+    ranked_items = [
+        SimpleNamespace(doc_id=4, score=0.95),
+        SimpleNamespace(doc_id=3, score=0.80),
+        SimpleNamespace(doc_id=2, score=0.60),
+        SimpleNamespace(doc_id=1, score=0.30),
+        SimpleNamespace(doc_id=0, score=0.10),
+    ]
+    mock_ranker = MagicMock()
+    mock_ranker.rank.return_value = SimpleNamespace(results=ranked_items)
+
+    service = RerankerService(ranker=mock_ranker)
+    result = await service.rerank("query", results, top_k=2)
+
+    # top_k has only 2 results
+    assert len(result.top_k) == 2
+    assert result.top_k[0].chunk_id == results[4].chunk_id
+    assert result.top_k[1].chunk_id == results[3].chunk_id
+
+    # all_scores has ALL 5 candidates
+    assert len(result.all_scores) == 5
+    # Scores are in descending order (reranker order)
+    scores = [s[1] for s in result.all_scores]
+    assert scores == sorted(scores, reverse=True)
+    # Each entry is (chunk_id, reranker_score, original_score)
+    for chunk_id, reranker_score, original_score in result.all_scores:
+        assert isinstance(chunk_id, str)
+        assert 0.0 <= reranker_score <= 1.0
+        assert 0.0 <= original_score <= 1.0
 
 
 # ---------------------------------------------------------------------------

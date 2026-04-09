@@ -39,6 +39,16 @@ def _sigmoid(x: float) -> float:
     return z / (1.0 + z)
 
 
+@dataclasses.dataclass
+class RerankResult:
+    """Reranking output with full score visibility (DEBT-014)."""
+
+    top_k: list[SearchResult]
+    all_scores: list[
+        tuple[str, float, float]
+    ]  # (chunk_id, reranker_score, original_score)
+
+
 class RerankerService:
     """Wraps the rerankers library for scoring and reordering search results."""
 
@@ -50,14 +60,14 @@ class RerankerService:
         query: str,
         results: list[SearchResult],
         top_k: int,
-    ) -> list[SearchResult]:
+    ) -> RerankResult:
         """Rerank search results using the cross-encoder model.
 
         Runs inference in a thread (CPU-bound). Returns top_k results
-        sorted by reranker score.
+        sorted by reranker score, plus scores for ALL evaluated candidates.
         """
         if not results:
-            return []
+            return RerankResult(top_k=[], all_scores=[])
 
         docs = [r.text_snippet for r in results]
 
@@ -67,26 +77,34 @@ class RerankerService:
             docs=docs,
         )
 
-        # Extract scores and detect whether normalization is needed.
+        # Score ALL candidates and detect whether normalization is needed.
         # FlashRank produces sigmoid scores in [0, 1]; cross-encoder
         # produces raw logits that can be negative or > 1.
-        top_items = ranked.results[:top_k]
-        raw_scores = [float(item.score) for item in top_items]
-        needs_sigmoid = any(s < 0.0 or s > 1.0 for s in raw_scores)
+        all_items = ranked.results
+        all_raw = [float(item.score) for item in all_items]
+        needs_sigmoid = any(s < 0.0 or s > 1.0 for s in all_raw)
 
+        all_scores: list[tuple[str, float, float]] = []
         reranked: list[SearchResult] = []
-        for item, raw_score in zip(top_items, raw_scores):
+
+        for item in all_items:
             original = results[item.doc_id]
-            normalized = _sigmoid(raw_score) if needs_sigmoid else raw_score
-            reranked.append(
-                dataclasses.replace(
-                    original,
-                    score=normalized,
-                    original_score=original.score,
-                )
+            raw = float(item.score)
+            normalized = _sigmoid(raw) if needs_sigmoid else raw
+            all_scores.append(
+                (original.chunk_id, round(normalized, 4), round(original.score, 4))
             )
 
-        return reranked
+            if len(reranked) < top_k:
+                reranked.append(
+                    dataclasses.replace(
+                        original,
+                        score=normalized,
+                        original_score=original.score,
+                    )
+                )
+
+        return RerankResult(top_k=reranked, all_scores=all_scores)
 
 
 def create_reranker(config: RerankConfig) -> RerankerService | None:

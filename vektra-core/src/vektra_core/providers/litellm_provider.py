@@ -104,11 +104,16 @@ class LitellmProvider:
             **self._base_kwargs,
             **kwargs,
         )
+        resolved_model: str | None = None
         async for chunk in response:
+            if resolved_model is None:
+                resolved_model = getattr(chunk, "model", None) or model
             delta = chunk.choices[0].delta
             content = (delta.content or "") if delta else ""
             finish = chunk.choices[0].finish_reason
-            yield CompletionChunk(content=content, done=finish is not None)
+            yield CompletionChunk(
+                content=content, done=finish is not None, model=resolved_model
+            )
 
     async def health_check(self) -> HealthStatus:
         """Probe the primary model with a short completion (5-second timeout)."""

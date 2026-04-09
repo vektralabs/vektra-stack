@@ -62,10 +62,11 @@ def _history_to_messages(history: list[dict[str, str | None]]) -> list[Message]:
     """Convert conversation history to role-based Message objects."""
     messages: list[Message] = []
     for turn in history:
-        if not turn.get("answer"):
+        answer = turn.get("answer")
+        if not answer:
             continue  # Skip turns with no answer to avoid polluting history
         messages.append(Message(role="user", content=turn["question"] or ""))
-        messages.append(Message(role="assistant", content=turn["answer"]))
+        messages.append(Message(role="assistant", content=answer))
     return messages
 
 

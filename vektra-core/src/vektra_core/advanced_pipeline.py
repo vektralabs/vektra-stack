@@ -206,12 +206,14 @@ class AdvancedQueryPipeline:
         list[StepTrace],
         list[SearchResult],
         bool,
+        bool,
         str,
         list[dict[str, str | None]],
     ]:
         """Run steps 0-6 (rewrite through post_retrieval safeguard).
 
-        Returns (steps, filtered_results, no_relevant_context, effective_query, history).
+        Returns (steps, filtered_results, no_relevant_context, safeguard_blocked,
+        effective_query, history).
         """
         steps: list[StepTrace] = []
 
@@ -232,7 +234,7 @@ class AdvancedQueryPipeline:
                 )
             )
             if not sg_pre.allowed:
-                return steps, [], False, query.question, []
+                return steps, [], False, True, query.question, []
         except Exception as exc:
             log.error("pre_query_safeguard_failed", error=str(exc))
             steps.append(

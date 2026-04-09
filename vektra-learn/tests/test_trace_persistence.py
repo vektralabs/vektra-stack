@@ -159,7 +159,7 @@ async def test_learn_store_trace_skipped_when_trace_is_none():
     trace = None
 
     _store_traces = True
-    if _store_traces and trace is not None and mock_svc:
+    if _store_traces and trace is not None:
         await mock_svc.store_trace(None, trace, namespace="test")
 
     mock_svc.store_trace.assert_not_called()

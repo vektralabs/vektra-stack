@@ -38,6 +38,8 @@ def _make_pipeline_config(**overrides) -> QueryPipelineConfig:
         "VEKTRA_RESPONSE_TOKEN_RESERVE": 512,
         "VEKTRA_CONTEXT_CHUNK_RATIO": 0.6,
         "VEKTRA_QUERY_PIPELINE": "advanced",
+        "VEKTRA_EVAL_MODE": False,
+        "VEKTRA_DEBUG_LOG_QUERIES": False,
     }
     defaults.update(overrides)
     return QueryPipelineConfig.model_validate(defaults)

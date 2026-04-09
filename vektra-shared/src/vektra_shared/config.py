@@ -187,6 +187,8 @@ class QueryPipelineConfig(BaseSettings):
     )
     min_relevance_score: float = Field(
         0.15,
+        ge=0.0,
+        le=1.0,
         alias="VEKTRA_MIN_RELEVANCE_SCORE",
         description="Minimum relevance score for chunk inclusion (ARCH-056). Safety net filter; top-k is the primary control.",
     )
@@ -197,11 +199,14 @@ class QueryPipelineConfig(BaseSettings):
     )
     response_token_reserve: int = Field(
         2048,
+        ge=1,
         alias="VEKTRA_RESPONSE_TOKEN_RESERVE",
         description="Tokens reserved for LLM response generation (ARCH-055).",
     )
     context_chunk_ratio: float = Field(
         0.6,
+        gt=0.0,
+        lt=1.0,
         alias="VEKTRA_CONTEXT_CHUNK_RATIO",
         description="Fraction of context window allocated to retrieved chunks (ARCH-055).",
     )
@@ -570,6 +575,14 @@ class VektraSettings(BaseSettings):
                 f"prompt_grounding_mode must be 'strict' or 'hybrid', got '{v}'"
             )
         return v
+
+    @model_validator(mode="after")
+    def validate_eval_mode_not_production(self) -> VektraSettings:
+        if self.env == "production" and self.eval_mode:
+            raise ValueError(
+                "VEKTRA_EVAL_MODE must be disabled in production (captures user text in traces)"
+            )
+        return self
 
     def as_llm_config(self) -> LLMConfig:
         """Extract LLM-specific sub-config."""

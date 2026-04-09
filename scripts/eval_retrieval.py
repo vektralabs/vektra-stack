@@ -2,7 +2,9 @@
 """Retrieval-only evaluation harness (TECH-002).
 
 Reads a JSONL dataset, calls the Vektra search API for each question,
-and computes retrieval quality metrics. No LLM calls are made.
+and computes retrieval quality metrics.
+By default uses /api/v1/search (no LLM). With --use-pipeline it calls
+/api/v1/query which runs the full RAG pipeline including LLM.
 
 Usage:
     python scripts/eval_retrieval.py [OPTIONS]
@@ -58,9 +60,12 @@ def load_dataset(path: str) -> list[dict]:
 
 
 def _normalize(s: str) -> str:
-    """Lowercase and strip diacritics for keyword matching."""
-    nfkd = unicodedata.normalize("NFKD", s.lower())
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
+    """Lowercase, strip diacritics and apostrophes for keyword matching."""
+    nfkd = unicodedata.normalize("NFKD", s.casefold())
+    base = "".join(c for c in nfkd if not unicodedata.combining(c))
+    for ch in ("'", "\u2019", "\u2018", "\u02bc", "`"):
+        base = base.replace(ch, "")
+    return base
 
 
 def chunk_matches_keywords(text: str, keywords: list[str]) -> bool:

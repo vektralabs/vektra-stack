@@ -38,11 +38,13 @@ async def test_returns_turns_from_persistent_store():
 
     request = MagicMock()
     request.app.state = app_state
+    request.state.request_id = "test-req-id"
 
+    background_tasks = MagicMock()
     key_info = MagicMock()
     key_info.scopes = ["admin"]
 
-    result = await get_conversation_turns(cid, request, key_info)
+    result = await get_conversation_turns(cid, request, background_tasks, key_info)
     assert result == turns
     conv_store.get_turns_detail.assert_called_once_with(cid)
 
@@ -65,7 +67,7 @@ async def test_returns_404_when_conversation_not_found():
     key_info = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_conversation_turns(uuid4(), request, key_info)
+        await get_conversation_turns(uuid4(), request, MagicMock(), key_info)
     assert exc_info.value.status_code == 404
 
 
@@ -86,5 +88,5 @@ async def test_returns_501_for_inmemory_store():
     key_info = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_conversation_turns(uuid4(), request, key_info)
+        await get_conversation_turns(uuid4(), request, MagicMock(), key_info)
     assert exc_info.value.status_code == 501

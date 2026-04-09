@@ -48,6 +48,13 @@ async def test_returns_turns_from_persistent_store():
     assert result == turns
     conv_store.get_turns_detail.assert_called_once_with(cid)
 
+    # Verify audit log was queued
+    background_tasks.add_task.assert_called_once()
+    call_kwargs = background_tasks.add_task.call_args.kwargs
+    assert call_kwargs["action"] == "conversation_turns_read"
+    assert call_kwargs["log_metadata"]["conversation_id"] == str(cid)
+    assert call_kwargs["log_metadata"]["turn_count"] == 1
+
 
 @pytest.mark.asyncio
 async def test_returns_404_when_conversation_not_found():

@@ -501,6 +501,7 @@ async def get_conversation_turns(
             request_id=request_id,
             action="conversation_turns_read",
             log_metadata={
+                "namespace": getattr(request.state, "rls_namespace", None),
                 "conversation_id": str(conversation_id),
                 "turn_count": len(turns),
             },

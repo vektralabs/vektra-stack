@@ -718,6 +718,7 @@ async def test_eval_mode_captures_prompt_messages():
     assert len(msgs) >= 2  # system + user at minimum
     assert msgs[0]["role"] == "system"
     assert msgs[-1]["role"] == "user"
+    assert any(msg.get("content") for msg in msgs)
 
 
 async def test_eval_mode_off_excludes_prompt_messages():

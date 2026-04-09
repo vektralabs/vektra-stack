@@ -641,6 +641,64 @@ async def test_eval_mode_off_excludes_query_text():
     assert "original_query" not in rewrite_step.metadata
 
 
+async def test_eval_mode_skipped_rewrite_includes_query():
+    """With eval_mode=True and no history, skip path still includes query text."""
+    results = [_make_search_result(0.8, "context")]
+    vs = AsyncMock()
+    vs.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        vector_store=vs,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=True),
+    )
+    # No conversation_id = no history = rewrite skipped
+    _, trace = await pipeline.execute(QueryRequest(question="What is RAG?"))
+
+    rewrite_step = next(s for s in trace.steps if s.name == "query_rewrite")
+    assert rewrite_step.metadata["rewritten"] is False
+    assert rewrite_step.metadata["original_query"] == "What is RAG?"
+    assert rewrite_step.metadata["rewritten_query"] == "What is RAG?"
+
+
+async def test_eval_mode_failed_rewrite_includes_query():
+    """With eval_mode=True and rewrite failure, error path still includes query text."""
+    conv_store = InMemoryConversationStore(max_turns=10)
+    cid = uuid4()
+    await conv_store.add_turn(cid, "Hello", "Hi there.")
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    # First call (rewrite) fails, second call (answer) succeeds
+    answer_resp = CompletionResponse(
+        content="Answer.",
+        model="m",
+        prompt_tokens=50,
+        completion_tokens=20,
+        total_tokens=70,
+    )
+    llm.complete = AsyncMock(side_effect=[RuntimeError("rewrite failed"), answer_resp])
+
+    results = [_make_search_result(0.8, "context")]
+    vs = AsyncMock()
+    vs.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        llm=llm,
+        vector_store=vs,
+        conversation_store=conv_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=True),
+    )
+    _, trace = await pipeline.execute(
+        QueryRequest(question="Follow up", conversation_id=cid)
+    )
+
+    rewrite_step = next(s for s in trace.steps if s.name == "query_rewrite")
+    assert rewrite_step.metadata["rewritten"] is False
+    assert "error" in rewrite_step.metadata
+    assert rewrite_step.metadata["original_query"] == "Follow up"
+    assert rewrite_step.metadata["rewritten_query"] == "Follow up"
+
+
 async def test_eval_mode_captures_prompt_messages():
     """With eval_mode=True, build_prompt trace includes full messages (FEAT-019)."""
     results = [_make_search_result(0.8, "context about RAG")]

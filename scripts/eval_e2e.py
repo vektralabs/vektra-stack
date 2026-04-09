@@ -115,8 +115,14 @@ def print_summary(results: list[E2EResult], elapsed_s: float) -> None:
         return
 
     valid = [r for r in results if r.error is None]
-    answered = sum(1 for r in valid if r.answer is not None)
+    answered = sum(
+        1 for r in valid if r.answer is not None and not r.no_relevant_context
+    )
+    answered_no_ctx = sum(
+        1 for r in valid if r.answer is not None and r.no_relevant_context
+    )
     no_context = sum(1 for r in valid if r.no_relevant_context)
+    unanswered = sum(1 for r in valid if r.answer is None)
     avg_sources = sum(r.num_sources for r in valid) / evaluated
 
     durations = sorted(r.duration_ms for r in valid)
@@ -129,8 +135,10 @@ def print_summary(results: list[E2EResult], elapsed_s: float) -> None:
     print(f"Questions:         {total} ({errors} errors)")
     print(f"Duration:          {elapsed_s:.1f}s total")
     print("")
-    print(f"Answered:          {answered}/{evaluated} ({answered / evaluated:.0%})")
-    print(f"No context:        {no_context}/{evaluated}")
+    print(f"Answered (grounded): {answered}/{evaluated} ({answered / evaluated:.0%})")
+    print(f"Answered (no ctx):   {answered_no_ctx}/{evaluated} (LLM without retrieval)")
+    print(f"Unanswered:          {unanswered}/{evaluated}")
+    print(f"No context:          {no_context}/{evaluated}")
     print(f"Avg sources:       {avg_sources:.1f}")
     print(f"Latency p50:       {p50:.0f}ms")
     print(f"Latency p95:       {p95:.0f}ms")
@@ -141,9 +149,13 @@ def print_summary(results: list[E2EResult], elapsed_s: float) -> None:
         print("\nBy category:")
         for cat in categories:
             cat_results = [r for r in valid if r.category == cat]
-            cat_answered = sum(1 for r in cat_results if r.answer is not None)
+            cat_grounded = sum(
+                1
+                for r in cat_results
+                if r.answer is not None and not r.no_relevant_context
+            )
             print(
-                f"  {cat:<15} answered={cat_answered}/{len(cat_results)}  n={len(cat_results)}"
+                f"  {cat:<15} grounded={cat_grounded}/{len(cat_results)}  n={len(cat_results)}"
             )
 
     print(f"{'=' * 60}")

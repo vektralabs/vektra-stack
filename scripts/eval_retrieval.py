@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -56,10 +57,20 @@ def load_dataset(path: str) -> list[dict]:
     return entries
 
 
+def _normalize(s: str) -> str:
+    """Lowercase and strip diacritics for keyword matching."""
+    nfkd = unicodedata.normalize("NFKD", s.lower())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
 def chunk_matches_keywords(text: str, keywords: list[str]) -> bool:
-    """Check if a chunk's text contains any of the expected keywords (case-insensitive)."""
-    text_lower = text.lower()
-    return any(kw.lower() in text_lower for kw in keywords)
+    """Check if a chunk's text contains any of the expected keywords.
+
+    Matching is case-insensitive and diacritic-insensitive so that
+    ASCII dataset entries like "liberta'" match Unicode text "libertà".
+    """
+    text_norm = _normalize(text)
+    return any(_normalize(kw) in text_norm for kw in keywords)
 
 
 def evaluate_question(
@@ -67,11 +78,11 @@ def evaluate_question(
     entry: dict,
     top_k: int,
     search_mode: str,
-    use_query: bool = False,
+    use_pipeline: bool = False,
 ) -> QuestionResult:
     """Run a single search/query and compute retrieval metrics.
 
-    When use_query=True, calls /api/v1/query (includes reranker) and
+    When use_pipeline=True, calls /api/v1/query (includes reranker) and
     evaluates on the returned sources. Otherwise calls /api/v1/search
     (raw vector search, no reranker).
     """
@@ -83,7 +94,7 @@ def evaluate_question(
     language = entry.get("language", "unknown")
 
     try:
-        if use_query:
+        if use_pipeline:
             resp = client.post(
                 "/api/v1/query",
                 json={
@@ -295,9 +306,9 @@ def main() -> None:
         help="Search mode (default: hybrid)",
     )
     parser.add_argument(
-        "--use-query",
+        "--use-pipeline",
         action="store_true",
-        help="Use /api/v1/query (with reranker) instead of /api/v1/search",
+        help="Use /api/v1/query (full RAG pipeline with reranker + LLM) instead of /api/v1/search (raw vector search). Results reflect the pipeline's source selection, not pure retrieval.",
     )
     args = parser.parse_args()
 
@@ -323,11 +334,13 @@ def main() -> None:
 
     print(f"Loaded {len(dataset)} questions from {args.dataset}")
     mode_info = (
-        "query (with reranker)" if args.use_query else f"search mode={args.search_mode}"
+        "pipeline (reranker + LLM)"
+        if args.use_pipeline
+        else f"search mode={args.search_mode}"
     )
     print(f"API: {api_url}  top_k={args.top_k}  {mode_info}")
 
-    timeout = 120.0 if args.use_query else 30.0
+    timeout = 120.0 if args.use_pipeline else 30.0
     client = httpx.Client(
         base_url=api_url,
         headers={"Authorization": f"Bearer {api_key}"},
@@ -338,7 +351,7 @@ def main() -> None:
     t0 = time.monotonic()
     for i, entry in enumerate(dataset):
         result = evaluate_question(
-            client, entry, args.top_k, args.search_mode, use_query=args.use_query
+            client, entry, args.top_k, args.search_mode, use_pipeline=args.use_pipeline
         )
         results.append(result)
         status = "HIT" if result.hit else ("ERR" if result.error else "MISS")

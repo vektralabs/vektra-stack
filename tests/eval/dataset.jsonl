@@ -46,7 +46,7 @@
 {"id": "ADV-01", "question": "Cosa dice la Costituzione italiana sul diritto di voto degli stranieri?", "expected_keywords": [], "namespace": "default", "category": "adversarial", "language": "it"}
 {"id": "ADV-02", "question": "Qual e' la pena prevista dalla Costituzione per chi viola i diritti fondamentali?", "expected_keywords": [], "namespace": "default", "category": "adversarial", "language": "it"}
 {"id": "ADV-03", "question": "What does the UDHR say about the right to bear arms?", "expected_keywords": [], "namespace": "default", "category": "adversarial", "language": "en"}
-{"id": "ADV-04", "question": "Cosa stabilisce la Costituzione italiana sulla pena di morte?", "expected_keywords": [], "namespace": "default", "category": "adversarial", "language": "it"}
+{"id": "ADV-04", "question": "Cosa stabilisce la Costituzione italiana sulla pena di morte?", "expected_keywords": ["pena di morte", "non e' ammessa"], "namespace": "default", "category": "factual", "language": "it"}
 {"id": "ADV-05", "question": "What is the UDHR's position on artificial intelligence and data privacy?", "expected_keywords": [], "namespace": "default", "category": "adversarial", "language": "en"}
 {"id": "ADV-06", "question": "Quanti articoli ha la Costituzione italiana?", "expected_keywords": [], "namespace": "default", "category": "adversarial", "language": "it"}
 {"id": "ADV-07", "question": "Who wrote the Universal Declaration of Human Rights?", "expected_keywords": [], "namespace": "default", "category": "adversarial", "language": "en"}

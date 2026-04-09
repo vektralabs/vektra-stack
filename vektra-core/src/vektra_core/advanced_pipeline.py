@@ -516,18 +516,25 @@ class AdvancedQueryPipeline:
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
-            log.info(
-                "query_no_relevant_context",
-                response_id=str(response_id),
-                namespace=query.namespace,
-            )
+            if safeguard_blocked:
+                log.info(
+                    "query_safeguard_blocked",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
+            else:
+                log.info(
+                    "query_no_relevant_context",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
             return QueryResponse(
                 response_id=response_id,
                 answer=None,
                 sources=[],
                 conversation_id=query.conversation_id,
-                context_only=not no_relevant_context,
-                no_relevant_context=no_relevant_context,
+                context_only=False,
+                no_relevant_context=no_relevant_context and not safeguard_blocked,
             ), trace
 
         # Step 7: Build prompt
@@ -674,6 +681,12 @@ class AdvancedQueryPipeline:
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
+            if safeguard_blocked:
+                log.info(
+                    "query_safeguard_blocked",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
             yield QueryChunk(type="trace", data=_trace_to_dict(trace))
             yield QueryChunk(type="done", data="")
             return

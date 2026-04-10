@@ -206,12 +206,14 @@ class AdvancedQueryPipeline:
         list[StepTrace],
         list[SearchResult],
         bool,
+        bool,
         str,
         list[dict[str, str | None]],
     ]:
         """Run steps 0-6 (rewrite through post_retrieval safeguard).
 
-        Returns (steps, filtered_results, no_relevant_context, effective_query, history).
+        Returns (steps, filtered_results, no_relevant_context, safeguard_blocked,
+        effective_query, history).
         """
         steps: list[StepTrace] = []
 
@@ -232,7 +234,7 @@ class AdvancedQueryPipeline:
                 )
             )
             if not sg_pre.allowed:
-                return steps, [], False, query.question, []
+                return steps, [], False, True, query.question, []
         except Exception as exc:
             log.error("pre_query_safeguard_failed", error=str(exc))
             steps.append(
@@ -361,6 +363,7 @@ class AdvancedQueryPipeline:
         )
 
         # Step 6: Post-retrieval safeguard (DEBT-003)
+        safeguard_blocked = False
         if filtered:
             t0 = time.monotonic()
             sg_ctx = SafeguardContext(
@@ -374,6 +377,7 @@ class AdvancedQueryPipeline:
                 )
                 if not sg_result.allowed:
                     filtered = []
+                    safeguard_blocked = True
                 elif sg_result.filtered_ids:
                     excluded = set(sg_result.filtered_ids)
                     filtered = [r for r in filtered if r.chunk_id not in excluded]
@@ -402,7 +406,14 @@ class AdvancedQueryPipeline:
         if not no_relevant_context and not filtered:
             no_relevant_context = True
 
-        return steps, filtered, no_relevant_context, effective_query, history
+        return (
+            steps,
+            filtered,
+            no_relevant_context,
+            safeguard_blocked,
+            effective_query,
+            history,
+        )
 
     def _build_prompt(
         self,
@@ -487,12 +498,15 @@ class AdvancedQueryPipeline:
             steps,
             filtered,
             no_relevant_context,
+            safeguard_blocked,
             _effective_query,
             history,
         ) = await self._run_pre_llm_steps(query)
 
-        # No relevant context -> skip LLM (strict), continue without context (hybrid)
-        if (no_relevant_context or not filtered) and query.grounding_mode != "hybrid":
+        # Safeguard hard block or no relevant context
+        if safeguard_blocked or (
+            (no_relevant_context or not filtered) and query.grounding_mode != "hybrid"
+        ):
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -502,18 +516,25 @@ class AdvancedQueryPipeline:
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
-            log.info(
-                "query_no_relevant_context",
-                response_id=str(response_id),
-                namespace=query.namespace,
-            )
+            if safeguard_blocked:
+                log.info(
+                    "query_safeguard_blocked",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
+            else:
+                log.info(
+                    "query_no_relevant_context",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
             return QueryResponse(
                 response_id=response_id,
                 answer=None,
                 sources=[],
                 conversation_id=query.conversation_id,
-                context_only=not no_relevant_context,
-                no_relevant_context=no_relevant_context,
+                context_only=False,
+                no_relevant_context=no_relevant_context and not safeguard_blocked,
             ), trace
 
         # Step 7: Build prompt
@@ -641,11 +662,14 @@ class AdvancedQueryPipeline:
             steps,
             filtered,
             no_relevant_context,
+            safeguard_blocked,
             _effective_query,
             history,
         ) = await self._run_pre_llm_steps(query)
 
-        if (no_relevant_context or not filtered) and query.grounding_mode != "hybrid":
+        if safeguard_blocked or (
+            (no_relevant_context or not filtered) and query.grounding_mode != "hybrid"
+        ):
             yield QueryChunk(type="sources", data=[])
             # Emit trace before done (DEBT-002)
             trace = QueryTrace(
@@ -657,6 +681,12 @@ class AdvancedQueryPipeline:
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
+            if safeguard_blocked:
+                log.info(
+                    "query_safeguard_blocked",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
             yield QueryChunk(type="trace", data=_trace_to_dict(trace))
             yield QueryChunk(type="done", data="")
             return

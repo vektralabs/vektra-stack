@@ -38,6 +38,8 @@ def _make_pipeline_config(**overrides) -> QueryPipelineConfig:
         "VEKTRA_RESPONSE_TOKEN_RESERVE": 512,
         "VEKTRA_CONTEXT_CHUNK_RATIO": 0.6,
         "VEKTRA_QUERY_PIPELINE": "advanced",
+        "VEKTRA_EVAL_MODE": False,
+        "VEKTRA_DEBUG_LOG_QUERIES": False,
     }
     defaults.update(overrides)
     return QueryPipelineConfig.model_validate(defaults)
@@ -402,6 +404,39 @@ async def test_post_retrieval_safeguard_failure_continues():
     assert response.answer is not None
     sg_step = next(s for s in trace.steps if s.name == "post_retrieval_safeguard")
     assert sg_step.metadata.get("skipped") is True
+
+
+async def test_post_retrieval_safeguard_denied_blocks_llm():
+    """When post_retrieval returns allowed=False, LLM is never called (even in hybrid)."""
+    results = [_make_search_result(0.8, "sensitive content")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    safeguard = _make_safeguard()
+    safeguard.post_retrieval = AsyncMock(return_value=SafeguardResult(allowed=False))
+
+    llm = MagicMock()
+    llm.complete = AsyncMock()
+    llm.count_tokens = MagicMock(return_value=10)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        safeguard=safeguard,
+        llm=llm,
+    )
+    # Use hybrid mode to verify safeguard block overrides grounding mode
+    response, trace = await pipeline.execute(
+        QueryRequest(question="test", grounding_mode="hybrid")
+    )
+
+    assert response.answer is None
+    assert response.sources == []
+    assert response.no_relevant_context is False  # not a context issue
+    assert response.context_only is False  # not context_only either
+    llm.complete.assert_not_awaited()
+
+    sg_step = next(s for s in trace.steps if s.name == "post_retrieval_safeguard")
+    assert sg_step.metadata["allowed"] is False
 
 
 # ---------------------------------------------------------------------------

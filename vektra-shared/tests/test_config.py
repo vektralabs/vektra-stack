@@ -55,6 +55,31 @@ class TestQueryPipelineConfig:
         assert cfg.chunk_dedup_enabled is True
         assert cfg.response_token_reserve == 1024
         assert cfg.prompt_templates_dir is None
+        assert cfg.grounding_mode == "strict"
+
+    def test_grounding_mode_hybrid(self) -> None:
+        cfg = QueryPipelineConfig(VEKTRA_PROMPT_GROUNDING_MODE="hybrid")
+        assert cfg.grounding_mode == "hybrid"
+
+    def test_grounding_mode_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="grounding_mode"):
+            QueryPipelineConfig(VEKTRA_PROMPT_GROUNDING_MODE="invalid")
+
+    def test_eval_mode_default_false(self) -> None:
+        cfg = QueryPipelineConfig()
+        assert cfg.eval_mode is False
+
+    def test_debug_log_queries_default_false(self) -> None:
+        cfg = QueryPipelineConfig()
+        assert cfg.debug_log_queries is False
+
+    def test_eval_mode_from_env(self) -> None:
+        cfg = QueryPipelineConfig(VEKTRA_EVAL_MODE=True)
+        assert cfg.eval_mode is True
+
+    def test_debug_log_queries_from_env(self) -> None:
+        cfg = QueryPipelineConfig(VEKTRA_DEBUG_LOG_QUERIES=True)
+        assert cfg.debug_log_queries is True
 
 
 class TestRewriteConfig:
@@ -76,8 +101,8 @@ class TestRerankConfig:
     def test_defaults(self) -> None:
         cfg = RerankConfig()
         assert cfg.enabled is True
-        assert cfg.provider == "flashrank"
-        assert cfg.model is None
+        assert cfg.provider == "cross-encoder"
+        assert cfg.model == "BAAI/bge-reranker-v2-m3"
         assert cfg.top_k == 5
 
     def test_env_var_override(self) -> None:
@@ -147,7 +172,7 @@ class TestQueryPipelineConfigNested:
         assert cfg.rewrite.enabled is True
         assert cfg.rewrite.model is None
         assert cfg.rerank.enabled is True
-        assert cfg.rerank.provider == "flashrank"
+        assert cfg.rerank.provider == "cross-encoder"
         assert cfg.rerank.top_k == 5
 
 
@@ -192,6 +217,10 @@ class TestVektraSettings:
     def test_min_relevance_score_above_one_invalid(self) -> None:
         with pytest.raises(ValidationError, match="min_relevance_score"):
             self._make(VEKTRA_MIN_RELEVANCE_SCORE=1.1)
+
+    def test_grounding_mode_invalid_at_settings_level(self) -> None:
+        with pytest.raises(ValidationError, match="prompt_grounding_mode"):
+            self._make(VEKTRA_PROMPT_GROUNDING_MODE="invalid")
 
     def test_as_llm_config(self) -> None:
         s = self._make(

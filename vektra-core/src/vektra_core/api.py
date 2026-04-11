@@ -38,7 +38,13 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
-from vektra_shared.types import QueryChunk, QueryRequest, SafeguardContext
+from vektra_shared.namespace import resolve_grounding_mode
+from vektra_shared.types import (
+    QueryChunk,
+    QueryRequest,
+    SafeguardContext,
+    trace_from_dict,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -122,6 +128,11 @@ class FeedbackCreated(BaseModel):
 async def _sse_generator(
     stream: AsyncGenerator[QueryChunk, None],
     request: Request,
+    *,
+    analytics_service: Any | None = None,
+    db_session_factory: Any | None = None,
+    namespace: str = "default",
+    store_traces: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Format QueryChunk events as SSE lines.
 
@@ -139,6 +150,22 @@ async def _sse_generator(
             elif chunk.type in ("sources", "error", "trace"):
                 payload = json.dumps({"type": chunk.type, "data": chunk.data})
                 yield f"data: {payload}\n\n"
+                # Persist trace (best-effort, BUG-013)
+                if (
+                    chunk.type == "trace"
+                    and store_traces
+                    and analytics_service
+                    and db_session_factory
+                ):
+                    try:
+                        trace_obj = trace_from_dict(chunk.data)  # type: ignore[arg-type]
+                        async with db_session_factory() as sess:
+                            await analytics_service.store_trace(
+                                sess, trace_obj, namespace=namespace
+                            )
+                            await sess.commit()
+                    except Exception:
+                        log.warning("stream_trace_store_failed", exc_info=True)
             elif chunk.type == "done":
                 yield "data: [DONE]\n\n"
     finally:
@@ -208,18 +235,63 @@ async def query(
     accept = request.headers.get("accept", "")
     use_stream = body.stream or "text/event-stream" in accept
 
+    # Ensure conversation row exists for persistent multi-turn (BUG-014).
+    # The API layer creates the row because it has namespace_id and key_id,
+    # which the pipeline does not (and should not) receive.
+    conversation_id = body.conversation_id
+    try:
+        conv_store = registry.get("conversation_store", "default")
+        if isinstance(conv_store, PersistentConversationStore):
+            if conversation_id is None:
+                conversation_id = await conv_store.create_conversation(
+                    namespace_id=body.namespace,
+                    key_id=_key.key_id,
+                )
+            else:
+                # Client-provided ID: create row if it doesn't exist yet.
+                await conv_store.ensure_conversation(
+                    conversation_id=conversation_id,
+                    namespace_id=body.namespace,
+                    key_id=_key.key_id,
+                )
+    except ValueError:
+        pass  # conversation store not registered (optional)
+    except Exception as exc:
+        log.warning("conversation_create_failed", error=str(exc))
+
+    # Resolve grounding mode: namespace config > env var > default (FEAT-020)
+    db_factory = getattr(request.app.state, "db_session_factory", None)
+    _default_mode = getattr(request.app.state, "grounding_mode_default", "strict")
+    if db_factory:
+        grounding_mode = await resolve_grounding_mode(
+            body.namespace, db_factory, default_mode=_default_mode
+        )
+    else:
+        grounding_mode = _default_mode
+
     query_req = QueryRequest(
         question=body.question,
         namespace=body.namespace,
-        conversation_id=body.conversation_id,
+        conversation_id=conversation_id,
         top_k=body.top_k,
         stream=use_stream,
+        grounding_mode=grounding_mode,
     )
 
     if use_stream:
         stream_iter = await pipeline.execute_stream(query_req)
         return StreamingResponse(
-            _sse_generator(stream_iter, request),
+            _sse_generator(
+                stream_iter,
+                request,
+                analytics_service=getattr(request.app.state, "analytics_service", None),
+                db_session_factory=getattr(
+                    request.app.state, "db_session_factory", None
+                ),
+                namespace=body.namespace,
+                store_traces=getattr(request.app.state, "store_traces_enabled", False)
+                is True,
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -254,6 +326,22 @@ async def query(
         chunks_retrieved=len(trace.chunks_retrieved),
         steps=[{"name": s.name, "duration_ms": s.duration_ms} for s in trace.steps],
     )
+
+    # Persist trace (best-effort, BUG-013)
+    if getattr(request.app.state, "store_traces_enabled", False) is True:
+        try:
+            svc = getattr(request.app.state, "analytics_service", None)
+            factory = getattr(request.app.state, "db_session_factory", None)
+            if svc and factory:
+                async with factory() as sess:
+                    await svc.store_trace(sess, trace, namespace=body.namespace)
+                    await sess.commit()
+        except Exception:
+            log.warning(
+                "trace_store_failed",
+                response_id=str(trace.response_id),
+                exc_info=True,
+            )
 
     return QueryResponseBody(
         response_id=response.response_id,

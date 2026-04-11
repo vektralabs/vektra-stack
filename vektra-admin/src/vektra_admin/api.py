@@ -441,6 +441,80 @@ async def revoke_api_key(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Admin conversation turns (DEBT-011)
+# ---------------------------------------------------------------------------
+
+
+class ConversationTurnDetail(BaseModel):
+    """Decrypted conversation turn with full metadata."""
+
+    turn_number: int
+    question: str
+    answer: str | None
+    response_id: UUID | None
+    model: str | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    created_at: datetime
+
+
+@router.get(
+    "/api/v1/admin/conversations/{conversation_id}/turns",
+    response_model=list[ConversationTurnDetail],
+)
+async def get_conversation_turns(
+    conversation_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _key: ApiKeyInfo = Depends(require_scope("admin")),
+) -> Any:
+    """Return decrypted conversation turns with full metadata (admin only)."""
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
+
+    try:
+        conv_store = registry.get("conversation_store", "default")
+    except ValueError:
+        raise HTTPException(status_code=503, detail="Conversation store not available")
+
+    if not hasattr(conv_store, "get_turns_detail"):
+        raise HTTPException(
+            status_code=501,
+            detail="Conversation decryption not available (in-memory store)",
+        )
+
+    turns = await conv_store.get_turns_detail(conversation_id)
+    if turns is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Audit log: sensitive content access
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        background_tasks.add_task(
+            _audit.log_event,
+            key_id=_key.key_id,
+            endpoint=f"/api/v1/admin/conversations/{conversation_id}/turns",
+            method="GET",
+            status_code=200,
+            request_id=request_id,
+            action="conversation_turns_read",
+            log_metadata={
+                "namespace": getattr(request.state, "rls_namespace", None),
+                "conversation_id": str(conversation_id),
+                "turn_count": len(turns),
+            },
+        )
+
+    return turns
+
+
+# ---------------------------------------------------------------------------
+# Admin HTML dashboard (REQ-006)
+# ---------------------------------------------------------------------------
+
+
 @router.get("/admin")
 async def admin_dashboard_redirect() -> Response:
     """Redirect legacy /admin to the new HTMX dashboard (ADR-0024)."""

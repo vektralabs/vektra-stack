@@ -156,6 +156,7 @@ class SearchResult:
     document_id: UUID
     document_version: int = 1  # from SourceDocument.version (REQ-056)
     metadata: dict[str, Any] = field(default_factory=dict)
+    original_score: float | None = None  # pre-reranker score (BUG-015)
 
 
 @dataclass
@@ -211,6 +212,7 @@ class CompletionChunk:
 
     content: str
     done: bool = False
+    model: str | None = None
 
 
 @dataclass
@@ -268,6 +270,7 @@ class QueryRequest:
     search_mode: SearchMode = SearchMode.DENSE
     filters: SearchFilters | None = None
     stream: bool = False
+    grounding_mode: str = "strict"  # "strict" | "hybrid" (FEAT-020)
 
 
 @dataclass
@@ -333,6 +336,29 @@ class QueryTrace:
     llm_model: str
     prompt_version: str  # SHA-256[:8] of concatenated template sources (ARCH-048)
     created_at: datetime
+
+
+def trace_from_dict(data: dict[str, Any]) -> QueryTrace:
+    """Reconstruct QueryTrace from _trace_to_dict() SSE emission format."""
+    return QueryTrace(
+        response_id=UUID(data["response_id"]),
+        steps=[
+            StepTrace(
+                name=s["name"],
+                duration_ms=s["duration_ms"],
+                metadata=s.get("metadata", {}),
+            )
+            for s in data["steps"]
+        ],
+        total_duration_ms=data["total_duration_ms"],
+        chunks_retrieved=[
+            ChunkRef(chunk_id=c["chunk_id"], score=c["score"])
+            for c in data["chunks_retrieved"]
+        ],
+        llm_model=data["llm_model"],
+        prompt_version=data["prompt_version"],
+        created_at=datetime.fromisoformat(data["created_at"]),
+    )
 
 
 # ---------------------------------------------------------------------------

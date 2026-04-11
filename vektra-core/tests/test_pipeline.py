@@ -7,6 +7,10 @@ from vektra_core.conversation import InMemoryConversationStore
 from vektra_core.pipeline import (
     SimpleQueryPipeline,
     _apply_retrieval_filter,
+    _context_window_fallback_warned,
+    _context_window_impl,
+    _count_tokens_impl,
+    _token_count_fallback_warned,
     _token_overlap_ratio,
 )
 from vektra_core.templates import TemplateRenderer
@@ -39,6 +43,8 @@ def _make_pipeline_config(**overrides) -> QueryPipelineConfig:
         "VEKTRA_CHUNK_DEDUP_ENABLED": True,
         "VEKTRA_RESPONSE_TOKEN_RESERVE": 512,
         "VEKTRA_CONTEXT_CHUNK_RATIO": 0.6,
+        "VEKTRA_EVAL_MODE": False,
+        "VEKTRA_DEBUG_LOG_QUERIES": False,
     }
     defaults.update(overrides)
     return QueryPipelineConfig.model_validate(defaults)
@@ -204,6 +210,35 @@ async def test_execute_no_relevant_context():
     assert response.no_relevant_context is True
     assert response.answer is None
     assert response.sources == []
+
+
+async def test_execute_no_relevant_context_hybrid_calls_llm():
+    """In hybrid mode, LLM is called even when no chunks pass threshold."""
+    results = [_make_search_result(0.1, "irrelevant chunk")]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    llm = MagicMock()
+    completion = CompletionResponse(
+        content="I know from my training that...",
+        model="ollama/llama3",
+        prompt_tokens=10,
+        completion_tokens=20,
+        total_tokens=30,
+    )
+    llm.complete = AsyncMock(return_value=completion)
+    llm.count_tokens = MagicMock(return_value=10)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        llm=llm,
+        pipeline_config=_make_pipeline_config(**{"VEKTRA_MIN_RELEVANCE_SCORE": 0.5}),
+    )
+    query = QueryRequest(question="Something specific", grounding_mode="hybrid")
+    response, _trace = await pipeline.execute(query)
+
+    assert response.answer is not None
+    llm.complete.assert_awaited_once()
 
 
 async def test_execute_empty_vector_results():
@@ -466,3 +501,61 @@ async def test_stream_llm_error_yields_error_and_done():
     assert "error" in types
     assert "trace" in types
     assert types[-1] == "done"
+
+
+# ---------------------------------------------------------------------------
+# _context_window_impl (BUG-017)
+# ---------------------------------------------------------------------------
+
+
+def test_context_window_uses_configured_value():
+    """Configured context_window takes priority over litellm lookup."""
+    result = _context_window_impl("nonexistent/model", configured_window=32768)
+    assert result == 32768
+
+
+def test_context_window_fallback_to_default():
+    """Unknown model without configured window falls back to 4096 with warning."""
+    _context_window_fallback_warned.discard("test/unknown-model-ctx")
+    result = _context_window_impl("test/unknown-model-ctx")
+    assert result == 4096
+    assert "test/unknown-model-ctx" in _context_window_fallback_warned
+
+
+def test_context_window_fallback_warns_once(capsys):
+    """Fallback warning is emitted on first call, silent on second."""
+    _context_window_fallback_warned.discard("test/warn-once-model")
+    _context_window_impl("test/warn-once-model")
+    first = capsys.readouterr()
+    assert "context_window_fallback" in first.out
+    _context_window_impl("test/warn-once-model")
+    second = capsys.readouterr()
+    assert "context_window_fallback" not in second.out
+
+
+# ---------------------------------------------------------------------------
+# _count_tokens_impl fallback warning (BUG-017)
+# ---------------------------------------------------------------------------
+
+
+def test_count_tokens_fallback_warns():
+    """Token count fallback emits warning on first use per model."""
+    _token_count_fallback_warned.discard("test/token-fallback-model")
+    mock_llm = MagicMock()
+    mock_llm.count_tokens.side_effect = Exception("unsupported")
+    result = _count_tokens_impl(mock_llm, "test/token-fallback-model", "hello world")
+    assert result == max(1, len("hello world") // 4)
+    assert "test/token-fallback-model" in _token_count_fallback_warned
+
+
+def test_count_tokens_fallback_warns_once(capsys):
+    """Token count fallback warning emitted on first call, silent on second."""
+    _token_count_fallback_warned.discard("test/token-once-model")
+    mock_llm = MagicMock()
+    mock_llm.count_tokens.side_effect = Exception("unsupported")
+    _count_tokens_impl(mock_llm, "test/token-once-model", "first")
+    first = capsys.readouterr()
+    assert "token_count_fallback" in first.out
+    _count_tokens_impl(mock_llm, "test/token-once-model", "second")
+    second = capsys.readouterr()
+    assert "token_count_fallback" not in second.out

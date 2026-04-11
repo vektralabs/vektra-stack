@@ -70,11 +70,10 @@ COPY vektra-app/src vektra-app/src
 # Include optional extras for Phase 2 vector store and sparse search support.
 # When INSTALL_UNSTRUCTURED=true, also install the Unstructured PDF extractor.
 ARG INSTALL_UNSTRUCTURED=false
-RUN uv sync --frozen --no-editable --no-dev \
-    && uv pip install 'qdrant-client==1.17.0' 'fastembed==0.7.4' \
-    && if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
-       uv pip install 'torch' 'torchvision' --index-url https://download.pytorch.org/whl/cpu --reinstall \
-       && uv pip install 'unstructured[pdf]>=0.15' 'pi-heif' 'sentence-transformers' --reinstall; \
+RUN if [ "$INSTALL_UNSTRUCTURED" = "true" ]; then \
+       uv sync --frozen --no-editable --no-dev --extra sparse --extra qdrant --extra ocr; \
+    else \
+       uv sync --frozen --no-editable --no-dev --extra sparse --extra qdrant; \
     fi
 
 # --------------------------------------------------------------------------

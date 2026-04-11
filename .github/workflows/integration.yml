@@ -10,7 +10,7 @@ jobs:
   integration:
     name: Integration tests + NFR gates
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -72,15 +72,9 @@ jobs:
           VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
           STARTUP_MS: ${{ steps.startup.outputs.startup_ms }}
 
-      - name: Query latency measurement (warn only)
-        if: always() && !cancelled()
-        continue-on-error: true
-        run: |
-          uv run pytest tests/nfr/test_performance.py \
-            -v --tb=short --junitxml=test-results/performance.xml
-        env:
-          VEKTRA_API_URL: http://localhost:8000
-          VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
+      # Query latency measurement removed from CI: requires a live LLM
+      # which is not available in GitHub Actions. Run manually on Kalypso:
+      #   uv run pytest tests/nfr/test_performance.py -v
 
       - name: Dump container logs on failure
         if: failure()

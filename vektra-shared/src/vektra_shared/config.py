@@ -9,6 +9,8 @@ Phase 2 additions: RewriteConfig (2), RerankConfig (4), WebhookConfig (3), Inges
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,6 +33,11 @@ class LLMConfig(BaseSettings):
         alias="VEKTRA_LLM_API_BASE",
         description="Custom API base URL for OpenAI-compatible providers (e.g., vLLM).",
     )
+    extra_body: dict[str, Any] | None = Field(
+        None,
+        alias="VEKTRA_LLM_EXTRA_BODY",
+        description="Extra JSON body params passed to the LLM API (e.g., chat_template_kwargs for vLLM).",
+    )
     fallback_model: str | None = Field(
         None,
         alias="VEKTRA_LLM_FALLBACK_MODEL",
@@ -40,6 +47,12 @@ class LLMConfig(BaseSettings):
         60000,
         alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS",
         description="Timeout in ms before switching to fallback model.",
+    )
+    context_window: int | None = Field(
+        None,
+        ge=1,
+        alias="VEKTRA_LLM_CONTEXT_WINDOW",
+        description="Context window size in tokens. Required for models not in litellm's registry (e.g. local vLLM). If unset, litellm lookup is attempted with a 4096-token fallback.",
     )
     context_only_enabled: bool = Field(
         True,
@@ -143,12 +156,12 @@ class RerankConfig(BaseSettings):
         description="Enable reranking in AdvancedQueryPipeline.",
     )
     provider: str = Field(
-        "flashrank",
+        "cross-encoder",
         alias="VEKTRA_RERANK_PROVIDER",
         description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere'.",
     )
     model: str | None = Field(
-        None,
+        "BAAI/bge-reranker-v2-m3",
         alias="VEKTRA_RERANK_MODEL",
         description="Provider-specific reranking model name.",
     )
@@ -173,9 +186,11 @@ class QueryPipelineConfig(BaseSettings):
         description="QueryPipeline implementation: 'simple' (Phase 1), 'advanced' (Phase 2).",
     )
     min_relevance_score: float = Field(
-        0.3,
+        0.15,
+        ge=0.0,
+        le=1.0,
         alias="VEKTRA_MIN_RELEVANCE_SCORE",
-        description="Minimum cosine similarity for chunk inclusion (ARCH-056).",
+        description="Minimum relevance score for chunk inclusion (ARCH-056). Safety net filter; top-k is the primary control.",
     )
     chunk_dedup_enabled: bool = Field(
         True,
@@ -184,18 +199,36 @@ class QueryPipelineConfig(BaseSettings):
     )
     response_token_reserve: int = Field(
         2048,
+        ge=1,
         alias="VEKTRA_RESPONSE_TOKEN_RESERVE",
         description="Tokens reserved for LLM response generation (ARCH-055).",
     )
     context_chunk_ratio: float = Field(
         0.6,
+        gt=0.0,
+        lt=1.0,
         alias="VEKTRA_CONTEXT_CHUNK_RATIO",
         description="Fraction of context window allocated to retrieved chunks (ARCH-055).",
     )
     prompt_templates_dir: str | None = Field(
         None,
         alias="VEKTRA_PROMPT_TEMPLATES_DIR",
-        description="Directory for Jinja2 templates (system.j2, context.j2, conversation.j2). Falls back to built-in defaults.",
+        description="Directory for Jinja2 templates (system.j2, context.j2). Falls back to built-in defaults.",
+    )
+    grounding_mode: str = Field(
+        "strict",
+        alias="VEKTRA_PROMPT_GROUNDING_MODE",
+        description="Prompt grounding mode: 'strict' (context + history only) or 'hybrid' (fallback to training data when confident).",
+    )
+    eval_mode: bool = Field(
+        False,
+        alias="VEKTRA_EVAL_MODE",
+        description="Capture query/prompt text in traces for batch evaluation. Staging only.",
+    )
+    debug_log_queries: bool = Field(
+        False,
+        alias="VEKTRA_DEBUG_LOG_QUERIES",
+        description="Log original and rewritten query text at debug level. Development only.",
     )
     rewrite: RewriteConfig = Field(default_factory=RewriteConfig)
     rerank: RerankConfig = Field(default_factory=RerankConfig)
@@ -203,6 +236,13 @@ class QueryPipelineConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
     )
+
+    @field_validator("grounding_mode")
+    @classmethod
+    def validate_grounding_mode(cls, v: str) -> str:
+        if v not in ("strict", "hybrid"):
+            raise ValueError(f"grounding_mode must be 'strict' or 'hybrid', got '{v}'")
+        return v
 
 
 class WebhookConfig(BaseSettings):
@@ -350,6 +390,11 @@ class ObservabilityConfig(BaseSettings):
         alias="VEKTRA_ANALYTICS_RETENTION_DAYS",
         description="QueryTrace storage retention days. Phase 2 only.",
     )
+    analytics_store_traces: bool | None = Field(
+        None,
+        alias="VEKTRA_ANALYTICS_STORE_TRACES",
+        description="Persist QueryTrace to DB. None = auto (on in dev, off in prod).",
+    )
     eval_mode: bool = Field(
         False,
         alias="VEKTRA_EVAL_MODE",
@@ -415,6 +460,8 @@ class VektraSettings(BaseSettings):
     )
     llm_api_key: str | None = Field(None, alias="VEKTRA_LLM_API_KEY")
     llm_api_base: str | None = Field(None, alias="VEKTRA_LLM_API_BASE")
+    llm_extra_body: dict[str, Any] | None = Field(None, alias="VEKTRA_LLM_EXTRA_BODY")
+    llm_context_window: int | None = Field(None, alias="VEKTRA_LLM_CONTEXT_WINDOW")
     llm_fallback_model: str | None = Field(None, alias="VEKTRA_LLM_FALLBACK_MODEL")
     llm_fallback_timeout_ms: int = Field(60000, alias="VEKTRA_LLM_FALLBACK_TIMEOUT_MS")
     llm_context_only_enabled: bool = Field(
@@ -444,11 +491,12 @@ class VektraSettings(BaseSettings):
 
     # Query pipeline
     query_pipeline: str = Field("advanced", alias="VEKTRA_QUERY_PIPELINE")
-    min_relevance_score: float = Field(0.3, alias="VEKTRA_MIN_RELEVANCE_SCORE")
+    min_relevance_score: float = Field(0.15, alias="VEKTRA_MIN_RELEVANCE_SCORE")
     chunk_dedup_enabled: bool = Field(True, alias="VEKTRA_CHUNK_DEDUP_ENABLED")
     response_token_reserve: int = Field(2048, alias="VEKTRA_RESPONSE_TOKEN_RESERVE")
     context_chunk_ratio: float = Field(0.6, alias="VEKTRA_CONTEXT_CHUNK_RATIO")
     prompt_templates_dir: str | None = Field(None, alias="VEKTRA_PROMPT_TEMPLATES_DIR")
+    prompt_grounding_mode: str = Field("strict", alias="VEKTRA_PROMPT_GROUNDING_MODE")
 
     # Ingest
     chunking_strategy: str = Field("fixed", alias="VEKTRA_CHUNKING_STRATEGY")
@@ -490,6 +538,9 @@ class VektraSettings(BaseSettings):
     analytics_retention_days: int | None = Field(
         None, alias="VEKTRA_ANALYTICS_RETENTION_DAYS"
     )
+    analytics_store_traces: bool | None = Field(
+        None, alias="VEKTRA_ANALYTICS_STORE_TRACES"
+    )
     eval_mode: bool = Field(False, alias="VEKTRA_EVAL_MODE")
 
     # External API keys (no VEKTRA_ prefix)
@@ -516,6 +567,23 @@ class VektraSettings(BaseSettings):
             raise ValueError(f"min_relevance_score must be between 0 and 1, got {v}")
         return v
 
+    @field_validator("prompt_grounding_mode")
+    @classmethod
+    def validate_prompt_grounding_mode(cls, v: str) -> str:
+        if v not in ("strict", "hybrid"):
+            raise ValueError(
+                f"prompt_grounding_mode must be 'strict' or 'hybrid', got '{v}'"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_eval_mode_not_production(self) -> VektraSettings:
+        if self.env == "production" and self.eval_mode:
+            raise ValueError(
+                "VEKTRA_EVAL_MODE must be disabled in production (captures user text in traces)"
+            )
+        return self
+
     def as_llm_config(self) -> LLMConfig:
         """Extract LLM-specific sub-config."""
         return LLMConfig.model_validate(
@@ -523,6 +591,8 @@ class VektraSettings(BaseSettings):
                 "VEKTRA_LLM_PROVIDER": self.llm_provider,
                 "VEKTRA_LLM_API_KEY": self.llm_api_key,
                 "VEKTRA_LLM_API_BASE": self.llm_api_base,
+                "VEKTRA_LLM_EXTRA_BODY": self.llm_extra_body,
+                "VEKTRA_LLM_CONTEXT_WINDOW": self.llm_context_window,
                 "VEKTRA_LLM_FALLBACK_MODEL": self.llm_fallback_model,
                 "VEKTRA_LLM_FALLBACK_TIMEOUT_MS": self.llm_fallback_timeout_ms,
                 "VEKTRA_LLM_CONTEXT_ONLY_ENABLED": self.llm_context_only_enabled,

@@ -38,8 +38,12 @@ class LitellmProvider:
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
         self._base_kwargs: dict[str, Any] = {}
+        if config.api_key:
+            self._base_kwargs["api_key"] = config.api_key
         if config.api_base:
             self._base_kwargs["api_base"] = config.api_base
+        if config.extra_body:
+            self._base_kwargs["extra_body"] = config.extra_body
 
     @property
     def model_name(self) -> str:
@@ -100,11 +104,16 @@ class LitellmProvider:
             **self._base_kwargs,
             **kwargs,
         )
+        resolved_model: str | None = None
         async for chunk in response:
+            if resolved_model is None:
+                resolved_model = getattr(chunk, "model", None) or model
             delta = chunk.choices[0].delta
             content = (delta.content or "") if delta else ""
             finish = chunk.choices[0].finish_reason
-            yield CompletionChunk(content=content, done=finish is not None)
+            yield CompletionChunk(
+                content=content, done=finish is not None, model=resolved_model
+            )
 
     async def health_check(self) -> HealthStatus:
         """Probe the primary model with a short completion (5-second timeout)."""

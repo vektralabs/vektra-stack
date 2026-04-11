@@ -239,6 +239,8 @@ async def _step_5_register_providers(
             persistence="disabled",
         )
 
+    registry.register("conversation_store", "default", conversation_store)
+
     # --- Reranker (Phase 2, conditional) ---
     from vektra_core.reranker import create_reranker
 
@@ -515,6 +517,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     app.state.db_session_factory = _get_sf()
     app.state.analytics_service = registry.get("analytics", "default")
+
+    # Resolve trace persistence flag (DEBT-011)
+    _store = settings.analytics_store_traces
+    if _store is None:
+        _store = settings.env == "development"
+    app.state.store_traces_enabled = _store
+
+    # Expose grounding mode default for API layer resolution (FEAT-020)
+    app.state.grounding_mode_default = settings.prompt_grounding_mode
+
     if registry.has("learn", "default"):
         app.state.learn_service = registry.get("learn", "default")
         app.state.learn_require_enrollment = settings.learn_require_enrollment

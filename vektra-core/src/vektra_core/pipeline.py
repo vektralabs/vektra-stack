@@ -58,6 +58,18 @@ def _elapsed_ms(since: float) -> int:
     return int((time.monotonic() - since) * 1000)
 
 
+def _history_to_messages(history: list[dict[str, str | None]]) -> list[Message]:
+    """Convert conversation history to role-based Message objects."""
+    messages: list[Message] = []
+    for turn in history:
+        answer = turn.get("answer")
+        if not answer:
+            continue  # Skip turns with no answer to avoid polluting history
+        messages.append(Message(role="user", content=turn["question"] or ""))
+        messages.append(Message(role="assistant", content=answer))
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # Retrieval filter (ARCH-056)
 # ---------------------------------------------------------------------------
@@ -109,20 +121,50 @@ def _apply_retrieval_filter(
 # ---------------------------------------------------------------------------
 
 
+_token_count_fallback_warned: set[str] = set()
+_context_window_fallback_warned: set[str] = set()
+
+
 def _count_tokens_impl(llm: LLMProvider, model: str, text: str) -> int:
     """Count tokens using the LLM provider, with char/4 fallback."""
     try:
         return llm.count_tokens(text, model)
     except Exception:
+        if model not in _token_count_fallback_warned:
+            _token_count_fallback_warned.add(model)
+            log.warning(
+                "token_count_fallback",
+                model=model,
+                method="char_div_4",
+                hint="Set VEKTRA_LLM_CONTEXT_WINDOW to ensure correct token budget allocation",
+            )
         return max(1, len(text) // 4)
 
 
-def _context_window_impl(model: str) -> int:
-    """Get context window size from litellm, with default fallback."""
+def _context_window_impl(model: str, configured_window: int | None = None) -> int:
+    """Get context window size, with fallback chain and warnings.
+
+    Priority: configured_window (env var) > litellm lookup > default 4096.
+    """
+    if configured_window is not None:
+        return configured_window
+
     try:
-        return litellm.get_max_tokens(model) or _DEFAULT_CONTEXT_WINDOW
+        result = litellm.get_max_tokens(model)
+        if result:
+            return result
     except Exception:
-        return _DEFAULT_CONTEXT_WINDOW
+        pass
+
+    if model not in _context_window_fallback_warned:
+        _context_window_fallback_warned.add(model)
+        log.warning(
+            "context_window_fallback",
+            model=model,
+            default=_DEFAULT_CONTEXT_WINDOW,
+            hint="Model not in litellm registry. Set VEKTRA_LLM_CONTEXT_WINDOW to the correct value",
+        )
+    return _DEFAULT_CONTEXT_WINDOW
 
 
 async def _call_llm_with_fallback_impl(
@@ -221,12 +263,16 @@ class SimpleQueryPipeline:
         self._conversation_store = conversation_store
         self._renderer = renderer
         self._config = pipeline_config
+        self._eval_mode = pipeline_config.eval_mode
+        self._debug_log_queries = pipeline_config.debug_log_queries
 
     def _count_tokens(self, text: str) -> int:
         return _count_tokens_impl(self._llm, self._llm_config.provider, text)
 
     def _context_window(self) -> int:
-        return _context_window_impl(self._llm_config.provider)
+        return _context_window_impl(
+            self._llm_config.provider, self._llm_config.context_window
+        )
 
     async def _call_llm_with_fallback(
         self,
@@ -378,8 +424,11 @@ class SimpleQueryPipeline:
         if not no_relevant_context and not filtered:
             no_relevant_context = True
 
-        # No relevant context or safeguard blocked → skip LLM, return early
-        if no_relevant_context or safeguard_blocked:
+        # Safeguard blocked → always skip LLM
+        # No relevant context → skip LLM in strict mode, continue in hybrid (FEAT-020)
+        if safeguard_blocked or (
+            no_relevant_context and query.grounding_mode != "hybrid"
+        ):
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -410,7 +459,12 @@ class SimpleQueryPipeline:
             history = await self._conversation_store.get_history(query.conversation_id)
 
         # Token budget allocation
-        system_text = self._renderer.render_system(namespace=query.namespace)
+        has_context = len(filtered) > 0
+        system_text = self._renderer.render_system(
+            namespace=query.namespace,
+            grounding_mode=query.grounding_mode,
+            has_context=has_context,
+        )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
         # DEBT-004: sort by score descending so budget allocator selects
@@ -435,32 +489,32 @@ class SimpleQueryPipeline:
         selected_chunks = [filtered[i] for i in selected_chunk_idx]
         selected_history = [history[i] for i in selected_history_idx]
 
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
-        )
-        conv_text = self._renderer.render_conversation(selected_history)
+        if selected_chunks:
+            context_text = self._renderer.render_context(
+                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+            )
+            user_content = f"{context_text}\n\nQuestion: {query.question}"
+        else:
+            user_content = f"Question: {query.question}"
 
         messages: list[Message] = [Message(role="system", content=system_text)]
-        if conv_text.strip():
-            messages.append(
-                Message(role="user", content=f"Previous conversation:\n{conv_text}")
-            )
-        messages.append(
-            Message(
-                role="user",
-                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
-            )
-        )
+        messages.extend(_history_to_messages(selected_history))
+        messages.append(Message(role="user", content=user_content))
 
+        build_meta: dict[str, object] = {
+            "prompt_version": self._renderer.prompt_version,
+            "chunks_in_prompt": len(selected_chunks),
+            "history_turns_in_prompt": len(selected_history),
+        }
+        if self._eval_mode:
+            build_meta["messages"] = [
+                {"role": m.role, "content": m.content} for m in messages
+            ]
         steps.append(
             StepTrace(
                 name="build_prompt",
                 duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "prompt_version": self._renderer.prompt_version,
-                    "chunks_in_prompt": len(selected_chunks),
-                    "history_turns_in_prompt": len(selected_history),
-                },
+                metadata=build_meta,
             )
         )
 
@@ -517,11 +571,17 @@ class SimpleQueryPipeline:
                 )
             )
 
-        # Save conversation turn
+        # Save conversation turn (best-effort)
         if query.conversation_id is not None:
-            await self._conversation_store.add_turn(
-                query.conversation_id, query.question, answer
-            )
+            try:
+                await self._conversation_store.add_turn(
+                    query.conversation_id,
+                    query.question,
+                    answer,
+                    response_id=response_id,
+                )
+            except Exception as exc:
+                log.warning("conversation_turn_store_failed", error=str(exc))
 
         total_ms = _elapsed_ms(t_total)
         trace = QueryTrace(
@@ -623,7 +683,7 @@ class SimpleQueryPipeline:
             )
         )
 
-        if no_relevant_context or not filtered:
+        if (no_relevant_context or not filtered) and query.grounding_mode != "hybrid":
             yield QueryChunk(type="sources", data=[])
             trace = QueryTrace(
                 response_id=response_id,
@@ -681,8 +741,10 @@ class SimpleQueryPipeline:
         if not no_relevant_context and not filtered:
             no_relevant_context = True
 
-        # Safeguard blocked all results → early return
-        if safeguard_blocked or no_relevant_context:
+        # Safeguard blocked or no context in strict mode → early return
+        if safeguard_blocked or (
+            no_relevant_context and query.grounding_mode != "hybrid"
+        ):
             yield QueryChunk(type="sources", data=[])
             trace = QueryTrace(
                 response_id=response_id,
@@ -703,7 +765,12 @@ class SimpleQueryPipeline:
         if query.conversation_id is not None:
             history = await self._conversation_store.get_history(query.conversation_id)
 
-        system_text = self._renderer.render_system(namespace=query.namespace)
+        has_context = len(filtered) > 0
+        system_text = self._renderer.render_system(
+            namespace=query.namespace,
+            grounding_mode=query.grounding_mode,
+            has_context=has_context,
+        )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
         # DEBT-004: sort by score descending so budget allocator selects
@@ -728,59 +795,64 @@ class SimpleQueryPipeline:
         selected_chunks = [filtered[i] for i in selected_chunk_idx]
         selected_history = [history[i] for i in selected_history_idx]
 
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
-        )
-        conv_text = self._renderer.render_conversation(selected_history)
+        if selected_chunks:
+            context_text = self._renderer.render_context(
+                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+            )
+            user_content = f"{context_text}\n\nQuestion: {query.question}"
+        else:
+            user_content = f"Question: {query.question}"
 
         messages: list[Message] = [Message(role="system", content=system_text)]
-        if conv_text.strip():
-            messages.append(
-                Message(role="user", content=f"Previous conversation:\n{conv_text}")
-            )
-        messages.append(
-            Message(
-                role="user",
-                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
-            )
-        )
+        messages.extend(_history_to_messages(selected_history))
+        messages.append(Message(role="user", content=user_content))
+        stream_build_meta: dict[str, object] = {
+            "prompt_version": self._renderer.prompt_version,
+            "chunks_in_prompt": len(selected_chunks),
+            "history_turns_in_prompt": len(selected_history),
+        }
+        if self._eval_mode:
+            stream_build_meta["messages"] = [
+                {"role": m.role, "content": m.content} for m in messages
+            ]
         steps.append(
             StepTrace(
                 name="build_prompt",
                 duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "prompt_version": self._renderer.prompt_version,
-                    "chunks_in_prompt": len(selected_chunks),
-                    "history_turns_in_prompt": len(selected_history),
-                },
+                metadata=stream_build_meta,
             )
         )
 
         # Step 5: Stream LLM tokens
         t0 = time.monotonic()
         full_answer_parts: list[str] = []
+        llm_model_resolved: str | None = None
         try:
             token_stream = await self._llm.stream(
                 messages, model=self._llm_config.provider
             )
             async for chunk in token_stream:
+                if chunk.model and llm_model_resolved is None:
+                    llm_model_resolved = chunk.model
                 if chunk.content:
                     full_answer_parts.append(chunk.content)
                     yield QueryChunk(type="token", data=chunk.content)
+            llm_model_resolved = llm_model_resolved or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",
                     duration_ms=_elapsed_ms(t0),
-                    metadata={"model": self._llm_config.provider},
+                    metadata={"model": llm_model_resolved},
                 )
             )
         except Exception as exc:
             log.warning("stream_llm_failed", error=str(exc))
+            llm_model_resolved = llm_model_resolved or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",
                     duration_ms=_elapsed_ms(t0),
-                    metadata={"error": str(exc)},
+                    metadata={"model": llm_model_resolved, "error": str(exc)},
                 )
             )
             yield QueryChunk(type="error", data="LLM unavailable")
@@ -791,7 +863,7 @@ class SimpleQueryPipeline:
                 chunks_retrieved=[
                     ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
                 ],
-                llm_model=self._llm_config.provider,
+                llm_model=llm_model_resolved,
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
@@ -827,11 +899,17 @@ class SimpleQueryPipeline:
                 )
             )
 
-        # Save conversation turn
+        # Save conversation turn (best-effort)
         if query.conversation_id is not None and full_answer:
-            await self._conversation_store.add_turn(
-                query.conversation_id, query.question, full_answer
-            )
+            try:
+                await self._conversation_store.add_turn(
+                    query.conversation_id,
+                    query.question,
+                    full_answer,
+                    response_id=response_id,
+                )
+            except Exception as exc:
+                log.warning("conversation_turn_store_failed", error=str(exc))
 
         # Yield sources (only budget-selected chunks)
         sources_data = [
@@ -855,7 +933,7 @@ class SimpleQueryPipeline:
             chunks_retrieved=[
                 ChunkRef(chunk_id=r.chunk_id, score=r.score) for r in filtered
             ],
-            llm_model=self._llm_config.provider,
+            llm_model=llm_model_resolved,
             prompt_version=self._renderer.prompt_version,
             created_at=datetime.now(UTC),
         )

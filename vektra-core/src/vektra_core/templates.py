@@ -1,9 +1,11 @@
 """Jinja2 template loader and renderer for RAG prompt composition (ARCH-054, ADR-0020).
 
-Three composable templates:
-  system.j2      - system instructions with namespace context
-  context.j2     - retrieved chunk injection
-  conversation.j2 - multi-turn conversation history
+Two composable templates:
+  system.j2  - system instructions with grounding mode and namespace context
+  context.j2 - retrieved chunk injection
+
+Conversation history is passed as native chat messages (user/assistant pairs),
+not rendered via a template (DEBT-016).
 
 Template directory priority (ARCH-054):
   1. VEKTRA_PROMPT_TEMPLATES_DIR if set (operator override)
@@ -25,12 +27,12 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _BUILTIN_DIR = Path(__file__).parent / "templates"
-_TEMPLATE_NAMES = ("system", "context", "conversation")
+_TEMPLATE_NAMES = ("system", "context")
 _OPTIONAL_TEMPLATES = ("rewrite",)
 
 
 class TemplateRenderer:
-    """Loads and renders the three RAG prompt templates.
+    """Loads and renders RAG prompt templates (system.j2, context.j2).
 
     Thread-safe: templates are loaded once at construction, rendering is stateless.
     Raises FileNotFoundError if a required template file is missing.
@@ -43,6 +45,8 @@ class TemplateRenderer:
             loader=jinja2.FileSystemLoader(str(search_dir)),
             autoescape=False,
             undefined=jinja2.StrictUndefined,
+            trim_blocks=True,
+            lstrip_blocks=True,
         )
 
         # Compute per-template SHA-256[:8] and the combined prompt_version (ARCH-048)
@@ -86,17 +90,21 @@ class TemplateRenderer:
         tmpl = self._env.get_template(name)
         return tmpl.render(**kwargs)
 
-    def render_system(self, namespace: str = "default") -> str:
-        """Render system.j2 with namespace variable."""
+    def render_system(
+        self,
+        namespace: str = "default",
+        grounding_mode: str = "strict",
+        has_context: bool = True,
+    ) -> str:
+        """Render system.j2 with namespace, grounding mode, and context flag."""
         tmpl = self._env.get_template("system.j2")
-        return tmpl.render(namespace=namespace)
+        return tmpl.render(
+            namespace=namespace,
+            grounding_mode=grounding_mode,
+            has_context=has_context,
+        )
 
     def render_context(self, chunks: list[dict[str, Any]]) -> str:
         """Render context.j2 with a list of chunk dicts containing 'text' (and optionally 'score')."""
         tmpl = self._env.get_template("context.j2")
         return tmpl.render(chunks=chunks)
-
-    def render_conversation(self, history: list[dict[str, Any]]) -> str:
-        """Render conversation.j2 with a list of turn dicts containing 'question' and 'answer'."""
-        tmpl = self._env.get_template("conversation.j2")
-        return tmpl.render(history=history)

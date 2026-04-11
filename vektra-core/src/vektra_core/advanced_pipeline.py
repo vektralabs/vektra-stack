@@ -32,6 +32,7 @@ from vektra_core.pipeline import (
     _context_window_impl,
     _count_tokens_impl,
     _elapsed_ms,
+    _history_to_messages,
     _trace_to_dict,
 )
 from vektra_core.reranker import RerankerService
@@ -95,6 +96,8 @@ class AdvancedQueryPipeline:
         self._sparse_embedding = sparse_embedding
         self._reranker = reranker
         self._rewrite_enabled = pipeline_config.rewrite.enabled
+        self._eval_mode = pipeline_config.eval_mode
+        self._debug_log_queries = pipeline_config.debug_log_queries
 
     # -- Helpers (delegating to shared module-level functions) --
 
@@ -102,7 +105,9 @@ class AdvancedQueryPipeline:
         return _count_tokens_impl(self._llm, self._llm_config.provider, text)
 
     def _context_window(self) -> int:
-        return _context_window_impl(self._llm_config.provider)
+        return _context_window_impl(
+            self._llm_config.provider, self._llm_config.context_window
+        )
 
     async def _call_llm_with_fallback(
         self,
@@ -121,10 +126,17 @@ class AdvancedQueryPipeline:
         t0 = time.monotonic()
 
         if not self._rewrite_enabled or not history:
+            skip_meta: dict[str, object] = {
+                "rewritten": False,
+                "history_turns_used": 0,
+            }
+            if self._eval_mode:
+                skip_meta["original_query"] = question
+                skip_meta["rewritten_query"] = question
             return question, StepTrace(
                 name="query_rewrite",
                 duration_ms=_elapsed_ms(t0),
-                metadata={"rewritten": False, "history_turns_used": 0},
+                metadata=skip_meta,
             )
 
         try:
@@ -147,22 +159,42 @@ class AdvancedQueryPipeline:
             if not rewritten:
                 rewritten = question
 
+            if self._debug_log_queries:
+                log.debug(
+                    "query_rewritten",
+                    original_query=question,
+                    rewritten_query=rewritten,
+                    history_turns=len(history),
+                )
+
             original_hash = hashlib.sha256(question.encode()).hexdigest()[:8]
+            metadata: dict[str, object] = {
+                "original_query_hash": original_hash,
+                "rewritten": True,
+                "history_turns_used": len(history),
+            }
+            if self._eval_mode:
+                metadata["original_query"] = question
+                metadata["rewritten_query"] = rewritten
+
             return rewritten, StepTrace(
                 name="query_rewrite",
                 duration_ms=_elapsed_ms(t0),
-                metadata={
-                    "original_query_hash": original_hash,
-                    "rewritten": True,
-                    "history_turns_used": len(history),
-                },
+                metadata=metadata,
             )
         except Exception as exc:
             log.warning("query_rewrite_failed", error=str(exc))
+            err_meta: dict[str, object] = {
+                "rewritten": False,
+                "error": str(exc),
+            }
+            if self._eval_mode:
+                err_meta["original_query"] = question
+                err_meta["rewritten_query"] = question
             return question, StepTrace(
                 name="query_rewrite",
                 duration_ms=_elapsed_ms(t0),
-                metadata={"rewritten": False, "error": str(exc)},
+                metadata=err_meta,
             )
 
     # -- Pre-LLM steps shared between execute() and execute_stream() --
@@ -174,12 +206,14 @@ class AdvancedQueryPipeline:
         list[StepTrace],
         list[SearchResult],
         bool,
+        bool,
         str,
         list[dict[str, str | None]],
     ]:
         """Run steps 0-6 (rewrite through post_retrieval safeguard).
 
-        Returns (steps, filtered_results, no_relevant_context, effective_query, history).
+        Returns (steps, filtered_results, no_relevant_context, safeguard_blocked,
+        effective_query, history).
         """
         steps: list[StepTrace] = []
 
@@ -200,7 +234,7 @@ class AdvancedQueryPipeline:
                 )
             )
             if not sg_pre.allowed:
-                return steps, [], False, query.question, []
+                return steps, [], False, True, query.question, []
         except Exception as exc:
             log.error("pre_query_safeguard_failed", error=str(exc))
             steps.append(
@@ -273,14 +307,28 @@ class AdvancedQueryPipeline:
         if self._reranker and results:
             t0 = time.monotonic()
             try:
-                results = await self._reranker.rerank(
+                rerank_result = await self._reranker.rerank(
                     effective_query, results, top_k=query.top_k
                 )
+                results = rerank_result.top_k
+                rerank_meta: dict[str, object] = {
+                    "after_rerank": len(results),
+                    "candidates_evaluated": len(rerank_result.all_scores),
+                }
+                if self._eval_mode:
+                    rerank_meta["scores"] = [
+                        {
+                            "chunk_id": cid,
+                            "reranker_score": rs,
+                            "original_score": orig,
+                        }
+                        for cid, rs, orig in rerank_result.all_scores
+                    ]
                 steps.append(
                     StepTrace(
                         name="rerank",
                         duration_ms=_elapsed_ms(t0),
-                        metadata={"after_rerank": len(results)},
+                        metadata=rerank_meta,
                     )
                 )
             except Exception as exc:
@@ -315,6 +363,7 @@ class AdvancedQueryPipeline:
         )
 
         # Step 6: Post-retrieval safeguard (DEBT-003)
+        safeguard_blocked = False
         if filtered:
             t0 = time.monotonic()
             sg_ctx = SafeguardContext(
@@ -328,6 +377,7 @@ class AdvancedQueryPipeline:
                 )
                 if not sg_result.allowed:
                     filtered = []
+                    safeguard_blocked = True
                 elif sg_result.filtered_ids:
                     excluded = set(sg_result.filtered_ids)
                     filtered = [r for r in filtered if r.chunk_id not in excluded]
@@ -356,7 +406,14 @@ class AdvancedQueryPipeline:
         if not no_relevant_context and not filtered:
             no_relevant_context = True
 
-        return steps, filtered, no_relevant_context, effective_query, history
+        return (
+            steps,
+            filtered,
+            no_relevant_context,
+            safeguard_blocked,
+            effective_query,
+            history,
+        )
 
     def _build_prompt(
         self,
@@ -369,7 +426,12 @@ class AdvancedQueryPipeline:
         """Build the LLM prompt with token budget allocation (ARCH-055)."""
         t0 = time.monotonic()
 
-        system_text = self._renderer.render_system(namespace=query.namespace)
+        has_context = len(filtered) > 0
+        system_text = self._renderer.render_system(
+            namespace=query.namespace,
+            grounding_mode=query.grounding_mode,
+            has_context=has_context,
+        )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
 
@@ -393,31 +455,31 @@ class AdvancedQueryPipeline:
         selected_chunks = [filtered[i] for i in selected_chunk_idx]
         selected_history = [history[i] for i in selected_history_idx]
 
-        context_text = self._renderer.render_context(
-            [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
-        )
-        conv_text = self._renderer.render_conversation(selected_history)
+        if selected_chunks:
+            context_text = self._renderer.render_context(
+                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+            )
+            user_content = f"{context_text}\n\nQuestion: {query.question}"
+        else:
+            user_content = f"Question: {query.question}"
 
         messages: list[Message] = [Message(role="system", content=system_text)]
-        if conv_text.strip():
-            messages.append(
-                Message(role="user", content=f"Previous conversation:\n{conv_text}")
-            )
-        messages.append(
-            Message(
-                role="user",
-                content=f"Context:\n{context_text}\n\nQuestion: {query.question}",
-            )
-        )
+        messages.extend(_history_to_messages(selected_history))
+        messages.append(Message(role="user", content=user_content))
 
+        build_meta: dict[str, object] = {
+            "prompt_version": self._renderer.prompt_version,
+            "chunks_in_prompt": len(selected_chunks),
+            "history_turns_in_prompt": len(selected_history),
+        }
+        if self._eval_mode:
+            build_meta["messages"] = [
+                {"role": m.role, "content": m.content} for m in messages
+            ]
         step = StepTrace(
             name="build_prompt",
             duration_ms=_elapsed_ms(t0),
-            metadata={
-                "prompt_version": self._renderer.prompt_version,
-                "chunks_in_prompt": len(selected_chunks),
-                "history_turns_in_prompt": len(selected_history),
-            },
+            metadata=build_meta,
         )
         return messages, selected_chunks, selected_history, step
 
@@ -436,12 +498,15 @@ class AdvancedQueryPipeline:
             steps,
             filtered,
             no_relevant_context,
+            safeguard_blocked,
             _effective_query,
             history,
         ) = await self._run_pre_llm_steps(query)
 
-        # No relevant context -> skip LLM
-        if no_relevant_context or not filtered:
+        # Safeguard hard block or no relevant context
+        if safeguard_blocked or (
+            (no_relevant_context or not filtered) and query.grounding_mode != "hybrid"
+        ):
             trace = QueryTrace(
                 response_id=response_id,
                 steps=steps,
@@ -451,18 +516,25 @@ class AdvancedQueryPipeline:
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
-            log.info(
-                "query_no_relevant_context",
-                response_id=str(response_id),
-                namespace=query.namespace,
-            )
+            if safeguard_blocked:
+                log.info(
+                    "query_safeguard_blocked",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
+            else:
+                log.info(
+                    "query_no_relevant_context",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
             return QueryResponse(
                 response_id=response_id,
                 answer=None,
                 sources=[],
                 conversation_id=query.conversation_id,
-                context_only=not no_relevant_context,
-                no_relevant_context=no_relevant_context,
+                context_only=False,
+                no_relevant_context=no_relevant_context and not safeguard_blocked,
             ), trace
 
         # Step 7: Build prompt
@@ -529,7 +601,10 @@ class AdvancedQueryPipeline:
         if query.conversation_id is not None:
             try:
                 await self._conversation_store.add_turn(
-                    query.conversation_id, query.question, answer
+                    query.conversation_id,
+                    query.question,
+                    answer,
+                    response_id=response_id,
                 )
             except Exception as exc:
                 log.warning("conversation_turn_store_failed", error=str(exc))
@@ -587,11 +662,14 @@ class AdvancedQueryPipeline:
             steps,
             filtered,
             no_relevant_context,
+            safeguard_blocked,
             _effective_query,
             history,
         ) = await self._run_pre_llm_steps(query)
 
-        if no_relevant_context or not filtered:
+        if safeguard_blocked or (
+            (no_relevant_context or not filtered) and query.grounding_mode != "hybrid"
+        ):
             yield QueryChunk(type="sources", data=[])
             # Emit trace before done (DEBT-002)
             trace = QueryTrace(
@@ -603,6 +681,12 @@ class AdvancedQueryPipeline:
                 prompt_version=self._renderer.prompt_version,
                 created_at=datetime.now(UTC),
             )
+            if safeguard_blocked:
+                log.info(
+                    "query_safeguard_blocked",
+                    response_id=str(response_id),
+                    namespace=query.namespace,
+                )
             yield QueryChunk(type="trace", data=_trace_to_dict(trace))
             yield QueryChunk(type="done", data="")
             return
@@ -616,15 +700,18 @@ class AdvancedQueryPipeline:
         # Step 8: Stream LLM tokens
         t0 = time.monotonic()
         full_answer_parts: list[str] = []
-        llm_model = self._llm_config.provider
+        llm_model: str | None = None
         try:
             token_stream = await self._llm.stream(
                 messages, model=self._llm_config.provider
             )
             async for chunk in token_stream:
+                if chunk.model and llm_model is None:
+                    llm_model = chunk.model
                 if chunk.content:
                     full_answer_parts.append(chunk.content)
                     yield QueryChunk(type="token", data=chunk.content)
+            llm_model = llm_model or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",
@@ -634,11 +721,12 @@ class AdvancedQueryPipeline:
             )
         except Exception as exc:
             log.warning("stream_llm_failed", error=str(exc))
+            llm_model = llm_model or self._llm_config.provider
             steps.append(
                 StepTrace(
                     name="llm_stream",
                     duration_ms=_elapsed_ms(t0),
-                    metadata={"error": str(exc)},
+                    metadata={"model": llm_model, "error": str(exc)},
                 )
             )
             yield QueryChunk(type="error", data="LLM unavailable")
@@ -694,7 +782,10 @@ class AdvancedQueryPipeline:
         if query.conversation_id is not None and full_answer:
             try:
                 await self._conversation_store.add_turn(
-                    query.conversation_id, query.question, full_answer
+                    query.conversation_id,
+                    query.question,
+                    full_answer,
+                    response_id=response_id,
                 )
             except Exception as exc:
                 log.warning("conversation_turn_store_failed", error=str(exc))

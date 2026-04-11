@@ -7,6 +7,7 @@ The query endpoint authenticates via JWT dashboard token (not API key).
 from __future__ import annotations
 
 import ipaddress
+import json
 import socket
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -15,7 +16,9 @@ from uuid import UUID, uuid4
 
 import httpx
 import jwt
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -23,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_learn.query import (
     CourseQueryRequest,
-    CourseQueryResponse,
     build_course_query,
     pipeline_response_to_course_response,
 )
@@ -45,8 +47,63 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
+from vektra_shared.namespace import resolve_grounding_mode
+from vektra_shared.types import trace_from_dict
+
+# Sentinel key_id for learn-originated conversations (JWT auth has no API key).
+_LEARN_SENTINEL_KEY_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 router = APIRouter(prefix="/api/v1/learn", tags=["learn"])
+
+
+async def _learn_sse_generator(
+    stream: AsyncGenerator[Any, None],
+    request: Request,
+    conversation_id: str | None = None,
+    *,
+    analytics_service: Any | None = None,
+    db_session_factory: Any | None = None,
+    namespace: str = "default",
+    store_traces: bool = False,
+) -> AsyncGenerator[str, None]:
+    """Format QueryChunk events as SSE lines for learn endpoint."""
+    log = structlog.get_logger(__name__)
+    try:
+        async for chunk in stream:
+            if await request.is_disconnected():
+                break
+            if chunk.type == "token":
+                payload = json.dumps({"type": "token", "data": chunk.data})
+                yield f"data: {payload}\n\n"
+            elif chunk.type in ("sources", "error", "trace"):
+                payload = json.dumps({"type": chunk.type, "data": chunk.data})
+                yield f"data: {payload}\n\n"
+                # Persist trace (best-effort, BUG-013)
+                if (
+                    chunk.type == "trace"
+                    and store_traces
+                    and analytics_service
+                    and db_session_factory
+                ):
+                    try:
+                        trace_obj = trace_from_dict(chunk.data)
+                        async with db_session_factory() as sess:
+                            await analytics_service.store_trace(
+                                sess, trace_obj, namespace=namespace
+                            )
+                            await sess.commit()
+                    except Exception:
+                        log.warning("stream_trace_store_failed", exc_info=True)
+            elif chunk.type == "done":
+                if conversation_id:
+                    meta = json.dumps(
+                        {"type": "done", "data": {"conversation_id": conversation_id}}
+                    )
+                    yield f"data: {meta}\n\n"
+                yield "data: [DONE]\n\n"
+    finally:
+        await stream.aclose()
+
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -413,14 +470,14 @@ async def generate_token(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/query", response_model=CourseQueryResponse)
+@router.post("/query", response_model=None)
 async def course_query(
     req: CourseQueryRequest,
     request: Request,
     token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
     service: LearnService = Depends(_get_service),
     session: AsyncSession = Depends(_get_session),
-) -> CourseQueryResponse:
+) -> Any:
     """Course-scoped RAG query authenticated via JWT dashboard token.
 
     Extracts course_id and namespace from the token, scopes the query
@@ -472,11 +529,42 @@ async def course_query(
     if req.conversation_id is None:
         req = req.model_copy(update={"conversation_id": uuid4()})
 
+    # Ensure conversation row exists for persistent multi-turn (BUG-014).
+    # The learn endpoint uses JWT auth (no API key), so key_id is a sentinel.
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None:
+        try:
+            conv_store = registry.get("conversation_store", "default")
+            if (
+                hasattr(conv_store, "ensure_conversation")
+                and req.conversation_id is not None
+            ):
+                await conv_store.ensure_conversation(
+                    conversation_id=req.conversation_id,
+                    namespace_id=namespace,
+                    key_id=_LEARN_SENTINEL_KEY_ID,
+                )
+        except ValueError:
+            pass  # conversation store not registered
+        except Exception as exc:
+            structlog.get_logger(__name__).warning(
+                "conversation_create_failed", error=str(exc)
+            )
+
     # Build course-scoped query and delegate to pipeline
     query_req = build_course_query(req, namespace=namespace, course_id=course_id)
 
-    # Get pipeline from ProviderRegistry
-    registry = getattr(request.app.state, "registry", None)
+    # Resolve grounding mode: namespace config > env var > default (FEAT-020)
+    _db_factory_gm = getattr(request.app.state, "db_session_factory", None)
+    _default_mode = getattr(request.app.state, "grounding_mode_default", "strict")
+    if _db_factory_gm:
+        _gm = await resolve_grounding_mode(
+            namespace, _db_factory_gm, default_mode=_default_mode
+        )
+    else:
+        _gm = _default_mode
+    query_req.grounding_mode = _gm
+
     if registry is None:
         err = ErrorResponse(
             category=ErrorCategory.TRANSIENT,
@@ -497,5 +585,39 @@ async def course_query(
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
-    response, _trace = await pipeline.execute(query_req)
+    _store_traces = getattr(request.app.state, "store_traces_enabled", False) is True
+    _analytics_svc = getattr(request.app.state, "analytics_service", None)
+    _db_factory = getattr(request.app.state, "db_session_factory", None)
+
+    if req.stream:
+        stream_iter = await pipeline.execute_stream(query_req)
+        return StreamingResponse(
+            _learn_sse_generator(
+                stream_iter,
+                request,
+                str(query_req.conversation_id),
+                analytics_service=_analytics_svc,
+                db_session_factory=_db_factory,
+                namespace=namespace,
+                store_traces=_store_traces,
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    response, trace = await pipeline.execute(query_req)
+
+    # Persist trace (best-effort, BUG-013)
+    if _store_traces and trace is not None and _analytics_svc and _db_factory:
+        try:
+            async with _db_factory() as sess:
+                await _analytics_svc.store_trace(sess, trace, namespace=namespace)
+                await sess.commit()
+        except Exception:
+            structlog.get_logger(__name__).warning(
+                "trace_store_failed",
+                response_id=str(trace.response_id) if trace is not None else None,
+                exc_info=True,
+            )
+
     return pipeline_response_to_course_response(response)

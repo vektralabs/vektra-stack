@@ -1147,6 +1147,8 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 **Status**: draft | **Priority**: medium | **Created**: 2026-03-17
 **Origin**: Moodle integration testing — greetings like "ciao", "buongiorno" trigger `no_relevant_context` and produce empty/unhelpful responses
 
+**Note (2026-04-18)**: FEAT-020 (`grounding_mode=hybrid`) partially overlaps: in hybrid mode the pipeline no longer short-circuits on `no_relevant_context` and calls the LLM. However, the system prompt is generic (training-data fallback), not tailored to greetings/meta-questions/off-topic with an explicit "redirect to course" behavior. FEAT-005 remains open for the dedicated no-context system prompt variant described in the acceptance criteria.
+
 **Context**: Both `SimpleQueryPipeline` and `AdvancedQueryPipeline` short-circuit when no chunks pass the relevance threshold (`min_relevance_score`): they return `answer: null` + `no_relevant_context: true` without ever calling the LLM. This is correct for retrieval quality (ARCH-056, REQ-066) — the system should not hallucinate answers from non-relevant chunks.
 
 However, for the learn chatbot widget (and any conversational interface), this creates a poor UX for:
@@ -1179,7 +1181,7 @@ The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) c
 
 ### FEAT-007: Markdown rendering in widget chat messages
 
-**Status**: in_progress | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing (2026-03-20)
 
 **Context**: The learn chatbot widget (`vektra-chat.js`) renders all messages as plain text via `textContent`. LLM responses typically contain Markdown formatting (bold, italic, lists, code blocks, headings) which is displayed as raw syntax. This makes responses harder to read, especially for structured answers with bullet points or code examples.
@@ -1280,7 +1282,7 @@ If no custom template exists, the global system.j2 still has access to the same 
 
 ### FEAT-006: Widget error feedback when Vektra API is unreachable
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing on remote machine (2026-03-20)
 
 **Context**: When the chatbot widget JS (`vektra-chat.js`) cannot reach the Vektra API (missing SSH tunnel, CORS misconfiguration, Vektra container down), the floating chat button silently fails to appear. No error is shown to the user or the admin. The Moodle block still displays "AI Assistant is active" because the server-side token generation succeeded (PHP runs inside Docker, reaches Vektra on the internal network), but the browser-side widget cannot load or connect.
@@ -1469,7 +1471,7 @@ Phase 2 (skip_retrieval flag):
 
 ### FEAT-009: Widget token auto-refresh on expiry
 
-**Status**: draft | **Priority**: high | **Created**: 2026-03-20
+**Status**: completed | **Priority**: high | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing - "invalid or expired dashboard token" after ~1h session
 
 **Context**: The JWT dashboard token has a 1h TTL (default). The token is generated server-side by the Moodle plugin (or any LMS) at page load and embedded in the widget via `data-token` attribute. Once expired, all subsequent queries fail with "signature has expired". The user must manually reload the page to get a fresh token.
@@ -1498,7 +1500,7 @@ For Moodle specifically, the plugin would expose a lightweight AJAX endpoint (`/
 
 ### FEAT-010: Enable SSE streaming in widget
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing - responses arrive as a single block, no progressive rendering
 
 **Context**: The widget's api-client.js already has a complete SSE streaming parser (lines 65-107) with `onToken`, `onSources`, `onDone` callbacks. The chat-ui.js has `createStreamMessage()` and `appendToken()` methods that progressively append text to the DOM. However, the query is sent with `stream: false` (hardcoded, line 33), so all responses arrive as a single JSON blob.
@@ -1545,6 +1547,54 @@ This does not violate REQ-051 if data is aggregated (no individual conversations
 - [ ] Time-series data (daily/weekly granularity)
 - [ ] Accessible via API with namespace-scoped authorization
 - [ ] No individual conversation content exposed (REQ-051 compliance)
+
+---
+
+### FEAT-022: Suggested questions as quick-start chips in widget
+
+**Status**: draft | **Priority**: low | **Created**: 2026-04-18
+**Origin**: v0.5.0 scoping discussion - instructor wants to guide students toward typical questions without crafting a new conversation each time
+
+**Context**: students opening the chatbot often do not know how to start. A short list of instructor-curated prompts, rendered as clickable chips above the input box on first open, lowers the barrier and steers usage toward pedagogically useful questions (e.g., "Riassumi la lezione 3", "Quali sono i punti chiave del capitolo?", "Fammi un quiz su questo argomento").
+
+**Proposed approach**: purely client-side, category (A) config (visual, no backend involvement). Passed via `data-suggested-questions` attribute on the script tag as a JSON array. The Moodle block config form exposes a textarea (one question per line) that the plugin serializes into the attribute. The widget renders chips on first open; clicking one fills the input and submits as if typed.
+
+**Traceability**: ADR-0025, FEAT-016
+
+**Acceptance Criteria** (tentative):
+- [ ] `data-suggested-questions` attribute parsed as JSON array of strings
+- [ ] Chips rendered above the input on first open only (hidden after first message)
+- [ ] Click fills input and submits
+- [ ] Chips respect theme (light/dark) and primary color from FEAT-016
+- [ ] Missing/malformed attribute falls back to no chips (no error)
+- [ ] Moodle block config exposes a textarea for instructor to edit the list
+
+---
+
+### FEAT-023: Socratic interaction mode for guided learning
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-04-18
+**Origin**: v0.5.0 scoping discussion - pedagogical need to differentiate "answer giver" from "learning guide" per course
+
+**Context**: in some courses the instructor wants the chatbot to act as a Socratic tutor — asking the student guiding questions instead of delivering the answer directly. This supports active learning and prevents the chatbot from becoming a shortcut that bypasses the learning process. Other courses (reference-style, FAQ-style) want the chatbot to give direct answers. The choice is per-course and must be configurable by the instructor.
+
+Implementation approach is deliberately deferred. Questions to resolve when designing this feature:
+- Is Socratic mode a third `grounding_mode` value (alongside `strict` and `hybrid`), or an orthogonal `interaction_mode` dimension?
+- How do the two interact when combined (strict + socratic, hybrid + socratic)?
+- Does the Socratic prompt need worked examples or is a system-prompt instruction enough?
+- How does it behave across multi-turn conversations (when does it "reveal" the answer)?
+- Should the instructor configure the depth of Socratic questioning (light nudging vs full inquiry)?
+
+Storage aligns with the same model as grounding mode: persisted in `namespaces.config` JSONB (category B config, backend-enforced), configurable via the Moodle block config form → `PATCH /api/v1/namespaces/{id}/config`. The widget does not need to know — the difference is entirely in the system prompt selected server-side.
+
+**Traceability**: FEAT-020 (grounding mode), ADR-0020 (prompt template architecture)
+
+**Acceptance Criteria** (tentative, pending design):
+- [ ] Per-namespace Socratic mode flag in `namespaces.config`
+- [ ] System prompt variant that implements Socratic dialogue
+- [ ] Works alongside strict/hybrid grounding modes
+- [ ] Validated with representative course scenarios
+- [ ] Instructor can enable/disable from Moodle block config
 
 ---
 

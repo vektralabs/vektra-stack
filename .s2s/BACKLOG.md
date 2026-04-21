@@ -664,6 +664,62 @@ As a result, `conversation.j2` and `TemplateRenderer.render_conversation()` are 
 
 ---
 
+### DEBT-017: Consolidate namespace-resolution logic in vektra-learn
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/src/vektra_learn/api.py:498-512`
+
+**Context**: `_resolve_namespace_from_token()` (added for WI-1 in v0.5.0) re-implements the same fallback chain that `course_query` does inline around lines 663-673 and 694-695: read `course_id` from the JWT, fall back to `namespace` claim, default to `course_id`. The learn-query path additionally performs an enrollment lookup when `VEKTRA_LEARN_REQUIRE_ENROLLMENT=true` which is interleaved with the plain resolution, so a naive extraction would miss that branch.
+
+**Proposed approach**: extend `_resolve_namespace_from_token` to return a `(course_id, namespace, namespace_source)` tuple, then refactor `course_query` to call it for the non-enrollment branch while keeping the enrollment path inline. Both endpoints stay in lockstep if the JWT schema evolves (e.g., a new claim is added).
+
+**Acceptance criteria**:
+- [ ] Single helper used by both `get_conversation_turns` and `course_query` (non-enrollment branch)
+- [ ] Enrollment-required branch unchanged
+- [ ] Tests cover both call sites against a shared fixture set
+- [ ] No behaviour change to error codes (ERR-LEARN-003 on missing course_id)
+
+---
+
+### DEBT-018: Scope widget `--vektra-primary` override and dedupe style node
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/widget/src/chat-ui.js:138-144`
+
+**Context**: `ChatUI._injectStyles()` appends a new `<style>` element setting `:root { --vektra-primary: <color> }` on every instantiation. Two consequences:
+
+1. Repeated construction (hot reload, multi-instance embedding, host-page re-init) accumulates style nodes.
+2. The override lives on `:root`, so if the host page already defines `--vektra-primary` for an unrelated purpose, the widget now wins document-wide.
+
+In today's deploy there is one widget per page and init fires once, so the impact is theoretical. Filing as debt so it's tracked when we eventually support embedding multiple instances or host pages that reuse the custom property.
+
+**Proposed approach**:
+1. Scope the override to the widget roots: `.vektra-chat-btn, .vektra-chat-panel { --vektra-primary: <color> }`.
+2. Cache/replace a single `<style id="vektra-primary-override">` node rather than appending on every construction.
+
+**Acceptance criteria**:
+- [ ] Custom property no longer leaks to `:root` when a widget is initialised
+- [ ] Re-initialising a widget replaces the style node instead of appending a new one
+- [ ] Default-color deploys render identically (no visual regression)
+
+---
+
+### DEBT-019: Unit assertion for `document_name` on streaming sources
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-core/tests/test_pipeline.py:423-497`
+
+**Context**: the streaming path (`execute_stream` in both `SimpleQueryPipeline` and `AdvancedQueryPipeline`) was the regression vector fixed by commit `45437c8` (missing `document_name` in `sources_data` dict of `AdvancedQueryPipeline.execute_stream`). Current unit coverage exercises `execute()` via `test_execute_populates_document_name` and is cross-checked end-to-end by the Kalypso smoke test. Adding a dedicated unit assertion on the streamed `sources` payload would catch the same regression at fastest feedback.
+
+**Proposed approach**: mirror `test_execute_populates_document_name` using the existing `_collect_stream()` helper: monkeypatch `pipeline_mod._fetch_document_names` to the same hit/miss fakes and assert each streamed `QueryChunk(type="sources", ...).data[*]["document_name"]` matches expectations. Add the same test for `AdvancedQueryPipeline`.
+
+**Acceptance criteria**:
+- [ ] Unit test covers `SimpleQueryPipeline.execute_stream` sources payload
+- [ ] Unit test covers `AdvancedQueryPipeline.execute_stream` sources payload
+- [ ] Both tests use the same mapping / empty-dict monkeypatches as the non-stream test for parity
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

@@ -545,7 +545,18 @@ class AdvancedQueryPipeline:
         steps.append(prompt_step)
 
         # Sources from budget-selected chunks only (not all filtered)
+        t0 = time.monotonic()
         name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        steps.append(
+            StepTrace(
+                name="document_names",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "requested": len(selected_chunks),
+                    "resolved": len(name_map),
+                },
+            )
+        )
         sources = [
             SourceRef(
                 doc_id=r.document_id,
@@ -794,7 +805,18 @@ class AdvancedQueryPipeline:
                 log.warning("conversation_turn_store_failed", error=str(exc))
 
         # Yield sources (only budget-selected chunks, not all filtered)
+        t0 = time.monotonic()
         name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        steps.append(
+            StepTrace(
+                name="document_names",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "requested": len(selected_chunks),
+                    "resolved": len(name_map),
+                },
+            )
+        )
         sources_data = [
             {
                 "doc_id": str(r.document_id),

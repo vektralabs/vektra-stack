@@ -12,7 +12,20 @@
  *     data-theme="light"
  *     data-language="en"
  *     data-token-refresh-url="/my-app/refresh-token"
+ *     data-title="My course helper"
+ *     data-primary-color="#9333ea"
+ *     data-icon="https://example.com/bot.png"
+ *     data-welcome-message="Hi! Ask me anything about the course."
+ *     data-powered-by="false"
  *   ></script>
+ *
+ * White-label attributes (all optional):
+ *   data-title             - header title and button aria-label
+ *   data-primary-color     - hex/rgb/named color used for buttons and accents
+ *   data-icon              - emoji or image URL for the floating button
+ *   data-welcome-message   - assistant message shown on first open
+ *   data-powered-by        - "true" (default) shows Vektra attribution,
+ *                            "false" hides it
  */
 
 import { ApiClient } from "./api-client.js";
@@ -35,6 +48,18 @@ import { ChatUI } from "./chat-ui.js";
   const language = scriptTag.getAttribute("data-language") || "en";
   const tokenRefreshUrl = scriptTag.getAttribute("data-token-refresh-url") || null;
 
+  // White-label attributes (all optional). See file header for semantics.
+  const customTitle = scriptTag.getAttribute("data-title") || null;
+  const customPrimaryColor =
+    scriptTag.getAttribute("data-primary-color") || null;
+  const customIcon = scriptTag.getAttribute("data-icon") || null;
+  const welcomeMessage = scriptTag.getAttribute("data-welcome-message") || null;
+  const poweredByAttr = scriptTag.getAttribute("data-powered-by");
+  // Default ON; only "false" (case-insensitive) hides attribution.
+  const showPoweredBy = poweredByAttr === null
+    ? true
+    : poweredByAttr.toLowerCase() !== "false";
+
   if (!apiUrl || !courseId || !token) {
     console.error(
       "[vektra-chat] Missing required attributes: data-api-url, data-course-id, data-token"
@@ -48,6 +73,11 @@ import { ChatUI } from "./chat-ui.js";
     const ui = new ChatUI({
       theme,
       language,
+      customTitle,
+      customPrimaryColor,
+      customIcon,
+      welcomeMessage,
+      showPoweredBy,
       onSend(question) {
         const stream = ui.createStreamMessage();
 

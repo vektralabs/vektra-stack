@@ -37,20 +37,71 @@ const I18N = {
   },
 };
 
+// Accept CSS colors that are hex (#rgb, #rgba, #rrggbb, #rrggbbaa),
+// rgb[a](), hsl[a](), or named (alphanumeric). Rejects anything with
+// quotes, semicolons, or whitespace that could break out into a style rule.
+// Matches the conservative set proposed by the plan's XSS mitigation.
+const _VALID_COLOR_RE =
+  /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,\s%]+\)|hsla?\([0-9.,\s%]+\)|[a-zA-Z]+)$/;
+
+function _isSafeColor(value) {
+  return typeof value === "string" && _VALID_COLOR_RE.test(value.trim());
+}
+
+// An icon value that looks like a URL becomes an <img>; otherwise it is
+// rendered as plain text (emoji or short string) via textContent to avoid
+// HTML injection via data-icon.
+function _iconIsUrl(value) {
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  return (
+    v.startsWith("http://") ||
+    v.startsWith("https://") ||
+    v.startsWith("/") ||
+    v.startsWith("data:image/")
+  );
+}
+
 export class ChatUI {
   /**
    * @param {object} opts
    * @param {string} opts.theme - "light" or "dark"
    * @param {string} opts.language - "en" or "it"
+   * @param {string|null} [opts.customTitle] - overrides the localized title
+   * @param {string|null} [opts.customPrimaryColor] - CSS color for accents
+   * @param {string|null} [opts.customIcon] - emoji or image URL for the button
+   * @param {string|null} [opts.welcomeMessage] - first assistant message on open
+   * @param {boolean} [opts.showPoweredBy=true] - show "Powered by Vektra" footer
    * @param {function} opts.onSend - callback(question: string)
    */
-  constructor({ theme = "light", language = "en", onSend }) {
+  constructor({
+    theme = "light",
+    language = "en",
+    customTitle = null,
+    customPrimaryColor = null,
+    customIcon = null,
+    welcomeMessage = null,
+    showPoweredBy = true,
+    onSend,
+  }) {
     this._theme = theme;
     this._lang = I18N[language] || I18N.en;
     this._onSend = onSend;
     this._isOpen = false;
     this._sending = false;
     this._status = null; // "unavailable" | "reconnecting" | "sessionExpired" | null
+
+    this._title = customTitle || this._lang.title;
+    this._icon = customIcon;
+    this._welcomeMessage = welcomeMessage;
+    this._showPoweredBy = showPoweredBy;
+    this._welcomeShown = false;
+    // Accept color only if it matches the conservative whitelist; anything
+    // else is silently ignored (falls back to theme default) to prevent CSS
+    // injection via data-primary-color.
+    this._primaryColor = _isSafeColor(customPrimaryColor)
+      ? customPrimaryColor.trim()
+      : null;
 
     this._injectStyles();
     this._createElements();
@@ -61,22 +112,40 @@ export class ChatUI {
     const style = document.createElement("style");
     style.textContent = buildStyles(this._theme);
     document.head.appendChild(style);
+
+    if (this._primaryColor) {
+      const override = document.createElement("style");
+      // Single CSS custom property; styles.js uses var(--vektra-primary, ...)
+      // so an invalid value (filtered above) never reaches the DOM.
+      override.textContent = `:root { --vektra-primary: ${this._primaryColor}; }`;
+      document.head.appendChild(override);
+    }
   }
 
   _createElements() {
-    // Floating button
+    // Floating button (aria-label + icon set via safe APIs — no innerHTML of user input)
     this._btn = document.createElement("button");
     this._btn.className = "vektra-chat-btn";
-    this._btn.setAttribute("aria-label", this._lang.title);
-    this._btn.innerHTML = "&#128172;"; // speech bubble emoji
+    this._btn.setAttribute("aria-label", this._title);
+    if (this._icon && _iconIsUrl(this._icon)) {
+      const img = document.createElement("img");
+      img.src = this._icon;
+      img.alt = "";
+      img.className = "vektra-chat-btn-icon";
+      this._btn.appendChild(img);
+    } else if (this._icon) {
+      this._btn.textContent = this._icon;
+    } else {
+      this._btn.innerHTML = "&#128172;"; // speech bubble emoji
+    }
     document.body.appendChild(this._btn);
 
-    // Chat panel
+    // Chat panel — scaffold built with safe APIs; title uses textContent below.
     this._panel = document.createElement("div");
     this._panel.className = "vektra-chat-panel";
     this._panel.innerHTML = `
       <div class="vektra-chat-header">
-        <span class="vektra-chat-header-title">${this._lang.title}</span>
+        <span class="vektra-chat-header-title"></span>
         <button class="vektra-chat-close" aria-label="${this._lang.close}">&times;</button>
       </div>
       <div class="vektra-chat-messages"></div>
@@ -87,6 +156,23 @@ export class ChatUI {
         <button class="vektra-chat-send">${this._lang.send}</button>
       </div>
     `;
+    // Title: set via textContent so data-title cannot inject HTML
+    const titleEl = this._panel.querySelector(".vektra-chat-header-title");
+    titleEl.textContent = this._title;
+
+    if (this._showPoweredBy) {
+      const footer = document.createElement("div");
+      footer.className = "vektra-chat-powered-by";
+      const link = document.createElement("a");
+      link.href = "https://vektralabs.github.io";
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Vektra";
+      footer.textContent = "Powered by ";
+      footer.appendChild(link);
+      this._panel.appendChild(footer);
+    }
+
     document.body.appendChild(this._panel);
 
     // Cache references
@@ -115,6 +201,16 @@ export class ChatUI {
   open() {
     this._isOpen = true;
     this._panel.classList.add("open");
+    // Emit welcome message on first open (WI-4). Rendered as an assistant
+    // bubble so it flows naturally with subsequent conversation turns.
+    if (this._welcomeMessage && !this._welcomeShown) {
+      this._welcomeShown = true;
+      const msg = document.createElement("div");
+      msg.className = "vektra-chat-msg assistant";
+      msg.textContent = this._welcomeMessage;
+      this._messagesEl.appendChild(msg);
+      this._scrollToBottom();
+    }
     this._inputEl.focus();
   }
 

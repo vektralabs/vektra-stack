@@ -579,7 +579,7 @@ async def test_namespace_config_patch_sets_grounding_mode(
     await _seed_namespace(fresh_engine, ns_id)
 
     resp = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"grounding_mode": "hybrid"},
         headers={"Authorization": f"Bearer {admin_key}"},
     )
@@ -603,7 +603,7 @@ async def test_namespace_config_patch_rejects_unknown_key(
     await _seed_namespace(fresh_engine, ns_id)
 
     resp = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"not_a_real_key": "whatever"},
         headers={"Authorization": f"Bearer {admin_key}"},
     )
@@ -622,7 +622,7 @@ async def test_namespace_config_patch_rejects_invalid_value(
     await _seed_namespace(fresh_engine, ns_id)
 
     resp = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"grounding_mode": "banana"},
         headers={"Authorization": f"Bearer {admin_key}"},
     )
@@ -641,7 +641,7 @@ async def test_namespace_config_patch_null_removes_key(
     await _seed_namespace(fresh_engine, ns_id)
 
     r1 = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"grounding_mode": "strict"},
         headers={"Authorization": f"Bearer {admin_key}"},
     )
@@ -649,7 +649,7 @@ async def test_namespace_config_patch_null_removes_key(
     assert r1.json()["config"] == {"grounding_mode": "strict"}
 
     r2 = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"grounding_mode": None},
         headers={"Authorization": f"Bearer {admin_key}"},
     )
@@ -676,7 +676,7 @@ async def test_namespace_config_patch_is_partial(client, bootstrap_key, fresh_en
     )
 
     resp = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"grounding_mode": "hybrid"},
         headers={"Authorization": f"Bearer {admin_key}"},
     )
@@ -690,7 +690,7 @@ async def test_namespace_config_patch_not_found(client, bootstrap_key):
     """PATCH on non-existent namespace returns 404 + ERR-ADMIN-005."""
     admin_key = await _create_admin_key(client, bootstrap_key)
     resp = await client.patch(
-        "/api/v1/namespaces/does-not-exist/config",
+        "/api/v1/admin/namespaces/does-not-exist/config",
         json={"grounding_mode": "strict"},
         headers={"Authorization": f"Bearer {admin_key}"},
     )
@@ -715,7 +715,7 @@ async def test_namespace_config_patch_requires_admin_scope(
     query_key = resp.json()["key"]
 
     resp = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"grounding_mode": "hybrid"},
         headers={"Authorization": f"Bearer {query_key}"},
     )
@@ -736,7 +736,7 @@ async def test_namespace_config_patch_resolves_via_shared_helper(
     await _seed_namespace(fresh_engine, ns_id)
 
     resp = await client.patch(
-        f"/api/v1/namespaces/{ns_id}/config",
+        f"/api/v1/admin/namespaces/{ns_id}/config",
         json={"grounding_mode": "hybrid"},
         headers={"Authorization": f"Bearer {admin_key}"},
     )

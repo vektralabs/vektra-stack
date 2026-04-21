@@ -76,10 +76,15 @@ async def _fetch_document_names(
 ) -> dict[Any, str]:
     """Resolve document IDs to their filenames for source citations (FEAT-012).
 
-    Batch lookup against ``source_documents.filename``. Returns an empty map
-    on any failure (DB not initialized in tests, transient DB error, etc.) —
-    the pipeline must continue to respond even if citations lose their
-    human-readable label. Widget falls back to ``chunk_id`` when missing.
+    Batch lookup against ``source_documents``. Soft-deleted documents
+    (REQ-057) are still returned with an ``(archived)`` suffix rather than
+    hidden: the citation must match what was actually retrieved from the
+    vector store, otherwise students see answers with no traceable source.
+
+    Returns an empty map on any failure (DB not initialized in tests,
+    transient DB error, etc.) — the pipeline must continue to respond even
+    if citations lose their human-readable label. Widget falls back to
+    ``chunk_id`` when a name is missing.
     """
     if not doc_ids:
         return {}
@@ -98,12 +103,18 @@ async def _fetch_document_names(
         async with factory() as session:
             result = await session.execute(
                 text(
-                    "SELECT id, filename FROM source_documents "
+                    "SELECT id, filename, deleted_at FROM source_documents "
                     "WHERE id = ANY(CAST(:ids AS uuid[]))"
                 ),
                 {"ids": unique_ids},
             )
-            return {row[0]: row[1] for row in result.all()}
+            out: dict[Any, str] = {}
+            for row in result.all():
+                name = row[1]
+                if row[2] is not None:
+                    name = f"{name} (archived)"
+                out[row[0]] = name
+            return out
     except Exception as exc:
         log.debug("document_names_fetch_failed", error=str(exc))
         return {}

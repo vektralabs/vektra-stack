@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 import httpx
 import jwt
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -38,6 +38,7 @@ from vektra_learn.service import (
     TokenRequest,
     TokenResponse,
 )
+from vektra_shared.audit import log_event as _audit_log_event
 from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.errors import (
     ERR_LEARN_001,
@@ -518,6 +519,7 @@ def _resolve_namespace_from_token(
 async def get_conversation_turns(
     conversation_id: UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
     token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
 ) -> ConversationTurnsResponse:
     """Return decrypted turns for a conversation belonging to the token's course.
@@ -605,6 +607,29 @@ async def get_conversation_turns(
         )
         for t in turns
     ]
+
+    # NFR-007: log sensitive content access (decrypted conversation turns).
+    # Learn endpoints authenticate via JWT and do not carry a key_id, so we
+    # use the sentinel defined for learn-originated rows.
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        background_tasks.add_task(
+            _audit_log_event,
+            key_id=_LEARN_SENTINEL_KEY_ID,
+            endpoint=f"/api/v1/learn/conversations/{conversation_id}/turns",
+            method="GET",
+            status_code=200,
+            request_id=request_id,
+            action="learn_conversation_turns_read",
+            log_metadata={
+                "namespace": namespace,
+                "conversation_id": str(conversation_id),
+                "turn_count": len(items),
+                "student_id": token_payload.get("sub"),
+                "course_id": token_payload.get("course_id"),
+            },
+        )
+
     return ConversationTurnsResponse(
         conversation_id=conversation_id,
         namespace=namespace,

@@ -535,7 +535,7 @@ class NamespaceConfigResponse(BaseModel):
 
 
 @router.patch(
-    "/api/v1/namespaces/{namespace_id}/config",
+    "/api/v1/admin/namespaces/{namespace_id}/config",
     response_model=NamespaceConfigResponse,
 )
 async def patch_namespace_config(
@@ -622,7 +622,7 @@ async def patch_namespace_config(
         background_tasks.add_task(
             _audit.log_event,
             key_id=key_info.key_id,
-            endpoint=f"/api/v1/namespaces/{namespace_id}/config",
+            endpoint=f"/api/v1/admin/namespaces/{namespace_id}/config",
             method="PATCH",
             status_code=200,
             request_id=request_id,

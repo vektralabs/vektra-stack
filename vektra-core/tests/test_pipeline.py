@@ -457,6 +457,46 @@ async def test_execute_populates_document_name(monkeypatch):
     assert all(s.document_name is None for s in response2.sources)
 
 
+async def test_fetch_document_names_marks_archived(monkeypatch):
+    """Soft-deleted documents are returned with ``(archived)`` suffix (REQ-057).
+
+    The citation must still match what was retrieved from the vector store;
+    we append a marker rather than hiding the document so students can see
+    that the source exists but is no longer available.
+    """
+    from vektra_core import pipeline as pipeline_mod
+
+    rows = [
+        ("doc-a", "active.pdf", None),
+        ("doc-b", "gone.pdf", "2026-04-20T10:00:00+00:00"),
+    ]
+
+    class _FakeResult:
+        def all(self_inner):
+            return rows
+
+    class _FakeSession:
+        async def __aenter__(self_inner):
+            return self_inner
+
+        async def __aexit__(self_inner, *_):
+            return False
+
+        async def execute(self_inner, *_a, **_k):
+            return _FakeResult()
+
+    def _factory():
+        return _FakeSession()
+
+    # Bypass get_session_factory() so the helper uses our fake session
+    from vektra_shared import db as db_mod
+
+    monkeypatch.setattr(db_mod, "get_session_factory", lambda: _factory)
+
+    result = await pipeline_mod._fetch_document_names(["doc-a", "doc-b"])
+    assert result == {"doc-a": "active.pdf", "doc-b": "gone.pdf (archived)"}
+
+
 # ---------------------------------------------------------------------------
 # Streaming tests (_stream / execute_stream)
 # ---------------------------------------------------------------------------

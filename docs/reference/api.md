@@ -142,7 +142,7 @@ Returns HTTP 204 (no body).
 
 ## Namespaces
 
-### PATCH /api/v1/namespaces/{namespace_id}/config
+### PATCH /api/v1/admin/namespaces/{namespace_id}/config
 
 Partially update a namespace's behavioral config (JSONB). Requires `admin` scope.
 
@@ -155,7 +155,7 @@ curl -s -X PATCH \
   -H "Authorization: Bearer $VEKTRA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"grounding_mode":"hybrid"}' \
-  http://localhost:8000/api/v1/namespaces/default/config | python3 -m json.tool
+  http://localhost:8000/api/v1/admin/namespaces/default/config | python3 -m json.tool
 ```
 
 Request body (flat dict, one entry per config key):

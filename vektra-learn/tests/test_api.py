@@ -499,9 +499,10 @@ class TestConversationTurnsEndpoint:
         )
 
         request = self._make_request(conv_store)
+        bg = MagicMock()
         token_payload = {"sub": "s1", "course_id": "CS101"}
 
-        resp = await get_conversation_turns(cid, request, token_payload)
+        resp = await get_conversation_turns(cid, request, bg, token_payload)
         assert resp.conversation_id == cid
         assert resp.namespace == "CS101"
         assert len(resp.turns) == 2
@@ -511,6 +512,14 @@ class TestConversationTurnsEndpoint:
         # Admin-only metadata must not be exposed
         assert not hasattr(resp.turns[0], "model")
         assert not hasattr(resp.turns[0], "response_id")
+        # Audit log scheduled for content access (NFR-007)
+        bg.add_task.assert_called_once()
+        call_kwargs = bg.add_task.call_args.kwargs
+        assert call_kwargs["action"] == "learn_conversation_turns_read"
+        assert call_kwargs["log_metadata"]["conversation_id"] == str(cid)
+        assert call_kwargs["log_metadata"]["namespace"] == "CS101"
+        assert call_kwargs["log_metadata"]["turn_count"] == 2
+        assert call_kwargs["log_metadata"]["student_id"] == "s1"
 
     async def test_403_on_namespace_mismatch(self):
         """Conversation exists but belongs to a different course."""
@@ -529,14 +538,17 @@ class TestConversationTurnsEndpoint:
         conv_store.get_turns_detail = AsyncMock()
 
         request = self._make_request(conv_store)
+        bg = MagicMock()
         token_payload = {"sub": "s1", "course_id": "CS101"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_conversation_turns(cid, request, token_payload)
+            await get_conversation_turns(cid, request, bg, token_payload)
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-006"
         # Must not leak the actual content of the other-namespace conversation
         conv_store.get_turns_detail.assert_not_awaited()
+        # No audit log on denied access (we only log successful reads)
+        bg.add_task.assert_not_called()
 
     async def test_404_on_missing_conversation(self):
         from vektra_learn.api import get_conversation_turns
@@ -546,10 +558,11 @@ class TestConversationTurnsEndpoint:
         conv_store.get_turns_detail = AsyncMock()
 
         request = self._make_request(conv_store)
+        bg = MagicMock()
         token_payload = {"sub": "s1", "course_id": "CS101"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_conversation_turns(uuid4(), request, token_payload)
+            await get_conversation_turns(uuid4(), request, bg, token_payload)
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-005"
         conv_store.get_turns_detail.assert_not_awaited()
@@ -571,10 +584,11 @@ class TestConversationTurnsEndpoint:
         conv_store.get_turns_detail = AsyncMock()
 
         request = self._make_request(conv_store)
+        bg = MagicMock()
         token_payload = {"sub": "s1", "course_id": "CS101"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_conversation_turns(cid, request, token_payload)
+            await get_conversation_turns(cid, request, bg, token_payload)
         assert exc_info.value.status_code == 404
 
     async def test_rejects_token_without_course_id(self):
@@ -582,10 +596,11 @@ class TestConversationTurnsEndpoint:
 
         conv_store = MagicMock()
         request = self._make_request(conv_store)
+        bg = MagicMock()
         token_payload = {"sub": "s1"}  # no course_id
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_conversation_turns(uuid4(), request, token_payload)
+            await get_conversation_turns(uuid4(), request, bg, token_payload)
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-003"
 
@@ -606,13 +621,14 @@ class TestConversationTurnsEndpoint:
         conv_store.get_turns_detail = AsyncMock(return_value=[])
 
         request = self._make_request(conv_store)
+        bg = MagicMock()
         token_payload = {
             "sub": "s1",
             "course_id": "CS101",
             "namespace": "shared-materials",
         }
 
-        resp = await get_conversation_turns(cid, request, token_payload)
+        resp = await get_conversation_turns(cid, request, bg, token_payload)
         assert resp.namespace == "shared-materials"
 
     async def test_501ish_when_store_lacks_decryption(self):
@@ -625,10 +641,11 @@ class TestConversationTurnsEndpoint:
 
         conv_store = _BareStore()
         request = self._make_request(conv_store)
+        bg = MagicMock()
         token_payload = {"sub": "s1", "course_id": "CS101"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_conversation_turns(uuid4(), request, token_payload)
+            await get_conversation_turns(uuid4(), request, bg, token_payload)
         # ERR-LEARN-001 is CONFIGURATION → 500
         assert exc_info.value.status_code == 500
         assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-001"

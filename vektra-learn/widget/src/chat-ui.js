@@ -111,6 +111,7 @@ export class ChatUI {
     this._onNewChat = onNewChat;
     this._isOpen = false;
     this._sending = false;
+    this._restoring = false; // true while a conversation history is being fetched
     this._status = null; // "unavailable" | "reconnecting" | "sessionExpired" | null
 
     this._title = customTitle || this._lang.title;
@@ -238,7 +239,7 @@ export class ChatUI {
   }
 
   _handleNewChat() {
-    if (this._sending) return;
+    if (this._sending || this._restoring) return;
     this.reset();
     if (this._onNewChat) this._onNewChat();
   }
@@ -309,7 +310,7 @@ export class ChatUI {
   }
 
   _handleSend() {
-    if (this._sending) return;
+    if (this._sending || this._restoring) return;
     const question = this._inputEl.value.trim();
     if (!question) return;
 
@@ -327,9 +328,21 @@ export class ChatUI {
     this._updateControlsDisabled();
   }
 
+  /**
+   * Toggle the "restoring history" state (WI-5). While active, the input
+   * and send button are disabled so a fast user cannot preempt a pending
+   * replay — otherwise `replayTurns` would wipe a user message that was
+   * already rendered, and a new_chat click would race the restore.
+   */
+  setRestoring(restoring) {
+    this._restoring = restoring;
+    this._updateControlsDisabled();
+  }
+
   _updateControlsDisabled() {
     const blocked =
       this._sending ||
+      this._restoring ||
       this._status === "unavailable" ||
       this._status === "sessionExpired";
     this._sendBtn.disabled = blocked;

@@ -171,15 +171,20 @@ function _clearStored(courseId) {
       },
     });
 
-    // Restore a conversation from a prior load (WI-5 / FEAT-004). Awaited
-    // so that a message sent by a fast user can't race the fetch: if we
-    // left this fire-and-forget, a replayTurns arriving after the first
-    // new query would wipe the already-rendered user message. The fetch
-    // has an 8s timeout (api-client.js) so a stalled backend cannot block
-    // init indefinitely. Any failure keeps the stored id for next reload.
+    // Restore a conversation from a prior load (WI-5 / FEAT-004). Awaited,
+    // with input+send disabled via ui.setRestoring(true) for the duration
+    // of the fetch. This closes a race the earlier "just await" fix did
+    // not fully handle: the UI is already mounted when the await starts,
+    // so without the input lock a fast user could type+send during the
+    // fetch — _handleSend would paint the user bubble into the DOM, then
+    // replayTurns would clear it when the restore resolved, losing the
+    // message. The fetch has an 8s timeout (api-client.js) so the input
+    // lock never persists indefinitely. Any failure keeps the stored id
+    // for the next load.
     async function restoreConversation() {
       const stored = _readStored(courseId);
       if (!stored) return;
+      ui.setRestoring(true);
       try {
         const payload = await client.getConversationTurns(stored.conversation_id);
         if (payload && Array.isArray(payload.turns) && payload.turns.length > 0) {
@@ -192,6 +197,8 @@ function _clearStored(courseId) {
       } catch {
         // Network/transient error (incl. AbortError on timeout): keep
         // stored id, try again next load.
+      } finally {
+        ui.setRestoring(false);
       }
     }
     await restoreConversation();

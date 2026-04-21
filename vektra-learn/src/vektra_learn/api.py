@@ -10,6 +10,7 @@ import ipaddress
 import json
 import socket
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -43,6 +44,8 @@ from vektra_shared.errors import (
     ERR_LEARN_002,
     ERR_LEARN_003,
     ERR_LEARN_004,
+    ERR_LEARN_005,
+    ERR_LEARN_006,
     ErrorCategory,
     ErrorResponse,
     http_status_for,
@@ -463,6 +466,150 @@ async def generate_token(
     token_resp = await service.generate_token(session, req)
     await session.commit()
     return token_resp
+
+
+# ---------------------------------------------------------------------------
+# Conversation turns (WI-1, FEAT-004)
+# ---------------------------------------------------------------------------
+
+
+class ConversationTurnItem(BaseModel):
+    """Decrypted student-facing conversation turn.
+
+    Intentionally omits admin-only metadata (model, prompt_tokens,
+    completion_tokens, response_id). v0.5.0 returns an empty ``sources``
+    list; source enrichment from query_traces is deferred.
+    """
+
+    turn_number: int
+    question: str
+    answer: str | None
+    created_at: datetime
+    sources: list[dict[str, Any]] = []
+
+
+class ConversationTurnsResponse(BaseModel):
+    conversation_id: UUID
+    namespace: str
+    turns: list[ConversationTurnItem]
+
+
+def _resolve_namespace_from_token(
+    token_payload: dict[str, Any], request: Request
+) -> str:
+    """Same fallback chain used by /query: namespace claim, else course_id."""
+    course_id = token_payload.get("course_id")
+    if not course_id:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_003,
+            message="Dashboard token is missing 'course_id' claim.",
+            remediation="Request a new dashboard token with a valid 'course_id'.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+    ns = token_payload.get("namespace") or course_id
+    return str(ns)
+
+
+@router.get(
+    "/conversations/{conversation_id}/turns",
+    response_model=ConversationTurnsResponse,
+)
+async def get_conversation_turns(
+    conversation_id: UUID,
+    request: Request,
+    token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
+) -> ConversationTurnsResponse:
+    """Return decrypted turns for a conversation belonging to the token's course.
+
+    Authorization is namespace-scoped: the conversation must match the namespace
+    derived from the JWT (``namespace`` claim or ``course_id`` fallback). A
+    mismatch returns 403 so the widget can distinguish "wrong course" from
+    "deleted conversation" (404) and reset its local state accordingly.
+    """
+    namespace = _resolve_namespace_from_token(token_payload, request)
+
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        err = ErrorResponse(
+            category=ErrorCategory.TRANSIENT,
+            code=ERR_LEARN_001,
+            message="Conversation store not available.",
+            remediation="The service may be starting up. Try again shortly.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    try:
+        conv_store = registry.get("conversation_store", "default")
+    except ValueError:
+        err = ErrorResponse(
+            category=ErrorCategory.TRANSIENT,
+            code=ERR_LEARN_001,
+            message="Conversation store not configured.",
+            remediation="The service may be starting up. Try again shortly.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    # In-memory store (test/dev) does not support decryption — treat as 501-ish.
+    if not hasattr(conv_store, "get_metadata") or not hasattr(
+        conv_store, "get_turns_detail"
+    ):
+        err = ErrorResponse(
+            category=ErrorCategory.CONFIGURATION,
+            code=ERR_LEARN_001,
+            message="Conversation store does not support turn retrieval.",
+            remediation=(
+                "Configure a persistent conversation store "
+                "(VEKTRA_CONVERSATION_KEY must be set)."
+            ),
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    meta = await conv_store.get_metadata(conversation_id)
+    if meta is None or meta.get("deleted_at") is not None:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_005,
+            message=f"Conversation '{conversation_id}' not found.",
+            remediation="Start a new conversation from the widget.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    if meta["namespace_id"] != namespace:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_006,
+            message="Conversation belongs to a different course.",
+            remediation="Open the course this conversation was created in.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    turns = await conv_store.get_turns_detail(conversation_id)
+    if turns is None:
+        # Race: metadata said present, now it's gone. Same envelope as 404.
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_005,
+            message=f"Conversation '{conversation_id}' not found.",
+            remediation="Start a new conversation from the widget.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    items = [
+        ConversationTurnItem(
+            turn_number=t["turn_number"],
+            question=t["question"],
+            answer=t.get("answer"),
+            created_at=t["created_at"],
+            sources=[],
+        )
+        for t in turns
+    ]
+    return ConversationTurnsResponse(
+        conversation_id=conversation_id,
+        namespace=namespace,
+        turns=items,
+    )
 
 
 # ---------------------------------------------------------------------------

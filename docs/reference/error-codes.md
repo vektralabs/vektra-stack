@@ -90,6 +90,8 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-LEARN-002 | vektra-learn | 404 | No enrollment found for student in course |
 | ERR-LEARN-003 | vektra-learn | 401 | Dashboard token missing required course_id claim |
 | ERR-LEARN-004 | vektra-learn | 422 | Invalid learn request (missing fields, bad format) |
+| ERR-LEARN-005 | vektra-learn | 404 | Conversation not found (GET conversations/turns) |
+| ERR-LEARN-006 | vektra-learn | 403 | Conversation belongs to a different course/namespace |
 
 ## Adding new error codes
 

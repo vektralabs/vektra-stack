@@ -1305,7 +1305,7 @@ This makes troubleshooting difficult: the admin sees "active" but students see n
 
 ### FEAT-012: Include document name in query source citations
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: Moodle integration testing - sources show chunk_id (UUID) instead of document name
 
 **Context**: The learn query response includes source citations with `doc_id`, `chunk_id`, `score`, and `snippet`. The widget renders these as `[1] chunk_id (score)` with a snippet preview. The `chunk_id` is a UUID which is meaningless to the user. The original document filename (e.g., "Escapologia Fiscale - 59 segreti.pdf") is not included in the source data.
@@ -1349,8 +1349,10 @@ Approach 1 (keyword proximity) is the best cost/benefit trade-off for a first im
 
 ### FEAT-016: White-label widget customization (name, colors, branding)
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: partial (data-attrs) | **Priority**: medium | **Created**: 2026-03-20 | **Updated**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: vertical deployment requirements - universities and organizations need chatbot with their own branding
+
+**v0.5.0 progress**: data-* attributes implemented (`data-title`, `data-primary-color`, `data-icon`, `data-welcome-message`, `data-powered-by`). Namespace-backed branding (category B) and JWT-claim precedence remain open — see FEAT-008.
 
 **Context**: The widget currently supports only `theme` (light/dark) and `language` (en/it) as visual customization. Everything else is hardcoded: title ("Course Assistant"), primary color (#2563eb blue), icon (speech bubble emoji), and no welcome message. ADR-0025 defines the `data-*` attribute contract as the configuration API, and the "configuration over fork" principle requires that customization happens via config, not code changes.
 
@@ -1640,9 +1642,11 @@ The core API (`POST /api/v1/query`) has the same design — it's documented as "
 
 ### FEAT-004: Widget conversation lifecycle improvements
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-16
+**Status**: partial (persistence + new chat) | **Priority**: medium | **Created**: 2026-03-16 | **Updated**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: Moodle integration testing (2026-03-16)
 **Depends on**: BUG-010
+
+**v0.5.0 progress**: sessionStorage persistence with 24h stale cutoff (tab-scoped, keyed by course_id), history replay via new `GET /conversations/{id}/turns`, explicit "New chat" button. Remaining open: idle timeout, cross-device continuity, token-refresh interaction policy. Sources are returned empty for v0.5.0 — extending turns response with citations requires joining query_traces and is deferred.
 
 **Context**: After BUG-010 is fixed, the widget will support multi-turn conversations within a single page load. However, the `conversation_id` lives only in JS memory (`ApiClient._conversationId`) and is lost on page refresh, navigation, or tab close. Additionally, there is no explicit way for the user to start a fresh conversation. These are UX improvements to evaluate for the learn chatbot widget.
 

@@ -81,6 +81,10 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ADMIN-001 | vektra-admin | 422 | Invalid scopes in API key creation request |
 | ERR-ADMIN-002 | vektra-admin | 404 | API key not found |
 | ERR-ADMIN-003 | vektra-admin | 409 | API key already revoked |
+| ERR-ADMIN-004 | vektra-admin | 422 | API key `expires_at` must be in the future |
+| ERR-ADMIN-005 | vektra-admin | 404 | Namespace not found (config PATCH) |
+| ERR-ADMIN-006 | vektra-admin | 400 | Unknown config key in namespace PATCH body |
+| ERR-ADMIN-007 | vektra-admin | 400 | Invalid value for namespace config key |
 | ERR-SAFEGUARD-001 | vektra-core | 400 | Query blocked by safeguard pre-check |
 | ERR-LEARN-001 | vektra-learn | 503 | Learn service unavailable or pipeline not configured |
 | ERR-LEARN-002 | vektra-learn | 404 | No enrollment found for student in course |

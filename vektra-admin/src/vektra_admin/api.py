@@ -29,6 +29,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from vektra_admin import audit as _audit
 from vektra_admin import bootstrap as _bootstrap
@@ -42,6 +43,17 @@ from vektra_shared.errors import (
     auth_invalid_token,
     http_status_for,
 )
+
+# ---------------------------------------------------------------------------
+# Namespace config whitelist (WI-3)
+# ---------------------------------------------------------------------------
+# Tight whitelist: unknown keys are rejected (not silently ignored) so that
+# typos from upstream clients (e.g. Moodle plugin) surface immediately. Each
+# key is a public contract — extend cautiously.
+ALLOWED_CONFIG_KEYS: set[str] = {"grounding_mode"}
+ALLOWED_CONFIG_VALUES: dict[str, set[str]] = {
+    "grounding_mode": {"strict", "hybrid"},
+}
 
 log = structlog.get_logger(__name__)
 
@@ -508,6 +520,126 @@ async def get_conversation_turns(
         )
 
     return turns
+
+
+# ---------------------------------------------------------------------------
+# Namespace configuration (WI-3, FEAT-020 write path)
+# ---------------------------------------------------------------------------
+
+
+class NamespaceConfigResponse(BaseModel):
+    """Full namespace config after a PATCH merge."""
+
+    namespace_id: str
+    config: dict[str, Any]
+
+
+@router.patch(
+    "/api/v1/namespaces/{namespace_id}/config",
+    response_model=NamespaceConfigResponse,
+)
+async def patch_namespace_config(
+    namespace_id: str,
+    body: dict[str, Any],
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    key_info: ApiKeyInfo = Depends(require_scope("admin")),
+) -> NamespaceConfigResponse:
+    """Partially update a namespace's config JSONB.
+
+    Behavior:
+      - Flat body, one entry per config key (e.g. ``{"grounding_mode": "hybrid"}``).
+      - Partial update: keys not present in the body are preserved.
+      - ``null`` value removes the key from config (falls back to env default
+        when resolved downstream, see :mod:`vektra_shared.namespace`).
+      - Unknown keys are rejected with 400 (not silently ignored) to surface
+        typos from upstream clients (e.g. Moodle plugin) during development.
+    """
+    from vektra_admin.models import NamespaceOrm  # late import
+
+    # --- Validate body: unknown keys rejected (ERR-ADMIN-006) ---
+    unknown_keys = set(body.keys()) - ALLOWED_CONFIG_KEYS
+    if unknown_keys:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-006",
+            message=f"Unknown config keys: {sorted(unknown_keys)}.",
+            remediation=(
+                f"Use only allowed keys: {sorted(ALLOWED_CONFIG_KEYS)}. "
+                "Unknown keys are rejected to surface typos early."
+            ),
+        )
+        raise HTTPException(status_code=400, detail=err.to_envelope())
+
+    # --- Validate each value: must be in per-key enum or null (ERR-ADMIN-007) ---
+    for key, value in body.items():
+        if value is None:
+            continue  # null = remove the key
+        allowed_values = ALLOWED_CONFIG_VALUES.get(key)
+        if allowed_values is not None and value not in allowed_values:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code="ERR-ADMIN-007",
+                message=f"Invalid value for '{key}': {value!r}.",
+                remediation=(
+                    f"Use one of: {sorted(allowed_values)}, or null to unset."
+                ),
+            )
+            raise HTTPException(status_code=400, detail=err.to_envelope())
+
+    # --- Load namespace (ERR-ADMIN-005 if missing) ---
+    result = await session.execute(
+        select(NamespaceOrm).where(NamespaceOrm.id == namespace_id)
+    )
+    ns = result.scalar_one_or_none()
+    if ns is None:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-005",
+            message=f"Namespace '{namespace_id}' not found.",
+            remediation="Verify the namespace id or create it via the admin UI.",
+        )
+        raise HTTPException(status_code=404, detail=err.to_envelope())
+
+    # --- Merge: null removes, non-null sets ---
+    current_config: dict[str, Any] = dict(ns.ns_config or {})
+    for key, value in body.items():
+        if value is None:
+            current_config.pop(key, None)
+        else:
+            current_config[key] = value
+
+    ns.ns_config = current_config
+    ns.updated_at = datetime.now(UTC)
+    # JSONB mutation tracking: reassignment above is sufficient, but be explicit
+    flag_modified(ns, "ns_config")
+    await session.commit()
+
+    # --- Audit log (NFR-007): config change is an administrative event ---
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        background_tasks.add_task(
+            _audit.log_event,
+            key_id=key_info.key_id,
+            endpoint=f"/api/v1/namespaces/{namespace_id}/config",
+            method="PATCH",
+            status_code=200,
+            request_id=request_id,
+            action="namespace_config_updated",
+            log_metadata={
+                "namespace_id": namespace_id,
+                "updated_keys": sorted(body.keys()),
+            },
+        )
+
+    log.info(
+        "namespace_config_updated",
+        namespace_id=namespace_id,
+        updated_keys=sorted(body.keys()),
+    )
+
+    return NamespaceConfigResponse(namespace_id=namespace_id, config=current_config)
 
 
 # ---------------------------------------------------------------------------

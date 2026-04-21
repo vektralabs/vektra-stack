@@ -293,7 +293,8 @@ Response:
             "score": 0.912,
             "snippet": "...",
             "citation_id": "d4e5f6-...",
-            "document_version": 1
+            "document_version": 1,
+            "document_name": "lecture-07.pdf"
         }
     ],
     "conversation_id": null,

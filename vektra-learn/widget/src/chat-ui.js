@@ -21,6 +21,7 @@ const I18N = {
     sessionExpired: "Your session has expired. Please reload the page.",
     close: "Close",
     newChat: "New chat",
+    poweredBy: "Powered by",
   },
   it: {
     title: "Assistente del corso",
@@ -36,6 +37,7 @@ const I18N = {
     sessionExpired: "La sessione è scaduta. Ricarica la pagina.",
     close: "Chiudi",
     newChat: "Nuova chat",
+    poweredBy: "Offerto da",
   },
 };
 
@@ -188,30 +190,23 @@ export class ChatUI {
     if (this._showPoweredBy) {
       const footer = document.createElement("div");
       footer.className = "vektra-chat-powered-by";
+      // If poweredByText is set, the whole footer is a single link with that
+      // text. Otherwise the footer is "<i18n: Powered by> <link>Vektra</link>".
+      // A blank or invalid poweredByUrl falls back to the Vektra default URL.
       const url = _isSafeLinkUrl(this._poweredByUrl)
         ? this._poweredByUrl.trim()
         : "https://vektralabs.github.io";
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
 
       if (this._poweredByText) {
-        // Operator-supplied text is rendered as a single link (textContent,
-        // not innerHTML, so no HTML injection). If no custom URL was given,
-        // we still link to the Vektra default — operators who want a
-        // non-link footer can just pass a blank data-powered-by-url (caught
-        // by _isSafeLinkUrl returning false) — actually the default wins in
-        // that case too; we keep it simple and always render a link.
-        const link = document.createElement("a");
-        link.href = url;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
         link.textContent = this._poweredByText;
         footer.appendChild(link);
       } else {
-        const link = document.createElement("a");
-        link.href = url;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
         link.textContent = "Vektra";
-        footer.textContent = "Powered by ";
+        footer.textContent = `${this._lang.poweredBy} `;
         footer.appendChild(link);
       }
       this._panel.appendChild(footer);

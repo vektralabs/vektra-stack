@@ -229,10 +229,15 @@ function _clearStored(courseId) {
     checkConnection();
   }
 
-  // Wait for DOM to be ready before creating UI elements
+  // Wait for DOM to be ready before creating UI elements. init is async
+  // (awaits restoreConversation); wrap with .catch so any unexpected
+  // rejection surfaces in the console rather than as an unhandled promise.
+  function runInit() {
+    init().catch((err) => console.error("[vektra-chat] init failed:", err));
+  }
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", runInit);
   } else {
-    init();
+    runInit();
   }
 })();

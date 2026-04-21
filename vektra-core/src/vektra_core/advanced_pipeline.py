@@ -794,6 +794,7 @@ class AdvancedQueryPipeline:
                 log.warning("conversation_turn_store_failed", error=str(exc))
 
         # Yield sources (only budget-selected chunks, not all filtered)
+        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -802,6 +803,7 @@ class AdvancedQueryPipeline:
                 "snippet": r.text_snippet,
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
+                "document_name": name_map.get(r.document_id),
             }
             for r in selected_chunks
         ]

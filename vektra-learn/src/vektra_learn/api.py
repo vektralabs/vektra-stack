@@ -610,25 +610,27 @@ async def get_conversation_turns(
 
     # NFR-007: log sensitive content access (decrypted conversation turns).
     # Learn endpoints authenticate via JWT and do not carry a key_id, so we
-    # use the sentinel defined for learn-originated rows.
-    request_id = getattr(request.state, "request_id", None)
-    if request_id:
-        background_tasks.add_task(
-            _audit_log_event,
-            key_id=_LEARN_SENTINEL_KEY_ID,
-            endpoint=f"/api/v1/learn/conversations/{conversation_id}/turns",
-            method="GET",
-            status_code=200,
-            request_id=request_id,
-            action="learn_conversation_turns_read",
-            log_metadata={
-                "namespace": namespace,
-                "conversation_id": str(conversation_id),
-                "turn_count": len(items),
-                "student_id": token_payload.get("sub"),
-                "course_id": token_payload.get("course_id"),
-            },
-        )
+    # use the sentinel defined for learn-originated rows. Fire the audit
+    # unconditionally with a synthesized request_id if the middleware hasn't
+    # set one — a missing correlation id must not silently skip the audit
+    # row (compliance gap otherwise invisible).
+    request_id = getattr(request.state, "request_id", None) or uuid4()
+    background_tasks.add_task(
+        _audit_log_event,
+        key_id=_LEARN_SENTINEL_KEY_ID,
+        endpoint=f"/api/v1/learn/conversations/{conversation_id}/turns",
+        method="GET",
+        status_code=200,
+        request_id=request_id,
+        action="learn_conversation_turns_read",
+        log_metadata={
+            "namespace": namespace,
+            "conversation_id": str(conversation_id),
+            "turn_count": len(items),
+            "student_id": token_payload.get("sub"),
+            "course_id": token_payload.get("course_id"),
+        },
+    )
 
     return ConversationTurnsResponse(
         conversation_id=conversation_id,

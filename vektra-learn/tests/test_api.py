@@ -631,8 +631,11 @@ class TestConversationTurnsEndpoint:
         resp = await get_conversation_turns(cid, request, bg, token_payload)
         assert resp.namespace == "shared-materials"
 
-    async def test_501ish_when_store_lacks_decryption(self):
-        """In-memory store (no get_metadata / get_turns_detail) returns 503."""
+    async def test_500_err_learn_001_when_store_lacks_decryption(self):
+        """In-memory store (no get_metadata / get_turns_detail) returns 500.
+
+        ERR-LEARN-001 is CONFIGURATION → 500.
+        """
         from vektra_learn.api import get_conversation_turns
 
         # bare object with none of the required methods
@@ -646,6 +649,47 @@ class TestConversationTurnsEndpoint:
 
         with pytest.raises(HTTPException) as exc_info:
             await get_conversation_turns(uuid4(), request, bg, token_payload)
-        # ERR-LEARN-001 is CONFIGURATION → 500
         assert exc_info.value.status_code == 500
         assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-001"
+
+    async def test_audit_fires_even_without_request_id(self):
+        """NFR-007: audit must fire unconditionally on successful turns read.
+
+        If the RequestIdMiddleware isn't wired (tests, early boot), a missing
+        request.state.request_id must not silently skip the audit row — the
+        handler synthesizes a UUID fallback so every authenticated content
+        access leaves an audit trail.
+        """
+        from vektra_learn.api import get_conversation_turns
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": cid,
+                "namespace_id": "CS101",
+                "deleted_at": None,
+                "turn_count": 0,
+            }
+        )
+        conv_store.get_turns_detail = AsyncMock(return_value=[])
+
+        # Simulate middleware not wired: request.state has no attribute
+        request = self._make_request(conv_store)
+
+        class _EmptyState:
+            pass
+
+        request.state = _EmptyState()
+
+        bg = MagicMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        await get_conversation_turns(cid, request, bg, token_payload)
+        bg.add_task.assert_called_once()
+        call_kwargs = bg.add_task.call_args.kwargs
+        assert call_kwargs["action"] == "learn_conversation_turns_read"
+        # Synthesized request_id must still be a UUID (not None)
+        from uuid import UUID as _UUID
+
+        assert isinstance(call_kwargs["request_id"], _UUID)

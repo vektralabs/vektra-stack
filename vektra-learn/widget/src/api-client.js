@@ -33,6 +33,47 @@ export class ApiClient {
   }
 
   /**
+   * Manually set the current conversation ID (e.g. restored from sessionStorage).
+   * Use null to clear it.
+   */
+  setConversationId(id) {
+    this._conversationId = id || null;
+  }
+
+  /**
+   * Fetch decrypted turns for a stored conversation (WI-1 / FEAT-004).
+   * Returns null on 404/403 (so the caller can reset local state silently),
+   * throws on other errors so that a transient network failure does not
+   * wipe the sessionStorage entry.
+   *
+   * @param {string} conversationId
+   * @returns {Promise<{conversation_id: string, namespace: string, turns: Array}|null>}
+   */
+  async getConversationTurns(conversationId, _retried = false) {
+    const resp = await fetch(
+      `${this._apiUrl}/api/v1/learn/conversations/${encodeURIComponent(conversationId)}/turns`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${this._token}` },
+      }
+    );
+    if (resp.status === 401 && !_retried) {
+      const newToken = await this._refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.getConversationTurns(conversationId, true);
+      }
+    }
+    if (resp.status === 404 || resp.status === 403) {
+      return null; // caller clears local state, no error surfaced to the user
+    }
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    return resp.json();
+  }
+
+  /**
    * Check if the Vektra API is reachable.
    * @returns {Promise<boolean>}
    */

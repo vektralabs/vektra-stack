@@ -108,6 +108,12 @@ export function buildStyles(theme) {
   font-weight: 600;
   font-size: 15px;
 }
+.vektra-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.vektra-chat-new,
 .vektra-chat-close {
   background: none;
   border: none;
@@ -116,6 +122,13 @@ export function buildStyles(theme) {
   color: ${t.textSecondary};
   padding: 4px;
   line-height: 1;
+}
+.vektra-chat-new {
+  font-size: 16px;
+}
+.vektra-chat-new:hover,
+.vektra-chat-close:hover {
+  color: ${t.text};
 }
 
 .vektra-chat-messages {

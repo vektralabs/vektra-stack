@@ -20,6 +20,7 @@ const I18N = {
     reconnecting: "Reconnecting...",
     sessionExpired: "Your session has expired. Please reload the page.",
     close: "Close",
+    newChat: "New chat",
   },
   it: {
     title: "Assistente del corso",
@@ -34,6 +35,7 @@ const I18N = {
     reconnecting: "Riconnessione...",
     sessionExpired: "La sessione è scaduta. Ricarica la pagina.",
     close: "Chiudi",
+    newChat: "Nuova chat",
   },
 };
 
@@ -73,6 +75,7 @@ export class ChatUI {
    * @param {string|null} [opts.welcomeMessage] - first assistant message on open
    * @param {boolean} [opts.showPoweredBy=true] - show "Powered by Vektra" footer
    * @param {function} opts.onSend - callback(question: string)
+   * @param {function} [opts.onNewChat] - callback invoked when "New chat" is clicked
    */
   constructor({
     theme = "light",
@@ -83,10 +86,12 @@ export class ChatUI {
     welcomeMessage = null,
     showPoweredBy = true,
     onSend,
+    onNewChat = null,
   }) {
     this._theme = theme;
     this._lang = I18N[language] || I18N.en;
     this._onSend = onSend;
+    this._onNewChat = onNewChat;
     this._isOpen = false;
     this._sending = false;
     this._status = null; // "unavailable" | "reconnecting" | "sessionExpired" | null
@@ -146,7 +151,10 @@ export class ChatUI {
     this._panel.innerHTML = `
       <div class="vektra-chat-header">
         <span class="vektra-chat-header-title"></span>
-        <button class="vektra-chat-close" aria-label="${this._lang.close}">&times;</button>
+        <div class="vektra-chat-header-actions">
+          <button class="vektra-chat-new" aria-label="${this._lang.newChat}" title="${this._lang.newChat}">&#10227;</button>
+          <button class="vektra-chat-close" aria-label="${this._lang.close}">&times;</button>
+        </div>
       </div>
       <div class="vektra-chat-messages"></div>
       <div class="vektra-chat-input-area">
@@ -180,6 +188,7 @@ export class ChatUI {
     this._inputEl = this._panel.querySelector(".vektra-chat-input");
     this._sendBtn = this._panel.querySelector(".vektra-chat-send");
     this._closeBtn = this._panel.querySelector(".vektra-chat-close");
+    this._newChatBtn = this._panel.querySelector(".vektra-chat-new");
   }
 
   _bindEvents() {
@@ -192,6 +201,55 @@ export class ChatUI {
         this._handleSend();
       }
     });
+    if (this._newChatBtn) {
+      this._newChatBtn.addEventListener("click", () => this._handleNewChat());
+    }
+  }
+
+  _handleNewChat() {
+    if (this._sending) return;
+    this.reset();
+    if (this._onNewChat) this._onNewChat();
+  }
+
+  /**
+   * Reset the chat panel: clear messages, re-arm welcome message, allow input.
+   * Does NOT call the onNewChat callback; use _handleNewChat for that.
+   */
+  reset() {
+    this._messagesEl.textContent = "";
+    this._welcomeShown = false;
+    if (this._isOpen && this._welcomeMessage) {
+      // Re-inject welcome message so the cleared panel isn't blank
+      this._welcomeShown = true;
+      const msg = document.createElement("div");
+      msg.className = "vektra-chat-msg assistant";
+      msg.textContent = this._welcomeMessage;
+      this._messagesEl.appendChild(msg);
+    }
+  }
+
+  /**
+   * Replay a list of stored turns as user/assistant message bubbles (WI-5).
+   * Call after restoring a conversation from sessionStorage but before
+   * enabling user input. Each turn is a plain object with
+   * { question, answer, sources }. Sources may be empty for now.
+   */
+  replayTurns(turns) {
+    if (!Array.isArray(turns)) return;
+    // Replaying takes ownership of the message list — clear any welcome msg
+    // so the history is the first thing the student sees.
+    this._messagesEl.textContent = "";
+    this._welcomeShown = true; // don't re-emit welcome on first open
+    for (const turn of turns) {
+      if (turn.question) this.addMessage("user", turn.question);
+      if (turn.answer) {
+        const msgEl = this.addMessage("assistant", turn.answer);
+        if (Array.isArray(turn.sources) && turn.sources.length > 0) {
+          this.addSources(msgEl, turn.sources);
+        }
+      }
+    }
   }
 
   toggle() {

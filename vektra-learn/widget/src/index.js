@@ -31,6 +31,50 @@
 import { ApiClient } from "./api-client.js";
 import { ChatUI } from "./chat-ui.js";
 
+// Storage key for per-course conversation persistence (WI-5). Tab-scoped
+// via sessionStorage so that shared university computers don't leak a
+// student's conversation to the next user.
+const STORAGE_PREFIX = "vektra-conv:";
+// Tabs kept open for days shouldn't silently resurface yesterday's chat.
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+function _readStored(courseId) {
+  try {
+    const raw = window.sessionStorage.getItem(STORAGE_PREFIX + courseId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.conversation_id) return null;
+    const age = Date.now() - (parsed.stored_at || 0);
+    if (age < 0 || age > STALE_AFTER_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function _writeStored(courseId, conversationId) {
+  try {
+    window.sessionStorage.setItem(
+      STORAGE_PREFIX + courseId,
+      JSON.stringify({
+        conversation_id: conversationId,
+        stored_at: Date.now(),
+      })
+    );
+  } catch {
+    // Storage full or unavailable — silently ignore; persistence is a
+    // convenience, not a correctness requirement.
+  }
+}
+
+function _clearStored(courseId) {
+  try {
+    window.sessionStorage.removeItem(STORAGE_PREFIX + courseId);
+  } catch {
+    // ignore
+  }
+}
+
 (function () {
   // Capture the script tag synchronously (before DOMContentLoaded)
   const scripts = document.querySelectorAll('script[src*="vektra-chat"]');
@@ -93,6 +137,10 @@ import { ChatUI } from "./chat-ui.js";
           },
           onDone() {
             ui.doneSending();
+            // Persist conversation ID for history restore on next load (WI-5).
+            if (client.conversationId) {
+              _writeStored(courseId, client.conversationId);
+            }
           },
           onError(errMsg) {
             // Show session expired message for auth failures
@@ -105,7 +153,34 @@ import { ChatUI } from "./chat-ui.js";
           },
         });
       },
+      onNewChat() {
+        // Reset both storage and client-side state so the next query
+        // creates a fresh conversation.
+        _clearStored(courseId);
+        client.setConversationId(null);
+      },
     });
+
+    // Restore a conversation from a prior load (WI-5 / FEAT-004). Silent:
+    // any failure (404, 403, network) keeps the widget usable with a clean
+    // slate rather than surfacing an error.
+    async function restoreConversation() {
+      const stored = _readStored(courseId);
+      if (!stored) return;
+      try {
+        const payload = await client.getConversationTurns(stored.conversation_id);
+        if (payload && Array.isArray(payload.turns) && payload.turns.length > 0) {
+          client.setConversationId(stored.conversation_id);
+          ui.replayTurns(payload.turns);
+        } else {
+          // Returned null (404/403) or empty turns — abandon stored id
+          _clearStored(courseId);
+        }
+      } catch {
+        // Network/transient error: keep stored id, try again next load
+      }
+    }
+    restoreConversation();
 
     // Check API connectivity on startup and show status if unreachable
     let retryTimer = null;

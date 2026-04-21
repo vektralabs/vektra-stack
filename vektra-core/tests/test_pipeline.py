@@ -420,6 +420,43 @@ async def test_execute_post_retrieval_blocked():
     assert sg_steps[0].metadata.get("allowed") is False
 
 
+async def test_execute_populates_document_name(monkeypatch):
+    """FEAT-012: execute() attaches document filename to each SourceRef when the
+    DB lookup succeeds, and leaves document_name=None when it returns an empty map
+    (DB not initialised or all documents missing)."""
+    from vektra_core import pipeline as pipeline_mod
+
+    doc_a = uuid4()
+    doc_b = uuid4()
+    results = [
+        _make_search_result(0.9, "chunk from A", doc_id=doc_a),
+        _make_search_result(0.8, "chunk from B", doc_id=doc_b),
+    ]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    # Case 1: DB lookup returns a mapping
+    async def _fake_fetch_hit(doc_ids):
+        # Called with the list of document ids from selected_chunks
+        assert set(doc_ids) == {doc_a, doc_b}
+        return {doc_a: "lecture-07.pdf", doc_b: "slides.pptx"}
+
+    monkeypatch.setattr(pipeline_mod, "_fetch_document_names", _fake_fetch_hit)
+
+    pipeline = _make_pipeline(vector_store=vector_store)
+    response, _ = await pipeline.execute(QueryRequest(question="Q?"))
+    names = {s.doc_id: s.document_name for s in response.sources}
+    assert names == {doc_a: "lecture-07.pdf", doc_b: "slides.pptx"}
+
+    # Case 2: DB lookup returns empty → document_name stays None for all sources
+    async def _fake_fetch_miss(doc_ids):
+        return {}
+
+    monkeypatch.setattr(pipeline_mod, "_fetch_document_names", _fake_fetch_miss)
+    response2, _ = await pipeline.execute(QueryRequest(question="Q?"))
+    assert all(s.document_name is None for s in response2.sources)
+
+
 # ---------------------------------------------------------------------------
 # Streaming tests (_stream / execute_stream)
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ from uuid import uuid4
 
 import litellm
 import structlog
+from sqlalchemy import text
 
 from vektra_core.budget import allocate_token_budget
 from vektra_core.conversation import ConversationStore
@@ -68,6 +69,44 @@ def _history_to_messages(history: list[dict[str, str | None]]) -> list[Message]:
         messages.append(Message(role="user", content=turn["question"] or ""))
         messages.append(Message(role="assistant", content=answer))
     return messages
+
+
+async def _fetch_document_names(
+    doc_ids: list[Any],
+) -> dict[Any, str]:
+    """Resolve document IDs to their filenames for source citations (FEAT-012).
+
+    Batch lookup against ``source_documents.filename``. Returns an empty map
+    on any failure (DB not initialized in tests, transient DB error, etc.) —
+    the pipeline must continue to respond even if citations lose their
+    human-readable label. Widget falls back to ``chunk_id`` when missing.
+    """
+    if not doc_ids:
+        return {}
+
+    # Late import to avoid initialization ordering issues in tests that stub
+    # out the DB layer.
+    from vektra_shared.db import get_session_factory
+
+    try:
+        factory = get_session_factory()
+    except RuntimeError:
+        return {}
+
+    unique_ids = list({str(d) for d in doc_ids})
+    try:
+        async with factory() as session:
+            result = await session.execute(
+                text(
+                    "SELECT id, filename FROM source_documents "
+                    "WHERE id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": unique_ids},
+            )
+            return {row[0]: row[1] for row in result.all()}
+    except Exception as exc:
+        log.debug("document_names_fetch_failed", error=str(exc))
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +558,7 @@ class SimpleQueryPipeline:
         )
 
         # Sources from budget-selected chunks only (not all filtered)
+        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
         sources = [
             SourceRef(
                 doc_id=r.document_id,
@@ -527,6 +567,7 @@ class SimpleQueryPipeline:
                 snippet=r.text_snippet,
                 citation_id=uuid4(),
                 document_version=r.document_version,
+                document_name=name_map.get(r.document_id),
             )
             for r in selected_chunks
         ]
@@ -912,6 +953,7 @@ class SimpleQueryPipeline:
                 log.warning("conversation_turn_store_failed", error=str(exc))
 
         # Yield sources (only budget-selected chunks)
+        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -920,6 +962,7 @@ class SimpleQueryPipeline:
                 "snippet": r.text_snippet,
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
+                "document_name": name_map.get(r.document_id),
             }
             for r in selected_chunks
         ]

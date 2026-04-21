@@ -70,6 +70,7 @@ def pipeline_response_to_course_response(
                 "chunk_id": s.chunk_id,
                 "score": s.score,
                 "snippet": s.snippet,
+                "document_name": s.document_name,  # FEAT-012
             }
             for s in resp.sources
         ],

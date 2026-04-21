@@ -32,6 +32,7 @@ from vektra_core.pipeline import (
     _context_window_impl,
     _count_tokens_impl,
     _elapsed_ms,
+    _fetch_document_names,
     _history_to_messages,
     _trace_to_dict,
 )
@@ -544,6 +545,7 @@ class AdvancedQueryPipeline:
         steps.append(prompt_step)
 
         # Sources from budget-selected chunks only (not all filtered)
+        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
         sources = [
             SourceRef(
                 doc_id=r.document_id,
@@ -552,6 +554,7 @@ class AdvancedQueryPipeline:
                 snippet=r.text_snippet,
                 citation_id=uuid4(),
                 document_version=r.document_version,
+                document_name=name_map.get(r.document_id),
             )
             for r in selected_chunks
         ]

@@ -283,6 +283,10 @@ class SourceRef:
     snippet: str
     citation_id: UUID
     document_version: int = 1  # from SearchResult (REQ-056)
+    # FEAT-012: filename of the source document so students can see citations
+    # like "[1] lecture-07.pdf (0.82)" instead of a chunk UUID. None when
+    # the referenced document row was soft-deleted or the DB lookup failed.
+    document_name: str | None = None
 
 
 @dataclass

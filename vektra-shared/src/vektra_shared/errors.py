@@ -110,6 +110,8 @@ ERR_LEARN_001 = "ERR-LEARN-001"  # Learn service not available
 ERR_LEARN_002 = "ERR-LEARN-002"  # Enrollment not found
 ERR_LEARN_003 = "ERR-LEARN-003"  # Invalid or expired dashboard token
 ERR_LEARN_004 = "ERR-LEARN-004"  # Duplicate enrollment
+ERR_LEARN_005 = "ERR-LEARN-005"  # Conversation not found (WI-1)
+ERR_LEARN_006 = "ERR-LEARN-006"  # Conversation belongs to another course (WI-1)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +137,8 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_LEARN_002: 404,
     ERR_LEARN_003: 401,
     ERR_LEARN_004: 409,
+    ERR_LEARN_005: 404,
+    ERR_LEARN_006: 403,
 }
 
 

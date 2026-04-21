@@ -24,6 +24,7 @@ from uuid import uuid4
 
 import litellm
 import structlog
+from sqlalchemy import text
 
 from vektra_core.budget import allocate_token_budget
 from vektra_core.conversation import ConversationStore
@@ -68,6 +69,60 @@ def _history_to_messages(history: list[dict[str, str | None]]) -> list[Message]:
         messages.append(Message(role="user", content=turn["question"] or ""))
         messages.append(Message(role="assistant", content=answer))
     return messages
+
+
+async def _fetch_document_names(
+    doc_ids: list[Any],
+) -> dict[str, str]:
+    """Resolve document IDs to their filenames for source citations (FEAT-012).
+
+    Batch lookup against ``source_documents``. Soft-deleted documents
+    (REQ-057) are still returned with an ``(archived)`` suffix rather than
+    hidden: the citation must match what was actually retrieved from the
+    vector store, otherwise students see answers with no traceable source.
+
+    Keys are always stringified: asyncpg returns ``uuid.UUID`` objects for
+    UUID columns and callers may pass either ``UUID`` or ``str`` ids, so
+    the map is normalised to ``str`` on both ends to avoid silent lookup
+    misses. Call sites use ``name_map.get(str(r.document_id))``.
+
+    Returns an empty map on any failure (DB not initialized in tests,
+    transient DB error, etc.) — the pipeline must continue to respond even
+    if citations lose their human-readable label. Widget falls back to
+    ``chunk_id`` when a name is missing.
+    """
+    if not doc_ids:
+        return {}
+
+    # Late import to avoid initialization ordering issues in tests that stub
+    # out the DB layer.
+    from vektra_shared.db import get_session_factory
+
+    try:
+        factory = get_session_factory()
+    except RuntimeError:
+        return {}
+
+    unique_ids = list({str(d) for d in doc_ids})
+    try:
+        async with factory() as session:
+            result = await session.execute(
+                text(
+                    "SELECT id, filename, deleted_at FROM source_documents "
+                    "WHERE id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": unique_ids},
+            )
+            out: dict[str, str] = {}
+            for row in result.all():
+                name = row[1]
+                if row[2] is not None:
+                    name = f"{name} (archived)"
+                out[str(row[0])] = name
+            return out
+    except Exception as exc:
+        log.debug("document_names_fetch_failed", error=str(exc))
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +574,18 @@ class SimpleQueryPipeline:
         )
 
         # Sources from budget-selected chunks only (not all filtered)
+        t0 = time.monotonic()
+        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        steps.append(
+            StepTrace(
+                name="document_names",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "requested": len(selected_chunks),
+                    "resolved": len(name_map),
+                },
+            )
+        )
         sources = [
             SourceRef(
                 doc_id=r.document_id,
@@ -527,6 +594,7 @@ class SimpleQueryPipeline:
                 snippet=r.text_snippet,
                 citation_id=uuid4(),
                 document_version=r.document_version,
+                document_name=name_map.get(str(r.document_id)),
             )
             for r in selected_chunks
         ]
@@ -912,6 +980,18 @@ class SimpleQueryPipeline:
                 log.warning("conversation_turn_store_failed", error=str(exc))
 
         # Yield sources (only budget-selected chunks)
+        t0 = time.monotonic()
+        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        steps.append(
+            StepTrace(
+                name="document_names",
+                duration_ms=_elapsed_ms(t0),
+                metadata={
+                    "requested": len(selected_chunks),
+                    "resolved": len(name_map),
+                },
+            )
+        )
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -920,6 +1000,7 @@ class SimpleQueryPipeline:
                 "snippet": r.text_snippet,
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
+                "document_name": name_map.get(str(r.document_id)),
             }
             for r in selected_chunks
         ]

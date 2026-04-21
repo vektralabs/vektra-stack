@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — v0.5.0 "Widget production-ready + instructor configuration"
+
+### Added
+
+- **vektra-admin**: `PATCH /api/v1/admin/namespaces/{id}/config` endpoint for instructor configuration. Admin-scoped, whitelisted (v0.5.0 accepts `grounding_mode` only), partial updates, null removes a key. Backs the Moodle block form that lets teachers toggle strict/hybrid RAG per course without admin intervention.
+- **vektra-learn**: `GET /api/v1/learn/conversations/{id}/turns` JWT-scoped endpoint so the widget can restore a conversation after a page reload. Returns decrypted question/answer + created_at; admin-only metadata is not exposed. 403 on namespace mismatch, 404 on missing.
+- **vektra-core**: `document_name` field on every source citation, joined from `source_documents.filename` so the widget renders `[1] lecture-07.pdf` instead of chunk UUIDs. Propagates through both `SimpleQueryPipeline` and `AdvancedQueryPipeline`, JSON and SSE paths. Soft-deleted source documents (REQ-057) keep their citation with an `(archived)` suffix so answers stay traceable.
+- **vektra-learn**: content-access audit entry (`learn_conversation_turns_read`) written on every successful turns fetch via the shared `vektra_shared.audit` interface (NFR-007).
+- **widget**: white-label `data-*` attributes — `data-title`, `data-primary-color`, `data-icon` (emoji or URL), `data-welcome-message`, `data-powered-by`. All rendered via `textContent` / safe color whitelist to avoid XSS.
+- **widget**: tab-scoped conversation persistence via `sessionStorage` keyed by `course_id` (24h cutoff); history replay on load via the new turns endpoint; explicit "New chat" button in the header.
+- **errors**: new codes `ERR-ADMIN-005/006/007` (namespace config) and `ERR-LEARN-005/006` (conversation turns).
+
+### Changed
+
+- **widget styles**: button and accent colors now use `var(--vektra-primary, …)` so `data-primary-color` takes effect without rebuilding the bundle. Hover states use `filter: brightness()` so custom colors still feel interactive.
+
 ## [0.3.0] - 2026-03-21
 
 E-learning vertical refinements, widget UX improvements, and Phase 2 stabilization.

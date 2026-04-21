@@ -531,3 +531,240 @@ async def test_ui_config_page(client, bootstrap_key):
     assert resp.status_code == 200
     assert "System configuration" in resp.text
     assert "Active providers" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Namespace config PATCH (WI-3)
+# ---------------------------------------------------------------------------
+#
+# These tests use short-lived sessions (via ``fresh_engine`` factory) for DB
+# setup and verification instead of the long-lived ``session`` fixture. The
+# test engine has ``pool_size=2, max_overflow=0``; holding the session while
+# the HTTP request path also needs a connection (plus the audit background
+# task scheduled inside the PATCH handler) can exhaust the pool and time out.
+
+
+async def _seed_namespace(fresh_engine, ns_id: str, config: dict | None = None) -> None:
+    """Insert (or replace) a namespace with the given config, releasing the
+    connection immediately after commit."""
+    import json
+
+    cfg_json = json.dumps(config or {})
+    async with fresh_engine() as s:
+        await s.execute(text("DELETE FROM namespaces WHERE id = :ns"), {"ns": ns_id})
+        await s.execute(
+            text(
+                "INSERT INTO namespaces (id, display_name, config) "
+                "VALUES (:ns, :name, CAST(:cfg AS jsonb))"
+            ),
+            {"ns": ns_id, "name": f"Test {ns_id}", "cfg": cfg_json},
+        )
+        await s.commit()
+
+
+async def _read_namespace_config(fresh_engine, ns_id: str) -> dict:
+    async with fresh_engine() as s:
+        result = await s.execute(
+            text("SELECT config FROM namespaces WHERE id = :ns"), {"ns": ns_id}
+        )
+        return result.scalar_one()
+
+
+async def test_namespace_config_patch_sets_grounding_mode(
+    client, bootstrap_key, fresh_engine
+):
+    """PATCH with grounding_mode=hybrid persists in namespaces.config JSONB."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-set-grounding"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": "hybrid"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["namespace_id"] == ns_id
+    assert body["config"] == {"grounding_mode": "hybrid"}
+
+    # Allow the audit background task to complete before reading the DB
+    await asyncio.sleep(0.2)
+    stored = await _read_namespace_config(fresh_engine, ns_id)
+    assert stored == {"grounding_mode": "hybrid"}
+
+
+async def test_namespace_config_patch_rejects_unknown_key(
+    client, bootstrap_key, fresh_engine
+):
+    """PATCH with unknown key returns 400 + ERR-ADMIN-006, includes key in message."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-unknown-key"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"not_a_real_key": "whatever"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 400, resp.text
+    err = resp.json()["detail"]["error"]
+    assert err["code"] == "ERR-ADMIN-006"
+    assert "not_a_real_key" in err["message"]
+
+
+async def test_namespace_config_patch_rejects_invalid_value(
+    client, bootstrap_key, fresh_engine
+):
+    """PATCH with grounding_mode='banana' returns 400 + ERR-ADMIN-007."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-invalid-value"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": "banana"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 400, resp.text
+    err = resp.json()["detail"]["error"]
+    assert err["code"] == "ERR-ADMIN-007"
+    assert "banana" in err["message"]
+
+
+async def test_namespace_config_patch_rejects_non_string_value(
+    client, bootstrap_key, fresh_engine
+):
+    """Guard against clients (e.g. Moodle plugin) sending the wrong JSON type.
+
+    42 is not in the allowed enum; the whitelist check rejects it regardless
+    of runtime type. Without this test the behaviour would silently work
+    today but could regress to a permissive type-coercing check.
+    """
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-nonstring-value"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": 42},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 400, resp.text
+    err = resp.json()["detail"]["error"]
+    assert err["code"] == "ERR-ADMIN-007"
+
+
+async def test_namespace_config_patch_null_removes_key(
+    client, bootstrap_key, fresh_engine
+):
+    """PATCH with null value removes the key from config (falls back to env default)."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-null-removes"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    r1 = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": "strict"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert r1.status_code == 200
+    assert r1.json()["config"] == {"grounding_mode": "strict"}
+
+    r2 = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": None},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["config"] == {}
+
+    await asyncio.sleep(0.2)
+    stored = await _read_namespace_config(fresh_engine, ns_id)
+    assert stored == {}
+
+
+async def test_namespace_config_patch_is_partial(client, bootstrap_key, fresh_engine):
+    """PATCH merges: existing keys not in the body are preserved.
+
+    Seed with a "legacy" key that the whitelist does not recognise; it must
+    survive the PATCH even though it is not writable via the API.
+    """
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-partial-merge"
+    await _seed_namespace(
+        fresh_engine,
+        ns_id,
+        config={"grounding_mode": "strict", "legacy_field": "keep"},
+    )
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": "hybrid"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["config"]["grounding_mode"] == "hybrid"
+    assert body["config"]["legacy_field"] == "keep"
+
+
+async def test_namespace_config_patch_not_found(client, bootstrap_key):
+    """PATCH on non-existent namespace returns 404 + ERR-ADMIN-005."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    resp = await client.patch(
+        "/api/v1/admin/namespaces/does-not-exist/config",
+        json={"grounding_mode": "strict"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"]["error"]["code"] == "ERR-ADMIN-005"
+
+
+async def test_namespace_config_patch_requires_admin_scope(
+    client, bootstrap_key, fresh_engine
+):
+    """PATCH with a non-admin (query-only) key returns 403."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-scope-check"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"label": "query-only", "scopes": ["query"]},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 201
+    query_key = resp.json()["key"]
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": "hybrid"},
+        headers={"Authorization": f"Bearer {query_key}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+async def test_namespace_config_patch_resolves_via_shared_helper(
+    client, bootstrap_key, fresh_engine
+):
+    """End-to-end: PATCH → resolve_grounding_mode returns the persisted value.
+
+    Proves WI-3 write path is read by FEAT-020's resolver with no cache in between.
+    """
+    from vektra_shared.namespace import resolve_grounding_mode
+
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-end-to-end"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": "hybrid"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 200
+    await asyncio.sleep(0.2)  # let audit background task complete before re-using pool
+
+    mode = await resolve_grounding_mode(ns_id, fresh_engine, default_mode="strict")
+    assert mode == "hybrid"

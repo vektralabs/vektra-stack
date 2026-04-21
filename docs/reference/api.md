@@ -140,6 +140,45 @@ curl -s -X DELETE \
 
 Returns HTTP 204 (no body).
 
+## Namespaces
+
+### PATCH /api/v1/admin/namespaces/{namespace_id}/config
+
+Partially update a namespace's behavioral config (JSONB). Requires `admin` scope.
+
+**Scopes**: `admin`
+
+Used by upstream plugins (e.g. the Moodle block) to toggle per-course settings such as the grounding mode without touching environment variables. The read path is `resolve_grounding_mode()` in `vektra-shared/src/vektra_shared/namespace.py`.
+
+```bash
+curl -s -X PATCH \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"grounding_mode":"hybrid"}' \
+  http://localhost:8000/api/v1/admin/namespaces/default/config | python3 -m json.tool
+```
+
+Request body (flat dict, one entry per config key):
+
+| Field | Type | Allowed values | Description |
+|-------|------|----------------|-------------|
+| `grounding_mode` | string or null | `"strict"`, `"hybrid"`, `null` | RAG grounding policy. `null` removes the key and falls back to `VEKTRA_PROMPT_GROUNDING_MODE`. |
+
+Behavior:
+- **Partial update**: keys not present in the body are preserved.
+- **Unknown keys rejected** with `400 ERR-ADMIN-006` (not silently ignored — surfaces typos early).
+- **Invalid values rejected** with `400 ERR-ADMIN-007`.
+- **Missing namespace** returns `404 ERR-ADMIN-005`.
+
+Response (HTTP 200):
+
+```json
+{
+    "namespace_id": "default",
+    "config": {"grounding_mode": "hybrid"}
+}
+```
+
 ## Ingest
 
 ### POST /api/v1/ingest
@@ -254,7 +293,8 @@ Response:
             "score": 0.912,
             "snippet": "...",
             "citation_id": "d4e5f6-...",
-            "document_version": 1
+            "document_version": 1,
+            "document_name": "lecture-07.pdf"
         }
     ],
     "conversation_id": null,

@@ -76,6 +76,7 @@ class SourceRefBody(BaseModel):
     snippet: str
     citation_id: UUID
     document_version: int = 1
+    document_name: str | None = None  # FEAT-012
 
 
 class QueryResponseBody(BaseModel):
@@ -354,6 +355,7 @@ async def query(
                 snippet=s.snippet,
                 citation_id=s.citation_id,
                 document_version=s.document_version,
+                document_name=s.document_name,
             )
             for s in response.sources
         ],

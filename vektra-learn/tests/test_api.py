@@ -440,3 +440,256 @@ class TestErrorStatusCodes:
             remediation="Check existing",
         )
         assert http_status_for(err_dup) == 409
+
+
+# ---------------------------------------------------------------------------
+# Conversation turns endpoint (WI-1 / FEAT-004)
+# ---------------------------------------------------------------------------
+
+
+class TestConversationTurnsEndpoint:
+    """JWT-scoped GET /api/v1/learn/conversations/{id}/turns."""
+
+    @staticmethod
+    def _make_request(conv_store):
+        app = MagicMock()
+        registry = MagicMock()
+        registry.get = MagicMock(return_value=conv_store)
+        app.state.registry = registry
+        request = MagicMock()
+        request.app = app
+        return request
+
+    async def test_returns_decrypted_turns_on_namespace_match(self):
+        from vektra_learn.api import get_conversation_turns
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": cid,
+                "namespace_id": "CS101",
+                "deleted_at": None,
+                "turn_count": 2,
+            }
+        )
+        conv_store.get_turns_detail = AsyncMock(
+            return_value=[
+                {
+                    "turn_number": 1,
+                    "question": "What is RAG?",
+                    "answer": "Retrieval-augmented generation.",
+                    "response_id": uuid4(),
+                    "model": "gpt-4o",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 20,
+                    "created_at": datetime.now(UTC),
+                },
+                {
+                    "turn_number": 2,
+                    "question": "Follow up?",
+                    "answer": "Sure.",
+                    "response_id": None,
+                    "model": None,
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
+                    "created_at": datetime.now(UTC),
+                },
+            ]
+        )
+
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        resp = await get_conversation_turns(cid, request, bg, token_payload)
+        assert resp.conversation_id == cid
+        assert resp.namespace == "CS101"
+        assert len(resp.turns) == 2
+        assert resp.turns[0].question == "What is RAG?"
+        assert resp.turns[0].answer == "Retrieval-augmented generation."
+        assert resp.turns[0].sources == []
+        # Admin-only metadata must not be exposed
+        assert not hasattr(resp.turns[0], "model")
+        assert not hasattr(resp.turns[0], "response_id")
+        # Audit log scheduled for content access (NFR-007)
+        bg.add_task.assert_called_once()
+        call_kwargs = bg.add_task.call_args.kwargs
+        assert call_kwargs["action"] == "learn_conversation_turns_read"
+        assert call_kwargs["log_metadata"]["conversation_id"] == str(cid)
+        assert call_kwargs["log_metadata"]["namespace"] == "CS101"
+        assert call_kwargs["log_metadata"]["turn_count"] == 2
+        assert call_kwargs["log_metadata"]["student_id"] == "s1"
+
+    async def test_403_on_namespace_mismatch(self):
+        """Conversation exists but belongs to a different course."""
+        from vektra_learn.api import get_conversation_turns
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": cid,
+                "namespace_id": "OTHER-COURSE",
+                "deleted_at": None,
+                "turn_count": 1,
+            }
+        )
+        conv_store.get_turns_detail = AsyncMock()
+
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_conversation_turns(cid, request, bg, token_payload)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-006"
+        # Must not leak the actual content of the other-namespace conversation
+        conv_store.get_turns_detail.assert_not_awaited()
+        # No audit log on denied access (we only log successful reads)
+        bg.add_task.assert_not_called()
+
+    async def test_404_on_missing_conversation(self):
+        from vektra_learn.api import get_conversation_turns
+
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(return_value=None)
+        conv_store.get_turns_detail = AsyncMock()
+
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_conversation_turns(uuid4(), request, bg, token_payload)
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-005"
+        conv_store.get_turns_detail.assert_not_awaited()
+
+    async def test_404_on_soft_deleted_conversation(self):
+        """Soft-deleted conversations behave as if they don't exist."""
+        from vektra_learn.api import get_conversation_turns
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": cid,
+                "namespace_id": "CS101",
+                "deleted_at": datetime.now(UTC),  # soft-deleted
+                "turn_count": 0,
+            }
+        )
+        conv_store.get_turns_detail = AsyncMock()
+
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_conversation_turns(cid, request, bg, token_payload)
+        assert exc_info.value.status_code == 404
+
+    async def test_rejects_token_without_course_id(self):
+        from vektra_learn.api import get_conversation_turns
+
+        conv_store = MagicMock()
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+        token_payload = {"sub": "s1"}  # no course_id
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_conversation_turns(uuid4(), request, bg, token_payload)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-003"
+
+    async def test_respects_namespace_claim_over_course_id(self):
+        """Namespace claim in JWT takes precedence over course_id."""
+        from vektra_learn.api import get_conversation_turns
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": cid,
+                "namespace_id": "shared-materials",
+                "deleted_at": None,
+                "turn_count": 0,
+            }
+        )
+        conv_store.get_turns_detail = AsyncMock(return_value=[])
+
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+        token_payload = {
+            "sub": "s1",
+            "course_id": "CS101",
+            "namespace": "shared-materials",
+        }
+
+        resp = await get_conversation_turns(cid, request, bg, token_payload)
+        assert resp.namespace == "shared-materials"
+
+    async def test_500_err_learn_001_when_store_lacks_decryption(self):
+        """In-memory store (no get_metadata / get_turns_detail) returns 500.
+
+        ERR-LEARN-001 is CONFIGURATION → 500.
+        """
+        from vektra_learn.api import get_conversation_turns
+
+        # bare object with none of the required methods
+        class _BareStore:
+            pass
+
+        conv_store = _BareStore()
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_conversation_turns(uuid4(), request, bg, token_payload)
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail["error"]["code"] == "ERR-LEARN-001"
+
+    async def test_audit_fires_even_without_request_id(self):
+        """NFR-007: audit must fire unconditionally on successful turns read.
+
+        If the RequestIdMiddleware isn't wired (tests, early boot), a missing
+        request.state.request_id must not silently skip the audit row — the
+        handler synthesizes a UUID fallback so every authenticated content
+        access leaves an audit trail.
+        """
+        from vektra_learn.api import get_conversation_turns
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": cid,
+                "namespace_id": "CS101",
+                "deleted_at": None,
+                "turn_count": 0,
+            }
+        )
+        conv_store.get_turns_detail = AsyncMock(return_value=[])
+
+        # Simulate middleware not wired: request.state has no attribute
+        request = self._make_request(conv_store)
+
+        class _EmptyState:
+            pass
+
+        request.state = _EmptyState()
+
+        bg = MagicMock()
+        token_payload = {"sub": "s1", "course_id": "CS101"}
+
+        await get_conversation_turns(cid, request, bg, token_payload)
+        bg.add_task.assert_called_once()
+        call_kwargs = bg.add_task.call_args.kwargs
+        assert call_kwargs["action"] == "learn_conversation_turns_read"
+        # Synthesized request_id must still be a UUID (not None)
+        from uuid import UUID as _UUID
+
+        assert isinstance(call_kwargs["request_id"], _UUID)

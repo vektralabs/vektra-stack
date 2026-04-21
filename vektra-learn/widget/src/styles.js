@@ -52,7 +52,7 @@ export function buildStyles(theme) {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: ${t.primary};
+  background: var(--vektra-primary, ${t.primary});
   color: #fff;
   border: none;
   cursor: pointer;
@@ -66,7 +66,8 @@ export function buildStyles(theme) {
   line-height: 1;
 }
 .vektra-chat-btn:hover {
-  background: ${t.primaryHover};
+  background: var(--vektra-primary, ${t.primaryHover});
+  filter: brightness(0.92);
   transform: scale(1.05);
 }
 
@@ -107,6 +108,12 @@ export function buildStyles(theme) {
   font-weight: 600;
   font-size: 15px;
 }
+.vektra-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.vektra-chat-new,
 .vektra-chat-close {
   background: none;
   border: none;
@@ -115,6 +122,13 @@ export function buildStyles(theme) {
   color: ${t.textSecondary};
   padding: 4px;
   line-height: 1;
+}
+.vektra-chat-new {
+  font-size: 16px;
+}
+.vektra-chat-new:hover,
+.vektra-chat-close:hover {
+  color: ${t.text};
 }
 
 .vektra-chat-messages {
@@ -135,7 +149,7 @@ export function buildStyles(theme) {
 }
 .vektra-chat-msg.user {
   align-self: flex-end;
-  background: ${t.userBubble};
+  background: var(--vektra-primary, ${t.userBubble});
   color: ${t.userText};
   border-bottom-right-radius: 4px;
 }
@@ -188,7 +202,7 @@ export function buildStyles(theme) {
   font-size: 12px;
 }
 .vektra-chat-msg.assistant a {
-  color: ${t.primary};
+  color: var(--vektra-primary, ${t.primary});
   text-decoration: underline;
 }
 .vektra-chat-msg.assistant strong {
@@ -206,7 +220,7 @@ export function buildStyles(theme) {
   background: none;
   border: none;
   cursor: pointer;
-  color: ${t.primary};
+  color: var(--vektra-primary, ${t.primary});
   font-size: 12px;
   padding: 0;
   font-family: inherit;
@@ -215,7 +229,7 @@ export function buildStyles(theme) {
   text-decoration: underline;
 }
 .vektra-chat-sources-toggle:focus-visible {
-  outline: 2px solid ${t.primary};
+  outline: 2px solid var(--vektra-primary, ${t.primary});
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -235,7 +249,7 @@ export function buildStyles(theme) {
 }
 .vektra-chat-source-num {
   font-weight: 600;
-  color: ${t.primary};
+  color: var(--vektra-primary, ${t.primary});
   margin-right: 4px;
 }
 .vektra-chat-source-text {
@@ -280,14 +294,14 @@ export function buildStyles(theme) {
   font-family: inherit;
 }
 .vektra-chat-input:focus-visible {
-  outline: 2px solid ${t.primary};
+  outline: 2px solid var(--vektra-primary, ${t.primary});
   outline-offset: -1px;
 }
 .vektra-chat-input::placeholder {
   color: ${t.textSecondary};
 }
 .vektra-chat-send {
-  background: ${t.primary};
+  background: var(--vektra-primary, ${t.primary});
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -298,11 +312,32 @@ export function buildStyles(theme) {
   transition: background 0.2s;
 }
 .vektra-chat-send:hover {
-  background: ${t.primaryHover};
+  background: var(--vektra-primary, ${t.primaryHover});
+  filter: brightness(0.92);
 }
 .vektra-chat-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.vektra-chat-btn-icon {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+
+.vektra-chat-powered-by {
+  padding: 6px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: ${t.textSecondary};
+  background: ${t.bgSecondary};
+  border-top: 1px solid ${t.border};
+  flex-shrink: 0;
+}
+.vektra-chat-powered-by a {
+  color: ${t.textSecondary};
+  text-decoration: underline;
 }
 
 @media (max-width: 480px) {

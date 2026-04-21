@@ -664,6 +664,62 @@ As a result, `conversation.j2` and `TemplateRenderer.render_conversation()` are 
 
 ---
 
+### DEBT-017: Consolidate namespace-resolution logic in vektra-learn
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/src/vektra_learn/api.py:498-512`
+
+**Context**: `_resolve_namespace_from_token()` (added for WI-1 in v0.5.0) re-implements the same fallback chain that `course_query` does inline around lines 663-673 and 694-695: read `course_id` from the JWT, fall back to `namespace` claim, default to `course_id`. The learn-query path additionally performs an enrollment lookup when `VEKTRA_LEARN_REQUIRE_ENROLLMENT=true` which is interleaved with the plain resolution, so a naive extraction would miss that branch.
+
+**Proposed approach**: extend `_resolve_namespace_from_token` to return a `(course_id, namespace, namespace_source)` tuple, then refactor `course_query` to call it for the non-enrollment branch while keeping the enrollment path inline. Both endpoints stay in lockstep if the JWT schema evolves (e.g., a new claim is added).
+
+**Acceptance criteria**:
+- [ ] Single helper used by both `get_conversation_turns` and `course_query` (non-enrollment branch)
+- [ ] Enrollment-required branch unchanged
+- [ ] Tests cover both call sites against a shared fixture set
+- [ ] No behaviour change to error codes (ERR-LEARN-003 on missing course_id)
+
+---
+
+### DEBT-018: Scope widget `--vektra-primary` override and dedupe style node
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/widget/src/chat-ui.js:138-144`
+
+**Context**: `ChatUI._injectStyles()` appends a new `<style>` element setting `:root { --vektra-primary: <color> }` on every instantiation. Two consequences:
+
+1. Repeated construction (hot reload, multi-instance embedding, host-page re-init) accumulates style nodes.
+2. The override lives on `:root`, so if the host page already defines `--vektra-primary` for an unrelated purpose, the widget now wins document-wide.
+
+In today's deploy there is one widget per page and init fires once, so the impact is theoretical. Filing as debt so it's tracked when we eventually support embedding multiple instances or host pages that reuse the custom property.
+
+**Proposed approach**:
+1. Scope the override to the widget roots: `.vektra-chat-btn, .vektra-chat-panel { --vektra-primary: <color> }`.
+2. Cache/replace a single `<style id="vektra-primary-override">` node rather than appending on every construction.
+
+**Acceptance criteria**:
+- [ ] Custom property no longer leaks to `:root` when a widget is initialised
+- [ ] Re-initialising a widget replaces the style node instead of appending a new one
+- [ ] Default-color deploys render identically (no visual regression)
+
+---
+
+### DEBT-019: Unit assertion for `document_name` on streaming sources
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-core/tests/test_pipeline.py:423-497`
+
+**Context**: the streaming path (`execute_stream` in both `SimpleQueryPipeline` and `AdvancedQueryPipeline`) was the regression vector fixed by commit `45437c8` (missing `document_name` in `sources_data` dict of `AdvancedQueryPipeline.execute_stream`). Current unit coverage exercises `execute()` via `test_execute_populates_document_name` and is cross-checked end-to-end by the Kalypso smoke test. Adding a dedicated unit assertion on the streamed `sources` payload would catch the same regression at fastest feedback.
+
+**Proposed approach**: mirror `test_execute_populates_document_name` using the existing `_collect_stream()` helper: monkeypatch `pipeline_mod._fetch_document_names` to the same hit/miss fakes and assert each streamed `QueryChunk(type="sources", ...).data[*]["document_name"]` matches expectations. Add the same test for `AdvancedQueryPipeline`.
+
+**Acceptance criteria**:
+- [ ] Unit test covers `SimpleQueryPipeline.execute_stream` sources payload
+- [ ] Unit test covers `AdvancedQueryPipeline.execute_stream` sources payload
+- [ ] Both tests use the same mapping / empty-dict monkeypatches as the non-stream test for parity
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23
@@ -1147,6 +1203,8 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 **Status**: draft | **Priority**: medium | **Created**: 2026-03-17
 **Origin**: Moodle integration testing — greetings like "ciao", "buongiorno" trigger `no_relevant_context` and produce empty/unhelpful responses
 
+**Note (2026-04-18)**: FEAT-020 (`grounding_mode=hybrid`) partially overlaps: in hybrid mode the pipeline no longer short-circuits on `no_relevant_context` and calls the LLM. However, the system prompt is generic (training-data fallback), not tailored to greetings/meta-questions/off-topic with an explicit "redirect to course" behavior. FEAT-005 remains open for the dedicated no-context system prompt variant described in the acceptance criteria.
+
 **Context**: Both `SimpleQueryPipeline` and `AdvancedQueryPipeline` short-circuit when no chunks pass the relevance threshold (`min_relevance_score`): they return `answer: null` + `no_relevant_context: true` without ever calling the LLM. This is correct for retrieval quality (ARCH-056, REQ-066) — the system should not hallucinate answers from non-relevant chunks.
 
 However, for the learn chatbot widget (and any conversational interface), this creates a poor UX for:
@@ -1179,7 +1237,7 @@ The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) c
 
 ### FEAT-007: Markdown rendering in widget chat messages
 
-**Status**: in_progress | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing (2026-03-20)
 
 **Context**: The learn chatbot widget (`vektra-chat.js`) renders all messages as plain text via `textContent`. LLM responses typically contain Markdown formatting (bold, italic, lists, code blocks, headings) which is displayed as raw syntax. This makes responses harder to read, especially for structured answers with bullet points or code examples.
@@ -1280,7 +1338,7 @@ If no custom template exists, the global system.j2 still has access to the same 
 
 ### FEAT-006: Widget error feedback when Vektra API is unreachable
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing on remote machine (2026-03-20)
 
 **Context**: When the chatbot widget JS (`vektra-chat.js`) cannot reach the Vektra API (missing SSH tunnel, CORS misconfiguration, Vektra container down), the floating chat button silently fails to appear. No error is shown to the user or the admin. The Moodle block still displays "AI Assistant is active" because the server-side token generation succeeded (PHP runs inside Docker, reaches Vektra on the internal network), but the browser-side widget cannot load or connect.
@@ -1303,7 +1361,7 @@ This makes troubleshooting difficult: the admin sees "active" but students see n
 
 ### FEAT-012: Include document name in query source citations
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: Moodle integration testing - sources show chunk_id (UUID) instead of document name
 
 **Context**: The learn query response includes source citations with `doc_id`, `chunk_id`, `score`, and `snippet`. The widget renders these as `[1] chunk_id (score)` with a snippet preview. The `chunk_id` is a UUID which is meaningless to the user. The original document filename (e.g., "Escapologia Fiscale - 59 segreti.pdf") is not included in the source data.
@@ -1347,8 +1405,10 @@ Approach 1 (keyword proximity) is the best cost/benefit trade-off for a first im
 
 ### FEAT-016: White-label widget customization (name, colors, branding)
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: partial (data-attrs) | **Priority**: medium | **Created**: 2026-03-20 | **Updated**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: vertical deployment requirements - universities and organizations need chatbot with their own branding
+
+**v0.5.0 progress**: data-* attributes implemented (`data-title`, `data-primary-color`, `data-icon`, `data-welcome-message`, `data-powered-by`). Namespace-backed branding (category B) and JWT-claim precedence remain open — see FEAT-008.
 
 **Context**: The widget currently supports only `theme` (light/dark) and `language` (en/it) as visual customization. Everything else is hardcoded: title ("Course Assistant"), primary color (#2563eb blue), icon (speech bubble emoji), and no welcome message. ADR-0025 defines the `data-*` attribute contract as the configuration API, and the "configuration over fork" principle requires that customization happens via config, not code changes.
 
@@ -1469,7 +1529,7 @@ Phase 2 (skip_retrieval flag):
 
 ### FEAT-009: Widget token auto-refresh on expiry
 
-**Status**: draft | **Priority**: high | **Created**: 2026-03-20
+**Status**: completed | **Priority**: high | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing - "invalid or expired dashboard token" after ~1h session
 
 **Context**: The JWT dashboard token has a 1h TTL (default). The token is generated server-side by the Moodle plugin (or any LMS) at page load and embedded in the widget via `data-token` attribute. Once expired, all subsequent queries fail with "signature has expired". The user must manually reload the page to get a fresh token.
@@ -1498,7 +1558,7 @@ For Moodle specifically, the plugin would expose a lightweight AJAX endpoint (`/
 
 ### FEAT-010: Enable SSE streaming in widget
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing - responses arrive as a single block, no progressive rendering
 
 **Context**: The widget's api-client.js already has a complete SSE streaming parser (lines 65-107) with `onToken`, `onSources`, `onDone` callbacks. The chat-ui.js has `createStreamMessage()` and `appendToken()` methods that progressively append text to the DOM. However, the query is sent with `stream: false` (hardcoded, line 33), so all responses arrive as a single JSON blob.
@@ -1548,6 +1608,54 @@ This does not violate REQ-051 if data is aggregated (no individual conversations
 
 ---
 
+### FEAT-022: Suggested questions as quick-start chips in widget
+
+**Status**: draft | **Priority**: low | **Created**: 2026-04-18
+**Origin**: v0.5.0 scoping discussion - instructor wants to guide students toward typical questions without crafting a new conversation each time
+
+**Context**: students opening the chatbot often do not know how to start. A short list of instructor-curated prompts, rendered as clickable chips above the input box on first open, lowers the barrier and steers usage toward pedagogically useful questions (e.g., "Riassumi la lezione 3", "Quali sono i punti chiave del capitolo?", "Fammi un quiz su questo argomento").
+
+**Proposed approach**: purely client-side, category (A) config (visual, no backend involvement). Passed via `data-suggested-questions` attribute on the script tag as a JSON array. The Moodle block config form exposes a textarea (one question per line) that the plugin serializes into the attribute. The widget renders chips on first open; clicking one fills the input and submits as if typed.
+
+**Traceability**: ADR-0025, FEAT-016
+
+**Acceptance Criteria** (tentative):
+- [ ] `data-suggested-questions` attribute parsed as JSON array of strings
+- [ ] Chips rendered above the input on first open only (hidden after first message)
+- [ ] Click fills input and submits
+- [ ] Chips respect theme (light/dark) and primary color from FEAT-016
+- [ ] Missing/malformed attribute falls back to no chips (no error)
+- [ ] Moodle block config exposes a textarea for instructor to edit the list
+
+---
+
+### FEAT-023: Socratic interaction mode for guided learning
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-04-18
+**Origin**: v0.5.0 scoping discussion - pedagogical need to differentiate "answer giver" from "learning guide" per course
+
+**Context**: in some courses the instructor wants the chatbot to act as a Socratic tutor — asking the student guiding questions instead of delivering the answer directly. This supports active learning and prevents the chatbot from becoming a shortcut that bypasses the learning process. Other courses (reference-style, FAQ-style) want the chatbot to give direct answers. The choice is per-course and must be configurable by the instructor.
+
+Implementation approach is deliberately deferred. Questions to resolve when designing this feature:
+- Is Socratic mode a third `grounding_mode` value (alongside `strict` and `hybrid`), or an orthogonal `interaction_mode` dimension?
+- How do the two interact when combined (strict + socratic, hybrid + socratic)?
+- Does the Socratic prompt need worked examples or is a system-prompt instruction enough?
+- How does it behave across multi-turn conversations (when does it "reveal" the answer)?
+- Should the instructor configure the depth of Socratic questioning (light nudging vs full inquiry)?
+
+Storage aligns with the same model as grounding mode: persisted in `namespaces.config` JSONB (category B config, backend-enforced), configurable via the Moodle block config form → `PATCH /api/v1/namespaces/{id}/config`. The widget does not need to know — the difference is entirely in the system prompt selected server-side.
+
+**Traceability**: FEAT-020 (grounding mode), ADR-0020 (prompt template architecture)
+
+**Acceptance Criteria** (tentative, pending design):
+- [ ] Per-namespace Socratic mode flag in `namespaces.config`
+- [ ] System prompt variant that implements Socratic dialogue
+- [ ] Works alongside strict/hybrid grounding modes
+- [ ] Validated with representative course scenarios
+- [ ] Instructor can enable/disable from Moodle block config
+
+---
+
 ## In Progress
 
 ### BUG-011: ~~Ingest pipeline does not generate sparse embeddings for hybrid search~~
@@ -1590,9 +1698,11 @@ The core API (`POST /api/v1/query`) has the same design — it's documented as "
 
 ### FEAT-004: Widget conversation lifecycle improvements
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-16
+**Status**: partial (persistence + new chat) | **Priority**: medium | **Created**: 2026-03-16 | **Updated**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: Moodle integration testing (2026-03-16)
 **Depends on**: BUG-010
+
+**v0.5.0 progress**: sessionStorage persistence with 24h stale cutoff (tab-scoped, keyed by course_id), history replay via new `GET /conversations/{id}/turns`, explicit "New chat" button. Remaining open: idle timeout, cross-device continuity, token-refresh interaction policy. Sources are returned empty for v0.5.0 — extending turns response with citations requires joining query_traces and is deferred.
 
 **Context**: After BUG-010 is fixed, the widget will support multi-turn conversations within a single page load. However, the `conversation_id` lives only in JS memory (`ApiClient._conversationId`) and is lost on page refresh, navigation, or tab close. Additionally, there is no explicit way for the user to start a fresh conversation. These are UX improvements to evaluate for the learn chatbot widget.
 

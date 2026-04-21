@@ -66,7 +66,7 @@ export function buildStyles(theme) {
   line-height: 1;
 }
 .vektra-chat-btn:hover {
-  background: ${t.primaryHover};
+  background: var(--vektra-primary, ${t.primaryHover});
   filter: brightness(0.92);
   transform: scale(1.05);
 }
@@ -312,7 +312,7 @@ export function buildStyles(theme) {
   transition: background 0.2s;
 }
 .vektra-chat-send:hover {
-  background: ${t.primaryHover};
+  background: var(--vektra-primary, ${t.primaryHover});
   filter: brightness(0.92);
 }
 .vektra-chat-send:disabled {

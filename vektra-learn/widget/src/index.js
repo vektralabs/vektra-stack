@@ -16,7 +16,9 @@
  *     data-primary-color="#9333ea"
  *     data-icon="https://example.com/bot.png"
  *     data-welcome-message="Hi! Ask me anything about the course."
- *     data-powered-by="false"
+ *     data-powered-by="true"
+ *     data-powered-by-text="Supported by University of X"
+ *     data-powered-by-url="https://univ.example/help"
  *   ></script>
  *
  * White-label attributes (all optional):
@@ -24,8 +26,12 @@
  *   data-primary-color     - hex/rgb/named color used for buttons and accents
  *   data-icon              - emoji or image URL for the floating button
  *   data-welcome-message   - assistant message shown on first open
- *   data-powered-by        - "true" (default) shows Vektra attribution,
+ *   data-powered-by        - "true" (default) shows the attribution footer,
  *                            "false" hides it
+ *   data-powered-by-text   - overrides the footer text (plain text, no HTML).
+ *                            Default: "Powered by Vektra" as a link.
+ *   data-powered-by-url    - overrides the footer link target. Default:
+ *                            https://vektralabs.github.io
  */
 
 import { ApiClient } from "./api-client.js";
@@ -103,6 +109,8 @@ function _clearStored(courseId) {
   const showPoweredBy = poweredByAttr === null
     ? true
     : poweredByAttr.toLowerCase() !== "false";
+  const poweredByText = scriptTag.getAttribute("data-powered-by-text") || null;
+  const poweredByUrl = scriptTag.getAttribute("data-powered-by-url") || null;
 
   if (!apiUrl || !courseId || !token) {
     console.error(
@@ -111,7 +119,7 @@ function _clearStored(courseId) {
     return;
   }
 
-  function init() {
+  async function init() {
     const client = new ApiClient(apiUrl, token, courseId, { tokenRefreshUrl });
 
     const ui = new ChatUI({
@@ -122,6 +130,8 @@ function _clearStored(courseId) {
       customIcon,
       welcomeMessage,
       showPoweredBy,
+      poweredByText,
+      poweredByUrl,
       onSend(question) {
         const stream = ui.createStreamMessage();
 
@@ -161,9 +171,12 @@ function _clearStored(courseId) {
       },
     });
 
-    // Restore a conversation from a prior load (WI-5 / FEAT-004). Silent:
-    // any failure (404, 403, network) keeps the widget usable with a clean
-    // slate rather than surfacing an error.
+    // Restore a conversation from a prior load (WI-5 / FEAT-004). Awaited
+    // so that a message sent by a fast user can't race the fetch: if we
+    // left this fire-and-forget, a replayTurns arriving after the first
+    // new query would wipe the already-rendered user message. The fetch
+    // has an 8s timeout (api-client.js) so a stalled backend cannot block
+    // init indefinitely. Any failure keeps the stored id for next reload.
     async function restoreConversation() {
       const stored = _readStored(courseId);
       if (!stored) return;
@@ -177,10 +190,11 @@ function _clearStored(courseId) {
           _clearStored(courseId);
         }
       } catch {
-        // Network/transient error: keep stored id, try again next load
+        // Network/transient error (incl. AbortError on timeout): keep
+        // stored id, try again next load.
       }
     }
-    restoreConversation();
+    await restoreConversation();
 
     // Check API connectivity on startup and show status if unreachable
     let retryTimer = null;

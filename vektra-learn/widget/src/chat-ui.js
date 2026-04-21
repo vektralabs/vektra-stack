@@ -64,6 +64,17 @@ function _iconIsUrl(value) {
   );
 }
 
+// Only http(s) and same-origin paths are allowed as link targets. Rejects
+// javascript:, data:, and other schemes that could enable XSS when the
+// operator-controlled attribute is combined with custom text.
+function _isSafeLinkUrl(value) {
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  return (
+    v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")
+  );
+}
+
 export class ChatUI {
   /**
    * @param {object} opts
@@ -73,7 +84,9 @@ export class ChatUI {
    * @param {string|null} [opts.customPrimaryColor] - CSS color for accents
    * @param {string|null} [opts.customIcon] - emoji or image URL for the button
    * @param {string|null} [opts.welcomeMessage] - first assistant message on open
-   * @param {boolean} [opts.showPoweredBy=true] - show "Powered by Vektra" footer
+   * @param {boolean} [opts.showPoweredBy=true] - show attribution footer
+   * @param {string|null} [opts.poweredByText] - custom footer text (plain text)
+   * @param {string|null} [opts.poweredByUrl] - custom footer link target
    * @param {function} opts.onSend - callback(question: string)
    * @param {function} [opts.onNewChat] - callback invoked when "New chat" is clicked
    */
@@ -85,6 +98,8 @@ export class ChatUI {
     customIcon = null,
     welcomeMessage = null,
     showPoweredBy = true,
+    poweredByText = null,
+    poweredByUrl = null,
     onSend,
     onNewChat = null,
   }) {
@@ -100,6 +115,8 @@ export class ChatUI {
     this._icon = customIcon;
     this._welcomeMessage = welcomeMessage;
     this._showPoweredBy = showPoweredBy;
+    this._poweredByText = poweredByText;
+    this._poweredByUrl = poweredByUrl;
     this._welcomeShown = false;
     // Accept color only if it matches the conservative whitelist; anything
     // else is silently ignored (falls back to theme default) to prevent CSS
@@ -171,13 +188,32 @@ export class ChatUI {
     if (this._showPoweredBy) {
       const footer = document.createElement("div");
       footer.className = "vektra-chat-powered-by";
-      const link = document.createElement("a");
-      link.href = "https://vektralabs.github.io";
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = "Vektra";
-      footer.textContent = "Powered by ";
-      footer.appendChild(link);
+      const url = _isSafeLinkUrl(this._poweredByUrl)
+        ? this._poweredByUrl.trim()
+        : "https://vektralabs.github.io";
+
+      if (this._poweredByText) {
+        // Operator-supplied text is rendered as a single link (textContent,
+        // not innerHTML, so no HTML injection). If no custom URL was given,
+        // we still link to the Vektra default — operators who want a
+        // non-link footer can just pass a blank data-powered-by-url (caught
+        // by _isSafeLinkUrl returning false) — actually the default wins in
+        // that case too; we keep it simple and always render a link.
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = this._poweredByText;
+        footer.appendChild(link);
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Vektra";
+        footer.textContent = "Powered by ";
+        footer.appendChild(link);
+      }
       this._panel.appendChild(footer);
     }
 

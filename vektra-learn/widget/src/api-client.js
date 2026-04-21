@@ -50,11 +50,15 @@ export class ApiClient {
    * @returns {Promise<{conversation_id: string, namespace: string, turns: Array}|null>}
    */
   async getConversationTurns(conversationId, _retried = false) {
+    // Bounded timeout so a stalled backend doesn't block widget init.
+    // AbortSignal.timeout rejects the fetch with an AbortError; callers
+    // already handle thrown errors by leaving stored state untouched.
     const resp = await fetch(
       `${this._apiUrl}/api/v1/learn/conversations/${encodeURIComponent(conversationId)}/turns`,
       {
         method: "GET",
         headers: { Authorization: `Bearer ${this._token}` },
+        signal: AbortSignal.timeout(8000),
       }
     );
     if (resp.status === 401 && !_retried) {

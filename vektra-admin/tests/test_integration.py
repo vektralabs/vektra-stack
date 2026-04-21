@@ -632,6 +632,29 @@ async def test_namespace_config_patch_rejects_invalid_value(
     assert "banana" in err["message"]
 
 
+async def test_namespace_config_patch_rejects_non_string_value(
+    client, bootstrap_key, fresh_engine
+):
+    """Guard against clients (e.g. Moodle plugin) sending the wrong JSON type.
+
+    42 is not in the allowed enum; the whitelist check rejects it regardless
+    of runtime type. Without this test the behaviour would silently work
+    today but could regress to a permissive type-coercing check.
+    """
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "wi3-nonstring-value"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": 42},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 400, resp.text
+    err = resp.json()["detail"]["error"]
+    assert err["code"] == "ERR-ADMIN-007"
+
+
 async def test_namespace_config_patch_null_removes_key(
     client, bootstrap_key, fresh_engine
 ):

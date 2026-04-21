@@ -73,13 +73,18 @@ def _history_to_messages(history: list[dict[str, str | None]]) -> list[Message]:
 
 async def _fetch_document_names(
     doc_ids: list[Any],
-) -> dict[Any, str]:
+) -> dict[str, str]:
     """Resolve document IDs to their filenames for source citations (FEAT-012).
 
     Batch lookup against ``source_documents``. Soft-deleted documents
     (REQ-057) are still returned with an ``(archived)`` suffix rather than
     hidden: the citation must match what was actually retrieved from the
     vector store, otherwise students see answers with no traceable source.
+
+    Keys are always stringified: asyncpg returns ``uuid.UUID`` objects for
+    UUID columns and callers may pass either ``UUID`` or ``str`` ids, so
+    the map is normalised to ``str`` on both ends to avoid silent lookup
+    misses. Call sites use ``name_map.get(str(r.document_id))``.
 
     Returns an empty map on any failure (DB not initialized in tests,
     transient DB error, etc.) — the pipeline must continue to respond even
@@ -108,12 +113,12 @@ async def _fetch_document_names(
                 ),
                 {"ids": unique_ids},
             )
-            out: dict[Any, str] = {}
+            out: dict[str, str] = {}
             for row in result.all():
                 name = row[1]
                 if row[2] is not None:
                     name = f"{name} (archived)"
-                out[row[0]] = name
+                out[str(row[0])] = name
             return out
     except Exception as exc:
         log.debug("document_names_fetch_failed", error=str(exc))
@@ -578,7 +583,7 @@ class SimpleQueryPipeline:
                 snippet=r.text_snippet,
                 citation_id=uuid4(),
                 document_version=r.document_version,
-                document_name=name_map.get(r.document_id),
+                document_name=name_map.get(str(r.document_id)),
             )
             for r in selected_chunks
         ]
@@ -973,7 +978,7 @@ class SimpleQueryPipeline:
                 "snippet": r.text_snippet,
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
-                "document_name": name_map.get(r.document_id),
+                "document_name": name_map.get(str(r.document_id)),
             }
             for r in selected_chunks
         ]

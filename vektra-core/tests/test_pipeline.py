@@ -435,11 +435,11 @@ async def test_execute_populates_document_name(monkeypatch):
     vector_store = AsyncMock()
     vector_store.search = AsyncMock(return_value=results)
 
-    # Case 1: DB lookup returns a mapping
+    # Case 1: DB lookup returns a mapping (keys stringified per helper contract)
     async def _fake_fetch_hit(doc_ids):
         # Called with the list of document ids from selected_chunks
         assert set(doc_ids) == {doc_a, doc_b}
-        return {doc_a: "lecture-07.pdf", doc_b: "slides.pptx"}
+        return {str(doc_a): "lecture-07.pdf", str(doc_b): "slides.pptx"}
 
     monkeypatch.setattr(pipeline_mod, "_fetch_document_names", _fake_fetch_hit)
 

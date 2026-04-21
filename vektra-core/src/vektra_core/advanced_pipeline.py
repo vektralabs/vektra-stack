@@ -554,7 +554,7 @@ class AdvancedQueryPipeline:
                 snippet=r.text_snippet,
                 citation_id=uuid4(),
                 document_version=r.document_version,
-                document_name=name_map.get(r.document_id),
+                document_name=name_map.get(str(r.document_id)),
             )
             for r in selected_chunks
         ]
@@ -803,7 +803,7 @@ class AdvancedQueryPipeline:
                 "snippet": r.text_snippet,
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
-                "document_name": name_map.get(r.document_id),
+                "document_name": name_map.get(str(r.document_id)),
             }
             for r in selected_chunks
         ]

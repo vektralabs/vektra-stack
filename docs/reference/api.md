@@ -163,11 +163,12 @@ Request body (flat dict, one entry per config key):
 | Field | Type | Allowed values | Description |
 |-------|------|----------------|-------------|
 | `grounding_mode` | string or null | `"strict"`, `"hybrid"`, `null` | RAG grounding policy. `null` removes the key and falls back to `VEKTRA_PROMPT_GROUNDING_MODE`. |
+| `show_sources` | bool or null | `true`, `false`, `null` | Widget citation visibility (FEAT-014). `null` removes the key and falls back to `VEKTRA_LEARN_SHOW_SOURCES`. The API always returns the full sources list; the flag only instructs the widget whether to render them. |
 
 Behavior:
 - **Partial update**: keys not present in the body are preserved.
 - **Unknown keys rejected** with `400 ERR-ADMIN-006` (not silently ignored — surfaces typos early).
-- **Invalid values rejected** with `400 ERR-ADMIN-007`.
+- **Invalid values rejected** with `400 ERR-ADMIN-007` (includes type mismatches, e.g. a JSON string passed for a boolean key).
 - **Missing namespace** returns `404 ERR-ADMIN-005`.
 
 Response (HTTP 200):
@@ -175,7 +176,7 @@ Response (HTTP 200):
 ```json
 {
     "namespace_id": "default",
-    "config": {"grounding_mode": "hybrid"}
+    "config": {"grounding_mode": "hybrid", "show_sources": false}
 }
 ```
 

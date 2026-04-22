@@ -1446,7 +1446,7 @@ For vertical deployments (e.g., a university running Vektra for their students),
 
 ### FEAT-014: Configurable source citation visibility
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-04-22 | **PR**: pending
 **Origin**: Moodle integration testing - source citations may not be appropriate for all courses
 
 **Context**: The widget always displays source citations (document/chunk reference, relevance score, snippet) below each assistant response. Some instructors may prefer to hide them:
@@ -1467,12 +1467,12 @@ The API still returns sources in the response regardless of the flag (useful for
 
 **Traceability**: ADR-0025, ARCH-063, FEAT-008
 
-**Acceptance Criteria** (tentative):
-- [ ] Global `show_sources` setting with default `true`
-- [ ] Per-namespace override (metadata or JWT claim)
-- [ ] Widget hides sources section when flag is `false`
-- [ ] API response still includes sources regardless (no data loss)
-- [ ] Moodle plugin exposes the setting in per-course block configuration
+**Acceptance Criteria**:
+- [x] Global `show_sources` setting with default `true` (`VEKTRA_LEARN_SHOW_SOURCES`)
+- [x] Per-namespace override via `namespaces.config.show_sources` (writable through the existing `PATCH /api/v1/admin/namespaces/{id}/config` whitelist)
+- [x] Widget hides sources section when flag is `false` (resolution chain: `data-show-sources` client override > server-resolved value > default `true`)
+- [x] API response still includes sources regardless (no data loss)
+- [ ] Moodle plugin exposes the setting in per-course block configuration — **deferred to the vektra-moodle sibling plan**
 
 ---
 

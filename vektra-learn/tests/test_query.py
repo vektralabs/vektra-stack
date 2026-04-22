@@ -107,3 +107,40 @@ class TestPipelineResponseToCourseResponse:
 
         result = pipeline_response_to_course_response(resp)
         assert result.sources == []
+
+    def test_show_sources_defaults_to_true(self):
+        """FEAT-014: unset show_sources defaults to True (current behaviour)."""
+        resp = QueryResponse(
+            response_id=uuid4(), answer="x", sources=[], conversation_id=None
+        )
+        result = pipeline_response_to_course_response(resp)
+        assert result.show_sources is True
+
+    def test_show_sources_propagates_false(self):
+        """FEAT-014: explicit show_sources=False carries through to the response."""
+        resp = QueryResponse(
+            response_id=uuid4(), answer="x", sources=[], conversation_id=None
+        )
+        result = pipeline_response_to_course_response(resp, show_sources=False)
+        assert result.show_sources is False
+
+    def test_show_sources_false_does_not_strip_sources(self):
+        """FEAT-014: the API still emits the full sources list regardless of the flag."""
+        doc_id = uuid4()
+        resp = QueryResponse(
+            response_id=uuid4(),
+            answer="x",
+            sources=[
+                SourceRef(
+                    doc_id=doc_id,
+                    chunk_id="c1",
+                    score=0.9,
+                    snippet="...",
+                    citation_id=uuid4(),
+                ),
+            ],
+            conversation_id=None,
+        )
+        result = pipeline_response_to_course_response(resp, show_sources=False)
+        assert len(result.sources) == 1
+        assert result.show_sources is False

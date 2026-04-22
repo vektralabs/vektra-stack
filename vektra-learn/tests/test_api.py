@@ -693,3 +693,132 @@ class TestConversationTurnsEndpoint:
         from uuid import UUID as _UUID
 
         assert isinstance(call_kwargs["request_id"], _UUID)
+
+
+# ---------------------------------------------------------------------------
+# FEAT-014: show_sources propagation
+# ---------------------------------------------------------------------------
+
+
+class TestShowSourcesPropagation:
+    """show_sources flag resolution and propagation to non-stream + SSE responses."""
+
+    def _make_pipeline_mock(self) -> tuple[MagicMock, MagicMock]:
+        mock_response = MagicMock()
+        mock_response.response_id = uuid4()
+        mock_response.answer = "answer"
+        mock_response.sources = []
+        mock_response.conversation_id = None
+        mock_response.no_relevant_context = False
+        mock_pipeline = AsyncMock()
+        mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
+        return mock_pipeline, mock_response
+
+    def _make_app(
+        self, pipeline: MagicMock, *, show_sources_default: bool
+    ) -> MagicMock:
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = False
+        mock_app.state.learn_show_sources_default = show_sources_default
+        # No DB factory: the resolver falls back to the env-default directly.
+        mock_app.state.db_session_factory = None
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = pipeline
+        mock_app.state.registry = mock_registry
+        return mock_app
+
+    async def test_non_stream_response_carries_env_default_true(self):
+        """When namespace has no override, the env-default (true) reaches the client."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        pipeline, _ = self._make_pipeline_mock()
+        mock_app = self._make_app(pipeline, show_sources_default=True)
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+        req = CourseQueryRequest(question="Q")
+
+        result = await course_query(
+            req,
+            mock_request,
+            {"sub": "s1", "course_id": "CS101"},
+            MagicMock(),
+            AsyncMock(),
+        )
+        assert result.show_sources is True
+
+    async def test_non_stream_response_carries_env_default_false(self):
+        """VEKTRA_LEARN_SHOW_SOURCES=false is surfaced when no namespace override exists."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        pipeline, _ = self._make_pipeline_mock()
+        mock_app = self._make_app(pipeline, show_sources_default=False)
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+        req = CourseQueryRequest(question="Q")
+
+        result = await course_query(
+            req,
+            mock_request,
+            {"sub": "s1", "course_id": "CS101"},
+            MagicMock(),
+            AsyncMock(),
+        )
+        assert result.show_sources is False
+
+    async def test_sse_sources_event_carries_show_sources(self):
+        """The SSE ``sources`` event payload includes the flag for the widget."""
+        import json as _json
+
+        from vektra_learn.api import _learn_sse_generator
+
+        chunk = MagicMock()
+        chunk.type = "sources"
+        chunk.data = [{"doc_id": "d1", "chunk_id": "c1", "score": 0.9, "snippet": "s"}]
+
+        async def _stream():
+            yield chunk
+
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(return_value=False)
+
+        events = []
+        async for ev in _learn_sse_generator(
+            _stream(), request, "conv-1", show_sources=False
+        ):
+            events.append(ev)
+
+        assert any("sources" in ev for ev in events)
+        sources_event = next(ev for ev in events if '"type": "sources"' in ev)
+        # Strip SSE framing ("data: ...\n\n") before parsing.
+        payload = _json.loads(sources_event.removeprefix("data: ").strip())
+        assert payload["type"] == "sources"
+        assert payload["show_sources"] is False
+        assert payload["data"] == chunk.data
+
+    async def test_sse_non_sources_events_do_not_include_flag(self):
+        """Only the ``sources`` event carries the flag; tokens and errors don't."""
+        import json as _json
+
+        from vektra_learn.api import _learn_sse_generator
+
+        token_chunk = MagicMock()
+        token_chunk.type = "token"
+        token_chunk.data = "hello"
+
+        async def _stream():
+            yield token_chunk
+
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(return_value=False)
+
+        events = []
+        async for ev in _learn_sse_generator(
+            _stream(), request, "conv-1", show_sources=False
+        ):
+            events.append(ev)
+
+        token_event = next(ev for ev in events if '"type": "token"' in ev)
+        payload = _json.loads(token_event.removeprefix("data: ").strip())
+        assert "show_sources" not in payload

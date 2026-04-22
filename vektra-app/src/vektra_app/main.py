@@ -527,6 +527,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Expose grounding mode default for API layer resolution (FEAT-020)
     app.state.grounding_mode_default = settings.prompt_grounding_mode
 
+    # Expose show_sources default for learn API resolution (FEAT-014)
+    app.state.learn_show_sources_default = settings.learn_show_sources
+
     if registry.has("learn", "default"):
         app.state.learn_service = registry.get("learn", "default")
         app.state.learn_require_enrollment = settings.learn_require_enrollment

@@ -50,9 +50,17 @@ from vektra_shared.errors import (
 # Tight whitelist: unknown keys are rejected (not silently ignored) so that
 # typos from upstream clients (e.g. Moodle plugin) surface immediately. Each
 # key is a public contract — extend cautiously.
-ALLOWED_CONFIG_KEYS: set[str] = {"grounding_mode"}
+#
+# Validation model:
+#   - ALLOWED_CONFIG_VALUES[key]: set of allowed values (enum-style key)
+#   - ALLOWED_CONFIG_TYPES[key]: required runtime type (type-validated key)
+# A key must appear in exactly one of the two maps.
+ALLOWED_CONFIG_KEYS: set[str] = {"grounding_mode", "show_sources"}
 ALLOWED_CONFIG_VALUES: dict[str, set[str]] = {
     "grounding_mode": {"strict", "hybrid"},
+}
+ALLOWED_CONFIG_TYPES: dict[str, type] = {
+    "show_sources": bool,
 }
 
 log = structlog.get_logger(__name__)
@@ -572,11 +580,12 @@ async def patch_namespace_config(
         )
         raise HTTPException(status_code=400, detail=err.to_envelope())
 
-    # --- Validate each value: must be in per-key enum or null (ERR-ADMIN-007) ---
+    # --- Validate each value: enum or runtime type per key, or null (ERR-ADMIN-007) ---
     for key, value in body.items():
         if value is None:
             continue  # null = remove the key
         allowed_values = ALLOWED_CONFIG_VALUES.get(key)
+        allowed_type = ALLOWED_CONFIG_TYPES.get(key)
         if allowed_values is not None and value not in allowed_values:
             err = ErrorResponse(
                 category=ErrorCategory.PERMANENT,
@@ -584,6 +593,18 @@ async def patch_namespace_config(
                 message=f"Invalid value for '{key}': {value!r}.",
                 remediation=(
                     f"Use one of: {sorted(allowed_values)}, or null to unset."
+                ),
+            )
+            raise HTTPException(status_code=400, detail=err.to_envelope())
+        if allowed_type is not None and not isinstance(value, allowed_type):
+            # isinstance(True, bool) is True and isinstance(1, bool) is False,
+            # so a JSON integer cannot impersonate a bool here.
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code="ERR-ADMIN-007",
+                message=f"Invalid value for '{key}': {value!r}.",
+                remediation=(
+                    f"Value must be of type {allowed_type.__name__}, or null to unset."
                 ),
             )
             raise HTTPException(status_code=400, detail=err.to_envelope())

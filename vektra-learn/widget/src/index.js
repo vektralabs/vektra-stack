@@ -19,6 +19,7 @@
  *     data-powered-by="true"
  *     data-powered-by-text="Supported by University of X"
  *     data-powered-by-url="https://univ.example/help"
+ *     data-show-sources="true"
  *   ></script>
  *
  * White-label attributes (all optional):
@@ -32,6 +33,10 @@
  *                            Default: "Powered by Vektra" as a link.
  *   data-powered-by-url    - overrides the footer link target. Default:
  *                            https://vektralabs.github.io
+ *   data-show-sources      - "true"/"false" client-side override for the
+ *                            source citations section. Absent = defer to the
+ *                            server-resolved value (namespace config > env
+ *                            default). (FEAT-014)
  */
 
 import { ApiClient } from "./api-client.js";
@@ -112,6 +117,15 @@ function _clearStored(courseId) {
   const poweredByText = scriptTag.getAttribute("data-powered-by-text") || null;
   const poweredByUrl = scriptTag.getAttribute("data-powered-by-url") || null;
 
+  // FEAT-014: client-side override for source citation visibility. When the
+  // attribute is absent, we defer to the server-resolved value that arrives
+  // with each query response; when present, "false" hides citations and any
+  // other string re-enables them (including an explicit "true" that forces
+  // visibility even when the namespace config disables them).
+  const showSourcesAttr = scriptTag.getAttribute("data-show-sources");
+  const clientShowSourcesOverride =
+    showSourcesAttr === null ? null : showSourcesAttr.toLowerCase() !== "false";
+
   if (!apiUrl || !courseId || !token) {
     console.error(
       "[vektra-chat] Missing required attributes: data-api-url, data-course-id, data-token"
@@ -139,8 +153,18 @@ function _clearStored(courseId) {
           onToken(tokenText) {
             ui.appendToken(stream, tokenText);
           },
-          onSources(sources) {
-            ui.addSources(stream, sources);
+          onSources(sources, serverShowSources) {
+            // Resolution: client data-show-sources override > server hint >
+            // default true (legacy behaviour when the server omits the field).
+            const effective =
+              clientShowSourcesOverride !== null
+                ? clientShowSourcesOverride
+                : typeof serverShowSources === "boolean"
+                  ? serverShowSources
+                  : true;
+            if (effective) {
+              ui.addSources(stream, sources);
+            }
           },
           onNoRelevantContext() {
             ui.appendToken(stream, ui.noRelevantContextMessage());

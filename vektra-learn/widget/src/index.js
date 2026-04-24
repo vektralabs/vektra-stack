@@ -123,8 +123,12 @@ function _clearStored(courseId) {
   // other string re-enables them (including an explicit "true" that forces
   // visibility even when the namespace config disables them).
   const showSourcesAttr = scriptTag.getAttribute("data-show-sources");
+  // Trim before lowercasing so " false " (or surrounding whitespace from
+  // server-side templating) is honoured, not silently treated as truthy.
   const clientShowSourcesOverride =
-    showSourcesAttr === null ? null : showSourcesAttr.toLowerCase() !== "false";
+    showSourcesAttr === null
+      ? null
+      : showSourcesAttr.trim().toLowerCase() !== "false";
 
   if (!apiUrl || !courseId || !token) {
     console.error(

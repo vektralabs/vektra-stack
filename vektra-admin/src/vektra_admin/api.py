@@ -51,17 +51,26 @@ from vektra_shared.errors import (
 # typos from upstream clients (e.g. Moodle plugin) surface immediately. Each
 # key is a public contract — extend cautiously.
 #
-# Validation model:
+# Validation model: every allowed key MUST be declared in exactly one of the
+# two maps below.
 #   - ALLOWED_CONFIG_VALUES[key]: set of allowed values (enum-style key)
 #   - ALLOWED_CONFIG_TYPES[key]: required runtime type (type-validated key)
-# A key must appear in exactly one of the two maps.
-ALLOWED_CONFIG_KEYS: set[str] = {"grounding_mode", "show_sources"}
+# ALLOWED_CONFIG_KEYS is derived (not hand-maintained) so a key cannot reach
+# the whitelist without a corresponding validation rule. The disjoint check
+# below fails at import if the same key is wired into both maps.
 ALLOWED_CONFIG_VALUES: dict[str, set[str]] = {
     "grounding_mode": {"strict", "hybrid"},
 }
 ALLOWED_CONFIG_TYPES: dict[str, type] = {
     "show_sources": bool,
 }
+assert ALLOWED_CONFIG_VALUES.keys().isdisjoint(ALLOWED_CONFIG_TYPES.keys()), (
+    "Each config key must appear in exactly one of "
+    "ALLOWED_CONFIG_VALUES / ALLOWED_CONFIG_TYPES, never both."
+)
+ALLOWED_CONFIG_KEYS: set[str] = (
+    ALLOWED_CONFIG_VALUES.keys() | ALLOWED_CONFIG_TYPES.keys()
+)
 
 log = structlog.get_logger(__name__)
 

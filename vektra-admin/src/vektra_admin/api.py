@@ -551,6 +551,101 @@ class NamespaceConfigResponse(BaseModel):
     config: dict[str, Any]
 
 
+class NamespaceConfigDetailResponse(BaseModel):
+    """Full namespace config plus the effective values after env-default fallback.
+
+    *config* mirrors what is physically stored in ``namespaces.config``.
+    *resolved* is what queries actually see at runtime, after the resolvers
+    in :mod:`vektra_shared.namespace` apply the env-var fallback chain
+    (namespace JSONB > env var > hardcoded default). Consumers like the
+    Moodle block edit form use *resolved* to render the "Use default" /
+    "Override" toggle without having to re-implement the chain client-side.
+    """
+
+    namespace_id: str
+    config: dict[str, Any]
+    resolved: dict[str, Any]
+
+
+def _resolved_from_stored(
+    stored: dict[str, Any],
+    *,
+    grounding_default: str,
+    show_sources_default: bool,
+) -> dict[str, Any]:
+    """Apply the namespace > env > hardcoded-default chain to a loaded JSONB.
+
+    This duplicates the trivial validation that
+    :func:`vektra_shared.namespace.resolve_grounding_mode` /
+    :func:`resolve_show_sources` perform, but operates on an already-loaded
+    config dict so the GET endpoint can avoid opening extra DB sessions
+    (the runtime resolvers exist for callers that hold only a namespace id).
+    """
+    raw_grounding = stored.get("grounding_mode")
+    grounding = (
+        raw_grounding if raw_grounding in {"strict", "hybrid"} else grounding_default
+    )
+    raw_show_sources = stored.get("show_sources")
+    show_sources = (
+        raw_show_sources if isinstance(raw_show_sources, bool) else show_sources_default
+    )
+    return {
+        "grounding_mode": grounding,
+        "show_sources": show_sources,
+    }
+
+
+@router.get(
+    "/api/v1/admin/namespaces/{namespace_id}/config",
+    response_model=NamespaceConfigDetailResponse,
+)
+async def get_namespace_config(
+    namespace_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    key_info: ApiKeyInfo = Depends(require_scope("admin")),
+) -> NamespaceConfigDetailResponse:
+    """Return the stored namespace config and the effective resolved values.
+
+    Behavior:
+      - 404 with ``ERR-ADMIN-005`` if the namespace does not exist.
+      - ``config`` is the raw JSONB (``{}`` when no key has ever been set).
+      - ``resolved`` is the value that queries observe, computed via the
+        same resolvers used by the runtime path. Always includes every
+        key in ``ALLOWED_CONFIG_KEYS``.
+    """
+    from vektra_admin.models import NamespaceOrm  # late import
+
+    result = await session.execute(
+        select(NamespaceOrm).where(NamespaceOrm.id == namespace_id)
+    )
+    ns = result.scalar_one_or_none()
+    if ns is None:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-005",
+            message=f"Namespace '{namespace_id}' not found.",
+            remediation="Verify the namespace id or create it via the admin UI.",
+        )
+        raise HTTPException(status_code=404, detail=err.to_envelope())
+
+    stored = dict(ns.ns_config or {})
+    resolved = _resolved_from_stored(
+        stored,
+        grounding_default=getattr(
+            request.app.state, "grounding_mode_default", "strict"
+        ),
+        show_sources_default=getattr(
+            request.app.state, "learn_show_sources_default", True
+        ),
+    )
+    return NamespaceConfigDetailResponse(
+        namespace_id=namespace_id,
+        config=stored,
+        resolved=resolved,
+    )
+
+
 @router.patch(
     "/api/v1/admin/namespaces/{namespace_id}/config",
     response_model=NamespaceConfigResponse,

@@ -886,3 +886,98 @@ async def test_namespace_config_patch_resolves_show_sources_via_shared_helper(
     # must take precedence and force False.
     value = await resolve_show_sources(ns_id, fresh_engine, default_value=True)
     assert value is False
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/namespaces/{id}/config (read-side symmetric to PATCH)
+# ---------------------------------------------------------------------------
+
+
+async def test_namespace_config_get_returns_empty_with_resolved_defaults(
+    client, bootstrap_key, fresh_engine
+):
+    """Fresh namespace: config={} and resolved exposes hardcoded defaults."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "feat14-get-empty"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.get(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["namespace_id"] == ns_id
+    assert body["config"] == {}
+    # Hardcoded resolver defaults: grounding_mode="strict", show_sources=True.
+    # In CI the env vars may shift these; assert the keys are present and bool/string-typed
+    # rather than a fixed value, so the test stays independent of test env config.
+    assert set(body["resolved"]) == {"grounding_mode", "show_sources"}
+    assert body["resolved"]["grounding_mode"] in {"strict", "hybrid"}
+    assert isinstance(body["resolved"]["show_sources"], bool)
+
+
+async def test_namespace_config_get_reflects_stored_overrides(
+    client, bootstrap_key, fresh_engine
+):
+    """After PATCH, GET returns the stored values in config and they win in resolved."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "feat14-get-overrides"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    # Store both keys
+    patch = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"grounding_mode": "hybrid", "show_sources": False},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert patch.status_code == 200, patch.text
+    await asyncio.sleep(0.2)
+
+    resp = await client.get(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["config"] == {"grounding_mode": "hybrid", "show_sources": False}
+    # Resolver must mirror the stored value (no env fallback when key is set)
+    assert body["resolved"]["grounding_mode"] == "hybrid"
+    assert body["resolved"]["show_sources"] is False
+
+
+async def test_namespace_config_get_404_on_missing(client, bootstrap_key):
+    """Missing namespace → 404 ERR-ADMIN-005, mirroring the PATCH error."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+
+    resp = await client.get(
+        "/api/v1/admin/namespaces/does-not-exist/config",
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 404, resp.text
+    err = resp.json()["detail"]["error"]
+    assert err["code"] == "ERR-ADMIN-005"
+
+
+async def test_namespace_config_get_requires_admin_scope(
+    client, bootstrap_key, fresh_engine
+):
+    """A non-admin (query-only) key must not be able to read the config."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "feat14-get-scope"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    # Create a query-only key and attempt the GET with it
+    create = await client.post(
+        "/api/v1/api-keys",
+        json={"label": "query-only", "scopes": ["query"]},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert create.status_code == 201, create.text
+    query_key = create.json()["key"]
+
+    resp = await client.get(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        headers={"Authorization": f"Bearer {query_key}"},
+    )
+    assert resp.status_code == 403, resp.text

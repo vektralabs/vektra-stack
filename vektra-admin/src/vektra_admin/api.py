@@ -569,30 +569,38 @@ class NamespaceConfigDetailResponse(BaseModel):
 
 def _resolved_from_stored(
     stored: dict[str, Any],
-    *,
-    grounding_default: str,
-    show_sources_default: bool,
+    defaults: dict[str, Any],
 ) -> dict[str, Any]:
     """Apply the namespace > env > hardcoded-default chain to a loaded JSONB.
 
-    This duplicates the trivial validation that
-    :func:`vektra_shared.namespace.resolve_grounding_mode` /
-    :func:`resolve_show_sources` perform, but operates on an already-loaded
-    config dict so the GET endpoint can avoid opening extra DB sessions
-    (the runtime resolvers exist for callers that hold only a namespace id).
+    Operates on an already-loaded config dict so the GET endpoint can avoid
+    opening extra DB sessions (the standalone resolvers in
+    :mod:`vektra_shared.namespace` remain for callers that hold only a
+    namespace id).
+
+    Validation is derived from the module-level ``ALLOWED_CONFIG_VALUES`` /
+    ``ALLOWED_CONFIG_TYPES`` maps and the result is built by iterating
+    ``ALLOWED_CONFIG_KEYS``, so adding a new whitelist key automatically
+    flows through here without further edits — the only requirement is that
+    *defaults* provides an entry for the new key (assertion below).
     """
-    raw_grounding = stored.get("grounding_mode")
-    grounding = (
-        raw_grounding if raw_grounding in {"strict", "hybrid"} else grounding_default
+    assert ALLOWED_CONFIG_KEYS <= defaults.keys(), (
+        "defaults must provide a fallback for every key in "
+        "ALLOWED_CONFIG_KEYS; missing: "
+        f"{sorted(ALLOWED_CONFIG_KEYS - defaults.keys())}"
     )
-    raw_show_sources = stored.get("show_sources")
-    show_sources = (
-        raw_show_sources if isinstance(raw_show_sources, bool) else show_sources_default
-    )
-    return {
-        "grounding_mode": grounding,
-        "show_sources": show_sources,
-    }
+    resolved: dict[str, Any] = {}
+    for key in ALLOWED_CONFIG_KEYS:
+        raw = stored.get(key)
+        allowed_values = ALLOWED_CONFIG_VALUES.get(key)
+        allowed_type = ALLOWED_CONFIG_TYPES.get(key)
+        if allowed_values is not None and raw in allowed_values:
+            resolved[key] = raw
+        elif allowed_type is not None and isinstance(raw, allowed_type):
+            resolved[key] = raw
+        else:
+            resolved[key] = defaults[key]
+    return resolved
 
 
 @router.get(
@@ -632,12 +640,14 @@ async def get_namespace_config(
     stored = dict(ns.ns_config or {})
     resolved = _resolved_from_stored(
         stored,
-        grounding_default=getattr(
-            request.app.state, "grounding_mode_default", "strict"
-        ),
-        show_sources_default=getattr(
-            request.app.state, "learn_show_sources_default", True
-        ),
+        defaults={
+            "grounding_mode": getattr(
+                request.app.state, "grounding_mode_default", "strict"
+            ),
+            "show_sources": getattr(
+                request.app.state, "learn_show_sources_default", True
+            ),
+        },
     )
     return NamespaceConfigDetailResponse(
         namespace_id=namespace_id,

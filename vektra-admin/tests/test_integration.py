@@ -857,3 +857,32 @@ async def test_namespace_config_patch_show_sources_partial_with_grounding(
     )
     assert r2.status_code == 200, r2.text
     assert r2.json()["config"] == {"grounding_mode": "hybrid", "show_sources": True}
+
+
+async def test_namespace_config_patch_resolves_show_sources_via_shared_helper(
+    client, bootstrap_key, fresh_engine
+):
+    """End-to-end: PATCH show_sources=False → resolve_show_sources returns False.
+
+    Mirrors test_namespace_config_patch_resolves_via_shared_helper for the
+    grounding_mode path. Proves the FEAT-014 write/read loop works with no
+    cache or stale resolver in between.
+    """
+    from vektra_shared.namespace import resolve_show_sources
+
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "feat14-resolver-end-to-end"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"show_sources": False},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 200, resp.text
+    await asyncio.sleep(0.2)  # let audit background task complete before re-using pool
+
+    # default_value=True would be the env-var fallback; the namespace override
+    # must take precedence and force False.
+    value = await resolve_show_sources(ns_id, fresh_engine, default_value=True)
+    assert value is False

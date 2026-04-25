@@ -193,7 +193,7 @@ Request body (flat dict, one entry per config key):
 | Field | Type | Allowed values | Description |
 |-------|------|----------------|-------------|
 | `grounding_mode` | string or null | `"strict"`, `"hybrid"`, `null` | RAG grounding policy. `null` removes the key and falls back to `VEKTRA_PROMPT_GROUNDING_MODE`. |
-| `show_sources` | bool or null | `true`, `false`, `null` | Widget citation visibility (FEAT-014). `null` removes the key and falls back to `VEKTRA_LEARN_SHOW_SOURCES`. The API always returns the full sources list; the flag only instructs the widget whether to render them. |
+| `show_sources` | bool or null | `true`, `false`, `null` | Widget citation visibility (FEAT-014). `null` removes the key and falls back to `VEKTRA_LEARN_SHOW_SOURCES`. The API always returns the full sources list; the flag only instructs the widget whether to render them. Resolution chain: client `data-show-sources` attr > `namespaces.config.show_sources` > `VEKTRA_LEARN_SHOW_SOURCES` env > hardcoded `true`. |
 
 Behavior:
 - **Partial update**: keys not present in the body are preserved.
@@ -339,6 +339,7 @@ Response:
 | `response_id` | Unique response identifier |
 | `answer` | LLM-generated answer grounded in sources |
 | `sources` | Ranked list of source chunks |
+| `sources[].document_name` | Filename of the source document (e.g. `lecture-07.pdf`). Soft-deleted documents (REQ-057) keep their citation with an `(archived)` suffix so traceability is preserved. |
 | `conversation_id` | Echoed back if provided in request |
 | `context_only` | `true` if LLM failed and raw sources returned |
 | `no_relevant_context` | `true` if no chunks exceeded relevance threshold |
@@ -367,6 +368,111 @@ curl -s \
   -H "Authorization: Bearer $VEKTRA_API_KEY" \
   http://localhost:8000/api/v1/providers | python3 -m json.tool
 ```
+
+## Learn
+
+The e-learning vertical (`vektra-learn`) exposes course-scoped endpoints authenticated via short-lived JWT dashboard tokens issued by `POST /api/v1/learn/tokens`. The `course_id` claim drives namespace isolation; the LMS-side integration (e.g. the Moodle plugin) is responsible for upstream auth before requesting a token.
+
+### POST /api/v1/learn/query
+
+Course-scoped RAG query. Authenticated via JWT (not API key). The namespace is derived from the token's `namespace` (or `course_id` fallback) claim.
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $LEARN_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What did we cover in lecture 7?"}' \
+  http://localhost:8000/api/v1/learn/query | python3 -m json.tool
+```
+
+Request body:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `question` | string | (required) | Query text |
+| `conversation_id` | UUID | - | Continue an existing conversation |
+| `top_k` | int | `5` | Number of chunks to retrieve |
+| `stream` | bool | `false` | Enable Server-Sent Events streaming |
+
+Response (HTTP 200, JSON):
+
+```json
+{
+    "response_id": "9f8e7d6c-...",
+    "answer": "Lecture 7 covered ...",
+    "sources": [
+        {
+            "doc_id": "550e8400-...",
+            "chunk_id": "c1a2b3...",
+            "score": 0.912,
+            "snippet": "...",
+            "document_name": "lecture-07.pdf"
+        }
+    ],
+    "conversation_id": "550e8400-...",
+    "no_relevant_context": false,
+    "show_sources": true
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `show_sources` | Server-resolved citation-visibility hint for the widget (FEAT-014). The full `sources` list is always returned regardless; the widget uses the flag to decide whether to render the citations block. See the resolution chain in [Namespaces PATCH](#patch-apiv1adminnamespacesnamespace_idconfig). |
+| `sources[].document_name` | Filename of the source document, with `(archived)` suffix for soft-deleted documents. |
+
+#### Streaming
+
+Set `stream: true` or send `Accept: text/event-stream`:
+
+```bash
+curl -s -N \
+  -H "Authorization: Bearer $LEARN_JWT" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"question":"What did we cover in lecture 7?","stream":true}' \
+  http://localhost:8000/api/v1/learn/query
+```
+
+The `sources` SSE event payload carries the same `show_sources` flag alongside the sources list.
+
+### GET /api/v1/learn/conversations/{conversation_id}/turns
+
+Return the decrypted turns of a conversation belonging to the token's course. Used by the widget to restore history after a page reload (FEAT-004).
+
+**Auth**: JWT dashboard token (same as `/learn/query`). The endpoint enforces `conversation.namespace_id == jwt.namespace`; a mismatch returns 403 (so the widget can distinguish "wrong course" from "deleted conversation" and reset its local state).
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $LEARN_JWT" \
+  http://localhost:8000/api/v1/learn/conversations/550e8400-.../turns | python3 -m json.tool
+```
+
+Response (HTTP 200):
+
+```json
+{
+    "conversation_id": "550e8400-...",
+    "namespace": "course-101",
+    "turns": [
+        {
+            "turn_number": 1,
+            "question": "What is RAG?",
+            "answer": "RAG is ...",
+            "created_at": "2026-04-25T14:00:00Z",
+            "sources": []
+        }
+    ]
+}
+```
+
+The `turns[].sources` array is empty in v0.5.0 (admin-only metadata such as model, prompt tokens, and source enrichment from `query_traces` is intentionally not exposed to students).
+
+Errors:
+- `404 ERR-LEARN-005` if the conversation does not exist or has been deleted.
+- `403 ERR-LEARN-006` if the conversation belongs to a different course/namespace.
+- `503 ERR-LEARN-001` if the conversation store is not yet initialized or does not support decryption (e.g. in-memory store; production deployments must set `VEKTRA_CONVERSATION_KEY`).
+
+**Audit (NFR-007)**: every successful read writes a `learn_conversation_turns_read` audit row carrying `namespace`, `conversation_id`, `turn_count`, `student_id`, and `course_id`. The audit row is generated even if the upstream middleware did not set a request id.
 
 ## Index
 

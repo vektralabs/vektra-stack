@@ -84,6 +84,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_RESPONSE_TOKEN_RESERVE` | int | `2048` | Tokens reserved for LLM response generation |
 | `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | Fraction of context window allocated to retrieved chunks (0.0-1.0) |
 | `VEKTRA_PROMPT_TEMPLATES_DIR` | str | - | Directory for custom Jinja2 prompt templates (`system.j2`, `context.j2`, `conversation.j2`). Uses built-in defaults if unset. |
+| `VEKTRA_PROMPT_GROUNDING_MODE` | str | `strict` | Default RAG grounding policy. `strict` answers from retrieved context + history only; `hybrid` falls back to model knowledge when confident. Per-namespace override via `PATCH /api/v1/admin/namespaces/{id}/config`. |
 
 ### Query rewriting
 
@@ -138,6 +139,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 |----------|------|---------|-------------|
 | `VEKTRA_LEARN_JWT_SECRET` | str | - | JWT signing secret for dashboard tokens. Required when vektra-learn is active. Min 32 characters. |
 | `VEKTRA_LEARN_REQUIRE_ENROLLMENT` | bool | `true` | Require enrollment record for learn queries. Set to false when LMS manages enrollment externally. |
+| `VEKTRA_LEARN_SHOW_SOURCES` | bool | `true` | Default visibility of the source-citations section in the widget (FEAT-014). Per-namespace override via `PATCH /api/v1/admin/namespaces/{id}/config` > `show_sources`. Per-widget override via the `data-show-sources` script-tag attribute. The API always returns the full sources list; the flag only instructs the widget whether to render them. |
 
 ## Observability
 
@@ -173,9 +175,9 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 
 | Category | Count |
 |----------|-------|
-| VEKTRA_* variables (across VektraSettings + sub-configs) | 53 |
+| VEKTRA_* variables (across VektraSettings + sub-configs) | 55 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
-| **Total documented** | **57** |
+| **Total documented** | **59** |
 
-The 53 VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
+The 55 VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.

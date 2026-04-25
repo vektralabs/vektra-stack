@@ -1,6 +1,6 @@
 [project]
 name = "vektra-analytics"
-version = "0.5.0-dev"
+version = "0.5.0"
 description = "QueryTrace storage, metrics aggregation, and reporting API"
 readme = "README.md"
 requires-python = ">=3.12"

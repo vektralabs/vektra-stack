@@ -1,6 +1,6 @@
 [project]
 name = "vektra-admin"
-version = "0.5.0-dev"
+version = "0.5.0"
 description = "System administration interface: health, API key management, audit log"
 readme = "README.md"
 requires-python = ">=3.12"

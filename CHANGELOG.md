@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — v0.5.0 "Widget production-ready + instructor configuration"
+## [0.5.0] - 2026-04-25
+
+Widget production-ready + instructor configuration.
 
 ### Added
 

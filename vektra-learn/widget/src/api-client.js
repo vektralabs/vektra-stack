@@ -175,7 +175,9 @@ export class ApiClient {
                   onToken(event.data);
                   receivedTokens = true;
                 } else if (event.type === "sources" && onSources) {
-                  onSources(event.data);
+                  // FEAT-014: forward the server-resolved show_sources hint
+                  // alongside the sources list (undefined on older servers).
+                  onSources(event.data, event.show_sources);
                 } else if (event.type === "done") {
                   if (event.data?.conversation_id) {
                     this._conversationId = event.data.conversation_id;
@@ -208,7 +210,8 @@ export class ApiClient {
           onToken(data.answer);
         }
         if (onSources && data.sources && data.sources.length > 0) {
-          onSources(data.sources);
+          // FEAT-014: pass server-resolved show_sources hint to caller.
+          onSources(data.sources, data.show_sources);
         }
         if (onDone) onDone();
       }

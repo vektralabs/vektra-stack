@@ -50,10 +50,27 @@ from vektra_shared.errors import (
 # Tight whitelist: unknown keys are rejected (not silently ignored) so that
 # typos from upstream clients (e.g. Moodle plugin) surface immediately. Each
 # key is a public contract — extend cautiously.
-ALLOWED_CONFIG_KEYS: set[str] = {"grounding_mode"}
+#
+# Validation model: every allowed key MUST be declared in exactly one of the
+# two maps below.
+#   - ALLOWED_CONFIG_VALUES[key]: set of allowed values (enum-style key)
+#   - ALLOWED_CONFIG_TYPES[key]: required runtime type (type-validated key)
+# ALLOWED_CONFIG_KEYS is derived (not hand-maintained) so a key cannot reach
+# the whitelist without a corresponding validation rule. The disjoint check
+# below fails at import if the same key is wired into both maps.
 ALLOWED_CONFIG_VALUES: dict[str, set[str]] = {
     "grounding_mode": {"strict", "hybrid"},
 }
+ALLOWED_CONFIG_TYPES: dict[str, type] = {
+    "show_sources": bool,
+}
+assert ALLOWED_CONFIG_VALUES.keys().isdisjoint(ALLOWED_CONFIG_TYPES.keys()), (
+    "Each config key must appear in exactly one of "
+    "ALLOWED_CONFIG_VALUES / ALLOWED_CONFIG_TYPES, never both."
+)
+ALLOWED_CONFIG_KEYS: set[str] = (
+    ALLOWED_CONFIG_VALUES.keys() | ALLOWED_CONFIG_TYPES.keys()
+)
 
 log = structlog.get_logger(__name__)
 
@@ -534,6 +551,111 @@ class NamespaceConfigResponse(BaseModel):
     config: dict[str, Any]
 
 
+class NamespaceConfigDetailResponse(BaseModel):
+    """Full namespace config plus the effective values after env-default fallback.
+
+    *config* mirrors what is physically stored in ``namespaces.config``.
+    *resolved* is what queries actually see at runtime, after the resolvers
+    in :mod:`vektra_shared.namespace` apply the env-var fallback chain
+    (namespace JSONB > env var > hardcoded default). Consumers like the
+    Moodle block edit form use *resolved* to render the "Use default" /
+    "Override" toggle without having to re-implement the chain client-side.
+    """
+
+    namespace_id: str
+    config: dict[str, Any]
+    resolved: dict[str, Any]
+
+
+def _resolved_from_stored(
+    stored: dict[str, Any],
+    defaults: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply the namespace > env > hardcoded-default chain to a loaded JSONB.
+
+    Operates on an already-loaded config dict so the GET endpoint can avoid
+    opening extra DB sessions (the standalone resolvers in
+    :mod:`vektra_shared.namespace` remain for callers that hold only a
+    namespace id).
+
+    Validation is derived from the module-level ``ALLOWED_CONFIG_VALUES`` /
+    ``ALLOWED_CONFIG_TYPES`` maps and the result is built by iterating
+    ``ALLOWED_CONFIG_KEYS``, so adding a new whitelist key automatically
+    flows through here without further edits — the only requirement is that
+    *defaults* provides an entry for the new key (assertion below).
+    """
+    assert ALLOWED_CONFIG_KEYS <= defaults.keys(), (
+        "defaults must provide a fallback for every key in "
+        "ALLOWED_CONFIG_KEYS; missing: "
+        f"{sorted(ALLOWED_CONFIG_KEYS - defaults.keys())}"
+    )
+    resolved: dict[str, Any] = {}
+    for key in ALLOWED_CONFIG_KEYS:
+        raw = stored.get(key)
+        allowed_values = ALLOWED_CONFIG_VALUES.get(key)
+        allowed_type = ALLOWED_CONFIG_TYPES.get(key)
+        if allowed_values is not None and raw in allowed_values:
+            resolved[key] = raw
+        elif allowed_type is not None and isinstance(raw, allowed_type):
+            resolved[key] = raw
+        else:
+            resolved[key] = defaults[key]
+    return resolved
+
+
+@router.get(
+    "/api/v1/admin/namespaces/{namespace_id}/config",
+    response_model=NamespaceConfigDetailResponse,
+)
+async def get_namespace_config(
+    namespace_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    key_info: ApiKeyInfo = Depends(require_scope("admin")),
+) -> NamespaceConfigDetailResponse:
+    """Return the stored namespace config and the effective resolved values.
+
+    Behavior:
+      - 404 with ``ERR-ADMIN-005`` if the namespace does not exist.
+      - ``config`` is the raw JSONB (``{}`` when no key has ever been set).
+      - ``resolved`` is the value that queries observe, computed via the
+        same resolvers used by the runtime path. Always includes every
+        key in ``ALLOWED_CONFIG_KEYS``.
+    """
+    from vektra_admin.models import NamespaceOrm  # late import
+
+    result = await session.execute(
+        select(NamespaceOrm).where(NamespaceOrm.id == namespace_id)
+    )
+    ns = result.scalar_one_or_none()
+    if ns is None:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code="ERR-ADMIN-005",
+            message=f"Namespace '{namespace_id}' not found.",
+            remediation="Verify the namespace id or create it via the admin UI.",
+        )
+        raise HTTPException(status_code=404, detail=err.to_envelope())
+
+    stored = dict(ns.ns_config or {})
+    resolved = _resolved_from_stored(
+        stored,
+        defaults={
+            "grounding_mode": getattr(
+                request.app.state, "grounding_mode_default", "strict"
+            ),
+            "show_sources": getattr(
+                request.app.state, "learn_show_sources_default", True
+            ),
+        },
+    )
+    return NamespaceConfigDetailResponse(
+        namespace_id=namespace_id,
+        config=stored,
+        resolved=resolved,
+    )
+
+
 @router.patch(
     "/api/v1/admin/namespaces/{namespace_id}/config",
     response_model=NamespaceConfigResponse,
@@ -572,11 +694,12 @@ async def patch_namespace_config(
         )
         raise HTTPException(status_code=400, detail=err.to_envelope())
 
-    # --- Validate each value: must be in per-key enum or null (ERR-ADMIN-007) ---
+    # --- Validate each value: enum or runtime type per key, or null (ERR-ADMIN-007) ---
     for key, value in body.items():
         if value is None:
             continue  # null = remove the key
         allowed_values = ALLOWED_CONFIG_VALUES.get(key)
+        allowed_type = ALLOWED_CONFIG_TYPES.get(key)
         if allowed_values is not None and value not in allowed_values:
             err = ErrorResponse(
                 category=ErrorCategory.PERMANENT,
@@ -584,6 +707,18 @@ async def patch_namespace_config(
                 message=f"Invalid value for '{key}': {value!r}.",
                 remediation=(
                     f"Use one of: {sorted(allowed_values)}, or null to unset."
+                ),
+            )
+            raise HTTPException(status_code=400, detail=err.to_envelope())
+        if allowed_type is not None and not isinstance(value, allowed_type):
+            # isinstance(True, bool) is True and isinstance(1, bool) is False,
+            # so a JSON integer cannot impersonate a bool here.
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code="ERR-ADMIN-007",
+                message=f"Invalid value for '{key}': {value!r}.",
+                remediation=(
+                    f"Value must be of type {allowed_type.__name__}, or null to unset."
                 ),
             )
             raise HTTPException(status_code=400, detail=err.to_envelope())

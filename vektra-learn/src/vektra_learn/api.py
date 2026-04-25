@@ -51,7 +51,7 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
-from vektra_shared.namespace import resolve_grounding_mode
+from vektra_shared.namespace import resolve_grounding_mode, resolve_show_sources
 from vektra_shared.types import trace_from_dict
 
 # Sentinel key_id for learn-originated conversations (JWT auth has no API key).
@@ -69,8 +69,14 @@ async def _learn_sse_generator(
     db_session_factory: Any | None = None,
     namespace: str = "default",
     store_traces: bool = False,
+    show_sources: bool = True,
 ) -> AsyncGenerator[str, None]:
-    """Format QueryChunk events as SSE lines for learn endpoint."""
+    """Format QueryChunk events as SSE lines for learn endpoint.
+
+    The *show_sources* flag (FEAT-014) is attached to the ``sources`` event
+    so the widget can decide whether to render citations for this response.
+    The payload itself is always sent in full for analytics/debugging.
+    """
     log = structlog.get_logger(__name__)
     try:
         async for chunk in stream:
@@ -80,7 +86,10 @@ async def _learn_sse_generator(
                 payload = json.dumps({"type": "token", "data": chunk.data})
                 yield f"data: {payload}\n\n"
             elif chunk.type in ("sources", "error", "trace"):
-                payload = json.dumps({"type": chunk.type, "data": chunk.data})
+                event: dict[str, Any] = {"type": chunk.type, "data": chunk.data}
+                if chunk.type == "sources":
+                    event["show_sources"] = show_sources
+                payload = json.dumps(event)
                 yield f"data: {payload}\n\n"
                 # Persist trace (best-effort, BUG-013)
                 if (
@@ -739,6 +748,17 @@ async def course_query(
         _gm = _default_mode
     query_req.grounding_mode = _gm
 
+    # Resolve show_sources: namespace config > env var > default true (FEAT-014)
+    _default_show_sources = getattr(
+        request.app.state, "learn_show_sources_default", True
+    )
+    if _db_factory_gm:
+        _show_sources = await resolve_show_sources(
+            namespace, _db_factory_gm, default_value=_default_show_sources
+        )
+    else:
+        _show_sources = _default_show_sources
+
     if registry is None:
         err = ErrorResponse(
             category=ErrorCategory.TRANSIENT,
@@ -774,6 +794,7 @@ async def course_query(
                 db_session_factory=_db_factory,
                 namespace=namespace,
                 store_traces=_store_traces,
+                show_sources=_show_sources,
             ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -794,4 +815,4 @@ async def course_query(
                 exc_info=True,
             )
 
-    return pipeline_response_to_course_response(response)
+    return pipeline_response_to_course_response(response, show_sources=_show_sources)

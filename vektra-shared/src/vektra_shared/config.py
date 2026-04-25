@@ -531,6 +531,11 @@ class VektraSettings(BaseSettings):
         alias="VEKTRA_LEARN_REQUIRE_ENROLLMENT",
         description="Require Vektra enrollment record for learn queries. Set to false when an external LMS manages enrollment and authorization.",
     )
+    learn_show_sources: bool = Field(
+        True,
+        alias="VEKTRA_LEARN_SHOW_SOURCES",
+        description="Default visibility of the source-citations section in the widget (FEAT-014). Per-namespace override via namespaces.config.show_sources.",
+    )
 
     # Observability / retention
     audit_retention_days: int = Field(90, alias="VEKTRA_AUDIT_RETENTION_DAYS")

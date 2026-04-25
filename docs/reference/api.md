@@ -142,6 +142,36 @@ Returns HTTP 204 (no body).
 
 ## Namespaces
 
+### GET /api/v1/admin/namespaces/{namespace_id}/config
+
+Read a namespace's stored config and the effective values after env-default fallback. Symmetric to the PATCH endpoint below.
+
+**Scopes**: `admin`
+
+```bash
+curl -s -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  http://localhost:8000/api/v1/admin/namespaces/default/config | python3 -m json.tool
+```
+
+Response (HTTP 200):
+
+```json
+{
+    "namespace_id": "default",
+    "config": {"grounding_mode": "hybrid"},
+    "resolved": {
+        "grounding_mode": "hybrid",
+        "show_sources": true
+    }
+}
+```
+
+- `config` mirrors the raw JSONB stored in `namespaces.config` (`{}` when no key has ever been set).
+- `resolved` is the value queries actually observe at runtime, after the namespace > env > hardcoded-default chain. Always includes every key in the whitelist. Use this for "Use default" / "Override" form rendering in upstream plugins (e.g. the Moodle block edit form).
+
+Errors:
+- `404 ERR-ADMIN-005` if the namespace does not exist.
+
 ### PATCH /api/v1/admin/namespaces/{namespace_id}/config
 
 Partially update a namespace's behavioral config (JSONB). Requires `admin` scope.
@@ -163,11 +193,12 @@ Request body (flat dict, one entry per config key):
 | Field | Type | Allowed values | Description |
 |-------|------|----------------|-------------|
 | `grounding_mode` | string or null | `"strict"`, `"hybrid"`, `null` | RAG grounding policy. `null` removes the key and falls back to `VEKTRA_PROMPT_GROUNDING_MODE`. |
+| `show_sources` | bool or null | `true`, `false`, `null` | Widget citation visibility (FEAT-014). `null` removes the key and falls back to `VEKTRA_LEARN_SHOW_SOURCES`. The API always returns the full sources list; the flag only instructs the widget whether to render them. |
 
 Behavior:
 - **Partial update**: keys not present in the body are preserved.
 - **Unknown keys rejected** with `400 ERR-ADMIN-006` (not silently ignored — surfaces typos early).
-- **Invalid values rejected** with `400 ERR-ADMIN-007`.
+- **Invalid values rejected** with `400 ERR-ADMIN-007` (includes type mismatches, e.g. a JSON string passed for a boolean key).
 - **Missing namespace** returns `404 ERR-ADMIN-005`.
 
 Response (HTTP 200):
@@ -175,7 +206,7 @@ Response (HTTP 200):
 ```json
 {
     "namespace_id": "default",
-    "config": {"grounding_mode": "hybrid"}
+    "config": {"grounding_mode": "hybrid", "show_sources": false}
 }
 ```
 

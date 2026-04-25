@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+<!--
+Convention (Keep a Changelog 1.1.0):
+- Add new entries under "[Unreleased]" using sections: Added, Changed,
+  Deprecated, Removed, Fixed, Security.
+- At release time: rename "[Unreleased]" to "[X.Y.Z] - YYYY-MM-DD" AND
+  add a fresh empty "[Unreleased]" block above it. The file must always
+  have an "[Unreleased]" section at the top, even if empty.
+- Releases are listed newest-first below "[Unreleased]".
+- See CONTRIBUTING.md > Changelog for the full process.
+-->
+
+## [Unreleased]
+
+<!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
+
 ## [0.5.0] - 2026-04-25
 
 Widget production-ready + instructor configuration.

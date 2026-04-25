@@ -124,6 +124,31 @@ git log --show-signature -1   # should show "Good ssh signature"
 **Remote servers without browser**: use `gh auth login --with-token` and add the
 `admin:ssh_signing_key` scope upfront to avoid needing browser-based re-auth later.
 
+## Changelog
+
+We follow [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). The
+file must always have an `[Unreleased]` section at the top, even if empty.
+
+**During development** — every PR with user-visible impact adds an entry under
+`[Unreleased]` in `CHANGELOG.md`, using one of the six standard sections:
+
+- **Added** — new features
+- **Changed** — changes in existing functionality
+- **Deprecated** — features that will be removed in upcoming releases
+- **Removed** — features removed in this release
+- **Fixed** — bug fixes
+- **Security** — vulnerability fixes
+
+Internal-only changes (refactors with no behavior change, CI tweaks, test-only
+edits) do not require a changelog entry.
+
+**At release time** — in the release-prep PR (`chore/vX.Y.Z-release`):
+
+1. Rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
+2. Add a fresh empty `## [Unreleased]` block above the new release entry
+3. Bump versions in all `vektra-*/pyproject.toml` from `X.Y.Z-dev` to `X.Y.Z`
+4. Refresh `uv.lock` to match the new versions
+
 ## PR workflow
 
 1. Create a branch: `git checkout -b feat/core-streaming`
@@ -148,6 +173,7 @@ Before opening a PR:
 - [ ] Unit tests pass: `uv run pytest <component>/tests/ -m "not integration"`
 - [ ] New behavior has test coverage
 - [ ] Commit messages follow Conventional Commits with `-s` sign-off
+- [ ] `CHANGELOG.md` has an `[Unreleased]` entry for any user-visible change
 - [ ] PR description explains the change and motivation
 
 ## CI pipeline

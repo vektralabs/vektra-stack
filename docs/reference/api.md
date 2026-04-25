@@ -339,7 +339,7 @@ Response:
 | `response_id` | Unique response identifier |
 | `answer` | LLM-generated answer grounded in sources |
 | `sources` | Ranked list of source chunks |
-| `sources[].document_name` | Filename of the source document (e.g. `lecture-07.pdf`). Soft-deleted documents (REQ-057) keep their citation with an `(archived)` suffix so traceability is preserved. |
+| `sources[].document_name` | Filename of the source document (e.g. `lecture-07.pdf`), or `null` when the document join returns no row. Soft-deleted documents (REQ-057) keep their citation with an `(archived)` suffix so traceability is preserved. |
 | `conversation_id` | Echoed back if provided in request |
 | `context_only` | `true` if LLM failed and raw sources returned |
 | `no_relevant_context` | `true` if no chunks exceeded relevance threshold |
@@ -418,7 +418,7 @@ Response (HTTP 200, JSON):
 | Field | Description |
 |-------|-------------|
 | `show_sources` | Server-resolved citation-visibility hint for the widget (FEAT-014). The full `sources` list is always returned regardless; the widget uses the flag to decide whether to render the citations block. See the resolution chain in [Namespaces PATCH](#patch-apiv1adminnamespacesnamespace_idconfig). |
-| `sources[].document_name` | Filename of the source document, with `(archived)` suffix for soft-deleted documents. |
+| `sources[].document_name` | Filename of the source document, with `(archived)` suffix for soft-deleted documents. May be `null` when the document join returns no row. |
 
 #### Streaming
 
@@ -465,7 +465,7 @@ Response (HTTP 200):
 }
 ```
 
-The `turns[].sources` array is empty in v0.5.0 (admin-only metadata such as model, prompt tokens, and source enrichment from `query_traces` is intentionally not exposed to students).
+The `turns[].sources` array is empty in v0.5.0 (admin-only metadata such as model, prompt tokens, and source enrichment from `query_traces` is intentionally not exposed to students). The `turns[].answer` field may be `null` for a turn that is still in-flight (the question is recorded immediately, the answer is filled in when the LLM completes).
 
 Errors:
 - `404 ERR-LEARN-005` if the conversation does not exist or has been deleted.

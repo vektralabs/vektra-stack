@@ -107,7 +107,7 @@ scripts/query.sh "Summarize the main findings"
 | `sources[].chunk_id` | Unique identifier of the retrieved chunk |
 | `sources[].citation_id` | UUID citation reference for traceability |
 | `sources[].document_version` | Index version of the chunk |
-| `sources[].document_name` | Filename of the source document. Soft-deleted documents keep their citation with an `(archived)` suffix so traceability is preserved. |
+| `sources[].document_name` | Filename of the source document, or `null` when the document join returns no row. Soft-deleted documents keep their citation with an `(archived)` suffix so traceability is preserved. |
 | `sources[].score` | Cosine similarity score (0.0 - 1.0, higher is more relevant) |
 | `sources[].snippet` | Text excerpt from the chunk |
 | `conversation_id` | Echoed back if provided in the request (see below) |

@@ -21,7 +21,7 @@ The widget is loaded via a `<script>` tag on the host LMS page. All customizatio
 
 ```html
 <script
-  src="https://your-vektra-host/static/vektra-chat.js"
+  src="https://your-vektra-host/static/learn/vektra-chat.js"
   data-api-url="https://your-vektra-host"
   data-course-id="CS101"
   data-token="<jwt-dashboard-token>"

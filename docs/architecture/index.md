@@ -8,8 +8,10 @@ Vektra is a modular monolith: a single deployable container with internal packag
 vektra-app          Application entrypoint, startup validation, middleware
   vektra-core       RAG query pipeline, LLM abstraction, conversations
   vektra-ingest     Document processing (PDF, DOCX, PPTX), chunking, async jobs
-  vektra-index      Vector store (pgvector), embedding, semantic search
-  vektra-admin      Health endpoints, API key management, audit logging
+  vektra-index      Vector store (pgvector / qdrant), embedding, semantic search
+  vektra-analytics  QueryTrace storage, metrics aggregation, reporting (Phase 2)
+  vektra-learn      E-learning vertical: LMS-agnostic API and chatbot widget (Phase 2)
+  vektra-admin      Health endpoints, API key management, namespace config, audit logging
   vektra-shared     Protocols, types, config, auth, ProviderRegistry
 ```
 
@@ -31,8 +33,8 @@ Optional profiles:
 
 Architecture documentation is maintained in the `.s2s/` directory:
 
-- [`.s2s/architecture.md`](../../.s2s/architecture.md) - arc42 architecture document (60 decisions, 9 Protocol interfaces)
-- [`.s2s/decisions/`](../../.s2s/decisions/) - Architecture Decision Records (ADR-0001 through ADR-0023)
+- [`.s2s/architecture.md`](../../.s2s/architecture.md) - arc42 architecture document (64 decisions, 9 Protocol interfaces)
+- [`.s2s/decisions/`](../../.s2s/decisions/) - Architecture Decision Records (ADR-0001 through ADR-0025)
 - [`.s2s/requirements.md`](../../.s2s/requirements.md) - Software Requirements Specification (61 REQs, 13 NFRs)
 
 ### Key decisions
@@ -47,6 +49,9 @@ Architecture documentation is maintained in the `.s2s/` directory:
 | [ADR-0013](../../.s2s/decisions/ADR-0013-embedding-provider-protocol.md) | EmbeddingProvider Protocol |
 | [ADR-0014](../../.s2s/decisions/ADR-0014-query-pipeline-abstraction.md) | QueryPipeline abstraction |
 | [ADR-0022](../../.s2s/decisions/ADR-0022-orm-sqlalchemy-async.md) | SQLAlchemy 2.0 async with asyncpg |
+| [ADR-0023](../../.s2s/decisions/ADR-0023-conversational-query-rewriting.md) | Conversational query rewriting (Phase 2) |
+| [ADR-0024](../../.s2s/decisions/ADR-0024-admin-ui-server-side.md) | Admin UI with server-side rendering (Phase 2: HTMX + Jinja2) |
+| [ADR-0025](../../.s2s/decisions/ADR-0025-learn-chatbot-widget.md) | Learn chatbot widget as backend-served JS bundle |
 
 ### Protocol interfaces
 
@@ -64,13 +69,18 @@ Vektra defines 9 Protocol interfaces in `vektra_shared` for pluggability:
 
 ### Startup validation
 
-The application runs an 8-step validation sequence at startup (ARCH-057):
+The application runs an 11-step validation sequence at startup (ARCH-057). Source of truth: `vektra-app/src/vektra_app/main.py:lifespan`.
 
-1. Configuration validation (Pydantic)
+1. Configuration validation (Pydantic `VektraSettings` + sub-configs)
 2. Database connectivity
 3. Database schema verification
 4. pgvector extension check
-5. Provider registration
+5. Provider registration (LLM, embedding, sparse embedding, vector store, safeguard, event emitter, key store, conversation store)
 6. Embedding model warmup
 7. LLM connectivity check (warning-only)
-8. Prompt template verification
+8. Prompt template loading
+9. Analytics check (`vektra-analytics` storage path reachable when configured)
+10. Learn check (`vektra-learn` JWT secret + LearnService instantiation when configured)
+11. Qdrant collection check (when `vector_store_provider=qdrant`)
+
+Steps 9–11 were added in Phase 2 to cover the analytics, e-learning, and hybrid-search features.

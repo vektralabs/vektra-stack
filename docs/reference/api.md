@@ -373,6 +373,109 @@ curl -s \
 
 The e-learning vertical (`vektra-learn`) exposes course-scoped endpoints authenticated via short-lived JWT dashboard tokens issued by `POST /api/v1/learn/tokens`. The `course_id` claim drives namespace isolation; the LMS-side integration (e.g. the Moodle plugin) is responsible for upstream auth before requesting a token.
 
+Two trust tiers:
+- **API key** (called server-side by the LMS): `/tokens`, `/enrollments`, `/content/ingest`. Each endpoint declares the minimum required scope below; `admin` is a project-wide superscope and always satisfies any required scope.
+- **JWT** (called from the browser by the widget, with the token issued by `/tokens`): `/query`, `/conversations/{id}/turns`. Namespace is derived from the JWT claims.
+
+### POST /api/v1/learn/tokens
+
+Issue a short-lived JWT dashboard token bound to a `(student_id, course_id)` pair. Called server-side by the LMS once it has authenticated the student.
+
+**Scopes**: `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"student_id":"u123","course_id":"CS101","expires_in":3600}' \
+  http://localhost:8000/api/v1/learn/tokens | python3 -m json.tool
+```
+
+Request body:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `student_id` | string | (required) | Stable student identifier (1–255 chars). |
+| `course_id` | string | (required) | Stable course identifier (1–255 chars). |
+| `namespace` | string | (course_id) | Namespace embedded in the JWT. Defaults to the course id when omitted. |
+| `expires_in` | int | `3600` | Token lifetime in seconds (max `86400`, i.e. 24h). |
+
+Response (HTTP 201):
+
+```json
+{
+    "token": "eyJhbGciOi...",
+    "expires_at": "2026-04-25T15:00:00Z"
+}
+```
+
+### POST /api/v1/learn/enrollments
+
+Register a student in a course. Optional when `VEKTRA_LEARN_REQUIRE_ENROLLMENT=false` (the LMS is the source of truth for enrollment).
+
+**Scopes**: `ingest`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"student_id":"u123","course_id":"CS101","namespace":"CS101"}' \
+  http://localhost:8000/api/v1/learn/enrollments | python3 -m json.tool
+```
+
+Request body:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `student_id` | string | Stable student identifier (1–255 chars). |
+| `course_id` | string | Stable course identifier (1–255 chars). |
+| `namespace` | string | Target namespace for course content (1–64 chars). Auto-created if absent. |
+| `metadata` | object | Optional free-form metadata. |
+
+Response (HTTP 201): full enrollment record (`id`, `student_id`, `course_id`, `namespace`, `enrolled_at`, `metadata`).
+
+Errors: `409 ERR-LEARN-004` if the same `(student_id, course_id)` is already enrolled.
+
+### GET /api/v1/learn/enrollments
+
+List enrollments. Filter by `course_id`, `student_id`, or both via query parameters.
+
+**Scopes**: `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/learn/enrollments?course_id=CS101&limit=50" | python3 -m json.tool
+```
+
+Query parameters: `course_id`, `student_id`, `limit` (1–500, default 50), `offset` (default 0).
+
+Response: `{"items": [...], "count": <int>}`.
+
+### DELETE /api/v1/learn/enrollments/{enrollment_id}
+
+Remove a single enrollment.
+
+**Scopes**: `admin`
+
+Returns HTTP 204 (no body). `404` if the enrollment id does not exist.
+
+### POST /api/v1/learn/content/ingest
+
+Trigger course-scoped ingestion. Used by automation (e.g. an n8n workflow watching a course folder) to push new material into the course namespace without going through the generic `/api/v1/ingest` endpoint.
+
+**Scopes**: `ingest`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"course_id":"CS101","namespace":"CS101","document_url":"https://lms.example/files/lecture-07.pdf"}' \
+  http://localhost:8000/api/v1/learn/content/ingest | python3 -m json.tool
+```
+
+Request body: `course_id`, `namespace`, optional `document_url`, optional `metadata`. Response echoes the ingestion `status`, `namespace`, `course_id`, `metadata`, and (when synchronous) `document_id` + `chunk_count`.
+
 ### POST /api/v1/learn/query
 
 Course-scoped RAG query. Authenticated via JWT (not API key). The namespace is derived from the token's `namespace` (or `course_id` fallback) claim.
@@ -418,7 +521,7 @@ Response (HTTP 200, JSON):
 | Field | Description |
 |-------|-------------|
 | `show_sources` | Server-resolved citation-visibility hint for the widget (FEAT-014). The full `sources` list is always returned regardless; the widget uses the flag to decide whether to render the citations block. See the resolution chain in [Namespaces PATCH](#patch-apiv1adminnamespacesnamespace_idconfig). |
-| `sources[].document_name` | Filename of the source document, with `(archived)` suffix for soft-deleted documents. May be `null` when the document join returns no row. |
+| `sources[].document_name` | Filename of the source document. Soft-deleted documents (REQ-057) keep an `(archived)` suffix so traceability is preserved. The field is `null` when the document join returns no row. |
 
 #### Streaming
 

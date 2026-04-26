@@ -46,12 +46,14 @@ Vektra uses a hybrid monorepo approach ([ADR-0001](.s2s/decisions/ADR-0001-hybri
 
 ```text
 vektra-stack/              # This repository (monorepo)
-├── vektra-core/           # RAG engine, LLM abstraction
+├── vektra-app/            # FastAPI entrypoint, startup validation, middleware
+├── vektra-shared/         # Protocols, types, config, auth, registry
+├── vektra-core/           # RAG engine, LLM abstraction, conversations
 ├── vektra-ingest/         # Document processing (PDF, OCR, PPT, Word)
 ├── vektra-index/          # Vector store abstraction, embedding
-├── vektra-analytics/      # Metrics, reporting, alerting
-├── vektra-learn/          # E-learning vertical (chatbot, dashboard)
-├── vektra-admin/          # System administration
+├── vektra-analytics/      # QueryTrace storage, metrics, reporting
+├── vektra-learn/          # E-learning vertical (chatbot widget, JWT-scoped API)
+├── vektra-admin/          # System administration (health, keys, namespace config)
 ├── docs/                  # Documentation
 └── docker-compose.yml     # Orchestration
 

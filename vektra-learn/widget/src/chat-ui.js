@@ -192,8 +192,8 @@ export class ChatUI {
       const footer = document.createElement("div");
       footer.className = "vektra-chat-powered-by";
       // If poweredByText is set, the whole footer is a single link with that
-      // text. Otherwise the footer is "<i18n: Powered by> <link>Vektra</link>".
-      // A blank or invalid poweredByUrl falls back to the Vektra default URL.
+      // text. Otherwise the footer is "<i18n: Powered by> <link>VektraLabs</link>".
+      // A blank or invalid poweredByUrl falls back to the VektraLabs default URL.
       const url = _isSafeLinkUrl(this._poweredByUrl)
         ? this._poweredByUrl.trim()
         : "https://vektralabs.github.io";
@@ -206,7 +206,7 @@ export class ChatUI {
         link.textContent = this._poweredByText;
         footer.appendChild(link);
       } else {
-        link.textContent = "Vektra";
+        link.textContent = "VektraLabs";
         footer.textContent = `${this._lang.poweredBy} `;
         footer.appendChild(link);
       }

@@ -34,10 +34,12 @@ Widget production-ready + instructor configuration.
 - **widget**: white-label `data-*` attributes — `data-title`, `data-primary-color`, `data-icon` (emoji or URL), `data-welcome-message`, `data-powered-by`, `data-powered-by-text`, `data-powered-by-url`. All rendered via `textContent` / safe color whitelist to avoid XSS.
 - **widget**: tab-scoped conversation persistence via `sessionStorage` keyed by `course_id` (24h cutoff); history replay on load via the new turns endpoint; explicit "New chat" button in the header.
 - **errors**: new codes `ERR-ADMIN-005/006/007` (namespace config) and `ERR-LEARN-005/006` (conversation turns).
+- **docs**: consolidated [Widget integration guide](docs/guides/widget-integration.md) covering the LMS-agnostic embed flow (server-side JWT issuance, all `data-*` attributes, conversation persistence, token refresh, source citation visibility, error states, and end-to-end examples for PHP and Python backends). Linked from `docs/README.md` under Guides.
 
 ### Changed
 
 - **User-facing branding**: README, top-level docs h1s, and external surfaces now use **Vektra RAG** as the product name. Coordinated with [vektralabs/vektra-moodle#14](https://github.com/vektralabs/vektra-moodle/pull/14) which renames its README h1 to "Vektra RAG for Moodle". Repo name (`vektra-stack`), Python package names (`vektra_*`), Docker images, container names, CLI commands, and internal code identifiers are unchanged.
+- **widget footer label**: default "Powered by" link text changed from "Vektra" to "VektraLabs" — clearer maintainer-credit pattern (the link points to vektralabs.github.io, the org landing page) and avoids the residual short form. Integrators using the default branding will see the new label after upgrading the bundle; custom `data-powered-by-text` overrides are unaffected.
 - **widget styles**: button and accent colors now use `var(--vektra-primary, …)` so `data-primary-color` takes effect without rebuilding the bundle. Hover states use `filter: brightness()` so custom colors still feel interactive.
 
 ## [0.4.0] - 2026-04-11

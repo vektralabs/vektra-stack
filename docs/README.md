@@ -17,6 +17,7 @@
 
 ## Guides
 
+- [Widget integration](guides/widget-integration.md) - embed the LMS-agnostic chatbot widget in any course page (data-* attributes, JWT flow, conversation persistence, token refresh)
 - [Contributors](guides/contributors/index.md) - dev setup, testing, extending providers
 
 ## Workflows

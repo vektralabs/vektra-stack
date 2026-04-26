@@ -56,7 +56,7 @@ The widget is loaded via a `<script>` tag on the host LMS page. All customizatio
 | `data-icon` | speech-bubble emoji | Floating button icon. Accepts an emoji (rendered as text) or a URL (rendered as image). |
 | `data-welcome-message` | (none) | First assistant message shown when the widget opens. |
 | `data-powered-by` | `true` | When `false` (case-insensitive), hide the attribution footer. |
-| `data-powered-by-text` | "Powered by Vektra" | Override the footer text (plain text only). |
+| `data-powered-by-text` | "Powered by VektraLabs" | Override the footer text (plain text only). |
 | `data-powered-by-url` | `https://vektralabs.github.io` | Override the footer link target. |
 | `data-show-sources` | (server-resolved) | Client-side override for the citations block (FEAT-014). When absent, defer to the server-resolved value. When present, the trimmed lowercase value is compared to `"false"`: only that exact string hides the section; any other value (including `"true"`) forces it visible. Resolution chain: this attr > `namespaces.config.show_sources` > `VEKTRA_LEARN_SHOW_SOURCES` env > hardcoded `true`. |
 

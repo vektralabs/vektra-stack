@@ -2,9 +2,11 @@
 
 FastAPI application assembly and startup validation for the Vektra platform.
 
-This package wires all component modules (vektra-admin, vektra-core, vektra-ingest,
-vektra-index) into a single FastAPI application with the 8-step startup validation
-sequence (ARCH-057).
+This package wires all component modules (vektra-shared, vektra-core, vektra-ingest,
+vektra-index, vektra-analytics, vektra-learn, vektra-admin) into a single FastAPI
+application with the 11-step startup validation sequence (ARCH-057). It also mounts
+the chatbot widget bundle at `/static/learn/vektra-chat.js` and the admin static
+assets at `/admin/static`.
 
 ## Usage
 

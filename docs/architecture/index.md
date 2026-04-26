@@ -57,15 +57,15 @@ Architecture documentation is maintained in the `.s2s/` directory:
 
 Vektra defines 9 Protocol interfaces in `vektra_shared` for pluggability:
 
-1. **LLMProvider** - multi-provider LLM abstraction with graceful degradation
-2. **EmbeddingProvider** - embedding generation (sentence-transformers in Phase 1)
-3. **SparseEmbeddingProvider** - sparse vectors for hybrid search (Phase 2)
-4. **VectorStoreProvider** - pluggable vector store (pgvector in Phase 1)
-5. **DocumentExtractor** - PDF, DOCX, PPTX extraction
-6. **ChunkingStrategy** - document chunking (fixed-size in Phase 1)
-7. **QueryPipeline** - RAG pipeline orchestration
-8. **SafeguardHook** - pre/post query safeguards
-9. **EventEmitter** - internal event hooks (no-op in Phase 1)
+1. **LLMProvider** - multi-provider LLM abstraction (litellm) with graceful degradation to fallback model and context-only mode.
+2. **EmbeddingProvider** - dense embedding generation. Default: `sentence-transformers` with `paraphrase-multilingual-MiniLM-L12-v2`.
+3. **SparseEmbeddingProvider** - sparse vectors for hybrid search. Phase 1: not registered. Phase 2: `FastEmbedBM25Provider` via `fastembed`.
+4. **VectorStoreProvider** - pluggable vector store with `SearchMode` enum (DENSE/SPARSE/HYBRID). Phase 1: pgvector. Phase 2: also Qdrant with native hybrid search.
+5. **DocumentExtractor** - PDF, DOCX, PPTX extraction. Phase 1: pdfplumber. Phase 2: also Unstructured (opt-in, adds OCR).
+6. **ChunkingStrategy** - document chunking. Phase 1: fixed-size. Phase 2: also dual-strategy (semantic + table preservation).
+7. **QueryPipeline** - RAG pipeline orchestration returning `QueryResponse` + `QueryTrace`. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline (query rewriting, reranking, hybrid retrieval).
+8. **SafeguardHook** - pre/post query safeguards at the three trust boundaries. Phase 1: passthrough. Phase 2: also Presidio (PII detection with content modification, ARCH-049).
+9. **EventEmitter** - internal event hooks. Phase 1: NoOpEventEmitter. Phase 2: LogEventEmitter and WebhookEventEmitter (HMAC-SHA256 signed delivery).
 
 ### Startup validation
 

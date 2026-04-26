@@ -82,7 +82,7 @@ All customization lives on the `<script>` tag. No rebuild is needed to white-lab
 | `data-powered-by` | `true` | When `false` (case-insensitive), hide the attribution footer. |
 | `data-powered-by-text` | "Powered by VektraLabs" | Override the footer text (plain text only). |
 | `data-powered-by-url` | `https://vektralabs.github.io` | Override the footer link target. |
-| `data-show-sources` | (server-resolved) | Client-side override for the citations block (FEAT-014). See [Source citations](#source-citations). |
+| `data-show-sources` | (server-resolved) | Client-side override for the citations block (FEAT-014). See [Source citations](#source-citations-feat-014). |
 
 ### Behavior
 
@@ -90,7 +90,7 @@ All customization lives on the `<script>` tag. No rebuild is needed to white-lab
 |---|---|---|
 | `data-theme` | `light` | Color theme: `light` or `dark`. |
 | `data-language` | `en` | UI strings language: `en`, `it`. |
-| `data-token-refresh-url` | (none) | URL the widget POSTs to after a `401` response, to obtain a refreshed JWT. See [Token refresh](#token-refresh). |
+| `data-token-refresh-url` | (none) | URL the widget POSTs to after a `401` response, to obtain a refreshed JWT. See [Token refresh](#token-refresh-feat-009). |
 
 All `data-*` values are rendered via `textContent` (never `innerHTML`), `data-primary-color` is whitelist-validated, and `data-powered-by-url` / `data-token-refresh-url` are scheme-validated. XSS via attribute injection is neutralized.
 

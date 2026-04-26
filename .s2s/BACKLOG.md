@@ -720,6 +720,67 @@ In today's deploy there is one widget per page and init fires once, so the impac
 
 ---
 
+### DEBT-020: Audit log fallback when `request_id` is missing on sensitive endpoints
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-04-26
+**Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-admin/src/vektra_admin/api.py:768-783`. Same pattern applies to sensitive reads, e.g. `get_conversation_turns` in `vektra-admin/src/vektra_admin/api.py:491-539`.
+
+**Context**: `patch_namespace_config` writes the audit log only when `request.state.request_id` is truthy:
+
+```python
+request_id = getattr(request.state, "request_id", None)
+if request_id:
+    background_tasks.add_task(_audit.log_event, ...)
+```
+
+If the request-id middleware fails to set the attribute (or runs out of order), audit events are silently skipped. This weakens NFR-007 ("audit every sensitive content access"). The same `if request_id:` guard appears on sensitive **read** endpoints too (e.g. `GET /admin/conversations/{id}/turns`), which means both write and read paths leak audit coverage when the middleware misbehaves. The fix should sweep both classes of endpoint, not only writes.
+
+**Proposed approach**:
+1. Synthesize a fallback `uuid4()` request_id when `request.state.request_id` is missing, so the audit log always fires.
+2. Emit a structlog warning in that path so middleware misconfiguration is observable.
+3. Sweep `vektra-admin/api.py` and `vektra-learn/api.py` for the `if request_id:` pattern across **both read and write** sensitive endpoints; apply the fix consistently.
+
+**Acceptance criteria**:
+- [ ] `patch_namespace_config` always writes an audit row, with a synthetic request_id when missing
+- [ ] Structlog warning emitted when the fallback path triggers
+- [ ] Same pattern applied to sensitive endpoints across vektra-admin and vektra-learn, covering reads (e.g. `GET /admin/conversations/{id}/turns`) **and** writes (`POST /api-keys`, `DELETE /api-keys/{id}`, `PATCH /admin/namespaces/{id}/config`, etc.)
+- [ ] Unit test covers the fallback path on at least one read and one write endpoint
+
+---
+
+### DEBT-021: Replace `_fetch_document_names` round-trip with provider-aligned filename resolution
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-26
+**Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-core/src/vektra_core/pipeline.py:100-126`. Multi-provider scoping refined per Gemini review on PR #72.
+
+**Context**: WI-2 (FEAT-012) added `document_name` to source citations by introducing `_fetch_document_names()`, which performs a separate `SELECT id, filename, deleted_at FROM source_documents WHERE id = ANY(...)` after the main chunk fetch. This adds one Postgres round-trip per query.
+
+The original WI-2 plan suggested integrating filename lookup into the existing chunk-fetch query. The v0.5.0 implementation chose the separate-call shape for clarity during milestone scope; consolidation is tracked here for future hardening.
+
+In current low-QPS deployments the extra round-trip is not measurable in user-facing latency. It becomes relevant under high concurrency.
+
+**Multi-provider note**: chunk metadata (text, source_document_id) lives in the Postgres `document_chunks` table regardless of vector store provider. Two valid optimization paths exist:
+
+- **Path A — Postgres-side JOIN** (works for both `pgvector` and `qdrant`): collapse the chunk fetch and filename lookup into a single SQL with `LEFT JOIN source_documents ON document_chunks.source_document_id = source_documents.id`. Saves one round-trip; provider-agnostic because chunks always live in Postgres.
+- **Path B — Provider-native payload denormalization** (Qdrant only): store `document_name` and a soft-delete flag inside the vector payload at ingest time. Search results carry the filename directly, eliminating the need for any Postgres lookup beyond the chunk text. Lower latency than path A for Qdrant deployments, at the cost of payload migration on document rename or soft-delete.
+
+Path A is sufficient for the immediate goal (one fewer round-trip). Path B is a follow-up for Qdrant-heavy deployments and requires a separate ingest-side change.
+
+**Proposed approach**:
+1. Implement path A first: move filename + `deleted_at` resolution into the chunk-fetch query (in `vektra-index` or wherever `document_chunks` is queried). Delete `_fetch_document_names`.
+2. Preserve the `(archived)` suffix at the citation-rendering layer (API serialization), independent of the storage path.
+3. Optionally: under the Qdrant provider, follow up with path B (denormalize at ingest, sync on document rename / soft-delete) as a separate item.
+
+**Acceptance criteria**:
+- [ ] Chunk-fetch query covers text + filename + soft-delete flag in a single round-trip (path A)
+- [ ] `_fetch_document_names()` removed from `vektra-core/pipeline.py`
+- [ ] Streaming and non-streaming pipelines both reflect the new shape
+- [ ] No regression in `(archived)` rendering for soft-deleted documents
+- [ ] Latency benchmark confirms one fewer Postgres round-trip per `/query` regardless of vector store provider
+- [ ] Qdrant payload denormalization (path B) tracked as a follow-up if needed
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

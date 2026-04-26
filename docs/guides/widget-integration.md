@@ -193,6 +193,7 @@ The Moodle plugin ([vektra-moodle](https://github.com/vektralabs/vektra-moodle))
 ## End-to-end example: Python (FastAPI)
 
 ```python
+import html
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -212,15 +213,21 @@ async def course_page(course_id: str, request: Request):
             json={"student_id": student_id, "course_id": course_id},
         )
         token = r.json()["token"]
+    # Escape every value that lands in HTML: even though course_id is path-typed
+    # by FastAPI, students may control it via routing, and token comes from an
+    # external service — never trust either source for raw HTML interpolation.
+    safe_host = html.escape(VEKTRA_HOST, quote=True)
+    safe_course = html.escape(course_id, quote=True)
+    safe_token = html.escape(token, quote=True)
     return f"""
     <html>
       <body>
-        <h1>Course {course_id}</h1>
+        <h1>Course {safe_course}</h1>
         <script
-          src="{VEKTRA_HOST}/static/learn/vektra-chat.js"
-          data-api-url="{VEKTRA_HOST}"
-          data-course-id="{course_id}"
-          data-token="{token}"
+          src="{safe_host}/static/learn/vektra-chat.js"
+          data-api-url="{safe_host}"
+          data-course-id="{safe_course}"
+          data-token="{safe_token}"
         ></script>
       </body>
     </html>

@@ -71,16 +71,16 @@ Vektra defines 9 Protocol interfaces in `vektra_shared` for pluggability:
 
 The application runs an 11-step validation sequence at startup (ARCH-057). Source of truth: `vektra-app/src/vektra_app/main.py:lifespan`.
 
-1. Configuration validation (Pydantic `VektraSettings` + sub-configs)
+1. Configuration validation: instantiate the flat `VektraSettings` aggregation. Sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`) are validated independently by their consumers, not at this step.
 2. Database connectivity
 3. Database schema verification
 4. pgvector extension check
-5. Provider registration (LLM, embedding, sparse embedding, vector store, safeguard, event emitter, key store, conversation store)
+5. Provider registration (LLM, embedding, sparse embedding, vector store, safeguard, event emitter, key store, conversation store, analytics service, learn service)
 6. Embedding model warmup
 7. LLM connectivity check (warning-only)
 8. Prompt template loading
-9. Analytics check (`vektra-analytics` storage path reachable when configured)
-10. Learn check (`vektra-learn` JWT secret + LearnService instantiation when configured)
+9. Analytics check: verify `AnalyticsService` is registered in `ProviderRegistry` (registration check only; no storage I/O).
+10. Learn check: when `VEKTRA_LEARN_JWT_SECRET` is set, verify a `LearnService` is registered (instantiation happens in step 5) and that the secret is at least 32 characters. Skipped when learn is not configured.
 11. Qdrant collection check (when `vector_store_provider=qdrant`)
 
 Steps 9–11 were added in Phase 2 to cover the analytics, e-learning, and hybrid-search features.

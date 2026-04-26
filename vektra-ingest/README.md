@@ -20,7 +20,14 @@ Sparse embeddings (Phase 2, BM25 via `fastembed`) are computed during ingestion 
 
 ## Async ingest
 
-Files larger than 10 MB are processed asynchronously via arq. The ingestion endpoint returns a `job_id`; clients poll `GET /api/v1/ingest/jobs/{job_id}/status` until completion. Phase-aware lifecycle (`processing`, `extracting`, `chunking`, `embedding`, `indexing`, `indexed`, `failed`) is captured in the job row.
+Files larger than 10 MB are processed asynchronously via arq. The ingestion endpoint returns a `job_id`; clients poll `GET /api/v1/ingest/jobs/{job_id}/status` until completion.
+
+The job row distinguishes:
+
+- **Status** — terminal-or-running state: `processing`, `indexed`, `failed`.
+- **Phase** — fine-grained progress while `status=processing`: `extracting`, `chunking`, `embedding`. Cleared once the job reaches a terminal status.
+
+Clients typically watch `status` to decide when to stop polling; `phase` and `percentage` drive progress UI.
 
 Batch operations (`POST /api/v1/ingest/batch`, batch deletion) and document version tracking are also implemented in Phase 2.
 

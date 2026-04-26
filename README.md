@@ -1,4 +1,4 @@
-# Vektra
+# Vektra RAG
 
 [![CI](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml/badge.svg?branch=main)](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml)
 [![Lint](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml)
@@ -19,8 +19,8 @@ Plug in any LLM provider, vector store, or pipeline, keep data on-premises, and 
 
 Unlike RAG toolkits (LangChain, LlamaIndex, Haystack), Vektra ships as a **deployable platform**:
 
-| Aspect | Toolkits | Vektra |
-|--------|----------|--------|
+| Aspect | Toolkits | Vektra RAG |
+|--------|----------|------------|
 | Deployment | Build your own | `docker compose up` |
 | Configuration | Code changes | YAML/environment |
 | On-premises | DIY | First-class support |
@@ -112,4 +112,4 @@ Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 ---
 
-**Vektra** is maintained by [VektraLabs](https://github.com/vektralabs).
+**Vektra RAG** is maintained by [VektraLabs](https://github.com/vektralabs).

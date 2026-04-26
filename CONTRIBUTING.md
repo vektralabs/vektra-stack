@@ -1,4 +1,4 @@
-# Contributing to Vektra
+# Contributing to Vektra RAG
 
 ## Quick start
 

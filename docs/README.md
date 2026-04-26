@@ -1,4 +1,4 @@
-# Vektra documentation
+# Vektra RAG documentation
 
 ## Getting started
 

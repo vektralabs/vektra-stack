@@ -37,6 +37,7 @@ Widget production-ready + instructor configuration.
 
 ### Changed
 
+- **User-facing branding**: README, top-level docs h1s, and external surfaces now use **Vektra RAG** as the product name. Coordinated with [vektralabs/vektra-moodle#14](https://github.com/vektralabs/vektra-moodle/pull/14) which renames its README h1 to "Vektra RAG for Moodle". Repo name (`vektra-stack`), Python package names (`vektra_*`), Docker images, container names, CLI commands, and internal code identifiers are unchanged.
 - **widget styles**: button and accent colors now use `var(--vektra-primary, …)` so `data-primary-color` takes effect without rebuilding the bundle. Hover states use `filter: brightness()` so custom colors still feel interactive.
 
 ## [0.4.0] - 2026-04-11

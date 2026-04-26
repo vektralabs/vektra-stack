@@ -1,4 +1,4 @@
-# Vektra Roadmap
+# Vektra RAG Roadmap
 
 This document outlines the phased development plan for Vektra.
 

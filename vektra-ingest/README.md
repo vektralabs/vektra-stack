@@ -7,7 +7,7 @@ Handles document extraction (`DocumentExtractor` protocol), chunking (`ChunkingS
 ## Extractors
 
 - **pdfplumber** (default): native text extraction from PDFs, DOCX, PPTX. No external runtime dependencies.
-- **Unstructured** (Phase 2, opt-in via `INSTALL_UNSTRUCTURED=true`): adds OCR support for scanned PDFs and 10-class element classification (titles, lists, tables, etc.). Heavier install footprint.
+- **Unstructured** (Phase 2, opt-in via the `INSTALL_UNSTRUCTURED=true` Docker build arg, not a runtime env var): adds OCR support for scanned PDFs (Tesseract + Poppler) and 10-class element classification (text, title, list, table, image, header, footer, figure caption, page break, formula). Heavier install footprint.
 
 Provider selected via `VEKTRA_DOCUMENT_EXTRACTOR=pdfplumber|unstructured`.
 

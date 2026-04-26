@@ -16,7 +16,11 @@ Conversation question/answer text is captured **only** when `VEKTRA_EVAL_MODE=tr
 
 ## Reporting
 
-`GET /api/v1/admin/analytics/...` endpoints aggregate counts, p50/p95 latency, retrieval/rerank score distributions, and grounding-mode breakdown per namespace.
+The analytics router (prefix `/api/v1`) exposes:
+
+- `GET /api/v1/traces` — paginated `QueryTrace` listing with namespace and time-range filters.
+- `GET /api/v1/traces/{response_id}` — single trace by `response_id`.
+- `GET /api/v1/metrics` — aggregated per-namespace metrics (counts, p50/p95 latency, retrieval/rerank score distributions, grounding-mode breakdown).
 
 Storage is optional and gated by `VEKTRA_ANALYTICS_STORE_TRACES`. Retention is independent (`VEKTRA_ANALYTICS_RETENTION_DAYS`) so traces can outlive the audit log or vice versa.
 

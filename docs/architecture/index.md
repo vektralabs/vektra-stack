@@ -65,7 +65,7 @@ Vektra defines 9 Protocol interfaces in `vektra_shared` for pluggability:
 6. **ChunkingStrategy** - document chunking. Phase 1: fixed-size. Phase 2: also dual-strategy (semantic + table preservation).
 7. **QueryPipeline** - RAG pipeline orchestration returning `QueryResponse` + `QueryTrace`. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline (query rewriting, reranking, hybrid retrieval).
 8. **SafeguardHook** - pre/post query safeguards at the three trust boundaries. Phase 1: passthrough. Phase 2: also Presidio (PII detection with content modification, ARCH-049).
-9. **EventEmitter** - internal event hooks. Phase 1: NoOpEventEmitter. Phase 2: LogEventEmitter and WebhookEventEmitter (HMAC-SHA256 signed delivery).
+9. **EventEmitter** - internal event hooks. Phase 1: NoOpEventEmitter. Phase 2: WebhookEventEmitter (HMAC-SHA256 signed HTTP POST, activated via `VEKTRA_WEBHOOK_URL`).
 
 ### Startup validation
 

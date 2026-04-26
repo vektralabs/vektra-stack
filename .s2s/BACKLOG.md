@@ -720,6 +720,59 @@ In today's deploy there is one widget per page and init fires once, so the impac
 
 ---
 
+### DEBT-020: Audit log fallback when `request_id` is missing on admin writes
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-04-26
+**Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-admin/src/vektra_admin/api.py:768-783`
+
+**Context**: `patch_namespace_config` writes the audit log only when `request.state.request_id` is truthy:
+
+```python
+request_id = getattr(request.state, "request_id", None)
+if request_id:
+    background_tasks.add_task(_audit.log_event, ...)
+```
+
+If the request-id middleware fails to set the attribute (or runs out of order), critical administrative events like namespace configuration changes are silently skipped from the audit log. This weakens NFR-007 (audit every sensitive content access). Other admin write endpoints (key CRUD, etc.) likely share the same pattern and should be audited together.
+
+**Proposed approach**:
+1. Synthesize a fallback `uuid4()` request_id when `request.state.request_id` is missing, so the audit log always fires.
+2. Emit a structlog warning in that path so middleware misconfiguration is observable.
+3. Sweep `vektra-admin/api.py` and `vektra-learn/api.py` for the same `if request_id:` pattern; apply the fix consistently.
+
+**Acceptance criteria**:
+- [ ] `patch_namespace_config` always writes an audit row, with a synthetic request_id when missing
+- [ ] Structlog warning emitted when the fallback path triggers
+- [ ] Same pattern applied to other admin write endpoints (POST /api-keys, DELETE /api-keys/{id}, etc.)
+- [ ] Unit test covers the fallback path
+
+---
+
+### DEBT-021: Replace `_fetch_document_names` round-trip with JOIN in chunk fetch
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-26
+**Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-core/src/vektra_core/pipeline.py:100-126`
+
+**Context**: WI-2 (FEAT-012) added `document_name` to source citations by introducing `_fetch_document_names()`, which performs a separate `SELECT id, filename, deleted_at FROM source_documents WHERE id = ANY(...)` after the main chunk fetch. This adds one Postgres round-trip per query.
+
+The original WI-2 plan suggested integrating the filename lookup into the existing `document_chunks` SELECT via a JOIN to `source_documents`. The v0.5.0 implementation chose the separate-call shape for clarity during milestone scope; consolidation is tracked here for future hardening.
+
+In current low-QPS deployments the extra round-trip is not measurable in user-facing latency. It becomes relevant under high concurrency.
+
+**Proposed approach**:
+1. Move filename resolution into the chunk-fetch query (in `vektra-index` or wherever `document_chunks` is queried) via `LEFT JOIN source_documents ON document_chunks.source_document_id = source_documents.id`.
+2. Return chunks already enriched with `document_name` and a `deleted_at` (or `archived` boolean) flag, so `_fetch_document_names` can be deleted.
+3. Preserve the `(archived)` suffix at the citation-rendering layer (API serialization).
+
+**Acceptance criteria**:
+- [ ] Single Postgres query covers chunk text + filename + archived flag
+- [ ] `_fetch_document_names()` removed from `vektra-core/pipeline.py`
+- [ ] Streaming and non-streaming pipelines both reflect the new shape
+- [ ] No regression in `(archived)` rendering for soft-deleted documents
+- [ ] Latency benchmark confirms one fewer round-trip per `/query`
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

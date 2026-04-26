@@ -140,7 +140,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - ChunkingStrategy: pluggable chunking. FixedSizeChunking (Phase 1), DualStrategyChunking with semantic splitting (Phase 2)
 - QueryPipeline: RAG pipeline abstraction returning QueryResponse + QueryTrace. Phase 2: AdvancedQueryPipeline with query rewriting (ARCH-061), reranking, hybrid search (implemented)
 - SafeguardHook: pre/post query safeguards (3 trust boundary points) with content modification support (ARCH-049)
-- EventEmitter: internal event hooks. NoOpEventEmitter (Phase 1), LogEventEmitter (Phase 2)
+- EventEmitter: internal event hooks. NoOpEventEmitter (Phase 1), WebhookEventEmitter (Phase 2: HMAC-SHA256 signed HTTP POST)
 
 **Key decisions** (64 total, 25 ADRs):
 - [ADR-0003](decisions/ADR-0003-modular-monolith-phase1.md): Modular monolith for Phase 1

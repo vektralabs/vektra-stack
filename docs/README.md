@@ -1,4 +1,4 @@
-# Vektra documentation
+# Vektra RAG documentation
 
 ## Getting started
 
@@ -8,7 +8,7 @@
 ## Reference
 
 - [API reference](reference/api.md) - all endpoints with curl examples
-- [Configuration](reference/configuration.md) - 40 environment variables with defaults
+- [Configuration](reference/configuration.md) - 64 environment variables with defaults
 - [Error codes](reference/error-codes.md) - error response codes and remediation
 
 ## Architecture
@@ -17,6 +17,7 @@
 
 ## Guides
 
+- [Widget integration](guides/widget-integration.md) - embed the LMS-agnostic chatbot widget in any course page (data-* attributes, JWT flow, conversation persistence, token refresh)
 - [Contributors](guides/contributors/index.md) - dev setup, testing, extending providers
 
 ## Workflows

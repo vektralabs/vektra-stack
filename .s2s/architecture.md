@@ -429,7 +429,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 - **ARCH-035 - EmbeddingProvider Protocol**: Dedicated Protocol for embedding generation. Separates embed_documents() from embed_query() for asymmetric models. Single shared instance between ingest and core. Configurable provider and model via env vars.
 - **ARCH-036 - QueryPipeline Protocol**: Abstraction of RAG query pipeline. execute() returns (QueryResponse, QueryTrace). Phase 1: SimpleQueryPipeline (embed -> search -> relevance_filter -> build_prompt -> LLM, with graceful degradation). relevance_filter applies minimum score threshold and overlap deduplication (ARCH-056). build_prompt calculates token budget from model context window (ARCH-055), renders composable Jinja2 templates (ARCH-054). Phase 2: AdvancedQueryPipeline adds query_rewrite (ARCH-061), query_classify, rerank, confidence scoring steps. Selectable via VEKTRA_QUERY_PIPELINE.
 - **ARCH-037 - ChunkingStrategy Protocol**: Abstraction of text chunking. Receives DocumentChunk stream, returns chunked stream. Phase 1: FixedSizeChunking. Selectable via VEKTRA_CHUNKING_STRATEGY.
-- **ARCH-038 - EventEmitter interface**: Internal event hooks with NoOp default. Emission points at document lifecycle, query completion, safeguard triggers, API key operations. Phase 2 (implemented): LogEventEmitter. WebhookEventEmitter with HMAC-SHA256 deferred to Phase 3.
+- **ARCH-038 - EventEmitter interface**: Internal event hooks with NoOp default. Emission points at document lifecycle, query completion, safeguard triggers, API key operations. Phase 2 (implemented): WebhookEventEmitter (HMAC-SHA256 signed HTTP POST, activated via `VEKTRA_WEBHOOK_URL`). LogEventEmitter (structlog-based) was scoped during planning but never implemented; the webhook path subsumed the use case.
 - **ARCH-039 - ProviderRegistry pattern**: Unified registry for all Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery in Phase 2. Consistent VEKTRA_* env var configuration pattern.
 - **ARCH-040 - Forward-compatible data model**: Phase 1 schema includes fields for Phase 2 features: response_id and citation_id for feedback loops, document version and supersedes_id for versioning, deleted_at and deletion_reason for soft delete, index_version for zero-downtime reindex. All fields nullable/defaulted, no behavioral change in Phase 1.
 - **ARCH-041 - Audit/analytics separation**: QueryTrace (per-step timing, chunk refs, model info) emitted separately from audit log. QueryTrace does not contain query text or response content (REQ-051 compliance). Phase 1: structlog emission. Phase 2 (implemented): dedicated query_traces table with reporting API (vektra-analytics).
@@ -704,7 +704,7 @@ class EventEmitter(Protocol):
     async def emit(event_type: str, payload: dict) -> None
 ```
 
-Phase 1: NoOpEventEmitter. Emission points: document.indexed, document.failed, query.completed, safeguard.triggered, apikey.created, apikey.revoked. Phase 2 (implemented): LogEventEmitter (structlog-based event logging). WebhookEventEmitter with HMAC-SHA256 deferred to Phase 3.
+Phase 1: NoOpEventEmitter. Emission points: document.indexed, document.failed, query.completed, safeguard.triggered, apikey.created, apikey.revoked. Phase 2 (implemented): WebhookEventEmitter — HMAC-SHA256 signed HTTP POST with configurable URL, secret, and timeout (`VEKTRA_WEBHOOK_URL`, `VEKTRA_WEBHOOK_SECRET`, `VEKTRA_WEBHOOK_TIMEOUT`). LogEventEmitter was originally scoped for Phase 2 but never built; structlog already emits the same events at module boundaries, so the webhook path was prioritized instead.
 
 ### 8.3.1 Extended types
 
@@ -1989,7 +1989,7 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 | TD-05 | No OAuth/OIDC | API keys sufficient for Phase 1 | Add for vektra-learn in Phase 2 |
 | TD-06 | Confidence scoring undefined | Algorithm needs research spike, confidence_tier field exists in QueryResponse | OQ-014, Phase 2 spike, field ready (ARCH-040) |
 | TD-07 | Dense-only vector search | Hybrid search Protocol ready (SearchMode enum), implementation deferred | REQ-050, swap PgvectorProvider or add QdrantVectorStoreProvider in Phase 2 (ARCH-051) |
-| TD-08 | NoOp event emission | EventEmitter hooks in place, no handler | REQ-061, swap to WebhookEventEmitter in Phase 2 |
+| TD-08 | NoOp event emission | EventEmitter hooks in place, no handler | REQ-061, WebhookEventEmitter implemented in Phase 2 |
 | TD-09 | Passthrough safeguards | SafeguardHook hooks in place, no enforcement | REQ-044, swap to Presidio-based in Phase 2 |
 | TD-10 | No sparse embeddings | SparseEmbeddingProvider Protocol defined, not registered | ARCH-053, register FastEmbedBM25Provider or SPLADEProvider in Phase 2 |
 
@@ -2133,7 +2133,7 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 | REQ-058 Content type detection | ARCH-042 Magic bytes | Reliable dispatch, mismatch warnings |
 | REQ-059 LLM graceful degradation | ARCH-043 Graceful degradation, ARCH-056 Retrieval quality | Fallback model, context-only response, no-relevant-context path |
 | REQ-060 QueryTrace | ARCH-041 Audit/analytics separation | Per-step RAG tracing, GDPR-safe |
-| REQ-061 EventEmitter | ARCH-038 EventEmitter interface | NoOp Phase 1, LogEventEmitter Phase 2 |
+| REQ-061 EventEmitter | ARCH-038 EventEmitter interface | NoOp Phase 1, WebhookEventEmitter Phase 2 |
 | REQ-062 ProviderRegistry | ARCH-039 ProviderRegistry pattern | Unified provider configuration |
 | REQ-063 Metadata filtering | ARCH-044 Chunk metadata filtering | JSONB + GIN index, SearchFilters in search() |
 | REQ-064 Zero-downtime reindex | ARCH-045 Index version | Atomic version switch, no downtime |
@@ -2218,4 +2218,4 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 *Version 1.9 - Quality scenarios: Section 10 expanded from 12 to 18 QS entries, quality tree restructured, 6 architecture-derived scenarios added (ARCH-043 degradation, ARCH-057 startup, ARCH-039 extensibility, ARCH-040 evolvability, NFR-008 retention, NFR-010 progress), validation scenario cross-reference (10.4)*
 *Version 1.9.1 - Conversational query rewriting: ARCH-061 (pre-retrieval query rewriting in AdvancedQueryPipeline), ADR-0023, rewrite.j2 template added to ARCH-054, ARCH-036 Phase 2 updated. Multilingual embedding note added to ADR-0013.*
 *Version 1.10 - OQ-018/OQ-019 resolution: ARCH-062 (admin UI server-side rendering, ADR-0024), ARCH-063 (learn chatbot widget, ADR-0025), ARCH-064 (Phase 2 hardware target 8GB/4CPU). Glossary: HTMX added. Deferred table: 3 entries added.*
-*Version 2.0 - Phase 2 delivery annotations: all Phase 2 features marked as implemented (v0.2.0). Component table expanded with vektra-analytics and vektra-learn. Protocol implementations updated: QdrantVectorStoreProvider, UnstructuredExtractor, DualStrategyChunking, AdvancedQueryPipeline, FastEmbedBM25Provider, LogEventEmitter. WebhookEventEmitter deferred to Phase 3.*
+*Version 2.0 - Phase 2 delivery annotations: all Phase 2 features marked as implemented (v0.2.0). Component table expanded with vektra-analytics and vektra-learn. Protocol implementations updated: QdrantVectorStoreProvider, UnstructuredExtractor, DualStrategyChunking, AdvancedQueryPipeline, FastEmbedBM25Provider, WebhookEventEmitter. LogEventEmitter was originally scoped for Phase 2 but never built; the webhook path subsumed the use case.*

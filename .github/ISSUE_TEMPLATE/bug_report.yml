@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a bug in Vektra
+description: Report a bug in Vektra RAG
 labels: ["bug"]
 body:
   - type: markdown

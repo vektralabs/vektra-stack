@@ -1,4 +1,4 @@
-# Vektra
+# Vektra RAG
 
 [![CI](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml/badge.svg?branch=main)](https://github.com/vektralabs/vektra-stack/actions/workflows/ci-unit.yml)
 [![Lint](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/vektralabs/vektra-stack/actions/workflows/lint.yml)
@@ -19,8 +19,8 @@ Plug in any LLM provider, vector store, or pipeline, keep data on-premises, and 
 
 Unlike RAG toolkits (LangChain, LlamaIndex, Haystack), Vektra ships as a **deployable platform**:
 
-| Aspect | Toolkits | Vektra |
-|--------|----------|--------|
+| Aspect | Toolkits | Vektra RAG |
+|--------|----------|------------|
 | Deployment | Build your own | `docker compose up` |
 | Configuration | Code changes | YAML/environment |
 | On-premises | DIY | First-class support |
@@ -46,12 +46,14 @@ Vektra uses a hybrid monorepo approach ([ADR-0001](.s2s/decisions/ADR-0001-hybri
 
 ```text
 vektra-stack/              # This repository (monorepo)
-├── vektra-core/           # RAG engine, LLM abstraction
+├── vektra-app/            # FastAPI entrypoint, startup validation, middleware
+├── vektra-shared/         # Protocols, types, config, auth, registry
+├── vektra-core/           # RAG engine, LLM abstraction, conversations
 ├── vektra-ingest/         # Document processing (PDF, OCR, PPT, Word)
 ├── vektra-index/          # Vector store abstraction, embedding
-├── vektra-analytics/      # Metrics, reporting, alerting
-├── vektra-learn/          # E-learning vertical (chatbot, dashboard)
-├── vektra-admin/          # System administration
+├── vektra-analytics/      # QueryTrace storage, metrics, reporting
+├── vektra-learn/          # E-learning vertical (chatbot widget, JWT-scoped API)
+├── vektra-admin/          # System administration (health, keys, namespace config)
 ├── docs/                  # Documentation
 └── docker-compose.yml     # Orchestration
 
@@ -110,4 +112,4 @@ Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 ---
 
-**Vektra** is maintained by [VektraLabs](https://github.com/vektralabs).
+**Vektra RAG** is maintained by [VektraLabs](https://github.com/vektralabs).

@@ -4,7 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — v0.5.0 "Widget production-ready + instructor configuration"
+<!--
+Convention (Keep a Changelog 1.1.0):
+- Add new entries under "[Unreleased]" using sections: Added, Changed,
+  Deprecated, Removed, Fixed, Security.
+- At release time: rename "[Unreleased]" to "[X.Y.Z] - YYYY-MM-DD" AND
+  add a fresh empty "[Unreleased]" block above it. The file must always
+  have an "[Unreleased]" section at the top, even if empty.
+- Releases are listed newest-first below "[Unreleased]".
+- See CONTRIBUTING.md > Changelog for the full process.
+-->
+
+## [Unreleased]
+
+<!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
+
+## [0.5.0] - 2026-04-25
+
+Widget production-ready + instructor configuration.
 
 ### Added
 
@@ -14,13 +31,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **vektra-learn**: `GET /api/v1/learn/conversations/{id}/turns` JWT-scoped endpoint so the widget can restore a conversation after a page reload. Returns decrypted question/answer + created_at; admin-only metadata is not exposed. 403 on namespace mismatch, 404 on missing.
 - **vektra-core**: `document_name` field on every source citation, joined from `source_documents.filename` so the widget renders `[1] lecture-07.pdf` instead of chunk UUIDs. Propagates through both `SimpleQueryPipeline` and `AdvancedQueryPipeline`, JSON and SSE paths. Soft-deleted source documents (REQ-057) keep their citation with an `(archived)` suffix so answers stay traceable.
 - **vektra-learn**: content-access audit entry (`learn_conversation_turns_read`) written on every successful turns fetch via the shared `vektra_shared.audit` interface (NFR-007).
-- **widget**: white-label `data-*` attributes — `data-title`, `data-primary-color`, `data-icon` (emoji or URL), `data-welcome-message`, `data-powered-by`. All rendered via `textContent` / safe color whitelist to avoid XSS.
+- **widget**: white-label `data-*` attributes — `data-title`, `data-primary-color`, `data-icon` (emoji or URL), `data-welcome-message`, `data-powered-by`, `data-powered-by-text`, `data-powered-by-url`. All rendered via `textContent` / safe color whitelist to avoid XSS.
 - **widget**: tab-scoped conversation persistence via `sessionStorage` keyed by `course_id` (24h cutoff); history replay on load via the new turns endpoint; explicit "New chat" button in the header.
 - **errors**: new codes `ERR-ADMIN-005/006/007` (namespace config) and `ERR-LEARN-005/006` (conversation turns).
+- **docs**: consolidated [Widget integration guide](docs/guides/widget-integration.md) covering the LMS-agnostic embed flow (server-side JWT issuance, all `data-*` attributes, conversation persistence, token refresh, source citation visibility, error states, and end-to-end examples for PHP and Python backends). Linked from `docs/README.md` under Guides.
 
 ### Changed
 
+- **User-facing branding**: README, top-level docs h1s, and external surfaces now use **Vektra RAG** as the product name. Coordinated with [vektralabs/vektra-moodle#14](https://github.com/vektralabs/vektra-moodle/pull/14) which renames its README h1 to "Vektra RAG for Moodle". Repo name (`vektra-stack`), Python package names (`vektra_*`), Docker images, container names, CLI commands, and internal code identifiers are unchanged.
+- **widget footer label**: default "Powered by" link text changed from "Vektra" to "VektraLabs" — clearer maintainer-credit pattern (the link points to vektralabs.github.io, the org landing page) and avoids the residual short form. Integrators using the default branding will see the new label after upgrading the bundle; custom `data-powered-by-text` overrides are unaffected.
 - **widget styles**: button and accent colors now use `var(--vektra-primary, …)` so `data-primary-color` takes effect without rebuilding the bundle. Hover states use `filter: brightness()` so custom colors still feel interactive.
+
+## [0.4.0] - 2026-04-11
+
+QueryTrace observability, eval harness, widget polish, and prompt hardening.
+
+### Added
+
+- **vektra-core**: configurable prompt grounding mode (FEAT-020, DEBT-016). `VEKTRA_PROMPT_GROUNDING_MODE=strict` (default) keeps the LLM tied to retrieved context + history; `hybrid` allows confident fallback to model knowledge. Foundation for the per-namespace override added in v0.5.0.
+- **vektra-core**: multilingual reranker upgrade (BUG-016, DEBT-010). Default reranker switched to `BAAI/bge-reranker-v2-m3` with a lower score threshold so non-English queries are no longer over-filtered.
+- **vektra-core**: `QueryTrace` persistence and an admin `GET /api/v1/admin/conversations/{id}/turns` endpoint (BUG-013, DEBT-011). Reranker scores, eval-mode metadata, and streaming model name are now captured in traces; gaps in the streaming path closed.
+- **vektra-learn**: SSE streaming in the learn query endpoint (FEAT-010). The `done` event now carries `conversation_id` so the widget keeps multi-turn continuity across SSE responses (BUG-018).
+- **widget**: Markdown rendering for assistant messages (FEAT-007), with code-block, list, and inline formatting; raw HTML stays sanitized.
+- **widget**: token auto-refresh on 401 (FEAT-009) via either an `onTokenExpired` callback or a `data-token-refresh-url` endpoint.
+- **widget**: API connectivity check and visible error feedback (FEAT-006) when the backend is unreachable.
+- **eval**: retrieval and end-to-end evaluation harness (TECH-002), plus a curated 55-question bilingual EN/IT evaluation dataset.
+- **config**: `VEKTRA_LLM_CONTEXT_WINDOW` propagation through `VektraSettings`, `VEKTRA_LLM_API_KEY` wired to litellm, and `VEKTRA_LLM_EXTRA_BODY` support for vLLM thinking-mode flags.
+
+### Fixed
+
+- **vektra-core**: warn (not crash) when `VEKTRA_LLM_CONTEXT_WINDOW` is unset for a model litellm does not know, falling back to 4096 (BUG-017).
+- **vektra-core**: conversation row now created before the first turn is persisted (BUG-014).
+- **vektra-core**: reranker scores propagated to `SearchResult` so observability and analytics see the post-rerank ranking (BUG-015).
+- **vektra-core**: register the conversation store in `ProviderRegistry` so dependent endpoints can resolve it.
+- **vektra-core**: distinguish "safeguard blocked" from "no relevant context" in the response so callers can tell apart a refusal from an empty result.
+- **vektra-core**: system prompt iteratively hardened to stop the LLM from leaking RAG internals (chunk IDs, scores, role names) in any language.
+- **vektra-learn**: audit logging on the conversation turns endpoint (NFR-007) was missing in the initial v0.4.0 release-review build.
+- **config**: `grounding_mode` validator added to `VektraSettings` so invalid values fail fast at startup.
+- **widget**: streaming token newlines and code-block formatting; centralized input-disabled state across sending and connection events; `<p>` no longer wraps inside `<code>` blocks.
+- **build**: removed redundant `uv sync` when `INSTALL_UNSTRUCTURED=true`; eliminated all `uv pip install` invocations outside the lockfile to harden the supply chain.
+- **CI**: latency measurement skipped on PR runs (post-merge only); perf-measurement queries reduced from 100 to 20 to keep workflow time bounded.
 
 ## [0.3.0] - 2026-03-21
 

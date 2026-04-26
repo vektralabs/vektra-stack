@@ -16,9 +16,12 @@ The file lives at `.github/CODEOWNERS`. Each component directory is mapped to on
 | Directory | Component | Owner(s) |
 |-----------|-----------|---------|
 | `vektra-shared/` | Shared protocols and types | @fvadicamo |
+| `vektra-app/` | Application entrypoint and startup validation | @fvadicamo |
 | `vektra-core/` | RAG engine and query pipeline | @fvadicamo |
 | `vektra-ingest/` | Document ingestion pipeline | @fvadicamo |
 | `vektra-index/` | Vector store and embedding | @fvadicamo |
+| `vektra-analytics/` | QueryTrace storage and metrics | @fvadicamo |
+| `vektra-learn/` | E-learning vertical (API + chatbot widget) | @fvadicamo |
 | `vektra-admin/` | Administration interface | @fvadicamo |
 | `.s2s/` | Specifications and architecture | @fvadicamo |
 | `docs/` | Documentation | @fvadicamo |

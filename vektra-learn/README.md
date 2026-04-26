@@ -58,7 +58,7 @@ The widget is loaded via a `<script>` tag on the host LMS page. All customizatio
 | `data-powered-by` | `true` | When `false` (case-insensitive), hide the attribution footer. |
 | `data-powered-by-text` | "Powered by Vektra" | Override the footer text (plain text only). |
 | `data-powered-by-url` | `https://vektralabs.github.io` | Override the footer link target. |
-| `data-show-sources` | (server-resolved) | Force or suppress the source-citations block (FEAT-014). Absent = defer to the server-resolved value. Resolution chain: this attr > `namespaces.config.show_sources` > `VEKTRA_LEARN_SHOW_SOURCES` env > hardcoded `true`. |
+| `data-show-sources` | (server-resolved) | Client-side override for the citations block (FEAT-014). When absent, defer to the server-resolved value. When present, the trimmed lowercase value is compared to `"false"`: only that exact string hides the section; any other value (including `"true"`) forces it visible. Resolution chain: this attr > `namespaces.config.show_sources` > `VEKTRA_LEARN_SHOW_SOURCES` env > hardcoded `true`. |
 
 ### Other attributes
 
@@ -66,7 +66,7 @@ The widget is loaded via a `<script>` tag on the host LMS page. All customizatio
 |-----------|---------|--------|
 | `data-theme` | `light` | Color theme: `light` or `dark`. |
 | `data-language` | `en` | UI strings language: `en`, `it`. |
-| `data-token-refresh-url` | (none) | Endpoint the widget calls when the JWT is about to expire (FEAT-009). |
+| `data-token-refresh-url` | (none) | URL the widget POSTs to (with `credentials: same-origin`, no body) after a `401` response, to obtain a refreshed JWT (FEAT-009). The endpoint must return JSON `{"token": "<new-jwt>"}`; any other shape, non-2xx status, or network error aborts the refresh and surfaces the original 401 to the user. |
 
 All `data-*` values are rendered via `textContent` (never `innerHTML`), and `data-primary-color` is validated against a safe whitelist, so XSS via attribute injection is neutralized.
 

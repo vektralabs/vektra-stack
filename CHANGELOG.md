@@ -39,6 +39,36 @@ Widget production-ready + instructor configuration.
 
 - **widget styles**: button and accent colors now use `var(--vektra-primary, …)` so `data-primary-color` takes effect without rebuilding the bundle. Hover states use `filter: brightness()` so custom colors still feel interactive.
 
+## [0.4.0] - 2026-04-11
+
+QueryTrace observability, eval harness, widget polish, and prompt hardening.
+
+### Added
+
+- **vektra-core**: configurable prompt grounding mode (FEAT-020, DEBT-016). `VEKTRA_PROMPT_GROUNDING_MODE=strict` (default) keeps the LLM tied to retrieved context + history; `hybrid` allows confident fallback to model knowledge. Foundation for the per-namespace override added in v0.5.0.
+- **vektra-core**: multilingual reranker upgrade (BUG-016, DEBT-010). Default reranker switched to `BAAI/bge-reranker-v2-m3` with a lower score threshold so non-English queries are no longer over-filtered.
+- **vektra-core**: `QueryTrace` persistence and an admin `GET /api/v1/admin/conversations/{id}/turns` endpoint (BUG-013, DEBT-011). Reranker scores, eval-mode metadata, and streaming model name are now captured in traces; gaps in the streaming path closed.
+- **vektra-learn**: SSE streaming in the learn query endpoint (FEAT-010). The `done` event now carries `conversation_id` so the widget keeps multi-turn continuity across SSE responses (BUG-018).
+- **widget**: Markdown rendering for assistant messages (FEAT-007), with code-block, list, and inline formatting; raw HTML stays sanitized.
+- **widget**: token auto-refresh on 401 (FEAT-009) via either an `onTokenExpired` callback or a `data-token-refresh-url` endpoint.
+- **widget**: API connectivity check and visible error feedback (FEAT-006) when the backend is unreachable.
+- **eval**: retrieval and end-to-end evaluation harness (TECH-002), plus a curated 55-question bilingual EN/IT evaluation dataset.
+- **config**: `VEKTRA_LLM_CONTEXT_WINDOW` propagation through `VektraSettings`, `VEKTRA_LLM_API_KEY` wired to litellm, and `VEKTRA_LLM_EXTRA_BODY` support for vLLM thinking-mode flags.
+
+### Fixed
+
+- **vektra-core**: warn (not crash) when `VEKTRA_LLM_CONTEXT_WINDOW` is unset for a model litellm does not know, falling back to 4096 (BUG-017).
+- **vektra-core**: conversation row now created before the first turn is persisted (BUG-014).
+- **vektra-core**: reranker scores propagated to `SearchResult` so observability and analytics see the post-rerank ranking (BUG-015).
+- **vektra-core**: register the conversation store in `ProviderRegistry` so dependent endpoints can resolve it.
+- **vektra-core**: distinguish "safeguard blocked" from "no relevant context" in the response so callers can tell apart a refusal from an empty result.
+- **vektra-core**: system prompt iteratively hardened to stop the LLM from leaking RAG internals (chunk IDs, scores, role names) in any language.
+- **vektra-learn**: audit logging on the conversation turns endpoint (NFR-007) was missing in the initial v0.4.0 release-review build.
+- **config**: `grounding_mode` validator added to `VektraSettings` so invalid values fail fast at startup.
+- **widget**: streaming token newlines and code-block formatting; centralized input-disabled state across sending and connection events; `<p>` no longer wraps inside `<code>` blocks.
+- **build**: removed redundant `uv sync` when `INSTALL_UNSTRUCTURED=true`; eliminated all `uv pip install` invocations outside the lockfile to harden the supply chain.
+- **CI**: latency measurement skipped on PR runs (post-merge only); perf-measurement queries reduced from 100 to 20 to keep workflow time bounded.
+
 ## [0.3.0] - 2026-03-21
 
 E-learning vertical refinements, widget UX improvements, and Phase 2 stabilization.

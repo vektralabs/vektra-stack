@@ -86,7 +86,7 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ADMIN-006 | vektra-admin | 400 | Unknown config key in namespace PATCH body |
 | ERR-ADMIN-007 | vektra-admin | 400 | Invalid value for namespace config key |
 | ERR-SAFEGUARD-001 | vektra-core | 400 | Query blocked by safeguard pre-check |
-| ERR-LEARN-001 | vektra-learn | 503 | Learn service unavailable or pipeline not configured |
+| ERR-LEARN-001 | vektra-learn | 503 / 500 | Learn service unavailable (503, registry not initialized) or misconfigured (500, conversation store does not support decryption — `VEKTRA_CONVERSATION_KEY` missing) |
 | ERR-LEARN-002 | vektra-learn | 404 | No enrollment found for student in course |
 | ERR-LEARN-003 | vektra-learn | 401 | Dashboard token missing required course_id claim |
 | ERR-LEARN-004 | vektra-learn | 409 | Duplicate enrollment (student already enrolled in course) |

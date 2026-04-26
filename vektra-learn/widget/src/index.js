@@ -30,7 +30,7 @@
  *   data-powered-by        - "true" (default) shows the attribution footer,
  *                            "false" hides it
  *   data-powered-by-text   - overrides the footer text (plain text, no HTML).
- *                            Default: "Powered by Vektra" as a link.
+ *                            Default: "Powered by VektraLabs" as a link.
  *   data-powered-by-url    - overrides the footer link target. Default:
  *                            https://vektralabs.github.io
  *   data-show-sources      - "true"/"false" client-side override for the

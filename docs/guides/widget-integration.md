@@ -24,16 +24,16 @@ The API key never leaves the LMS backend. The browser only sees the JWT, which i
 
 ### 1. Issue a JWT (server-side)
 
-The LMS backend exchanges its admin API key for a course-scoped JWT:
+The LMS backend exchanges its admin API key for a JWT bound to a `(student_id, course_id)` pair:
 
 ```bash
 curl -X POST https://your-vektra-host/api/v1/learn/tokens \
-  -H "X-API-Key: <admin-key>" \
+  -H "Authorization: Bearer <admin-api-key>" \
   -H "Content-Type: application/json" \
-  -d '{"namespace": "CS101"}'
+  -d '{"student_id": "stu-12345", "course_id": "CS101"}'
 ```
 
-Response:
+Response (HTTP 201):
 
 ```json
 {
@@ -42,7 +42,7 @@ Response:
 }
 ```
 
-The JWT carries the `course_id` claim and is signed with `VEKTRA_LEARN_JWT_SECRET`. See [API reference > Learn](../reference/api.md#learn) for the full request/response shape.
+Required fields: `student_id`, `course_id`. Optional: `namespace` (defaults to `course_id`), `expires_in` (default 3600s, max 86400s). The JWT carries the `course_id` claim and is signed with `VEKTRA_LEARN_JWT_SECRET`. See [API reference > Learn](../reference/api.md#learn) for the full request/response shape.
 
 ### 2. Embed the widget (HTML)
 
@@ -162,12 +162,13 @@ All strings are i18n-localized (`en`, `it`). Add a language by extending `I18N` 
 // Server-side: issue JWT for the current student in this course.
 $ch = curl_init('https://vektra.example.com/api/v1/learn/tokens');
 curl_setopt($ch, CURLOPT_HTTPHEADER, [
-    'X-API-Key: ' . VEKTRA_ADMIN_KEY,    // never sent to browser
+    'Authorization: Bearer ' . VEKTRA_ADMIN_KEY,    // never sent to browser
     'Content-Type: application/json',
 ]);
 curl_setopt($ch, CURLOPT_POST, true);
 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-    'namespace' => $course->idnumber,
+    'student_id' => (string) $USER->id,
+    'course_id'  => $course->idnumber,
 ]));
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 $response = json_decode(curl_exec($ch), true);
@@ -202,12 +203,13 @@ ADMIN_KEY = "..."
 
 @app.get("/course/{course_id}", response_class=HTMLResponse)
 async def course_page(course_id: str, request: Request):
-    # Validate user's session here (omitted)
+    # Validate user's session here and resolve student_id (omitted)
+    student_id = request.session["student_id"]
     async with httpx.AsyncClient() as client:
         r = await client.post(
             f"{VEKTRA_HOST}/api/v1/learn/tokens",
-            headers={"X-API-Key": ADMIN_KEY},
-            json={"namespace": course_id},
+            headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+            json={"student_id": student_id, "course_id": course_id},
         )
         token = r.json()["token"]
     return f"""

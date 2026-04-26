@@ -83,9 +83,9 @@ See [API reference > Learn](../docs/reference/api.md#learn) for full request/res
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | `POST` | `/api/v1/learn/tokens` | API key (`admin`) | Issue a JWT dashboard token (called server-side by the LMS). |
-| `POST` | `/api/v1/learn/enrollments` | API key (`admin`) | Register a student in a course (optional when `VEKTRA_LEARN_REQUIRE_ENROLLMENT=false`). |
+| `POST` | `/api/v1/learn/enrollments` | API key (`ingest`) | Register a student in a course (optional when `VEKTRA_LEARN_REQUIRE_ENROLLMENT=false`). |
 | `GET` | `/api/v1/learn/enrollments` | API key (`admin`) | List enrollments. |
 | `DELETE` | `/api/v1/learn/enrollments/{id}` | API key (`admin`) | Remove an enrollment. |
-| `POST` | `/api/v1/learn/content/ingest` | API key (`ingest`/`admin`) | Trigger course-scoped ingestion. |
+| `POST` | `/api/v1/learn/content/ingest` | API key (`ingest`) | Trigger course-scoped ingestion. |
 | `POST` | `/api/v1/learn/query` | JWT | Course-scoped RAG query. Returns `show_sources` flag + `document_name` per source. |
 | `GET` | `/api/v1/learn/conversations/{id}/turns` | JWT | Replay decrypted conversation history (namespace-scoped; emits `learn_conversation_turns_read` audit row per NFR-007). |

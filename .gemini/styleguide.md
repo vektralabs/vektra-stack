@@ -1,4 +1,4 @@
-# Vektra coding conventions for Gemini Code Assist
+# Vektra RAG coding conventions for Gemini Code Assist
 
 ## General
 

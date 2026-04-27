@@ -139,10 +139,11 @@ export class ChatUI {
     document.head.appendChild(style);
 
     if (this._primaryColor) {
-      // Reuse a single override node so repeated construction (hot reload,
-      // multi-instance, host-page re-init) doesn't accumulate style elements.
-      // Scope to the widget roots so the custom property doesn't leak to the
-      // host page's :root and clobber unrelated --vektra-primary uses there.
+      // Reuse a single override node — only the primary-color override is
+      // deduped, not the main style block above (DEBT-018 scope: avoid the
+      // override leaking to host page :root and clobbering unrelated
+      // --vektra-primary uses; main-style accumulation across hot reloads is
+      // not tackled here, see DEBT-022 for multi-instance support).
       let override = document.getElementById("vektra-primary-override");
       if (!override) {
         override = document.createElement("style");

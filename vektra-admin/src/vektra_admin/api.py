@@ -274,9 +274,10 @@ async def create_api_key(
     registry = getattr(request.app.state, "registry", None)
 
     key_info: ApiKeyInfo | None = None
+    is_bootstrap = _bootstrap.is_bootstrap_key(token)
 
     # --- Authenticate: bootstrap or admin key ---
-    if _bootstrap.is_bootstrap_key(token):
+    if is_bootstrap:
         # Check consumption before proceeding
         consumed = await _bootstrap.is_bootstrap_consumed(session)
         if consumed:
@@ -372,7 +373,6 @@ async def create_api_key(
     # AuditLogOrm.key_id is NOT a FK, so UUID(int=0) is safe as sentinel.
     _BOOTSTRAP_SENTINEL = UUID(int=0)
     request_id = _resolve_request_id(request)
-    is_bootstrap = _bootstrap.is_bootstrap_key(token)
     background_tasks.add_task(
         _audit.log_event,
         key_id=key_info.key_id if key_info else _BOOTSTRAP_SENTINEL,

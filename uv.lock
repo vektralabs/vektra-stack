@@ -5139,7 +5139,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "jinja2", specifier = ">=3.1" },
-    { name = "litellm", specifier = ">=1.83.10,<1.83.11" },
+    { name = "litellm", specifier = ">=1.83.10" },
     { name = "presidio-analyzer", specifier = ">=2.2" },
     { name = "presidio-anonymizer", specifier = ">=2.2" },
     { name = "pydantic", specifier = ">=2,<3" },

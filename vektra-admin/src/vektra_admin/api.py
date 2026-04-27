@@ -348,7 +348,7 @@ async def create_api_key(
     )
     session.add(new_key)
 
-    if _bootstrap.is_bootstrap_key(token):
+    if is_bootstrap:
         await _bootstrap.consume_bootstrap_key(session)
 
     await session.commit()

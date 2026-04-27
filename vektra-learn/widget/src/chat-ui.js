@@ -139,11 +139,17 @@ export class ChatUI {
     document.head.appendChild(style);
 
     if (this._primaryColor) {
-      const override = document.createElement("style");
-      // Single CSS custom property; styles.js uses var(--vektra-primary, ...)
-      // so an invalid value (filtered above) never reaches the DOM.
-      override.textContent = `:root { --vektra-primary: ${this._primaryColor}; }`;
-      document.head.appendChild(override);
+      // Reuse a single override node so repeated construction (hot reload,
+      // multi-instance, host-page re-init) doesn't accumulate style elements.
+      // Scope to the widget roots so the custom property doesn't leak to the
+      // host page's :root and clobber unrelated --vektra-primary uses there.
+      let override = document.getElementById("vektra-primary-override");
+      if (!override) {
+        override = document.createElement("style");
+        override.id = "vektra-primary-override";
+        document.head.appendChild(override);
+      }
+      override.textContent = `.vektra-chat-btn, .vektra-chat-panel { --vektra-primary: ${this._primaryColor}; }`;
     }
   }
 

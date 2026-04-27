@@ -133,8 +133,8 @@ def test_resolve_request_id_returns_existing_when_present():
     assert _resolve_request_id(request) == rid
 
 
-def test_resolve_request_id_synthesizes_uuid_when_missing(caplog):
-    """Helper should synthesize a UUID and log a warning when state attr missing."""
+def test_resolve_request_id_synthesizes_uuid_when_missing():
+    """Helper should synthesize a fresh UUID per call when state attr missing."""
     request = MagicMock()
     request.state.request_id = None
 

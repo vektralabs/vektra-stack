@@ -683,8 +683,10 @@ As a result, `conversation.j2` and `TemplateRenderer.render_conversation()` are 
 
 ### DEBT-018: Scope widget `--vektra-primary` override and dedupe style node
 
-**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Status**: completed | **Priority**: low | **Created**: 2026-04-21 | **Completed**: 2026-04-27 (v0.5.0)
 **Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/widget/src/chat-ui.js:138-144`
+
+**Resolution**: `_injectStyles()` now writes the `--vektra-primary` override scoped to `.vektra-chat-btn, .vektra-chat-panel` (no longer to `:root`) and reuses a single `<style id="vektra-primary-override">` element across instantiations.
 
 **Context**: `ChatUI._injectStyles()` appends a new `<style>` element setting `:root { --vektra-primary: <color> }` on every instantiation. Two consequences:
 
@@ -722,8 +724,10 @@ In today's deploy there is one widget per page and init fires once, so the impac
 
 ### DEBT-020: Audit log fallback when `request_id` is missing on sensitive endpoints
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-04-26
+**Status**: completed | **Priority**: medium | **Created**: 2026-04-26 | **Completed**: 2026-04-27 (v0.5.0)
 **Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-admin/src/vektra_admin/api.py:768-783`. Same pattern applies to sensitive reads, e.g. `get_conversation_turns` in `vektra-admin/src/vektra_admin/api.py:491-539`.
+
+**Resolution**: each of `vektra-admin/api.py`, `vektra-learn/api.py`, and `vektra-ingest/api.py` declares a private `_resolve_request_id(request) -> UUID` helper that synthesizes `uuid4()` when `request.state.request_id` is missing and emits a `request_id_middleware_missing_fallback` structlog warning. All known sensitive endpoints (admin api-keys CRUD, namespace config PATCH, admin/learn conversation turns reads, ingest async + direct audit writers) now audit unconditionally. Helper duplication across three modules is intentional for v0.5.0 — extraction to `vektra_shared` is tracked separately if a fourth caller appears.
 
 **Context**: `patch_namespace_config` writes the audit log only when `request.state.request_id` is truthy:
 

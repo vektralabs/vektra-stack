@@ -45,7 +45,7 @@ Widget production-ready + instructor configuration.
 
 ### Fixed
 
-- **audit log fallback (DEBT-020, NFR-007)**: sensitive admin and learn endpoints now always write an audit row, even if the request-id middleware doesn't populate `request.state.request_id`. A shared `_resolve_request_id` helper synthesizes a `uuid4()` fallback and emits a structlog warning so middleware misconfiguration is observable. Applied to `POST /api-keys`, `DELETE /api-keys/{id}`, `PATCH /admin/namespaces/{id}/config`, `GET /admin/conversations/{id}/turns`, and `GET /api/v1/learn/conversations/{id}/turns` (previous code skipped the audit silently when `request_id` was missing).
+- **audit log fallback (DEBT-020, NFR-007)**: sensitive admin, learn, and ingest endpoints now always write an audit row, even if the request-id middleware doesn't populate `request.state.request_id`. Each component declares a private `_resolve_request_id` helper that synthesizes a `uuid4()` fallback and emits a structlog warning so middleware misconfiguration is observable. Applied to `POST /api-keys`, `DELETE /api-keys/{id}`, `PATCH /admin/namespaces/{id}/config`, `GET /admin/conversations/{id}/turns`, `GET /api/v1/learn/conversations/{id}/turns`, and the vektra-ingest async + direct audit writers (used by `POST /api/v1/ingest`, batch ingest, deletion). Previous code skipped the audit silently when `request_id` was missing.
 - **test fakes**: renamed `self_inner` to `self` in nested `_FakeResult` / `_FakeSession` helpers inside `test_fetch_document_names_marks_archived` (style consistency with PEP 8; no behaviour change).
 
 ### Security

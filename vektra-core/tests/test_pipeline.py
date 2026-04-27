@@ -473,17 +473,17 @@ async def test_fetch_document_names_marks_archived(monkeypatch):
     ]
 
     class _FakeResult:
-        def all(self_inner):
+        def all(self):
             return rows
 
     class _FakeSession:
-        async def __aenter__(self_inner):
-            return self_inner
+        async def __aenter__(self):
+            return self
 
-        async def __aexit__(self_inner, *_):
+        async def __aexit__(self, *_):
             return False
 
-        async def execute(self_inner, *_a, **_k):
+        async def execute(self, *_a, **_k):
             return _FakeResult()
 
     def _factory():

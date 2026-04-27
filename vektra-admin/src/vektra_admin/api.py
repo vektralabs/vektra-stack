@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from fastapi import (
@@ -73,6 +73,22 @@ ALLOWED_CONFIG_KEYS: set[str] = (
 )
 
 log = structlog.get_logger(__name__)
+
+
+def _resolve_request_id(request: Request) -> UUID:
+    """Return ``request.state.request_id`` or synthesize a fallback ``uuid4()``.
+
+    Always returns a UUID so audit logging never silently skips sensitive
+    endpoints (NFR-007) when the request-id middleware misbehaves. Emits a
+    structlog warning on the fallback path so misconfiguration is observable.
+    """
+    rid: UUID | None = getattr(request.state, "request_id", None)
+    if rid is not None:
+        return rid
+    fallback = uuid4()
+    log.warning("request_id_middleware_missing_fallback", fallback=str(fallback))
+    return fallback
+
 
 router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
@@ -258,9 +274,10 @@ async def create_api_key(
     registry = getattr(request.app.state, "registry", None)
 
     key_info: ApiKeyInfo | None = None
+    is_bootstrap = _bootstrap.is_bootstrap_key(token)
 
     # --- Authenticate: bootstrap or admin key ---
-    if _bootstrap.is_bootstrap_key(token):
+    if is_bootstrap:
         # Check consumption before proceeding
         consumed = await _bootstrap.is_bootstrap_consumed(session)
         if consumed:
@@ -331,7 +348,7 @@ async def create_api_key(
     )
     session.add(new_key)
 
-    if _bootstrap.is_bootstrap_key(token):
+    if is_bootstrap:
         await _bootstrap.consume_bootstrap_key(session)
 
     await session.commit()
@@ -355,19 +372,17 @@ async def create_api_key(
     # NFR-007: log ALL authenticated requests, including bootstrap key usage.
     # AuditLogOrm.key_id is NOT a FK, so UUID(int=0) is safe as sentinel.
     _BOOTSTRAP_SENTINEL = UUID(int=0)
-    request_id = getattr(request.state, "request_id", None)
-    if request_id:
-        is_bootstrap = _bootstrap.is_bootstrap_key(token)
-        background_tasks.add_task(
-            _audit.log_event,
-            key_id=key_info.key_id if key_info else _BOOTSTRAP_SENTINEL,
-            endpoint="/api/v1/api-keys",
-            method="POST",
-            status_code=201,
-            request_id=request_id,
-            action="apikey_created_bootstrap" if is_bootstrap else "apikey_created",
-            log_metadata={"new_key_id": str(new_key.id)},
-        )
+    request_id = _resolve_request_id(request)
+    background_tasks.add_task(
+        _audit.log_event,
+        key_id=key_info.key_id if key_info else _BOOTSTRAP_SENTINEL,
+        endpoint="/api/v1/api-keys",
+        method="POST",
+        status_code=201,
+        request_id=request_id,
+        action="apikey_created_bootstrap" if is_bootstrap else "apikey_created",
+        log_metadata={"new_key_id": str(new_key.id)},
+    )
 
     log.info("api_key_created", key_id=str(new_key.id), scopes=requested_scopes)
 
@@ -449,18 +464,17 @@ async def revoke_api_key(
             pass
 
     # Audit log (async background task; log_event creates its own session)
-    request_id = getattr(request.state, "request_id", None)
-    if request_id:
-        background_tasks.add_task(
-            _audit.log_event,
-            key_id=key_info.key_id,
-            endpoint=f"/api/v1/api-keys/{key_id}",
-            method="DELETE",
-            status_code=204,
-            request_id=request_id,
-            action="apikey_revoked",
-            log_metadata={"revoked_key_id": str(key_id)},
-        )
+    request_id = _resolve_request_id(request)
+    background_tasks.add_task(
+        _audit.log_event,
+        key_id=key_info.key_id,
+        endpoint=f"/api/v1/api-keys/{key_id}",
+        method="DELETE",
+        status_code=204,
+        request_id=request_id,
+        action="apikey_revoked",
+        log_metadata={"revoked_key_id": str(key_id)},
+    )
 
     log.info("api_key_revoked", key_id=str(key_id), revoked_by=str(key_info.key_id))
 
@@ -519,22 +533,21 @@ async def get_conversation_turns(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     # Audit log: sensitive content access
-    request_id = getattr(request.state, "request_id", None)
-    if request_id:
-        background_tasks.add_task(
-            _audit.log_event,
-            key_id=_key.key_id,
-            endpoint=f"/api/v1/admin/conversations/{conversation_id}/turns",
-            method="GET",
-            status_code=200,
-            request_id=request_id,
-            action="conversation_turns_read",
-            log_metadata={
-                "namespace": getattr(request.state, "rls_namespace", None),
-                "conversation_id": str(conversation_id),
-                "turn_count": len(turns),
-            },
-        )
+    request_id = _resolve_request_id(request)
+    background_tasks.add_task(
+        _audit.log_event,
+        key_id=_key.key_id,
+        endpoint=f"/api/v1/admin/conversations/{conversation_id}/turns",
+        method="GET",
+        status_code=200,
+        request_id=request_id,
+        action="conversation_turns_read",
+        log_metadata={
+            "namespace": getattr(request.state, "rls_namespace", None),
+            "conversation_id": str(conversation_id),
+            "turn_count": len(turns),
+        },
+    )
 
     return turns
 
@@ -752,21 +765,20 @@ async def patch_namespace_config(
     await session.commit()
 
     # --- Audit log (NFR-007): config change is an administrative event ---
-    request_id = getattr(request.state, "request_id", None)
-    if request_id:
-        background_tasks.add_task(
-            _audit.log_event,
-            key_id=key_info.key_id,
-            endpoint=f"/api/v1/admin/namespaces/{namespace_id}/config",
-            method="PATCH",
-            status_code=200,
-            request_id=request_id,
-            action="namespace_config_updated",
-            log_metadata={
-                "namespace_id": namespace_id,
-                "updated_keys": sorted(body.keys()),
-            },
-        )
+    request_id = _resolve_request_id(request)
+    background_tasks.add_task(
+        _audit.log_event,
+        key_id=key_info.key_id,
+        endpoint=f"/api/v1/admin/namespaces/{namespace_id}/config",
+        method="PATCH",
+        status_code=200,
+        request_id=request_id,
+        action="namespace_config_updated",
+        log_metadata={
+            "namespace_id": namespace_id,
+            "updated_keys": sorted(body.keys()),
+        },
+    )
 
     log.info(
         "namespace_config_updated",

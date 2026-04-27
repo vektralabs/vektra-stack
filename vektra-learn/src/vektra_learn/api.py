@@ -57,6 +57,24 @@ from vektra_shared.types import trace_from_dict
 # Sentinel key_id for learn-originated conversations (JWT auth has no API key).
 _LEARN_SENTINEL_KEY_ID = UUID("00000000-0000-0000-0000-000000000000")
 
+
+def _resolve_request_id(request: Request) -> UUID:
+    """Return ``request.state.request_id`` or synthesize a fallback ``uuid4()``.
+
+    Always returns a UUID so audit logging never silently skips sensitive
+    endpoints (NFR-007) when the request-id middleware misbehaves. Emits a
+    structlog warning on the fallback path so misconfiguration is observable.
+    """
+    rid: UUID | None = getattr(request.state, "request_id", None)
+    if rid is not None:
+        return rid
+    fallback = uuid4()
+    structlog.get_logger(__name__).warning(
+        "request_id_middleware_missing_fallback", fallback=str(fallback)
+    )
+    return fallback
+
+
 router = APIRouter(prefix="/api/v1/learn", tags=["learn"])
 
 
@@ -623,7 +641,7 @@ async def get_conversation_turns(
     # unconditionally with a synthesized request_id if the middleware hasn't
     # set one — a missing correlation id must not silently skip the audit
     # row (compliance gap otherwise invisible).
-    request_id = getattr(request.state, "request_id", None) or uuid4()
+    request_id = _resolve_request_id(request)
     background_tasks.add_task(
         _audit_log_event,
         key_id=_LEARN_SENTINEL_KEY_ID,

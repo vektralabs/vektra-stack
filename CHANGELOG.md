@@ -19,7 +19,7 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
-## [0.5.0] - 2026-04-25
+## [0.5.0] - 2026-04-27
 
 Widget production-ready + instructor configuration.
 
@@ -41,6 +41,18 @@ Widget production-ready + instructor configuration.
 - **User-facing branding**: README, top-level docs h1s, and external surfaces now use **Vektra RAG** as the product name. Coordinated with [vektralabs/vektra-moodle#14](https://github.com/vektralabs/vektra-moodle/pull/14) which renames its README h1 to "Vektra RAG for Moodle". Repo name (`vektra-stack`), Python package names (`vektra_*`), Docker images, container names, CLI commands, and internal code identifiers are unchanged.
 - **widget footer label**: default "Powered by" link text changed from "Vektra" to "VektraLabs" — clearer maintainer-credit pattern (the link points to vektralabs.github.io, the org landing page) and avoids the residual short form. Integrators using the default branding will see the new label after upgrading the bundle; custom `data-powered-by-text` overrides are unaffected.
 - **widget styles**: button and accent colors now use `var(--vektra-primary, …)` so `data-primary-color` takes effect without rebuilding the bundle. Hover states use `filter: brightness()` so custom colors still feel interactive.
+- **widget primary-color scope (DEBT-018)**: the `--vektra-primary` override is now scoped to widget roots (`.vektra-chat-btn, .vektra-chat-panel`) instead of `:root`, so it no longer clobbers any unrelated `--vektra-primary` declarations on the host page. Repeated widget initialization reuses a single `<style id="vektra-primary-override">` node instead of accumulating duplicates (multi-instance / hot-reload safety).
+
+### Fixed
+
+- **audit log fallback (DEBT-020, NFR-007)**: sensitive admin, learn, and ingest endpoints now always write an audit row, even if the request-id middleware doesn't populate `request.state.request_id`. Each component declares a private `_resolve_request_id` helper that synthesizes a `uuid4()` fallback and emits a structlog warning so middleware misconfiguration is observable. Applied to `POST /api-keys`, `DELETE /api-keys/{id}`, `PATCH /admin/namespaces/{id}/config`, `GET /admin/conversations/{id}/turns`, `GET /api/v1/learn/conversations/{id}/turns`, and the vektra-ingest async + direct audit writers (used by `POST /api/v1/ingest`, batch ingest, deletion). Previous code skipped the audit silently when `request_id` was missing.
+- **test fakes**: renamed `self_inner` to `self` in nested `_FakeResult` / `_FakeSession` helpers inside `test_fetch_document_names_marks_archived` (style consistency with PEP 8; no behaviour change).
+
+### Security
+
+- **deps**: bumped `litellm` from `>=1.40,<1.82.7` to `>=1.83.10,<1.83.11` — closes 2 critical CVEs (authentication bypass via OIDC userinfo cache key collision) and several high-severity findings (authenticated command execution via MCP stdio test endpoints, SSTI in `/prompts/test`).
+- **deps-dev**: bumped `pytest` from `>=8.0` to `>=9.0.3` (full test suite green on the new major version).
+- **deps-dev**: bumped widget `esbuild` from `^0.24` to `^0.25`.
 
 ## [0.4.0] - 2026-04-11
 

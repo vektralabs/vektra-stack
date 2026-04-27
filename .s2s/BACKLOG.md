@@ -683,8 +683,10 @@ As a result, `conversation.j2` and `TemplateRenderer.render_conversation()` are 
 
 ### DEBT-018: Scope widget `--vektra-primary` override and dedupe style node
 
-**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Status**: completed | **Priority**: low | **Created**: 2026-04-21 | **Completed**: 2026-04-27 (v0.5.0)
 **Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/widget/src/chat-ui.js:138-144`
+
+**Resolution**: `_injectStyles()` now writes the `--vektra-primary` override scoped to `.vektra-chat-btn, .vektra-chat-panel` (no longer to `:root`) and reuses a single `<style id="vektra-primary-override">` element across instantiations.
 
 **Context**: `ChatUI._injectStyles()` appends a new `<style>` element setting `:root { --vektra-primary: <color> }` on every instantiation. Two consequences:
 
@@ -722,8 +724,10 @@ In today's deploy there is one widget per page and init fires once, so the impac
 
 ### DEBT-020: Audit log fallback when `request_id` is missing on sensitive endpoints
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-04-26
+**Status**: completed | **Priority**: medium | **Created**: 2026-04-26 | **Completed**: 2026-04-27 (v0.5.0)
 **Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-admin/src/vektra_admin/api.py:768-783`. Same pattern applies to sensitive reads, e.g. `get_conversation_turns` in `vektra-admin/src/vektra_admin/api.py:491-539`.
+
+**Resolution**: each of `vektra-admin/api.py`, `vektra-learn/api.py`, and `vektra-ingest/api.py` declares a private `_resolve_request_id(request) -> UUID` helper that synthesizes `uuid4()` when `request.state.request_id` is missing and emits a `request_id_middleware_missing_fallback` structlog warning. All known sensitive endpoints (admin api-keys CRUD, namespace config PATCH, admin/learn conversation turns reads, ingest async + direct audit writers) now audit unconditionally. Helper duplication across three modules is intentional for v0.5.0 — extraction to `vektra_shared` is tracked separately if a fourth caller appears.
 
 **Context**: `patch_namespace_config` writes the audit log only when `request.state.request_id` is truthy:
 
@@ -778,6 +782,51 @@ Path A is sufficient for the immediate goal (one fewer round-trip). Path B is a 
 - [ ] No regression in `(archived)` rendering for soft-deleted documents
 - [ ] Latency benchmark confirms one fewer Postgres round-trip per `/query` regardless of vector store provider
 - [ ] Qdrant payload denormalization (path B) tracked as a follow-up if needed
+
+---
+
+### DEBT-022: Widget multi-instance primary-color and base-style support
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-27
+**Origin**: Gemini review on PR #73 (v0.5.0 hardening), `vektra-learn/widget/src/chat-ui.js:152`
+
+**Context**: DEBT-018 closed the host-page leak (`:root` → widget-roots scoped) and deduped the `--vektra-primary` override style node. It does **not** support multiple widgets on the same page with different primary colors: the override is keyed by a global `id="vektra-primary-override"` and writes class selectors shared by every instance, so the last constructor to fire wins for all instances. Separately, the main `<style>` block (the theme stylesheet) still appends a fresh element on every `ChatUI` construction — fine for the current 1-widget-per-page assumption, but accumulates under hot-reload or future multi-instance embedding.
+
+Today's deploy is single-instance, so the gap is theoretical. Filing for the moment we ship multi-instance embedding (e.g. an instructor-side admin widget alongside a student widget on the same LMS page).
+
+**Proposed approach**:
+1. Apply per-instance primary color via `style.setProperty("--vektra-primary", color)` on the widget's root elements (`._btn` and `._panel`) inside `_createElements`, instead of writing a global stylesheet override. Drop the `vektra-primary-override` style node.
+2. Dedupe the main style block too: look up `document.getElementById("vektra-chat-ui-styles")` and reuse if present; otherwise create. Note: instances must agree on theme — or theme should also become per-instance.
+3. Decide whether `--vektra-primary` lookups inside descendants (`.vektra-chat-msg.user`, etc.) still resolve correctly via cascade after the per-instance set.
+
+**Acceptance criteria**:
+- [ ] Two widgets on the same page with different `data-primary-color` render with their own respective colors
+- [ ] Re-initialising a widget (hot reload / SPA navigation) does not accumulate `<style>` elements in `document.head`
+- [ ] No regression on single-instance deploys (dominant case today)
+- [ ] Visual smoke test in Moodle host page
+
+---
+
+### DEBT-023: Hoist `_resolve_request_id` audit-fallback helper into `vektra_shared`
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-27
+**Origin**: CodeRabbit review on PR #73 (v0.5.0 hardening), nitpick on `vektra-learn/src/vektra_learn/api.py:60-76`
+
+**Context**: DEBT-020 introduced a `_resolve_request_id(request) -> UUID` helper that synthesizes `uuid4()` when `request.state.request_id` is missing and emits a structlog warning. The helper is duplicated almost verbatim across `vektra-admin/src/vektra_admin/api.py`, `vektra-learn/src/vektra_learn/api.py`, and `vektra-ingest/src/vektra_ingest/api.py`. Logger usage is also subtly inconsistent: admin/ingest call `log.warning(...)` against a module-level `log`, while learn calls `structlog.get_logger(__name__).warning(...)` inline.
+
+Three near-duplicates is the threshold where extraction starts to pay off (a fourth caller is plausible if the platform grows new audited endpoints; behavioural drift between modules is the real risk).
+
+**Proposed approach**:
+1. Add `vektra_shared.audit.resolve_request_id(request: Request) -> UUID` (or a new `vektra_shared.request_id` module if `audit.py` should stay narrow).
+2. Standardize the logger call shape so all three modules emit the same `request_id_middleware_missing_fallback` event with identical keys.
+3. Replace the three local helpers with imports.
+4. Verify import-linter contracts still pass (`vektra_shared` is the only module the components are allowed to import from, so this is well within the existing contract).
+
+**Acceptance criteria**:
+- [ ] `_resolve_request_id` removed from `vektra-admin/api.py`, `vektra-learn/api.py`, `vektra-ingest/api.py`
+- [ ] Single shared helper in `vektra_shared` with the same signature and behaviour
+- [ ] Same structlog event name and keys regardless of caller
+- [ ] All existing audit-fallback tests still pass; helper unit-tested in `vektra-shared/tests`
 
 ---
 

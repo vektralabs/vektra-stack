@@ -33,6 +33,51 @@ export class ApiClient {
   }
 
   /**
+   * Manually set the current conversation ID (e.g. restored from sessionStorage).
+   * Use null to clear it.
+   */
+  setConversationId(id) {
+    this._conversationId = id || null;
+  }
+
+  /**
+   * Fetch decrypted turns for a stored conversation (WI-1 / FEAT-004).
+   * Returns null on 404/403 (so the caller can reset local state silently),
+   * throws on other errors so that a transient network failure does not
+   * wipe the sessionStorage entry.
+   *
+   * @param {string} conversationId
+   * @returns {Promise<{conversation_id: string, namespace: string, turns: Array}|null>}
+   */
+  async getConversationTurns(conversationId, _retried = false) {
+    // Bounded timeout so a stalled backend doesn't block widget init.
+    // AbortSignal.timeout rejects the fetch with an AbortError; callers
+    // already handle thrown errors by leaving stored state untouched.
+    const resp = await fetch(
+      `${this._apiUrl}/api/v1/learn/conversations/${encodeURIComponent(conversationId)}/turns`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${this._token}` },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    if (resp.status === 401 && !_retried) {
+      const newToken = await this._refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.getConversationTurns(conversationId, true);
+      }
+    }
+    if (resp.status === 404 || resp.status === 403) {
+      return null; // caller clears local state, no error surfaced to the user
+    }
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    return resp.json();
+  }
+
+  /**
    * Check if the Vektra API is reachable.
    * @returns {Promise<boolean>}
    */
@@ -130,7 +175,9 @@ export class ApiClient {
                   onToken(event.data);
                   receivedTokens = true;
                 } else if (event.type === "sources" && onSources) {
-                  onSources(event.data);
+                  // FEAT-014: forward the server-resolved show_sources hint
+                  // alongside the sources list (undefined on older servers).
+                  onSources(event.data, event.show_sources);
                 } else if (event.type === "done") {
                   if (event.data?.conversation_id) {
                     this._conversationId = event.data.conversation_id;
@@ -163,7 +210,8 @@ export class ApiClient {
           onToken(data.answer);
         }
         if (onSources && data.sources && data.sources.length > 0) {
-          onSources(data.sources);
+          // FEAT-014: pass server-resolved show_sources hint to caller.
+          onSources(data.sources, data.show_sources);
         }
         if (onDone) onDone();
       }

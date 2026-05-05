@@ -35,6 +35,10 @@ class CourseQueryResponse(BaseModel):
     sources: list[dict[str, Any]]
     conversation_id: UUID | None
     no_relevant_context: bool = False
+    # FEAT-014: server-resolved citation visibility (namespace config > env > default).
+    # The API always returns the sources list so analytics and QueryTrace keep
+    # full information; the flag only instructs the widget whether to render them.
+    show_sources: bool = True
 
 
 def build_course_query(
@@ -59,8 +63,14 @@ def build_course_query(
 
 def pipeline_response_to_course_response(
     resp: QueryResponse,
+    *,
+    show_sources: bool = True,
 ) -> CourseQueryResponse:
-    """Convert a QueryResponse to a CourseQueryResponse for the learn API."""
+    """Convert a QueryResponse to a CourseQueryResponse for the learn API.
+
+    *show_sources* is the server-resolved FEAT-014 flag. The API always
+    returns the full sources list; the flag is a hint for the widget.
+    """
     return CourseQueryResponse(
         response_id=resp.response_id,
         answer=resp.answer,
@@ -70,9 +80,11 @@ def pipeline_response_to_course_response(
                 "chunk_id": s.chunk_id,
                 "score": s.score,
                 "snippet": s.snippet,
+                "document_name": s.document_name,  # FEAT-012
             }
             for s in resp.sources
         ],
         conversation_id=resp.conversation_id,
         no_relevant_context=resp.no_relevant_context,
+        show_sources=show_sources,
     )

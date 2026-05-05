@@ -664,6 +664,172 @@ As a result, `conversation.j2` and `TemplateRenderer.render_conversation()` are 
 
 ---
 
+### DEBT-017: Consolidate namespace-resolution logic in vektra-learn
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/src/vektra_learn/api.py:498-512`
+
+**Context**: `_resolve_namespace_from_token()` (added for WI-1 in v0.5.0) re-implements the same fallback chain that `course_query` does inline around lines 663-673 and 694-695: read `course_id` from the JWT, fall back to `namespace` claim, default to `course_id`. The learn-query path additionally performs an enrollment lookup when `VEKTRA_LEARN_REQUIRE_ENROLLMENT=true` which is interleaved with the plain resolution, so a naive extraction would miss that branch.
+
+**Proposed approach**: extend `_resolve_namespace_from_token` to return a `(course_id, namespace, namespace_source)` tuple, then refactor `course_query` to call it for the non-enrollment branch while keeping the enrollment path inline. Both endpoints stay in lockstep if the JWT schema evolves (e.g., a new claim is added).
+
+**Acceptance criteria**:
+- [ ] Single helper used by both `get_conversation_turns` and `course_query` (non-enrollment branch)
+- [ ] Enrollment-required branch unchanged
+- [ ] Tests cover both call sites against a shared fixture set
+- [ ] No behaviour change to error codes (ERR-LEARN-003 on missing course_id)
+
+---
+
+### DEBT-018: Scope widget `--vektra-primary` override and dedupe style node
+
+**Status**: completed | **Priority**: low | **Created**: 2026-04-21 | **Completed**: 2026-04-27 (v0.5.0)
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-learn/widget/src/chat-ui.js:138-144`
+
+**Resolution**: `_injectStyles()` now writes the `--vektra-primary` override scoped to `.vektra-chat-btn, .vektra-chat-panel` (no longer to `:root`) and reuses a single `<style id="vektra-primary-override">` element across instantiations.
+
+**Context**: `ChatUI._injectStyles()` appends a new `<style>` element setting `:root { --vektra-primary: <color> }` on every instantiation. Two consequences:
+
+1. Repeated construction (hot reload, multi-instance embedding, host-page re-init) accumulates style nodes.
+2. The override lives on `:root`, so if the host page already defines `--vektra-primary` for an unrelated purpose, the widget now wins document-wide.
+
+In today's deploy there is one widget per page and init fires once, so the impact is theoretical. Filing as debt so it's tracked when we eventually support embedding multiple instances or host pages that reuse the custom property.
+
+**Proposed approach**:
+1. Scope the override to the widget roots: `.vektra-chat-btn, .vektra-chat-panel { --vektra-primary: <color> }`.
+2. Cache/replace a single `<style id="vektra-primary-override">` node rather than appending on every construction.
+
+**Acceptance criteria**:
+- [ ] Custom property no longer leaks to `:root` when a widget is initialised
+- [ ] Re-initialising a widget replaces the style node instead of appending a new one
+- [ ] Default-color deploys render identically (no visual regression)
+
+---
+
+### DEBT-019: Unit assertion for `document_name` on streaming sources
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-21
+**Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-core/tests/test_pipeline.py:423-497`
+
+**Context**: the streaming path (`execute_stream` in both `SimpleQueryPipeline` and `AdvancedQueryPipeline`) was the regression vector fixed by commit `45437c8` (missing `document_name` in `sources_data` dict of `AdvancedQueryPipeline.execute_stream`). Current unit coverage exercises `execute()` via `test_execute_populates_document_name` and is cross-checked end-to-end by the Kalypso smoke test. Adding a dedicated unit assertion on the streamed `sources` payload would catch the same regression at fastest feedback.
+
+**Proposed approach**: mirror `test_execute_populates_document_name` using the existing `_collect_stream()` helper: monkeypatch `pipeline_mod._fetch_document_names` to the same hit/miss fakes and assert each streamed `QueryChunk(type="sources", ...).data[*]["document_name"]` matches expectations. Add the same test for `AdvancedQueryPipeline`.
+
+**Acceptance criteria**:
+- [ ] Unit test covers `SimpleQueryPipeline.execute_stream` sources payload
+- [ ] Unit test covers `AdvancedQueryPipeline.execute_stream` sources payload
+- [ ] Both tests use the same mapping / empty-dict monkeypatches as the non-stream test for parity
+
+---
+
+### DEBT-020: Audit log fallback when `request_id` is missing on sensitive endpoints
+
+**Status**: completed | **Priority**: medium | **Created**: 2026-04-26 | **Completed**: 2026-04-27 (v0.5.0)
+**Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-admin/src/vektra_admin/api.py:768-783`. Same pattern applies to sensitive reads, e.g. `get_conversation_turns` in `vektra-admin/src/vektra_admin/api.py:491-539`.
+
+**Resolution**: each of `vektra-admin/api.py`, `vektra-learn/api.py`, and `vektra-ingest/api.py` declares a private `_resolve_request_id(request) -> UUID` helper that synthesizes `uuid4()` when `request.state.request_id` is missing and emits a `request_id_middleware_missing_fallback` structlog warning. All known sensitive endpoints (admin api-keys CRUD, namespace config PATCH, admin/learn conversation turns reads, ingest async + direct audit writers) now audit unconditionally. Helper duplication across three modules is intentional for v0.5.0 — extraction to `vektra_shared` is tracked separately if a fourth caller appears.
+
+**Context**: `patch_namespace_config` writes the audit log only when `request.state.request_id` is truthy:
+
+```python
+request_id = getattr(request.state, "request_id", None)
+if request_id:
+    background_tasks.add_task(_audit.log_event, ...)
+```
+
+If the request-id middleware fails to set the attribute (or runs out of order), audit events are silently skipped. This weakens NFR-007 ("audit every sensitive content access"). The same `if request_id:` guard appears on sensitive **read** endpoints too (e.g. `GET /admin/conversations/{id}/turns`), which means both write and read paths leak audit coverage when the middleware misbehaves. The fix should sweep both classes of endpoint, not only writes.
+
+**Proposed approach**:
+1. Synthesize a fallback `uuid4()` request_id when `request.state.request_id` is missing, so the audit log always fires.
+2. Emit a structlog warning in that path so middleware misconfiguration is observable.
+3. Sweep `vektra-admin/api.py` and `vektra-learn/api.py` for the `if request_id:` pattern across **both read and write** sensitive endpoints; apply the fix consistently.
+
+**Acceptance criteria**:
+- [ ] `patch_namespace_config` always writes an audit row, with a synthetic request_id when missing
+- [ ] Structlog warning emitted when the fallback path triggers
+- [ ] Same pattern applied to sensitive endpoints across vektra-admin and vektra-learn, covering reads (e.g. `GET /admin/conversations/{id}/turns`) **and** writes (`POST /api-keys`, `DELETE /api-keys/{id}`, `PATCH /admin/namespaces/{id}/config`, etc.)
+- [ ] Unit test covers the fallback path on at least one read and one write endpoint
+
+---
+
+### DEBT-021: Replace `_fetch_document_names` round-trip with provider-aligned filename resolution
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-26
+**Origin**: Gemini review on PR #71 (v0.5.0 release), `vektra-core/src/vektra_core/pipeline.py:100-126`. Multi-provider scoping refined per Gemini review on PR #72.
+
+**Context**: WI-2 (FEAT-012) added `document_name` to source citations by introducing `_fetch_document_names()`, which performs a separate `SELECT id, filename, deleted_at FROM source_documents WHERE id = ANY(...)` after the main chunk fetch. This adds one Postgres round-trip per query.
+
+The original WI-2 plan suggested integrating filename lookup into the existing chunk-fetch query. The v0.5.0 implementation chose the separate-call shape for clarity during milestone scope; consolidation is tracked here for future hardening.
+
+In current low-QPS deployments the extra round-trip is not measurable in user-facing latency. It becomes relevant under high concurrency.
+
+**Multi-provider note**: chunk metadata (text, source_document_id) lives in the Postgres `document_chunks` table regardless of vector store provider. Two valid optimization paths exist:
+
+- **Path A — Postgres-side JOIN** (works for both `pgvector` and `qdrant`): collapse the chunk fetch and filename lookup into a single SQL with `LEFT JOIN source_documents ON document_chunks.source_document_id = source_documents.id`. Saves one round-trip; provider-agnostic because chunks always live in Postgres.
+- **Path B — Provider-native payload denormalization** (Qdrant only): store `document_name` and a soft-delete flag inside the vector payload at ingest time. Search results carry the filename directly, eliminating the need for any Postgres lookup beyond the chunk text. Lower latency than path A for Qdrant deployments, at the cost of payload migration on document rename or soft-delete.
+
+Path A is sufficient for the immediate goal (one fewer round-trip). Path B is a follow-up for Qdrant-heavy deployments and requires a separate ingest-side change.
+
+**Proposed approach**:
+1. Implement path A first: move filename + `deleted_at` resolution into the chunk-fetch query (in `vektra-index` or wherever `document_chunks` is queried). Delete `_fetch_document_names`.
+2. Preserve the `(archived)` suffix at the citation-rendering layer (API serialization), independent of the storage path.
+3. Optionally: under the Qdrant provider, follow up with path B (denormalize at ingest, sync on document rename / soft-delete) as a separate item.
+
+**Acceptance criteria**:
+- [ ] Chunk-fetch query covers text + filename + soft-delete flag in a single round-trip (path A)
+- [ ] `_fetch_document_names()` removed from `vektra-core/pipeline.py`
+- [ ] Streaming and non-streaming pipelines both reflect the new shape
+- [ ] No regression in `(archived)` rendering for soft-deleted documents
+- [ ] Latency benchmark confirms one fewer Postgres round-trip per `/query` regardless of vector store provider
+- [ ] Qdrant payload denormalization (path B) tracked as a follow-up if needed
+
+---
+
+### DEBT-022: Widget multi-instance primary-color and base-style support
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-27
+**Origin**: Gemini review on PR #73 (v0.5.0 hardening), `vektra-learn/widget/src/chat-ui.js:152`
+
+**Context**: DEBT-018 closed the host-page leak (`:root` → widget-roots scoped) and deduped the `--vektra-primary` override style node. It does **not** support multiple widgets on the same page with different primary colors: the override is keyed by a global `id="vektra-primary-override"` and writes class selectors shared by every instance, so the last constructor to fire wins for all instances. Separately, the main `<style>` block (the theme stylesheet) still appends a fresh element on every `ChatUI` construction — fine for the current 1-widget-per-page assumption, but accumulates under hot-reload or future multi-instance embedding.
+
+Today's deploy is single-instance, so the gap is theoretical. Filing for the moment we ship multi-instance embedding (e.g. an instructor-side admin widget alongside a student widget on the same LMS page).
+
+**Proposed approach**:
+1. Apply per-instance primary color via `style.setProperty("--vektra-primary", color)` on the widget's root elements (`._btn` and `._panel`) inside `_createElements`, instead of writing a global stylesheet override. Drop the `vektra-primary-override` style node.
+2. Dedupe the main style block too: look up `document.getElementById("vektra-chat-ui-styles")` and reuse if present; otherwise create. Note: instances must agree on theme — or theme should also become per-instance.
+3. Decide whether `--vektra-primary` lookups inside descendants (`.vektra-chat-msg.user`, etc.) still resolve correctly via cascade after the per-instance set.
+
+**Acceptance criteria**:
+- [ ] Two widgets on the same page with different `data-primary-color` render with their own respective colors
+- [ ] Re-initialising a widget (hot reload / SPA navigation) does not accumulate `<style>` elements in `document.head`
+- [ ] No regression on single-instance deploys (dominant case today)
+- [ ] Visual smoke test in Moodle host page
+
+---
+
+### DEBT-023: Hoist `_resolve_request_id` audit-fallback helper into `vektra_shared`
+
+**Status**: planned | **Priority**: low | **Created**: 2026-04-27
+**Origin**: CodeRabbit review on PR #73 (v0.5.0 hardening), nitpick on `vektra-learn/src/vektra_learn/api.py:60-76`
+
+**Context**: DEBT-020 introduced a `_resolve_request_id(request) -> UUID` helper that synthesizes `uuid4()` when `request.state.request_id` is missing and emits a structlog warning. The helper is duplicated almost verbatim across `vektra-admin/src/vektra_admin/api.py`, `vektra-learn/src/vektra_learn/api.py`, and `vektra-ingest/src/vektra_ingest/api.py`. Logger usage is also subtly inconsistent: admin/ingest call `log.warning(...)` against a module-level `log`, while learn calls `structlog.get_logger(__name__).warning(...)` inline.
+
+Three near-duplicates is the threshold where extraction starts to pay off (a fourth caller is plausible if the platform grows new audited endpoints; behavioural drift between modules is the real risk).
+
+**Proposed approach**:
+1. Add `vektra_shared.audit.resolve_request_id(request: Request) -> UUID` (or a new `vektra_shared.request_id` module if `audit.py` should stay narrow).
+2. Standardize the logger call shape so all three modules emit the same `request_id_middleware_missing_fallback` event with identical keys.
+3. Replace the three local helpers with imports.
+4. Verify import-linter contracts still pass (`vektra_shared` is the only module the components are allowed to import from, so this is well within the existing contract).
+
+**Acceptance criteria**:
+- [ ] `_resolve_request_id` removed from `vektra-admin/api.py`, `vektra-learn/api.py`, `vektra-ingest/api.py`
+- [ ] Single shared helper in `vektra_shared` with the same signature and behaviour
+- [ ] Same structlog event name and keys regardless of caller
+- [ ] All existing audit-fallback tests still pass; helper unit-tested in `vektra-shared/tests`
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23
@@ -1147,6 +1313,8 @@ Plan generation follows a three-phase approach (lesson learned from Phase 1):
 **Status**: draft | **Priority**: medium | **Created**: 2026-03-17
 **Origin**: Moodle integration testing — greetings like "ciao", "buongiorno" trigger `no_relevant_context` and produce empty/unhelpful responses
 
+**Note (2026-04-18)**: FEAT-020 (`grounding_mode=hybrid`) partially overlaps: in hybrid mode the pipeline no longer short-circuits on `no_relevant_context` and calls the LLM. However, the system prompt is generic (training-data fallback), not tailored to greetings/meta-questions/off-topic with an explicit "redirect to course" behavior. FEAT-005 remains open for the dedicated no-context system prompt variant described in the acceptance criteria.
+
 **Context**: Both `SimpleQueryPipeline` and `AdvancedQueryPipeline` short-circuit when no chunks pass the relevance threshold (`min_relevance_score`): they return `answer: null` + `no_relevant_context: true` without ever calling the LLM. This is correct for retrieval quality (ARCH-056, REQ-066) — the system should not hallucinate answers from non-relevant chunks.
 
 However, for the learn chatbot widget (and any conversational interface), this creates a poor UX for:
@@ -1179,7 +1347,7 @@ The existing **SafeguardHook** (`pre_query`, `post_retrieval`, `pre_response`) c
 
 ### FEAT-007: Markdown rendering in widget chat messages
 
-**Status**: in_progress | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing (2026-03-20)
 
 **Context**: The learn chatbot widget (`vektra-chat.js`) renders all messages as plain text via `textContent`. LLM responses typically contain Markdown formatting (bold, italic, lists, code blocks, headings) which is displayed as raw syntax. This makes responses harder to read, especially for structured answers with bullet points or code examples.
@@ -1280,7 +1448,7 @@ If no custom template exists, the global system.j2 still has access to the same 
 
 ### FEAT-006: Widget error feedback when Vektra API is unreachable
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing on remote machine (2026-03-20)
 
 **Context**: When the chatbot widget JS (`vektra-chat.js`) cannot reach the Vektra API (missing SSH tunnel, CORS misconfiguration, Vektra container down), the floating chat button silently fails to appear. No error is shown to the user or the admin. The Moodle block still displays "AI Assistant is active" because the server-side token generation succeeded (PHP runs inside Docker, reaches Vektra on the internal network), but the browser-side widget cannot load or connect.
@@ -1303,7 +1471,7 @@ This makes troubleshooting difficult: the admin sees "active" but students see n
 
 ### FEAT-012: Include document name in query source citations
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: Moodle integration testing - sources show chunk_id (UUID) instead of document name
 
 **Context**: The learn query response includes source citations with `doc_id`, `chunk_id`, `score`, and `snippet`. The widget renders these as `[1] chunk_id (score)` with a snippet preview. The `chunk_id` is a UUID which is meaningless to the user. The original document filename (e.g., "Escapologia Fiscale - 59 segreti.pdf") is not included in the source data.
@@ -1347,8 +1515,10 @@ Approach 1 (keyword proximity) is the best cost/benefit trade-off for a first im
 
 ### FEAT-016: White-label widget customization (name, colors, branding)
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: partial (data-attrs) | **Priority**: medium | **Created**: 2026-03-20 | **Updated**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: vertical deployment requirements - universities and organizations need chatbot with their own branding
+
+**v0.5.0 progress**: data-* attributes implemented (`data-title`, `data-primary-color`, `data-icon`, `data-welcome-message`, `data-powered-by`). Namespace-backed branding (category B) and JWT-claim precedence remain open — see FEAT-008.
 
 **Context**: The widget currently supports only `theme` (light/dark) and `language` (en/it) as visual customization. Everything else is hardcoded: title ("Course Assistant"), primary color (#2563eb blue), icon (speech bubble emoji), and no welcome message. ADR-0025 defines the `data-*` attribute contract as the configuration API, and the "configuration over fork" principle requires that customization happens via config, not code changes.
 
@@ -1386,7 +1556,7 @@ For vertical deployments (e.g., a university running Vektra for their students),
 
 ### FEAT-014: Configurable source citation visibility
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-04-22 | **PR**: pending
 **Origin**: Moodle integration testing - source citations may not be appropriate for all courses
 
 **Context**: The widget always displays source citations (document/chunk reference, relevance score, snippet) below each assistant response. Some instructors may prefer to hide them:
@@ -1407,12 +1577,12 @@ The API still returns sources in the response regardless of the flag (useful for
 
 **Traceability**: ADR-0025, ARCH-063, FEAT-008
 
-**Acceptance Criteria** (tentative):
-- [ ] Global `show_sources` setting with default `true`
-- [ ] Per-namespace override (metadata or JWT claim)
-- [ ] Widget hides sources section when flag is `false`
-- [ ] API response still includes sources regardless (no data loss)
-- [ ] Moodle plugin exposes the setting in per-course block configuration
+**Acceptance Criteria**:
+- [x] Global `show_sources` setting with default `true` (`VEKTRA_LEARN_SHOW_SOURCES`)
+- [x] Per-namespace override via `namespaces.config.show_sources` (writable through the existing `PATCH /api/v1/admin/namespaces/{id}/config` whitelist)
+- [x] Widget hides sources section when flag is `false` (resolution chain: `data-show-sources` client override > server-resolved value > default `true`)
+- [x] API response still includes sources regardless (no data loss)
+- [ ] Moodle plugin exposes the setting in per-course block configuration — **deferred to the vektra-moodle sibling plan**
 
 ---
 
@@ -1469,7 +1639,7 @@ Phase 2 (skip_retrieval flag):
 
 ### FEAT-009: Widget token auto-refresh on expiry
 
-**Status**: draft | **Priority**: high | **Created**: 2026-03-20
+**Status**: completed | **Priority**: high | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing - "invalid or expired dashboard token" after ~1h session
 
 **Context**: The JWT dashboard token has a 1h TTL (default). The token is generated server-side by the Moodle plugin (or any LMS) at page load and embedded in the widget via `data-token` attribute. Once expired, all subsequent queries fail with "signature has expired". The user must manually reload the page to get a fresh token.
@@ -1498,7 +1668,7 @@ For Moodle specifically, the plugin would expose a lightweight AJAX endpoint (`/
 
 ### FEAT-010: Enable SSE streaming in widget
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-20
+**Status**: completed | **Priority**: medium | **Created**: 2026-03-20 | **Completed**: 2026-03-23 | **PR**: #50
 **Origin**: Moodle integration testing - responses arrive as a single block, no progressive rendering
 
 **Context**: The widget's api-client.js already has a complete SSE streaming parser (lines 65-107) with `onToken`, `onSources`, `onDone` callbacks. The chat-ui.js has `createStreamMessage()` and `appendToken()` methods that progressively append text to the DOM. However, the query is sent with `stream: false` (hardcoded, line 33), so all responses arrive as a single JSON blob.
@@ -1548,6 +1718,54 @@ This does not violate REQ-051 if data is aggregated (no individual conversations
 
 ---
 
+### FEAT-022: Suggested questions as quick-start chips in widget
+
+**Status**: draft | **Priority**: low | **Created**: 2026-04-18
+**Origin**: v0.5.0 scoping discussion - instructor wants to guide students toward typical questions without crafting a new conversation each time
+
+**Context**: students opening the chatbot often do not know how to start. A short list of instructor-curated prompts, rendered as clickable chips above the input box on first open, lowers the barrier and steers usage toward pedagogically useful questions (e.g., "Riassumi la lezione 3", "Quali sono i punti chiave del capitolo?", "Fammi un quiz su questo argomento").
+
+**Proposed approach**: purely client-side, category (A) config (visual, no backend involvement). Passed via `data-suggested-questions` attribute on the script tag as a JSON array. The Moodle block config form exposes a textarea (one question per line) that the plugin serializes into the attribute. The widget renders chips on first open; clicking one fills the input and submits as if typed.
+
+**Traceability**: ADR-0025, FEAT-016
+
+**Acceptance Criteria** (tentative):
+- [ ] `data-suggested-questions` attribute parsed as JSON array of strings
+- [ ] Chips rendered above the input on first open only (hidden after first message)
+- [ ] Click fills input and submits
+- [ ] Chips respect theme (light/dark) and primary color from FEAT-016
+- [ ] Missing/malformed attribute falls back to no chips (no error)
+- [ ] Moodle block config exposes a textarea for instructor to edit the list
+
+---
+
+### FEAT-023: Socratic interaction mode for guided learning
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-04-18
+**Origin**: v0.5.0 scoping discussion - pedagogical need to differentiate "answer giver" from "learning guide" per course
+
+**Context**: in some courses the instructor wants the chatbot to act as a Socratic tutor — asking the student guiding questions instead of delivering the answer directly. This supports active learning and prevents the chatbot from becoming a shortcut that bypasses the learning process. Other courses (reference-style, FAQ-style) want the chatbot to give direct answers. The choice is per-course and must be configurable by the instructor.
+
+Implementation approach is deliberately deferred. Questions to resolve when designing this feature:
+- Is Socratic mode a third `grounding_mode` value (alongside `strict` and `hybrid`), or an orthogonal `interaction_mode` dimension?
+- How do the two interact when combined (strict + socratic, hybrid + socratic)?
+- Does the Socratic prompt need worked examples or is a system-prompt instruction enough?
+- How does it behave across multi-turn conversations (when does it "reveal" the answer)?
+- Should the instructor configure the depth of Socratic questioning (light nudging vs full inquiry)?
+
+Storage aligns with the same model as grounding mode: persisted in `namespaces.config` JSONB (category B config, backend-enforced), configurable via the Moodle block config form → `PATCH /api/v1/namespaces/{id}/config`. The widget does not need to know — the difference is entirely in the system prompt selected server-side.
+
+**Traceability**: FEAT-020 (grounding mode), ADR-0020 (prompt template architecture)
+
+**Acceptance Criteria** (tentative, pending design):
+- [ ] Per-namespace Socratic mode flag in `namespaces.config`
+- [ ] System prompt variant that implements Socratic dialogue
+- [ ] Works alongside strict/hybrid grounding modes
+- [ ] Validated with representative course scenarios
+- [ ] Instructor can enable/disable from Moodle block config
+
+---
+
 ## In Progress
 
 ### BUG-011: ~~Ingest pipeline does not generate sparse embeddings for hybrid search~~
@@ -1590,9 +1808,11 @@ The core API (`POST /api/v1/query`) has the same design — it's documented as "
 
 ### FEAT-004: Widget conversation lifecycle improvements
 
-**Status**: draft | **Priority**: medium | **Created**: 2026-03-16
+**Status**: partial (persistence + new chat) | **Priority**: medium | **Created**: 2026-03-16 | **Updated**: 2026-04-21 | **Plan**: 20260418-v050-widget-and-prof-config
 **Origin**: Moodle integration testing (2026-03-16)
 **Depends on**: BUG-010
+
+**v0.5.0 progress**: sessionStorage persistence with 24h stale cutoff (tab-scoped, keyed by course_id), history replay via new `GET /conversations/{id}/turns`, explicit "New chat" button. Remaining open: idle timeout, cross-device continuity, token-refresh interaction policy. Sources are returned empty for v0.5.0 — extending turns response with citations requires joining query_traces and is deferred.
 
 **Context**: After BUG-010 is fixed, the widget will support multi-turn conversations within a single page load. However, the `conversation_id` lives only in JS memory (`ApiClient._conversationId`) and is lost on page refresh, navigation, or tab close. Additionally, there is no explicit way for the user to start a fresh conversation. These are UX improvements to evaluate for the learn chatbot widget.
 

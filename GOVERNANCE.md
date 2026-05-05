@@ -1,4 +1,4 @@
-# Vektra Governance
+# Vektra RAG Governance
 
 This document describes the governance model for the Vektra project.
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from fastapi import (
@@ -50,6 +50,22 @@ from vektra_shared.errors import (
 )
 
 log = structlog.get_logger(__name__)
+
+
+def _resolve_request_id(request: Request) -> UUID:
+    """Return ``request.state.request_id`` or synthesize a fallback ``uuid4()``.
+
+    Always returns a UUID so audit logging never silently skips sensitive
+    endpoints (NFR-007) when the request-id middleware misbehaves. Emits a
+    structlog warning on the fallback path so misconfiguration is observable.
+    """
+    rid: UUID | None = getattr(request.state, "request_id", None)
+    if rid is not None:
+        return rid
+    fallback = uuid4()
+    log.warning("request_id_middleware_missing_fallback", fallback=str(fallback))
+    return fallback
+
 
 router = APIRouter()
 
@@ -893,9 +909,7 @@ def _write_audit_log(
     """Fire-and-forget audit log write via background task."""
     from vektra_shared.audit import log_event
 
-    request_id = getattr(request.state, "request_id", None)
-    if request_id is None:
-        return
+    request_id = _resolve_request_id(request)
 
     background_tasks.add_task(
         log_event,
@@ -920,9 +934,7 @@ async def _write_audit_log_direct(
     """Write audit log directly (for error paths where BackgroundTasks don't run)."""
     from vektra_shared.audit import log_event
 
-    request_id = getattr(request.state, "request_id", None)
-    if request_id is None:
-        return
+    request_id = _resolve_request_id(request)
 
     try:
         await log_event(

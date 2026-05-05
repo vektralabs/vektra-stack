@@ -10,6 +10,7 @@ import ipaddress
 import json
 import socket
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -17,7 +18,7 @@ from uuid import UUID, uuid4
 import httpx
 import jwt
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -37,21 +38,42 @@ from vektra_learn.service import (
     TokenRequest,
     TokenResponse,
 )
+from vektra_shared.audit import log_event as _audit_log_event
 from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.errors import (
     ERR_LEARN_001,
     ERR_LEARN_002,
     ERR_LEARN_003,
     ERR_LEARN_004,
+    ERR_LEARN_005,
+    ERR_LEARN_006,
     ErrorCategory,
     ErrorResponse,
     http_status_for,
 )
-from vektra_shared.namespace import resolve_grounding_mode
+from vektra_shared.namespace import resolve_grounding_mode, resolve_show_sources
 from vektra_shared.types import trace_from_dict
 
 # Sentinel key_id for learn-originated conversations (JWT auth has no API key).
 _LEARN_SENTINEL_KEY_ID = UUID("00000000-0000-0000-0000-000000000000")
+
+
+def _resolve_request_id(request: Request) -> UUID:
+    """Return ``request.state.request_id`` or synthesize a fallback ``uuid4()``.
+
+    Always returns a UUID so audit logging never silently skips sensitive
+    endpoints (NFR-007) when the request-id middleware misbehaves. Emits a
+    structlog warning on the fallback path so misconfiguration is observable.
+    """
+    rid: UUID | None = getattr(request.state, "request_id", None)
+    if rid is not None:
+        return rid
+    fallback = uuid4()
+    structlog.get_logger(__name__).warning(
+        "request_id_middleware_missing_fallback", fallback=str(fallback)
+    )
+    return fallback
+
 
 router = APIRouter(prefix="/api/v1/learn", tags=["learn"])
 
@@ -65,8 +87,14 @@ async def _learn_sse_generator(
     db_session_factory: Any | None = None,
     namespace: str = "default",
     store_traces: bool = False,
+    show_sources: bool = True,
 ) -> AsyncGenerator[str, None]:
-    """Format QueryChunk events as SSE lines for learn endpoint."""
+    """Format QueryChunk events as SSE lines for learn endpoint.
+
+    The *show_sources* flag (FEAT-014) is attached to the ``sources`` event
+    so the widget can decide whether to render citations for this response.
+    The payload itself is always sent in full for analytics/debugging.
+    """
     log = structlog.get_logger(__name__)
     try:
         async for chunk in stream:
@@ -76,7 +104,10 @@ async def _learn_sse_generator(
                 payload = json.dumps({"type": "token", "data": chunk.data})
                 yield f"data: {payload}\n\n"
             elif chunk.type in ("sources", "error", "trace"):
-                payload = json.dumps({"type": chunk.type, "data": chunk.data})
+                event: dict[str, Any] = {"type": chunk.type, "data": chunk.data}
+                if chunk.type == "sources":
+                    event["show_sources"] = show_sources
+                payload = json.dumps(event)
                 yield f"data: {payload}\n\n"
                 # Persist trace (best-effort, BUG-013)
                 if (
@@ -466,6 +497,176 @@ async def generate_token(
 
 
 # ---------------------------------------------------------------------------
+# Conversation turns (WI-1, FEAT-004)
+# ---------------------------------------------------------------------------
+
+
+class ConversationTurnItem(BaseModel):
+    """Decrypted student-facing conversation turn.
+
+    Intentionally omits admin-only metadata (model, prompt_tokens,
+    completion_tokens, response_id). v0.5.0 returns an empty ``sources``
+    list; source enrichment from query_traces is deferred.
+    """
+
+    turn_number: int
+    question: str
+    answer: str | None
+    created_at: datetime
+    sources: list[dict[str, Any]] = []
+
+
+class ConversationTurnsResponse(BaseModel):
+    conversation_id: UUID
+    namespace: str
+    turns: list[ConversationTurnItem]
+
+
+def _resolve_namespace_from_token(
+    token_payload: dict[str, Any], request: Request
+) -> str:
+    """Same fallback chain used by /query: namespace claim, else course_id."""
+    course_id = token_payload.get("course_id")
+    if not course_id:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_003,
+            message="Dashboard token is missing 'course_id' claim.",
+            remediation="Request a new dashboard token with a valid 'course_id'.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+    ns = token_payload.get("namespace") or course_id
+    return str(ns)
+
+
+@router.get(
+    "/conversations/{conversation_id}/turns",
+    response_model=ConversationTurnsResponse,
+)
+async def get_conversation_turns(
+    conversation_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
+) -> ConversationTurnsResponse:
+    """Return decrypted turns for a conversation belonging to the token's course.
+
+    Authorization is namespace-scoped: the conversation must match the namespace
+    derived from the JWT (``namespace`` claim or ``course_id`` fallback). A
+    mismatch returns 403 so the widget can distinguish "wrong course" from
+    "deleted conversation" (404) and reset its local state accordingly.
+    """
+    namespace = _resolve_namespace_from_token(token_payload, request)
+
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        err = ErrorResponse(
+            category=ErrorCategory.TRANSIENT,
+            code=ERR_LEARN_001,
+            message="Conversation store not available.",
+            remediation="The service may be starting up. Try again shortly.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    try:
+        conv_store = registry.get("conversation_store", "default")
+    except ValueError:
+        err = ErrorResponse(
+            category=ErrorCategory.TRANSIENT,
+            code=ERR_LEARN_001,
+            message="Conversation store not configured.",
+            remediation="The service may be starting up. Try again shortly.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    # In-memory store (test/dev) does not support decryption — treat as 501-ish.
+    if not hasattr(conv_store, "get_metadata") or not hasattr(
+        conv_store, "get_turns_detail"
+    ):
+        err = ErrorResponse(
+            category=ErrorCategory.CONFIGURATION,
+            code=ERR_LEARN_001,
+            message="Conversation store does not support turn retrieval.",
+            remediation=(
+                "Configure a persistent conversation store "
+                "(VEKTRA_CONVERSATION_KEY must be set)."
+            ),
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    meta = await conv_store.get_metadata(conversation_id)
+    if meta is None or meta.get("deleted_at") is not None:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_005,
+            message=f"Conversation '{conversation_id}' not found.",
+            remediation="Start a new conversation from the widget.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    if meta["namespace_id"] != namespace:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_006,
+            message="Conversation belongs to a different course.",
+            remediation="Open the course this conversation was created in.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    turns = await conv_store.get_turns_detail(conversation_id)
+    if turns is None:
+        # Race: metadata said present, now it's gone. Same envelope as 404.
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_005,
+            message=f"Conversation '{conversation_id}' not found.",
+            remediation="Start a new conversation from the widget.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    items = [
+        ConversationTurnItem(
+            turn_number=t["turn_number"],
+            question=t["question"],
+            answer=t.get("answer"),
+            created_at=t["created_at"],
+            sources=[],
+        )
+        for t in turns
+    ]
+
+    # NFR-007: log sensitive content access (decrypted conversation turns).
+    # Learn endpoints authenticate via JWT and do not carry a key_id, so we
+    # use the sentinel defined for learn-originated rows. Fire the audit
+    # unconditionally with a synthesized request_id if the middleware hasn't
+    # set one — a missing correlation id must not silently skip the audit
+    # row (compliance gap otherwise invisible).
+    request_id = _resolve_request_id(request)
+    background_tasks.add_task(
+        _audit_log_event,
+        key_id=_LEARN_SENTINEL_KEY_ID,
+        endpoint=f"/api/v1/learn/conversations/{conversation_id}/turns",
+        method="GET",
+        status_code=200,
+        request_id=request_id,
+        action="learn_conversation_turns_read",
+        log_metadata={
+            "namespace": namespace,
+            "conversation_id": str(conversation_id),
+            "turn_count": len(items),
+            "student_id": token_payload.get("sub"),
+            "course_id": token_payload.get("course_id"),
+        },
+    )
+
+    return ConversationTurnsResponse(
+        conversation_id=conversation_id,
+        namespace=namespace,
+        turns=items,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Course-scoped query
 # ---------------------------------------------------------------------------
 
@@ -565,6 +766,17 @@ async def course_query(
         _gm = _default_mode
     query_req.grounding_mode = _gm
 
+    # Resolve show_sources: namespace config > env var > default true (FEAT-014)
+    _default_show_sources = getattr(
+        request.app.state, "learn_show_sources_default", True
+    )
+    if _db_factory_gm:
+        _show_sources = await resolve_show_sources(
+            namespace, _db_factory_gm, default_value=_default_show_sources
+        )
+    else:
+        _show_sources = _default_show_sources
+
     if registry is None:
         err = ErrorResponse(
             category=ErrorCategory.TRANSIENT,
@@ -600,6 +812,7 @@ async def course_query(
                 db_session_factory=_db_factory,
                 namespace=namespace,
                 store_traces=_store_traces,
+                show_sources=_show_sources,
             ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -620,4 +833,4 @@ async def course_query(
                 exc_info=True,
             )
 
-    return pipeline_response_to_course_response(response)
+    return pipeline_response_to_course_response(response, show_sources=_show_sources)

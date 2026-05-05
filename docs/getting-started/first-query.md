@@ -79,7 +79,8 @@ scripts/query.sh "Summarize the main findings"
             "score": 0.912,
             "snippet": "Finding 1: The study reveals that...",
             "citation_id": "e5f6a7-...",
-            "document_version": 1
+            "document_version": 1,
+            "document_name": "your-document.pdf"
         },
         {
             "doc_id": "a1b2c3d4-...",
@@ -87,7 +88,8 @@ scripts/query.sh "Summarize the main findings"
             "score": 0.847,
             "snippet": "Finding 2: In contrast to previous work...",
             "citation_id": "b8c9d0-...",
-            "document_version": 1
+            "document_version": 1,
+            "document_name": "your-document.pdf"
         }
     ],
     "conversation_id": null,
@@ -105,6 +107,7 @@ scripts/query.sh "Summarize the main findings"
 | `sources[].chunk_id` | Unique identifier of the retrieved chunk |
 | `sources[].citation_id` | UUID citation reference for traceability |
 | `sources[].document_version` | Index version of the chunk |
+| `sources[].document_name` | Filename of the source document, or `null` when the document join returns no row. Soft-deleted documents keep their citation with an `(archived)` suffix so traceability is preserved. |
 | `sources[].score` | Cosine similarity score (0.0 - 1.0, higher is more relevant) |
 | `sources[].snippet` | Text excerpt from the chunk |
 | `conversation_id` | Echoed back if provided in the request (see below) |

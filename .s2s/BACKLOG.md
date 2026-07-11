@@ -830,6 +830,56 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ---
 
+### DEBT-024: Security hardening — Dependabot + code scanning sweep (post v0.5.0)
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-05-06
+**Origin**: post-release security review (`gh api repos/.../dependabot/alerts`, `repos/.../code-scanning/alerts`) on 2026-05-06
+
+**Context**: v0.5.0 closed the critical/high litellm CVEs and the lxml/pillow/pypdf transitive bumps that were active at release time. A fresh sweep on 2026-05-06 surfaces 14 still-open Dependabot alerts (all transitive in `uv.lock`) and 13 code-scanning warnings. None block v0.5.0, but the set should be addressed before v0.5.1 to avoid accumulating debt.
+
+**Open Dependabot alerts** (state=open, all in `uv.lock`):
+
+| # | Severity | Package | Summary |
+|---|----------|---------|---------|
+| 1 | high | PyJWT | Accepts unknown `crit` header extensions |
+| 43 | medium | python-dotenv | Symlink following in `set_key` allows arbitrary file overwrite |
+| 42 | medium | Mako | Path traversal via double-slash URI prefix in `TemplateLookup` |
+| 25 | medium | aiohttp | Accepts duplicate Host headers |
+| 20 | medium | aiohttp | Multipart Header Size Bypass |
+| 19 | medium | aiohttp | UNC SSRF / NTLMv2 credential theft / local file read in static routes |
+| 16 | medium | aiohttp | Unlimited trailer headers → uncapped memory usage |
+| 24, 23, 22, 21, 18, 17 | low | aiohttp | C parser null bytes, response splitting, multipart memory DoS, cookie/proxy-auth leak on cross-origin redirect, CRLF injection, DNS cache DoS |
+| 12 | low | Pygments | ReDoS in regex |
+
+**Open code-scanning alerts**:
+
+| # | Severity | Rule | File |
+|---|----------|------|------|
+| 1 | medium | `py/cookie-injection` | `vektra-admin/src/vektra_admin/ui.py` |
+| 3–15 | medium (warning) | `actions/missing-workflow-permissions` | `.github/workflows/{ci-unit,integration,lint,shell-scripts}.yml` |
+
+**Proposed approach**:
+
+1. **PyJWT (high) — first**: bump in workspace constraint and re-lock. Auth-adjacent surface, treat as priority.
+2. **aiohttp cluster (7 alerts)**: single bump should clear all 7. Verify minimum version that closes every CVE in the set, then re-lock once.
+3. **python-dotenv, Mako, Pygments**: single re-lock pass, low integration risk.
+4. **`actions/missing-workflow-permissions`**: one commit adding minimal `permissions:` blocks (`contents: read` at workflow level, granular at job level where needed) to all five workflow files.
+5. **`py/cookie-injection`** in `vektra-admin/ui.py`: requires code review (not just bump). Inspect cookie write path in admin UI for tainted input from user-controlled fields; harden or annotate as intentional with `# nosemgrep` only if false positive.
+
+**Acceptance criteria**:
+- [ ] PyJWT alert (#1) resolved (`gh api repos/.../dependabot/alerts/1` shows `state=fixed`)
+- [ ] All 7 aiohttp alerts (#16, #17, #18, #19, #20, #21, #22, #23, #24, #25) resolved
+- [ ] python-dotenv (#43), Mako (#42), Pygments (#12) resolved
+- [ ] All 12 `actions/missing-workflow-permissions` code-scanning alerts dismissed/closed
+- [ ] `py/cookie-injection` alert either resolved by code change or documented as false positive in `vektra-admin/ui.py` with justification
+- [ ] `make lint` and `make test` green after re-lock; CI passes on the resulting PR
+
+**Notes**:
+- Dependabot PRs #74 (dev-deps + 2 major bumps) and #39 (paths-filter v3→v4) were deferred from v0.5.0 — re-evaluate as part of this sweep.
+- Three transitive deps alerts mentioned in v0.5.0 release notes (lxml/onnx/pillow) are now resolved (fixed at 2026-05-05).
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

@@ -670,12 +670,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # 2. Prometheus metrics
-    from starlette_prometheus import PrometheusMiddleware
-    from starlette_prometheus.view import metrics as metrics_view
+    # 2. Prometheus metrics (ARCH-014). prometheus-fastapi-instrumentator
+    # replaced starlette-prometheus, which is unmaintained and incompatible
+    # with starlette >= 1.0 (route.path AttributeError on included routers).
+    from prometheus_fastapi_instrumentator import Instrumentator
 
-    app.add_middleware(PrometheusMiddleware)
-    app.add_route("/metrics", metrics_view)
+    Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(
+        app, endpoint="/metrics", include_in_schema=False
+    )
 
     # 3. Rate limit response headers (copies X-RateLimit-* from request.state)
     app.add_middleware(RateLimitHeaderMiddleware)

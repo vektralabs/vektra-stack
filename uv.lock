@@ -3081,6 +3081,19 @@ wheels = [
 ]
 
 [[package]]
+name = "prometheus-fastapi-instrumentator"
+version = "8.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "prometheus-client" },
+    { name = "starlette" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/e9/2065686d1dfa62296fdc158b6e8fd25b0cb3dca09b0632cabeb5ae81fe4d/prometheus_fastapi_instrumentator-8.0.2.tar.gz", hash = "sha256:3c252e748151768a7aefd66824a04a870144f71de48a67aed211749a9ca2a548", size = 21342, upload-time = "2026-06-23T09:39:31.611Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/c7/fa2b3f469a2e6001b829e0d6bc8680755349aa1329a87bf48731e9d5d30a/prometheus_fastapi_instrumentator-8.0.2-py3-none-any.whl", hash = "sha256:746002ec1e2c58b93f61444e1d104de959a9463a6a3f1c8909ac3757e16c3866", size = 20549, upload-time = "2026-06-23T09:39:32.616Z" },
+]
+
+[[package]]
 name = "propcache"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4395,19 +4408,6 @@ wheels = [
 ]
 
 [[package]]
-name = "starlette-prometheus"
-version = "0.10.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "prometheus-client" },
-    { name = "starlette" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/89/f2/03fc6b3c10fb436c81ee567ac46c49418819d6901101ece7bd45be465162/starlette_prometheus-0.10.0.tar.gz", hash = "sha256:77d1e9cfad572206e8de242975bd00a62e33685eb330389f2add04e4d719d47d", size = 15712, upload-time = "2024-09-03T09:48:17.425Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/40/244a5eba1a1d0393b9eea768afee74ab8e0d7d0e99299edbcafe22ef65f7/starlette_prometheus-0.10.0-py3-none-any.whl", hash = "sha256:8b2f997495f809f01387378dad5476b2a1cf2fb2d9b96164394effdecb2d8380", size = 16333, upload-time = "2024-09-03T09:48:15.876Z" },
-]
-
-[[package]]
 name = "structlog"
 version = "25.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5077,7 +5077,7 @@ version = "0.5.0"
 source = { editable = "vektra-app" }
 dependencies = [
     { name = "alembic" },
-    { name = "starlette-prometheus" },
+    { name = "prometheus-fastapi-instrumentator" },
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vektra-admin" },
@@ -5100,7 +5100,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
-    { name = "starlette-prometheus", specifier = ">=0.10" },
+    { name = "prometheus-fastapi-instrumentator", specifier = ">=8.0" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "vektra-admin", editable = "vektra-admin" },

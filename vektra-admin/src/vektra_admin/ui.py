@@ -15,6 +15,7 @@ Authentication flow:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,12 @@ ui_router = APIRouter(prefix="/admin", tags=["admin-ui"])
 # ---------------------------------------------------------------------------
 
 _COOKIE_NAME = "vektra_admin_token"
+
+# API keys are urlsafe base64 (keys.generate_key); the bootstrap key is
+# operator-chosen but must fit the same cookie-safe charset. Rejecting
+# anything else before lookup keeps header-unsafe characters out of the
+# Set-Cookie value (py/cookie-injection).
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 
 
 class _AdminRedirect(Exception):
@@ -156,6 +163,8 @@ async def login_submit(request: Request) -> Response:
     token = form.get("token", "")
     if not token or not isinstance(token, str):
         return RedirectResponse(url="/admin/login?error=missing", status_code=303)
+    if not _TOKEN_RE.fullmatch(token):
+        return RedirectResponse(url="/admin/login?error=invalid", status_code=303)
 
     registry = getattr(request.app.state, "registry", None)
     if registry is None:

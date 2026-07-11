@@ -85,7 +85,6 @@ module = [
     "docx.*",
     "testcontainers.*",
     "psutil.*",
-    "starlette_prometheus.*",
     "uvicorn.*",
     "qdrant_client",
     "qdrant_client.*",

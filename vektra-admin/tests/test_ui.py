@@ -142,6 +142,36 @@ async def test_login_non_admin_token_rejected():
     assert "error=invalid" in resp.headers["location"]
 
 
+async def test_login_malformed_token_rejected_before_lookup():
+    # Header-unsafe characters must never reach Set-Cookie (py/cookie-injection)
+    app = _make_app()
+    key_store = app.state.registry.get("key_store", "default")
+    for bad in ("tok;Path=/", "tok\r\nSet-Cookie: x=y", 'tok"quoted"', "short"):
+        async with _client(app) as client:
+            resp = await client.post(
+                "/admin/login",
+                data={"token": bad},
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        assert "error=invalid" in resp.headers["location"]
+        assert _COOKIE_NAME not in resp.cookies
+    key_store.lookup_by_token.assert_not_called()
+
+
+async def test_login_token_with_surrounding_whitespace_accepted():
+    # Pasted tokens often carry accidental whitespace; strip before validation
+    async with _client() as client:
+        resp = await client.post(
+            "/admin/login",
+            data={"token": "  test-admin-token\n"},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/admin/"
+    assert _COOKIE_NAME in resp.cookies
+
+
 async def test_login_empty_token_redirects():
     async with _client() as client:
         resp = await client.post(

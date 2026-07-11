@@ -13,7 +13,7 @@ dependencies = [
     "vektra-analytics",
     "vektra-learn",
     "uvicorn[standard]>=0.30",
-    "starlette-prometheus>=0.10",
+    "prometheus-fastapi-instrumentator>=8.0",
     "structlog>=24.0",
     "alembic>=1.13",
 ]

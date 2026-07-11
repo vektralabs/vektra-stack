@@ -465,7 +465,7 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 
 - **ARCH-012 - Tech stack**: FastAPI 0.115+ with Pydantic v2, sentence-transformers (all-MiniLM-L6-v2), Python 3.11+.
 - **ARCH-013 - Structured logging**: structlog with JSON output, PII redaction processors.
-- **ARCH-014 - Prometheus metrics**: starlette-prometheus on /metrics endpoint. Histogram buckets aligned with latency NFRs.
+- **ARCH-014 - Prometheus metrics**: prometheus-fastapi-instrumentator on /metrics endpoint (replaced starlette-prometheus in v0.5.1, unmaintained and incompatible with starlette >= 1.0). Histogram buckets aligned with latency NFRs.
 - **ARCH-028 - LLM abstraction: litellm**: ~5MB footprint, native async streaming. Wrapped behind LLMProvider Protocol.
 - **ARCH-029 - Protocol method signatures**: Standardized async Protocols for LLMProvider, VectorStoreProvider, DocumentExtractor, SafeguardHook.
 - **ARCH-030 - PDF extraction: pdfplumber**: Pure Python, ~5MB footprint. Implements DocumentExtractor Protocol.

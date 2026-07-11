@@ -832,51 +832,60 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ### DEBT-024: Security hardening — Dependabot + code scanning sweep (post v0.5.0)
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-05-06
-**Origin**: post-release security review (`gh api repos/.../dependabot/alerts`, `repos/.../code-scanning/alerts`) on 2026-05-06
+**Status**: in_progress | **Priority**: high | **Created**: 2026-05-06 | **Updated**: 2026-07-11
+**Origin**: post-release security review (`gh api repos/.../dependabot/alerts`, `repos/.../code-scanning/alerts`) on 2026-05-06; re-swept 2026-07-11
 
-**Context**: v0.5.0 closed the critical/high litellm CVEs and the lxml/pillow/pypdf transitive bumps that were active at release time. A fresh sweep on 2026-05-06 surfaces 14 still-open Dependabot alerts (all transitive in `uv.lock`) and 13 code-scanning warnings. None block v0.5.0, but the set should be addressed before v0.5.1 to avoid accumulating debt.
+**Context**: v0.5.0 closed the critical/high litellm CVEs and the lxml/pillow/pypdf transitive bumps that were active at release time. The original sweep (2026-05-06) found 14 open Dependabot alerts. Two months of inactivity later (2026-07-11) the set has grown to **62 open Dependabot alerts** (1 critical, 15 high, 29 medium, 17 low — all transitive in `uv.lock`) and 13 code-scanning warnings. Priority raised medium → high: the critical litellm alert is an authentication bypass.
 
-**Open Dependabot alerts** (state=open, all in `uv.lock`):
+**Open Dependabot alerts** (state=open, 2026-07-11, all in `uv.lock`, grouped by package):
 
-| # | Severity | Package | Summary |
-|---|----------|---------|---------|
-| 1 | high | PyJWT | Accepts unknown `crit` header extensions |
-| 43 | medium | python-dotenv | Symlink following in `set_key` allows arbitrary file overwrite |
-| 42 | medium | Mako | Path traversal via double-slash URI prefix in `TemplateLookup` |
-| 25 | medium | aiohttp | Accepts duplicate Host headers |
-| 20 | medium | aiohttp | Multipart Header Size Bypass |
-| 19 | medium | aiohttp | UNC SSRF / NTLMv2 credential theft / local file read in static routes |
-| 16 | medium | aiohttp | Unlimited trailer headers → uncapped memory usage |
-| 24, 23, 22, 21, 18, 17 | low | aiohttp | C parser null bytes, response splitting, multipart memory DoS, cookie/proxy-auth leak on cross-origin redirect, CRLF injection, DNS cache DoS |
-| 12 | low | Pygments | ReDoS in regex |
+| Package | Alerts (severity) | Fix version | Notes |
+|---------|-------------------|-------------|-------|
+| litellm | 1 critical, 1 high | 1.84.0 | **Auth bypass via Host header injection** — top priority |
+| PyJWT / pyjwt | 2 high, 2 medium, 1 low | 2.13.0 | Public-key JWK accepted as HMAC secret (forged tokens); `crit` header |
+| starlette / Starlette | 2 high, 2 medium, 1 low | 1.3.1 | SSRF + NTLM credential theft via UNC in StaticFiles; form limits ignored |
+| transformers | 1 high | 5.3.0 | RCE |
+| urllib3 | 2 high | 2.7.0 | Decompression bomb bypass; header leak across origins |
+| cryptography | 1 high | 48.0.1 | Vulnerable OpenSSL in wheels |
+| Mako | 2 high | 1.3.12 | Path traversal in TemplateLookup |
+| python-multipart | 2 high, 3 low | 0.0.31 | Multipart DoS |
+| soupsieve | 2 high | 2.8.4 | ReDoS / memory exhaustion |
+| aiohttp | 21 alerts (11 medium, 10 low) | 3.14.1 | Single bump clears the whole cluster |
+| pypdf | 9 medium | 6.13.3 | |
+| idna | 1 medium | 3.15 | |
+| onnx | 1 medium | 1.22.0 | |
+| pydantic-settings | 1 medium | 2.14.2 | |
+| python-dotenv | 1 medium | 1.2.2 | |
+| Pygments | 1 low | 2.20.0 | |
+| torch | 1 low | none published | Cannot be resolved by re-lock; leave open, re-check at v0.5.2 |
 
-**Open code-scanning alerts**:
+**Open code-scanning alerts** (unchanged since 2026-05-06):
 
 | # | Severity | Rule | File |
 |---|----------|------|------|
 | 1 | medium | `py/cookie-injection` | `vektra-admin/src/vektra_admin/ui.py` |
-| 3–15 | medium (warning) | `actions/missing-workflow-permissions` | `.github/workflows/{ci-unit,integration,lint,shell-scripts}.yml` |
+| 3–15 | medium (warning) | `actions/missing-workflow-permissions` | `.github/workflows/ci-unit.yml` (9 jobs), `integration.yml`, `lint.yml`, `shell-scripts.yml` |
 
-**Proposed approach**:
+**Approach**:
 
-1. **PyJWT (high) — first**: bump in workspace constraint and re-lock. Auth-adjacent surface, treat as priority.
-2. **aiohttp cluster (7 alerts)**: single bump should clear all 7. Verify minimum version that closes every CVE in the set, then re-lock once.
-3. **python-dotenv, Mako, Pygments**: single re-lock pass, low integration risk.
-4. **`actions/missing-workflow-permissions`**: one commit adding minimal `permissions:` blocks (`contents: read` at workflow level, granular at job level where needed) to all five workflow files.
-5. **`py/cookie-injection`** in `vektra-admin/ui.py`: requires code review (not just bump). Inspect cookie write path in admin UI for tainted input from user-controlled fields; harden or annotate as intentional with `# nosemgrep` only if false positive.
+1. **litellm (critical) and PyJWT first**: auth-adjacent surface. Bump constraints where needed and re-lock.
+2. **Remaining high cluster** (starlette, transformers, urllib3, cryptography, Mako, python-multipart, soupsieve): same re-lock pass, verifying each first-patched version is reached.
+3. **Medium/low clusters** (aiohttp ×21, pypdf ×9, idna, onnx, pydantic-settings, python-dotenv, Pygments): expected to clear in the same re-lock.
+4. **`actions/missing-workflow-permissions`**: one commit adding minimal `permissions:` blocks (`contents: read` at workflow level, granular at job level where needed) to all four workflow files.
+5. **`py/cookie-injection`** in `vektra-admin/ui.py`: requires code review (not just bump). Inspect cookie write path in admin UI for tainted input from user-controlled fields; harden or annotate as intentional only if false positive.
 
 **Acceptance criteria**:
-- [ ] PyJWT alert (#1) resolved (`gh api repos/.../dependabot/alerts/1` shows `state=fixed`)
-- [ ] All 7 aiohttp alerts (#16, #17, #18, #19, #20, #21, #22, #23, #24, #25) resolved
-- [ ] python-dotenv (#43), Mako (#42), Pygments (#12) resolved
+- [ ] litellm critical alert (#92) and high (#95) resolved
+- [ ] All PyJWT alerts (#1, #68, …) resolved at >= 2.13.0
+- [ ] All remaining high alerts resolved (starlette, transformers, urllib3, cryptography, Mako, python-multipart, soupsieve)
+- [ ] aiohttp (×21), pypdf (×9) and remaining medium/low alerts resolved; torch documented as no-fix-available
 - [ ] All 12 `actions/missing-workflow-permissions` code-scanning alerts dismissed/closed
 - [ ] `py/cookie-injection` alert either resolved by code change or documented as false positive in `vektra-admin/ui.py` with justification
 - [ ] `make lint` and `make test` green after re-lock; CI passes on the resulting PR
 
 **Notes**:
-- Dependabot PRs #74 (dev-deps + 2 major bumps) and #39 (paths-filter v3→v4) were deferred from v0.5.0 — re-evaluate as part of this sweep.
-- Three transitive deps alerts mentioned in v0.5.0 release notes (lxml/onnx/pillow) are now resolved (fixed at 2026-05-05).
+- Open Dependabot PRs to re-evaluate as part of this sweep: #39 (paths-filter v3→v4), #76 (uv group), #77 (esbuild, widget npm), #78 (dev-deps), #79 (actions/checkout 7). The uv re-lock here likely supersedes #76/#78.
+- Three transitive deps alerts mentioned in v0.5.0 release notes (lxml/onnx/pillow) were fixed 2026-05-05; onnx has since reopened with a new advisory (see table).
 
 ---
 

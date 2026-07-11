@@ -163,6 +163,8 @@ async def login_submit(request: Request) -> Response:
     token = form.get("token", "")
     if not token or not isinstance(token, str):
         return RedirectResponse(url="/admin/login?error=missing", status_code=303)
+    # Pasted tokens often carry accidental surrounding whitespace
+    token = token.strip()
     if not _TOKEN_RE.fullmatch(token):
         return RedirectResponse(url="/admin/login?error=invalid", status_code=303)
 

@@ -19,6 +19,11 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
+### Security
+
+- **deps**: re-lock of all transitive dependencies flagged by Dependabot (DEBT-024, 61 of 62 open alerts). Highlights: litellm 1.83.10 → 1.91.2 (critical: authentication bypass via Host header injection), pyjwt 2.11 → 2.13 (public-key JWK accepted as HMAC secret), starlette 0.52 → 1.3.1 with fastapi 0.129 → 0.139 (StaticFiles SSRF/NTLM credential theft), transformers 5.2 → 5.3 (RCE), plus urllib3, cryptography, Mako, python-multipart, soupsieve, aiohttp (×21 advisories), pypdf (×9), idna, onnx, pydantic-settings, python-dotenv, Pygments. The remaining open alert (torch, low) has no patched release yet.
+- **ci**: minimal `permissions:` blocks added to all GitHub workflows (`contents: read`), closing the 12 `actions/missing-workflow-permissions` code-scanning alerts.
+
 ## [0.5.0] - 2026-04-27
 
 Widget production-ready + instructor configuration.

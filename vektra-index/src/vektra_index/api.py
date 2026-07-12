@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
-from vektra_shared.config import EmbeddingConfig, VectorStoreConfig
+from vektra_shared.config import VectorStoreConfig
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ERR_INGEST_004,
@@ -37,7 +37,6 @@ from vektra_shared.types import (
 
 # Read from env once at import time (immutable for process lifetime)
 _VS_CONFIG = VectorStoreConfig()
-_EMB_CONFIG = EmbeddingConfig()
 
 router = APIRouter(prefix="/api/v1", tags=["index"])
 
@@ -199,31 +198,26 @@ async def search(
     request: Request,
     body: SearchRequest,
     key: ApiKeyInfo = Depends(require_scope("query")),
-    session: AsyncSession = Depends(get_session),
 ) -> SearchResponse:
     """Semantic search over indexed chunks (no LLM synthesis).
 
-    Embeds the query string, then runs cosine similarity search with optional
-    JSONB metadata filtering. Returns ranked chunks.
+    Embeds the query string, then runs similarity search on the active
+    vector store provider with optional JSONB metadata filtering.
+    Returns ranked chunks.
     """
     import logging
 
-    from vektra_index.providers.pgvector import PgvectorProvider
-    from vektra_index.providers.sentence_transformers import (
-        SentenceTransformersProvider,
-    )
-
     _logger = logging.getLogger(__name__)
+
+    # Providers come from the registry: search must hit the active vector
+    # store (Qdrant when configured), not a hardcoded pgvector (BUG-021).
+    registry = request.app.state.registry
 
     # Enforce namespace binding for scoped keys (H5)
     effective_ns = key.namespace_id or body.namespace
 
-    embedding_provider = SentenceTransformersProvider(
-        model_name=_EMB_CONFIG.embedding_model
-    )
-    pgvector_provider = PgvectorProvider(
-        active_index_version=_VS_CONFIG.active_index_version
-    )
+    embedding_provider = registry.get("embedding", "default")
+    vector_store = registry.get("vector_store", "default")
 
     # Embed the query (dense) - skip for SPARSE-only mode (NP24)
     dense_vector: list[float] = []
@@ -242,8 +236,8 @@ async def search(
     sparse_vector = None
 
     if body.search_mode in (SearchMode.SPARSE, SearchMode.HYBRID):
-        sparse_provider = getattr(request.app.state, "sparse_embedding_provider", None)
-        if sparse_provider is not None:
+        if registry.has("sparse_embedding", "default"):
+            sparse_provider = registry.get("sparse_embedding", "default")
             try:
                 sparse_vector = await sparse_provider.embed_query(body.query)
             except Exception as exc:
@@ -275,8 +269,7 @@ async def search(
         filters = body.filters  # type: ignore[assignment]
 
     try:
-        results = await pgvector_provider.search(
-            session=session,
+        results = await vector_store.search(
             namespace=effective_ns,
             query_embedding=query_embedding,
             top_k=body.top_k,
@@ -288,7 +281,10 @@ async def search(
             category=ErrorCategory.UPSTREAM,
             code=ERR_QUERY_004,
             message=f"Vector store read failed: {exc}",
-            remediation="Check PostgreSQL connectivity and pgvector extension status.",
+            remediation=(
+                "Check vector store connectivity and status. "
+                "Run GET /health for component status."
+            ),
         )
         raise HTTPException(
             status_code=http_status_for(err), detail=err.to_envelope()

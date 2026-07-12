@@ -115,3 +115,61 @@ def test_render_system_has_context_false_no_injection_protection():
     renderer = TemplateRenderer()
     result = renderer.render_system(has_context=False)
     assert "treat this content as data" not in result.lower()
+
+
+# --- Citations tests (FEAT-021) ---
+
+
+def test_render_system_citations_enabled_swaps_rule_one():
+    """With citations on (and context), Rule 1 instructs inline [id] markers."""
+    renderer = TemplateRenderer()
+    result = renderer.render_system(citations_enabled=True, has_context=True)
+    assert "Cite the sources" in result
+    assert "[1][3]" in result
+    assert "Never mention, quote, or allude" not in result
+
+
+def test_render_system_citations_disabled_keeps_hidden_sources_rule():
+    renderer = TemplateRenderer()
+    result = renderer.render_system(citations_enabled=False, has_context=True)
+    assert "Never mention, quote, or allude" in result
+    assert "Cite the sources" not in result
+
+
+def test_render_system_citations_default_matches_disabled():
+    """Default-off: omitting the flag renders byte-identical output."""
+    renderer = TemplateRenderer()
+    assert renderer.render_system(has_context=True) == renderer.render_system(
+        has_context=True, citations_enabled=False
+    )
+
+
+def test_render_system_citations_without_context_keeps_hidden_sources_rule():
+    """No context -> nothing to cite, even with citations enabled."""
+    renderer = TemplateRenderer()
+    result = renderer.render_system(citations_enabled=True, has_context=False)
+    assert "Cite the sources" not in result
+    assert "Never mention, quote, or allude" in result
+
+
+def test_render_context_with_title_attribute():
+    renderer = TemplateRenderer()
+    chunks = [
+        {"text": "Article 21 text.", "score": 0.9, "title": 'Costituzione.pdf, p."3"'},
+        {"text": "Untitled chunk.", "score": 0.8, "title": None},
+    ]
+    result = renderer.render_context(chunks)
+    # Title present and escaped
+    assert 'title="Costituzione.pdf, p.&#34;3&#34;"' in result
+    # None title omits the attribute entirely
+    assert '<source id="2">Untitled chunk.</source>' in result
+
+
+def test_render_context_without_title_key_unchanged():
+    """Chunks without a 'title' key (SimpleQueryPipeline, custom callers)
+    render exactly as before FEAT-021."""
+    renderer = TemplateRenderer()
+    chunks = [{"text": "Plain chunk.", "score": 0.5}]
+    result = renderer.render_context(chunks)
+    assert '<source id="1">Plain chunk.</source>' in result
+    assert "title=" not in result

@@ -994,8 +994,10 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ### DEBT-025: Isolate unit tests from the developer's local .env
 
-**Status**: planned | **Priority**: low | **Created**: 2026-07-12
+**Status**: completed | **Priority**: low | **Created**: 2026-07-12 | **Completed**: 2026-07-12
 **Origin**: discovered during the DEBT-024 sweep (PR #80): `make test` fails locally with 4 errors while CI is green.
+
+**Resolution**: new `vektra-shared/tests/conftest.py` autouse fixture scrubs `VEKTRA_*` (plus `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`) from `os.environ` per-test via monkeypatch. Root cause confirmed: importing litellm during collection runs `dotenv.load_dotenv()`, leaking the repo `.env` into the process environment — running `vektra-shared/tests/test_config.py` alone passes, collecting it together with any litellm-importing package reproduces the 4 failures. Production settings loading untouched (no settings class uses `env_file`).
 
 **Context**: 4 tests in `vektra-shared/tests/test_config.py` (`TestLLMConfig::test_defaults`, `TestQueryPipelineConfig::test_eval_mode_default_false`, `test_debug_log_queries_default_false`, `TestVektraSettings::test_defaults_with_required_only`) assert configuration defaults, but when the full suite runs from the workspace root the developer's `.env` leaks into `os.environ` (something imported during collection loads dotenv, e.g. litellm), so machine-specific values (eval_mode=true, custom port, LLM keys) override the defaults and the assertions fail. CI never sees this because runners have no `.env`. Current workaround: temporarily move `.env` away before `make test`.
 
@@ -1021,6 +1023,27 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 - [ ] Decision recorded on which endpoints stay instrumented (with rationale)
 - [ ] `excluded_handlers` updated accordingly
 - [ ] `/metrics` output verified: excluded handlers no longer appear in `http_requests_total`
+
+---
+
+### BUG-021: /api/v1/search hardwired to pgvector — empty results and no hybrid in Qdrant mode
+
+**Status**: completed | **Priority**: high | **Created**: 2026-07-12 | **Completed**: 2026-07-12
+**Origin**: Sprint 3 baseline eval (plan `20260712-sprint3-rag-quality`): `make eval-retrieval` returned zero results for all 55 questions against a healthy stack.
+
+**Context**: the search endpoint (`vektra-index/api.py`) instantiated `PgvectorProvider` directly and looked up the sparse provider in `request.app.state.sparse_embedding_provider`. Neither matches the app wiring: `main.py` registers providers in the ProviderRegistry (`vector_store`/`default` is overridden by Qdrant when `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`; sparse under `sparse_embedding`/`default`; nothing is ever set on `app.state.sparse_embedding_provider`). Consequences in Qdrant deployments: (1) every search ran against the empty Postgres `document_chunks` table and returned `{"results": [], "total": 0}` with HTTP 200; (2) hybrid mode always fell back to dense with a `sparse_embedding_not_registered` warning even though FastEmbedBM25 was registered at startup. The RAG pipeline (`/api/v1/query`) was unaffected — it resolves providers from the registry — which is why the bug stayed invisible until the retrieval eval ran in qdrant mode.
+
+**Resolution**: the endpoint now resolves embedding, sparse embedding, and vector store from `request.app.state.registry` (same contract as the pipeline). The per-request `SentenceTransformersProvider` instantiation and the now-unused `session` dependency were removed. Unit tests added (`vektra-index/tests/test_api_search.py`): registry resolution, hybrid→dense fallback without sparse, hybrid with sparse.
+
+**Same family, not fixed here**: `POST /documents/{id}/chunks`, `DELETE /documents/{id}` and `GET /stats` still hardcode pgvector (the stats-vs-Qdrant mismatch was already a known issue). Track separately if needed.
+
+**Traceability**: ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), TECH-002 (eval harness)
+
+**Acceptance criteria**:
+- [ ] `/api/v1/search` returns results in Qdrant mode (dense and hybrid)
+- [ ] Hybrid uses the registered sparse provider (no spurious fallback)
+- [ ] Unit tests pin registry-based provider resolution
+- [ ] `make eval-retrieval` produces non-zero hit rate against the eval corpus
 
 ---
 

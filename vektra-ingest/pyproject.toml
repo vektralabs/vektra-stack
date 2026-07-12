@@ -21,7 +21,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ocr = ["unstructured[pdf]>=0.15"]
+# torchvision is a transitive dep (unstructured-inference -> timm) that must
+# come from the pytorch-cpu index: the PyPI wheel is built against CUDA torch
+# and fails at import against torch+cpu ("operator torchvision::nms does not
+# exist", BUG-022). Declaring it here lets uv pin its index like torch.
+ocr = ["unstructured[pdf]>=0.15", "torchvision>=0.25,<0.26"]
 
 [build-system]
 requires = ["hatchling"]
@@ -38,6 +42,7 @@ markers = ["integration: integration tests requiring Docker (excluded from ci-un
 
 [tool.uv.sources]
 vektra-shared = { workspace = true }
+torchvision = { index = "pytorch-cpu" }
 
 [dependency-groups]
 dev = [

@@ -244,3 +244,151 @@ class TestQdrantHealthCheck:
         status = await provider.health_check()
         assert status.status == "unhealthy"
         assert "connection refused" in status.message
+
+
+class TestQdrantParentChunks:
+    """Parent chunk linkage, search exclusion, and retrieve-by-id (FEAT-017)."""
+
+    @pytest.mark.asyncio
+    async def test_store_includes_parent_id_in_payload(self):
+        provider, _client = _make_provider()
+        doc_id = str(uuid4())
+
+        _mock_qdrant_models.PointStruct.reset_mock()
+        chunks = [
+            ChunkEmbedding(
+                chunk_id="child-1",
+                text="child text",
+                dense=[0.1] * 384,
+                metadata={"document_id": doc_id, "chunk_level": "child"},
+                parent_id="parent-1",
+            ),
+            ChunkEmbedding(
+                chunk_id="parent-1",
+                text="parent text",
+                dense=[0.1] * 384,
+                metadata={"document_id": doc_id, "chunk_level": "parent"},
+            ),
+        ]
+
+        await provider.store("default", chunks)
+
+        payloads = [
+            c.kwargs["payload"] for c in _mock_qdrant_models.PointStruct.call_args_list
+        ]
+        assert payloads[0]["parent_id"] == "parent-1"
+        assert payloads[1]["parent_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_build_filter_excludes_parent_chunks(self):
+        provider, _client = _make_provider()
+
+        _mock_qdrant_models.Filter.reset_mock()
+        _mock_qdrant_models.FieldCondition.reset_mock()
+        provider._build_filter("default")
+
+        filter_kwargs = _mock_qdrant_models.Filter.call_args.kwargs
+        assert "must_not" in filter_kwargs
+        assert len(filter_kwargs["must_not"]) == 1
+        condition_keys = [
+            c.kwargs.get("key")
+            for c in _mock_qdrant_models.FieldCondition.call_args_list
+        ]
+        assert "metadata.chunk_level" in condition_keys
+
+    @pytest.mark.asyncio
+    async def test_search_results_carry_parent_id(self):
+        provider, client = _make_provider()
+        doc_id = str(uuid4())
+
+        query_result = MagicMock()
+        query_result.points = [
+            _make_scored_point(
+                "child-1",
+                0.9,
+                {
+                    "text": "child text",
+                    "document_id": doc_id,
+                    "metadata": {"chunk_level": "child"},
+                    "namespace_id": "default",
+                    "parent_id": "parent-1",
+                },
+            ),
+        ]
+        client.query_points = AsyncMock(return_value=query_result)
+
+        results = await provider.search(
+            "default", QueryEmbedding(dense=[0.1] * 384), 5, SearchMode.DENSE
+        )
+
+        assert results[0].parent_id == "parent-1"
+
+    @pytest.mark.asyncio
+    async def test_retrieve_filters_by_namespace(self):
+        from types import SimpleNamespace
+
+        provider, client = _make_provider()
+        doc_id = str(uuid4())
+        parent_id = str(uuid4())
+        alien_id = str(uuid4())
+
+        # Qdrant retrieve() returns Record objects with no score attribute
+        records = [
+            SimpleNamespace(
+                id=parent_id,
+                payload={
+                    "text": "parent text",
+                    "document_id": doc_id,
+                    "metadata": {"chunk_level": "parent"},
+                    "namespace_id": "default",
+                    "parent_id": None,
+                },
+            ),
+            SimpleNamespace(
+                id=alien_id,
+                payload={
+                    "text": "other tenant",
+                    "document_id": doc_id,
+                    "metadata": {},
+                    "namespace_id": "other",
+                    "parent_id": None,
+                },
+            ),
+        ]
+        client.retrieve = AsyncMock(return_value=records)
+
+        results = await provider.retrieve("default", [parent_id, alien_id])
+
+        client.retrieve.assert_awaited_once()
+        assert [r.chunk_id for r in results] == [parent_id]
+        assert results[0].score == 0.0
+        assert results[0].text_snippet == "parent text"
+
+    @pytest.mark.asyncio
+    async def test_retrieve_skips_invalid_ids(self):
+        """Non-UUID ids never reach the Qdrant client (it would reject the batch)."""
+        provider, client = _make_provider()
+        client.retrieve = AsyncMock(return_value=[])
+        valid = str(uuid4())
+
+        await provider.retrieve("default", ["not-a-uuid", valid])
+
+        assert client.retrieve.await_args.kwargs["ids"] == [valid]
+
+    @pytest.mark.asyncio
+    async def test_retrieve_empty_ids_short_circuits(self):
+        provider, client = _make_provider()
+
+        results = await provider.retrieve("default", [])
+
+        assert results == []
+        client.retrieve.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retrieve_all_invalid_ids_short_circuits(self):
+        provider, client = _make_provider()
+
+        results = await provider.retrieve("default", ["parent-1", "child-2"])
+
+        assert results == []
+        client.retrieve.assert_not_called()

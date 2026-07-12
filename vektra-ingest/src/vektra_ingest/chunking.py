@@ -265,6 +265,9 @@ class DualStrategyChunking:
                         parent_start = parent_end
                         continue
 
+                    # The parent carries its own hierarchy id so the ingest
+                    # pipeline can remap these chunker-local ids to stored
+                    # chunk ids (FEAT-017).
                     yield DocumentChunk(
                         text=parent_text,
                         element_type=ElementType.TEXT,
@@ -274,7 +277,7 @@ class DualStrategyChunking:
                             "token_count": len(parent_tokens),
                             "chunk_level": "parent",
                         },
-                        parent_id=None,
+                        parent_id=parent_id,
                     )
                     chunk_index += 1
 

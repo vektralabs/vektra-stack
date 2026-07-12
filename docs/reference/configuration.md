@@ -81,6 +81,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_QUERY_PIPELINE` | str | `advanced` | Pipeline implementation: `simple`, `advanced` |
 | `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.15` | Minimum relevance score for chunk inclusion (0.0-1.0). Safety net filter; top-k is the primary control. |
 | `VEKTRA_CHUNK_DEDUP_ENABLED` | bool | `true` | Deduplicate overlapping adjacent chunks from the same document |
+| `VEKTRA_PARENT_EXPANSION_ENABLED` | bool | `false` | Replace retrieved child chunks with their parent chunk text before prompt construction (advanced pipeline only). Requires documents ingested with `VEKTRA_CHUNKING_STRATEGY=dual`. |
 | `VEKTRA_RESPONSE_TOKEN_RESERVE` | int | `2048` | Tokens reserved for LLM response generation |
 | `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | Fraction of context window allocated to retrieved chunks (0.0-1.0) |
 | `VEKTRA_PROMPT_TEMPLATES_DIR` | str | - | Directory for custom Jinja2 prompt templates (`system.j2`, `context.j2`, `conversation.j2`). Uses built-in defaults if unset. |

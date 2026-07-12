@@ -73,7 +73,18 @@ class PgvectorProvider:
 
         inserted_ids: list[str] = []
         for position, chunk in enumerate(chunks):
-            chunk_id = uuid4()
+            # Honor caller-provided deterministic ids (uuid5 from ingest);
+            # parent linkage relies on them (FEAT-017).
+            try:
+                chunk_id = UUID(chunk.chunk_id) if chunk.chunk_id else uuid4()
+            except ValueError:
+                chunk_id = uuid4()
+            parent_uuid: UUID | None = None
+            if chunk.parent_id:
+                try:
+                    parent_uuid = UUID(chunk.parent_id)
+                except ValueError:
+                    parent_uuid = None
             sparse_data = None
             if chunk.sparse is not None:
                 sparse_data = {
@@ -90,6 +101,7 @@ class PgvectorProvider:
                 chunk_metadata=chunk.metadata,
                 position=chunk.metadata.get("position", position),
                 index_version=self._active_index_version,
+                parent_id=parent_uuid,
             )
             session.add(orm_obj)
             inserted_ids.append(str(chunk_id))
@@ -151,6 +163,7 @@ class PgvectorProvider:
                 DocumentChunkOrm.document_id,
                 DocumentChunkOrm.content,
                 DocumentChunkOrm.chunk_metadata,
+                DocumentChunkOrm.parent_id,
                 score_expr,
             )
             .where(
@@ -161,6 +174,7 @@ class PgvectorProvider:
             .limit(top_k)
         )
 
+        stmt = self._exclude_parent_chunks(stmt)
         stmt = self._apply_filters(stmt, filters)
         stmt = self._join_source_documents(stmt)
 
@@ -228,6 +242,7 @@ class PgvectorProvider:
                 DocumentChunkOrm.document_id,
                 DocumentChunkOrm.content,
                 DocumentChunkOrm.chunk_metadata,
+                DocumentChunkOrm.parent_id,
                 score_col,
             )
             .where(
@@ -239,6 +254,7 @@ class PgvectorProvider:
             .limit(top_k)
         )
 
+        stmt = self._exclude_parent_chunks(stmt)
         stmt = self._apply_filters(stmt, filters)
         stmt = self._join_source_documents(stmt)
 
@@ -314,9 +330,26 @@ class PgvectorProvider:
                 document_id=r.document_id,
                 document_version=r.document_version,
                 metadata=r.metadata,
+                parent_id=r.parent_id,
             )
             for rrf_score, r in rrf_scored[:top_k]
         ]
+
+    @staticmethod
+    def _exclude_parent_chunks(stmt: Any) -> Any:
+        """Exclude parent-level chunks from search results (FEAT-017).
+
+        Parent chunks are context material fetched by id during expansion,
+        not retrieval targets. Chunks without a chunk_level key (fixed
+        chunking) are unaffected: NULL IS DISTINCT FROM 'parent'.
+        """
+        from vektra_index.models import DocumentChunkOrm
+
+        return stmt.where(
+            DocumentChunkOrm.chunk_metadata["chunk_level"]
+            .as_string()
+            .is_distinct_from("parent")
+        )
 
     @staticmethod
     def _apply_filters(stmt: Any, filters: SearchFilters | None) -> Any:
@@ -361,9 +394,47 @@ class PgvectorProvider:
                 document_id=row.document_id,
                 document_version=row.document_version,
                 metadata=row.chunk_metadata or {},
+                parent_id=str(row.parent_id) if row.parent_id else None,
             )
             for row in rows
         ]
+
+    async def retrieve(
+        self,
+        session: AsyncSession,
+        namespace: str,
+        chunk_ids: list[str],
+    ) -> list[SearchResult]:
+        """Fetch chunks by id (no vector search). Used for parent chunk
+        expansion (FEAT-017); score is 0.0 by convention.
+        """
+        from vektra_index.models import DocumentChunkOrm
+
+        valid_ids: list[UUID] = []
+        for cid in chunk_ids:
+            try:
+                valid_ids.append(UUID(cid))
+            except ValueError:
+                logger.warning("retrieve_invalid_chunk_id: %s", cid)
+        if not valid_ids:
+            return []
+
+        stmt = select(
+            DocumentChunkOrm.id,
+            DocumentChunkOrm.document_id,
+            DocumentChunkOrm.content,
+            DocumentChunkOrm.chunk_metadata,
+            DocumentChunkOrm.parent_id,
+            literal_column("0.0").label("score"),
+        ).where(
+            DocumentChunkOrm.id.in_(valid_ids),
+            DocumentChunkOrm.namespace_id == namespace,
+            DocumentChunkOrm.index_version == self._active_index_version,
+        )
+        stmt = self._join_source_documents(stmt)
+
+        result = await session.execute(stmt)
+        return self._rows_to_results(result.all())
 
     async def delete(
         self,

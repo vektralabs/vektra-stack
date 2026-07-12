@@ -184,6 +184,7 @@ class QdrantVectorStoreProvider:
                         "text": chunk.text,
                         "metadata": chunk.metadata,
                         "document_id": chunk.metadata.get("document_id", ""),
+                        "parent_id": chunk.parent_id,
                     },
                 )
             )
@@ -333,6 +334,30 @@ class QdrantVectorStoreProvider:
         )
         return self._points_to_results(results.points)
 
+    async def retrieve(
+        self,
+        namespace: str,
+        chunk_ids: list[str],
+    ) -> list[SearchResult]:
+        """Fetch points by id (no vector search). Used for parent chunk
+        expansion (FEAT-017); score is 0.0 by convention.
+
+        Points whose payload namespace does not match are dropped (namespace
+        isolation): Qdrant retrieve() takes no filter.
+        """
+        if not chunk_ids:
+            return []
+
+        records = await self._client.retrieve(
+            collection_name=self._collection_name,
+            ids=chunk_ids,
+            with_payload=True,
+        )
+        matching = [
+            r for r in records if (r.payload or {}).get("namespace_id") == namespace
+        ]
+        return self._points_to_results(matching)
+
     async def delete(self, namespace: str, ids: list[str]) -> int:
         """Delete points by document_id payload filter.
 
@@ -428,11 +453,24 @@ class QdrantVectorStoreProvider:
                         )
                     )
 
-        return models.Filter(must=must_conditions)
+        # Parent chunks are context material, not retrieval targets (FEAT-017)
+        return models.Filter(
+            must=must_conditions,
+            must_not=[
+                models.FieldCondition(
+                    key="metadata.chunk_level",
+                    match=models.MatchValue(value="parent"),
+                )
+            ],
+        )
 
     @staticmethod
     def _points_to_results(points: list[Any]) -> list[SearchResult]:
-        """Convert Qdrant ScoredPoint list to SearchResult list."""
+        """Convert Qdrant ScoredPoint/Record list to SearchResult list.
+
+        Record objects (from retrieve()) have no score attribute: score
+        defaults to 0.0.
+        """
         results: list[SearchResult] = []
         for point in points:
             payload = point.payload or {}
@@ -442,16 +480,18 @@ class QdrantVectorStoreProvider:
             except (ValueError, AttributeError):
                 doc_id = UUID(int=0)
 
+            score = getattr(point, "score", None)
             results.append(
                 SearchResult(
                     chunk_id=str(point.id),
-                    score=float(point.score) if point.score is not None else 0.0,
+                    score=float(score) if score is not None else 0.0,
                     text_snippet=payload.get("text", ""),
                     document_id=doc_id,
                     document_version=payload.get("metadata", {}).get(
                         "document_version", 1
                     ),
                     metadata=payload.get("metadata", {}),
+                    parent_id=payload.get("parent_id"),
                 )
             )
         return results

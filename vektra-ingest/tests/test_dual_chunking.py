@@ -74,20 +74,17 @@ async def test_text_elements_split_with_overlap():
     chunks = await _collect(chunker, elements)
 
     # Should have at least one parent and at least one child
-    parents = [
-        c for c in chunks if c.parent_id is None and c.element_type == ElementType.TEXT
-    ]
-    children = [c for c in chunks if c.parent_id is not None]
+    parents = [c for c in chunks if c.metadata.get("chunk_level") == "parent"]
+    children = [c for c in chunks if c.metadata.get("chunk_level") == "child"]
 
     assert len(parents) >= 1
     assert len(children) >= 1
 
+    # Parents carry their own hierarchy id; children reference it (FEAT-017)
+    parent_ids = {p.parent_id for p in parents}
+    assert None not in parent_ids
     for child in children:
-        assert child.parent_id is not None
-        assert child.metadata.get("chunk_level") == "child"
-
-    for parent in parents:
-        assert parent.metadata.get("chunk_level") == "parent"
+        assert child.parent_id in parent_ids
 
 
 @pytest.mark.asyncio

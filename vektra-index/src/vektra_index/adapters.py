@@ -120,6 +120,17 @@ class VectorStoreServiceAdapter:
                 raw_filters=raw_filters,
             )
 
+    async def retrieve(
+        self,
+        namespace: str,
+        chunk_ids: list[str],
+    ) -> list[SearchResult]:
+        factory = self._get_session_factory()
+        pgvector = self._get_pgvector()
+
+        async with factory() as session:
+            return await pgvector.retrieve(session, namespace, chunk_ids)
+
     async def delete(self, namespace: str, ids: list[str]) -> int:
         """Delete all chunks for each document_id in ids.
 

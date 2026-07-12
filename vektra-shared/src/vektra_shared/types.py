@@ -121,6 +121,7 @@ class ChunkEmbedding:
     dense: list[float]
     sparse: SparseVector | None = None  # Phase 2: hybrid search
     metadata: dict[str, Any] = field(default_factory=dict)
+    parent_id: str | None = None  # stored chunk_id of the parent chunk (FEAT-017)
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +158,7 @@ class SearchResult:
     document_version: int = 1  # from SourceDocument.version (REQ-056)
     metadata: dict[str, Any] = field(default_factory=dict)
     original_score: float | None = None  # pre-reranker score (BUG-015)
+    parent_id: str | None = None  # stored chunk_id of the parent chunk (FEAT-017)
 
 
 @dataclass

@@ -197,6 +197,11 @@ class QueryPipelineConfig(BaseSettings):
         alias="VEKTRA_CHUNK_DEDUP_ENABLED",
         description="Enable overlap deduplication for adjacent chunks from the same document.",
     )
+    parent_expansion_enabled: bool = Field(
+        False,
+        alias="VEKTRA_PARENT_EXPANSION_ENABLED",
+        description="Replace retrieved child chunks with their parent chunk text before prompt construction (FEAT-017). Requires dual chunking at ingest time.",
+    )
     response_token_reserve: int = Field(
         2048,
         ge=1,
@@ -493,6 +498,9 @@ class VektraSettings(BaseSettings):
     query_pipeline: str = Field("advanced", alias="VEKTRA_QUERY_PIPELINE")
     min_relevance_score: float = Field(0.15, alias="VEKTRA_MIN_RELEVANCE_SCORE")
     chunk_dedup_enabled: bool = Field(True, alias="VEKTRA_CHUNK_DEDUP_ENABLED")
+    parent_expansion_enabled: bool = Field(
+        False, alias="VEKTRA_PARENT_EXPANSION_ENABLED"
+    )
     response_token_reserve: int = Field(2048, alias="VEKTRA_RESPONSE_TOKEN_RESERVE")
     context_chunk_ratio: float = Field(0.6, alias="VEKTRA_CONTEXT_CHUNK_RATIO")
     prompt_templates_dir: str | None = Field(None, alias="VEKTRA_PROMPT_TEMPLATES_DIR")

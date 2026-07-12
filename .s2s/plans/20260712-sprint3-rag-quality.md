@@ -145,12 +145,15 @@ the backlog assumptions:
       accounting (17 new tests; suite 658 passed)
 
 ### 4. FEAT-018 — verification first (no branch unless justified)
-- [ ] Multi-turn scenario runner against `/api/v1/query` with `conversation_id`
+- [x] Multi-turn scenario runner against `/api/v1/query` with `conversation_id`
       (same-topic follow-up, topic switch, "give me others", negation)
-- [ ] Evaluate with FEAT-020 grounding modes: does history use already mitigate
-      the "same chunks every turn" complaint?
-- [ ] Decision recorded in backlog (implement with Qdrant `must_not` + turn-chunk
-      tracking, or close as mitigated) — implementation only if tests justify it
+- [x] Evaluate with FEAT-020 grounding modes: rewrite + history already mitigate
+      topic switch and negation fully (0 shared chunks, high rerank scores);
+      "give me more" is the one genuine case (3/3 identical chunks, graceful
+      degradation via history); same-topic follow-up dies at the threshold
+      (TECH-007), which exclusion would worsen
+- [x] Decision recorded in backlog: **no-go for Sprint 3, deferred behind
+      TECH-007** — evidence in the FEAT-018 backlog entry and Notes below
 
 ### 5. FEAT-021 — per-namespace citations (branch `feat/feat-021-namespace-citations`)
 - [ ] `resolve_citations_enabled` in `vektra_shared/namespace.py` (clone of FEAT-020
@@ -278,3 +281,14 @@ the bundle and a manual smoke in the Moodle dev stack.
   - Local dev `.env` now: `VEKTRA_CHUNKING_STRATEGY=dual`,
     `VEKTRA_PARENT_CHILD_LEVELS=1`, `VEKTRA_PARENT_EXPANSION_ENABLED=true`,
     `VEKTRA_EVAL_MODE=true` (left on for FEAT-018 trace inspection).
+- 2026-07-12: **FEAT-018 verified — no-go, deferred behind TECH-007.** Four
+  multi-turn scenarios against `/api/v1/query` with `conversation_id`
+  (eval-full corpus, expansion on, eval-mode traces): topic switch and negation
+  fully mitigated by rewrite (ARCH-061) + history (FEAT-020) — chunks change
+  completely, rerank 0.99/0.82; same-topic follow-up ("quali limiti prevede
+  l'art. 21?") rewrites correctly but dies at the retrieval filter (max rerank
+  0.093 < 0.15 — same TECH-007 signature as multi-chunk); "give me more"
+  confirms the FEAT-018 premise (3/3 identical chunks despite an explicit
+  "diversi da quelli già citati" rewrite) but degrades gracefully via history.
+  Chunk exclusion today would raise refusals on follow-ups; revisit after
+  TECH-007. Full per-turn evidence in the FEAT-018 backlog entry.

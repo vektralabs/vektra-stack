@@ -65,8 +65,15 @@ The LLM already has native conversational coherence: it sees the full history an
 
 ### FEAT-018: Exclude previously retrieved chunks in multi-turn conversations
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-28
-**Depends on**: evaluate BUG-020 option 1 (prompt fix) first - this may not be needed if the prompt change resolves multi-turn coherence.
+**Status**: deferred (2026-07-12, verified) | **Priority**: low | **Created**: 2026-03-28
+**Depends on**: TECH-007 (rerank+threshold funnel) - with the current funnel, excluding previously seen chunks would increase multi-turn refusals, not variety.
+
+**Verification (2026-07-12, Sprint 3, plan `20260712-sprint3-rag-quality` section 4)**: 4 multi-turn scenarios run against `/api/v1/query` with `conversation_id` on the `eval-full` corpus (rewrite + FEAT-020 history + FEAT-017 expansion active, eval-mode traces inspected):
+- **Topic switch** and **negation**: already fully mitigated - the rewriter produces clean standalone queries, retrieved chunks change completely (0 shared), reranker scores high (0.99 / 0.82). No exclusion needed.
+- **Same-topic follow-up** ("quali limiti prevede l'art. 21?"): rewrite is correct but the turn dies at the retrieval filter (max rerank 0.093 < 0.15) - a TECH-007 failure, which chunk exclusion would make worse, not better.
+- **"Give me more"**: the one genuine FEAT-018 case. Rewrite is explicit ("altri diritti... diversi da quelli gia' citati") yet the prompt receives the same 3 chunks as turn 1 (3/3 shared); the LLM degrades gracefully via history (acknowledges prior answer, avoids verbatim repetition) but cannot produce genuinely new content from identical material.
+
+**Decision**: no-go for Sprint 3. Revisit only after TECH-007 lands (a funnel that admits more chunks makes exclusion safe and useful), with "give me more" as the driving scenario and the original design below.
 
 **Context**: in multi-turn conversations, the vector search returns the same high-scoring chunks every turn, even when the user explicitly asks for "other" or "different" results. The query rewrite contextualizes the question but the retrieval still matches on semantic similarity, which favors the same chunks.
 

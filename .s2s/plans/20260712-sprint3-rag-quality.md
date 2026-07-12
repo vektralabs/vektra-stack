@@ -116,7 +116,7 @@ the backlog assumptions:
 - [x] Autouse fixture in `vektra-shared/tests/conftest.py` scrubs `VEKTRA_*` + external keys
 - [x] `make test` green with populated `.env` (638 passed) + `make lint` green
 - [x] Backlog entry updated (completed + resolution), changelog entry
-- [ ] PR created and merged
+- [x] PR created and merged (#84; #85 BUG-021, #86 backlog, #87 BUG-022 merged the same day)
 
 ### 2. Baseline eval (no branch; results recorded, not committed as code)
 - [x] Eval corpus verified intact in namespace `default` (excerpt corpus, 12 chunks — no reingest needed)
@@ -126,19 +126,23 @@ the backlog assumptions:
 - [x] Numbers logged in this plan (Notes) and in vektra-internal (`stack/20260712-sprint3-baseline-eval.md`)
 
 ### 3. FEAT-017 — parent chunk expansion (branch `feat/feat-017-parent-chunk-expansion`)
-- [ ] Propagate `parent_id` into `ChunkEmbedding` → Qdrant payload + pgvector column;
-      keep deterministic child/parent ids at store time
-- [ ] Search excludes `chunk_level=parent` by default (both providers)
-- [ ] `VEKTRA_PARENT_EXPANSION_ENABLED` (default false) in `QueryPipelineConfig`
+- [x] Propagate `parent_id` into `ChunkEmbedding` → Qdrant payload + pgvector column;
+      keep deterministic child/parent ids at store time (pgvector now honors
+      caller-provided uuid5 ids instead of generating uuid4)
+- [x] Search excludes `chunk_level=parent` by default (both providers)
+- [x] `VEKTRA_PARENT_EXPANSION_ENABLED` (default false) in `QueryPipelineConfig`
       + mirrored in `VektraSettings`
-- [ ] Expansion step in AdvancedQueryPipeline: fetch parent text by id via vector
-      store, replace child text **before** token budgeting (ARCH-055); dedup children
-      of the same parent (child text is a substring of parent → existing 80% overlap
-      dedup interacts)
-- [ ] Trace metadata records expansion (children expanded, parents fetched)
-- [ ] Reingest eval corpus with `dual` strategy; measure: dual+exclusion without
-      expansion (≈ fixed baseline expected), then with expansion; record both
-- [ ] Unit tests: store-time linkage, search filter, expansion logic, budget accounting
+- [x] Expansion step in AdvancedQueryPipeline: fetch parent text by id via new
+      `VectorStoreProvider.retrieve()`, replace child text **before** token
+      budgeting (ARCH-055); children of the same parent collapse into the
+      highest-scored one (runs after the 80% overlap dedup, so no interaction)
+- [x] Trace metadata records expansion (children_expanded, siblings_merged,
+      parents_fetched)
+- [x] Reingest eval corpus with `dual` strategy; measured both (see Notes):
+      A dual-no-expansion ≈ baseline on e2e but -6.5pp retrieval hit (boundary
+      effect); B expansion-on: zero e2e flips, sources 1.4 → 1.0
+- [x] Unit tests: store-time linkage, search filter, expansion logic, budget
+      accounting (17 new tests; suite 658 passed)
 
 ### 4. FEAT-018 — verification first (no branch unless justified)
 - [ ] Multi-turn scenario runner against `/api/v1/query` with `conversation_id`
@@ -247,3 +251,30 @@ the bundle and a manual smoke in the Moodle dev stack.
   - March numbers (factual 90 / reasoning 80 / multi-chunk 10) are not comparable:
     different pipeline (pre BUG-015/016/017, pre FEAT-020) and per-question
     results were never versioned (gitignored file, since overwritten).
+- 2026-07-12: **FEAT-017 measured** (full corpus `eval-full`, Combo D, same
+  dataset/config as baseline; corpus reingested with `dual` 500/100, parent 1500:
+  105 points = 22 parents + 83 children, parents excluded from search).
+  Baseline to compare (fixed 500/100, 78 chunks): retrieval hit 89.1% /
+  MRR 0.8062 / P@5 0.3174; e2e grounded 35/55, multi-chunk 0/10, avg sources 1.4.
+  - **Measure A** (dual + parent exclusion, expansion off): retrieval hit 82.6% /
+    MRR 0.7029 / P@5 0.3130; e2e grounded 35/55 (64%), multi-chunk 1/10, avg
+    sources 1.4, p50 3935ms. Dual chunking itself costs ~6.5pp hit rate on this
+    corpus: children no longer roll overlap across parent boundaries, and 3
+    questions whose keywords straddle a 1500-token section edge flip to miss
+    (IT-F-13, IT-R-02, EN-F-03).
+  - **Measure B** (expansion on): e2e grounded 35/55, multi-chunk 1/10, avg
+    sources 1.0 (sibling merge working: same grounding with a more compact
+    prompt), p50 3813ms. Zero per-question flips vs A. Expansion verified live
+    in traces (`parent_expansion` step, children_expanded/parents_fetched).
+  - **Root cause of the multi-chunk collapse found (and it is upstream of
+    FEAT-017)**: 9/10 multi-chunk questions end with `retrieval_filter
+    before=5 after=0` — bge-reranker-v2-m3 scores each partial-answer chunk
+    of a comparative/multi-part question below `min_relevance_score` 0.15
+    (MC-01 with eval mode: max rerank score 0.088 while the raw RRF candidate
+    was 0.61). The whole candidate set is wiped before expansion can run.
+    Filed as TECH-007. Parent expansion works as designed but cannot touch
+    this failure mode; the Costituzione corpus also understates its benefit
+    (short self-contained articles — see TECH-005 collection 1).
+  - Local dev `.env` now: `VEKTRA_CHUNKING_STRATEGY=dual`,
+    `VEKTRA_PARENT_CHILD_LEVELS=1`, `VEKTRA_PARENT_EXPANSION_ENABLED=true`,
+    `VEKTRA_EVAL_MODE=true` (left on for FEAT-018 trace inspection).

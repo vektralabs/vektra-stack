@@ -283,19 +283,23 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 ### FEAT-017: Parent chunk expansion in query pipeline
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-23
+**Status**: completed (2026-07-12) | **Priority**: medium | **Created**: 2026-03-23
 **Analysis**: `vektra-internal/stack/20260323-rag-prompt-chunk-confusion-analysis.md`
 
 **Context**: when a child chunk is retrieved via search, the pipeline should optionally expand it to the parent chunk for broader context. The infrastructure is already in place: `DualStrategyChunking` creates parent-child hierarchy (parent every 3000 tokens, children at 500 tokens with overlap), `DocumentChunkOrm` has `parent_id` column, and both are stored in the database. Missing: (1) filter parent chunks from default search results (search currently returns both), (2) parent expansion logic in AdvancedQueryPipeline when a child matches.
 
+**Premise corrections found during implementation**: the hierarchy was NOT actually persisted anywhere (`run_ingest` dropped `chunk.parent_id`, `ChunkEmbedding` had no field, Qdrant payload had none, `DocumentChunkOrm.parent_id` was always NULL); parent size is `chunk_size*3` (1500 tokens with Combo D 500, not 3000); pgvector `store()` ignored caller chunk ids (generated uuid4), so deterministic ids had to be plumbed there too.
+
 **Traceability**: ARCH-037 (ChunkingStrategy), ARCH-055 (token budget), core-pipeline-v2
 
 **Acceptance criteria**:
-- [ ] Search excludes parent chunks by default (WHERE parent_id IS NOT NULL for children only)
-- [ ] AdvancedQueryPipeline fetches parent chunk when child matches and includes it in context
-- [ ] Parent expansion is configurable (on/off, via env var)
-- [ ] Token budget accounts for expanded parent chunk size
-- [ ] Tested: truncated-context answers improve with parent expansion enabled
+- [x] Search excludes parent chunks by default (`chunk_level=parent` filtered: Qdrant `must_not`, pgvector `IS DISTINCT FROM`)
+- [x] AdvancedQueryPipeline fetches parent chunk when child matches and includes it in context (step 6.5, new `VectorStoreProvider.retrieve()`)
+- [x] Parent expansion is configurable (`VEKTRA_PARENT_EXPANSION_ENABLED`, default off)
+- [x] Token budget accounts for expanded parent chunk size (expansion runs before ARCH-055 allocation)
+- [x] Tested: 17 unit tests (linkage, exclusion, expansion, budget); measured on `eval-full` — expansion is grounding-neutral there (35/55 with and without, zero per-question flips, avg sources 1.4 → 1.0 via sibling merge). The multi-chunk collapse it targeted turned out to be upstream: the rerank+threshold funnel wipes all candidates before expansion (TECH-007). The corpus also understates expansion benefit (short self-contained articles — TECH-005 collection 1 is the real test bench).
+
+**Resolution (2026-07-12, Sprint 3)**: shipped default-off on `feat/feat-017-parent-chunk-expansion`. Measured A/B on `eval-full` reingested dual (105 points = 22 parents + 83 children): dual chunking alone costs ~6.5pp retrieval hit vs fixed (children stop rolling overlap across 1500-token parent boundaries; IT-F-13, IT-R-02, EN-F-03 flip to miss). Full numbers in plan `20260712-sprint3-rag-quality` Notes.
 
 ---
 
@@ -354,6 +358,25 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 - [ ] Default extractor decision recorded (keep pdfplumber / switch / route)
 - [ ] Routing feature filed as FEAT with concrete signals if the bake-off justifies it
 - [ ] Image language packs fixed (tesseract-ita) regardless of outcome
+
+---
+
+### TECH-007: Multi-part questions wiped by rerank+threshold funnel (multi-chunk collapse root cause)
+
+**Status**: planned | **Priority**: high | **Created**: 2026-07-12
+**Origin**: FEAT-017 measurement (plan `20260712-sprint3-rag-quality`) - expansion turned out to be downstream of the real failure.
+
+**Context**: on `eval-full`, 9/10 multi-chunk questions end with `retrieval_filter before=5 after=0` → `no_relevant_context` → refusal, despite 90% raw retrieval hit for the category. Cause: bge-reranker-v2-m3 scores each partial-answer chunk of a comparative/multi-part question low (each chunk answers only one part), and `VEKTRA_MIN_RELEVANCE_SCORE=0.15` — calibrated in the tuning sprint on single-fact questions (DEBT-010) — wipes the entire candidate set. Evidence (MC-01, eval mode traces): max reranker score 0.088 on a candidate whose raw RRF score was 0.61. Parent expansion (FEAT-017) never runs because zero results survive the filter.
+
+**Candidate directions** (evaluate, do not assume): (a) floor semantics - keep top-N post-rerank chunks regardless of threshold when the raw retrieval score was strong (e.g. min(top_k, after_rerank) >= 2); (b) per-category or per-score-source thresholds (reranker scores are not calibrated on the same scale as RRF); (c) query decomposition for multi-part questions (rewrite step already exists, ARCH-061); (d) rescore against the parent text instead of the child (combines with FEAT-017).
+
+**Traceability**: ARCH-056 (retrieval quality controls), ADR-0021, DEBT-010, FEAT-017, TECH-005
+
+**Acceptance criteria**:
+- [ ] Reproduce with the eval harness and document the score distributions per category
+- [ ] Chosen mitigation implemented behind config, default preserving current single-fact behavior
+- [ ] `eval-full` multi-chunk grounded moves from 0-1/10 without regressing factual (19/21) or adversarial refusals (no answered-without-context)
+- [ ] Decision and numbers recorded in the sprint plan and vektra-internal
 
 ---
 

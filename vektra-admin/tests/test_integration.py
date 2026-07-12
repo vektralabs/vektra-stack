@@ -912,9 +912,14 @@ async def test_namespace_config_get_returns_empty_with_resolved_defaults(
     # Hardcoded resolver defaults: grounding_mode="strict", show_sources=True.
     # In CI the env vars may shift these; assert the keys are present and bool/string-typed
     # rather than a fixed value, so the test stays independent of test env config.
-    assert set(body["resolved"]) == {"grounding_mode", "show_sources"}
+    assert set(body["resolved"]) == {
+        "grounding_mode",
+        "show_sources",
+        "citations_enabled",
+    }
     assert body["resolved"]["grounding_mode"] in {"strict", "hybrid"}
     assert isinstance(body["resolved"]["show_sources"], bool)
+    assert body["resolved"]["citations_enabled"] is False  # FEAT-021 default
 
 
 async def test_namespace_config_get_reflects_stored_overrides(
@@ -981,3 +986,47 @@ async def test_namespace_config_get_requires_admin_scope(
         headers={"Authorization": f"Bearer {query_key}"},
     )
     assert resp.status_code == 403, resp.text
+
+
+# ---------------------------------------------------------------------------
+# FEAT-021: citations_enabled per-namespace setting
+# ---------------------------------------------------------------------------
+
+
+async def test_namespace_config_patch_sets_citations_enabled(
+    client, bootstrap_key, fresh_engine
+):
+    """PATCH with citations_enabled=true persists as a bool in namespaces.config."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "feat21-citations-true"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"citations_enabled": True},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["config"] == {"citations_enabled": True}
+
+    await asyncio.sleep(0.2)
+    stored = await _read_namespace_config(fresh_engine, ns_id)
+    assert stored == {"citations_enabled": True}
+
+
+async def test_namespace_config_patch_rejects_citations_enabled_non_bool(
+    client, bootstrap_key, fresh_engine
+):
+    """citations_enabled is strictly bool: strings are rejected with ERR-ADMIN-007."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    ns_id = "feat21-citations-nonbool"
+    await _seed_namespace(fresh_engine, ns_id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/namespaces/{ns_id}/config",
+        json={"citations_enabled": "yes"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 400, resp.text
+    err = resp.json()["detail"]["error"]
+    assert err["code"] == "ERR-ADMIN-007"

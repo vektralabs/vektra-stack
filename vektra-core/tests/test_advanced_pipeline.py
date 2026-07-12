@@ -959,3 +959,73 @@ async def test_parent_expansion_feeds_token_budget_with_parent_text():
     # The budget counted the parent text, not the child snippet
     assert any(parent_text == t for t in token_counts)
     assert all(t != "tiny" for t in token_counts)
+
+
+# ---------------------------------------------------------------------------
+# Per-namespace citations (FEAT-021)
+# ---------------------------------------------------------------------------
+
+
+async def test_citations_enabled_flows_to_prompt_and_sources():
+    """citations_enabled=True: Rule 1 swaps, context gets titles, SourceRef.title set."""
+    from unittest.mock import patch
+    from uuid import UUID as _UUID
+
+    doc_id = uuid4()
+    result = SearchResult(
+        chunk_id=str(uuid4()),
+        score=0.9,
+        text_snippet="Article 21 grants freedom of expression.",
+        document_id=doc_id,
+        document_version=1,
+        metadata={"page": 12},
+    )
+
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[result])
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=True),
+    )
+
+    with patch(
+        "vektra_core.advanced_pipeline._fetch_document_names",
+        new=AsyncMock(return_value={str(doc_id): "lecture-07.pdf"}),
+    ):
+        response, trace = await pipeline.execute(
+            QueryRequest(question="test", citations_enabled=True)
+        )
+
+    build_step = next(s for s in trace.steps if s.name == "build_prompt")
+    messages = build_step.metadata["messages"]
+    system_msg = next(m for m in messages if m["role"] == "system")
+    user_msg = next(m for m in messages if m["role"] == "user")
+    assert "Cite the sources" in system_msg["content"]
+    assert 'title="lecture-07.pdf, p.12"' in user_msg["content"]
+
+    assert response.sources[0].title == "lecture-07.pdf, p.12"
+    assert response.sources[0].document_name == "lecture-07.pdf"
+    assert isinstance(response.sources[0].doc_id, _UUID)
+
+
+async def test_citations_disabled_by_default_leaves_prompt_untouched():
+    """Default QueryRequest: hidden-sources rule, no titles, SourceRef.title None."""
+    result = _make_search_result(0.9, "some grounded text")
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[result])
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_EVAL_MODE=True),
+    )
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    build_step = next(s for s in trace.steps if s.name == "build_prompt")
+    messages = build_step.metadata["messages"]
+    system_msg = next(m for m in messages if m["role"] == "system")
+    user_msg = next(m for m in messages if m["role"] == "user")
+    assert "Never mention, quote, or allude" in system_msg["content"]
+    assert "Cite the sources" not in system_msg["content"]
+    assert "title=" not in user_msg["content"]
+    assert response.sources[0].title is None

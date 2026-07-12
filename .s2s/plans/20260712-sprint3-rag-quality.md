@@ -156,16 +156,25 @@ the backlog assumptions:
       TECH-007** — evidence in the FEAT-018 backlog entry and Notes below
 
 ### 5. FEAT-021 — per-namespace citations (branch `feat/feat-021-namespace-citations`)
-- [ ] `resolve_citations_enabled` in `vektra_shared/namespace.py` (clone of FEAT-020
-      pattern), default false; admin config PATCH whitelist extended
-- [ ] `QueryRequest.citations_enabled` resolved at API layer, passed to renderer
-- [ ] `system.j2` Rule 1 conditional (cite `[id]` inline when enabled)
-- [ ] `context.j2`: add `title` attribute (document_name + page) when enabled
-- [ ] Propagate `source_file`/`page`/`title` through to `SourceRef` (API response)
-- [ ] Widget: render inline `[n]` markers as interactive references (tooltip/footnote
-      with source title + snippet); esbuild bundle rebuilt
-- [ ] Default-off behavior byte-identical prompts (prompt_version changes documented)
-- [ ] Unit tests: namespace resolution, both template branches, SourceRef fields
+- [x] `resolve_citations_enabled` in `vektra_shared/namespace.py` (clone of FEAT-020
+      pattern), default false; admin config PATCH whitelist + GET resolved defaults
+      extended
+- [x] `QueryRequest.citations_enabled` resolved at API layer (core + learn), passed
+      to renderer
+- [x] `system.j2` Rule 1 conditional (cite `[id]` inline when enabled and context
+      present)
+- [x] `context.j2`: `title` attribute (document_name + page, composed at
+      prompt-build time) when enabled; template tolerant of chunks without title
+- [x] `SourceRef.title` in API responses (core sync + streaming, learn course
+      response); `source_file`/`page` were already in `SearchResult.metadata`
+- [x] Widget: `[n]` markers rendered as superscripts with source-title tooltip
+      wired in `addSources()`; bundle built by the Docker widget-builder stage
+      (static/ is gitignored)
+- [x] Default-off behavior byte-identical prompts, asserted in template tests
+      (prompt_version changes because template files changed — documented in
+      changelog)
+- [x] Unit tests: namespace resolution (4), templates (6), pipeline flow (2),
+      admin integration (2 + resolved defaults); suite 672 passed
 
 ## State & Data Lifecycle
 

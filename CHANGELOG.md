@@ -21,6 +21,7 @@ Convention (Keep a Changelog 1.1.0):
 
 ### Added
 
+- **rag**: optional per-namespace inline source citations (FEAT-021, `citations_enabled` in the namespace config JSONB via `PATCH /api/v1/admin/namespaces/{id}/config`, default off, advanced pipeline only). When enabled, the system prompt instructs the LLM to add inline `[n]` markers matching the `<source id>` elements, the context template carries a `title` attribute ("filename, p.N"), and each returned source includes a `title` field; the learn widget renders the markers as superscripts with a tooltip. Default-off renders byte-identical prompts; `prompt_version` changes anyway because the template files changed (trace comparability note).
 - **rag**: optional parent chunk expansion in the advanced query pipeline (FEAT-017, `VEKTRA_PARENT_EXPANSION_ENABLED`, default off). With `VEKTRA_CHUNKING_STRATEGY=dual`, retrieved child chunks are replaced with their parent chunk's text after the retrieval filter and before token budgeting; children of the same parent collapse into the highest-scored one. Parent-child linkage is now actually persisted (deterministic `uuid5(doc_id, position)` ids, `parent_id` in the Qdrant payload and in the pgvector column), a new `VectorStoreProvider.retrieve()` fetches chunks by id, and the trace records `children_expanded`/`siblings_merged`/`parents_fetched` in a `parent_expansion` step.
 
 ### Changed

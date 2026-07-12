@@ -230,7 +230,8 @@ Rules:
 
 ### FEAT-021: Optional source citations in responses (per-namespace)
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-28
+**Status**: completed (2026-07-12) | **Priority**: medium | **Created**: 2026-03-28
+**Resolution**: shipped on `feat/feat-021-namespace-citations` (Sprint 3, plan `20260712-sprint3-rag-quality` section 5). Deltas vs the design below: the context template keeps the existing `<source id>` tag (the `<doc>` sketch predates the template); `SearchResult` gains no new fields (source_file/page were already in `metadata`; the title is composed at prompt-build time from `_fetch_document_names` + page); resolution is namespace JSONB > hardcoded false, no env var; the widget renders `[n]` as superscript with the source title as native tooltip, wired in `addSources()`. Default-off renders byte-identical prompts (`prompt_version` changes because the template files changed).
 
 **Context**: in some deployment contexts (academic research, compliance, legal), full transparency with source citations is required. Currently Rule 1 in the system prompt forbids any mention of sources ("Never mention, quote, or allude to sources, documents, context tags, or reference material"). This is correct for the default e-learning use case where the student should not know about the RAG pipeline, but must be optional for contexts where traceability is a requirement.
 
@@ -278,13 +279,13 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 **Traceability**: ARCH-054 (composable templates), ARCH-047 (namespace metadata), ADR-0025 (chatbot widget)
 
 **Acceptance criteria**:
-- [ ] `citations_enabled` per-namespace setting in namespace metadata JSONB
-- [ ] `system.j2` Rule 1 conditional: cite with `[id]` when enabled, hide sources when disabled
-- [ ] `context.j2` includes document title in `<doc>` elements when citations enabled
-- [ ] Document filename and page propagated through `SearchResult` to template
-- [ ] `SourceRef` includes `title` field in API response
-- [ ] Widget renders `[id]` references as tooltips or footnotes with source info
-- [ ] Default behavior unchanged (citations disabled, Rule 1 hides sources)
+- [x] `citations_enabled` per-namespace setting in namespace metadata JSONB (admin PATCH whitelist + GET resolved defaults)
+- [x] `system.j2` Rule 1 conditional: cite with `[id]` when enabled (and context present), hide sources when disabled
+- [x] `context.j2` includes document title in `<source>` elements when citations enabled
+- [x] Document filename and page propagated to the template (composed at prompt-build time from `_fetch_document_names` + `metadata.page`)
+- [x] `SourceRef` includes `title` field in API response (core + learn, sync + streaming)
+- [x] Widget renders `[id]` references as superscripts with source-title tooltips
+- [x] Default behavior unchanged (citations disabled, Rule 1 hides sources; byte-identical rendering asserted in tests)
 
 ---
 

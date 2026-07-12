@@ -1,3 +1,3 @@
 <context>
-{% for chunk in chunks %}<source id="{{ loop.index }}">{{ chunk.text | e }}</source>
+{% for chunk in chunks %}<source id="{{ loop.index }}"{% if chunk.get("title") %} title="{{ chunk.get("title") | e }}"{% endif %}>{{ chunk.text | e }}</source>
 {% endfor %}</context>

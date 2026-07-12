@@ -4,7 +4,7 @@
 **Status**: active
 **Branch**: one branch/PR per item (`chore/debt-025-test-env-isolation`, `feat/feat-017-parent-chunk-expansion`, `feat/feat-021-namespace-citations`, FEAT-018 branch only if verification justifies it)
 **Created**: 2026-07-12T08:39:46Z
-**Updated**: 2026-07-12T09:00:00Z
+**Updated**: 2026-07-12T09:35:00Z
 
 ## Traceability
 
@@ -102,9 +102,12 @@ the backlog assumptions:
   10 multi-chunk / 9 adversarial; 37 IT / 18 EN). No multi-turn entries and no
   `conversation_id` support in the scripts: FEAT-018 verification needs a small
   multi-turn runner.
-- **Local corpus state (2026-07-12)**: Qdrant collection `vektra` has 656 points but
-  only 12 in namespace `default` → the eval corpus must be (re)ingested before any
-  baseline. Current local chunking is `fixed` 500/100.
+- **Local corpus state (2026-07-12)**: Qdrant collection `vektra` has 656 points;
+  the 12 in namespace `default` are the intact excerpt eval corpus from 20260325
+  (`costituzione_italiana.md` v2 + `udhr_excerpts.md` v2 + `sample.pdf`). Current
+  local chunking is `fixed` 500/100. The full Costituzione PDF (97 chunks) was
+  deliberately removed from `default` back then; FEAT-017 will reintroduce a
+  larger corpus with `dual` chunking.
 
 ## Tasks
 
@@ -116,10 +119,11 @@ the backlog assumptions:
 - [ ] PR created and merged
 
 ### 2. Baseline eval (no branch; results recorded, not committed as code)
-- [ ] Eval corpus (re)ingested into namespace `default` (fixed 500/100, Combo D config)
-- [ ] `make eval-retrieval` baseline recorded (hit rate, MRR, precision@k, per-category)
-- [ ] `make eval-e2e` baseline recorded (grounded rate, no-ctx, latency p50/p95)
-- [ ] Numbers logged in this plan (Notes) and in vektra-internal
+- [x] Eval corpus verified intact in namespace `default` (excerpt corpus, 12 chunks — no reingest needed)
+- [x] BUG-021 discovered and fixed (search endpoint hardwired to pgvector — see Notes; branch `fix/bug-021-search-registry-providers`)
+- [x] `make eval-retrieval` baseline recorded (hit rate, MRR, precision@k, per-category)
+- [x] `make eval-e2e` baseline recorded (grounded rate, no-ctx, latency p50/p95)
+- [x] Numbers logged in this plan (Notes) and in vektra-internal (`stack/20260712-sprint3-baseline-eval.md`)
 
 ### 3. FEAT-017 — parent chunk expansion (branch `feat/feat-017-parent-chunk-expansion`)
 - [ ] Propagate `parent_id` into `ChunkEmbedding` → Qdrant payload + pgvector column;
@@ -210,6 +214,36 @@ the bundle and a manual smoke in the Moodle dev stack.
 - 2026-07-12: DEBT-025 completed on `chore/debt-025-test-env-isolation`
   (fixture + docs, suite 638 passed / 3 skipped). Plan file rides the same PR.
 - 2026-07-12: local stack recovered for eval: Qdrant container was down since ~May,
-  restarted from compose profile with existing volume (collection green, 656 points);
-  namespace `default` nearly empty → corpus reingest scheduled before baseline.
-- Baseline numbers: TBD (item 2).
+  restarted from compose profile with existing volume (collection green, 656 points).
+  The 12 points in namespace `default` turned out to be the intact excerpt eval
+  corpus (`costituzione_italiana.md` v2, 6 chunks + `udhr_excerpts.md` v2, 4 +
+  `sample.pdf`, 2) — no reingest needed for the baseline.
+- 2026-07-12: baseline eval was blocked twice, both fixed: (a) **BUG-021** —
+  `/api/v1/search` was hardwired to pgvector and read the sparse provider from a
+  never-populated `app.state` attribute → zero results for all 55 questions in
+  qdrant mode, hybrid always degraded to dense. Fixed on
+  `fix/bug-021-search-registry-providers` (registry-based resolution + endpoint
+  tests). (b) stale vLLM model id in local `.env` (`qwen35-27b-fp8` after a
+  `vllm-switch`; server serves `qwen36-35b-a3b-fp8`) → every LLM call failed with
+  NotFoundError and the pipeline returned context-only answers (answer null).
+  `.env` updated, container recreated with the BUG-021 fix baked in.
+- 2026-07-12: **baseline recorded** (excerpt corpus, Combo D, qwen36-35b-a3b-fp8,
+  grounding strict; full report in vektra-internal
+  `stack/20260712-sprint3-baseline-eval.md`):
+  - retrieval (`/api/v1/search` hybrid, top_k=5): hit rate 100% (46 scored),
+    MRR 0.8957, precision@5 0.3261; MRR factual 0.8810 / multi-chunk 0.8200 /
+    reasoning 0.9667; EN 0.8595 / IT 0.9115; RRF score p50 0.50. Hit rate
+    saturates on the tiny corpus — MRR/precision are the sensitive metrics.
+  - e2e (`/api/v1/query`, 55 questions, 0 errors, 178s): grounded 38/55 (69%),
+    no_context 17/55, answered-without-context 0, avg sources 1.3, latency
+    p50 3069ms / p95 4371ms. By category: factual 19/21, reasoning 12/15,
+    **multi-chunk 3/10**, adversarial 4/9 (adversarial no_ctx is largely the
+    desired refusal).
+  - reading: multi-chunk is the bottleneck — 7/10 end in no_context despite 100%
+    retrieval hit: chunks are found by search but cut by rerank+threshold before
+    the prompt (avg sources 1.3). Primary target for FEAT-017. Consider
+    reingesting the full Costituzione PDF (97 chunks) for a more discriminative
+    FEAT-017 comparison.
+  - March numbers (factual 90 / reasoning 80 / multi-chunk 10) are not comparable:
+    different pipeline (pre BUG-015/016/017, pre FEAT-020) and per-question
+    results were never versioned (gitignored file, since overwritten).

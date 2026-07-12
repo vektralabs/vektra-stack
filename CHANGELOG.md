@@ -19,6 +19,10 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
+### Fixed
+
+- **index**: `/api/v1/search` now resolves the embedding, sparse-embedding, and vector-store providers from the ProviderRegistry instead of hardcoding pgvector and reading a never-populated `app.state` attribute (BUG-021). In Qdrant deployments the endpoint returned zero results (it searched the empty `document_chunks` table) and hybrid mode always fell back to dense; the RAG pipeline (`/api/v1/query`) was unaffected. Found by the Sprint 3 baseline `make eval-retrieval` run.
+
 ## [0.5.1] - 2026-07-12
 
 Security hardening: DEBT-024 dependency sweep, workflow permissions, admin login hardening.

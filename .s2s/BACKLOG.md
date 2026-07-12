@@ -923,6 +923,27 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ---
 
+### BUG-021: /api/v1/search hardwired to pgvector — empty results and no hybrid in Qdrant mode
+
+**Status**: completed | **Priority**: high | **Created**: 2026-07-12 | **Completed**: 2026-07-12
+**Origin**: Sprint 3 baseline eval (plan `20260712-sprint3-rag-quality`): `make eval-retrieval` returned zero results for all 55 questions against a healthy stack.
+
+**Context**: the search endpoint (`vektra-index/api.py`) instantiated `PgvectorProvider` directly and looked up the sparse provider in `request.app.state.sparse_embedding_provider`. Neither matches the app wiring: `main.py` registers providers in the ProviderRegistry (`vector_store`/`default` is overridden by Qdrant when `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`; sparse under `sparse_embedding`/`default`; nothing is ever set on `app.state.sparse_embedding_provider`). Consequences in Qdrant deployments: (1) every search ran against the empty Postgres `document_chunks` table and returned `{"results": [], "total": 0}` with HTTP 200; (2) hybrid mode always fell back to dense with a `sparse_embedding_not_registered` warning even though FastEmbedBM25 was registered at startup. The RAG pipeline (`/api/v1/query`) was unaffected — it resolves providers from the registry — which is why the bug stayed invisible until the retrieval eval ran in qdrant mode.
+
+**Resolution**: the endpoint now resolves embedding, sparse embedding, and vector store from `request.app.state.registry` (same contract as the pipeline). The per-request `SentenceTransformersProvider` instantiation and the now-unused `session` dependency were removed. Unit tests added (`vektra-index/tests/test_api_search.py`): registry resolution, hybrid→dense fallback without sparse, hybrid with sparse.
+
+**Same family, not fixed here**: `POST /documents/{id}/chunks`, `DELETE /documents/{id}` and `GET /stats` still hardcode pgvector (the stats-vs-Qdrant mismatch was already a known issue). Track separately if needed.
+
+**Traceability**: ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), TECH-002 (eval harness)
+
+**Acceptance criteria**:
+- [ ] `/api/v1/search` returns results in Qdrant mode (dense and hybrid)
+- [ ] Hybrid uses the registered sparse provider (no spurious fallback)
+- [ ] Unit tests pin registry-based provider resolution
+- [ ] `make eval-retrieval` produces non-zero hit rate against the eval corpus
+
+---
+
 ### INFRA-005: Docker log persistence across container restarts
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-03-23

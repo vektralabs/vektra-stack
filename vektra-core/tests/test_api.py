@@ -60,6 +60,7 @@ def _make_registry(api_key: str = "test-key-xxxx") -> ProviderRegistry:
                     score=0.9,
                     snippet="Some relevant snippet.",
                     citation_id=uuid4(),
+                    title="lecture-07.pdf, p.3",  # FEAT-021
                 )
             ],
             conversation_id=query_req.conversation_id,
@@ -132,6 +133,8 @@ async def test_query_json_returns_response():
     assert isinstance(body["sources"], list)
     assert len(body["sources"]) == 1
     assert "citation_id" in body["sources"][0]
+    # FEAT-021: the title must survive the SourceRef -> SourceRefBody mapping
+    assert body["sources"][0]["title"] == "lecture-07.pdf, p.3"
 
 
 async def test_query_requires_auth():

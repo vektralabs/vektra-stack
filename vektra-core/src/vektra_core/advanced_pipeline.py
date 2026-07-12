@@ -484,11 +484,30 @@ class AdvancedQueryPipeline:
             "after_expansion": len(expanded),
         }
 
+    @staticmethod
+    def _chunk_title(
+        result: SearchResult,
+        name_map: dict[str, str],
+    ) -> str | None:
+        """Human-readable source title for citations (FEAT-021).
+
+        Prefers "document_name, p.N"; falls back to the raw source_file
+        from chunk metadata, then None (attribute omitted in the template).
+        """
+        name = name_map.get(str(result.document_id)) or result.metadata.get(
+            "source_file"
+        )
+        if not name:
+            return None
+        page = result.metadata.get("page")
+        return f"{name}, p.{page}" if page is not None else str(name)
+
     def _build_prompt(
         self,
         query: QueryRequest,
         filtered: list[SearchResult],
         history: list[dict[str, str | None]],
+        name_map: dict[str, str] | None = None,
     ) -> tuple[
         list[Message], list[SearchResult], list[dict[str, str | None]], StepTrace
     ]:
@@ -500,6 +519,7 @@ class AdvancedQueryPipeline:
             namespace=query.namespace,
             grounding_mode=query.grounding_mode,
             has_context=has_context,
+            citations_enabled=query.citations_enabled,
         )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
@@ -525,8 +545,20 @@ class AdvancedQueryPipeline:
         selected_history = [history[i] for i in selected_history_idx]
 
         if selected_chunks:
+            _names = name_map or {}
             context_text = self._renderer.render_context(
-                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+                [
+                    {
+                        "text": r.text_snippet,
+                        "score": r.score,
+                        "title": (
+                            self._chunk_title(r, _names)
+                            if query.citations_enabled
+                            else None
+                        ),
+                    }
+                    for r in selected_chunks
+                ]
             )
             user_content = f"{context_text}\n\nQuestion: {query.question}"
         else:
@@ -606,15 +638,25 @@ class AdvancedQueryPipeline:
                 no_relevant_context=no_relevant_context and not safeguard_blocked,
             ), trace
 
-        # Step 7: Build prompt
+        # Step 7: Build prompt (citations need document names up front, FEAT-021)
+        prompt_name_map: dict[str, str] = {}
+        if query.citations_enabled and filtered:
+            prompt_name_map = await _fetch_document_names(
+                [r.document_id for r in filtered]
+            )
         messages, selected_chunks, _, prompt_step = self._build_prompt(
-            query, filtered, history
+            query, filtered, history, name_map=prompt_name_map
         )
         steps.append(prompt_step)
 
         # Sources from budget-selected chunks only (not all filtered)
         t0 = time.monotonic()
-        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        if query.citations_enabled:
+            name_map = prompt_name_map
+        else:
+            name_map = await _fetch_document_names(
+                [r.document_id for r in selected_chunks]
+            )
         steps.append(
             StepTrace(
                 name="document_names",
@@ -634,6 +676,9 @@ class AdvancedQueryPipeline:
                 citation_id=uuid4(),
                 document_version=r.document_version,
                 document_name=name_map.get(str(r.document_id)),
+                title=(
+                    self._chunk_title(r, name_map) if query.citations_enabled else None
+                ),
             )
             for r in selected_chunks
         ]
@@ -773,9 +818,14 @@ class AdvancedQueryPipeline:
             yield QueryChunk(type="done", data="")
             return
 
-        # Step 7: Build prompt
+        # Step 7: Build prompt (citations need document names up front, FEAT-021)
+        prompt_name_map: dict[str, str] = {}
+        if query.citations_enabled and filtered:
+            prompt_name_map = await _fetch_document_names(
+                [r.document_id for r in filtered]
+            )
         messages, selected_chunks, _, prompt_step = self._build_prompt(
-            query, filtered, history
+            query, filtered, history, name_map=prompt_name_map
         )
         steps.append(prompt_step)
 
@@ -874,7 +924,12 @@ class AdvancedQueryPipeline:
 
         # Yield sources (only budget-selected chunks, not all filtered)
         t0 = time.monotonic()
-        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        if query.citations_enabled:
+            name_map = prompt_name_map
+        else:
+            name_map = await _fetch_document_names(
+                [r.document_id for r in selected_chunks]
+            )
         steps.append(
             StepTrace(
                 name="document_names",
@@ -894,6 +949,9 @@ class AdvancedQueryPipeline:
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
                 "document_name": name_map.get(str(r.document_id)),
+                "title": (
+                    self._chunk_title(r, name_map) if query.citations_enabled else None
+                ),
             }
             for r in selected_chunks
         ]

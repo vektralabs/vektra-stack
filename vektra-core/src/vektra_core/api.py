@@ -38,7 +38,7 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
-from vektra_shared.namespace import resolve_grounding_mode
+from vektra_shared.namespace import resolve_citations_enabled, resolve_grounding_mode
 from vektra_shared.types import (
     QueryChunk,
     QueryRequest,
@@ -77,6 +77,7 @@ class SourceRefBody(BaseModel):
     citation_id: UUID
     document_version: int = 1
     document_name: str | None = None  # FEAT-012
+    title: str | None = None  # FEAT-021: set when the namespace cites sources
 
 
 class QueryResponseBody(BaseModel):
@@ -270,6 +271,11 @@ async def query(
     else:
         grounding_mode = _default_mode
 
+    # Resolve citations: namespace config > default false (FEAT-021)
+    citations_enabled = False
+    if db_factory:
+        citations_enabled = await resolve_citations_enabled(body.namespace, db_factory)
+
     query_req = QueryRequest(
         question=body.question,
         namespace=body.namespace,
@@ -277,6 +283,7 @@ async def query(
         top_k=body.top_k,
         stream=use_stream,
         grounding_mode=grounding_mode,
+        citations_enabled=citations_enabled,
     )
 
     if use_stream:

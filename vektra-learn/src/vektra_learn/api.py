@@ -51,7 +51,11 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
-from vektra_shared.namespace import resolve_grounding_mode, resolve_show_sources
+from vektra_shared.namespace import (
+    resolve_citations_enabled,
+    resolve_grounding_mode,
+    resolve_show_sources,
+)
 from vektra_shared.types import trace_from_dict
 
 # Sentinel key_id for learn-originated conversations (JWT auth has no API key).
@@ -776,6 +780,12 @@ async def course_query(
         )
     else:
         _show_sources = _default_show_sources
+
+    # Resolve citations: namespace config > default false (FEAT-021)
+    if _db_factory_gm:
+        query_req.citations_enabled = await resolve_citations_enabled(
+            namespace, _db_factory_gm
+        )
 
     if registry is None:
         err = ErrorResponse(

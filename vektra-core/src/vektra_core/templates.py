@@ -95,16 +95,19 @@ class TemplateRenderer:
         namespace: str = "default",
         grounding_mode: str = "strict",
         has_context: bool = True,
+        citations_enabled: bool = False,
     ) -> str:
-        """Render system.j2 with namespace, grounding mode, and context flag."""
+        """Render system.j2 with namespace, grounding mode, and context/citation flags."""
         tmpl = self._env.get_template("system.j2")
         return tmpl.render(
             namespace=namespace,
             grounding_mode=grounding_mode,
             has_context=has_context,
+            citations_enabled=citations_enabled,
         )
 
     def render_context(self, chunks: list[dict[str, Any]]) -> str:
-        """Render context.j2 with a list of chunk dicts containing 'text' (and optionally 'score')."""
+        """Render context.j2 with a list of chunk dicts containing 'text' and
+        optionally 'score' and 'title' (source title attribute, FEAT-021)."""
         tmpl = self._env.get_template("context.j2")
         return tmpl.render(chunks=chunks)

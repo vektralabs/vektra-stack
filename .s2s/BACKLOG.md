@@ -1010,6 +1010,24 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ---
 
+### BUG-022: INSTALL_UNSTRUCTURED image build broken — torchvision resolved from PyPI against torch+cpu
+
+**Status**: completed | **Priority**: high | **Created**: 2026-07-12 | **Completed**: 2026-07-12
+**Origin**: first production build with `INSTALL_UNSTRUCTURED=true` (rootful system-instance deployment on the dev workstation, 2026-07-12).
+
+**Context**: the OCR image variant has never built successfully. `uv sync --extra ocr` resolves `torchvision` — a transitive dependency via `unstructured[pdf]` → unstructured-inference → timm — from PyPI, whose wheels are compiled against CUDA torch, while `torch` itself is pinned to the `pytorch-cpu` index (vektra-index `[tool.uv.sources]`). At image build the model pre-cache step (`Dockerfile:126`) fails importing sentence_transformers with `RuntimeError: operator torchvision::nms does not exist`. CI never builds with the flag, so the breakage stayed invisible since the extra was introduced.
+
+**Resolution**: declare `torchvision>=0.25,<0.26` in the `ocr` extra with `[tool.uv.sources] torchvision = { index = "pytorch-cpu" }` in `vektra-ingest/pyproject.toml` (same pattern as torch in vektra-index); relock — torchvision flips to `0.25.0+cpu` from the CPU index, torch stays at 2.10.0 (upper bound `<0.26` keeps the relock surgical). New path-filtered workflow `.github/workflows/docker-ocr-build.yml` builds the `INSTALL_UNSTRUCTURED=true` image whenever Dockerfile/uv.lock/ingest deps change, so the variant cannot silently regress again.
+
+**Note**: the OCR image ships English tesseract only (`tesseract-ocr-eng`); the missing Italian language pack is tracked as a TECH-006 quick win, out of scope here.
+
+**Acceptance criteria**:
+- [ ] `docker build --build-arg INSTALL_UNSTRUCTURED=true .` succeeds from a clean cache
+- [ ] `uv.lock` resolves torchvision from the pytorch-cpu registry
+- [ ] CI builds the OCR variant on changes to Dockerfile / uv.lock / ingest deps
+
+---
+
 ### DEBT-026: Tune Prometheus instrumentation exclusions (health/docs endpoints)
 
 **Status**: planned | **Priority**: low | **Created**: 2026-07-12

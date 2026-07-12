@@ -345,12 +345,20 @@ class QdrantVectorStoreProvider:
         Points whose payload namespace does not match are dropped (namespace
         isolation): Qdrant retrieve() takes no filter.
         """
-        if not chunk_ids:
+        valid_ids: list[str] = []
+        for cid in chunk_ids:
+            try:
+                UUID(cid)
+            except ValueError:
+                logger.warning("qdrant_retrieve_invalid_chunk_id: %s", cid)
+                continue
+            valid_ids.append(cid)
+        if not valid_ids:
             return []
 
         records = await self._client.retrieve(
             collection_name=self._collection_name,
-            ids=chunk_ids,
+            ids=valid_ids,
             with_payload=True,
         )
         matching = [

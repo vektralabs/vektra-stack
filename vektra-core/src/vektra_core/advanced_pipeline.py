@@ -447,10 +447,7 @@ class AdvancedQueryPipeline:
         (ARCH-055) so the budget sees the expanded text. Results keep the
         child's chunk_id and score for trace comparability.
         """
-        parent_ids: list[str] = []
-        for r in results:
-            if r.parent_id and r.parent_id not in parent_ids:
-                parent_ids.append(r.parent_id)
+        parent_ids = list(dict.fromkeys(r.parent_id for r in results if r.parent_id))
         if not parent_ids:
             return results, {"children_expanded": 0, "parents_fetched": 0}
 

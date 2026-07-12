@@ -329,11 +329,13 @@ class TestQdrantParentChunks:
 
         provider, client = _make_provider()
         doc_id = str(uuid4())
+        parent_id = str(uuid4())
+        alien_id = str(uuid4())
 
         # Qdrant retrieve() returns Record objects with no score attribute
         records = [
             SimpleNamespace(
-                id="parent-1",
+                id=parent_id,
                 payload={
                     "text": "parent text",
                     "document_id": doc_id,
@@ -343,7 +345,7 @@ class TestQdrantParentChunks:
                 },
             ),
             SimpleNamespace(
-                id="alien-1",
+                id=alien_id,
                 payload={
                     "text": "other tenant",
                     "document_id": doc_id,
@@ -355,18 +357,38 @@ class TestQdrantParentChunks:
         ]
         client.retrieve = AsyncMock(return_value=records)
 
-        results = await provider.retrieve("default", ["parent-1", "alien-1"])
+        results = await provider.retrieve("default", [parent_id, alien_id])
 
         client.retrieve.assert_awaited_once()
-        assert [r.chunk_id for r in results] == ["parent-1"]
+        assert [r.chunk_id for r in results] == [parent_id]
         assert results[0].score == 0.0
         assert results[0].text_snippet == "parent text"
+
+    @pytest.mark.asyncio
+    async def test_retrieve_skips_invalid_ids(self):
+        """Non-UUID ids never reach the Qdrant client (it would reject the batch)."""
+        provider, client = _make_provider()
+        client.retrieve = AsyncMock(return_value=[])
+        valid = str(uuid4())
+
+        await provider.retrieve("default", ["not-a-uuid", valid])
+
+        assert client.retrieve.await_args.kwargs["ids"] == [valid]
 
     @pytest.mark.asyncio
     async def test_retrieve_empty_ids_short_circuits(self):
         provider, client = _make_provider()
 
         results = await provider.retrieve("default", [])
+
+        assert results == []
+        client.retrieve.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retrieve_all_invalid_ids_short_circuits(self):
+        provider, client = _make_provider()
+
+        results = await provider.retrieve("default", ["parent-1", "child-2"])
 
         assert results == []
         client.retrieve.assert_not_called()

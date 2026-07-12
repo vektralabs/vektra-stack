@@ -363,6 +363,7 @@ async def query(
                 citation_id=s.citation_id,
                 document_version=s.document_version,
                 document_name=s.document_name,
+                title=s.title,  # FEAT-021
             )
             for s in response.sources
         ],

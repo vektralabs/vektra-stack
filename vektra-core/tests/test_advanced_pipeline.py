@@ -770,3 +770,192 @@ async def test_eval_mode_off_excludes_prompt_messages():
 
     build_step = next(s for s in trace.steps if s.name == "build_prompt")
     assert "messages" not in build_step.metadata
+
+
+# ---------------------------------------------------------------------------
+# Parent chunk expansion (FEAT-017)
+# ---------------------------------------------------------------------------
+
+
+def _make_child_result(
+    score: float, text: str, parent_id: str, doc_id: UUID | None = None
+) -> SearchResult:
+    return SearchResult(
+        chunk_id=str(uuid4()),
+        score=score,
+        text_snippet=text,
+        document_id=doc_id or uuid4(),
+        document_version=1,
+        parent_id=parent_id,
+    )
+
+
+def _make_parent_chunk(chunk_id: str, text: str, doc_id: UUID) -> SearchResult:
+    return SearchResult(
+        chunk_id=chunk_id,
+        score=0.0,
+        text_snippet=text,
+        document_id=doc_id,
+        document_version=1,
+    )
+
+
+async def test_parent_expansion_replaces_child_text():
+    """Expanded children carry the parent text into prompt and sources."""
+    doc_id = uuid4()
+    parent_text = "PARENT SECTION: full surrounding context for the child."
+    child = _make_child_result(0.9, "tiny child snippet", "parent-1", doc_id)
+    orphan = _make_search_result(0.8, "standalone chunk without parent")
+
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[child, orphan])
+    vector_store.retrieve = AsyncMock(
+        return_value=[_make_parent_chunk("parent-1", parent_text, doc_id)]
+    )
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_PARENT_EXPANSION_ENABLED=True),
+    )
+    response, trace = await pipeline.execute(
+        QueryRequest(question="test", namespace="default")
+    )
+
+    vector_store.retrieve.assert_awaited_once_with(
+        namespace="default", chunk_ids=["parent-1"]
+    )
+    # Expanded result keeps the child's chunk_id and score
+    by_id = {s.chunk_id: s for s in response.sources}
+    assert by_id[child.chunk_id].snippet == parent_text
+    assert by_id[child.chunk_id].score == child.score
+    assert by_id[orphan.chunk_id].snippet == orphan.text_snippet
+
+    step = next(s for s in trace.steps if s.name == "parent_expansion")
+    assert step.metadata["children_expanded"] == 1
+    assert step.metadata["siblings_merged"] == 0
+    assert step.metadata["parents_fetched"] == 1
+
+
+async def test_parent_expansion_merges_siblings_of_same_parent():
+    """Children of the same parent collapse into the highest-scored one."""
+    doc_id = uuid4()
+    parent_text = "PARENT: contains both sibling fragments."
+    sibling_hi = _make_child_result(0.9, "fragment one", "parent-1", doc_id)
+    sibling_lo = _make_child_result(0.7, "fragment two", "parent-1", doc_id)
+
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[sibling_hi, sibling_lo])
+    vector_store.retrieve = AsyncMock(
+        return_value=[_make_parent_chunk("parent-1", parent_text, doc_id)]
+    )
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_PARENT_EXPANSION_ENABLED=True),
+    )
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    assert len(response.sources) == 1
+    assert response.sources[0].chunk_id == sibling_hi.chunk_id
+    assert response.sources[0].snippet == parent_text
+
+    step = next(s for s in trace.steps if s.name == "parent_expansion")
+    assert step.metadata["children_expanded"] == 1
+    assert step.metadata["siblings_merged"] == 1
+
+
+async def test_parent_expansion_disabled_by_default():
+    """Without the flag no retrieve call is made and no step is traced."""
+    child = _make_child_result(0.9, "child snippet", "parent-1")
+
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[child])
+
+    pipeline = _make_pipeline(vector_store=vector_store)
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    vector_store.retrieve.assert_not_awaited()
+    assert all(s.name != "parent_expansion" for s in trace.steps)
+    assert response.sources[0].snippet == "child snippet"
+
+
+async def test_parent_expansion_retrieve_failure_keeps_children():
+    """A vector store failure during expansion degrades gracefully."""
+    child = _make_child_result(0.9, "child snippet", "parent-1")
+
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[child])
+    vector_store.retrieve = AsyncMock(side_effect=RuntimeError("qdrant down"))
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_PARENT_EXPANSION_ENABLED=True),
+    )
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    assert response.answer is not None
+    assert response.sources[0].snippet == "child snippet"
+    step = next(s for s in trace.steps if s.name == "parent_expansion")
+    assert step.metadata.get("skipped") is True
+
+
+async def test_parent_expansion_missing_parent_keeps_child():
+    """Children whose parent is not returned by retrieve() stay unexpanded."""
+    child = _make_child_result(0.9, "child snippet", "parent-gone")
+
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[child])
+    vector_store.retrieve = AsyncMock(return_value=[])
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(VEKTRA_PARENT_EXPANSION_ENABLED=True),
+    )
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    assert response.sources[0].snippet == "child snippet"
+    step = next(s for s in trace.steps if s.name == "parent_expansion")
+    assert step.metadata["children_expanded"] == 0
+    assert step.metadata["parents_fetched"] == 0
+
+
+async def test_parent_expansion_feeds_token_budget_with_parent_text():
+    """Token budgeting (ARCH-055) operates on the expanded parent text."""
+    doc_id = uuid4()
+    parent_text = "PARENT TEXT " * 50
+    child = _make_child_result(0.9, "tiny", "parent-1", doc_id)
+
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[child])
+    vector_store.retrieve = AsyncMock(
+        return_value=[_make_parent_chunk("parent-1", parent_text, doc_id)]
+    )
+
+    llm = MagicMock()
+    llm.complete = AsyncMock(
+        return_value=CompletionResponse(
+            content="The answer.",
+            model="ollama/llama3",
+            prompt_tokens=10,
+            completion_tokens=20,
+            total_tokens=30,
+        )
+    )
+    token_counts: list[str] = []
+
+    def _count(text: str, model: str | None = None) -> int:
+        token_counts.append(text)
+        return len(text.split())
+
+    llm.count_tokens = MagicMock(side_effect=_count)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        llm=llm,
+        pipeline_config=_make_pipeline_config(VEKTRA_PARENT_EXPANSION_ENABLED=True),
+    )
+    await pipeline.execute(QueryRequest(question="test"))
+
+    # The budget counted the parent text, not the child snippet
+    assert any(parent_text == t for t in token_counts)
+    assert all(t != "tiny" for t in token_counts)

@@ -711,3 +711,124 @@ async def test_storage_failure_raises_ingest_error():
                             session=session,
                             registry=registry,
                         )
+
+
+# ---------------------------------------------------------------------------
+# Parent chunk linkage at store time (FEAT-017)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dual_ingest_links_children_to_stored_parent_ids(monkeypatch):
+    """Children reference the parent's deterministic stored id, not the
+    chunker-local transient id; parents and tables carry no parent_id."""
+    from uuid import uuid5
+
+    from vektra_ingest.pipeline import run_ingest
+
+    monkeypatch.setenv("VEKTRA_CHUNKING_STRATEGY", "dual")
+    monkeypatch.setenv("VEKTRA_PARENT_CHILD_LEVELS", "1")
+
+    doc_id = uuid4()
+
+    session = AsyncMock()
+
+    async def _execute(stmt, *args, **kwargs):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        return mock_result
+
+    added_docs: list = []
+
+    def _session_add(obj):
+        added_docs.append(obj)
+
+    async def _flush_side_effect():
+        for obj in added_docs:
+            obj.id = doc_id
+
+    session.execute = _execute
+    session.add = _session_add
+    session.flush = AsyncMock(side_effect=_flush_side_effect)
+    session.commit = AsyncMock()
+
+    registry, mock_embedding, mock_vs = _make_registry()
+    mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384] * 4)
+    mock_vs.store = AsyncMock(return_value=["i0", "i1", "i2", "i3"])
+
+    async def _fake_extract(req):
+        async def _gen():
+            yield DocumentChunk(text="whatever", element_type=ElementType.TEXT)
+
+        return _gen()
+
+    # Controlled dual output: parent + two children + standalone table
+    async def _fake_chunk(elements):
+        async def _gen():
+            yield DocumentChunk(
+                text="parent text",
+                element_type=ElementType.TEXT,
+                metadata={"chunk_level": "parent"},
+                parent_id="transient-1",
+            )
+            yield DocumentChunk(
+                text="child a",
+                element_type=ElementType.TEXT,
+                metadata={"chunk_level": "child"},
+                parent_id="transient-1",
+            )
+            yield DocumentChunk(
+                text="child b",
+                element_type=ElementType.TEXT,
+                metadata={"chunk_level": "child"},
+                parent_id="transient-1",
+            )
+            yield DocumentChunk(
+                text="<table>standalone</table>",
+                element_type=ElementType.TABLE,
+                metadata={},
+                parent_id=None,
+            )
+
+        return _gen()
+
+    mock_extractor = MagicMock()
+    mock_extractor.extract = _fake_extract
+    mock_extractor.supported_types.return_value = {"application/pdf"}
+
+    with patch(
+        "vektra_ingest.pipeline.detect_content_type", return_value="application/pdf"
+    ):
+        with patch(
+            "vektra_ingest.pipeline._get_extractor", return_value=mock_extractor
+        ):
+            with patch(
+                "vektra_ingest.pipeline.DualStrategyChunking"
+            ) as mock_chunker_class:
+                mock_chunker = MagicMock()
+                mock_chunker.chunk = _fake_chunk
+                mock_chunker_class.return_value = mock_chunker
+
+                result = await run_ingest(
+                    file_content=b"%PDF-1.4 fake pdf",
+                    filename="dual.pdf",
+                    namespace="default",
+                    session=session,
+                    registry=registry,
+                )
+
+    assert result.status == "new"
+    stored_chunks = mock_vs.store.call_args.args[1]
+    assert len(stored_chunks) == 4
+
+    parent, child_a, child_b, table = stored_chunks
+    expected_parent_stored_id = str(uuid5(doc_id, "0"))
+
+    assert parent.chunk_id == expected_parent_stored_id
+    assert parent.parent_id is None
+    assert child_a.parent_id == expected_parent_stored_id
+    assert child_b.parent_id == expected_parent_stored_id
+    assert table.parent_id is None
+    # Deterministic ids for every chunk: uuid5(doc_id, position)
+    for i, chunk in enumerate(stored_chunks):
+        assert chunk.chunk_id == str(uuid5(doc_id, str(i)))

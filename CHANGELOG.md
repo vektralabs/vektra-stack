@@ -19,6 +19,10 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
+### Fixed
+
+- **docker**: the `INSTALL_UNSTRUCTURED=true` image variant builds again (BUG-022). torchvision (transitive via unstructured-inference) resolved from PyPI with CUDA-built wheels while torch is pinned to the CPU index, crashing the build with `operator torchvision::nms does not exist`. It is now declared in the `ocr` extra and pinned to the pytorch-cpu index; a new path-filtered CI workflow builds the OCR variant so it cannot silently regress.
+
 ## [0.5.1] - 2026-07-12
 
 Security hardening: DEBT-024 dependency sweep, workflow permissions, admin login hardening.

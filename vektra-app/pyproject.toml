@@ -1,6 +1,6 @@
 [project]
 name = "vektra-app"
-version = "0.5.0"
+version = "0.5.1"
 description = "FastAPI application assembly and startup validation (ARCH-015, ARCH-057)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,7 +13,7 @@ dependencies = [
     "vektra-analytics",
     "vektra-learn",
     "uvicorn[standard]>=0.30",
-    "starlette-prometheus>=0.10",
+    "prometheus-fastapi-instrumentator>=8.0",
     "structlog>=24.0",
     "alembic>=1.13",
 ]

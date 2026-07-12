@@ -19,6 +19,21 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
+## [0.5.1] - 2026-07-12
+
+Security hardening: DEBT-024 dependency sweep, workflow permissions, admin login hardening.
+
+### Security
+
+- **deps**: re-lock of all transitive dependencies flagged by Dependabot (DEBT-024, 61 of 62 open alerts). Highlights: litellm 1.83.10 → 1.91.2 (critical: authentication bypass via Host header injection), pyjwt 2.11 → 2.13 (public-key JWK accepted as HMAC secret), starlette 0.52 → 1.3.1 with fastapi 0.129 → 0.139 (StaticFiles SSRF/NTLM credential theft), transformers 5.2 → 5.3 (RCE), plus urllib3, cryptography, Mako, python-multipart, soupsieve, aiohttp (×21 advisories), pypdf (×9), idna, onnx, pydantic-settings, python-dotenv, Pygments. The remaining open alert (torch, low) has no patched release yet.
+- **ci**: minimal `permissions:` blocks added to all GitHub workflows (`contents: read`), closing the 12 `actions/missing-workflow-permissions` code-scanning alerts.
+- **admin**: login hardening: `POST /admin/login` validates the token against the urlsafe-base64 charset before key-store lookup (closes the `py/cookie-injection` code-scanning alert) and strips accidental surrounding whitespace from pasted tokens.
+- **deps-dev**: esbuild 0.25 → 0.28 in the widget build toolchain (Dependabot security update); development-dependencies group refresh; GitHub Actions bumps (checkout v7, dorny/paths-filter v4).
+
+### Changed
+
+- **metrics**: `/metrics` is now served by prometheus-fastapi-instrumentator instead of starlette-prometheus (unmaintained, incompatible with starlette >= 1.0: every request failed with `AttributeError` on included routers). Metric names change accordingly (e.g. `http_request_duration_seconds` replaces the `starlette_*` families); no in-repo dashboards or tests referenced the old names. ARCH-014 updated.
+
 ## [0.5.0] - 2026-04-27
 
 Widget production-ready + instructor configuration.

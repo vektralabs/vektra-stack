@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-04-09
+**Updated**: 2026-07-12
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -827,6 +827,99 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 - [ ] Single shared helper in `vektra_shared` with the same signature and behaviour
 - [ ] Same structlog event name and keys regardless of caller
 - [ ] All existing audit-fallback tests still pass; helper unit-tested in `vektra-shared/tests`
+
+---
+
+### DEBT-024: Security hardening — Dependabot + code scanning sweep (post v0.5.0)
+
+**Status**: completed | **Priority**: high | **Created**: 2026-05-06 | **Updated**: 2026-07-11 | **Completed**: 2026-07-12 (v0.5.1) | **PR**: #80
+**Origin**: post-release security review (`gh api repos/.../dependabot/alerts`, `repos/.../code-scanning/alerts`) on 2026-05-06; re-swept 2026-07-11
+
+**Resolution**: PR #80 (merged to develop 2026-07-11, released with v0.5.1): uv.lock re-lock closing 61 of 62 Dependabot alerts (torch low has no patched release, stays open by design), minimal `permissions:` blocks on all workflows (12 code-scanning alerts), `py/cookie-injection` closed by a token-format guard on `POST /admin/login`. Fallout handled in the same PR: starlette 1.x broke starlette-prometheus (unmaintained), replaced with prometheus-fastapi-instrumentator (ARCH-014 updated). Dependabot PRs: #78, #79, #39, #77 merged; #76 closed as superseded. Alert closure happens on the default branch, verified after the v0.5.1 release merge.
+
+**Context**: v0.5.0 closed the critical/high litellm CVEs and the lxml/pillow/pypdf transitive bumps that were active at release time. The original sweep (2026-05-06) found 14 open Dependabot alerts. Two months of inactivity later (2026-07-11) the set has grown to **62 open Dependabot alerts** (1 critical, 15 high, 29 medium, 17 low — all transitive in `uv.lock`) and 13 code-scanning warnings. Priority raised medium → high: the critical litellm alert is an authentication bypass.
+
+**Open Dependabot alerts** (state=open, 2026-07-11, all in `uv.lock`, grouped by package):
+
+| Package | Alerts (severity) | Fix version | Notes |
+|---------|-------------------|-------------|-------|
+| litellm | 1 critical, 1 high | 1.84.0 | **Auth bypass via Host header injection** — top priority |
+| PyJWT / pyjwt | 2 high, 2 medium, 1 low | 2.13.0 | Public-key JWK accepted as HMAC secret (forged tokens); `crit` header |
+| starlette / Starlette | 2 high, 2 medium, 1 low | 1.3.1 | SSRF + NTLM credential theft via UNC in StaticFiles; form limits ignored |
+| transformers | 1 high | 5.3.0 | RCE |
+| urllib3 | 2 high | 2.7.0 | Decompression bomb bypass; header leak across origins |
+| cryptography | 1 high | 48.0.1 | Vulnerable OpenSSL in wheels |
+| Mako | 2 high | 1.3.12 | Path traversal in TemplateLookup |
+| python-multipart | 2 high, 3 low | 0.0.31 | Multipart DoS |
+| soupsieve | 2 high | 2.8.4 | ReDoS / memory exhaustion |
+| aiohttp | 21 alerts (11 medium, 10 low) | 3.14.1 | Single bump clears the whole cluster |
+| pypdf | 9 medium | 6.13.3 | |
+| idna | 1 medium | 3.15 | |
+| onnx | 1 medium | 1.22.0 | |
+| pydantic-settings | 1 medium | 2.14.2 | |
+| python-dotenv | 1 medium | 1.2.2 | |
+| Pygments | 1 low | 2.20.0 | |
+| torch | 1 low | none published | Cannot be resolved by re-lock; leave open, re-check at v0.5.2 |
+
+**Open code-scanning alerts** (unchanged since 2026-05-06):
+
+| # | Severity | Rule | File |
+|---|----------|------|------|
+| 1 | medium | `py/cookie-injection` | `vektra-admin/src/vektra_admin/ui.py` |
+| 3–15 | medium (warning) | `actions/missing-workflow-permissions` | `.github/workflows/ci-unit.yml` (9 jobs), `integration.yml`, `lint.yml`, `shell-scripts.yml` |
+
+**Approach**:
+
+1. **litellm (critical) and PyJWT first**: auth-adjacent surface. Bump constraints where needed and re-lock.
+2. **Remaining high cluster** (starlette, transformers, urllib3, cryptography, Mako, python-multipart, soupsieve): same re-lock pass, verifying each first-patched version is reached.
+3. **Medium/low clusters** (aiohttp ×21, pypdf ×9, idna, onnx, pydantic-settings, python-dotenv, Pygments): expected to clear in the same re-lock.
+4. **`actions/missing-workflow-permissions`**: one commit adding minimal `permissions:` blocks (`contents: read` at workflow level, granular at job level where needed) to all four workflow files.
+5. **`py/cookie-injection`** in `vektra-admin/ui.py`: requires code review (not just bump). Inspect cookie write path in admin UI for tainted input from user-controlled fields; harden or annotate as intentional only if false positive.
+
+**Acceptance criteria**:
+- [ ] litellm critical alert (#92) and high (#95) resolved
+- [ ] All PyJWT alerts (#1, #68, …) resolved at >= 2.13.0
+- [ ] All remaining high alerts resolved (starlette, transformers, urllib3, cryptography, Mako, python-multipart, soupsieve)
+- [ ] aiohttp (×21), pypdf (×9) and remaining medium/low alerts resolved; torch documented as no-fix-available
+- [ ] All 12 `actions/missing-workflow-permissions` code-scanning alerts dismissed/closed
+- [ ] `py/cookie-injection` alert either resolved by code change or documented as false positive in `vektra-admin/ui.py` with justification
+- [ ] `make lint` and `make test` green after re-lock; CI passes on the resulting PR
+
+**Notes**:
+- Open Dependabot PRs to re-evaluate as part of this sweep: #39 (paths-filter v3→v4), #76 (uv group), #77 (esbuild, widget npm), #78 (dev-deps), #79 (actions/checkout 7). The uv re-lock here likely supersedes #76/#78.
+- Three transitive deps alerts mentioned in v0.5.0 release notes (lxml/onnx/pillow) were fixed 2026-05-05; onnx has since reopened with a new advisory (see table).
+
+---
+
+### DEBT-025: Isolate unit tests from the developer's local .env
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-12
+**Origin**: discovered during the DEBT-024 sweep (PR #80): `make test` fails locally with 4 errors while CI is green.
+
+**Context**: 4 tests in `vektra-shared/tests/test_config.py` (`TestLLMConfig::test_defaults`, `TestQueryPipelineConfig::test_eval_mode_default_false`, `test_debug_log_queries_default_false`, `TestVektraSettings::test_defaults_with_required_only`) assert configuration defaults, but when the full suite runs from the workspace root the developer's `.env` leaks into `os.environ` (something imported during collection loads dotenv, e.g. litellm), so machine-specific values (eval_mode=true, custom port, LLM keys) override the defaults and the assertions fail. CI never sees this because runners have no `.env`. Current workaround: temporarily move `.env` away before `make test`.
+
+**Proposed approach**: a `vektra-shared/tests` (or workspace-level) autouse fixture that snapshots and scrubs `VEKTRA_*` variables from `os.environ` for the default-assertion tests, or `monkeypatch.delenv` on the specific vars. Alternatively point pydantic-settings at a nonexistent env file in tests via `_env_file=None`.
+
+**Acceptance criteria**:
+- [ ] `make test` passes on a dev machine with a populated `.env`
+- [ ] Default-assertion tests are hermetic (no dependency on ambient `VEKTRA_*` vars)
+- [ ] No change to production settings loading behavior
+
+---
+
+### DEBT-026: Tune Prometheus instrumentation exclusions (health/docs endpoints)
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-12
+**Origin**: Gemini review on PR #82 (v0.5.1 release), `vektra-app/src/vektra_app/main.py:680`
+
+**Context**: the prometheus-fastapi-instrumentator setup (introduced in v0.5.1 when it replaced starlette-prometheus) excludes only `/metrics` from instrumentation. Health endpoints (`/health`, `/health/{component}`, `/health/memory`) and docs endpoints (`/docs`, `/openapi.json`) are polled by load balancers, orchestrators, and monitoring systems; instrumenting them inflates request counters and histogram cardinality with traffic that carries no signal about API usage.
+
+**Proposed approach**: extend `excluded_handlers` with anchored, escaped regexes — the instrumentator compiles each pattern and matches with `re.match`, so an unanchored `/docs` would also match `/docsomething` and an unescaped `.` matches any character. Example: `["^/metrics$", "^/health", "^/docs$", "^/openapi\\.json$"]`. Consider whether health-endpoint latency is itself worth tracking (it can reveal DB/LLM check slowness) before excluding it wholesale — an alternative is excluding only `/docs`/`/openapi.json` and keeping `/health` instrumented.
+
+**Acceptance criteria**:
+- [ ] Decision recorded on which endpoints stay instrumented (with rationale)
+- [ ] `excluded_handlers` updated accordingly
+- [ ] `/metrics` output verified: excluded handlers no longer appear in `http_requests_total`
 
 ---
 

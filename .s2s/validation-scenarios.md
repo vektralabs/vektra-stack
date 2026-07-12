@@ -1154,7 +1154,7 @@ Phase: 1 | 2
 
 **Actor**: Platform Operator / Prometheus
 **Trigger**: Monitoring system scrapes metrics
-**Preconditions**: Vektra stack running with starlette-prometheus
+**Preconditions**: Vektra stack running with prometheus-fastapi-instrumentator
 
 **Flow**:
 1. Prometheus scrapes GET /metrics

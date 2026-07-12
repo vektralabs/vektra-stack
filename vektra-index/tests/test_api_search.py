@@ -91,7 +91,7 @@ async def _post_search(app: FastAPI, body: dict) -> tuple[int, dict]:
 
 
 @pytest.mark.asyncio
-async def test_search_uses_registry_vector_store():
+async def test_search_uses_registry_vector_store() -> None:
     """Results must come from the registry's vector store, not pgvector."""
     vector_store = _make_vector_store([_result()])
     app = _make_app(vector_store)
@@ -119,7 +119,7 @@ async def test_search_uses_registry_vector_store():
 
 
 @pytest.mark.asyncio
-async def test_search_hybrid_falls_back_to_dense_without_sparse():
+async def test_search_hybrid_falls_back_to_dense_without_sparse() -> None:
     """HYBRID with no registered sparse provider degrades to DENSE."""
     vector_store = _make_vector_store([])
     app = _make_app(vector_store, sparse_provider=None)
@@ -137,7 +137,7 @@ async def test_search_hybrid_falls_back_to_dense_without_sparse():
 
 
 @pytest.mark.asyncio
-async def test_search_hybrid_uses_registered_sparse_provider():
+async def test_search_hybrid_uses_registered_sparse_provider() -> None:
     """HYBRID with a registered sparse provider keeps hybrid mode and sparse vector."""
     vector_store = _make_vector_store([_result()])
     sparse_vector = MagicMock(name="sparse_vector")

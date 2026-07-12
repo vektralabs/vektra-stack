@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-04-09
+**Updated**: 2026-07-12
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -832,8 +832,10 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ### DEBT-024: Security hardening — Dependabot + code scanning sweep (post v0.5.0)
 
-**Status**: in_progress | **Priority**: high | **Created**: 2026-05-06 | **Updated**: 2026-07-11
+**Status**: completed | **Priority**: high | **Created**: 2026-05-06 | **Updated**: 2026-07-11 | **Completed**: 2026-07-12 (v0.5.1) | **PR**: #80
 **Origin**: post-release security review (`gh api repos/.../dependabot/alerts`, `repos/.../code-scanning/alerts`) on 2026-05-06; re-swept 2026-07-11
+
+**Resolution**: PR #80 (merged to develop 2026-07-11, released with v0.5.1): uv.lock re-lock closing 61 of 62 Dependabot alerts (torch low has no patched release, stays open by design), minimal `permissions:` blocks on all workflows (12 code-scanning alerts), `py/cookie-injection` closed by a token-format guard on `POST /admin/login`. Fallout handled in the same PR: starlette 1.x broke starlette-prometheus (unmaintained), replaced with prometheus-fastapi-instrumentator (ARCH-014 updated). Dependabot PRs: #78, #79, #39, #77 merged; #76 closed as superseded. Alert closure happens on the default branch, verified after the v0.5.1 release merge.
 
 **Context**: v0.5.0 closed the critical/high litellm CVEs and the lxml/pillow/pypdf transitive bumps that were active at release time. The original sweep (2026-05-06) found 14 open Dependabot alerts. Two months of inactivity later (2026-07-11) the set has grown to **62 open Dependabot alerts** (1 critical, 15 high, 29 medium, 17 low — all transitive in `uv.lock`) and 13 code-scanning warnings. Priority raised medium → high: the critical litellm alert is an authentication bypass.
 
@@ -886,6 +888,22 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 **Notes**:
 - Open Dependabot PRs to re-evaluate as part of this sweep: #39 (paths-filter v3→v4), #76 (uv group), #77 (esbuild, widget npm), #78 (dev-deps), #79 (actions/checkout 7). The uv re-lock here likely supersedes #76/#78.
 - Three transitive deps alerts mentioned in v0.5.0 release notes (lxml/onnx/pillow) were fixed 2026-05-05; onnx has since reopened with a new advisory (see table).
+
+---
+
+### DEBT-025: Isolate unit tests from the developer's local .env
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-12
+**Origin**: discovered during the DEBT-024 sweep (PR #80): `make test` fails locally with 4 errors while CI is green.
+
+**Context**: 4 tests in `vektra-shared/tests/test_config.py` (`TestLLMConfig::test_defaults`, `TestQueryPipelineConfig::test_eval_mode_default_false`, `test_debug_log_queries_default_false`, `TestVektraSettings::test_defaults_with_required_only`) assert configuration defaults, but when the full suite runs from the workspace root the developer's `.env` leaks into `os.environ` (something imported during collection loads dotenv, e.g. litellm), so machine-specific values (eval_mode=true, custom port, LLM keys) override the defaults and the assertions fail. CI never sees this because runners have no `.env`. Current workaround: temporarily move `.env` away before `make test`.
+
+**Proposed approach**: a `vektra-shared/tests` (or workspace-level) autouse fixture that snapshots and scrubs `VEKTRA_*` variables from `os.environ` for the default-assertion tests, or `monkeypatch.delenv` on the specific vars. Alternatively point pydantic-settings at a nonexistent env file in tests via `_env_file=None`.
+
+**Acceptance criteria**:
+- [ ] `make test` passes on a dev machine with a populated `.env`
+- [ ] Default-assertion tests are hermetic (no dependency on ambient `VEKTRA_*` vars)
+- [ ] No change to production settings loading behavior
 
 ---
 

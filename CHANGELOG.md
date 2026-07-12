@@ -19,6 +19,10 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
+### Fixed
+
+- **tests**: unit tests are now hermetic against the developer's local `.env` (DEBT-025). Importing litellm during pytest collection loads `.env` into the process environment, which made 4 default-assertion tests in `vektra-shared` fail on dev machines while CI stayed green. An autouse fixture in `vektra-shared/tests/conftest.py` scrubs ambient `VEKTRA_*` variables; production settings loading is unchanged.
+
 ## [0.5.1] - 2026-07-12
 
 Security hardening: DEBT-024 dependency sweep, workflow permissions, admin login hardening.

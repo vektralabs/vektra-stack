@@ -891,22 +891,6 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ---
 
-### DEBT-026: Tune Prometheus instrumentation exclusions (health/docs endpoints)
-
-**Status**: planned | **Priority**: low | **Created**: 2026-07-12
-**Origin**: Gemini review on PR #82 (v0.5.1 release), `vektra-app/src/vektra_app/main.py:680`
-
-**Context**: the prometheus-fastapi-instrumentator setup (introduced in v0.5.1 when it replaced starlette-prometheus) excludes only `/metrics` from instrumentation. Health endpoints (`/health`, `/health/{component}`, `/health/memory`) and docs endpoints (`/docs`, `/openapi.json`) are polled by load balancers, orchestrators, and monitoring systems; instrumenting them inflates request counters and histogram cardinality with traffic that carries no signal about API usage.
-
-**Proposed approach**: extend `excluded_handlers` to `["/metrics", "/health.*", "/docs", "/openapi.json"]`. Consider whether health-endpoint latency is itself worth tracking (it can reveal DB/LLM check slowness) before excluding it wholesale — an alternative is excluding only `/docs`/`/openapi.json` and keeping `/health` instrumented.
-
-**Acceptance criteria**:
-- [ ] Decision recorded on which endpoints stay instrumented (with rationale)
-- [ ] `excluded_handlers` updated accordingly
-- [ ] `/metrics` output verified: excluded handlers no longer appear in `http_requests_total`
-
----
-
 ### DEBT-025: Isolate unit tests from the developer's local .env
 
 **Status**: planned | **Priority**: low | **Created**: 2026-07-12
@@ -920,6 +904,22 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 - [ ] `make test` passes on a dev machine with a populated `.env`
 - [ ] Default-assertion tests are hermetic (no dependency on ambient `VEKTRA_*` vars)
 - [ ] No change to production settings loading behavior
+
+---
+
+### DEBT-026: Tune Prometheus instrumentation exclusions (health/docs endpoints)
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-12
+**Origin**: Gemini review on PR #82 (v0.5.1 release), `vektra-app/src/vektra_app/main.py:680`
+
+**Context**: the prometheus-fastapi-instrumentator setup (introduced in v0.5.1 when it replaced starlette-prometheus) excludes only `/metrics` from instrumentation. Health endpoints (`/health`, `/health/{component}`, `/health/memory`) and docs endpoints (`/docs`, `/openapi.json`) are polled by load balancers, orchestrators, and monitoring systems; instrumenting them inflates request counters and histogram cardinality with traffic that carries no signal about API usage.
+
+**Proposed approach**: extend `excluded_handlers` with anchored, escaped regexes — the instrumentator compiles each pattern and matches with `re.match`, so an unanchored `/docs` would also match `/docsomething` and an unescaped `.` matches any character. Example: `["^/metrics$", "^/health", "^/docs$", "^/openapi\\.json$"]`. Consider whether health-endpoint latency is itself worth tracking (it can reveal DB/LLM check slowness) before excluding it wholesale — an alternative is excluding only `/docs`/`/openapi.json` and keeping `/health` instrumented.
+
+**Acceptance criteria**:
+- [ ] Decision recorded on which endpoints stay instrumented (with rationale)
+- [ ] `excluded_handlers` updated accordingly
+- [ ] `/metrics` output verified: excluded handlers no longer appear in `http_requests_total`
 
 ---
 

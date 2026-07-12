@@ -347,7 +347,7 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 2. Bake-off on a real IT+EN course-material corpus (lecture PDFs, scanned handouts, slides): pdfplumber vs unstructured(auto) vs MinerU vs PaddleOCR-VL vs GLM-OCR (Italian validation), scored with olmOCR-bench-style per-page checks + the TECH-005 dirty-extraction suite.
 3. Routing design (follow-up FEAT): per-page/per-document signals (embedded text layer, image-coverage ratio, garble score, language) choosing extractor; MinerU/Docling already embed such routing if delegating at document level.
 
-**Traceability**: ARCH-037 (DocumentExtractor Protocol), ADR-0007, TECH-005
+**Traceability**: ARCH-030 (pdfplumber extraction), ARCH-042 (extractor dispatch), ADR-0007, TECH-005
 
 **Acceptance criteria**:
 - [ ] Comparison report with per-tool scores on the shared corpus (IT + EN, native + scanned)

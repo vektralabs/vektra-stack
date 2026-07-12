@@ -893,8 +893,10 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ### DEBT-025: Isolate unit tests from the developer's local .env
 
-**Status**: planned | **Priority**: low | **Created**: 2026-07-12
+**Status**: completed | **Priority**: low | **Created**: 2026-07-12 | **Completed**: 2026-07-12
 **Origin**: discovered during the DEBT-024 sweep (PR #80): `make test` fails locally with 4 errors while CI is green.
+
+**Resolution**: new `vektra-shared/tests/conftest.py` autouse fixture scrubs `VEKTRA_*` (plus `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`) from `os.environ` per-test via monkeypatch. Root cause confirmed: importing litellm during collection runs `dotenv.load_dotenv()`, leaking the repo `.env` into the process environment — running `vektra-shared/tests/test_config.py` alone passes, collecting it together with any litellm-importing package reproduces the 4 failures. Production settings loading untouched (no settings class uses `env_file`).
 
 **Context**: 4 tests in `vektra-shared/tests/test_config.py` (`TestLLMConfig::test_defaults`, `TestQueryPipelineConfig::test_eval_mode_default_false`, `test_debug_log_queries_default_false`, `TestVektraSettings::test_defaults_with_required_only`) assert configuration defaults, but when the full suite runs from the workspace root the developer's `.env` leaks into `os.environ` (something imported during collection loads dotenv, e.g. litellm), so machine-specific values (eval_mode=true, custom port, LLM keys) override the defaults and the assertions fail. CI never sees this because runners have no `.env`. Current workaround: temporarily move `.env` away before `make test`.
 

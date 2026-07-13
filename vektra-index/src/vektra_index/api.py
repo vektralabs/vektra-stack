@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
+    ERR_AUTH_003,
     ERR_INGEST_004,
     ERR_QUERY_004,
     ErrorCategory,
@@ -202,11 +203,25 @@ async def store_chunks(
     )
 
 
+def _namespace_scope_violation() -> HTTPException:
+    """403 for a namespace-bound key reaching outside its namespace (H5)."""
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_AUTH_003,
+        message="Namespace scope violation",
+        remediation=(
+            "This API key is bound to a single namespace. Omit the namespace "
+            "parameter, or set it to the namespace the key is bound to."
+        ),
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+
 @router.get("/documents/{document_id}/chunks", response_model=ListChunksResponse)
 async def list_document_chunks(
     document_id: UUID,
     request: Request,
-    namespace: str = Query("default"),
+    namespace: str | None = Query(None),
     key: ApiKeyInfo = Depends(require_scope(None)),
 ) -> ListChunksResponse:
     """List a document's stored chunks at the active index version.
@@ -216,9 +231,12 @@ async def list_document_chunks(
     """
     vector_store = request.app.state.registry.get("vector_store", "default")
 
-    effective_ns = key.namespace_id or namespace
+    # namespace defaults to None, not "default": a namespace-bound key that omits
+    # the parameter must fall through to its own namespace, not collide with the
+    # literal "default" and be rejected as a scope violation.
     if key.namespace_id and namespace and namespace != key.namespace_id:
-        raise HTTPException(status_code=403, detail="Namespace scope violation")
+        raise _namespace_scope_violation()
+    effective_ns = key.namespace_id or namespace or "default"
 
     chunks = await vector_store.list_chunks(effective_ns, document_id)
 
@@ -356,7 +374,7 @@ async def search(
 async def delete_document(
     document_id: UUID,
     request: Request,
-    namespace: str = Query("default"),
+    namespace: str | None = Query(None),
     key: ApiKeyInfo = Depends(require_scope("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> DeleteDocumentResponse:
@@ -376,14 +394,22 @@ async def delete_document(
 
     vector_store = request.app.state.registry.get("vector_store", "default")
 
-    chunks_removed = await vector_store.delete(namespace, [str(document_id)])
+    # Namespace binding (H5), which this endpoint never enforced: a namespace-bound
+    # admin key could name any namespace and have it honoured. That was survivable
+    # only while the delete was a no-op against the active store; now that it
+    # actually removes the chunks, it would be a cross-namespace deletion.
+    if key.namespace_id and namespace and namespace != key.namespace_id:
+        raise _namespace_scope_violation()
+    effective_ns = key.namespace_id or namespace or "default"
+
+    chunks_removed = await vector_store.delete(effective_ns, [str(document_id)])
 
     async with session.begin():
         await session.execute(
             update(SourceDocumentOrm)
             .where(
                 SourceDocumentOrm.id == document_id,
-                SourceDocumentOrm.namespace_id == namespace,
+                SourceDocumentOrm.namespace_id == effective_ns,
                 SourceDocumentOrm.deleted_at.is_(None),
             )
             .values(
@@ -417,9 +443,9 @@ async def stats(
 
     vector_store = request.app.state.registry.get("vector_store", "default")
 
-    effective_ns = key.namespace_id or namespace
     if key.namespace_id and namespace and namespace != key.namespace_id:
-        raise HTTPException(status_code=403, detail="Namespace scope violation")
+        raise _namespace_scope_violation()
+    effective_ns = key.namespace_id or namespace
 
     doc_stmt = (
         select(func.count())

@@ -660,6 +660,9 @@ List a document's stored chunks at the active index version, ordered by position
 active vector store, which is the only source of truth for chunk text. Includes parent chunks
 (FEAT-017), which search excludes. Accepts any valid scope.
 
+`namespace` is optional: a namespace-bound key resolves to its own namespace when it is omitted,
+and naming a different one returns 403.
+
 **Scopes**: any
 
 ```bash

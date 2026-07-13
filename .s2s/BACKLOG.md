@@ -56,6 +56,27 @@ The RAG pipeline and `/api/v1/search` are unaffected: they resolve the provider 
 
 ---
 
+### BUG-024: the stack does not start when sparse embedding is enabled
+
+**Status**: completed (2026-07-13) | **Priority**: high | **Created**: 2026-07-13
+**Origin**: BUG-023 verification (2026-07-13). The development stack failed to boot after an image rebuild; the container that had been running for days survived only because its image predated the defect.
+
+**Context**: `check_provider_registration` (`vektra-index/startup.py:37`) requires the sparse provider to be registered under the **name** taken from `VEKTRA_SPARSE_EMBEDDING_PROVIDER` (e.g. `fastembed-bm25`), but `main.py` registered it only under `"default"`:
+
+```
+Provider 'fastembed-bm25' not registered in category 'sparse_embedding'. Available: ['default']
+```
+
+The vector store registers both aliases (`"default"` **and** the provider name); the sparse provider registered only the first. So **any deployment with `VEKTRA_SPARSE_EMBEDDING_PROVIDER` set failed to start**, which means hybrid search could not be enabled at all. Introduced by `b49ce23`, which wired up the check that had until then been dead code.
+
+**Why nothing caught it** (the more important half): `vektra-app/tests/` was executed by **nothing** — not `make test`, not CI — despite holding the tests for the module that wires every provider together. And the existing check tests could not have caught it anyway: they hand `check_provider_registration` a mock registry that already contains the name, so they assert the check against a fiction. A test of the registration and a test of the validation both passed while the two disagreed.
+
+**Resolution**: register the alias, as the vector store already does. `vektra-app/tests/test_provider_registration.py` wires the *real* registration step to the *real* check (confirmed to fail with the exact production error when the fix is reverted), and the app suite now runs in `make test` and in a new `test-app` CI job. The two app test files that need Docker said so in their own docstrings but lacked the `integration` marker; they now carry it.
+
+**Traceability**: ARCH-057 (startup validation), ARCH-039 (ProviderRegistry), ARCH-053 (sparse embeddings), BUG-023 (found during its verification)
+
+---
+
 ### DEBT-027: VEKTRA_PARENT_CHILD_LEVELS is dead config
 
 **Status**: planned | **Priority**: low | **Created**: 2026-07-13

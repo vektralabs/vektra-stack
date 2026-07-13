@@ -25,6 +25,7 @@ jobs:
       admin:     ${{ steps.filter.outputs.admin }}
       analytics: ${{ steps.filter.outputs.analytics }}
       learn:     ${{ steps.filter.outputs.learn }}
+      app:       ${{ steps.filter.outputs.app }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -51,6 +52,9 @@ jobs:
             learn:
               - 'vektra-learn/**'
               - 'vektra-shared/**'
+            app:
+              - 'vektra-app/**'
+              - 'vektra-*/**'
 
   test-shared:
     name: Test vektra-shared
@@ -171,11 +175,30 @@ jobs:
           uv run pytest vektra-learn/tests/ -v --tb=short -m "not integration"
           --cov=vektra_learn --cov-report=term-missing --cov-fail-under=80
 
+  # vektra-app wires every component together (provider registration, startup
+  # validation). Its tests existed but nothing ran them, in CI or in `make test`,
+  # which is how a registration/validation mismatch shipped on develop and stopped
+  # the stack from booting with sparse embeddings enabled (BUG-024).
+  test-app:
+    name: Test vektra-app
+    needs: detect-changes
+    if: needs.detect-changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen
+      - name: Run unit tests
+        run: uv run pytest vektra-app/tests/ -v --tb=short -m "not integration"
+
   # Aggregator job used as the single required status check in branch protection.
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-app]
     runs-on: ubuntu-latest
     if: always()
     steps:

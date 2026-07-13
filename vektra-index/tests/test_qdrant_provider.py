@@ -341,6 +341,7 @@ class TestQdrantParentChunks:
                     "document_id": doc_id,
                     "metadata": {"chunk_level": "parent"},
                     "namespace_id": "default",
+                    "index_version": 1,
                     "parent_id": None,
                 },
             ),
@@ -351,6 +352,7 @@ class TestQdrantParentChunks:
                     "document_id": doc_id,
                     "metadata": {},
                     "namespace_id": "other",
+                    "index_version": 1,
                     "parent_id": None,
                 },
             ),
@@ -363,6 +365,51 @@ class TestQdrantParentChunks:
         assert [r.chunk_id for r in results] == [parent_id]
         assert results[0].score == 0.0
         assert results[0].text_snippet == "parent text"
+
+    @pytest.mark.asyncio
+    async def test_retrieve_filters_by_index_version(self):
+        """A chunk from a stale index version must not be retrievable (BUG-023).
+
+        retrieve() takes no server-side filter, so the version is enforced on the
+        payload. Without it, a chunk that search can never return (search does
+        filter on index_version) was still reachable through parent expansion.
+        """
+        from types import SimpleNamespace
+
+        provider, client = _make_provider(active_index_version=2)
+        doc_id = str(uuid4())
+        current_id = str(uuid4())
+        stale_id = str(uuid4())
+
+        records = [
+            SimpleNamespace(
+                id=current_id,
+                payload={
+                    "text": "current version",
+                    "document_id": doc_id,
+                    "metadata": {},
+                    "namespace_id": "default",
+                    "index_version": 2,
+                    "parent_id": None,
+                },
+            ),
+            SimpleNamespace(
+                id=stale_id,
+                payload={
+                    "text": "stale version",
+                    "document_id": doc_id,
+                    "metadata": {},
+                    "namespace_id": "default",
+                    "index_version": 1,
+                    "parent_id": None,
+                },
+            ),
+        ]
+        client.retrieve = AsyncMock(return_value=records)
+
+        results = await provider.retrieve("default", [current_id, stale_id])
+
+        assert [r.chunk_id for r in results] == [current_id]
 
     @pytest.mark.asyncio
     async def test_retrieve_skips_invalid_ids(self):
@@ -392,3 +439,118 @@ class TestQdrantParentChunks:
 
         assert results == []
         client.retrieve.assert_not_called()
+
+
+class TestQdrantChunkPaths:
+    """Chunk enumeration, counting and deletion (BUG-023, ADR-0026).
+
+    These paths used to read Postgres, which the Qdrant provider never writes,
+    so they operated on an empty table and reported success.
+    """
+
+    @pytest.mark.asyncio
+    async def test_list_chunks_scrolls_and_orders_by_position(self):
+        from types import SimpleNamespace
+
+        provider, client = _make_provider()
+        doc_id = uuid4()
+
+        def _record(point_id: str, text: str, position: int, parent_id=None):
+            return SimpleNamespace(
+                id=point_id,
+                payload={
+                    "text": text,
+                    "document_id": str(doc_id),
+                    "metadata": {"position": position},
+                    "namespace_id": "default",
+                    "index_version": 1,
+                    "parent_id": parent_id,
+                },
+                vector={},
+            )
+
+        # Two pages: the second call returns the tail and a None offset. Records
+        # come back out of order to prove list_chunks sorts by position.
+        client.scroll = AsyncMock(
+            side_effect=[
+                ([_record("c2", "second", 1), _record("c0", "first", 0)], "page-2"),
+                ([_record("c3", "third", 2)], None),
+            ]
+        )
+
+        chunks = await provider.list_chunks("default", doc_id)
+
+        assert client.scroll.await_count == 2
+        assert [c.text for c in chunks] == ["first", "second", "third"]
+        assert [c.position for c in chunks] == [0, 1, 2]
+
+    @pytest.mark.asyncio
+    async def test_list_chunks_carries_sparse_vector(self):
+        """Sparse vectors survive a reindex: BM25 does not depend on the model."""
+        from types import SimpleNamespace
+
+        provider, client = _make_provider()
+
+        record = SimpleNamespace(
+            id=str(uuid4()),
+            payload={
+                "text": "chunk",
+                "document_id": str(uuid4()),
+                "metadata": {"position": 0},
+                "namespace_id": "default",
+                "index_version": 1,
+                "parent_id": None,
+            },
+            vector={"sparse": SimpleNamespace(indices=[3, 7], values=[0.5, 0.9])},
+        )
+        client.scroll = AsyncMock(return_value=([record], None))
+
+        chunks = await provider.list_chunks("default", uuid4())
+
+        assert chunks[0].sparse is not None
+        assert chunks[0].sparse.indices == [3, 7]
+        assert chunks[0].sparse.values == [0.5, 0.9]
+
+    @pytest.mark.asyncio
+    async def test_count_chunks_scopes_to_active_index_version(self):
+        provider, client = _make_provider(active_index_version=2)
+        client.count = AsyncMock(return_value=MagicMock(count=42))
+
+        result = await provider.count_chunks("default")
+
+        assert result == 42
+        assert client.count.await_args.kwargs["exact"] is True
+
+    @pytest.mark.asyncio
+    async def test_delete_returns_real_count(self):
+        """delete() reports the points it removed, not a hardcoded 0 (BUG-023)."""
+        provider, client = _make_provider()
+        client.count = AsyncMock(return_value=MagicMock(count=7))
+        client.delete = AsyncMock()
+
+        removed = await provider.delete("default", [str(uuid4())])
+
+        assert removed == 7
+        client.delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_store_writes_target_index_version(self):
+        """Reindex writes a second version alongside the live one (ARCH-045)."""
+        provider, client = _make_provider(active_index_version=1)
+        client.upsert = AsyncMock()
+
+        await provider.store(
+            "default",
+            [
+                ChunkEmbedding(
+                    chunk_id=str(uuid4()),
+                    text="chunk",
+                    dense=[0.1] * 384,
+                    metadata={"document_id": str(uuid4())},
+                )
+            ],
+            index_version=2,
+        )
+
+        payload = _mock_qdrant_models.PointStruct.call_args.kwargs["payload"]
+        assert payload["index_version"] == 2

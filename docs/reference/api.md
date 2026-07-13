@@ -654,9 +654,41 @@ curl -s \
   http://localhost:8000/api/v1/documents/550e8400-.../chunks | python3 -m json.tool
 ```
 
+### GET /api/v1/documents/{document_id}/chunks
+
+List a document's stored chunks at the active index version, ordered by position. Reads from the
+active vector store, which is the only source of truth for chunk text. Includes parent chunks
+(FEAT-017), which search excludes. Accepts any valid scope.
+
+**Scopes**: any
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/documents/550e8400-.../chunks?namespace=default" | python3 -m json.tool
+```
+
+```json
+{
+    "document_id": "550e8400-...",
+    "namespace": "default",
+    "chunks": [
+        {
+            "chunk_id": "9f1c...",
+            "text": "Example chunk text",
+            "position": 0,
+            "parent_id": null,
+            "metadata": {"chunk_level": "parent"}
+        }
+    ],
+    "total": 1
+}
+```
+
 ### DELETE /api/v1/documents/{document_id}
 
-Delete all chunks for a document and soft-delete the document record. Requires `admin` scope.
+Remove a document's chunks from the active vector store, then soft-delete the document record.
+`chunks_removed` is the number of chunks actually removed. Requires `admin` scope.
 
 **Scopes**: `admin`
 

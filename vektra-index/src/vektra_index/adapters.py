@@ -31,6 +31,7 @@ from vektra_shared.types import (
     SearchFilters,
     SearchMode,
     SearchResult,
+    StoredChunk,
 )
 
 log = structlog.get_logger(__name__)
@@ -61,6 +62,7 @@ class VectorStoreServiceAdapter:
         self,
         namespace: str,
         chunks: Sequence[ChunkEmbedding],
+        index_version: int | None = None,
     ) -> list[str]:
         """Store chunks for a document.
 
@@ -90,7 +92,13 @@ class VectorStoreServiceAdapter:
 
         async with factory() as session:
             try:
-                ids = await pgvector.store(session, namespace, document_id, chunks)
+                ids = await pgvector.store(
+                    session,
+                    namespace,
+                    document_id,
+                    chunks,
+                    index_version=index_version,
+                )
                 await session.commit()
                 return ids
             except Exception:
@@ -130,6 +138,24 @@ class VectorStoreServiceAdapter:
 
         async with factory() as session:
             return await pgvector.retrieve(session, namespace, chunk_ids)
+
+    async def list_chunks(
+        self,
+        namespace: str,
+        document_id: UUID,
+    ) -> list[StoredChunk]:
+        factory = self._get_session_factory()
+        pgvector = self._get_pgvector()
+
+        async with factory() as session:
+            return await pgvector.list_chunks(session, namespace, document_id)
+
+    async def count_chunks(self, namespace: str | None = None) -> int:
+        factory = self._get_session_factory()
+        pgvector = self._get_pgvector()
+
+        async with factory() as session:
+            return await pgvector.count_chunks(session, namespace)
 
     async def delete(self, namespace: str, ids: list[str]) -> int:
         """Delete all chunks for each document_id in ids.

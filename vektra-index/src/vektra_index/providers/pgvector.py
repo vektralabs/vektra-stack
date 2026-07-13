@@ -14,11 +14,10 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Sequence
-from datetime import UTC
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Float, delete, func, literal_column, select, text, update
+from sqlalchemy import Float, delete, func, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.types import (
@@ -28,6 +27,8 @@ from vektra_shared.types import (
     SearchFilters,
     SearchMode,
     SearchResult,
+    SparseVector,
+    StoredChunk,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,11 +59,15 @@ class PgvectorProvider:
         namespace: str,
         document_id: UUID,
         chunks: Sequence[ChunkEmbedding],
+        index_version: int | None = None,
     ) -> list[str]:
         """Bulk-insert chunks into document_chunks.
 
         Persists chunk.sparse as JSONB {"indices": [...], "values": [...]}
         when present. Existing chunks with no sparse data keep NULL.
+
+        index_version defaults to the active version; reindex passes the target
+        version to write a second version alongside the live one (ADR-0026).
 
         Returns list of inserted chunk IDs (str, not UUID per ARCH-051).
         """
@@ -71,6 +76,9 @@ class PgvectorProvider:
 
         from vektra_index.models import DocumentChunkOrm
 
+        target_version = (
+            index_version if index_version is not None else self._active_index_version
+        )
         inserted_ids: list[str] = []
         for position, chunk in enumerate(chunks):
             # Honor caller-provided deterministic ids (uuid5 from ingest);
@@ -100,7 +108,7 @@ class PgvectorProvider:
                 sparse_vector=sparse_data,
                 chunk_metadata=chunk.metadata,
                 position=chunk.metadata.get("position", position),
-                index_version=self._active_index_version,
+                index_version=target_version,
                 parent_id=parent_uuid,
             )
             session.add(orm_obj)
@@ -442,16 +450,15 @@ class PgvectorProvider:
         namespace: str,
         document_id: UUID,
     ) -> int:
-        """Hard-delete document_chunks, then soft-delete source_document.
+        """Hard-delete a document's chunks across every index version.
 
-        Returns chunks_removed count. Both operations in one transaction
-        per BLOCKER B-1/B-3 resolution (ARCH-058 schema notes).
+        Chunks only: soft-deleting the source_document row is document-level
+        bookkeeping and belongs to the caller, so that the same call means the
+        same thing under every provider (ADR-0026). Returns chunks_removed.
         """
-        from datetime import datetime
+        from vektra_index.models import DocumentChunkOrm
 
-        from vektra_index.models import DocumentChunkOrm, SourceDocumentOrm
-
-        # 1. Count chunks before deletion (BLOCKER B-3: chunks_removed data source)
+        # Count before deletion (BLOCKER B-3: chunks_removed data source)
         count_result = await session.execute(
             select(func.count()).where(
                 DocumentChunkOrm.document_id == document_id,
@@ -460,7 +467,6 @@ class PgvectorProvider:
         )
         chunks_count = count_result.scalar_one()
 
-        # 2. Hard-delete document_chunks
         await session.execute(
             delete(DocumentChunkOrm).where(
                 DocumentChunkOrm.document_id == document_id,
@@ -468,50 +474,64 @@ class PgvectorProvider:
             )
         )
 
-        # 3. Soft-delete source_document
-        await session.execute(
-            update(SourceDocumentOrm)
-            .where(
-                SourceDocumentOrm.id == document_id,
-                SourceDocumentOrm.namespace_id == namespace,
-                SourceDocumentOrm.deleted_at.is_(None),
-            )
-            .values(
-                deleted_at=datetime.now(UTC),
-                deletion_reason="user_request",
-            )
-        )
-
         await session.flush()
         return chunks_count
 
-    async def health_check(self, session: AsyncSession) -> HealthStatus:
-        """Quick connectivity check via SELECT 1 FROM document_chunks."""
-        try:
-            start = time.monotonic()
-            await session.execute(text("SELECT 1"))
-            latency_ms = int((time.monotonic() - start) * 1000)
-            return HealthStatus(status="healthy", latency_ms=latency_ms)
-        except Exception as exc:
-            return HealthStatus(status="unhealthy", message=str(exc))
+    async def list_chunks(
+        self,
+        session: AsyncSession,
+        namespace: str,
+        document_id: UUID,
+    ) -> list[StoredChunk]:
+        """All chunks of a document at the active index version, by position."""
+        from vektra_index.models import DocumentChunkOrm
 
-    async def namespace_stats(
+        result = await session.execute(
+            select(
+                DocumentChunkOrm.id,
+                DocumentChunkOrm.content,
+                DocumentChunkOrm.chunk_metadata,
+                DocumentChunkOrm.position,
+                DocumentChunkOrm.parent_id,
+                DocumentChunkOrm.sparse_vector,
+            )
+            .where(
+                DocumentChunkOrm.document_id == document_id,
+                DocumentChunkOrm.namespace_id == namespace,
+                DocumentChunkOrm.index_version == self._active_index_version,
+            )
+            .order_by(DocumentChunkOrm.position)
+        )
+
+        chunks: list[StoredChunk] = []
+        for row in result.all():
+            sparse = None
+            if row.sparse_vector:
+                sparse = SparseVector(
+                    indices=row.sparse_vector.get("indices", []),
+                    values=row.sparse_vector.get("values", []),
+                )
+            chunks.append(
+                StoredChunk(
+                    chunk_id=str(row.id),
+                    text=row.content,
+                    metadata=dict(row.chunk_metadata or {}),
+                    position=row.position,
+                    parent_id=str(row.parent_id) if row.parent_id else None,
+                    sparse=sparse,
+                )
+            )
+        return chunks
+
+    async def count_chunks(
         self,
         session: AsyncSession,
         namespace: str | None = None,
-    ) -> dict[str, Any]:
-        """Return document and chunk counts for a namespace (or all namespaces).
-
-        Used by GET /stats endpoint (ARCH-051).
-        """
+    ) -> int:
+        """Chunks at the active index version, excluding deleted documents."""
         from vektra_index.models import DocumentChunkOrm, SourceDocumentOrm
 
-        doc_stmt = (
-            select(func.count())
-            .select_from(SourceDocumentOrm)
-            .where(SourceDocumentOrm.deleted_at.is_(None))
-        )
-        chunk_stmt = (
+        stmt = (
             select(func.count())
             .select_from(DocumentChunkOrm)
             .join(
@@ -522,16 +542,17 @@ class PgvectorProvider:
             .where(DocumentChunkOrm.index_version == self._active_index_version)
             .where(SourceDocumentOrm.deleted_at.is_(None))
         )
-
         if namespace:
-            doc_stmt = doc_stmt.where(SourceDocumentOrm.namespace_id == namespace)
-            chunk_stmt = chunk_stmt.where(DocumentChunkOrm.namespace_id == namespace)
+            stmt = stmt.where(DocumentChunkOrm.namespace_id == namespace)
 
-        doc_count = (await session.execute(doc_stmt)).scalar_one()
-        chunk_count = (await session.execute(chunk_stmt)).scalar_one()
+        return int((await session.execute(stmt)).scalar_one())
 
-        return {
-            "document_count": doc_count,
-            "chunk_count": chunk_count,
-            "namespace": namespace or "all",
-        }
+    async def health_check(self, session: AsyncSession) -> HealthStatus:
+        """Quick connectivity check via SELECT 1 FROM document_chunks."""
+        try:
+            start = time.monotonic()
+            await session.execute(text("SELECT 1"))
+            latency_ms = int((time.monotonic() - start) * 1000)
+            return HealthStatus(status="healthy", latency_ms=latency_ms)
+        except Exception as exc:
+            return HealthStatus(status="unhealthy", message=str(exc))

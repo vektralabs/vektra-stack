@@ -11,9 +11,18 @@ permissions:
 
 jobs:
   integration:
-    name: Integration tests + NFR gates
+    # The suite runs against every supported vector store, not just the default.
+    # BUG-023 survived for months because it ran against pgvector only: with
+    # Qdrant active, endpoints that read chunks from Postgres worked on an empty
+    # table and reported success. A provider-specific regression fails here now.
+    name: Integration tests (${{ matrix.vector_store }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        vector_store: [pgvector, qdrant]
 
     steps:
       - uses: actions/checkout@v7
@@ -36,13 +45,20 @@ jobs:
             echo 'VEKTRA_STARTUP_LLM_CHECK=false'
             echo 'VEKTRA_LLM_CONTEXT_ONLY_ENABLED=true'
             echo 'VEKTRA_ADMIN_BOOTSTRAP_KEY=ci-bootstrap-key'
+            echo "VEKTRA_VECTOR_STORE_PROVIDER=${{ matrix.vector_store }}"
           } > .env
+          if [ "${{ matrix.vector_store }}" = "qdrant" ]; then
+            echo 'VEKTRA_QDRANT_URL=http://qdrant:6333' >> .env
+          fi
 
       - name: Build Docker image
         run: docker compose build
 
       - name: Start stack and measure startup (NFR-004)
         id: startup
+        env:
+          # The qdrant service sits behind a compose profile
+          COMPOSE_PROFILES: ${{ matrix.vector_store == 'qdrant' && 'qdrant' || '' }}
         run: |
           START_NS=$(date +%s%N)
           docker compose up -d
@@ -60,13 +76,18 @@ jobs:
         id: integration
         run: |
           uv run pytest tests/integration/ \
-            -v --tb=short --junitxml=test-results/integration.xml
+            -v --tb=short \
+            --junitxml=test-results/integration-${{ matrix.vector_store }}.xml
         timeout-minutes: 10
         env:
           VEKTRA_API_URL: http://localhost:8000
           VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
 
+      # NFR gates seed and count chunks in Postgres directly, so they are bound
+      # to pgvector by construction. Running them once is enough: they measure
+      # latency and startup, not chunk paths.
       - name: NFR hard gates (NFR-002/004/007/009)
+        if: matrix.vector_store == 'pgvector'
         run: |
           uv run pytest tests/nfr/test_nfr_hard.py \
             -v --tb=short --junitxml=test-results/nfr-hard.xml
@@ -85,12 +106,14 @@ jobs:
 
       - name: Tear down
         if: always()
+        env:
+          COMPOSE_PROFILES: ${{ matrix.vector_store == 'qdrant' && 'qdrant' || '' }}
         run: docker compose down -v --remove-orphans
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: integration-test-results
+          name: integration-test-results-${{ matrix.vector_store }}
           path: test-results/
           retention-days: 14

@@ -124,6 +124,24 @@ class ChunkEmbedding:
     parent_id: str | None = None  # stored chunk_id of the parent chunk (FEAT-017)
 
 
+@dataclass
+class StoredChunk:
+    """A chunk as held by the active vector store, without its dense vector.
+
+    Returned by VectorStoreProvider.list_chunks(). Carries everything needed to
+    re-embed the chunk (text) and to rebuild its identity and parent linkage
+    (chunk_id, parent_id, position), but not the embedding itself: reindex
+    recomputes it, and no caller needs to read vectors back (ADR-0026).
+    """
+
+    chunk_id: str  # str, not UUID (ARCH-051)
+    text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    position: int = 0
+    parent_id: str | None = None  # stored chunk_id of the parent chunk (FEAT-017)
+    sparse: SparseVector | None = None
+
+
 # ---------------------------------------------------------------------------
 # Search / retrieval types
 # ---------------------------------------------------------------------------

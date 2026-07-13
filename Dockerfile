@@ -137,4 +137,8 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -so /dev/null http://localhost:8000/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["server"]
+# No CMD: entrypoint.sh already defaults CMD_TARGET to "server" when no
+# positional argument is given. A CMD here would always win over the
+# CMD_TARGET env var (Docker always passes CMD as $1), making
+# `CMD_TARGET=migrate docker run image` silently start a full server
+# instead of running the one-shot migration.

@@ -11,6 +11,8 @@ set -e
 # Prefer positional arg ($1 from CMD), then env var, then default.
 # This allows both: docker run image migrate
 #              and: CMD_TARGET=migrate docker run image
+# The second form only works because the Dockerfile has no CMD: Docker
+# always passes CMD as $1, so a CMD would permanently win over the env var.
 CMD_TARGET="${1:-${CMD_TARGET:-server}}"
 
 case "$CMD_TARGET" in

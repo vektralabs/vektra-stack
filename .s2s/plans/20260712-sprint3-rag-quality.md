@@ -323,3 +323,25 @@ the bundle and a manual smoke in the Moodle dev stack.
   `vektra-internal/stack/20260713-tech007-retrieval-rescue.md`; per-question
   artifacts in `20260713-tech007-eval-artifacts/`. Dev `.env` adds
   `VEKTRA_RETRIEVAL_RESCUE_TOP_K=3`, `VEKTRA_RETRIEVAL_RESCUE_FLOOR=0.005`.
+- 2026-07-13: **FEAT-024 implemented and measured (post-sprint, PR #93)** —
+  TEI remote providers, `feat/feat-024-tei-providers`. TEIEmbeddingProvider
+  (native /embed, /info dimensions with /embed probe fallback — TEI 1.9.3
+  does not expose the size in /info), TEIRerankerService (/rerank, same
+  RerankResult semantics), Qdrant collection sized from the active provider
+  (fixes the hardcoded-384 latent bug; live 384-vs-1024 mismatch produces a
+  clear startup warning), cohere api_key pass-through fixed, startup warmup
+  fixed to resolve the `default` embedding alias (was hardcoded to
+  'sentence-transformers' and broke any alternative provider).
+  **Comparison on eval-full questions (same dual chunks, ns eval-tei,
+  bge-m3 float32 CPU via TEI): retrieval hit 82.6% -> 93.5%, MRR 0.7029 ->
+  0.8478 — beats even the fixed-chunking MiniLM baseline (89.1%/0.8062),
+  confirming MiniLM's 128-token truncation as a real retrieval cap.** E2e
+  grounded 54/55 stable, multi-chunk substance improves (MC-02 real
+  bi-document comparison, kw 7/25 vs 4/25), p50 +0.7s (CPU TEI). Reranker
+  smoke: factual 0.75 survives threshold, comparative all-below rescued by
+  TECH-007 (rescued=3) — full funnel verified with both remote providers.
+  Found in passing (filed under BUG-021 family): run_reindex stores through
+  hardcoded pgvector — reindex-into-Qdrant silently no-ops. Dev stack
+  restored to reference config (MiniLM + rescue); eval-tei namespace and
+  vektra-tei collection (105 points, 1024-dim) left in place for follow-ups;
+  bge-reranker TEI cache kept at /mnt/scratch/tei-rerank-cache.

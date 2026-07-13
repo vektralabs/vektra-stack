@@ -81,6 +81,8 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_QUERY_PIPELINE` | str | `advanced` | Pipeline implementation: `simple`, `advanced` |
 | `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.15` | Minimum relevance score for chunk inclusion (0.0-1.0). Safety net filter; top-k is the primary control. |
 | `VEKTRA_CHUNK_DEDUP_ENABLED` | bool | `true` | Deduplicate overlapping adjacent chunks from the same document |
+| `VEKTRA_RETRIEVAL_RESCUE_TOP_K` | int | `0` | When the `VEKTRA_MIN_RELEVANCE_SCORE` filter empties the candidate set, keep this many top-scored chunks above the rescue floor instead of refusing. Multi-part and comparative questions get uniformly low reranker scores (each chunk answers only one part), so with the rescue the LLM arbitrates via grounding instead of the query dying at the filter. `0` disables the rescue. Recommended starting point when enabling: `3`. |
+| `VEKTRA_RETRIEVAL_RESCUE_FLOOR` | float | `0.02` | Absolute minimum score for rescued chunks (0.0-1.0): candidates below this are never rescued. Only used when `VEKTRA_RETRIEVAL_RESCUE_TOP_K` > 0. Lower values rescue more multi-part questions but feed more irrelevant context to adversarial ones. |
 | `VEKTRA_PARENT_EXPANSION_ENABLED` | bool | `false` | Replace retrieved child chunks with their parent chunk text before prompt construction (advanced pipeline only). Requires documents ingested with `VEKTRA_CHUNKING_STRATEGY=dual`. |
 | `VEKTRA_RESPONSE_TOKEN_RESERVE` | int | `2048` | Tokens reserved for LLM response generation |
 | `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | Fraction of context window allocated to retrieved chunks (0.0-1.0) |

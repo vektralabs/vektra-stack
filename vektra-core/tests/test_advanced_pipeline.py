@@ -155,6 +155,35 @@ async def test_execute_no_relevant_context():
     assert response.answer is None
 
 
+async def test_execute_rescue_keeps_borderline_chunks():
+    """With rescue enabled, a set wiped by the threshold reaches the LLM (TECH-007)."""
+    results = [
+        _make_search_result(0.09, "partial answer one"),
+        _make_search_result(0.07, "partial answer two"),
+        _make_search_result(0.01, "below the rescue floor"),
+    ]
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=results)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store,
+        pipeline_config=_make_pipeline_config(
+            VEKTRA_RETRIEVAL_RESCUE_TOP_K=3,
+            VEKTRA_RETRIEVAL_RESCUE_FLOOR=0.02,
+        ),
+    )
+    response, trace = await pipeline.execute(
+        QueryRequest(question="multi-part question")
+    )
+
+    assert response.no_relevant_context is False
+    assert response.answer == "The answer."
+    assert len(response.sources) == 2
+    filter_step = next(s for s in trace.steps if s.name == "retrieval_filter")
+    assert filter_step.metadata["rescued"] == 2
+    assert filter_step.metadata["after"] == 2
+
+
 async def test_execute_no_relevant_context_hybrid_calls_llm():
     """In hybrid mode, LLM is called even when no chunks pass threshold."""
     results = [_make_search_result(0.1, "irrelevant")]

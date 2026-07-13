@@ -77,6 +77,27 @@ class TestQueryPipelineConfig:
         cfg = QueryPipelineConfig(VEKTRA_EVAL_MODE=True)
         assert cfg.eval_mode is True
 
+    def test_rescue_defaults_off(self) -> None:
+        cfg = QueryPipelineConfig()
+        assert cfg.retrieval_rescue_top_k == 0
+        assert cfg.retrieval_rescue_floor == 0.02
+
+    def test_rescue_from_env(self) -> None:
+        cfg = QueryPipelineConfig(
+            VEKTRA_RETRIEVAL_RESCUE_TOP_K=3,
+            VEKTRA_RETRIEVAL_RESCUE_FLOOR=0.005,
+        )
+        assert cfg.retrieval_rescue_top_k == 3
+        assert cfg.retrieval_rescue_floor == 0.005
+
+    def test_rescue_top_k_negative_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="VEKTRA_RETRIEVAL_RESCUE_TOP_K"):
+            QueryPipelineConfig(VEKTRA_RETRIEVAL_RESCUE_TOP_K=-1)
+
+    def test_rescue_floor_above_one_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="VEKTRA_RETRIEVAL_RESCUE_FLOOR"):
+            QueryPipelineConfig(VEKTRA_RETRIEVAL_RESCUE_FLOOR=1.5)
+
     def test_debug_log_queries_from_env(self) -> None:
         cfg = QueryPipelineConfig(VEKTRA_DEBUG_LOG_QUERIES=True)
         assert cfg.debug_log_queries is True
@@ -201,6 +222,14 @@ class TestVektraSettings:
     def test_context_chunk_ratio_one_invalid(self) -> None:
         with pytest.raises(ValidationError, match="context_chunk_ratio"):
             self._make(VEKTRA_CONTEXT_CHUNK_RATIO=1.0)
+
+    def test_rescue_top_k_negative_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="retrieval_rescue_top_k"):
+            self._make(VEKTRA_RETRIEVAL_RESCUE_TOP_K=-1)
+
+    def test_rescue_floor_above_one_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="retrieval_rescue_floor"):
+            self._make(VEKTRA_RETRIEVAL_RESCUE_FLOOR=1.5)
 
     def test_min_relevance_score_valid_zero(self) -> None:
         s = self._make(VEKTRA_MIN_RELEVANCE_SCORE=0.0)

@@ -301,3 +301,25 @@ the bundle and a manual smoke in the Moodle dev stack.
   "diversi da quelli già citati" rewrite) but degrades gracefully via history.
   Chunk exclusion today would raise refusals on follow-ups; revisit after
   TECH-007. Full per-turn evidence in the FEAT-018 backlog entry.
+- 2026-07-13: **TECH-007 resolved (post-sprint, PR #92)** — retrieval-filter
+  rescue, `feat/tech-007-retrieval-rescue`. Reproduction with eval-mode traces
+  on all 55 questions showed (1) the collapse was wider than multi-chunk:
+  4 reasoning + 2 factual also wiped (that is why grounded was 35/55);
+  (2) no static threshold separates multi-chunk from adversarial (wiped MC
+  max-rerank 0.005-0.088 vs wiped ADV 0.000-0.142, full overlap) — the filter
+  cannot discriminate, and the reranker already passes 4-5/9 adversarial to
+  the LLM (0.36-0.84) whose strict grounding answers correctively. Mitigation:
+  rescue only-when-empty behind `VEKTRA_RETRIEVAL_RESCUE_TOP_K` (default 0 =
+  off) + `VEKTRA_RETRIEVAL_RESCUE_FLOOR` (default 0.02); `retrieval_filter`
+  trace step gains `rescued`. Measured with top_k=3/floor=0.005 (same corpus,
+  expansion on): grounded 35/55 -> **54/55**, factual 19 -> 21/21 (kw 45/50),
+  reasoning 11 -> 15/15 (kw 41/46), multi-chunk 1 -> 10/10 by harness metric
+  (honest reading: 2-3/10 substantially complete, 7 informed refusals that
+  correctly explain the missing half — bi-document comparatives never get
+  chunks of both documents among the 20 candidates: candidate-coverage limit,
+  upstream of the filter). Adversarial: 0 answered-without-context, 0
+  hallucinations (manual review 9/9). top_k=5 control run equivalent within
+  LLM variance; p50 unchanged (~3.9s). Full report:
+  `vektra-internal/stack/20260713-tech007-retrieval-rescue.md`; per-question
+  artifacts in `20260713-tech007-eval-artifacts/`. Dev `.env` adds
+  `VEKTRA_RETRIEVAL_RESCUE_TOP_K=3`, `VEKTRA_RETRIEVAL_RESCUE_FLOOR=0.005`.

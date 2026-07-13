@@ -52,7 +52,9 @@ async def check_provider_registration(
 async def check_embedding_model(registry: Any) -> None:
     """ARCH-057 step 6: warm up the embedding model and verify dimensionality."""
     try:
-        embedding_provider = registry.get("embedding", "sentence-transformers")
+        # "default" aliases whichever provider is active
+        # (sentence-transformers or tei, FEAT-024).
+        embedding_provider = registry.get("embedding", "default")
         test_embedding = await embedding_provider.embed_query("startup validation test")
         actual_dims = len(test_embedding)
         expected_dims = embedding_provider.dimensions()

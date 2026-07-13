@@ -59,8 +59,10 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `VEKTRA_EMBEDDING_PROVIDER` | str | `sentence-transformers` | Embedding provider implementation |
-| `VEKTRA_EMBEDDING_MODEL` | str | `paraphrase-multilingual-MiniLM-L12-v2` | Model name within the selected provider |
+| `VEKTRA_EMBEDDING_PROVIDER` | str | `sentence-transformers` | Embedding provider implementation: `sentence-transformers` (in-process), `tei` (remote) |
+| `VEKTRA_EMBEDDING_MODEL` | str | `paraphrase-multilingual-MiniLM-L12-v2` | Model name within the selected provider (`sentence-transformers` only; a TEI instance serves one fixed model) |
+| `VEKTRA_TEI_URL` | str | `http://localhost:8080` | TEI server base URL (native API, no `/v1` suffix). Used when provider is `tei`. The Qdrant collection is sized from the served model's dimensions at startup |
+| `VEKTRA_TEI_API_KEY` | str | - | Bearer token for the TEI embedding server (`--api-key`). Optional |
 | `VEKTRA_SPARSE_EMBEDDING_PROVIDER` | str | - | Sparse embedding provider: `fastembed-bm25`, `splade` |
 | `VEKTRA_SPARSE_EMBEDDING_MODEL` | str | - | Sparse embedding model name |
 
@@ -101,9 +103,12 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `VEKTRA_RERANK_ENABLED` | bool | `true` | Enable cross-encoder reranking after retrieval |
-| `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere` |
+| `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere`, `tei` (remote) |
 | `VEKTRA_RERANK_MODEL` | str | `BAAI/bge-reranker-v2-m3` | Multilingual reranking model. For English-only lightweight deployments: provider=`flashrank`, model=`ms-marco-MiniLM-L-12-v2` |
 | `VEKTRA_RERANK_TOP_K` | int | `5` | Final top-k results after reranking |
+| `VEKTRA_RERANK_API_KEY` | str | - | API key for API-based providers (`cohere`) |
+| `VEKTRA_RERANK_TEI_URL` | str | `http://localhost:8080` | TEI reranker server base URL (one TEI instance per model, e.g. serving `BAAI/bge-reranker-v2-m3`). Used when provider is `tei`. Scores are sigmoid-normalized like the in-process path |
+| `VEKTRA_RERANK_TEI_API_KEY` | str | - | Bearer token for the TEI reranker server. Optional |
 
 ## Ingestion
 

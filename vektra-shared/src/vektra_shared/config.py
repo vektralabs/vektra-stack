@@ -88,6 +88,16 @@ class EmbeddingConfig(BaseSettings):
         alias="VEKTRA_SPARSE_EMBEDDING_MODEL",
         description="Sparse embedding model name. Phase 2 only.",
     )
+    tei_url: str = Field(
+        "http://localhost:8080",
+        alias="VEKTRA_TEI_URL",
+        description="TEI server base URL (native API, no /v1 suffix). Used when embedding_provider='tei' (FEAT-024).",
+    )
+    tei_api_key: str | None = Field(
+        None,
+        alias="VEKTRA_TEI_API_KEY",
+        description="Bearer token for the TEI embedding server (--api-key). Optional.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
@@ -158,7 +168,7 @@ class RerankConfig(BaseSettings):
     provider: str = Field(
         "cross-encoder",
         alias="VEKTRA_RERANK_PROVIDER",
-        description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere'.",
+        description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere', 'tei'.",
     )
     model: str | None = Field(
         "BAAI/bge-reranker-v2-m3",
@@ -170,6 +180,21 @@ class RerankConfig(BaseSettings):
         ge=1,
         alias="VEKTRA_RERANK_TOP_K",
         description="Final top-k results after reranking.",
+    )
+    api_key: str | None = Field(
+        None,
+        alias="VEKTRA_RERANK_API_KEY",
+        description="API key for API-based rerank providers (e.g. 'cohere').",
+    )
+    tei_url: str = Field(
+        "http://localhost:8080",
+        alias="VEKTRA_RERANK_TEI_URL",
+        description="TEI reranker server base URL (one TEI instance per model). Used when provider='tei' (FEAT-024).",
+    )
+    tei_api_key: str | None = Field(
+        None,
+        alias="VEKTRA_RERANK_TEI_API_KEY",
+        description="Bearer token for the TEI reranker server. Optional.",
     )
 
     model_config = SettingsConfigDict(
@@ -499,6 +524,8 @@ class VektraSettings(BaseSettings):
     sparse_embedding_model: str | None = Field(
         None, alias="VEKTRA_SPARSE_EMBEDDING_MODEL"
     )
+    tei_url: str = Field("http://localhost:8080", alias="VEKTRA_TEI_URL")
+    tei_api_key: str | None = Field(None, alias="VEKTRA_TEI_API_KEY")
 
     # Vector store
     vector_store_provider: str = Field("pgvector", alias="VEKTRA_VECTOR_STORE_PROVIDER")

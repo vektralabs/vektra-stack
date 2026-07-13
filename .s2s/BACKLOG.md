@@ -393,8 +393,9 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 ### FEAT-024: Remote embedding and reranker providers (TEI)
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-12
+**Status**: completed | **Priority**: medium | **Created**: 2026-07-12 | **Completed**: 2026-07-13 | **PR**: #93
 **Origin**: deployment modularity review 2026-07-12 - the host workstation already serves TEI instances (bge-m3, qwen3-embedding); Vektra cannot use them.
+**Evidence**: `vektra-internal/stack/20260713-feat024-tei-providers.md` (+ artifacts in `20260713-feat024-eval-artifacts/`)
 
 **Context**: `VEKTRA_EMBEDDING_PROVIDER` documents a `tei` option (config.py:74) but **no TEI provider exists**: `main.py:129-137` unconditionally instantiates in-process `SentenceTransformersProvider`; the compose even ships a `tei` profile service nobody can talk to. The reranker likewise runs in-process only (`rerankers` lib; the `cohere` path never passes an api_key, so it is dead as wired - reranker.py:122). Consequences: every Vektra instance duplicates embedding/reranker compute in-container (CPU), and shared GPU/CPU inference services on the host cannot be reused.
 
@@ -406,14 +407,16 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 **Why it matters beyond dedup**: the current embedding model (paraphrase-multilingual-MiniLM-L12-v2) has **max_seq_length 128 tokens** - our 500-token chunks are silently truncated at embedding time (dense sees only the chunk head; BM25 sees the full text). bge-m3 (8192-token window, MIRACL dense nDCG@10 69.2 vs mE5-large 66.6; MiniLM sits 16-22 nDCG points below even mE5 on European-language retrieval per PL-MTEB) is the natural upgrade candidate, testable via TEI without fattening the container.
 
+**Resolution (2026-07-13)**: implemented as designed with two deltas: (1) TEI 1.9.3 `/info` does not expose the embedding size, so `dimensions()` probes `/embed` as fallback (both paths unit-tested); (2) found and fixed in passing a startup blocker: `check_embedding_model` resolved the provider by the hardcoded `sentence-transformers` name, so startup failed with any other provider (now uses the `default` alias). Measured on eval-full questions (same dual chunks, reindexed via a fresh `eval-tei` namespace): **bge-m3 via TEI retrieval hit 93.5% / MRR 0.8478 vs MiniLM dual 82.6% / 0.7029 (+10.9pp)** - beats even the fixed-chunking MiniLM baseline (89.1%/0.8062), confirming the 128-token truncation hypothesis; e2e grounded 54/55 stable, MC answers improve in substance (MC-02 produces a real bi-document comparison; kw 7/25 vs 4/25), p50 +0.7s (TEI on CPU). TEI reranker smoke: factual query scores 0.75 (2 survive the threshold), comparative query all-below-threshold rescued by TECH-007 (`rescued=3`) - full funnel verified with both remote providers, authenticated. Discovery filed under BUG-021: `run_reindex` stores through hardcoded pgvector, so reindex-into-Qdrant silently writes nothing (worked around via fresh-namespace ingest). Switching the default embedding to bge-m3 is a separate decision (needs full corpus re-ingest and a TECH-005-grade bench).
+
 **Traceability**: ADR-0013 (EmbeddingProvider Protocol), ARCH-035, ARCH-036, ADR-0021
 
 **Acceptance criteria**:
-- [ ] `VEKTRA_EMBEDDING_PROVIDER=tei` works end-to-end (ingest + query) against a TEI instance with api key
-- [ ] Collection created with the provider's real dimensions; clear error on dimension mismatch with an existing collection
-- [ ] `VEKTRA_RERANK_PROVIDER=tei` reranks via TEI /rerank with scores compatible with the threshold filter
-- [ ] Embedding-model comparison (MiniLM in-process vs bge-m3 via TEI) run with the TECH-005/existing harness and recorded
-- [ ] Docs: configuration.md + .env.example cover the new provider options
+- [x] `VEKTRA_EMBEDDING_PROVIDER=tei` works end-to-end (ingest + query) against a TEI instance with api key
+- [x] Collection created with the provider's real dimensions; clear error on dimension mismatch with an existing collection (verified live: 384-vs-1024 startup warning with remediation)
+- [x] `VEKTRA_RERANK_PROVIDER=tei` reranks via TEI /rerank with scores compatible with the threshold filter
+- [x] Embedding-model comparison (MiniLM in-process vs bge-m3 via TEI) run with the TECH-005/existing harness and recorded
+- [x] Docs: configuration.md + .env.example cover the new provider options
 
 ---
 
@@ -1087,7 +1090,7 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 **Resolution**: the endpoint now resolves embedding, sparse embedding, and vector store from `request.app.state.registry` (same contract as the pipeline). The per-request `SentenceTransformersProvider` instantiation and the now-unused `session` dependency were removed. Unit tests added (`vektra-index/tests/test_api_search.py`): registry resolution, hybrid→dense fallback without sparse, hybrid with sparse.
 
-**Same family, not fixed here**: `POST /documents/{id}/chunks`, `DELETE /documents/{id}` and `GET /stats` still hardcode pgvector (the stats-vs-Qdrant mismatch was already a known issue). Track separately if needed.
+**Same family, not fixed here**: `POST /documents/{id}/chunks`, `DELETE /documents/{id}` and `GET /stats` still hardcode pgvector (the stats-vs-Qdrant mismatch was already a known issue). Also `run_reindex` (`vektra-index/reindex.py`): it re-embeds with the registry's active embedding provider but stores through a hardcoded `PgvectorProvider`, so in Qdrant mode a reindex reports "completed" while the Qdrant collection receives nothing (found during the FEAT-024 live smoke, 2026-07-13: reindexing eval-full to v2 wrote to Postgres only). Track separately if needed.
 
 **Traceability**: ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), TECH-002 (eval harness)
 

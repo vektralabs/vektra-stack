@@ -39,7 +39,7 @@ from vektra_core.pipeline import (
     _history_to_messages,
     _trace_to_dict,
 )
-from vektra_core.reranker import RerankerService
+from vektra_core.reranker import RerankerProtocol
 from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.protocols import (
@@ -87,7 +87,7 @@ class AdvancedQueryPipeline:
         renderer: TemplateRenderer,
         pipeline_config: QueryPipelineConfig,
         sparse_embedding: SparseEmbeddingProvider | None = None,
-        reranker: RerankerService | None = None,
+        reranker: RerankerProtocol | None = None,
     ) -> None:
         self._embedding = embedding
         self._vector_store = vector_store

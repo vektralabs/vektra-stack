@@ -371,20 +371,23 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 ### TECH-007: Multi-part questions wiped by rerank+threshold funnel (multi-chunk collapse root cause)
 
-**Status**: planned | **Priority**: high | **Created**: 2026-07-12
+**Status**: completed | **Priority**: high | **Created**: 2026-07-12 | **Completed**: 2026-07-13 | **PR**: #92
 **Origin**: FEAT-017 measurement (plan `20260712-sprint3-rag-quality`) - expansion turned out to be downstream of the real failure.
+**Evidence**: `vektra-internal/stack/20260713-tech007-retrieval-rescue.md` (+ per-question artifacts in `20260713-tech007-eval-artifacts/`)
 
 **Context**: on `eval-full`, 9/10 multi-chunk questions end with `retrieval_filter before=5 after=0` → `no_relevant_context` → refusal, despite 90% raw retrieval hit for the category. Cause: bge-reranker-v2-m3 scores each partial-answer chunk of a comparative/multi-part question low (each chunk answers only one part), and `VEKTRA_MIN_RELEVANCE_SCORE=0.15` — calibrated in the tuning sprint on single-fact questions (DEBT-010) — wipes the entire candidate set. Evidence (MC-01, eval mode traces): max reranker score 0.088 on a candidate whose raw RRF score was 0.61. Parent expansion (FEAT-017) never runs because zero results survive the filter.
 
 **Candidate directions** (evaluate, do not assume): (a) floor semantics - keep top-N post-rerank chunks regardless of threshold when the raw retrieval score was strong (e.g. min(top_k, after_rerank) >= 2); (b) per-category or per-score-source thresholds (reranker scores are not calibrated on the same scale as RRF); (c) query decomposition for multi-part questions (rewrite step already exists, ARCH-061); (d) rescore against the parent text instead of the child (combines with FEAT-017).
 
+**Resolution**: measured score distributions showed the collapse was wider than multi-chunk (also 4 reasoning + 2 factual wiped, hence grounded 35/55) and that no static threshold separates multi-chunk from adversarial (wiped MC max-rerank 0.005-0.088 vs wiped ADV 0.000-0.142, full overlap) — the filter cannot discriminate, and the reranker already passes 4-5/9 adversarial to the LLM today. Chose direction (a) in minimal form: **rescue only-when-empty** (`VEKTRA_RETRIEVAL_RESCUE_TOP_K`, default 0 = off; `VEKTRA_RETRIEVAL_RESCUE_FLOOR`, default 0.02): when the threshold empties the set, keep the top-N chunks above the floor and let strict grounding arbitrate. Discarded: (b) does not discriminate; (c) larger feature, downstream; (d) per-query cost, combinable later. Measured with `top_k=3, floor=0.005`: grounded 35/55 → 54/55, factual 19→21/21, reasoning 11→15/15, multi-chunk 1→10/10 by the harness metric — honestly: 2-3/10 substantially complete answers, 7 informed refusals that explain the gap (candidates for bi-document comparatives never include chunks of both documents: a candidate-coverage limit upstream of the filter, not a funnel issue). Adversarial: 0 answered-without-context, 0 hallucinations on manual review of all 9 (rescued ones give informed refusals or correct corrective answers). `top_k=5` control run equivalent within LLM variance. Latency unchanged.
+
 **Traceability**: ARCH-056 (retrieval quality controls), ADR-0021, DEBT-010, FEAT-017, TECH-005
 
 **Acceptance criteria**:
-- [ ] Reproduce with the eval harness and document the score distributions per category
-- [ ] Chosen mitigation implemented behind config, default preserving current single-fact behavior
-- [ ] `eval-full` multi-chunk grounded moves from 0-1/10 without regressing factual (19/21) or adversarial refusals (no answered-without-context)
-- [ ] Decision and numbers recorded in the sprint plan and vektra-internal
+- [x] Reproduce with the eval harness and document the score distributions per category
+- [x] Chosen mitigation implemented behind config, default preserving current single-fact behavior
+- [x] `eval-full` multi-chunk grounded moves from 0-1/10 without regressing factual (19/21) or adversarial refusals (no answered-without-context)
+- [x] Decision and numbers recorded in the sprint plan and vektra-internal
 
 ---
 

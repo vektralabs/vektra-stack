@@ -13,6 +13,8 @@ place the two can be seen disagreeing.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,16 +32,39 @@ _SESSION_FACTORY = "vektra_shared.db.get_session_factory"
 _KEY_STORE_LOAD = "vektra_admin.keystore.InMemoryKeyStore.load_from_db"
 
 
-def _settings(**overrides: object) -> VektraSettings:
-    """Settings built in isolation from the machine's .env.
+@pytest.fixture(autouse=True)
+def _isolate_from_local_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run these tests against the settings they declare, not the machine's .env.
 
-    Every field these tests depend on is passed explicitly, `_env_file=None`
-    included: importing litellm (which registration does) runs `load_dotenv()`,
-    which pulls the repo's .env into `os.environ` for the rest of the session.
-    A setting left to its default would then silently pick up the developer's
-    local configuration, and the sparse-disabled case would stop testing what
-    its name says.
+    Two leaks, and both have to be closed (same defect class as DEBT-025):
+
+    - `os.environ`: importing litellm, which registration does, runs `load_dotenv()`
+      and pulls the repo's .env into the process environment for the rest of the
+      session. `_env_file=None` does not help, because BaseSettings still reads
+      `os.environ`.
+    - the .env **file** itself: registration builds sub-configs of its own
+      (`QueryPipelineConfig()`), which resolve `env_file=".env"` relative to the
+      working directory and so bypass the settings passed in. Running from an
+      empty cwd is what actually closes this one.
+
+    Without both, a field left at its default silently picks up local config: on a
+    developer machine with VEKTRA_RERANK_ENABLED=true, registration went off and
+    loaded a cross-encoder that CI, which has no .env, never loaded. The test then
+    exercises a different code path on every machine.
     """
+    for key in [k for k in os.environ if k.startswith("VEKTRA_")]:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    # Reranking is on by default (RerankConfig.enabled), and registration reads that
+    # config itself rather than the settings passed in, so it would load a
+    # cross-encoder on every test. Nothing here asserts on the reranker; pin it off
+    # so these tests do not depend on a model being downloadable.
+    monkeypatch.setenv("VEKTRA_RERANK_ENABLED", "false")
+
+
+def _settings(**overrides: object) -> VektraSettings:
+    """Settings built in isolation from the machine's .env (see _scrub_vektra_env)."""
     params: dict[str, object] = {
         "llm_provider": "ollama/llama3",
         "vector_store_provider": "pgvector",

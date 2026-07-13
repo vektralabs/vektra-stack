@@ -8,6 +8,8 @@
   4. rerank              - cross-encoder reranking (skip if not configured)
   5. retrieval_filter    - score threshold + overlap dedup (ARCH-056)
   6. post_retrieval      - SafeguardHook.post_retrieval() (DEBT-003)
+  6.5 parent_expansion   - replace child text with parent chunk text (FEAT-017,
+                           skip unless VEKTRA_PARENT_EXPANSION_ENABLED)
   7. build_prompt        - token budget + Jinja2 rendering (ARCH-055)
   8. llm_call            - LLM with graceful degradation (ARCH-043)
   9. pre_response        - SafeguardHook.pre_response() (ARCH-049)
@@ -16,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -36,7 +39,7 @@ from vektra_core.pipeline import (
     _history_to_messages,
     _trace_to_dict,
 )
-from vektra_core.reranker import RerankerService
+from vektra_core.reranker import RerankerProtocol
 from vektra_core.templates import TemplateRenderer
 from vektra_shared.config import LLMConfig, QueryPipelineConfig
 from vektra_shared.protocols import (
@@ -84,7 +87,7 @@ class AdvancedQueryPipeline:
         renderer: TemplateRenderer,
         pipeline_config: QueryPipelineConfig,
         sparse_embedding: SparseEmbeddingProvider | None = None,
-        reranker: RerankerService | None = None,
+        reranker: RerankerProtocol | None = None,
     ) -> None:
         self._embedding = embedding
         self._vector_store = vector_store
@@ -99,6 +102,7 @@ class AdvancedQueryPipeline:
         self._rewrite_enabled = pipeline_config.rewrite.enabled
         self._eval_mode = pipeline_config.eval_mode
         self._debug_log_queries = pipeline_config.debug_log_queries
+        self._parent_expansion = pipeline_config.parent_expansion_enabled
 
     # -- Helpers (delegating to shared module-level functions) --
 
@@ -345,10 +349,12 @@ class AdvancedQueryPipeline:
 
         # Step 5: Retrieval filter (ARCH-056)
         t0 = time.monotonic()
-        filtered = _apply_retrieval_filter(
+        filtered, rescued = _apply_retrieval_filter(
             results,
             min_score=self._config.min_relevance_score,
             dedup_enabled=self._config.chunk_dedup_enabled,
+            rescue_top_k=self._config.retrieval_rescue_top_k,
+            rescue_floor=self._config.retrieval_rescue_floor,
         )
         no_relevant_context = len(filtered) == 0
         steps.append(
@@ -359,6 +365,7 @@ class AdvancedQueryPipeline:
                     "before": len(results),
                     "after": len(filtered),
                     "no_relevant_context": no_relevant_context,
+                    "rescued": rescued,
                 },
             )
         )
@@ -407,6 +414,20 @@ class AdvancedQueryPipeline:
         if not no_relevant_context and not filtered:
             no_relevant_context = True
 
+        # Step 6.5: Parent chunk expansion (FEAT-017)
+        if self._parent_expansion and filtered:
+            t0 = time.monotonic()
+            filtered, expansion_meta = await self._expand_parents(
+                query.namespace, filtered
+            )
+            steps.append(
+                StepTrace(
+                    name="parent_expansion",
+                    duration_ms=_elapsed_ms(t0),
+                    metadata=expansion_meta,
+                )
+            )
+
         return (
             steps,
             filtered,
@@ -416,11 +437,80 @@ class AdvancedQueryPipeline:
             history,
         )
 
+    async def _expand_parents(
+        self,
+        namespace: str,
+        results: list[SearchResult],
+    ) -> tuple[list[SearchResult], dict[str, object]]:
+        """Replace child chunk text with the parent chunk text (FEAT-017).
+
+        Children of the same parent collapse into a single result (the
+        highest-scored one, since results arrive score-ordered): the parent
+        text already contains all its children. Runs before token budgeting
+        (ARCH-055) so the budget sees the expanded text. Results keep the
+        child's chunk_id and score for trace comparability.
+        """
+        parent_ids = list(dict.fromkeys(r.parent_id for r in results if r.parent_id))
+        if not parent_ids:
+            return results, {"children_expanded": 0, "parents_fetched": 0}
+
+        try:
+            parents = await self._vector_store.retrieve(
+                namespace=namespace, chunk_ids=parent_ids
+            )
+        except Exception as exc:
+            log.warning("parent_expansion_failed", error=str(exc))
+            return results, {"skipped": True, "error": str(exc)}
+
+        parent_text = {p.chunk_id: p.text_snippet for p in parents}
+        expanded: list[SearchResult] = []
+        seen_parents: set[str] = set()
+        children_expanded = 0
+        siblings_merged = 0
+        for r in results:
+            if r.parent_id and r.parent_id in parent_text:
+                if r.parent_id in seen_parents:
+                    siblings_merged += 1
+                    continue
+                seen_parents.add(r.parent_id)
+                children_expanded += 1
+                expanded.append(
+                    dataclasses.replace(r, text_snippet=parent_text[r.parent_id])
+                )
+            else:
+                expanded.append(r)
+
+        return expanded, {
+            "children_expanded": children_expanded,
+            "siblings_merged": siblings_merged,
+            "parents_fetched": len(parents),
+            "after_expansion": len(expanded),
+        }
+
+    @staticmethod
+    def _chunk_title(
+        result: SearchResult,
+        name_map: dict[str, str],
+    ) -> str | None:
+        """Human-readable source title for citations (FEAT-021).
+
+        Prefers "document_name, p.N"; falls back to the raw source_file
+        from chunk metadata, then None (attribute omitted in the template).
+        """
+        name = name_map.get(str(result.document_id)) or result.metadata.get(
+            "source_file"
+        )
+        if not name:
+            return None
+        page = result.metadata.get("page")
+        return f"{name}, p.{page}" if page is not None else str(name)
+
     def _build_prompt(
         self,
         query: QueryRequest,
         filtered: list[SearchResult],
         history: list[dict[str, str | None]],
+        name_map: dict[str, str] | None = None,
     ) -> tuple[
         list[Message], list[SearchResult], list[dict[str, str | None]], StepTrace
     ]:
@@ -432,6 +522,7 @@ class AdvancedQueryPipeline:
             namespace=query.namespace,
             grounding_mode=query.grounding_mode,
             has_context=has_context,
+            citations_enabled=query.citations_enabled,
         )
         system_tokens = self._count_tokens(system_text)
         question_tokens = self._count_tokens(query.question)
@@ -457,8 +548,20 @@ class AdvancedQueryPipeline:
         selected_history = [history[i] for i in selected_history_idx]
 
         if selected_chunks:
+            _names = name_map or {}
             context_text = self._renderer.render_context(
-                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+                [
+                    {
+                        "text": r.text_snippet,
+                        "score": r.score,
+                        "title": (
+                            self._chunk_title(r, _names)
+                            if query.citations_enabled
+                            else None
+                        ),
+                    }
+                    for r in selected_chunks
+                ]
             )
             user_content = f"{context_text}\n\nQuestion: {query.question}"
         else:
@@ -538,15 +641,25 @@ class AdvancedQueryPipeline:
                 no_relevant_context=no_relevant_context and not safeguard_blocked,
             ), trace
 
-        # Step 7: Build prompt
+        # Step 7: Build prompt (citations need document names up front, FEAT-021)
+        prompt_name_map: dict[str, str] = {}
+        if query.citations_enabled and filtered:
+            prompt_name_map = await _fetch_document_names(
+                [r.document_id for r in filtered]
+            )
         messages, selected_chunks, _, prompt_step = self._build_prompt(
-            query, filtered, history
+            query, filtered, history, name_map=prompt_name_map
         )
         steps.append(prompt_step)
 
         # Sources from budget-selected chunks only (not all filtered)
         t0 = time.monotonic()
-        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        if query.citations_enabled:
+            name_map = prompt_name_map
+        else:
+            name_map = await _fetch_document_names(
+                [r.document_id for r in selected_chunks]
+            )
         steps.append(
             StepTrace(
                 name="document_names",
@@ -566,6 +679,9 @@ class AdvancedQueryPipeline:
                 citation_id=uuid4(),
                 document_version=r.document_version,
                 document_name=name_map.get(str(r.document_id)),
+                title=(
+                    self._chunk_title(r, name_map) if query.citations_enabled else None
+                ),
             )
             for r in selected_chunks
         ]
@@ -705,9 +821,14 @@ class AdvancedQueryPipeline:
             yield QueryChunk(type="done", data="")
             return
 
-        # Step 7: Build prompt
+        # Step 7: Build prompt (citations need document names up front, FEAT-021)
+        prompt_name_map: dict[str, str] = {}
+        if query.citations_enabled and filtered:
+            prompt_name_map = await _fetch_document_names(
+                [r.document_id for r in filtered]
+            )
         messages, selected_chunks, _, prompt_step = self._build_prompt(
-            query, filtered, history
+            query, filtered, history, name_map=prompt_name_map
         )
         steps.append(prompt_step)
 
@@ -806,7 +927,12 @@ class AdvancedQueryPipeline:
 
         # Yield sources (only budget-selected chunks, not all filtered)
         t0 = time.monotonic()
-        name_map = await _fetch_document_names([r.document_id for r in selected_chunks])
+        if query.citations_enabled:
+            name_map = prompt_name_map
+        else:
+            name_map = await _fetch_document_names(
+                [r.document_id for r in selected_chunks]
+            )
         steps.append(
             StepTrace(
                 name="document_names",
@@ -826,6 +952,9 @@ class AdvancedQueryPipeline:
                 "citation_id": str(uuid4()),
                 "document_version": r.document_version,
                 "document_name": name_map.get(str(r.document_id)),
+                "title": (
+                    self._chunk_title(r, name_map) if query.citations_enabled else None
+                ),
             }
             for r in selected_chunks
         ]

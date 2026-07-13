@@ -1,0 +1,36 @@
+# Guard for the INSTALL_UNSTRUCTURED image variant (BUG-022).
+# The OCR extra pulls torch-adjacent wheels whose index pinning can silently
+# break the build; regular CI never builds with the flag, so this workflow
+# does, but only when the inputs that can break it change.
+name: docker-ocr-build
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "uv.lock"
+      - "pyproject.toml"
+      - "vektra-ingest/pyproject.toml"
+      - ".github/workflows/docker-ocr-build.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "Dockerfile"
+      - "uv.lock"
+      - "pyproject.toml"
+      - "vektra-ingest/pyproject.toml"
+      - ".github/workflows/docker-ocr-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ocr-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build image with INSTALL_UNSTRUCTURED=true
+        run: docker build --build-arg INSTALL_UNSTRUCTURED=true -t vektra-ocr-ci .

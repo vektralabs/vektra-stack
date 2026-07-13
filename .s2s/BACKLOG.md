@@ -65,8 +65,15 @@ The LLM already has native conversational coherence: it sees the full history an
 
 ### FEAT-018: Exclude previously retrieved chunks in multi-turn conversations
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-28
-**Depends on**: evaluate BUG-020 option 1 (prompt fix) first - this may not be needed if the prompt change resolves multi-turn coherence.
+**Status**: deferred (2026-07-12, verified) | **Priority**: low | **Created**: 2026-03-28
+**Depends on**: TECH-007 (rerank+threshold funnel) - with the current funnel, excluding previously seen chunks would increase multi-turn refusals, not variety.
+
+**Verification (2026-07-12, Sprint 3, plan `20260712-sprint3-rag-quality` section 4)**: 4 multi-turn scenarios run against `/api/v1/query` with `conversation_id` on the `eval-full` corpus (rewrite + FEAT-020 history + FEAT-017 expansion active, eval-mode traces inspected):
+- **Topic switch** and **negation**: already fully mitigated - the rewriter produces clean standalone queries, retrieved chunks change completely (0 shared), reranker scores high (0.99 / 0.82). No exclusion needed.
+- **Same-topic follow-up** ("quali limiti prevede l'art. 21?"): rewrite is correct but the turn dies at the retrieval filter (max rerank 0.093 < 0.15) - a TECH-007 failure, which chunk exclusion would make worse, not better.
+- **"Give me more"**: the one genuine FEAT-018 case. Rewrite is explicit ("altri diritti... diversi da quelli gia' citati") yet the prompt receives the same 3 chunks as turn 1 (3/3 shared); the LLM degrades gracefully via history (acknowledges prior answer, avoids verbatim repetition) but cannot produce genuinely new content from identical material.
+
+**Decision**: no-go for Sprint 3. Revisit only after TECH-007 lands (a funnel that admits more chunks makes exclusion safe and useful), with "give me more" as the driving scenario and the original design below.
 
 **Context**: in multi-turn conversations, the vector search returns the same high-scoring chunks every turn, even when the user explicitly asks for "other" or "different" results. The query rewrite contextualizes the question but the retrieval still matches on semantic similarity, which favors the same chunks.
 
@@ -223,7 +230,8 @@ Rules:
 
 ### FEAT-021: Optional source citations in responses (per-namespace)
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-28
+**Status**: completed (2026-07-12) | **Priority**: medium | **Created**: 2026-03-28
+**Resolution**: shipped on `feat/feat-021-namespace-citations` (Sprint 3, plan `20260712-sprint3-rag-quality` section 5). Deltas vs the design below: the context template keeps the existing `<source id>` tag (the `<doc>` sketch predates the template); `SearchResult` gains no new fields (source_file/page were already in `metadata`; the title is composed at prompt-build time from `_fetch_document_names` + page); resolution is namespace JSONB > hardcoded false, no env var; the widget renders `[n]` as superscript with the source title as native tooltip, wired in `addSources()`. Default-off renders byte-identical prompts (`prompt_version` changes because the template files changed).
 
 **Context**: in some deployment contexts (academic research, compliance, legal), full transparency with source citations is required. Currently Rule 1 in the system prompt forbids any mention of sources ("Never mention, quote, or allude to sources, documents, context tags, or reference material"). This is correct for the default e-learning use case where the student should not know about the RAG pipeline, but must be optional for contexts where traceability is a requirement.
 
@@ -271,31 +279,161 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 **Traceability**: ARCH-054 (composable templates), ARCH-047 (namespace metadata), ADR-0025 (chatbot widget)
 
 **Acceptance criteria**:
-- [ ] `citations_enabled` per-namespace setting in namespace metadata JSONB
-- [ ] `system.j2` Rule 1 conditional: cite with `[id]` when enabled, hide sources when disabled
-- [ ] `context.j2` includes document title in `<doc>` elements when citations enabled
-- [ ] Document filename and page propagated through `SearchResult` to template
-- [ ] `SourceRef` includes `title` field in API response
-- [ ] Widget renders `[id]` references as tooltips or footnotes with source info
-- [ ] Default behavior unchanged (citations disabled, Rule 1 hides sources)
+- [x] `citations_enabled` per-namespace setting in namespace metadata JSONB (admin PATCH whitelist + GET resolved defaults)
+- [x] `system.j2` Rule 1 conditional: cite with `[id]` when enabled (and context present), hide sources when disabled
+- [x] `context.j2` includes document title in `<source>` elements when citations enabled
+- [x] Document filename and page propagated to the template (composed at prompt-build time from `_fetch_document_names` + `metadata.page`)
+- [x] `SourceRef` includes `title` field in API response (core + learn, sync + streaming)
+- [x] Widget renders `[id]` references as superscripts with source-title tooltips
+- [x] Default behavior unchanged (citations disabled, Rule 1 hides sources; byte-identical rendering asserted in tests)
 
 ---
 
 ### FEAT-017: Parent chunk expansion in query pipeline
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-23
+**Status**: completed (2026-07-12) | **Priority**: medium | **Created**: 2026-03-23
 **Analysis**: `vektra-internal/stack/20260323-rag-prompt-chunk-confusion-analysis.md`
 
 **Context**: when a child chunk is retrieved via search, the pipeline should optionally expand it to the parent chunk for broader context. The infrastructure is already in place: `DualStrategyChunking` creates parent-child hierarchy (parent every 3000 tokens, children at 500 tokens with overlap), `DocumentChunkOrm` has `parent_id` column, and both are stored in the database. Missing: (1) filter parent chunks from default search results (search currently returns both), (2) parent expansion logic in AdvancedQueryPipeline when a child matches.
 
+**Premise corrections found during implementation**: the hierarchy was NOT actually persisted anywhere (`run_ingest` dropped `chunk.parent_id`, `ChunkEmbedding` had no field, Qdrant payload had none, `DocumentChunkOrm.parent_id` was always NULL); parent size is `chunk_size*3` (1500 tokens with Combo D 500, not 3000); pgvector `store()` ignored caller chunk ids (generated uuid4), so deterministic ids had to be plumbed there too.
+
 **Traceability**: ARCH-037 (ChunkingStrategy), ARCH-055 (token budget), core-pipeline-v2
 
 **Acceptance criteria**:
-- [ ] Search excludes parent chunks by default (WHERE parent_id IS NOT NULL for children only)
-- [ ] AdvancedQueryPipeline fetches parent chunk when child matches and includes it in context
-- [ ] Parent expansion is configurable (on/off, via env var)
-- [ ] Token budget accounts for expanded parent chunk size
-- [ ] Tested: truncated-context answers improve with parent expansion enabled
+- [x] Search excludes parent chunks by default (`chunk_level=parent` filtered: Qdrant `must_not`, pgvector `IS DISTINCT FROM`)
+- [x] AdvancedQueryPipeline fetches parent chunk when child matches and includes it in context (step 6.5, new `VectorStoreProvider.retrieve()`)
+- [x] Parent expansion is configurable (`VEKTRA_PARENT_EXPANSION_ENABLED`, default off)
+- [x] Token budget accounts for expanded parent chunk size (expansion runs before ARCH-055 allocation)
+- [x] Tested: 17 unit tests (linkage, exclusion, expansion, budget); measured on `eval-full` — expansion is grounding-neutral there (35/55 with and without, zero per-question flips, avg sources 1.4 → 1.0 via sibling merge). The multi-chunk collapse it targeted turned out to be upstream: the rerank+threshold funnel wipes all candidates before expansion (TECH-007). The corpus also understates expansion benefit (short self-contained articles — TECH-005 collection 1 is the real test bench).
+
+**Resolution (2026-07-12, Sprint 3)**: shipped default-off on `feat/feat-017-parent-chunk-expansion`. Measured A/B on `eval-full` reingested dual (105 points = 22 parents + 83 children): dual chunking alone costs ~6.5pp retrieval hit vs fixed (children stop rolling overlap across 1500-token parent boundaries; IT-F-13, IT-R-02, EN-F-03 flip to miss). Full numbers in plan `20260712-sprint3-rag-quality` Notes.
+
+---
+
+### TECH-005: Eval suite expansion (collections, casistiche, public regression slice)
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-12
+**Origin**: Sprint 3 baseline eval (plan `20260712-sprint3-rag-quality`) - the excerpt corpus saturates hit rate; the full-corpus variant (`tests/eval/dataset-full.jsonl`) exposed multi-chunk collapse. Operator wants broader casistiche coverage for performance, regression and tuning decisions.
+
+**Context**: today the harness has two datasets over two corpora (excerpts 12 chunks, `eval-full` 78 chunks) plus a documented "dirty extraction" trap (senato.it combined PDF: pdfplumber fuses words, IT hit rate 72% vs 88% clean - see `tests/eval/README.md`). Each new collection must cover a failure mode the existing ones cannot express; ground truth is keyword-based (chunking-independent), generated by an LLM reading the FULL documents (not the chunks, to avoid single-chunk bias), with human spot-check on a sample and adversarial entries authored against corpus gaps.
+
+**Collections to add, in value order for the e-learning vertical**:
+1. Long structured "textbook" document (chapters/sections, context-dependent definitions) - the real FEAT-017 test bench; constitution articles are short and self-contained, parent expansion benefit is understated there.
+2. Multi-document corpus with thematic distractors (e.g. Costituzione + UDHR + ECHR in one namespace) - stresses reranker discrimination and per-document citation correctness (FEAT-021).
+3. Multi-turn conversational scenarios - harness currently never sends `conversation_id`; needed for FEAT-018 verification anyway.
+4. Tables/exact-value questions (dates, numbers, formulas) - discriminates BM25 vs dense and table extraction.
+5. Cross-lingual as a formal dataset category (EN queries on IT corpus and vice versa).
+6. Dirty-extraction suite (senato PDF) as a separate ingest-robustness track with its own expectations.
+
+**Public regression slice**: add a small external benchmark for component regressions (embedding/reranker swaps), separate from the domain datasets: SQuAD-it subset for Italian (paragraph containing the answer = expected passage) and optionally BEIR/SciFact for English. Note: no public dataset provides "expected reranker scores" - they provide relevance judgments; assert ranking metrics (nDCG/MRR), never absolute score values (RRF scores are 1.0/0.5/0.33 by construction).
+
+**Generative metrics**: TECH-002's RAGAS AC was never implemented (no `ground_truth_answer` in datasets, no judge). Decide whether to add an LLM-judge stage (local vLLM as judge) with ground-truth answers on a subset.
+
+**Acceptance criteria**:
+- [ ] At least the textbook collection + multi-turn runner implemented with documented ground-truth methodology
+- [ ] Public regression slice runnable via `make eval-retrieval EVAL_ARGS=...` with recorded baseline
+- [ ] `tests/eval/README.md` updated with collection matrix and when to use which
+- [ ] Decision recorded on RAGAS/LLM-judge (implement or drop the TECH-002 AC)
+
+---
+
+### TECH-006: Extractor/OCR bake-off and per-document routing design
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-12
+**Origin**: operator request (system instance runs `unstructured` for comparison vs pdfplumber); OCR landscape research 2026-07-12 (sources in the entry).
+
+**Context**: ingestion quality gates retrieval quality (see the senato.it PDF case: fused words invalidate keyword ground truth). Current extractors: pdfplumber (default) and unstructured `strategy="auto"` (tesseract OCR fallback; **image ships English tesseract only - no `tesseract-ocr-ita`**). The DocumentExtractor Protocol routes per MIME type only; the pdfplumber-vs-unstructured choice is global config (`_build_extractor_registry`, `vektra-ingest/pipeline.py:78-112`).
+
+**Research findings (July 2026)**:
+- "GLM OCR" is real: Zhipu GLM-OCR, 0.9B, MIT weights, #1 OmniDocBench v1.5 (94.62), very fast (MTP), vLLM-servable; Italian NOT in the official language list - must be validated empirically.
+- PaddleOCR-VL 1.6 (Apache-2.0): highest composite (96.33 OmniDocBench v1.6), explicit Italian support (111+ langs), official NVIDIA Blackwell setup guide, vLLM/SGLang backends.
+- MinerU 3.4 (Apache-based license): end-to-end PDF->MD with built-in scanned-PDF auto-detection, reading order, cross-page tables, 109-lang OCR incl. Italian; `http-client` backend can point at a remote vLLM.
+- Docling (IBM, MIT): framework with pluggable OCR engines, selective OCR of bitmap regions, `force_full_page_ocr`; cleanest MIT-licensed lib companion/replacement for unstructured.
+- unstructured supports swapping its OCR engine via `OCR_AGENT` env (tesseract -> paddle) without code changes.
+- Marker/Surya/Chandra excluded (GPL / OpenRAIL-M commercial restrictions); olmOCR-2 excluded (English-focused); GOT-OCR2.0/Nougat superseded.
+- Zero-install baseline available today: the active vLLM model (qwen36-35b-a3b, vision-capable) can be prompted as a page-image extractor.
+
+**Proposed approach**:
+1. Quick wins: add `tesseract-ocr-ita` (build arg for language packs) to the INSTALL_UNSTRUCTURED image; evaluate `OCR_AGENT=paddle`.
+2. Bake-off on a real IT+EN course-material corpus (lecture PDFs, scanned handouts, slides): pdfplumber vs unstructured(auto) vs MinerU vs PaddleOCR-VL vs GLM-OCR (Italian validation), scored with olmOCR-bench-style per-page checks + the TECH-005 dirty-extraction suite.
+3. Routing design (follow-up FEAT): per-page/per-document signals (embedded text layer, image-coverage ratio, garble score, language) choosing extractor; MinerU/Docling already embed such routing if delegating at document level.
+
+**Traceability**: ARCH-030 (pdfplumber extraction), ARCH-042 (extractor dispatch), ADR-0007, TECH-005
+
+**Acceptance criteria**:
+- [ ] Comparison report with per-tool scores on the shared corpus (IT + EN, native + scanned)
+- [ ] Default extractor decision recorded (keep pdfplumber / switch / route)
+- [ ] Routing feature filed as FEAT with concrete signals if the bake-off justifies it
+- [ ] Image language packs fixed (tesseract-ita) regardless of outcome
+
+---
+
+### TECH-007: Multi-part questions wiped by rerank+threshold funnel (multi-chunk collapse root cause)
+
+**Status**: completed | **Priority**: high | **Created**: 2026-07-12 | **Completed**: 2026-07-13 | **PR**: #92
+**Origin**: FEAT-017 measurement (plan `20260712-sprint3-rag-quality`) - expansion turned out to be downstream of the real failure.
+**Evidence**: `vektra-internal/stack/20260713-tech007-retrieval-rescue.md` (+ per-question artifacts in `20260713-tech007-eval-artifacts/`)
+
+**Context**: on `eval-full`, 9/10 multi-chunk questions end with `retrieval_filter before=5 after=0` → `no_relevant_context` → refusal, despite 90% raw retrieval hit for the category. Cause: bge-reranker-v2-m3 scores each partial-answer chunk of a comparative/multi-part question low (each chunk answers only one part), and `VEKTRA_MIN_RELEVANCE_SCORE=0.15` — calibrated in the tuning sprint on single-fact questions (DEBT-010) — wipes the entire candidate set. Evidence (MC-01, eval mode traces): max reranker score 0.088 on a candidate whose raw RRF score was 0.61. Parent expansion (FEAT-017) never runs because zero results survive the filter.
+
+**Candidate directions** (evaluate, do not assume): (a) floor semantics - keep top-N post-rerank chunks regardless of threshold when the raw retrieval score was strong (e.g. min(top_k, after_rerank) >= 2); (b) per-category or per-score-source thresholds (reranker scores are not calibrated on the same scale as RRF); (c) query decomposition for multi-part questions (rewrite step already exists, ARCH-061); (d) rescore against the parent text instead of the child (combines with FEAT-017).
+
+**Resolution**: measured score distributions showed the collapse was wider than multi-chunk (also 4 reasoning + 2 factual wiped, hence grounded 35/55) and that no static threshold separates multi-chunk from adversarial (wiped MC max-rerank 0.005-0.088 vs wiped ADV 0.000-0.142, full overlap) — the filter cannot discriminate, and the reranker already passes 4-5/9 adversarial to the LLM today. Chose direction (a) in minimal form: **rescue only-when-empty** (`VEKTRA_RETRIEVAL_RESCUE_TOP_K`, default 0 = off; `VEKTRA_RETRIEVAL_RESCUE_FLOOR`, default 0.02): when the threshold empties the set, keep the top-N chunks above the floor and let strict grounding arbitrate. Discarded: (b) does not discriminate; (c) larger feature, downstream; (d) per-query cost, combinable later. Measured with `top_k=3, floor=0.005`: grounded 35/55 → 54/55, factual 19→21/21, reasoning 11→15/15, multi-chunk 1→10/10 by the harness metric — honestly: 2-3/10 substantially complete answers, 7 informed refusals that explain the gap (candidates for bi-document comparatives never include chunks of both documents: a candidate-coverage limit upstream of the filter, not a funnel issue). Adversarial: 0 answered-without-context, 0 hallucinations on manual review of all 9 (rescued ones give informed refusals or correct corrective answers). `top_k=5` control run equivalent within LLM variance. Latency unchanged.
+
+**Traceability**: ARCH-056 (retrieval quality controls), ADR-0021, DEBT-010, FEAT-017, TECH-005
+
+**Acceptance criteria**:
+- [x] Reproduce with the eval harness and document the score distributions per category
+- [x] Chosen mitigation implemented behind config, default preserving current single-fact behavior
+- [x] `eval-full` multi-chunk grounded moves from 0-1/10 without regressing factual (19/21) or adversarial refusals (no answered-without-context)
+- [x] Decision and numbers recorded in the sprint plan and vektra-internal
+
+---
+
+### FEAT-024: Remote embedding and reranker providers (TEI)
+
+**Status**: completed | **Priority**: medium | **Created**: 2026-07-12 | **Completed**: 2026-07-13 | **PR**: #93
+**Origin**: deployment modularity review 2026-07-12 - the host workstation already serves TEI instances (bge-m3, qwen3-embedding); Vektra cannot use them.
+**Evidence**: `vektra-internal/stack/20260713-feat024-tei-providers.md` (+ artifacts in `20260713-feat024-eval-artifacts/`)
+
+**Context**: `VEKTRA_EMBEDDING_PROVIDER` documents a `tei` option (config.py:74) but **no TEI provider exists**: `main.py:129-137` unconditionally instantiates in-process `SentenceTransformersProvider`; the compose even ships a `tei` profile service nobody can talk to. The reranker likewise runs in-process only (`rerankers` lib; the `cohere` path never passes an api_key, so it is dead as wired - reranker.py:122). Consequences: every Vektra instance duplicates embedding/reranker compute in-container (CPU), and shared GPU/CPU inference services on the host cannot be reused.
+
+**Design**:
+- `TEIEmbeddingProvider` implementing EmbeddingProvider over TEI HTTP (`POST /embed` or OpenAI-compatible `/v1/embeddings`), env: `VEKTRA_TEI_URL`, `VEKTRA_TEI_API_KEY`; `dimensions()` from TEI `GET /info`. Register on `VEKTRA_EMBEDDING_PROVIDER=tei`.
+- `TEIRerankerProvider` over TEI `POST /rerank` (`{query, texts}` -> `[{index, score}]`, sigmoid scores; TEI serves bge-reranker-v2-m3 - one TEI instance per model). New `VEKTRA_RERANK_PROVIDER=tei` + endpoint/key env vars. Fix the cohere api_key pass-through in passing or remove the dead option.
+- **Dimension plumbing**: `QdrantVectorStoreProvider` defaults `dense_dimensions=384` and main.py never passes it (qdrant.py:88, main.py:166-171) - a latent bug for any non-384 model; ensure collection creation uses the active provider's dimensions and document the reindex-on-model-change requirement (bge-m3 is 1024-dim).
+- Note: TEI serves bge-m3 dense only (no sparse output for bge-m3); Vektra's BM25 sparse via fastembed stays client-side, hybrid keeps working.
+
+**Why it matters beyond dedup**: the current embedding model (paraphrase-multilingual-MiniLM-L12-v2) has **max_seq_length 128 tokens** - our 500-token chunks are silently truncated at embedding time (dense sees only the chunk head; BM25 sees the full text). bge-m3 (8192-token window, MIRACL dense nDCG@10 69.2 vs mE5-large 66.6; MiniLM sits 16-22 nDCG points below even mE5 on European-language retrieval per PL-MTEB) is the natural upgrade candidate, testable via TEI without fattening the container.
+
+**Resolution (2026-07-13)**: implemented as designed with two deltas: (1) TEI 1.9.3 `/info` does not expose the embedding size, so `dimensions()` probes `/embed` as fallback (both paths unit-tested); (2) found and fixed in passing a startup blocker: `check_embedding_model` resolved the provider by the hardcoded `sentence-transformers` name, so startup failed with any other provider (now uses the `default` alias). Measured on eval-full questions (same dual chunks, reindexed via a fresh `eval-tei` namespace): **bge-m3 via TEI retrieval hit 93.5% / MRR 0.8478 vs MiniLM dual 82.6% / 0.7029 (+10.9pp)** - beats even the fixed-chunking MiniLM baseline (89.1%/0.8062), confirming the 128-token truncation hypothesis; e2e grounded 54/55 stable, MC answers improve in substance (MC-02 produces a real bi-document comparison; kw 7/25 vs 4/25), p50 +0.7s (TEI on CPU). TEI reranker smoke: factual query scores 0.75 (2 survive the threshold), comparative query all-below-threshold rescued by TECH-007 (`rescued=3`) - full funnel verified with both remote providers, authenticated. Discovery filed under BUG-021: `run_reindex` stores through hardcoded pgvector, so reindex-into-Qdrant silently writes nothing (worked around via fresh-namespace ingest). Switching the default embedding to bge-m3 is a separate decision (needs full corpus re-ingest and a TECH-005-grade bench).
+
+**Traceability**: ADR-0013 (EmbeddingProvider Protocol), ARCH-035, ARCH-036, ADR-0021
+
+**Acceptance criteria**:
+- [x] `VEKTRA_EMBEDDING_PROVIDER=tei` works end-to-end (ingest + query) against a TEI instance with api key
+- [x] Collection created with the provider's real dimensions; clear error on dimension mismatch with an existing collection (verified live: 384-vs-1024 startup warning with remediation)
+- [x] `VEKTRA_RERANK_PROVIDER=tei` reranks via TEI /rerank with scores compatible with the threshold filter
+- [x] Embedding-model comparison (MiniLM in-process vs bge-m3 via TEI) run with the TECH-005/existing harness and recorded
+- [x] Docs: configuration.md + .env.example cover the new provider options
+
+---
+
+### INFRA-007: Publish versioned container images on release (GHCR)
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-12
+**Origin**: system-instance deployment 2026-07-12 - updates currently require a local `docker build` from a git checkout on every host.
+
+**Context**: no workflow publishes images (`release.yml` is a disabled placeholder, `if: false`, "Phase 1 releases are tagged manually"); the integration workflow builds only for its own tests. Deployments (e.g. the workstation rootful instance) must clone + build locally, which is slow and duplicates work per host.
+
+**Proposed approach**: GitHub Actions workflow on tag push (`v*`): build the image (both `INSTALL_UNSTRUCTURED=true` and `false` variants, e.g. tags `X.Y.Z` and `X.Y.Z-ocr`) and push to `ghcr.io/vektralabs/vektra`. Deployment update flow becomes `docker compose pull && docker compose up -d`. Consider enabling the semantic-release placeholder later; out of scope here.
+
+**Acceptance criteria**:
+- [ ] Tag push publishes `ghcr.io/vektralabs/vektra:{version}` and `{version}-ocr` (multi-stage cache enabled)
+- [ ] Image labels carry version + commit (OCI labels)
+- [ ] README/deploy docs updated: pull-based deployment documented
+- [ ] Existing tag flow unchanged (manual tagging still cuts the release)
 
 ---
 
@@ -893,8 +1031,10 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 ### DEBT-025: Isolate unit tests from the developer's local .env
 
-**Status**: planned | **Priority**: low | **Created**: 2026-07-12
+**Status**: completed | **Priority**: low | **Created**: 2026-07-12 | **Completed**: 2026-07-12
 **Origin**: discovered during the DEBT-024 sweep (PR #80): `make test` fails locally with 4 errors while CI is green.
+
+**Resolution**: new `vektra-shared/tests/conftest.py` autouse fixture scrubs `VEKTRA_*` (plus `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`) from `os.environ` per-test via monkeypatch. Root cause confirmed: importing litellm during collection runs `dotenv.load_dotenv()`, leaking the repo `.env` into the process environment — running `vektra-shared/tests/test_config.py` alone passes, collecting it together with any litellm-importing package reproduces the 4 failures. Production settings loading untouched (no settings class uses `env_file`).
 
 **Context**: 4 tests in `vektra-shared/tests/test_config.py` (`TestLLMConfig::test_defaults`, `TestQueryPipelineConfig::test_eval_mode_default_false`, `test_debug_log_queries_default_false`, `TestVektraSettings::test_defaults_with_required_only`) assert configuration defaults, but when the full suite runs from the workspace root the developer's `.env` leaks into `os.environ` (something imported during collection loads dotenv, e.g. litellm), so machine-specific values (eval_mode=true, custom port, LLM keys) override the defaults and the assertions fail. CI never sees this because runners have no `.env`. Current workaround: temporarily move `.env` away before `make test`.
 
@@ -904,6 +1044,24 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 - [ ] `make test` passes on a dev machine with a populated `.env`
 - [ ] Default-assertion tests are hermetic (no dependency on ambient `VEKTRA_*` vars)
 - [ ] No change to production settings loading behavior
+
+---
+
+### BUG-022: INSTALL_UNSTRUCTURED image build broken — torchvision resolved from PyPI against torch+cpu
+
+**Status**: completed | **Priority**: high | **Created**: 2026-07-12 | **Completed**: 2026-07-12
+**Origin**: first production build with `INSTALL_UNSTRUCTURED=true` (rootful system-instance deployment on the dev workstation, 2026-07-12).
+
+**Context**: the OCR image variant has never built successfully. `uv sync --extra ocr` resolves `torchvision` — a transitive dependency via `unstructured[pdf]` → unstructured-inference → timm — from PyPI, whose wheels are compiled against CUDA torch, while `torch` itself is pinned to the `pytorch-cpu` index (vektra-index `[tool.uv.sources]`). At image build the model pre-cache step (`Dockerfile:126`) fails importing sentence_transformers with `RuntimeError: operator torchvision::nms does not exist`. CI never builds with the flag, so the breakage stayed invisible since the extra was introduced.
+
+**Resolution**: declare `torchvision>=0.25,<0.26` in the `ocr` extra with `[tool.uv.sources] torchvision = { index = "pytorch-cpu" }` in `vektra-ingest/pyproject.toml` (same pattern as torch in vektra-index); relock — torchvision flips to `0.25.0+cpu` from the CPU index, torch stays at 2.10.0 (upper bound `<0.26` keeps the relock surgical). New path-filtered workflow `.github/workflows/docker-ocr-build.yml` builds the `INSTALL_UNSTRUCTURED=true` image whenever Dockerfile/uv.lock/ingest deps change, so the variant cannot silently regress again.
+
+**Note**: the OCR image ships English tesseract only (`tesseract-ocr-eng`); the missing Italian language pack is tracked as a TECH-006 quick win, out of scope here.
+
+**Acceptance criteria**:
+- [ ] `docker build --build-arg INSTALL_UNSTRUCTURED=true .` succeeds from a clean cache
+- [ ] `uv.lock` resolves torchvision from the pytorch-cpu registry
+- [ ] CI builds the OCR variant on changes to Dockerfile / uv.lock / ingest deps
 
 ---
 
@@ -920,6 +1078,27 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 - [ ] Decision recorded on which endpoints stay instrumented (with rationale)
 - [ ] `excluded_handlers` updated accordingly
 - [ ] `/metrics` output verified: excluded handlers no longer appear in `http_requests_total`
+
+---
+
+### BUG-021: /api/v1/search hardwired to pgvector — empty results and no hybrid in Qdrant mode
+
+**Status**: completed | **Priority**: high | **Created**: 2026-07-12 | **Completed**: 2026-07-12
+**Origin**: Sprint 3 baseline eval (plan `20260712-sprint3-rag-quality`): `make eval-retrieval` returned zero results for all 55 questions against a healthy stack.
+
+**Context**: the search endpoint (`vektra-index/api.py`) instantiated `PgvectorProvider` directly and looked up the sparse provider in `request.app.state.sparse_embedding_provider`. Neither matches the app wiring: `main.py` registers providers in the ProviderRegistry (`vector_store`/`default` is overridden by Qdrant when `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`; sparse under `sparse_embedding`/`default`; nothing is ever set on `app.state.sparse_embedding_provider`). Consequences in Qdrant deployments: (1) every search ran against the empty Postgres `document_chunks` table and returned `{"results": [], "total": 0}` with HTTP 200; (2) hybrid mode always fell back to dense with a `sparse_embedding_not_registered` warning even though FastEmbedBM25 was registered at startup. The RAG pipeline (`/api/v1/query`) was unaffected — it resolves providers from the registry — which is why the bug stayed invisible until the retrieval eval ran in qdrant mode.
+
+**Resolution**: the endpoint now resolves embedding, sparse embedding, and vector store from `request.app.state.registry` (same contract as the pipeline). The per-request `SentenceTransformersProvider` instantiation and the now-unused `session` dependency were removed. Unit tests added (`vektra-index/tests/test_api_search.py`): registry resolution, hybrid→dense fallback without sparse, hybrid with sparse.
+
+**Same family, not fixed here**: `POST /documents/{id}/chunks`, `DELETE /documents/{id}` and `GET /stats` still hardcode pgvector (the stats-vs-Qdrant mismatch was already a known issue). Also `run_reindex` (`vektra-index/reindex.py`): it re-embeds with the registry's active embedding provider but stores through a hardcoded `PgvectorProvider`, so in Qdrant mode a reindex reports "completed" while the Qdrant collection receives nothing (found during the FEAT-024 live smoke, 2026-07-13: reindexing eval-full to v2 wrote to Postgres only). Track separately if needed.
+
+**Traceability**: ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), TECH-002 (eval harness)
+
+**Acceptance criteria**:
+- [ ] `/api/v1/search` returns results in Qdrant mode (dense and hybrid)
+- [ ] Hybrid uses the registered sparse provider (no spurious fallback)
+- [ ] Unit tests pin registry-based provider resolution
+- [ ] `make eval-retrieval` produces non-zero hit rate against the eval corpus
 
 ---
 

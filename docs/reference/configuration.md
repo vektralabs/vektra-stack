@@ -59,8 +59,10 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `VEKTRA_EMBEDDING_PROVIDER` | str | `sentence-transformers` | Embedding provider implementation |
-| `VEKTRA_EMBEDDING_MODEL` | str | `paraphrase-multilingual-MiniLM-L12-v2` | Model name within the selected provider |
+| `VEKTRA_EMBEDDING_PROVIDER` | str | `sentence-transformers` | Embedding provider implementation: `sentence-transformers` (in-process), `tei` (remote) |
+| `VEKTRA_EMBEDDING_MODEL` | str | `paraphrase-multilingual-MiniLM-L12-v2` | Model name within the selected provider (`sentence-transformers` only; a TEI instance serves one fixed model) |
+| `VEKTRA_TEI_URL` | str | `http://localhost:8080` | TEI server base URL (native API, no `/v1` suffix). Used when provider is `tei`. The Qdrant collection is sized from the served model's dimensions at startup |
+| `VEKTRA_TEI_API_KEY` | str | - | Bearer token for the TEI embedding server (`--api-key`). Optional |
 | `VEKTRA_SPARSE_EMBEDDING_PROVIDER` | str | - | Sparse embedding provider: `fastembed-bm25`, `splade` |
 | `VEKTRA_SPARSE_EMBEDDING_MODEL` | str | - | Sparse embedding model name |
 
@@ -81,6 +83,9 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_QUERY_PIPELINE` | str | `advanced` | Pipeline implementation: `simple`, `advanced` |
 | `VEKTRA_MIN_RELEVANCE_SCORE` | float | `0.15` | Minimum relevance score for chunk inclusion (0.0-1.0). Safety net filter; top-k is the primary control. |
 | `VEKTRA_CHUNK_DEDUP_ENABLED` | bool | `true` | Deduplicate overlapping adjacent chunks from the same document |
+| `VEKTRA_RETRIEVAL_RESCUE_TOP_K` | int | `0` | When the `VEKTRA_MIN_RELEVANCE_SCORE` filter empties the candidate set, keep this many top-scored chunks above the rescue floor instead of refusing. Multi-part and comparative questions get uniformly low reranker scores (each chunk answers only one part), so with the rescue the LLM arbitrates via grounding instead of the query dying at the filter. `0` disables the rescue. Recommended starting point when enabling: `3`. |
+| `VEKTRA_RETRIEVAL_RESCUE_FLOOR` | float | `0.02` | Absolute minimum score for rescued chunks (0.0-1.0): candidates below this are never rescued. Only used when `VEKTRA_RETRIEVAL_RESCUE_TOP_K` > 0. Lower values rescue more multi-part questions but feed more irrelevant context to adversarial ones. |
+| `VEKTRA_PARENT_EXPANSION_ENABLED` | bool | `false` | Replace retrieved child chunks with their parent chunk text before prompt construction (advanced pipeline only). Requires documents ingested with `VEKTRA_CHUNKING_STRATEGY=dual`. |
 | `VEKTRA_RESPONSE_TOKEN_RESERVE` | int | `2048` | Tokens reserved for LLM response generation |
 | `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | Fraction of context window allocated to retrieved chunks (0.0-1.0) |
 | `VEKTRA_PROMPT_TEMPLATES_DIR` | str | - | Directory for custom Jinja2 prompt templates (`system.j2`, `context.j2`, `conversation.j2`). Uses built-in defaults if unset. |
@@ -98,9 +103,12 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `VEKTRA_RERANK_ENABLED` | bool | `true` | Enable cross-encoder reranking after retrieval |
-| `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere` |
+| `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere`, `tei` (remote) |
 | `VEKTRA_RERANK_MODEL` | str | `BAAI/bge-reranker-v2-m3` | Multilingual reranking model. For English-only lightweight deployments: provider=`flashrank`, model=`ms-marco-MiniLM-L-12-v2` |
 | `VEKTRA_RERANK_TOP_K` | int | `5` | Final top-k results after reranking |
+| `VEKTRA_RERANK_API_KEY` | str | - | API key for API-based providers (`cohere`) |
+| `VEKTRA_RERANK_TEI_URL` | str | `http://localhost:8080` | TEI reranker server base URL (one TEI instance per model, e.g. serving `BAAI/bge-reranker-v2-m3`). Used when provider is `tei`. Scores are sigmoid-normalized like the in-process path |
+| `VEKTRA_RERANK_TEI_API_KEY` | str | - | Bearer token for the TEI reranker server. Optional |
 
 ## Ingestion
 

@@ -209,6 +209,16 @@ export function buildStyles(theme) {
   font-weight: 600;
 }
 
+.vektra-chat-msg sup.vektra-cite {
+  font-size: 0.75em;
+  vertical-align: super;
+  line-height: 1;
+}
+.vektra-chat-msg sup.vektra-cite.linked {
+  color: var(--vektra-primary, ${t.primary});
+  cursor: help;
+  font-weight: 600;
+}
 .vektra-chat-sources {
   margin-top: 8px;
   padding-top: 8px;

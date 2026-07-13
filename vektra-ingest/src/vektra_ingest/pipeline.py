@@ -395,6 +395,15 @@ async def run_ingest(
                     ),
                 )
 
+        # Map chunker-local hierarchy ids to stored chunk ids (FEAT-017).
+        # Parent chunks carry their own transient id in chunk.parent_id;
+        # children reference it. Stored ids are deterministic: uuid5(doc_id, position).
+        parent_stored_ids = {
+            chunk.parent_id: str(uuid5(doc_id, str(i)))
+            for i, chunk in enumerate(all_chunks)
+            if chunk.parent_id and chunk.metadata.get("chunk_level") == "parent"
+        }
+
         # Build ChunkEmbedding objects with document_id in metadata
         _extra = extra_metadata or {}
         chunk_embeddings = [
@@ -411,6 +420,11 @@ async def run_ingest(
                     "element_type": chunk.element_type.value,
                     "position": i,
                 },
+                parent_id=(
+                    parent_stored_ids.get(chunk.parent_id)
+                    if chunk.parent_id and chunk.metadata.get("chunk_level") == "child"
+                    else None
+                ),
             )
             for i, (chunk, embedding, sparse) in enumerate(
                 zip(all_chunks, embeddings, sparse_vectors)

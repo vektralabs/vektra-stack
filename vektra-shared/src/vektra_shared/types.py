@@ -121,6 +121,7 @@ class ChunkEmbedding:
     dense: list[float]
     sparse: SparseVector | None = None  # Phase 2: hybrid search
     metadata: dict[str, Any] = field(default_factory=dict)
+    parent_id: str | None = None  # stored chunk_id of the parent chunk (FEAT-017)
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +158,7 @@ class SearchResult:
     document_version: int = 1  # from SourceDocument.version (REQ-056)
     metadata: dict[str, Any] = field(default_factory=dict)
     original_score: float | None = None  # pre-reranker score (BUG-015)
+    parent_id: str | None = None  # stored chunk_id of the parent chunk (FEAT-017)
 
 
 @dataclass
@@ -271,6 +273,7 @@ class QueryRequest:
     filters: SearchFilters | None = None
     stream: bool = False
     grounding_mode: str = "strict"  # "strict" | "hybrid" (FEAT-020)
+    citations_enabled: bool = False  # per-namespace inline citations (FEAT-021)
 
 
 @dataclass
@@ -288,6 +291,10 @@ class SourceRef:
     # documents (REQ-057) appear with an " (archived)" suffix; None only when
     # the DB lookup failed (transient error, DB not initialised in tests).
     document_name: str | None = None
+    # FEAT-021: human-readable source title ("filename, p.N") matching the
+    # title attribute rendered in the prompt context; set only when the
+    # namespace has citations_enabled.
+    title: str | None = None
 
 
 @dataclass

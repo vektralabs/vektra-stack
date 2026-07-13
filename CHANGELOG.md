@@ -19,6 +19,28 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
+## [0.6.0] - 2026-07-13
+
+RAG quality release: parent chunk expansion, retrieval-filter rescue, per-namespace citations, remote TEI providers.
+
+### Added
+
+- **rag**: remote embedding and reranking via HuggingFace Text Embeddings Inference (FEAT-024). `VEKTRA_EMBEDDING_PROVIDER=tei` embeds through a TEI instance (`VEKTRA_TEI_URL`/`VEKTRA_TEI_API_KEY`, native `/embed` API) instead of in-process sentence-transformers, enabling shared host inference and long-window models (bge-m3: 8192 tokens vs MiniLM's 128, which silently truncates 500-token chunks today). `VEKTRA_RERANK_PROVIDER=tei` reranks through TEI `/rerank` (`VEKTRA_RERANK_TEI_URL`/`VEKTRA_RERANK_TEI_API_KEY`). The Qdrant collection is now sized from the active embedding provider's dimensions instead of a hardcoded 384 (latent bug for any non-384 model), with a clear startup error on dimension mismatch against an existing collection. The `cohere` rerank option now actually passes its API key (`VEKTRA_RERANK_API_KEY`); it was dead as wired.
+- **rag**: optional retrieval-filter rescue for multi-part questions (TECH-007, `VEKTRA_RETRIEVAL_RESCUE_TOP_K` + `VEKTRA_RETRIEVAL_RESCUE_FLOOR`, default off). When `VEKTRA_MIN_RELEVANCE_SCORE` empties the candidate set, keep the top-N chunks above an absolute floor instead of refusing: the cross-encoder scores each partial-answer chunk of a comparative/multi-part question below the threshold (it answers only one part), so on the eval corpus 9/10 multi-chunk questions died at the filter with `before=5 after=0` despite 90% raw retrieval hit. With the rescue, borderline sets reach the LLM, which arbitrates via strict grounding. The `retrieval_filter` trace step now records a `rescued` count.
+- **rag**: optional per-namespace inline source citations (FEAT-021, `citations_enabled` in the namespace config JSONB via `PATCH /api/v1/admin/namespaces/{id}/config`, default off, advanced pipeline only). When enabled, the system prompt instructs the LLM to add inline `[n]` markers matching the `<source id>` elements, the context template carries a `title` attribute ("filename, p.N"), and each returned source includes a `title` field; the learn widget renders the markers as superscripts with a tooltip. Default-off renders byte-identical prompts; `prompt_version` changes anyway because the template files changed (trace comparability note).
+- **rag**: optional parent chunk expansion in the advanced query pipeline (FEAT-017, `VEKTRA_PARENT_EXPANSION_ENABLED`, default off). With `VEKTRA_CHUNKING_STRATEGY=dual`, retrieved child chunks are replaced with their parent chunk's text after the retrieval filter and before token budgeting; children of the same parent collapse into the highest-scored one. Parent-child linkage is now actually persisted (deterministic `uuid5(doc_id, position)` ids, `parent_id` in the Qdrant payload and in the pgvector column), a new `VectorStoreProvider.retrieve()` fetches chunks by id, and the trace records `children_expanded`/`siblings_merged`/`parents_fetched` in a `parent_expansion` step.
+
+### Changed
+
+- **index**: vector search now excludes parent-level chunks (`chunk_level=parent`) in both providers; parents are context material fetched by id during expansion, not retrieval targets. Only affects documents ingested with `dual` chunking, whose parents previously polluted search results.
+- **index**: pgvector `store()` honors caller-provided UUID chunk ids (deterministic ids from ingest) instead of always generating random ones; non-UUID ids still fall back to random.
+
+### Fixed
+
+- **docker**: the `INSTALL_UNSTRUCTURED=true` image variant builds again (BUG-022). torchvision (transitive via unstructured-inference) resolved from PyPI with CUDA-built wheels while torch is pinned to the CPU index, crashing the build with `operator torchvision::nms does not exist`. It is now declared in the `ocr` extra and pinned to the pytorch-cpu index; a new path-filtered CI workflow builds the OCR variant so it cannot silently regress.
+- **index**: `/api/v1/search` now resolves the embedding, sparse-embedding, and vector-store providers from the ProviderRegistry instead of hardcoding pgvector and reading a never-populated `app.state` attribute (BUG-021). In Qdrant deployments the endpoint returned zero results (it searched the empty `document_chunks` table) and hybrid mode always fell back to dense; the RAG pipeline (`/api/v1/query`) was unaffected. Found by the Sprint 3 baseline `make eval-retrieval` run.
+- **tests**: unit tests are now hermetic against the developer's local `.env` (DEBT-025). Importing litellm during pytest collection loads `.env` into the process environment, which made 4 default-assertion tests in `vektra-shared` fail on dev machines while CI stayed green. An autouse fixture in `vektra-shared/tests/conftest.py` scrubs ambient `VEKTRA_*` variables; production settings loading is unchanged. The fixture is replicated in `vektra-core` and `vektra-ingest` (FEAT-017 surfaced the same leak there: ambient `VEKTRA_CHUNKING_STRATEGY=dual` broke 12 chunker and pipeline-default tests).
+
 ## [0.5.1] - 2026-07-12
 
 Security hardening: DEBT-024 dependency sweep, workflow permissions, admin login hardening.

@@ -1,12 +1,17 @@
-"""Unit tests for RerankerService and create_reranker factory."""
+"""Unit tests for RerankerService, TEIRerankerService and create_reranker."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import httpx
+import pytest
+
 from vektra_core.reranker import (
     RerankerService,
     RerankResult,
+    TEIRerankerService,
     _default_model_for_provider,
     _sigmoid,
     create_reranker,
@@ -242,3 +247,83 @@ def test_sigmoid_extreme_values_no_overflow():
     """Numerically stable sigmoid must not overflow on extreme logits."""
     assert _sigmoid(1000.0) == 1.0
     assert _sigmoid(-1000.0) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TEIRerankerService (FEAT-024)
+# ---------------------------------------------------------------------------
+
+
+def _tei_client(handler) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://tei.test"
+    )
+
+
+async def test_tei_rerank_empty_results():
+    service = TEIRerankerService(url="http://tei.test", _client=_tei_client(None))
+    result = await service.rerank("query", [], top_k=5)
+    assert result.top_k == []
+    assert result.all_scores == []
+
+
+async def test_tei_rerank_orders_and_normalizes():
+    results = [
+        _make_result(0.5, "doc A"),
+        _make_result(0.3, "doc B"),
+        _make_result(0.9, "doc C"),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert request.url.path == "/rerank"
+        assert body["query"] == "test query"
+        assert body["texts"] == ["doc A", "doc B", "doc C"]
+        assert body["raw_scores"] is False
+        return httpx.Response(
+            200,
+            json=[
+                {"index": 2, "score": 0.95},
+                {"index": 0, "score": 0.80},
+                {"index": 1, "score": 0.10},
+            ],
+        )
+
+    service = TEIRerankerService(url="http://tei.test", _client=_tei_client(handler))
+    result = await service.rerank("test query", results, top_k=2)
+
+    assert len(result.top_k) == 2
+    assert result.top_k[0].chunk_id == results[2].chunk_id
+    assert result.top_k[0].score == 0.95
+    assert result.top_k[0].original_score == 0.9  # BUG-015 preserved
+    assert result.top_k[1].chunk_id == results[0].chunk_id
+    assert len(result.all_scores) == 3
+
+
+async def test_tei_rerank_raises_on_http_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    service = TEIRerankerService(url="http://tei.test", _client=_tei_client(handler))
+    with pytest.raises(httpx.HTTPStatusError):
+        await service.rerank("q", [_make_result(0.5)], top_k=2)
+
+
+def test_create_reranker_tei_provider():
+    config = RerankConfig(
+        VEKTRA_RERANK_ENABLED=True,
+        VEKTRA_RERANK_PROVIDER="tei",
+        VEKTRA_RERANK_TEI_URL="http://tei.test",
+    )
+    reranker = create_reranker(config)
+    assert isinstance(reranker, TEIRerankerService)
+
+
+def test_create_reranker_tei_invalid_url_returns_none():
+    """A malformed TEI URL degrades to None instead of aborting startup."""
+    config = RerankConfig(
+        VEKTRA_RERANK_ENABLED=True,
+        VEKTRA_RERANK_PROVIDER="tei",
+        VEKTRA_RERANK_TEI_URL="http://[invalid",
+    )
+    assert create_reranker(config) is None

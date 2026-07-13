@@ -150,5 +150,12 @@ function renderInline(text) {
         }
         return `${label} (${url})`;
       })
+      // Citation markers [n] (FEAT-021): must run after links so [label](url)
+      // is already consumed. addSources() attaches the source title as a
+      // tooltip when the namespace has citations enabled.
+      .replace(
+        /\[(\d{1,2})\]/g,
+        '<sup class="vektra-cite" data-cite="$1">[$1]</sup>',
+      )
   );
 }

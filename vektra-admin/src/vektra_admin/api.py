@@ -63,6 +63,7 @@ ALLOWED_CONFIG_VALUES: dict[str, set[str]] = {
 }
 ALLOWED_CONFIG_TYPES: dict[str, type] = {
     "show_sources": bool,
+    "citations_enabled": bool,
 }
 assert ALLOWED_CONFIG_VALUES.keys().isdisjoint(ALLOWED_CONFIG_TYPES.keys()), (
     "Each config key must appear in exactly one of "
@@ -660,6 +661,8 @@ async def get_namespace_config(
             "show_sources": getattr(
                 request.app.state, "learn_show_sources_default", True
             ),
+            # FEAT-021: no env var, hardcoded default off
+            "citations_enabled": False,
         },
     )
     return NamespaceConfigDetailResponse(

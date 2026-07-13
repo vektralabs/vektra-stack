@@ -49,6 +49,39 @@ async def resolve_grounding_mode(
     return default_mode
 
 
+async def resolve_citations_enabled(
+    namespace: str,
+    session_factory: Any,
+    default_value: bool = False,
+) -> bool:
+    """Resolve citations_enabled: namespace JSONB config > default (FEAT-021).
+
+    There is no env var for this setting: citations are a per-namespace
+    deployment choice (academic/compliance contexts), default off.
+
+    Returns *default_value* on any error (namespace not found, DB error,
+    non-boolean value in config).
+    """
+    try:
+        async with session_factory() as session:
+            result = await session.execute(
+                text("SELECT config FROM namespaces WHERE id = :ns"),
+                {"ns": namespace},
+            )
+            row = result.scalar_one_or_none()
+            if row and isinstance(row, dict):
+                ns_value = row.get("citations_enabled")
+                if isinstance(ns_value, bool):
+                    return ns_value
+    except Exception as exc:
+        log.debug(
+            "citations_enabled_resolution_fallback",
+            namespace=namespace,
+            error=str(exc),
+        )
+    return default_value
+
+
 async def resolve_show_sources(
     namespace: str,
     session_factory: Any,

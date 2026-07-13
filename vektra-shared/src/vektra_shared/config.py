@@ -88,6 +88,16 @@ class EmbeddingConfig(BaseSettings):
         alias="VEKTRA_SPARSE_EMBEDDING_MODEL",
         description="Sparse embedding model name. Phase 2 only.",
     )
+    tei_url: str = Field(
+        "http://localhost:8080",
+        alias="VEKTRA_TEI_URL",
+        description="TEI server base URL (native API, no /v1 suffix). Used when embedding_provider='tei' (FEAT-024).",
+    )
+    tei_api_key: str | None = Field(
+        None,
+        alias="VEKTRA_TEI_API_KEY",
+        description="Bearer token for the TEI embedding server (--api-key). Optional.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
@@ -158,7 +168,7 @@ class RerankConfig(BaseSettings):
     provider: str = Field(
         "cross-encoder",
         alias="VEKTRA_RERANK_PROVIDER",
-        description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere'.",
+        description="Reranking provider: 'flashrank', 'cross-encoder', 'cohere', 'tei'.",
     )
     model: str | None = Field(
         "BAAI/bge-reranker-v2-m3",
@@ -170,6 +180,21 @@ class RerankConfig(BaseSettings):
         ge=1,
         alias="VEKTRA_RERANK_TOP_K",
         description="Final top-k results after reranking.",
+    )
+    api_key: str | None = Field(
+        None,
+        alias="VEKTRA_RERANK_API_KEY",
+        description="API key for API-based rerank providers (e.g. 'cohere').",
+    )
+    tei_url: str = Field(
+        "http://localhost:8080",
+        alias="VEKTRA_RERANK_TEI_URL",
+        description="TEI reranker server base URL (one TEI instance per model). Used when provider='tei' (FEAT-024).",
+    )
+    tei_api_key: str | None = Field(
+        None,
+        alias="VEKTRA_RERANK_TEI_API_KEY",
+        description="Bearer token for the TEI reranker server. Optional.",
     )
 
     model_config = SettingsConfigDict(
@@ -196,6 +221,24 @@ class QueryPipelineConfig(BaseSettings):
         True,
         alias="VEKTRA_CHUNK_DEDUP_ENABLED",
         description="Enable overlap deduplication for adjacent chunks from the same document.",
+    )
+    retrieval_rescue_top_k: int = Field(
+        0,
+        ge=0,
+        alias="VEKTRA_RETRIEVAL_RESCUE_TOP_K",
+        description="When min_relevance_score empties the candidate set, keep this many top-scored chunks above the rescue floor instead of refusing (TECH-007). 0 disables rescue (default).",
+    )
+    retrieval_rescue_floor: float = Field(
+        0.02,
+        ge=0.0,
+        le=1.0,
+        alias="VEKTRA_RETRIEVAL_RESCUE_FLOOR",
+        description="Absolute minimum score for rescued chunks: candidates below this are never rescued. Only used when retrieval_rescue_top_k > 0.",
+    )
+    parent_expansion_enabled: bool = Field(
+        False,
+        alias="VEKTRA_PARENT_EXPANSION_ENABLED",
+        description="Replace retrieved child chunks with their parent chunk text before prompt construction (FEAT-017). Requires dual chunking at ingest time.",
     )
     response_token_reserve: int = Field(
         2048,
@@ -481,6 +524,8 @@ class VektraSettings(BaseSettings):
     sparse_embedding_model: str | None = Field(
         None, alias="VEKTRA_SPARSE_EMBEDDING_MODEL"
     )
+    tei_url: str = Field("http://localhost:8080", alias="VEKTRA_TEI_URL")
+    tei_api_key: str | None = Field(None, alias="VEKTRA_TEI_API_KEY")
 
     # Vector store
     vector_store_provider: str = Field("pgvector", alias="VEKTRA_VECTOR_STORE_PROVIDER")
@@ -493,6 +538,11 @@ class VektraSettings(BaseSettings):
     query_pipeline: str = Field("advanced", alias="VEKTRA_QUERY_PIPELINE")
     min_relevance_score: float = Field(0.15, alias="VEKTRA_MIN_RELEVANCE_SCORE")
     chunk_dedup_enabled: bool = Field(True, alias="VEKTRA_CHUNK_DEDUP_ENABLED")
+    retrieval_rescue_top_k: int = Field(0, alias="VEKTRA_RETRIEVAL_RESCUE_TOP_K")
+    retrieval_rescue_floor: float = Field(0.02, alias="VEKTRA_RETRIEVAL_RESCUE_FLOOR")
+    parent_expansion_enabled: bool = Field(
+        False, alias="VEKTRA_PARENT_EXPANSION_ENABLED"
+    )
     response_token_reserve: int = Field(2048, alias="VEKTRA_RESPONSE_TOKEN_RESERVE")
     context_chunk_ratio: float = Field(0.6, alias="VEKTRA_CONTEXT_CHUNK_RATIO")
     prompt_templates_dir: str | None = Field(None, alias="VEKTRA_PROMPT_TEMPLATES_DIR")
@@ -570,6 +620,20 @@ class VektraSettings(BaseSettings):
     def validate_relevance_score(cls, v: float) -> float:
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"min_relevance_score must be between 0 and 1, got {v}")
+        return v
+
+    @field_validator("retrieval_rescue_floor")
+    @classmethod
+    def validate_rescue_floor(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"retrieval_rescue_floor must be between 0 and 1, got {v}")
+        return v
+
+    @field_validator("retrieval_rescue_top_k")
+    @classmethod
+    def validate_rescue_top_k(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"retrieval_rescue_top_k must be >= 0, got {v}")
         return v
 
     @field_validator("prompt_grounding_mode")

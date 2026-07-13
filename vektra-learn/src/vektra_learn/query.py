@@ -81,6 +81,7 @@ def pipeline_response_to_course_response(
                 "score": s.score,
                 "snippet": s.snippet,
                 "document_name": s.document_name,  # FEAT-012
+                "title": s.title,  # FEAT-021: citation tooltip label
             }
             for s in resp.sources
         ],

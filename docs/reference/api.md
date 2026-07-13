@@ -194,6 +194,7 @@ Request body (flat dict, one entry per config key):
 |-------|------|----------------|-------------|
 | `grounding_mode` | string or null | `"strict"`, `"hybrid"`, `null` | RAG grounding policy. `null` removes the key and falls back to `VEKTRA_PROMPT_GROUNDING_MODE`. |
 | `show_sources` | bool or null | `true`, `false`, `null` | Widget citation visibility (FEAT-014). `null` removes the key and falls back to `VEKTRA_LEARN_SHOW_SOURCES`. The API always returns the full sources list; the flag only instructs the widget whether to render them. Resolution chain: client `data-show-sources` attr > `namespaces.config.show_sources` > `VEKTRA_LEARN_SHOW_SOURCES` env > hardcoded `true`. |
+| `citations_enabled` | bool or null | `true`, `false`, `null` | Inline source citations (FEAT-021, advanced pipeline only). When `true`, the LLM is instructed to add `[n]` markers matching the context sources, and each returned source carries a `title` ("filename, p.N") for tooltip rendering. No env var: `null` (or absent) means disabled. Default-off leaves prompts unchanged. |
 
 Behavior:
 - **Partial update**: keys not present in the body are preserved.
@@ -340,6 +341,7 @@ Response:
 | `answer` | LLM-generated answer grounded in sources |
 | `sources` | Ranked list of source chunks |
 | `sources[].document_name` | Filename of the source document (e.g. `lecture-07.pdf`), or `null` when the document join returns no row. Soft-deleted documents (REQ-057) keep their citation with an `(archived)` suffix so traceability is preserved. |
+| `sources[].title` | FEAT-021: human-readable citation label ("filename, p.N") matching the `[n]` markers in the answer. Set only when the namespace has `citations_enabled`; `null` otherwise. |
 | `conversation_id` | Echoed back if provided in request |
 | `context_only` | `true` if LLM failed and raw sources returned |
 | `no_relevant_context` | `true` if no chunks exceeded relevance threshold |
@@ -522,6 +524,7 @@ Response (HTTP 200, JSON):
 |-------|-------------|
 | `show_sources` | Server-resolved citation-visibility hint for the widget (FEAT-014). The full `sources` list is always returned regardless; the widget uses the flag to decide whether to render the citations block. See the resolution chain in [Namespaces PATCH](#patch-apiv1adminnamespacesnamespace_idconfig). |
 | `sources[].document_name` | Filename of the source document. Soft-deleted documents (REQ-057) keep an `(archived)` suffix so traceability is preserved. The field is `null` when the document join returns no row. |
+| `sources[].title` | FEAT-021: citation label ("filename, p.N") for the `[n]` markers, `null` unless the namespace has `citations_enabled`. |
 
 #### Streaming
 

@@ -163,3 +163,144 @@ class TestPgvectorIndexVersionFilter:
 
         provider = PgvectorProvider(active_index_version=2)
         assert provider._active_index_version == 2
+
+
+class TestPgvectorParentChunks:
+    """Deterministic ids, parent linkage, search exclusion, retrieve (FEAT-017)."""
+
+    def _make_session(self):
+        session = AsyncMock()
+        session.flush = AsyncMock()
+        session.execute = AsyncMock()
+        session.add = MagicMock()
+        return session
+
+    @pytest.mark.asyncio
+    async def test_store_honors_deterministic_ids_and_parent_linkage(self):
+        """store() keeps caller-provided uuid ids and fills the parent_id column."""
+        from vektra_index.providers.pgvector import PgvectorProvider
+
+        session = self._make_session()
+        provider = PgvectorProvider()
+
+        parent_uuid = uuid4()
+        child_uuid = uuid4()
+        chunks = [
+            ChunkEmbedding(
+                chunk_id=str(parent_uuid),
+                text="parent",
+                dense=[0.1] * 384,
+                metadata={"chunk_level": "parent"},
+            ),
+            ChunkEmbedding(
+                chunk_id=str(child_uuid),
+                text="child",
+                dense=[0.1] * 384,
+                metadata={"chunk_level": "child"},
+                parent_id=str(parent_uuid),
+            ),
+        ]
+
+        with patch("vektra_index.models.DocumentChunkOrm") as MockOrm:
+            MockOrm.return_value = MagicMock()
+            result = await provider.store(session, "default", uuid4(), chunks)
+
+        assert result == [str(parent_uuid), str(child_uuid)]
+        orm_kwargs = [c.kwargs for c in MockOrm.call_args_list]
+        assert orm_kwargs[0]["id"] == parent_uuid
+        assert orm_kwargs[0]["parent_id"] is None
+        assert orm_kwargs[1]["id"] == child_uuid
+        assert orm_kwargs[1]["parent_id"] == parent_uuid
+
+    @pytest.mark.asyncio
+    async def test_store_falls_back_to_random_id_on_non_uuid(self):
+        """Non-UUID caller ids (external store-chunks callers) get random uuids."""
+        from vektra_index.providers.pgvector import PgvectorProvider
+
+        session = self._make_session()
+        provider = PgvectorProvider()
+
+        chunks = [
+            ChunkEmbedding(
+                chunk_id="not-a-uuid",
+                text="x",
+                dense=[0.1] * 384,
+                metadata={},
+                parent_id="also-not-a-uuid",
+            ),
+        ]
+
+        with patch("vektra_index.models.DocumentChunkOrm") as MockOrm:
+            MockOrm.return_value = MagicMock()
+            result = await provider.store(session, "default", uuid4(), chunks)
+
+        UUID(result[0])  # random but valid
+        assert MockOrm.call_args.kwargs["parent_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_dense_search_excludes_parent_chunks(self):
+        """The dense search SQL filters out chunk_level=parent rows."""
+        from sqlalchemy.dialects import postgresql
+
+        from vektra_index.providers.pgvector import PgvectorProvider
+        from vektra_shared.types import QueryEmbedding
+
+        session = self._make_session()
+        empty_result = MagicMock()
+        empty_result.all.return_value = []
+        session.execute = AsyncMock(return_value=empty_result)
+
+        provider = PgvectorProvider()
+        await provider.search(
+            session, "default", QueryEmbedding(dense=[0.1] * 384), top_k=5
+        )
+
+        stmt = session.execute.call_args.args[0]
+        compiled = stmt.compile(dialect=postgresql.dialect())
+        assert "IS DISTINCT FROM" in str(compiled)
+        # The JSONB accessor key and the excluded value are bind parameters
+        assert "chunk_level" in compiled.params.values()
+        assert "parent" in compiled.params.values()
+
+    @pytest.mark.asyncio
+    async def test_retrieve_maps_rows_and_skips_invalid_ids(self):
+        from vektra_index.providers.pgvector import PgvectorProvider
+
+        session = self._make_session()
+        parent_uuid = uuid4()
+        doc_id = uuid4()
+        row = FakeRow(
+            id=parent_uuid,
+            document_id=doc_id,
+            content="parent text",
+            chunk_metadata={"chunk_level": "parent"},
+            parent_id=None,
+            score=0.0,
+            document_version=1,
+        )
+        rows_result = MagicMock()
+        rows_result.all.return_value = [row]
+        session.execute = AsyncMock(return_value=rows_result)
+
+        provider = PgvectorProvider()
+        results = await provider.retrieve(
+            session, "default", [str(parent_uuid), "not-a-uuid"]
+        )
+
+        assert len(results) == 1
+        assert results[0].chunk_id == str(parent_uuid)
+        assert results[0].score == 0.0
+        assert results[0].text_snippet == "parent text"
+        assert results[0].parent_id is None
+
+    @pytest.mark.asyncio
+    async def test_retrieve_all_invalid_ids_returns_empty(self):
+        from vektra_index.providers.pgvector import PgvectorProvider
+
+        session = self._make_session()
+        provider = PgvectorProvider()
+
+        results = await provider.retrieve(session, "default", ["nope", "still-nope"])
+
+        assert results == []
+        session.execute.assert_not_called()

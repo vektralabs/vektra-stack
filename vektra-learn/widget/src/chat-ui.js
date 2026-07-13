@@ -408,6 +408,19 @@ export class ChatUI {
     const msgEl = msgOrStream.el || msgOrStream;
     if (!sources || sources.length === 0) return;
 
+    // FEAT-021: link [n] citation markers in the answer to their source.
+    // Marker order matches the sources order (both follow the prompt's
+    // budget-selected chunk order), so [n] -> sources[n-1].
+    for (const cite of msgEl.querySelectorAll("sup.vektra-cite")) {
+      const idx = parseInt(cite.getAttribute("data-cite"), 10) - 1;
+      const src = sources[idx];
+      const label = src && (src.title || src.document_name);
+      if (label) {
+        cite.title = label;
+        cite.classList.add("linked");
+      }
+    }
+
     const container = document.createElement("div");
     container.className = "vektra-chat-sources";
 

@@ -31,6 +31,7 @@ from vektra_app import __version__
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
 from vektra_shared.errors import ERR_CONFIG_001, ErrorCategory, ErrorResponse
+from vektra_shared.protocols import EmbeddingProvider
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.startup import (
     StartupValidationError,
@@ -126,15 +127,31 @@ async def _step_5_register_providers(
     registry.register("llm", "default", llm_provider)
 
     # --- Embedding ---
-    from vektra_index.providers.sentence_transformers import (
-        SentenceTransformersProvider,
-    )
+    embedding_provider: EmbeddingProvider
+    if settings.embedding_provider == "tei":
+        from vektra_index.providers.tei import TEIEmbeddingProvider
 
-    embedding_provider = SentenceTransformersProvider(
-        model_name=settings.embedding_model
-    )
-    registry.register("embedding", "default", embedding_provider)
-    registry.register("embedding", "sentence-transformers", embedding_provider)
+        embedding_provider = TEIEmbeddingProvider(
+            url=settings.tei_url,
+            api_key=settings.tei_api_key,
+        )
+        registry.register("embedding", "default", embedding_provider)
+        registry.register("embedding", "tei", embedding_provider)
+        log.info(
+            "embedding_registered",
+            provider="tei",
+            url=_redact_url(settings.tei_url),
+        )
+    else:
+        from vektra_index.providers.sentence_transformers import (
+            SentenceTransformersProvider,
+        )
+
+        embedding_provider = SentenceTransformersProvider(
+            model_name=settings.embedding_model
+        )
+        registry.register("embedding", "default", embedding_provider)
+        registry.register("embedding", "sentence-transformers", embedding_provider)
 
     # --- Vector store ---
     from vektra_index.adapters import VectorStoreServiceAdapter
@@ -168,6 +185,10 @@ async def _step_5_register_providers(
             api_key=settings.qdrant_api_key,
             collection_name=settings.qdrant_collection,
             active_index_version=settings.active_index_version,
+            # FEAT-024: size the collection from the active embedding model
+            # instead of the hardcoded 384 default (latent bug for any
+            # non-384 model; bge-m3 via TEI is 1024).
+            dense_dimensions=embedding_provider.dimensions(),
         )
         registry.register("vector_store", "default", qdrant_provider)
         registry.register("vector_store", "qdrant", qdrant_provider)
@@ -246,6 +267,9 @@ async def _step_5_register_providers(
 
     pipeline_config = QueryPipelineConfig()
     reranker = create_reranker(pipeline_config.rerank)
+    if reranker is not None:
+        # Registered so the lifespan teardown can close remote clients (FEAT-024)
+        registry.register("reranker", "default", reranker)
 
     # --- Query pipeline (Phase 2: select simple or advanced) ---
     templates_dir = (
@@ -538,6 +562,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     log.info("shutdown_started")
+    # Close remote provider HTTP clients (TEI, FEAT-024) best-effort
+    for category in ("embedding", "reranker"):
+        try:
+            provider = registry.get(category, "default")
+        except Exception:
+            continue
+        aclose = getattr(provider, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception as exc:
+                log.warning("provider_close_failed", category=category, error=str(exc))
     from vektra_shared.db import get_engine
 
     engine = get_engine()

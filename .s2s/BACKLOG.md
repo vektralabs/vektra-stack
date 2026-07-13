@@ -422,18 +422,20 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 ### INFRA-007: Publish versioned container images on release (GHCR)
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-12
+**Status**: completed | **Priority**: medium | **Created**: 2026-07-12 | **Completed**: 2026-07-13
 **Origin**: system-instance deployment 2026-07-12 - updates currently require a local `docker build` from a git checkout on every host.
 
 **Context**: no workflow publishes images (`release.yml` is a disabled placeholder, `if: false`, "Phase 1 releases are tagged manually"); the integration workflow builds only for its own tests. Deployments (e.g. the workstation rootful instance) must clone + build locally, which is slow and duplicates work per host.
 
 **Proposed approach**: GitHub Actions workflow on tag push (`v*`): build the image (both `INSTALL_UNSTRUCTURED=true` and `false` variants, e.g. tags `X.Y.Z` and `X.Y.Z-ocr`) and push to `ghcr.io/vektralabs/vektra`. Deployment update flow becomes `docker compose pull && docker compose up -d`. Consider enabling the semantic-release placeholder later; out of scope here.
 
+**Resolution**: added `.github/workflows/publish.yml`, triggered on `v*` tag push only (the manual tagging flow is unchanged; `release.yml` stays a disabled placeholder). A matrix job builds the standard and `INSTALL_UNSTRUCTURED=true` variants via `docker/build-push-action`, pushes `ghcr.io/vektralabs/vektra:{version}` and `:{version}-ocr` (version = tag stripped of its leading `v`) with GHA layer caching (`type=gha`, per-variant scope) and OCI `version`/`revision` labels via `docker/metadata-action`, authenticated with the built-in `GITHUB_TOKEN` (`contents: read`, `packages: write`, no new secrets). No `latest` tag, per the AC. Since the existing `docker-compose.yml` builds the `vektra` service from source (`build:` + static `image: vektra-stack`), pull-based deployment needed a way to point compose at the published image without touching that file: added `deploy/docker-compose.image.yml.example` (same pattern as the existing `deploy/traefik` and `deploy/nginx` examples), an overlay that resets `build:` and sets `image: ghcr.io/vektralabs/vektra:${VEKTRA_VERSION}`. Documented in `docs/getting-started/index.md` ("Alternative: pull a published image") with a pointer from `README.md`. Verified the overlay merges correctly with `docker compose config` (both against a scratch compose file and the repo's actual `docker-compose.yml`).
+
 **Acceptance criteria**:
-- [ ] Tag push publishes `ghcr.io/vektralabs/vektra:{version}` and `{version}-ocr` (multi-stage cache enabled)
-- [ ] Image labels carry version + commit (OCI labels)
-- [ ] README/deploy docs updated: pull-based deployment documented
-- [ ] Existing tag flow unchanged (manual tagging still cuts the release)
+- [x] Tag push publishes `ghcr.io/vektralabs/vektra:{version}` and `{version}-ocr` (multi-stage cache enabled)
+- [x] Image labels carry version + commit (OCI labels)
+- [x] README/deploy docs updated: pull-based deployment documented
+- [x] Existing tag flow unchanged (manual tagging still cuts the release)
 
 ---
 

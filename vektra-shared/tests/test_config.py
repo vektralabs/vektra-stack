@@ -223,6 +223,14 @@ class TestVektraSettings:
         with pytest.raises(ValidationError, match="context_chunk_ratio"):
             self._make(VEKTRA_CONTEXT_CHUNK_RATIO=1.0)
 
+    def test_rescue_top_k_negative_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="retrieval_rescue_top_k"):
+            self._make(VEKTRA_RETRIEVAL_RESCUE_TOP_K=-1)
+
+    def test_rescue_floor_above_one_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="retrieval_rescue_floor"):
+            self._make(VEKTRA_RETRIEVAL_RESCUE_FLOOR=1.5)
+
     def test_min_relevance_score_valid_zero(self) -> None:
         s = self._make(VEKTRA_MIN_RELEVANCE_SCORE=0.0)
         assert s.min_relevance_score == 0.0

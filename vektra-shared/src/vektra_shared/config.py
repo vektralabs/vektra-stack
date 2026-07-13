@@ -602,6 +602,13 @@ class VektraSettings(BaseSettings):
             raise ValueError(f"retrieval_rescue_floor must be between 0 and 1, got {v}")
         return v
 
+    @field_validator("retrieval_rescue_top_k")
+    @classmethod
+    def validate_rescue_top_k(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"retrieval_rescue_top_k must be >= 0, got {v}")
+        return v
+
     @field_validator("prompt_grounding_mode")
     @classmethod
     def validate_prompt_grounding_mode(cls, v: str) -> str:

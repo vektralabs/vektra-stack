@@ -181,6 +181,8 @@ class TestPgvectorParentChunks:
         from vektra_index.providers.pgvector import PgvectorProvider
 
         session = self._make_session()
+        added_orms = []
+        session.add.side_effect = added_orms.append
         provider = PgvectorProvider()
 
         parent_uuid = uuid4()
@@ -201,16 +203,13 @@ class TestPgvectorParentChunks:
             ),
         ]
 
-        with patch("vektra_index.models.DocumentChunkOrm") as MockOrm:
-            MockOrm.return_value = MagicMock()
-            result = await provider.store(session, "default", uuid4(), chunks)
+        result = await provider.store(session, "default", uuid4(), chunks)
 
         assert result == [str(parent_uuid), str(child_uuid)]
-        orm_kwargs = [c.kwargs for c in MockOrm.call_args_list]
-        assert orm_kwargs[0]["id"] == parent_uuid
-        assert orm_kwargs[0]["parent_id"] is None
-        assert orm_kwargs[1]["id"] == child_uuid
-        assert orm_kwargs[1]["parent_id"] == parent_uuid
+        assert added_orms[0].id == parent_uuid
+        assert added_orms[0].parent_id is None
+        assert added_orms[1].id == child_uuid
+        assert added_orms[1].parent_id == parent_uuid
 
     @pytest.mark.asyncio
     async def test_store_falls_back_to_random_id_on_non_uuid(self):
@@ -218,6 +217,8 @@ class TestPgvectorParentChunks:
         from vektra_index.providers.pgvector import PgvectorProvider
 
         session = self._make_session()
+        added_orms = []
+        session.add.side_effect = added_orms.append
         provider = PgvectorProvider()
 
         chunks = [
@@ -230,12 +231,10 @@ class TestPgvectorParentChunks:
             ),
         ]
 
-        with patch("vektra_index.models.DocumentChunkOrm") as MockOrm:
-            MockOrm.return_value = MagicMock()
-            result = await provider.store(session, "default", uuid4(), chunks)
+        result = await provider.store(session, "default", uuid4(), chunks)
 
         UUID(result[0])  # random but valid
-        assert MockOrm.call_args.kwargs["parent_id"] is None
+        assert added_orms[0].parent_id is None
 
     @pytest.mark.asyncio
     async def test_dense_search_excludes_parent_chunks(self):

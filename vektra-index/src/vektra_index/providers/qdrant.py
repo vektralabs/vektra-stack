@@ -118,7 +118,11 @@ class QdrantVectorStoreProvider:
         if self._collection_name in existing:
             info = await self._client.get_collection(self._collection_name)
             vectors = info.config.params.vectors
-            dense = vectors.get("dense") if isinstance(vectors, dict) else None
+            dense = (
+                vectors.get("dense")
+                if isinstance(vectors, dict)
+                else getattr(vectors, "dense", None)
+            )
             existing_size = getattr(dense, "size", None)
             if existing_size is not None and existing_size != self._dense_dimensions:
                 raise ValueError(

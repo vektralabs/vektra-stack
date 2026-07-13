@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import math
 from typing import Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -30,6 +31,14 @@ _PROVIDER_TO_MODEL_TYPE = {
     "cross-encoder": "cross-encoder",
     "cohere": "APIRanker",
 }
+
+
+def _redact_url(url: str) -> str:
+    """Return scheme://hostname:port only, stripping credentials and path."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}"
 
 
 def _sigmoid(x: float) -> float:
@@ -176,6 +185,10 @@ class TEIRerankerService:
         ordered = [(int(item["index"]), float(item["score"])) for item in ranked]
         return _build_rerank_result(results, ordered, top_k)
 
+    async def aclose(self) -> None:
+        """Release the underlying HTTP client (tests and shutdown)."""
+        await self._client.aclose()
+
 
 def create_reranker(config: RerankConfig) -> RerankerProtocol | None:
     """Create a reranker service from config. Returns None if unavailable."""
@@ -184,8 +197,15 @@ def create_reranker(config: RerankConfig) -> RerankerProtocol | None:
         return None
 
     if config.provider == "tei":
-        log.info("reranker_loaded", provider="tei", url=config.tei_url)
-        return TEIRerankerService(url=config.tei_url, api_key=config.tei_api_key)
+        try:
+            service = TEIRerankerService(url=config.tei_url, api_key=config.tei_api_key)
+            log.info("reranker_loaded", provider="tei", url=_redact_url(config.tei_url))
+        except Exception as exc:
+            # Same graceful-degradation contract as the in-process path:
+            # a bad reranker config must not abort startup.
+            log.warning("reranker_init_failed", provider="tei", error=str(exc))
+            return None
+        return service
 
     model_type = _PROVIDER_TO_MODEL_TYPE.get(config.provider, config.provider)
     model_name = config.model or _default_model_for_provider(config.provider)

@@ -317,3 +317,13 @@ def test_create_reranker_tei_provider():
     )
     reranker = create_reranker(config)
     assert isinstance(reranker, TEIRerankerService)
+
+
+def test_create_reranker_tei_invalid_url_returns_none():
+    """A malformed TEI URL degrades to None instead of aborting startup."""
+    config = RerankConfig(
+        VEKTRA_RERANK_ENABLED=True,
+        VEKTRA_RERANK_PROVIDER="tei",
+        VEKTRA_RERANK_TEI_URL="http://[invalid",
+    )
+    assert create_reranker(config) is None

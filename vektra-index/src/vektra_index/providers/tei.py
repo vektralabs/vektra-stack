@@ -57,6 +57,10 @@ class TEIEmbeddingProvider:
         resp = await self._client.post("/embed", json={"inputs": texts})
         resp.raise_for_status()
         data: list[list[float]] = resp.json()
+        if data and self._dimensions is None:
+            # Warm the dimensions cache so the startup warmup (embed_query)
+            # makes the later synchronous dimensions() call free.
+            self._dimensions = len(data[0])
         return data
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -93,18 +97,18 @@ class TEIEmbeddingProvider:
     @staticmethod
     def _fetch_dimensions(client: httpx.Client) -> int:
         try:
-            info: dict[str, Any] = client.get("/info").raise_for_status().json()
-            for key in ("embedding_size", "hidden_size"):
-                if isinstance(info.get(key), int):
-                    return int(info[key])
-        except httpx.HTTPStatusError:
-            logger.debug("TEI /info unavailable, probing /embed for dimensions")
-        probe = (
-            client.post("/embed", json={"inputs": ["dim probe"]})
-            .raise_for_status()
-            .json()
-        )
-        return len(probe[0])
+            resp = client.get("/info")
+            resp.raise_for_status()
+            info: Any = resp.json()
+            if isinstance(info, dict):
+                for key in ("embedding_size", "hidden_size"):
+                    if isinstance(info.get(key), int):
+                        return int(info[key])
+        except (httpx.HTTPError, ValueError):
+            logger.debug("TEI /info unavailable or invalid, probing /embed")
+        resp = client.post("/embed", json={"inputs": ["dim probe"]})
+        resp.raise_for_status()
+        return len(resp.json()[0])
 
     async def health_check(self) -> HealthStatus:
         """Verify the TEI server responds and can produce an embedding."""

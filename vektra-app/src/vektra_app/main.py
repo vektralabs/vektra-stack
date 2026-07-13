@@ -267,6 +267,9 @@ async def _step_5_register_providers(
 
     pipeline_config = QueryPipelineConfig()
     reranker = create_reranker(pipeline_config.rerank)
+    if reranker is not None:
+        # Registered so the lifespan teardown can close remote clients (FEAT-024)
+        registry.register("reranker", "default", reranker)
 
     # --- Query pipeline (Phase 2: select simple or advanced) ---
     templates_dir = (
@@ -559,6 +562,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     log.info("shutdown_started")
+    # Close remote provider HTTP clients (TEI, FEAT-024) best-effort
+    for category in ("embedding", "reranker"):
+        try:
+            provider = registry.get(category, "default")
+        except Exception:
+            continue
+        aclose = getattr(provider, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception as exc:
+                log.warning("provider_close_failed", category=category, error=str(exc))
     from vektra_shared.db import get_engine
 
     engine = get_engine()

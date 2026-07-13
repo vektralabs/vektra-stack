@@ -197,6 +197,19 @@ class QueryPipelineConfig(BaseSettings):
         alias="VEKTRA_CHUNK_DEDUP_ENABLED",
         description="Enable overlap deduplication for adjacent chunks from the same document.",
     )
+    retrieval_rescue_top_k: int = Field(
+        0,
+        ge=0,
+        alias="VEKTRA_RETRIEVAL_RESCUE_TOP_K",
+        description="When min_relevance_score empties the candidate set, keep this many top-scored chunks above the rescue floor instead of refusing (TECH-007). 0 disables rescue (default).",
+    )
+    retrieval_rescue_floor: float = Field(
+        0.02,
+        ge=0.0,
+        le=1.0,
+        alias="VEKTRA_RETRIEVAL_RESCUE_FLOOR",
+        description="Absolute minimum score for rescued chunks: candidates below this are never rescued. Only used when retrieval_rescue_top_k > 0.",
+    )
     parent_expansion_enabled: bool = Field(
         False,
         alias="VEKTRA_PARENT_EXPANSION_ENABLED",
@@ -498,6 +511,8 @@ class VektraSettings(BaseSettings):
     query_pipeline: str = Field("advanced", alias="VEKTRA_QUERY_PIPELINE")
     min_relevance_score: float = Field(0.15, alias="VEKTRA_MIN_RELEVANCE_SCORE")
     chunk_dedup_enabled: bool = Field(True, alias="VEKTRA_CHUNK_DEDUP_ENABLED")
+    retrieval_rescue_top_k: int = Field(0, alias="VEKTRA_RETRIEVAL_RESCUE_TOP_K")
+    retrieval_rescue_floor: float = Field(0.02, alias="VEKTRA_RETRIEVAL_RESCUE_FLOOR")
     parent_expansion_enabled: bool = Field(
         False, alias="VEKTRA_PARENT_EXPANSION_ENABLED"
     )
@@ -578,6 +593,13 @@ class VektraSettings(BaseSettings):
     def validate_relevance_score(cls, v: float) -> float:
         if not 0.0 <= v <= 1.0:
             raise ValueError(f"min_relevance_score must be between 0 and 1, got {v}")
+        return v
+
+    @field_validator("retrieval_rescue_floor")
+    @classmethod
+    def validate_rescue_floor(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"retrieval_rescue_floor must be between 0 and 1, got {v}")
         return v
 
     @field_validator("prompt_grounding_mode")

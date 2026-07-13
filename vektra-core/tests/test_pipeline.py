@@ -135,10 +135,13 @@ def test_retrieval_filter_removes_low_score():
         _make_search_result(0.2, "bad chunk"),
         _make_search_result(0.8, "great chunk"),
     ]
-    filtered = _apply_retrieval_filter(results, min_score=0.3, dedup_enabled=False)
+    filtered, rescued = _apply_retrieval_filter(
+        results, min_score=0.3, dedup_enabled=False
+    )
     scores = [r.score for r in filtered]
     assert all(s >= 0.3 for s in scores)
     assert len(filtered) == 2
+    assert rescued == 0
 
 
 def test_retrieval_filter_dedup_removes_near_duplicate():
@@ -148,7 +151,7 @@ def test_retrieval_filter_dedup_removes_near_duplicate():
         _make_search_result(0.9, text_a),
         _make_search_result(0.7, text_b),
     ]
-    filtered = _apply_retrieval_filter(results, min_score=0.3, dedup_enabled=True)
+    filtered, _ = _apply_retrieval_filter(results, min_score=0.3, dedup_enabled=True)
     assert len(filtered) == 1
     assert filtered[0].score == 0.9  # higher-scoring one kept
 
@@ -160,8 +163,88 @@ def test_retrieval_filter_no_dedup_keeps_all():
         _make_search_result(0.9, text_a),
         _make_search_result(0.7, text_b),
     ]
-    filtered = _apply_retrieval_filter(results, min_score=0.3, dedup_enabled=False)
+    filtered, _ = _apply_retrieval_filter(results, min_score=0.3, dedup_enabled=False)
     assert len(filtered) == 2
+
+
+def test_retrieval_filter_rescue_disabled_by_default():
+    results = [
+        _make_search_result(0.09, "part one"),
+        _make_search_result(0.07, "part two"),
+    ]
+    filtered, rescued = _apply_retrieval_filter(
+        results, min_score=0.15, dedup_enabled=False
+    )
+    assert filtered == []
+    assert rescued == 0
+
+
+def test_retrieval_filter_rescue_keeps_top_k_above_floor():
+    results = [
+        _make_search_result(0.004, "below floor"),
+        _make_search_result(0.09, "part one"),
+        _make_search_result(0.05, "part three"),
+        _make_search_result(0.07, "part two"),
+    ]
+    filtered, rescued = _apply_retrieval_filter(
+        results,
+        min_score=0.15,
+        dedup_enabled=False,
+        rescue_top_k=3,
+        rescue_floor=0.02,
+    )
+    assert [r.score for r in filtered] == [0.09, 0.07, 0.05]
+    assert rescued == 3
+
+
+def test_retrieval_filter_rescue_all_below_floor_returns_empty():
+    results = [
+        _make_search_result(0.01, "noise"),
+        _make_search_result(0.005, "more noise"),
+    ]
+    filtered, rescued = _apply_retrieval_filter(
+        results,
+        min_score=0.15,
+        dedup_enabled=False,
+        rescue_top_k=3,
+        rescue_floor=0.02,
+    )
+    assert filtered == []
+    assert rescued == 0
+
+
+def test_retrieval_filter_rescue_not_triggered_when_survivors_exist():
+    results = [
+        _make_search_result(0.5, "strong chunk"),
+        _make_search_result(0.09, "weak chunk"),
+    ]
+    filtered, rescued = _apply_retrieval_filter(
+        results,
+        min_score=0.15,
+        dedup_enabled=False,
+        rescue_top_k=3,
+        rescue_floor=0.02,
+    )
+    assert [r.score for r in filtered] == [0.5]
+    assert rescued == 0
+
+
+def test_retrieval_filter_rescued_chunks_pass_through_dedup():
+    text = "the quick brown fox jumps over the lazy dog and more words here"
+    results = [
+        _make_search_result(0.09, text),
+        _make_search_result(0.07, text + " again"),  # >80% overlap with the first
+    ]
+    filtered, rescued = _apply_retrieval_filter(
+        results,
+        min_score=0.15,
+        dedup_enabled=True,
+        rescue_top_k=3,
+        rescue_floor=0.02,
+    )
+    assert len(filtered) == 1
+    assert filtered[0].score == 0.09
+    assert rescued == 2  # rescued before dedup
 
 
 # ---------------------------------------------------------------------------

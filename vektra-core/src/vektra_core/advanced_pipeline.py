@@ -349,10 +349,12 @@ class AdvancedQueryPipeline:
 
         # Step 5: Retrieval filter (ARCH-056)
         t0 = time.monotonic()
-        filtered = _apply_retrieval_filter(
+        filtered, rescued = _apply_retrieval_filter(
             results,
             min_score=self._config.min_relevance_score,
             dedup_enabled=self._config.chunk_dedup_enabled,
+            rescue_top_k=self._config.retrieval_rescue_top_k,
+            rescue_floor=self._config.retrieval_rescue_floor,
         )
         no_relevant_context = len(filtered) == 0
         steps.append(
@@ -363,6 +365,7 @@ class AdvancedQueryPipeline:
                     "before": len(results),
                     "after": len(filtered),
                     "no_relevant_context": no_relevant_context,
+                    "rescued": rescued,
                 },
             )
         )

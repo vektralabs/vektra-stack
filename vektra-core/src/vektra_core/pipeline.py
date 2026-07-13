@@ -143,20 +143,37 @@ def _apply_retrieval_filter(
     results: list[SearchResult],
     min_score: float,
     dedup_enabled: bool,
-) -> list[SearchResult]:
+    rescue_top_k: int = 0,
+    rescue_floor: float = 0.0,
+) -> tuple[list[SearchResult], int]:
     """Filter by relevance score and remove near-duplicate chunks (ARCH-056).
 
     Step 1: Remove chunks below min_score.
-    Step 2: If dedup_enabled, remove chunks with >80% token overlap with any
+    Step 2: If the threshold empties the set and rescue_top_k > 0, keep the
+            top rescue_top_k chunks scoring >= rescue_floor instead (TECH-007).
+            The threshold is a safety net, not a hard gate: multi-part
+            questions get uniformly low reranker scores (each chunk answers
+            only one part), so a borderline set reaches the LLM, which
+            arbitrates via grounding.
+    Step 3: If dedup_enabled, remove chunks with >80% token overlap with any
             already-selected chunk (keeping higher-scoring ones by processing
             in score-descending order).
 
-    Returns results in score-descending order.
+    Returns (results in score-descending order, count of rescued chunks).
     """
     filtered = [r for r in results if r.score >= min_score]
 
+    rescued = 0
+    if not filtered and rescue_top_k > 0:
+        filtered = sorted(
+            (r for r in results if r.score >= rescue_floor),
+            key=lambda r: r.score,
+            reverse=True,
+        )[:rescue_top_k]
+        rescued = len(filtered)
+
     if not dedup_enabled:
-        return filtered
+        return filtered, rescued
 
     # Process by score descending; keep first occurrence of near-duplicates
     kept: list[SearchResult] = []
@@ -168,7 +185,7 @@ def _apply_retrieval_filter(
         if not is_dup:
             kept.append(candidate)
 
-    return kept
+    return kept, rescued
 
 
 # ---------------------------------------------------------------------------
@@ -417,10 +434,12 @@ class SimpleQueryPipeline:
 
         # Step 3: Retrieval filter
         t0 = time.monotonic()
-        filtered = _apply_retrieval_filter(
+        filtered, rescued = _apply_retrieval_filter(
             results,
             min_score=self._config.min_relevance_score,
             dedup_enabled=self._config.chunk_dedup_enabled,
+            rescue_top_k=self._config.retrieval_rescue_top_k,
+            rescue_floor=self._config.retrieval_rescue_floor,
         )
         no_relevant_context = len(filtered) == 0
         steps.append(
@@ -431,6 +450,7 @@ class SimpleQueryPipeline:
                     "before": len(results),
                     "after": len(filtered),
                     "no_relevant_context": no_relevant_context,
+                    "rescued": rescued,
                 },
             )
         )
@@ -733,10 +753,12 @@ class SimpleQueryPipeline:
 
         # Step 3: Retrieval filter
         t0 = time.monotonic()
-        filtered = _apply_retrieval_filter(
+        filtered, rescued = _apply_retrieval_filter(
             results,
             min_score=self._config.min_relevance_score,
             dedup_enabled=self._config.chunk_dedup_enabled,
+            rescue_top_k=self._config.retrieval_rescue_top_k,
+            rescue_floor=self._config.retrieval_rescue_floor,
         )
         no_relevant_context = len(filtered) == 0
         steps.append(
@@ -747,6 +769,7 @@ class SimpleQueryPipeline:
                     "before": len(results),
                     "after": len(filtered),
                     "no_relevant_context": no_relevant_context,
+                    "rescued": rescued,
                 },
             )
         )

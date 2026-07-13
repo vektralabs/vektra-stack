@@ -17,7 +17,7 @@ Do not construct API calls from memory or guesswork.
 When querying Postgres directly (psql, DB inspection):
 - **Always run `\d table_name` first** to check column names and types. Common pitfalls: `namespace_id` (not `namespace`), `bytea` columns that need decryption, columns that don't exist.
 - **Conversation turns are encrypted**: `question` and `answer` are `pgp_sym_encrypt()`'d. To read them: `SELECT pgp_sym_decrypt(question, '<key>') FROM conversation_turns WHERE ...` using `VEKTRA_CONVERSATION_KEY` from `.env`.
-- **Postgres holds metadata/text, Qdrant holds vectors**: chunk text is in `document_chunks` (Postgres), but vector search runs against Qdrant (check `VEKTRA_QDRANT_URL` and `VEKTRA_QDRANT_COLLECTION` in config for host/port/collection). To inspect vectors or search results, query Qdrant REST API directly. The Qdrant payload uses `namespace_id` as the namespace filter field.
+- **Where chunk text lives depends on the vector store provider**: `document_chunks` (Postgres) is written *only* by the pgvector provider (`providers/pgvector.py`). With `VEKTRA_VECTOR_STORE_PROVIDER=qdrant` that table stays **empty**: the Qdrant provider stores chunk text and metadata in the Qdrant payload (`text`, `namespace_id`, `document_id`, `parent_id`, `metadata.chunk_level`), and Qdrant is the only source of truth for per-chunk content. Postgres still holds `source_documents` (one row per document, with `chunk_count`). So in Qdrant mode, inspect chunks via the Qdrant REST API, not SQL. The Qdrant payload uses `namespace_id` as the namespace filter field. This is also why `reindex` is a no-op in Qdrant mode (BUG-021): it reads the empty `document_chunks` table.
 
 ## Query pipeline vs search endpoint
 

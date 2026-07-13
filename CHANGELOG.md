@@ -22,6 +22,7 @@ Convention (Keep a Changelog 1.1.0):
 ### Fixed
 
 - **index**: `check_provider_registration` (ARCH-057 step 5) is now actually called at startup, and checks the `embedding`/`default` alias instead of a hardcoded `sentence-transformers` name. The function was dead code — nothing called it outside its own unit test — which is why TEI mode (`VEKTRA_EMBEDDING_PROVIDER=tei`) started fine even though the check could never see its provider. Found in review.
+- **docker**: the Qdrant healthcheck (`docker-compose.yml`, `qdrant` service) shelled out to `curl`, which the `qdrant/qdrant` image does not ship, so the container was permanently reported `unhealthy` in every deployment using the `qdrant` profile. Replaced with a `bash`-only check against `/healthz` over `/dev/tcp`, verified against the pinned `v1.17.0` image (empirically confirmed to flip the live container from `unhealthy` to `healthy`). The TEI healthcheck was also audited and does ship `curl`, so it is unchanged.
 
 ## [0.6.0] - 2026-07-13
 

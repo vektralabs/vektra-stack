@@ -19,6 +19,10 @@ Convention (Keep a Changelog 1.1.0):
 
 <!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
 
+## [0.6.0] - 2026-07-13
+
+RAG quality release: parent chunk expansion, retrieval-filter rescue, per-namespace citations, remote TEI providers.
+
 ### Added
 
 - **rag**: remote embedding and reranking via HuggingFace Text Embeddings Inference (FEAT-024). `VEKTRA_EMBEDDING_PROVIDER=tei` embeds through a TEI instance (`VEKTRA_TEI_URL`/`VEKTRA_TEI_API_KEY`, native `/embed` API) instead of in-process sentence-transformers, enabling shared host inference and long-window models (bge-m3: 8192 tokens vs MiniLM's 128, which silently truncates 500-token chunks today). `VEKTRA_RERANK_PROVIDER=tei` reranks through TEI `/rerank` (`VEKTRA_RERANK_TEI_URL`/`VEKTRA_RERANK_TEI_API_KEY`). The Qdrant collection is now sized from the active embedding provider's dimensions instead of a hardcoded 384 (latent bug for any non-384 model), with a clear startup error on dimension mismatch against an existing collection. The `cohere` rerank option now actually passes its API key (`VEKTRA_RERANK_API_KEY`); it was dead as wired.

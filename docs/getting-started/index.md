@@ -51,6 +51,21 @@ docker compose --profile local-llm up -d
 
 First start downloads the embedding model (~80 MB) and may take a few minutes.
 
+### Alternative: pull a published image
+
+The steps above build the image from your git checkout. For a production host, pull a
+versioned release instead of building locally:
+
+```bash
+cp deploy/docker-compose.image.yml.example docker-compose.image.yml
+echo "VEKTRA_VERSION=0.6.1" >> .env   # pick a published tag; add -ocr for the OCR variant
+docker compose -f docker-compose.yml -f docker-compose.image.yml pull
+docker compose -f docker-compose.yml -f docker-compose.image.yml up -d
+```
+
+To update later: `docker compose -f docker-compose.yml -f docker-compose.image.yml pull && docker compose -f docker-compose.yml -f docker-compose.image.yml up -d`.
+Published tags: [ghcr.io/vektralabs/vektra](https://github.com/vektralabs/vektra-stack/pkgs/container/vektra).
+
 ## 3. Wait for health
 
 ```bash

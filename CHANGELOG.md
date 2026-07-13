@@ -17,7 +17,9 @@ Convention (Keep a Changelog 1.1.0):
 
 ## [Unreleased]
 
-<!-- Add entries under: Added, Changed, Deprecated, Removed, Fixed, Security -->
+### Added
+
+- **ci**: publish versioned container images to GHCR on tag push (INFRA-007). `v*` tags trigger `.github/workflows/publish.yml`, which builds and pushes `ghcr.io/vektralabs/vektra:{version}` and `:{version}-ocr` (GHA build cache, OCI version/revision labels, built-in `GITHUB_TOKEN`, no new secrets). Deployment docs and a new `deploy/docker-compose.image.yml.example` overlay cover the resulting `docker compose pull && docker compose up -d` flow as an alternative to building from source. No `latest` tag. The manual tagging flow is unchanged.
 
 ### Fixed
 

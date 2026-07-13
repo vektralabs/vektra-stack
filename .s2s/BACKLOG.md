@@ -22,6 +22,78 @@
 
 ## Planned
 
+### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
+
+**Status**: planned | **Priority**: high | **Created**: 2026-07-13
+**Origin**: TECH-005 ingest (2026-07-13). Verifying a fresh ingest showed `document_chunks` empty for the namespace, then empty for the *entire* database, on a stack that had ingested 15 documents.
+
+**Context**: `DocumentChunkOrm` (the `document_chunks` table) is written **only** by `PgvectorProvider` (`vektra-index/src/vektra_index/providers/pgvector.py:94`). `QdrantVectorStoreProvider` keeps chunk text and metadata in the Qdrant payload (`providers/qdrant.py:204`: `text`, `namespace_id`, `document_id`, `parent_id`, `metadata.chunk_level`). So with `VEKTRA_VECTOR_STORE_PROVIDER=qdrant` (the configuration every real deployment runs) the table is empty and Postgres only holds `source_documents`.
+
+Every code path that still reads chunks from Postgres therefore operates on an empty table and reports success:
+
+- `run_reindex` (`vektra-index/src/vektra_index/reindex.py`): reads zero chunks, re-embeds nothing, stores through a hardcoded `PgvectorProvider`, and marks the job `completed`. Confirmed live on 2026-07-13 (reindexing `eval-full` to v2 produced zero Qdrant points). **This is the root cause of the reindex no-op noted under BUG-021**, which was previously (and wrongly) attributed to the hardcoded provider alone.
+- `GET /api/v1/stats`: reports `chunk_count: 0` globally.
+- `GET /api/v1/documents/{id}/chunks`: returns an empty list for documents that have chunks.
+- `DELETE /api/v1/documents/{id}`: deletes the Postgres rows; needs verification that Qdrant points are actually removed.
+
+The RAG pipeline and `/api/v1/search` are unaffected: they resolve the provider from the registry (fixed in BUG-021).
+
+**Why high**: these endpoints do not fail, they lie. An operator cannot tell a broken reindex from a successful one, and `stats` is the first thing anyone looks at.
+
+**Proposed approach**: route every chunk-reading path through the `VectorStoreProvider` Protocol instead of SQL. The Protocol already has `retrieve()` (added for FEAT-017); assess whether it needs a `list_by_document()` / `count()` extension, or whether `source_documents.chunk_count` plus Qdrant counts are enough for stats. Decide explicitly whether `document_chunks` remains a pgvector-only implementation detail (then no other module may read it) or becomes a provider-agnostic store written by both providers. The first option is smaller and matches ARCH-051.
+
+**Acceptance criteria**:
+- [ ] Decision recorded: is `document_chunks` pgvector-internal, or provider-agnostic?
+- [ ] `run_reindex` re-embeds and stores through the registry's active vector store; a reindex in Qdrant mode measurably rewrites the collection (point count and vector dimension verified after the run)
+- [ ] A reindex that stores nothing fails loudly instead of reporting `completed`
+- [ ] `GET /api/v1/stats` returns real counts in Qdrant mode
+- [ ] `GET /api/v1/documents/{id}/chunks` returns the chunks in Qdrant mode
+- [ ] `DELETE /api/v1/documents/{id}` verified to remove the Qdrant points, not just the Postgres rows
+- [ ] Integration test that runs the suite against `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, so this class of bug cannot come back silently
+- [ ] `QdrantVectorStoreProvider.retrieve()` scopes by `index_version` like the pgvector provider does (currently it filters only by `namespace_id`, so a chunk from a stale index version is still retrievable)
+
+**Traceability**: BUG-021 (same family, search endpoint), ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), FEAT-017 (`retrieve()`)
+
+---
+
+### DEBT-027: VEKTRA_PARENT_CHILD_LEVELS is dead config
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-13
+**Origin**: TECH-005 ingest (2026-07-13).
+
+**Context**: the setting is validated (`>= 1`) but never used to control hierarchy depth: `DualStrategyChunking` builds exactly two levels (parent + child), hardcoded. The name promises configurable depth that does not exist, which is the same class of defect as DEBT-013 (`VEKTRA_RERANK_TOP_K` dead config).
+
+**Acceptance criteria**:
+- [ ] Either the setting drives the chunker's depth, or it is removed from config, `.env.example` and docs
+- [ ] If removed, the removal is noted in the changelog (deployments may have it set)
+
+---
+
+### TECH-008: Chunk-RAG vs graph navigation on a structured markdown wiki
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-13
+**Origin**: operator request (2026-07-13), during the TECH-005 corpus discussion.
+
+**Context**: our retrieval is chunk-based: embed, search, rerank, stuff the winners into the prompt. An alternative exists and is increasingly viable: give the model the corpus *structure* (index plus links) and let it navigate the link graph, opening pages and following references, the way a coding agent walks a repository. On small, well-structured, densely linked corpora, navigation can beat chunk retrieval; on large, messy corpora, and whenever latency and cost per query matter, chunk RAG wins. Where that boundary sits **for this product** is an architectural question we will have to answer eventually, and an LLM-authored wiki written to explicit guidelines (structured markdown, wikilinks) is the ideal test bench: the operator already has such material.
+
+**Two things this must not get wrong**:
+1. **Closed-book control is mandatory.** A wiki written by an LLM is exactly the corpus a model may answer from parametric memory. Without a no-context baseline, retrieval could contribute nothing while the numbers look excellent. Any question the model answers correctly with no context is not a retrieval question and must be dropped. (Same control now applied to TECH-005; see that entry.)
+2. **It is not a TECH-005 collection.** TECH-005 measures the current pipeline against a hard corpus. This item compares two paradigms. Mixing them confounds both.
+
+**Possible outcome, not just a study**: if navigation wins on linked corpora, the cheap version of it is a *link-aware expansion* step, the same shape as FEAT-017's parent expansion but following the wiki graph instead of the document hierarchy. That would be a feature, not a paper.
+
+**Proposed approach**: ingest the wiki as its own namespace, generate ground truth with the TECH-005 methodology (full-page reading, discriminative keywords, closed-book control), then run three arms on identical questions: (a) the current pipeline, (b) the pipeline plus link-aware expansion, (c) an agentic baseline that receives the index and a tool to open a page and follow its links. Compare grounded accuracy, latency and token cost, not just retrieval hit rate: cost is the whole reason chunk RAG exists.
+
+**Acceptance criteria**:
+- [ ] Wiki ingested; ground truth generated with the TECH-005 methodology and spot-checked
+- [ ] Closed-book baseline run; questions answerable without context are removed and the count reported
+- [ ] Three arms measured on the same questions: grounded accuracy, p50 latency, tokens per query
+- [ ] Recommendation recorded: keep chunk RAG, add link-aware expansion, or investigate agentic navigation further. Whichever it is, say what the evidence was.
+
+**Depends on**: TECH-005 (needs a second-corpus baseline first, so we are not comparing paradigms on a single corpus)
+
+---
+
 ### BUG-020: System prompt "use only this material" conflicts with multi-turn history
 
 **Status**: completed | **Priority**: high | **Created**: 2026-03-28 | **Completed**: 2026-04-04 | **PR**: #54
@@ -330,8 +402,16 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 **Generative metrics**: TECH-002's RAGAS AC was never implemented (no `ground_truth_answer` in datasets, no judge). Decide whether to add an LLM-judge stage (local vLLM as judge) with ground-truth answers on a subset.
 
+**Progress 2026-07-13 (collection 1 built, awaiting operator spot-check)**: corpus chosen and cleaned (Carlo Smuraglia, *Diritto penale del lavoro*, Milano University Press, CC BY-SA 4.0: 89.6k words of prose, 13 chapters, dense implicit cross-references, which is what makes parent expansion meaningful). Ingested into namespace `eval-textbook` (562 points: 113 parents + 449 children). 60 questions generated (24 factual, 15 reasoning, 12 multi-chunk, 9 adversarial) by agents reading full chapters, never chunks. Machine-validated: every keyword occurs in the corpus and in exactly one chapter (two for multi-chunk). **Nothing is committed here yet: the human spot-check is an acceptance criterion and it has not run.** Evidence and artifacts: `vektra-internal/stack/20260713-tech005-collection1-textbook.md`.
+
+Licensing lesson worth keeping: OpenStax advertises CC BY but its live per-book metadata says CC BY-NC-SA, and Italian university "dispense" are almost always CC BY-NC-ND. The ND clause forbids distributing a cleaned/chunked derivative, so those corpora cannot ship with a public eval.
+
+**Closed-book control (new mandatory step for every dataset)**: put each question to the answering LLM with NO context and an instruction to answer only if certain. Any question answered correctly from parametric memory does not measure retrieval and must be dropped or rewritten. On collection 1: 0 expected keywords leaked, 53/60 answered "NON SO". The three questions the model guessed from general legal knowledge are flagged for rewriting. This control must be documented in `tests/eval/README.md` and applied to the existing datasets too.
+
 **Acceptance criteria**:
 - [ ] At least the textbook collection + multi-turn runner implemented with documented ground-truth methodology
+- [ ] Human spot-check of a stratified sample of the LLM-generated ground truth, with the verdicts recorded (blocked on the operator: sample in `vektra-internal/stack/20260713-tech005-groundtruth-review.md`)
+- [ ] Closed-book control documented in `tests/eval/README.md` as a required step, and run on the existing datasets
 - [ ] Public regression slice runnable via `make eval-retrieval EVAL_ARGS=...` with recorded baseline
 - [ ] `tests/eval/README.md` updated with collection matrix and when to use which
 - [ ] Decision recorded on RAGAS/LLM-judge (implement or drop the TECH-002 AC)

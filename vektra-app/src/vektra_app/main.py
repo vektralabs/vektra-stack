@@ -339,6 +339,15 @@ async def _step_5_register_providers(
 
     vektra_shared.audit.set_log_fn(_audit_impl)
 
+    # --- ARCH-057 step 5 (cont'd): verify provider registration ---
+    from vektra_index.startup import check_provider_registration
+
+    await check_provider_registration(
+        registry,
+        vector_store_provider=settings.vector_store_provider,
+        sparse_embedding_provider=settings.sparse_embedding_provider,
+    )
+
 
 async def _step_6_embedding_warmup(registry: ProviderRegistry) -> None:
     """ARCH-057 step 6: warm up the embedding model."""

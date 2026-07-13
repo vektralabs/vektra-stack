@@ -17,13 +17,25 @@ def _make_registry(
     embed_dims: int = 384,
     reported_dims: int = 384,
     vector_store_name: str = "pgvector",
+    embedding_names: set[str] | None = None,
 ) -> MagicMock:
-    """Build a mock ProviderRegistry for startup checks."""
+    """Build a mock ProviderRegistry for startup checks.
+
+    ``embedding_names`` mirrors the names actually registered under the
+    "embedding" category (see ``_step_5_register_providers``): "default"
+    plus either "sentence-transformers" or "tei". Defaults to the
+    sentence-transformers registration when unset.
+    """
     registry = MagicMock()
+
+    if embedding_names is None:
+        embedding_names = (
+            {"default", "sentence-transformers"} if has_embedding else set()
+        )
 
     def _has(category: str, name: str) -> bool:
         if category == "embedding":
-            return has_embedding
+            return has_embedding and name in embedding_names
         if category == "vector_store":
             return has_vector_store and name == vector_store_name
         if category == "sparse_embedding":
@@ -112,6 +124,19 @@ async def test_check_provider_registration_missing_sparse() -> None:
         await check_provider_registration(
             registry, sparse_embedding_provider="fastembed-bm25"
         )
+
+
+async def test_check_provider_registration_tei_only() -> None:
+    """Regression guard: a TEI-only registry (embedding registered as
+    "default" + "tei", no "sentence-transformers") must pass. The check
+    looks up the "default" alias, which resolves to whichever embedding
+    provider is active, instead of hardcoding "sentence-transformers"
+    (see vektra_app._step_5_register_providers).
+    """
+    from vektra_index.startup import check_provider_registration
+
+    registry = _make_registry(embedding_names={"default", "tei"})
+    await check_provider_registration(registry)  # should not raise
 
 
 # --- check_embedding_model ---

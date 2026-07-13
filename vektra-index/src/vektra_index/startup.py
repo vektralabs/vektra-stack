@@ -30,7 +30,7 @@ async def check_provider_registration(
     and optionally the sparse embedding provider.
     """
     required = [
-        ("embedding", "sentence-transformers"),
+        ("embedding", "default"),
         ("vector_store", vector_store_provider),
     ]
     if sparse_embedding_provider:

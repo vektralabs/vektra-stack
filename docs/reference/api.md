@@ -232,7 +232,7 @@ Query parameters:
 |-------|------|---------|-------------|
 | `namespace` | string | `default` | Target namespace for the document |
 
-Supported formats: PDF, DOCX, PPTX. Maximum file size: 50 MB (configurable via `VEKTRA_MAX_FILE_SIZE_MB`).
+Supported formats: PDF, DOCX, PPTX, Markdown (`text/markdown`). Maximum file size: 50 MB (configurable via `VEKTRA_MAX_FILE_SIZE_MB`).
 
 Sync response (HTTP 200, files <= 10 MB):
 
@@ -240,9 +240,11 @@ Sync response (HTTP 200, files <= 10 MB):
 {
     "document_id": "550e8400-...",
     "chunk_count": 24,
-    "status": "indexed"
+    "status": "new"
 }
 ```
+
+Sync status values: `new` (extracted, embedded and stored), `exists` (exact duplicate: same content hash and same filename, no work done), `alias` (same content under a different filename: an alias is added to the existing document).
 
 Async response (HTTP 202, files > 10 MB):
 

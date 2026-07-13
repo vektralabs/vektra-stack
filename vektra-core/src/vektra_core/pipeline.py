@@ -159,7 +159,10 @@ def _apply_retrieval_filter(
             already-selected chunk (keeping higher-scoring ones by processing
             in score-descending order).
 
-    Returns (results in score-descending order, count of rescued chunks).
+    Returns (filtered results, count of rescued chunks). The rescue and dedup
+    paths return results in score-descending order; the plain-threshold path
+    preserves the caller's ordering (already score-descending after search or
+    rerank).
     """
     filtered = [r for r in results if r.score >= min_score]
 

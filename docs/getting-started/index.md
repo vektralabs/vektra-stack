@@ -59,11 +59,15 @@ versioned release instead of building locally:
 ```bash
 cp deploy/docker-compose.image.yml.example docker-compose.image.yml
 echo "VEKTRA_VERSION=0.6.1" >> .env   # pick a published tag; add -ocr for the OCR variant
-docker compose -f docker-compose.yml -f docker-compose.image.yml pull
-docker compose -f docker-compose.yml -f docker-compose.image.yml up -d
+echo "COMPOSE_FILE=docker-compose.yml:docker-compose.image.yml" >> .env
+docker compose pull
+docker compose up -d
 ```
 
-To update later: `docker compose -f docker-compose.yml -f docker-compose.image.yml pull && docker compose -f docker-compose.yml -f docker-compose.image.yml up -d`.
+`COMPOSE_FILE` makes every compose command merge both files, so `pull`, `up`, `ps` and
+`logs` all work without repeating `-f`.
+
+To update later: `docker compose pull && docker compose up -d`.
 Published tags: [ghcr.io/vektralabs/vektra](https://github.com/vektralabs/vektra-stack/pkgs/container/vektra).
 
 ## 3. Wait for health

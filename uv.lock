@@ -5236,6 +5236,7 @@ version = "0.5.1"
 source = { editable = "vektra-core" }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "litellm" },
     { name = "presidio-analyzer" },
@@ -5256,6 +5257,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "litellm", specifier = ">=1.83.10" },
     { name = "presidio-analyzer", specifier = ">=2.2" },
@@ -5280,6 +5282,7 @@ source = { editable = "vektra-index" }
 dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pgvector" },
     { name = "pydantic" },
     { name = "sentence-transformers" },
@@ -5310,6 +5313,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastembed", marker = "extra == 'sparse'", specifier = ">=0.4" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "pgvector", specifier = ">=0.3" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.12" },

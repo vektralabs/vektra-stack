@@ -106,13 +106,29 @@ class QdrantVectorStoreProvider:
         """Create the collection if it doesn't exist.
 
         Called during startup validation. Configures named vectors
-        for dense and sparse search.
+        for dense and sparse search. If the collection already exists,
+        verifies its dense vector size matches the active embedding model
+        (FEAT-024): a silent mismatch would fail on every upsert/search
+        with an opaque Qdrant error, so fail fast with a clear message.
         """
         from qdrant_client import models
 
         collections = await self._client.get_collections()
         existing = {c.name for c in collections.collections}
         if self._collection_name in existing:
+            info = await self._client.get_collection(self._collection_name)
+            vectors = info.config.params.vectors
+            dense = vectors.get("dense") if isinstance(vectors, dict) else None
+            existing_size = getattr(dense, "size", None)
+            if existing_size is not None and existing_size != self._dense_dimensions:
+                raise ValueError(
+                    f"Qdrant collection '{self._collection_name}' has dense "
+                    f"vectors of size {existing_size}, but the active embedding "
+                    f"model produces {self._dense_dimensions} dimensions. "
+                    "Changing the embedding model requires re-ingesting into a "
+                    "new collection (set VEKTRA_QDRANT_COLLECTION) or deleting "
+                    "the existing one."
+                )
             return
 
         try:

@@ -68,9 +68,14 @@ def test_startup_complete_logged() -> None:
 
 
 def test_graceful_failure_on_missing_config() -> None:
-    """Missing required env var produces a structured error, not a traceback.
+    """A required env var with no usable value fails startup, not the first query.
 
-    Runs a separate short-lived container with VEKTRA_LLM_PROVIDER unset.
+    Runs a short-lived container with `-e VEKTRA_LLM_PROVIDER=`, which sets the
+    variable to the empty string — it does not unset it, as this docstring used to
+    claim. That mattered: `str` accepted `""`, so the container booted and served, and
+    the misconfiguration surfaced at the first query instead of at startup. The test
+    never once ran (DEBT-031), so nobody found out. `llm_provider` is now `min_length=1`
+    and both cases fail at step 1 with a structured error.
     """
     result = subprocess.run(
         [

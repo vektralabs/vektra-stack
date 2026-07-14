@@ -498,6 +498,7 @@ class VektraSettings(BaseSettings):
     # LLM
     llm_provider: str = Field(
         ...,
+        min_length=1,
         alias="VEKTRA_LLM_PROVIDER",
         description="LLM model identifier in litellm format.",
     )

@@ -211,6 +211,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Runs PR-authored test code; don't leave the token in .git/config
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true

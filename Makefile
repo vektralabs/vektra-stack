@@ -76,6 +76,7 @@ test: ## Run unit tests with coverage
 		vektra-index/tests/ \
 		vektra-analytics/tests/ \
 		vektra-learn/tests/ \
+		vektra-app/tests/ \
 		-v --tb=short -m "not integration"
 
 lint: ## Run linters (ruff + mypy + import-linter)

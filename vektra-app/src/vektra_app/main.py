@@ -169,7 +169,15 @@ async def _step_5_register_providers(
 
         model_name = settings.sparse_embedding_model or "Qdrant/bm25"
         sparse_provider = FastEmbedBM25Provider(model_name=model_name)
+        # Both aliases, as the vector store does: callers resolve "default",
+        # while startup validation (ARCH-057) looks the provider up by its
+        # configured name. Registering only "default" made the check fail on
+        # every stack with sparse enabled, so hybrid search could not be turned
+        # on at all (BUG-024).
         registry.register("sparse_embedding", "default", sparse_provider)
+        registry.register(
+            "sparse_embedding", settings.sparse_embedding_provider, sparse_provider
+        )
         log.info(
             "sparse_embedding_registered",
             provider=settings.sparse_embedding_provider,

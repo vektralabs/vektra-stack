@@ -130,8 +130,21 @@ if [ "$MODE" = "cleanup" ]; then
       exit 0
       ;;
     409)
+      # The refusal (ERR-INDEX-001) is the one message the operator must read, so
+      # dig it out of the envelope rather than dumping JSON at them. Falls back to
+      # the raw body if the shape is not what we expect, instead of dying on a
+      # KeyError and hiding the reason the delete was refused.
       echo "Error: refused. Index version ${VERSION} is the one currently being served." >&2
-      echo "$CLEANUP_BODY" >&2
+      echo "$CLEANUP_BODY" | python3 -c "
+import sys, json
+raw = sys.stdin.read()
+try:
+    body = json.loads(raw)
+    err = body.get('detail', body).get('error', {})
+    print(err.get('message') or err.get('remediation') or raw)
+except Exception:
+    print(raw)
+" >&2
       echo "" >&2
       echo "Switch VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart first." >&2
       exit 1

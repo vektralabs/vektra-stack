@@ -930,6 +930,8 @@ Consequences: every reindex permanently doubles the storage for that namespace, 
 
 **Context**: REQ-010 defines a single error envelope (`{"error": {category, code, message, remediation, request_id, details}}`), and `docs/reference/api.md` presented it as universal. It is not. Reindex (`400`, `404`), conversations (`404`, `503`) and admin conversation turns (`404`, `501`, `503`) raise `HTTPException` with a plain string detail, so they return FastAPI's bare `{"detail": "..."}` — no code, no remediation, no request id.
 
+**Scope reduced (2026-07-14, DEBT-032 / #108)**: the new `DELETE /api/v1/index-versions/{version}` was built enveloped from the start (`ERR-INDEX-001`, `ERR-INDEX-002`), so it is *not* part of this cleanup. What remains is the pre-existing set: `POST /reindex`, `GET /reindex/{job_id}/status`, conversations, admin conversation turns.
+
 A client cannot branch on an error code for these endpoints, and the operator-facing reindex failures are exactly the ones where a machine-readable code would be worth having. The doc now warns that both shapes exist; the fix is to make the envelope actually universal.
 
 **Acceptance criteria**:

@@ -92,6 +92,8 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-LEARN-004 | vektra-learn | 409 | Duplicate enrollment (student already enrolled in course) |
 | ERR-LEARN-005 | vektra-learn | 404 | Conversation not found (GET conversations/turns) |
 | ERR-LEARN-006 | vektra-learn | 403 | Conversation belongs to a different course/namespace |
+| ERR-INDEX-001 | vektra-index | 409 | Refused: the index version named for deletion is the one currently being served. Nothing was deleted (REQ-064) |
+| ERR-INDEX-002 | vektra-index | 400 | Invalid index version (below 1) |
 
 ## Adding new error codes
 

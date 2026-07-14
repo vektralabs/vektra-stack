@@ -28,7 +28,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.db import get_session
-from vektra_shared.errors import ActiveIndexVersionError
+from vektra_shared.errors import (
+    ERR_INDEX_001,
+    ERR_INDEX_002,
+    ActiveIndexVersionError,
+    ErrorCategory,
+    ErrorResponse,
+    http_status_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +79,44 @@ class DeleteIndexVersionResponse(BaseModel):
     namespace: str
     index_version: int
     chunks_removed: int
+
+
+# ---------------------------------------------------------------------------
+# Errors (REQ-010 envelope)
+# ---------------------------------------------------------------------------
+
+
+def _active_index_version_refusal(exc: ActiveIndexVersionError) -> HTTPException:
+    """409 for a cleanup aimed at the version being served.
+
+    The one error on this endpoint a client would genuinely branch on, so it
+    carries a code rather than a bare string: an operator tool needs to tell
+    "wrong version, nothing happened" apart from "the store is down".
+    """
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_INDEX_001,
+        message=str(exc),
+        remediation=(
+            "Switch VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart, "
+            "then delete the old one. To check which version is live, see "
+            "VEKTRA_ACTIVE_INDEX_VERSION in the running configuration."
+        ),
+        details={"namespace": exc.namespace, "index_version": exc.index_version},
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+
+def _invalid_index_version(index_version: int) -> HTTPException:
+    """400 for an index version below 1."""
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_INDEX_002,
+        message=f"index_version must be an integer >= 1, got {index_version}.",
+        remediation="Pass the index version you want to delete, as an integer >= 1.",
+        details={"index_version": index_version},
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
 
 # ---------------------------------------------------------------------------
@@ -426,9 +471,7 @@ async def delete_index_version(
     from vektra_index.api import _namespace_scope_violation
 
     if index_version < 1:
-        raise HTTPException(
-            status_code=400, detail="index_version must be an integer >= 1"
-        )
+        raise _invalid_index_version(index_version)
 
     vector_store = request.app.state.registry.get("vector_store", "default")
 
@@ -445,7 +488,7 @@ async def delete_index_version(
             effective_ns, index_version
         )
     except ActiveIndexVersionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise _active_index_version_refusal(exc) from exc
 
     logger.info(
         "index_version_deleted",

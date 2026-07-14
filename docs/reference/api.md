@@ -1047,11 +1047,11 @@ curl -s -X DELETE \
 }
 ```
 
-Errors:
+Errors (all in the REQ-010 envelope):
 
-- **`409`** if `index_version` is the version the system is currently serving. **This is the guard that matters.** The store refuses before deleting anything, so the request is a no-op, not a partial wipe. The failure mode it exists to prevent is not "an old version survives", it is "the live index is emptied": get the version number wrong by one and every query stops finding anything.
-- `400` if `index_version` is below 1.
-- `403` for a namespace-bound key naming another namespace. The delete is by filter, so a silently retargeted namespace would drop an entire version of a namespace the caller never named.
+- **`409` `ERR-INDEX-001`** if `index_version` is the version the system is currently serving. **This is the guard that matters.** The store refuses before deleting anything, so the request is a no-op, not a partial wipe. The failure mode it exists to prevent is not "an old version survives", it is "the live index is emptied": get the version number wrong by one and every query stops finding anything. `details` carries the `namespace` and `index_version` that were refused.
+- `400` `ERR-INDEX-002` if `index_version` is below 1.
+- `403` `ERR-AUTH-003` for a namespace-bound key naming another namespace. The delete is by filter, so a silently retargeted namespace would drop an entire version of a namespace the caller never named.
 
 The call is **idempotent**: deleting a version that is already gone returns `200` with `chunks_removed: 0`. That is the cheapest way to confirm a cleanup really happened, and it is safe to repeat.
 
@@ -1134,7 +1134,16 @@ Or: `scripts/reindex.sh --cleanup 1 default`.
 Ordering is not left to your memory. If you run this **before** the switch, version 1 is still the active one and the API refuses with `409` — the request deletes nothing:
 
 ```json
-{"detail": "Refusing to delete index version 1 of namespace 'default': it is the version currently being served. Switch VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart before cleaning up the old one."}
+{
+  "error": {
+    "category": "PERMANENT",
+    "code": "ERR-INDEX-001",
+    "message": "Refusing to delete index version 1 of namespace 'default': it is the version currently being served. Switch VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart before cleaning up the old one.",
+    "remediation": "Switch VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart, then delete the old one. To check which version is live, see VEKTRA_ACTIVE_INDEX_VERSION in the running configuration.",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "details": {"namespace": "default", "index_version": 1}
+  }
+}
 ```
 
 That refusal is the whole reason this is an endpoint rather than a store-level delete. Reclaiming space is the small half of the job; the large half is that the obvious hand-written version of it — a Qdrant filter delete, or `DELETE FROM document_chunks WHERE index_version = 1` — has no idea which version is live, and is run by an operator at precisely the moment they are least sure. One wrong number and the live index is empty, with no error and nothing to roll back to.
@@ -1323,10 +1332,10 @@ Most errors follow a standard envelope (REQ-010):
 
 See [error codes reference](error-codes.md) for the complete list.
 
-Not every endpoint uses the envelope. Reindex, conversations and admin conversation turns return FastAPI's bare shape instead:
+Not every endpoint uses the envelope. `POST /api/v1/reindex`, `GET /api/v1/reindex/{job_id}/status`, conversations and admin conversation turns return FastAPI's bare shape instead:
 
 ```json
 {"detail": "Reindex job not found"}
 ```
 
-Clients that parse errors must handle both. The envelope is the intended contract; the bare form is a gap, not a second contract to rely on.
+Clients that parse errors must handle both. The envelope is the intended contract; the bare form is a gap (DEBT-033), not a second contract to rely on. `DELETE /api/v1/index-versions/{version}` uses the envelope throughout, including its `409`.

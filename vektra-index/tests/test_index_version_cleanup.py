@@ -273,8 +273,16 @@ async def test_endpoint_refuses_to_delete_the_version_being_served() -> None:
     status, body = await _delete_version(app, 1, {"namespace": "default"})
 
     assert status == 409
-    assert "currently being served" in body["detail"]
     client.delete.assert_not_awaited()
+
+    # REQ-010 envelope with a code: an operator tool has to tell "wrong version,
+    # nothing happened" apart from "the store is down", and cannot do that from
+    # a bare string.
+    err = body["detail"]["error"]
+    assert err["code"] == "ERR-INDEX-001"
+    assert err["details"] == {"namespace": "default", "index_version": 1}
+    assert "currently being served" in err["message"]
+    assert err["remediation"]
 
 
 @pytest.mark.asyncio
@@ -282,9 +290,10 @@ async def test_endpoint_rejects_version_zero() -> None:
     client = _make_qdrant_client()
     app = _make_app(active_index_version=1, client=client)
 
-    status, _ = await _delete_version(app, 0)
+    status, body = await _delete_version(app, 0)
 
     assert status == 400
+    assert body["detail"]["error"]["code"] == "ERR-INDEX-002"
     client.delete.assert_not_awaited()
 
 

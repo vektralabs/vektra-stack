@@ -126,6 +126,7 @@ And a scrub alone is not sufficient. Sub-configs (`QueryPipelineConfig`, `Rerank
 **Acceptance criteria**:
 - [ ] One autouse fixture applies to every test package, not three of eight
 - [ ] The scrub covers the `.env` **file**, not only `os.environ`
+- [ ] Heavy defaults are pinned off in tests that do not assert on them: reranking is enabled by default and is read from an internal config, so provider registration downloads and loads a cross-encoder on any test that touches it. Pinning it off in `test_provider_registration.py` took that file from 10.8s to 1.5s and removed its dependency on a model being downloadable.
 - [ ] A test proves it: with a populated `.env`, a config left at its default resolves to the default, not to the local value
 
 **Traceability**: DEBT-025 (incomplete fix), BUG-024

@@ -30,7 +30,7 @@ def test_every_test_package_imports_the_isolation_fixture() -> None:
         if not conftest.is_file():
             missing.append(f"{tests_dir.relative_to(REPO_ROOT)}: no conftest.py")
             continue
-        if "vektra_shared.testing" not in conftest.read_text():
+        if "vektra_shared.testing" not in conftest.read_text(encoding="utf-8"):
             missing.append(
                 f"{conftest.relative_to(REPO_ROOT)}: does not import "
                 "the shared isolation fixture"

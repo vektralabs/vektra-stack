@@ -13,6 +13,14 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
+# Needs the running stack, so it is an integration test and now says so. Unmarked, it
+# was indistinguishable from a unit test that `make test` had merely forgotten — and
+# in fact no runner ran it at all, despite the docstring above assuming otherwise
+# (DEBT-031).
+pytestmark = pytest.mark.integration
+
 # All 11 ARCH-057 startup step names in execution order
 _STARTUP_STEPS = [
     "config_validation",

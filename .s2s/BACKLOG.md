@@ -165,7 +165,7 @@ They need Docker, and they now carry the `integration` marker, so the unit runs 
 
 ### DEBT-031: nothing guarantees a test suite is actually executed
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Status**: done (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14
 **Origin**: DEBT-029/030 (2026-07-14). The lesson the fix left behind, rather than a defect the fix left behind.
 
 **Context**: BUG-024 (a startup blocker) shipped because `vektra-app/tests/` was executed by nothing — neither `make test` nor CI. DEBT-030 wired that one package in, and the two files in it turned out to have **never worked at all** (`str(make_url(...))` masks the password as `***`, so alembic authenticated with `***` and every test died in setup). A test nobody runs rots.
@@ -177,10 +177,16 @@ That is the exact shape of the hole BUG-024 fell through, still open one level u
 **Proposed approach**: extend the structural test (or add a sibling) so that every `vektra-*/tests` directory, plus `tests/integration` and `tests/nfr`, is referenced by the `make test` target **and** by a CI job. Parsing the Makefile and the workflow YAML is enough; it does not need to run them. Consider also asserting that a package's `integration`-marked tests are named in some workflow, which is the specific gap DEBT-030 closed by hand.
 
 **Acceptance criteria**:
-- [ ] A test fails when a `vektra-*/tests` directory exists that no CI job runs
-- [ ] A test fails when such a directory is missing from the `make test` target, so the local gate and CI cannot drift apart (they are two independent hand-maintained lists today)
-- [ ] It fails for the unit path and the integration path independently (an `integration`-marked suite excluded from unit runs and named in no workflow is the DEBT-030 case, and must be caught)
-- [ ] Verified by deleting a package from the workflow, and separately from the Makefile, and watching the test go red each time
+- [x] A test fails when a `vektra-*/tests` directory exists that no CI job runs
+- [x] A test fails when such a directory is missing from the `make test` target, so the local gate and CI cannot drift apart (they are two independent hand-maintained lists today)
+- [x] It fails for the unit path and the integration path independently (an `integration`-marked suite excluded from unit runs and named in no workflow is the DEBT-030 case, and must be caught)
+- [x] Verified by deleting a package from the workflow, and separately from the Makefile, and watching the test go red each time
+
+**Resolution**: `vektra-shared/tests/test_suite_execution_coverage.py` parses the `test:` recipe and every workflow's `pytest` invocations, and asserts each test file would actually be *collected* — honouring the `-m` filter, not just the paths. That distinction is the whole thing: a directory-level check would have passed, because `vektra-admin/tests/` **is** named in both lists; what nobody ran was the `integration`-marked file inside it. YAML is parsed, not grepped, so the commented-out `pytest` line in `integration.yml` grants no coverage. The guard runs in a `test-structure` job with **no path filter** — every other unit job is gated on `paths-filter`, so a Makefile-only edit, a workflow-only edit, or a new package skips them all, which are exactly the three cases the guard is for. The DEBT-029 guard now runs there too.
+
+Proven by breaking it five ways, each going red on the right assertion and green on restore: package dropped from the workflow; package dropped from the Makefile; the integration glob narrowed back to `vektra-app` (the DEBT-030 regression); a `vektra-foo/tests/` nobody wired up; and the allowlist emptied, which correctly re-flags the commented-out line as no coverage.
+
+**Found by the guard, previously unknown** (see CHANGELOG): five suites executed by nothing. `tests/test_startup.py` (ARCH-057 startup validation — its docstring assumed integration.yml ran it; integration.yml names `tests/integration/`, never `tests/`), and the `integration`-marked suites of vektra-admin, vektra-index (×2) and vektra-ingest, which DEBT-030 left behind when it wired up vektra-app by hand. All now run; the four had not rotted (52 integration tests pass), which was luck. The `app-integration` job becomes `package-integration` over a `vektra-*/tests` glob so the list stops being hand-maintained.
 
 **Traceability**: BUG-024 (root cause), DEBT-029, DEBT-030
 

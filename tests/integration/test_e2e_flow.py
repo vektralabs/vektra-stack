@@ -17,6 +17,9 @@ from pathlib import Path
 import httpx
 import pytest
 
+# Runs against the live stack (integration.yml), so every unit run must exclude it.
+pytestmark = pytest.mark.integration
+
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 SAMPLE_PDF = FIXTURES_DIR / "sample.pdf"
 

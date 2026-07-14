@@ -117,3 +117,23 @@ jobs:
           name: integration-test-results-${{ matrix.vector_store }}
           path: test-results/
           retention-days: 14
+
+  # Aggregator, and the single required status check in branch protection. The
+  # matrix reports one check per provider ("Integration tests (pgvector)", "…
+  # (qdrant)"), so without a job carrying the required name the check would never
+  # report and every PR would sit BLOCKED. Same pattern as ci-gate in ci-unit.yml:
+  # adding a provider to the matrix then needs no change to branch protection.
+  integration-gate:
+    name: Integration tests + NFR gates
+    needs: integration
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check every provider passed
+        run: |
+          RESULT="${{ needs.integration.result }}"
+          if [[ "$RESULT" != "success" ]]; then
+            echo "Integration matrix did not pass (result: $RESULT)."
+            exit 1
+          fi
+          echo "Integration tests passed on every vector store provider."

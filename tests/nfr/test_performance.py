@@ -17,6 +17,10 @@ import time
 import httpx
 import pytest
 
+# Needs the live stack *and* a real LLM, so CI runs it nowhere; it is the one entry in
+# EXPECTED_UNRUN in the DEBT-031 guard. Marked all the same, so no unit run picks it up.
+pytestmark = pytest.mark.integration
+
 # NFR-001 target: query latency (not a hard gate in Phase 1 per EX-004)
 _QUERY_LATENCY_TARGET_MS = 2000
 _NOTE_THRESHOLD = 1.2  # 20% above target -> note

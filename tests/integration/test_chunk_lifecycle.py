@@ -22,6 +22,9 @@ import time
 import httpx
 import pytest
 
+# Runs against the live stack (integration.yml), so every unit run must exclude it.
+pytestmark = pytest.mark.integration
+
 CHUNK_TEXT = (
     "# Zarnak protocol\n\n"
     "The Zarnak protocol reaches consensus with a quorum of seven nodes.\n"

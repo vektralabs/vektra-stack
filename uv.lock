@@ -5454,6 +5454,7 @@ dev = [
     { name = "import-linter" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -5473,6 +5474,7 @@ dev = [
     { name = "import-linter", specifier = ">=2.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [[package]]

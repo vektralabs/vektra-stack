@@ -118,22 +118,69 @@ jobs:
           path: test-results/
           retention-days: 14
 
+  # The ARCH-057 startup sequence and the REQ-011/NFR-009 error contract. These
+  # tests existed but no workflow ran them (DEBT-030), which is the surface a
+  # provider-wiring defect broke in BUG-024 — and, unrun, they had themselves rotted:
+  # they masked the container password and failed at setup for anyone who tried.
+  # They bring up their own postgres via testcontainers, so they need Docker but not
+  # the compose stack.
+  app-integration:
+    name: App integration tests (startup + error contract)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Runs PR-authored test code; no reason to keep the token in .git/config
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: Prepare test results directory
+        run: mkdir -p test-results
+
+      - name: Run vektra-app integration tests
+        run: |
+          uv run pytest vektra-app/tests/ -m integration \
+            -v --tb=short --junitxml=test-results/app-integration.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-integration-test-results
+          path: test-results/
+          retention-days: 14
+
   # Aggregator, and the single required status check in branch protection. The
   # matrix reports one check per provider ("Integration tests (pgvector)", "…
   # (qdrant)"), so without a job carrying the required name the check would never
   # report and every PR would sit BLOCKED. Same pattern as ci-gate in ci-unit.yml:
-  # adding a provider to the matrix then needs no change to branch protection.
+  # adding a provider to the matrix, or a job like app-integration, then needs no
+  # change to branch protection.
   integration-gate:
     name: Integration tests + NFR gates
-    needs: integration
+    needs: [integration, app-integration]
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Check every provider passed
+      - name: Check every integration job passed
         run: |
-          RESULT="${{ needs.integration.result }}"
-          if [[ "$RESULT" != "success" ]]; then
-            echo "Integration matrix did not pass (result: $RESULT)."
+          MATRIX="${{ needs.integration.result }}"
+          APP="${{ needs.app-integration.result }}"
+          if [[ "$MATRIX" != "success" ]]; then
+            echo "Integration matrix did not pass (result: $MATRIX)."
             exit 1
           fi
-          echo "Integration tests passed on every vector store provider."
+          if [[ "$APP" != "success" ]]; then
+            echo "App integration tests did not pass (result: $APP)."
+            exit 1
+          fi
+          echo "Integration tests passed on every vector store provider, and the app suite passed."

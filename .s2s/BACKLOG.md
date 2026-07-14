@@ -899,8 +899,12 @@ Swagger at `/docs` is auto-generated and complete, but the markdown reference do
 
 ### DEBT-032: no way to clean up an old index version after a reindex
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Status**: planned | **Priority**: high | **Created**: 2026-07-14 | **Raised to high**: 2026-07-14
 **Origin**: DOCS-009 (2026-07-14), found while documenting the reindex flow end to end.
+
+**Why high, and why this is not really "debt"**: REQ-064 spells the cleanup out as part of the requirement ("new chunks created with incremented version alongside old, atomic switch via config change, **cleanup of old version afterwards**"). So this is not a suboptimal-but-working solution: it is an acceptance criterion of a shipped requirement that was never built, while the module docstring tells the operator it exists. Code that promises a capability it does not have is the same disease as BUG-023, one level up.
+
+It is also **live only because we fixed BUG-023**. Until 2026-07-14 a reindex in Qdrant mode wrote nothing, so there was never an old version to clean up and the gap was harmless. The moment reindex started actually writing, every reindex began doubling a namespace's storage permanently, and the only exit became a hand-written destructive delete. This is the third gap in this family that was **armed by its own fix** (see also: the namespace binding on `DELETE`, dormant while the delete was a no-op; and the `vektra-app` tests, which had never worked because nobody ran them).
 
 **Context**: reindex writes a second copy of every chunk under the target index version, alongside the live one. That is what makes it zero-downtime, and it is correct. But nothing ever removes the old copy. There is no cleanup endpoint, no cleanup flag on the reindex job, and no script step: `scripts/reindex.sh` stops after telling the operator to set `VEKTRA_ACTIVE_INDEX_VERSION`.
 
@@ -913,6 +917,9 @@ Consequences: every reindex permanently doubles the storage for that namespace, 
 - [ ] An admin endpoint exposes it, refusing to delete the active index version
 - [ ] `scripts/reindex.sh` can complete the lifecycle
 - [ ] `docs/reference/api.md` replaces the manual store-level procedure with the endpoint
+- [ ] The endpoint refuses to delete the version the system is currently serving, and a test proves it: the destructive failure mode is not "an old version survives", it is "the live index is emptied"
+
+**Traceability**: REQ-064 (unimplemented acceptance criterion), ARCH-045 (index versioning), ADR-0026 (the Protocol that needs the version-scoped delete), BUG-023 (whose fix made this live)
 
 ---
 

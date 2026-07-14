@@ -68,10 +68,13 @@ def _mark_name(node: ast.expr) -> str | None:
     return None
 
 
-def _module_marks(tree: ast.Module) -> set[str]:
-    """Marks applied to the whole module via a top-level `pytestmark`."""
+def _pytestmark_marks(body: list[ast.stmt]) -> set[str]:
+    """Marks a `pytestmark` assignment applies to everything in this scope.
+
+    Valid at module level and inside a class, and pytest honours both.
+    """
     marks: set[str] = set()
-    for node in tree.body:
+    for node in body:
         if not isinstance(node, ast.Assign):
             continue
         if not any(
@@ -101,25 +104,32 @@ class Suite:
 
 
 def _classify(path: Path) -> Suite:
+    """Which kinds of test a file holds, honouring how a mark is inherited.
+
+    A test is `integration` if it says so itself, or if the class or the module around
+    it does — pytest applies all three, so a guard that read only the innermost one
+    would call a class of integration tests "unit", never ask for an integration run,
+    and let them go unexecuted. Which is the bug this whole file exists to prevent.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = {"unit": False, "integration": False}
 
-    if "integration" in _module_marks(tree):
-        # A module-level mark applies to every test in the file, so there is nothing
-        # left that a unit run could pick up.
-        return Suite(path, has_unit=False, has_integration=True)
+    def visit(body: list[ast.stmt], inherited: bool) -> None:
+        scoped = inherited or "integration" in _pytestmark_marks(body)
+        for node in body:
+            marked = scoped or any(
+                _mark_name(d) == "integration"
+                for d in getattr(node, "decorator_list", [])
+            )
+            if isinstance(node, ast.ClassDef):
+                visit(node.body, marked)
+            elif isinstance(
+                node, ast.FunctionDef | ast.AsyncFunctionDef
+            ) and node.name.startswith("test_"):
+                found["integration" if marked else "unit"] = True
 
-    has_unit = False
-    has_integration = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        if not node.name.startswith("test_"):
-            continue
-        if any(_mark_name(d) == "integration" for d in node.decorator_list):
-            has_integration = True
-        else:
-            has_unit = True
-    return Suite(path, has_unit=has_unit, has_integration=has_integration)
+    visit(tree.body, inherited=False)
+    return Suite(path, has_unit=found["unit"], has_integration=found["integration"])
 
 
 def _suites() -> list[Suite]:

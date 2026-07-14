@@ -914,10 +914,9 @@ Consequences: every reindex permanently doubles the storage for that namespace, 
 
 **Acceptance criteria**:
 - [ ] `VectorStoreProvider` gains a version-scoped delete, implemented by both pgvector and Qdrant
-- [ ] An admin endpoint exposes it, refusing to delete the active index version
+- [ ] An admin endpoint exposes it and **refuses to delete the version the system is currently serving**, with a test that proves the refusal: the destructive failure mode here is not "an old version survives", it is "the live index is emptied"
 - [ ] `scripts/reindex.sh` can complete the lifecycle
 - [ ] `docs/reference/api.md` replaces the manual store-level procedure with the endpoint
-- [ ] The endpoint refuses to delete the version the system is currently serving, and a test proves it: the destructive failure mode is not "an old version survives", it is "the live index is emptied"
 
 **Traceability**: REQ-064 (unimplemented acceptance criterion), ARCH-045 (index versioning), ADR-0026 (the Protocol that needs the version-scoped delete), BUG-023 (whose fix made this live)
 

@@ -76,6 +76,22 @@ curl -s \
 
 Components: `llm`, `embedding`, `vector_store`.
 
+### GET /api/v1/health
+
+Vector store health as seen by `vektra-index` (unauthenticated). Distinct from `GET /health`: this one checks only the **active** vector store, so it turns unhealthy when the store actually backing the index is unreachable.
+
+```bash
+curl -s http://localhost:8000/api/v1/health | python3 -m json.tool
+```
+
+```json
+{
+    "status": "healthy",
+    "component": "vektra-index",
+    "latency_ms": 1
+}
+```
+
 ## API keys
 
 ### POST /api/v1/api-keys
@@ -97,7 +113,8 @@ Request body:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `label` | string | no | Human-readable label |
-| `scopes` | string[] | no | Permissions: `admin`, `ingest`, `query`. Defaults to `["admin"]`. |
+| `scopes` | string[] | no | Permissions: `admin`, `ingest`, `query`. Defaults to `["admin"]`. Invalid scopes are rejected with `422 ERR-ADMIN-001`. |
+| `expires_at` | datetime | no | Expiry timestamp. Must be timezone-aware and in the future, otherwise `422 ERR-ADMIN-004`. Omit for a non-expiring key. |
 
 Response (HTTP 201):
 
@@ -284,6 +301,86 @@ curl -s \
 
 Status values: `processing`, `indexed`, `failed`.
 
+### POST /api/v1/ingest/batch
+
+Ingest multiple documents in one multipart request. Every file is processed asynchronously, so the response is always HTTP 202 — there is no synchronous fast path here, unlike `POST /api/v1/ingest`.
+
+**Scopes**: `ingest`, `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -F "files=@lecture-07.pdf;type=application/pdf" \
+  -F "files=@lecture-08.pdf;type=application/pdf" \
+  "http://localhost:8000/api/v1/ingest/batch?namespace=default" | python3 -m json.tool
+```
+
+Query parameters: `namespace` (default `default`). Files must be sent as repeated `files` fields.
+
+Response (HTTP 202): one entry per submitted file, in submission order.
+
+```json
+[
+    {"job_id": "e5f6a7b8-...", "filename": "lecture-07.pdf", "status": "pending", "error": null},
+    {"job_id": null, "filename": "huge.pdf", "status": "rejected", "error": "File size 73400320 bytes exceeds maximum 52428800 bytes."}
+]
+```
+
+Per-file status: `pending` (job created, poll it via `GET /api/v1/ingest/jobs/{job_id}/status`), `rejected` (over `VEKTRA_MAX_FILE_SIZE_MB`, no job created), `failed` (job creation failed). A rejected or failed file does not fail the request: the batch still returns 202, so callers must inspect each entry rather than trust the status code. An empty file list returns 422.
+
+### DELETE /api/v1/documents/batch
+
+Delete several documents in one call. Chunks are hard-deleted from the active vector store; the document records are soft-deleted with `deletion_reason='user_request'`.
+
+**Scopes**: `admin`
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"document_ids":["550e8400-...","6f1c2d3e-..."],"namespace":"default"}' \
+  http://localhost:8000/api/v1/documents/batch | python3 -m json.tool
+```
+
+Request body:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `document_ids` | UUID[] | (required) | Documents to delete |
+| `namespace` | string | `default` | Namespace the documents belong to |
+
+Response (HTTP 200):
+
+```json
+{
+    "deleted": ["550e8400-..."],
+    "not_found": ["6f1c2d3e-..."]
+}
+```
+
+Unknown ids are reported in `not_found` rather than failing the request.
+
+### Granular pipeline endpoints
+
+`POST /api/v1/ingest/extract`, `POST /api/v1/ingest/chunk` and `POST /api/v1/ingest/embed` run the ingestion pipeline **without storing anything**. They exist to inspect and tune each stage in isolation: what the extractor produced, how the chunker split it, what got embedded. Nothing reaches the vector store, so they are safe to run against production data.
+
+**Scopes**: `ingest`, `admin` (all three)
+
+Each takes a single `file` field (multipart), is synchronous, and rejects files above 10 MB with HTTP 413. Unsupported content types return 422.
+
+| Endpoint | Runs | Returns (JSON array) |
+|----------|------|----------------------|
+| `POST /api/v1/ingest/extract` | extraction | `{text, element_type, content_format, metadata}` per element |
+| `POST /api/v1/ingest/chunk` | extraction + chunking | the same shape, after the chunking strategy |
+| `POST /api/v1/ingest/embed` | extraction + chunking + embedding | `{text, dense, element_type, content_format, metadata}` per chunk, `dense` being the embedding vector |
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -F "file=@lecture-07.pdf;type=application/pdf" \
+  http://localhost:8000/api/v1/ingest/chunk | python3 -m json.tool
+```
+
 ## Query
 
 ### POST /api/v1/query
@@ -372,6 +469,114 @@ curl -s \
   -H "Authorization: Bearer $VEKTRA_API_KEY" \
   http://localhost:8000/api/v1/providers | python3 -m json.tool
 ```
+
+## Conversations
+
+Conversation **content** is never served by these endpoints (REQ-051): they return metadata only. The decrypted turns are available to students through `GET /api/v1/learn/conversations/{id}/turns` (JWT, own course only) and to operators through `GET /api/v1/admin/conversations/{id}/turns` (admin).
+
+Both endpoints require persistent conversation storage. With the in-memory fallback store they return `503`.
+
+### GET /api/v1/conversations/{conversation_id}
+
+Conversation metadata.
+
+**Scopes**: `query`, `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  http://localhost:8000/api/v1/conversations/550e8400-... | python3 -m json.tool
+```
+
+Response (HTTP 200):
+
+```json
+{
+    "id": "550e8400-...",
+    "namespace_id": "default",
+    "created_at": "2026-07-14T10:00:00Z",
+    "updated_at": "2026-07-14T10:05:00Z",
+    "turn_count": 3,
+    "title": null
+}
+```
+
+Errors: `404` if the conversation does not exist **or has been soft-deleted**; `503` if conversations are not persisted.
+
+### DELETE /api/v1/conversations/{conversation_id}
+
+Soft-delete a conversation and all its turns (REQ-057). Returns HTTP 204 (no body).
+
+**Scopes**: `query`, `admin`
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  http://localhost:8000/api/v1/conversations/550e8400-...
+```
+
+Errors: `404` if the conversation does not exist or was already deleted.
+
+A namespace-bound key can only read and delete conversations in its own namespace.
+
+## Feedback
+
+Feedback on an answer (REQ-055). Two levels: the whole response, or one citation within it. Both record the submitting key and namespace.
+
+The `namespace` field in the body is ignored for namespace-bound keys, which always write to their own namespace.
+
+### POST /api/v1/feedback/{response_id}
+
+Rate a response. `response_id` is the value returned by `POST /api/v1/query`.
+
+**Scopes**: `query`, `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"rating":5,"comment":"Accurate and well sourced"}' \
+  http://localhost:8000/api/v1/feedback/9f8e7d6c-... | python3 -m json.tool
+```
+
+Request body:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `rating` | int | (required) | 1 to 5. Outside that range: 422. |
+| `comment` | string | `null` | Free-text comment |
+| `namespace` | string | `default` | Namespace to attribute the feedback to |
+
+Response (HTTP 201):
+
+```json
+{"id": "b7c8d9e0-..."}
+```
+
+### POST /api/v1/feedback/citation/{citation_id}
+
+Rate a single citation. `citation_id` is `sources[].citation_id` from the query response; `response_id` is required in the **body** here (the path carries the citation, not the response).
+
+**Scopes**: `query`, `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"response_id":"9f8e7d6c-...","rating":2,"comment":"Wrong page"}' \
+  http://localhost:8000/api/v1/feedback/citation/d4e5f6-... | python3 -m json.tool
+```
+
+Request body:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `response_id` | UUID | (required) | The response the citation belongs to |
+| `rating` | int | (required) | 1 to 5 |
+| `comment` | string | `null` | Free-text comment |
+| `namespace` | string | `default` | Namespace to attribute the feedback to |
+
+Response (HTTP 201): `{"id": "<feedback-id>"}`.
 
 ## Learn
 
@@ -710,9 +915,9 @@ curl -s -X DELETE \
 
 ### GET /api/v1/stats
 
-Document and chunk counts. Requires `query` scope.
+Document and chunk counts, at the **active index version**. Accepts any valid scope.
 
-**Scopes**: `query`
+**Scopes**: any
 
 ```bash
 curl -s \
@@ -730,23 +935,329 @@ curl -s \
 
 Omit `namespace` to get totals across all namespaces.
 
-## Admin
+## Reindex
 
-### GET /admin
+Re-embed a namespace under a **new index version** without downtime (REQ-064, ARCH-045, [ADR-0026](../../.s2s/decisions/ADR-0026-document-chunks-pgvector-internal.md)). Use it after changing the embedding model, the chunking strategy, or any setting that invalidates existing vectors.
 
-Minimal HTML dashboard showing health status. Requires any valid Bearer token.
+The mechanism: chunks are versioned. Every read (search, stats, chunk listing) filters on the **active** index version, set by `VEKTRA_ACTIVE_INDEX_VERSION` (default `1`). A reindex writes a second copy of the chunks under the target version, **alongside** the live ones, which keep serving traffic. The new version becomes live only when the operator changes the env var and restarts. Nothing is deleted along the way, so a bad reindex is rolled back by simply not switching.
+
+The switch and the cleanup are manual. There is **no** API to activate a version or to delete an old one: activation is an env var plus a restart, and cleanup is a store-level delete (see [Step 5](#step-5-clean-up-the-old-version)).
+
+### POST /api/v1/reindex
+
+Start a reindex job. Returns immediately (HTTP 202); the work runs in the background.
+
+**Scopes**: `admin`
 
 ```bash
 curl -s \
   -H "Authorization: Bearer $VEKTRA_API_KEY" \
-  http://localhost:8000/admin
+  -H "Content-Type: application/json" \
+  -d '{"namespace":"default","target_index_version":2}' \
+  http://localhost:8000/api/v1/reindex | python3 -m json.tool
 ```
+
+Request body:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `namespace` | string | `default` | Namespace to reindex. Ignored for a namespace-bound key, which always reindexes its own. |
+| `target_index_version` | int | (required) | Version to write. Must be `>= 1` and **differ** from the active version. |
+
+Response (HTTP 202):
+
+```json
+{
+    "job_id": "0500a873-0c7a-4e42-a8d2-0bd7d77591be",
+    "status": "pending",
+    "namespace": "default",
+    "target_index_version": 2
+}
+```
+
+The source version is not a parameter: the job always reads the active version, since that is the only version the store exposes for reading.
+
+Errors: `400` if `target_index_version` equals the active version (reindexing a version onto itself would overwrite the live chunks instead of writing beside them).
+
+### GET /api/v1/reindex/{job_id}/status
+
+Poll a reindex job.
+
+**Scopes**: `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  http://localhost:8000/api/v1/reindex/0500a873-.../status | python3 -m json.tool
+```
+
+Response (HTTP 200):
+
+```json
+{
+    "job_id": "0500a873-0c7a-4e42-a8d2-0bd7d77591be",
+    "status": "completed",
+    "namespace": "default",
+    "source_index_version": 1,
+    "target_index_version": 2,
+    "total_documents": 3,
+    "processed_documents": 3,
+    "chunks_reindexed": 12,
+    "error_message": null,
+    "created_at": "2026-07-14T16:13:21.085723+00:00",
+    "completed_at": "2026-07-14T16:13:21.248801+00:00"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `status` | `pending`, `running`, `completed`, `failed` |
+| `source_index_version` | Version read from (the active one at trigger time) |
+| `total_documents` | Documents in the namespace, excluding soft-deleted ones |
+| `processed_documents` | Progress counter |
+| **`chunks_reindexed`** | **Chunks actually written under the target version. This is the number that tells a real reindex from an empty one — check it, not just `status`.** |
+| `error_message` | Failure reason, `null` on success |
+
+Errors: `404` if the job id is unknown, or belongs to a different namespace than a namespace-bound key.
+
+**Why `chunks_reindexed` matters.** Until BUG-023 the job read chunks from a Postgres table that is empty in Qdrant mode, re-embedded nothing, wrote nothing, and still reported `completed`. An operator polling `status` alone would have seen a green result and switched the active version to an **empty index**. The job now refuses to report success when it wrote nothing: a namespace with documents but zero reindexed chunks fails with `error_message` explaining that the store returned no chunks at the source version. `chunks_reindexed` makes the distinction visible rather than implied — treat a completed job whose `chunks_reindexed` is 0 (against a non-empty namespace) as a bug, not a no-op.
+
+### End-to-end operator flow
+
+`scripts/reindex.sh TARGET_VERSION [NAMESPACE]` automates steps 1 and 2. The steps below are what it does, plus the manual part it deliberately stops short of.
+
+#### Step 1: trigger
+
+Note the chunk count you expect to move, so you can check it afterwards:
+
+```bash
+curl -s -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/stats?namespace=default"
+# {"document_count":3,"chunk_count":12,"namespace":"default"}
+
+JOB_ID=$(curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"namespace":"default","target_index_version":2}' \
+  http://localhost:8000/api/v1/reindex | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+```
+
+#### Step 2: poll until it settles
+
+```bash
+curl -s -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/reindex/$JOB_ID/status" | python3 -m json.tool
+```
+
+Poll until `status` is `completed` or `failed`. Live traffic is still being served by the old version throughout.
+
+#### Step 3: verify `chunks_reindexed` before switching
+
+This is the gate. **Do not switch on `status: completed` alone.**
+
+```bash
+curl -s -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/reindex/$JOB_ID/status" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'], d['chunks_reindexed'], 'chunks')"
+# completed 12 chunks
+```
+
+`chunks_reindexed` should be consistent with the `chunk_count` you noted in step 1. If it is `0`, or far below what you expected, the new version is empty or partial: **do not switch**, investigate. The old version is untouched, so there is nothing to roll back.
+
+#### Step 4: switch the active version
+
+Set the env var and recreate the container (a restart does not reload `.env`):
+
+```bash
+# .env
+VEKTRA_ACTIVE_INDEX_VERSION=2
+```
+
+```bash
+docker compose up -d vektra
+```
+
+Every read now resolves to version 2. Confirm with a query and with `GET /api/v1/stats`, whose counts are version-scoped and should now reflect the new index.
+
+To roll back, set the variable back to `1` and recreate again: version 1 is still in the store.
+
+#### Step 5: clean up the old version
+
+**There is no API for this.** The old version's chunks stay in the store, invisible to reads but occupying space, until they are removed at the store level. Once the new version is verified in production, delete them directly:
+
+```bash
+# Qdrant
+curl -s -X POST "http://localhost:6333/collections/vektra/points/delete?wait=true" \
+  -H "Content-Type: application/json" \
+  -d '{"filter":{"must":[
+        {"key":"namespace_id","match":{"value":"default"}},
+        {"key":"index_version","match":{"value":1}}]}}'
+```
+
+```sql
+-- pgvector
+DELETE FROM document_chunks
+WHERE namespace_id = 'default' AND index_version = 1;
+```
+
+Both are irreversible and neither is namespace-safe by default: **always filter on both `namespace_id` and `index_version`**, and count the matching rows/points before deleting. Deleting the version that is currently active empties the live index.
+
+## Analytics
+
+Operational data, not user-facing (ARCH-041, [ADR-0017](../../.s2s/decisions/ADR-0017-audit-analytics-separation.md)). Every endpoint here requires `admin`.
+
+A `QueryTrace` records what the RAG pipeline did for one response: each step with its duration, the chunks it retrieved with their scores, the model and prompt version. It is written by the query pipeline and is the tool for answering "why was this answer bad?".
+
+### GET /api/v1/traces
+
+List traces, most recent first.
+
+**Scopes**: `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/traces?namespace=default&min_duration_ms=3000&limit=20" \
+  | python3 -m json.tool
+```
+
+Query parameters:
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `namespace` | string | all | Filter by namespace |
+| `from` | datetime | - | Start of the time window (ISO 8601) |
+| `to` | datetime | - | End of the time window (ISO 8601) |
+| `model` | string | all | Filter by LLM model |
+| `min_duration_ms` | int | - | Only traces slower than this. Useful for hunting latency outliers. |
+| `limit` | int | `50` | Page size (1 to 500) |
+| `offset` | int | `0` | Pagination offset |
+
+Note the parameter names: `from`, `to` and `model` (not `from_dt`, `to_dt`, `llm_model` — those are the internal Python names).
+
+Response (HTTP 200):
+
+```json
+{
+    "items": [
+        {
+            "response_id": "c1d7ffce-...",
+            "steps": [
+                {"name": "pre_query_safeguard", "duration_ms": 0, "metadata": {"allowed": true}},
+                {"name": "embed_query", "duration_ms": 11, "metadata": {}},
+                {"name": "llm_call", "duration_ms": 3421, "metadata": {}}
+            ],
+            "total_duration_ms": 3652,
+            "chunks_retrieved": [{"chunk_id": "9f1c...", "score": 0.912}],
+            "llm_model": "openai/qwen35-27b-fp8",
+            "prompt_version": "v1",
+            "created_at": "2026-07-12T09:17:40.010407Z"
+        }
+    ],
+    "count": 1
+}
+```
+
+`count` is the number of items **on the current page**, not the total number of matching traces. Paginate with `offset` until a page comes back short; do not treat `count` as a total.
+
+### GET /api/v1/traces/{response_id}
+
+A single trace, by the `response_id` returned from `POST /api/v1/query`. Same object as an entry in `items` above.
+
+**Scopes**: `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  http://localhost:8000/api/v1/traces/c1d7ffce-... | python3 -m json.tool
+```
+
+Errors: `404 ERR-ANALYTICS-002` if no trace exists for that response id (traces are stored only when trace storage is enabled). `503 ERR-ANALYTICS-001` if the analytics service is still starting.
+
+### GET /api/v1/metrics
+
+Aggregated metrics over a time window. Not to be confused with `GET /metrics`, which is the unauthenticated Prometheus endpoint at the root.
+
+**Scopes**: `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/metrics?namespace=default" | python3 -m json.tool
+```
+
+Query parameters: `namespace`, `from`, `to` (all optional; default is all namespaces over all time).
+
+Response (HTTP 200):
+
+```json
+{
+    "total_queries": 67,
+    "avg_latency_ms": 3652.23,
+    "p95_latency_ms": 5985.2,
+    "avg_retrieval_score": 0.6675,
+    "queries_per_hour": 0.03,
+    "model_distribution": {"openai/qwen35-27b-fp8": 7, "qwen36-35b-a3b-fp8": 38},
+    "period_start": "2026-03-28T10:38:28.227883Z",
+    "period_end": "2026-07-12T09:17:40.010407Z"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `avg_retrieval_score` | Mean similarity score of retrieved chunks. A drop here is a retrieval-quality regression, and it moves before answer quality visibly does. |
+| `queries_per_hour` | Throughput over the window |
+| `model_distribution` | Query count per model. Entries can look duplicated (`qwen35-27b-fp8` and `openai/qwen35-27b-fp8`) because the model string is recorded as configured; a provider prefix change produces a new bucket. |
+| `period_start` / `period_end` | Actual window covered by the data, not the requested one |
+
+## Admin
+
+### GET /api/v1/admin/conversations/{conversation_id}/turns
+
+Decrypted conversation turns with full metadata (DEBT-011). Conversation content is encrypted at rest (pgcrypto, [ADR-0011](../../.s2s/decisions/ADR-0011-conversation-encryption.md)); this is the operator path to read it. Students read their own history through the JWT-authenticated `GET /api/v1/learn/conversations/{id}/turns`, which returns no metadata.
+
+**Scopes**: `admin`
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  http://localhost:8000/api/v1/admin/conversations/550e8400-.../turns | python3 -m json.tool
+```
+
+Response (HTTP 200): a JSON array (not an object).
+
+```json
+[
+    {
+        "turn_number": 1,
+        "question": "What is RAG?",
+        "answer": "RAG is ...",
+        "response_id": "9f8e7d6c-...",
+        "model": null,
+        "prompt_tokens": null,
+        "completion_tokens": null,
+        "created_at": "2026-07-14T10:00:00Z"
+    }
+]
+```
+
+`answer` is `null` for a turn still in flight (the question is recorded before the LLM responds). `model`, `prompt_tokens` and `completion_tokens` are currently always `null`: the columns exist but nothing populates them yet (DEBT-012).
+
+Errors: `404` if the conversation does not exist. `501` if the conversation store cannot decrypt (in-memory store: set `VEKTRA_CONVERSATION_KEY` for a real deployment). `503` if the store is unavailable.
+
+**Audit (NFR-007)**: every read writes a `conversation_turns_read` audit row with the namespace, conversation id and turn count.
+
+### GET /admin
+
+Redirects (HTTP 308) to `/admin/`, the HTMX dashboard ([ADR-0024](../../.s2s/decisions/ADR-0024-admin-ui-server-side.md)).
+
+The dashboard and its routes (`/admin/keys`, `/admin/namespaces`, `/admin/audit`, `/admin/config`) are a **browser UI, not an API**: they authenticate with a session cookie obtained from `/admin/login`, not with a Bearer token. Do not script against them — use the `/api/v1/*` endpoints above.
 
 ## Observability
 
 ### GET /metrics
 
-Prometheus metrics (unauthenticated).
+Prometheus metrics (unauthenticated). For aggregated RAG analytics as JSON, see [`GET /api/v1/metrics`](#get-apiv1metrics) instead.
 
 ```bash
 curl -s http://localhost:8000/metrics
@@ -754,7 +1265,7 @@ curl -s http://localhost:8000/metrics
 
 ## Error responses
 
-All errors follow a standard envelope (REQ-010):
+Most errors follow a standard envelope (REQ-010):
 
 ```json
 {
@@ -770,3 +1281,11 @@ All errors follow a standard envelope (REQ-010):
 ```
 
 See [error codes reference](error-codes.md) for the complete list.
+
+Not every endpoint uses the envelope. Reindex, conversations and admin conversation turns return FastAPI's bare shape instead:
+
+```json
+{"detail": "Reindex job not found"}
+```
+
+Clients that parse errors must handle both. The envelope is the intended contract; the bare form is a gap, not a second contract to rely on.

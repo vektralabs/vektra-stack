@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -58,6 +58,7 @@ class ReindexStatusResponse(BaseModel):
     target_index_version: int
     total_documents: int
     processed_documents: int
+    chunks_reindexed: int
     error_message: str | None = None
     created_at: str
     completed_at: str | None = None
@@ -66,6 +67,18 @@ class ReindexStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Background job
 # ---------------------------------------------------------------------------
+
+
+def _target_chunk_id(document_id: UUID, position: int, target_version: int) -> str:
+    """Deterministic id for a chunk rewritten under the target index version.
+
+    Must differ from the source version's id: providers that keep both versions
+    in one store (Qdrant) tell them apart by payload, so reusing the ingest seed
+    uuid5(document_id, position) would overwrite the live version instead of
+    writing alongside it (ADR-0026). Deterministic, so re-running a reindex is
+    idempotent rather than duplicating points.
+    """
+    return str(uuid5(document_id, f"{position}:v{target_version}"))
 
 
 async def run_reindex(
@@ -78,9 +91,15 @@ async def run_reindex(
     """Background reindex job: re-embed all chunks under a new index version.
 
     For each document in the namespace:
-    1. Read existing chunks (text + metadata) from source_index_version
+    1. Read existing chunks (text + metadata) from the active vector store
     2. Re-embed chunk texts using the current EmbeddingProvider
-    3. Store new chunks under target_index_version via PgvectorProvider
+    3. Store new chunks under target_index_version in that same store
+
+    Reads and writes go through the VectorStoreProvider from the registry, so a
+    reindex acts on whichever store is active. It previously read chunks from
+    Postgres and wrote them back through a hardcoded PgvectorProvider, which in
+    Qdrant mode read an empty table, re-embedded nothing, and still reported
+    "completed" (BUG-023, ADR-0026).
 
     The original chunks (source_version) are preserved for zero-downtime
     operation. Once the operator verifies the new index and switches
@@ -89,8 +108,8 @@ async def run_reindex(
     This function runs outside the request lifecycle. It creates its own
     DB sessions as needed.
     """
-    from vektra_index.models import DocumentChunkOrm, ReindexJobOrm, SourceDocumentOrm
-    from vektra_index.providers.pgvector import PgvectorProvider
+    from vektra_index.models import ReindexJobOrm, SourceDocumentOrm
+    from vektra_shared.config import VectorStoreConfig
     from vektra_shared.db import get_session_factory
     from vektra_shared.types import ChunkEmbedding
 
@@ -135,39 +154,34 @@ async def run_reindex(
             )
             doc_ids = [row[0] for row in doc_result.all()]
 
-            # Get embedding provider from registry (required)
+            # Get providers from registry (required)
             if registry is None:
                 raise RuntimeError("ProviderRegistry is required for reindex")
             embedding_provider = registry.get("embedding", "default")
             if embedding_provider is None:
                 raise RuntimeError("No embedding provider registered for reindex")
+            vector_store = registry.get("vector_store", "default")
+            if vector_store is None:
+                raise RuntimeError("No vector store registered for reindex")
 
-            # PgvectorProvider with target version for storing new chunks
-            target_pgvector = PgvectorProvider(active_index_version=target_version)
+            # list_chunks() reads the store's active version. Reindexing a
+            # different source version would silently read the active one
+            # instead, so refuse rather than rewrite the wrong chunks.
+            active_version = VectorStoreConfig().active_index_version
+            if source_version != active_version:
+                raise RuntimeError(
+                    f"Cannot reindex from version {source_version}: the vector "
+                    f"store reads version {active_version}. Set "
+                    f"VEKTRA_ACTIVE_INDEX_VERSION={source_version} first."
+                )
+
+            chunks_reindexed = 0
 
             for i, doc_id in enumerate(doc_ids):
-                # Read existing chunks for this document
-                chunk_result = await session.execute(
-                    select(
-                        DocumentChunkOrm.content,
-                        DocumentChunkOrm.chunk_metadata,
-                        DocumentChunkOrm.element_type,
-                        DocumentChunkOrm.content_format,
-                        DocumentChunkOrm.position,
-                        DocumentChunkOrm.sparse_vector,
-                    )
-                    .where(
-                        DocumentChunkOrm.document_id == doc_id,
-                        DocumentChunkOrm.namespace_id == namespace,
-                        DocumentChunkOrm.index_version == source_version,
-                    )
-                    .order_by(DocumentChunkOrm.position)
-                )
-                existing_chunks = chunk_result.all()
+                existing_chunks = await vector_store.list_chunks(namespace, doc_id)
 
                 if existing_chunks:
-                    # Re-embed chunk texts
-                    texts = [row.content for row in existing_chunks]
+                    texts = [chunk.text for chunk in existing_chunks]
                     embeddings = await embedding_provider.embed_documents(texts)
 
                     if len(embeddings) != len(texts):
@@ -176,39 +190,43 @@ async def run_reindex(
                             f"expected {len(texts)} for document {doc_id}"
                         )
 
-                    # Build ChunkEmbedding objects with target version metadata
+                    # Chunk ids change with the version, so parent links have to
+                    # be remapped or FEAT-017 parent expansion would point at the
+                    # source version's chunks.
+                    id_map = {
+                        chunk.chunk_id: _target_chunk_id(
+                            doc_id, chunk.position, target_version
+                        )
+                        for chunk in existing_chunks
+                    }
+
                     chunk_embeddings = []
-                    for _pos, (chunk_row, embedding) in enumerate(
-                        zip(existing_chunks, embeddings)
-                    ):
-                        metadata = dict(chunk_row.chunk_metadata or {})
+                    for chunk, embedding in zip(existing_chunks, embeddings):
+                        metadata = dict(chunk.metadata)
                         metadata["document_id"] = str(doc_id)
-                        metadata["position"] = chunk_row.position
-
-                        sparse = None
-                        if chunk_row.sparse_vector:
-                            from vektra_shared.types import SparseVector
-
-                            sparse = SparseVector(
-                                indices=chunk_row.sparse_vector.get("indices", []),
-                                values=chunk_row.sparse_vector.get("values", []),
-                            )
+                        metadata["position"] = chunk.position
 
                         chunk_embeddings.append(
                             ChunkEmbedding(
-                                chunk_id=f"{doc_id}_{chunk_row.position}",
-                                text=chunk_row.content,
+                                chunk_id=id_map[chunk.chunk_id],
+                                text=chunk.text,
                                 dense=embedding,
-                                sparse=sparse,
+                                sparse=chunk.sparse,
                                 metadata=metadata,
+                                parent_id=(
+                                    id_map.get(chunk.parent_id)
+                                    if chunk.parent_id
+                                    else None
+                                ),
                             )
                         )
 
-                    # Store re-embedded chunks with target version
-                    await target_pgvector.store(
-                        session, namespace, doc_id, chunk_embeddings
+                    stored = await vector_store.store(
+                        namespace,
+                        chunk_embeddings,
+                        index_version=target_version,
                     )
-                    await session.commit()
+                    chunks_reindexed += len(stored)
 
                 # Update progress
                 await session.execute(
@@ -217,6 +235,7 @@ async def run_reindex(
                     .values(
                         processed_documents=i + 1,
                         current_document_id=doc_id,
+                        chunks_reindexed=chunks_reindexed,
                     )
                 )
                 await session.commit()
@@ -231,16 +250,36 @@ async def run_reindex(
                     },
                 )
 
+            # A reindex over a non-empty namespace that wrote nothing has not
+            # succeeded, whatever the loop above thinks. Reporting "completed"
+            # here is the exact failure BUG-023 was: say so instead.
+            if total > 0 and chunks_reindexed == 0:
+                raise RuntimeError(
+                    f"Reindex stored no chunks for {total} document(s) in "
+                    f"namespace '{namespace}'. The vector store returned no "
+                    f"chunks at index version {source_version}."
+                )
+
             # Mark as completed
             await session.execute(
                 update(ReindexJobOrm)
                 .where(ReindexJobOrm.id == job_id)
                 .values(
                     status="completed",
+                    chunks_reindexed=chunks_reindexed,
                     completed_at=datetime.now(UTC),
                 )
             )
             await session.commit()
+
+            logger.info(
+                "reindex_completed",
+                extra={
+                    "job_id": str(job_id),
+                    "documents": total,
+                    "chunks_reindexed": chunks_reindexed,
+                },
+            )
 
     except Exception as exc:
         logger.error("reindex_failed", extra={"job_id": str(job_id), "error": str(exc)})
@@ -346,6 +385,7 @@ async def reindex_status(
         target_index_version=job.target_index_version,
         total_documents=job.total_documents,
         processed_documents=job.processed_documents,
+        chunks_reindexed=job.chunks_reindexed,
         error_message=job.error_message,
         created_at=job.created_at.isoformat(),
         completed_at=job.completed_at.isoformat() if job.completed_at else None,

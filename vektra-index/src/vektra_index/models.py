@@ -184,6 +184,12 @@ class ReindexJobOrm(Base):
     processed_documents: Mapped[int] = mapped_column(
         INTEGER, nullable=False, server_default=text("0")
     )
+    # Chunks actually re-embedded and written to the target version. Makes the
+    # work a reindex did observable: a job that processed every document but
+    # stored nothing used to be indistinguishable from a real one (BUG-023).
+    chunks_reindexed: Mapped[int] = mapped_column(
+        INTEGER, nullable=False, server_default=text("0")
+    )
     current_document_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
     )

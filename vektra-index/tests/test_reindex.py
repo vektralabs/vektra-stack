@@ -22,12 +22,14 @@ class TestReindexModels:
             target_index_version=2,
             total_documents=10,
             processed_documents=3,
+            chunks_reindexed=42,
             error_message=None,
             created_at="2026-03-02T00:00:00",
             completed_at=None,
         )
         assert resp.status == "running"
         assert resp.processed_documents == 3
+        assert resp.chunks_reindexed == 42
 
     def test_reindex_response_model(self):
         from vektra_index.reindex import ReindexResponse
@@ -54,81 +56,186 @@ class TestReindexModels:
         assert req.namespace == "default"
 
 
+def _make_reindex_env(doc_ids, chunks_by_doc, total=None):
+    """Wire the session + registry run_reindex needs.
+
+    Chunks come from the vector store, not from SQL: the only rows the session
+    still serves are the job record and the document list (ADR-0026).
+    """
+    from vektra_shared.types import StoredChunk
+
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),  # update status to running
+            MagicMock(**{"scalar_one.return_value": len(doc_ids)}),  # count
+            MagicMock(),  # update total_documents
+            MagicMock(**{"all.return_value": [(d,) for d in doc_ids]}),  # doc query
+            # progress update per document, then the terminal update
+            *[MagicMock() for _ in range(len(doc_ids) + 1)],
+        ]
+    )
+    session.commit = AsyncMock()
+
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    factory = MagicMock(return_value=ctx)
+
+    embedding = AsyncMock()
+    embedding.embed_documents = AsyncMock(
+        side_effect=lambda texts: [[0.1] * 384 for _ in texts]
+    )
+
+    vector_store = AsyncMock()
+    vector_store.list_chunks = AsyncMock(
+        side_effect=lambda ns, doc_id: [
+            StoredChunk(**c) for c in chunks_by_doc.get(doc_id, [])
+        ]
+    )
+    vector_store.store = AsyncMock(
+        side_effect=lambda ns, chunks, **kw: [c.chunk_id for c in chunks]
+    )
+
+    registry = MagicMock()
+    registry.get = MagicMock(
+        side_effect=lambda category, name: {
+            "embedding": embedding,
+            "vector_store": vector_store,
+        }[category]
+    )
+
+    return session, factory, embedding, vector_store, registry
+
+
 class TestRunReindex:
     @pytest.mark.asyncio
-    async def test_run_reindex_updates_progress(self):
-        """Verify that run_reindex re-embeds chunks and updates job status."""
+    async def test_run_reindex_reads_and_writes_through_the_active_store(self):
+        """Reindex goes through the registry's vector store, not Postgres.
+
+        Reading chunks from Postgres and writing them back through a hardcoded
+        PgvectorProvider is what made reindex a silent no-op in Qdrant mode
+        (BUG-023): it read an empty table and reported "completed".
+        """
         from vektra_index.reindex import run_reindex
 
-        job_id = uuid4()
-        doc1_id = uuid4()
-        doc2_id = uuid4()
-
-        # Mock chunk rows returned by the chunk query
-        mock_chunk1 = MagicMock(
-            content="hello world",
-            chunk_metadata={"document_id": str(doc1_id)},
-            element_type="text",
-            content_format="text",
-            position=0,
-            sparse_vector=None,
-        )
-        mock_chunk2 = MagicMock(
-            content="goodbye world",
-            chunk_metadata={"document_id": str(doc2_id)},
-            element_type="text",
-            content_format="text",
-            position=0,
-            sparse_vector=None,
+        doc1_id, doc2_id = uuid4(), uuid4()
+        _session, factory, embedding, vector_store, registry = _make_reindex_env(
+            [doc1_id, doc2_id],
+            {
+                doc1_id: [{"chunk_id": str(uuid4()), "text": "hello", "position": 0}],
+                doc2_id: [{"chunk_id": str(uuid4()), "text": "goodbye", "position": 0}],
+            },
         )
 
-        mock_session = AsyncMock()
-        execute_results = [
-            MagicMock(),  # update status to running
-            MagicMock(**{"scalar_one.return_value": 2}),  # count
-            MagicMock(),  # update total_documents
-            MagicMock(**{"all.return_value": [(doc1_id,), (doc2_id,)]}),  # doc query
-            MagicMock(**{"all.return_value": [mock_chunk1]}),  # chunks for doc 1
-            MagicMock(),  # pgvector store flush (doc 1)
-            MagicMock(),  # update progress doc 1
-            MagicMock(**{"all.return_value": [mock_chunk2]}),  # chunks for doc 2
-            MagicMock(),  # pgvector store flush (doc 2)
-            MagicMock(),  # update progress doc 2
-            MagicMock(),  # update completed
-        ]
-        mock_session.execute = AsyncMock(side_effect=execute_results)
-        mock_session.commit = AsyncMock()
-        mock_session.add = MagicMock()
-        mock_session.flush = AsyncMock()
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        mock_factory = MagicMock(return_value=mock_session_ctx)
-
-        # Mock embedding provider
-        mock_embedding = AsyncMock()
-        mock_embedding.embed_documents = AsyncMock(return_value=[[0.1] * 384])
-        mock_registry = MagicMock()
-        mock_registry.get = MagicMock(return_value=mock_embedding)
-
-        with patch(
-            "vektra_shared.db.get_session_factory",
-            return_value=mock_factory,
-        ):
+        with patch("vektra_shared.db.get_session_factory", return_value=factory):
             await run_reindex(
-                job_id=job_id,
+                job_id=uuid4(),
                 namespace="default",
                 source_version=1,
                 target_version=2,
-                registry=mock_registry,
+                registry=registry,
             )
 
-        # Verify embedding was called for both documents
-        assert mock_embedding.embed_documents.call_count == 2
-        assert mock_session.execute.call_count >= 4
-        assert mock_session.commit.call_count >= 4
+        assert embedding.embed_documents.call_count == 2
+        assert vector_store.list_chunks.await_count == 2
+        assert vector_store.store.await_count == 2
+        # Every write lands on the target version, alongside the live one
+        for call in vector_store.store.await_args_list:
+            assert call.kwargs["index_version"] == 2
+
+    @pytest.mark.asyncio
+    async def test_run_reindex_fails_when_it_stores_nothing(self):
+        """A reindex over a non-empty namespace that wrote nothing has failed.
+
+        Reporting "completed" here is exactly what BUG-023 was: the operator
+        could not tell a broken reindex from a real one.
+        """
+        from vektra_index.reindex import run_reindex
+
+        doc_id = uuid4()
+        session, factory, _embedding, vector_store, registry = _make_reindex_env(
+            [doc_id], {doc_id: []}
+        )
+
+        with patch("vektra_shared.db.get_session_factory", return_value=factory):
+            await run_reindex(
+                job_id=uuid4(),
+                namespace="default",
+                source_version=1,
+                target_version=2,
+                registry=registry,
+            )
+
+        vector_store.store.assert_not_awaited()
+        # The terminal write marks the job failed, not completed
+        final_values = session.execute.await_args.args[0].compile().params
+        assert final_values["status"] == "failed"
+        assert "stored no chunks" in final_values["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_run_reindex_remaps_parent_links(self):
+        """Chunk ids change with the version, so parent links must follow.
+
+        Otherwise FEAT-017 parent expansion in the reindexed version would point
+        at the source version's chunks.
+        """
+        from vektra_index.reindex import run_reindex
+
+        doc_id = uuid4()
+        parent_id, child_id = str(uuid4()), str(uuid4())
+        _session, factory, _embedding, vector_store, registry = _make_reindex_env(
+            [doc_id],
+            {
+                doc_id: [
+                    {"chunk_id": parent_id, "text": "parent", "position": 0},
+                    {
+                        "chunk_id": child_id,
+                        "text": "child",
+                        "position": 1,
+                        "parent_id": parent_id,
+                    },
+                ]
+            },
+        )
+
+        with patch("vektra_shared.db.get_session_factory", return_value=factory):
+            await run_reindex(
+                job_id=uuid4(),
+                namespace="default",
+                source_version=1,
+                target_version=2,
+                registry=registry,
+            )
+
+        stored = vector_store.store.await_args.args[1]
+        new_parent, new_child = stored[0], stored[1]
+        # Ids are rewritten for the target version, and the child follows
+        assert new_parent.chunk_id != parent_id
+        assert new_child.parent_id == new_parent.chunk_id
+
+    @pytest.mark.asyncio
+    async def test_run_reindex_refuses_stale_source_version(self):
+        """list_chunks() reads the store's active version, so reindexing from a
+        different source version would silently rewrite the wrong chunks."""
+        from vektra_index.reindex import run_reindex
+
+        doc_id = uuid4()
+        _session, factory, _embedding, vector_store, registry = _make_reindex_env(
+            [doc_id], {doc_id: [{"chunk_id": str(uuid4()), "text": "x", "position": 0}]}
+        )
+
+        with patch("vektra_shared.db.get_session_factory", return_value=factory):
+            await run_reindex(
+                job_id=uuid4(),
+                namespace="default",
+                source_version=7,  # the store reads version 1
+                target_version=8,
+                registry=registry,
+            )
+
+        vector_store.list_chunks.assert_not_awaited()
+        vector_store.store.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_run_reindex_marks_failed_on_error(self):

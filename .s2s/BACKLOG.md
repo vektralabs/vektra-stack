@@ -24,7 +24,16 @@
 
 ### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
 
-**Status**: planned | **Priority**: high | **Created**: 2026-07-13
+**Status**: completed (2026-07-13) | **Priority**: high | **Created**: 2026-07-13
+**Resolution**: [ADR-0026](decisions/ADR-0026-document-chunks-pgvector-internal.md). `document_chunks` is now formally private to the pgvector provider; every chunk path goes through the `VectorStoreProvider` Protocol, which grew `list_chunks()`, `count_chunks()` and an optional `index_version` on `store()`. The integration suite runs as a CI matrix over both providers.
+
+**Corrections to this entry, found while fixing it**:
+- `GET /api/v1/documents/{id}/chunks` **did not exist**. It was created as part of the fix (`list_chunks()` was needed for reindex anyway).
+- `DELETE` was worse than "needs verification": it returned `200 {"chunks_removed": 0}`, left every Qdrant point in place, and the deleted document went on answering queries (reproduced live: score 0.559 after a 200).
+- Two paths the entry did not list had the same root cause: `POST /documents/{id}/chunks` wrote to the *inactive* store, and `GET /api/v1/health` reported the index healthy without ever looking at the store backing it.
+- The **retention purge** (REQ-057, `cleanup_soft_deleted_task`) had the same defect and the worst consequence: it hard-deleted the Postgres row and relied on the `document_chunks` CASCADE, so in Qdrant mode it purged nothing, and the surviving content was no longer traceable to any document. Fixed here.
+- The chunk quota in `vektra-admin/quotas.py` is the same violation but is **dead code** (no callers), so it is latent rather than live. Filed as DEBT-028.
+
 **Origin**: TECH-005 ingest (2026-07-13). Verifying a fresh ingest showed `document_chunks` empty for the namespace, then empty for the *entire* database, on a stack that had ingested 15 documents.
 
 **Context**: `DocumentChunkOrm` (the `document_chunks` table) is written **only** by `PgvectorProvider` (`vektra-index/src/vektra_index/providers/pgvector.py:94`). `QdrantVectorStoreProvider` keeps chunk text and metadata in the Qdrant payload (`providers/qdrant.py:204`: `text`, `namespace_id`, `document_id`, `parent_id`, `metadata.chunk_level`). So with `VEKTRA_VECTOR_STORE_PROVIDER=qdrant` (the configuration every real deployment runs) the table is empty and Postgres only holds `source_documents`.
@@ -43,16 +52,33 @@ The RAG pipeline and `/api/v1/search` are unaffected: they resolve the provider 
 **Proposed approach**: route every chunk-reading path through the `VectorStoreProvider` Protocol instead of SQL. The Protocol already has `retrieve()` (added for FEAT-017); assess whether it needs a `list_by_document()` / `count()` extension, or whether `source_documents.chunk_count` plus Qdrant counts are enough for stats. Decide explicitly whether `document_chunks` remains a pgvector-only implementation detail (then no other module may read it) or becomes a provider-agnostic store written by both providers. The first option is smaller and matches ARCH-051.
 
 **Acceptance criteria**:
-- [ ] Decision recorded: is `document_chunks` pgvector-internal, or provider-agnostic?
-- [ ] `run_reindex` re-embeds and stores through the registry's active vector store; a reindex in Qdrant mode measurably rewrites the collection (point count and vector dimension verified after the run)
-- [ ] A reindex that stores nothing fails loudly instead of reporting `completed`
-- [ ] `GET /api/v1/stats` returns real counts in Qdrant mode
-- [ ] `GET /api/v1/documents/{id}/chunks` returns the chunks in Qdrant mode
-- [ ] `DELETE /api/v1/documents/{id}` verified to remove the Qdrant points, not just the Postgres rows
-- [ ] Integration test that runs the suite against `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, so this class of bug cannot come back silently
-- [ ] `QdrantVectorStoreProvider.retrieve()` scopes by `index_version` like the pgvector provider does (currently it filters only by `namespace_id`, so a chunk from a stale index version is still retrievable)
+- [x] Decision recorded: `document_chunks` is pgvector-internal (ADR-0026). The rejected alternative would have made Postgres a mandatory co-store under every provider, i.e. the redundancy the pluggable-store design exists to avoid.
+- [x] `run_reindex` re-embeds and stores through the registry's active vector store. Verified live on the Qdrant stack: namespace `default` went from `v1=12 v2=0` to `v1=12 v2=12` points, `chunks_reindexed=12`, source version preserved. Before the fix the same job reported `completed 3/3` and wrote zero.
+- [x] A reindex that stores nothing fails loudly instead of reporting `completed`
+- [x] `GET /api/v1/stats` returns real counts in Qdrant mode (verified: 12 / 105 / 562, matching the Qdrant point counts; was 0 / 0 / 0)
+- [x] `GET /api/v1/documents/{id}/chunks` returns the chunks in Qdrant mode (the endpoint did not exist; created)
+- [x] `DELETE /api/v1/documents/{id}` removes the points, not just the Postgres rows (verified: `chunks_removed` 0 -> 2, Qdrant points 2 -> 0, and the deleted document dropped out of search)
+- [x] Integration test that runs the suite against `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`: `.github/workflows/integration.yml` is now a matrix over both providers, and `tests/integration/test_chunk_lifecycle.py` asserts the lifecycle through the public API, including that a deleted document is not retrievable
+- [x] `QdrantVectorStoreProvider.retrieve()` scopes by `index_version`
 
-**Traceability**: BUG-021 (same family, search endpoint), ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), FEAT-017 (`retrieve()`)
+**Traceability**: BUG-021 (same family, search endpoint), ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), FEAT-017 (`retrieve()`), ADR-0026. Spawned DEBT-028; verifying this fix also surfaced BUG-024 (filed and fixed separately).
+
+---
+
+### DEBT-028: chunk quota counts a table the active provider may not write
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-13
+**Origin**: BUG-023 (2026-07-13).
+
+**Context**: `check_namespace_quota` (`vektra-admin/quotas.py:91`) counts `document_chunks` with raw SQL ("to avoid cross-module imports"). Under ADR-0026 that table is private to the pgvector provider, so in Qdrant mode the count is always 0 and the chunk quota would never be enforced.
+
+It is currently **dead code**: `check_namespace_quota` has no callers. The defect is therefore latent, not live, which is the only reason it is not filed as a bug.
+
+**Acceptance criteria**:
+- [ ] The chunk count goes through `VectorStoreProvider.count_chunks()` before the quota is wired up to anything
+- [ ] Or, if the quota is not going to be used, the function is removed rather than left as a trap
+
+**Traceability**: ADR-0026, BUG-023
 
 ---
 

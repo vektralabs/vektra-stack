@@ -24,8 +24,12 @@
 
 ### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
 
-**Status**: completed (2026-07-13) | **Priority**: high | **Created**: 2026-07-13
-**Resolution**: [ADR-0026](decisions/ADR-0026-document-chunks-pgvector-internal.md). `document_chunks` is now formally private to the pgvector provider; every chunk path goes through the `VectorStoreProvider` Protocol, which grew `list_chunks()`, `count_chunks()` and an optional `index_version` on `store()`. The integration suite runs as a CI matrix over both providers.
+**Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #102
+**Resolution**: [ADR-0026](decisions/ADR-0026-document-chunks-pgvector-internal.md). `document_chunks` is now formally private to the pgvector provider; every chunk path goes through the `VectorStoreProvider` Protocol, which grew `list_chunks()`, `count_chunks()` and an optional `index_version` on `store()`. Migration `0007` adds `reindex_jobs.chunks_reindexed`, which makes the work a reindex did observable. The integration suite runs as a CI matrix over both providers.
+
+**Evidence** (measured on the live Qdrant stack, before and after): `document_chunks` held 0 rows against 1323 Qdrant points; reindex reported `completed 3/3` while writing zero points (after: `v2` 0 -> 12, source version intact, `chunks_reindexed=12`); `/stats` reported `chunk_count: 0` for namespaces holding 12 / 105 / 562 (after: exact); `DELETE` returned `200 {"chunks_removed": 0}` and the deleted document still answered queries at score 0.559 (after: `chunks_removed: 2`, points 2 -> 0, search 1 -> 0). Full record in `vektra-internal/stack/20260714-bug023-qdrant-chunk-paths-evidence.md`.
+
+**Also fixed here, found in review**: `DELETE /documents/{id}` never enforced namespace binding (H5). The gap predates this work, but it was dormant only because the delete was a no-op against the active store: once the delete actually removes the chunks, the same request is a **cross-namespace deletion**. Covered by `test_api_namespace_binding.py`.
 
 **Corrections to this entry, found while fixing it**:
 - `GET /api/v1/documents/{id}/chunks` **did not exist**. It was created as part of the fix (`list_chunks()` was needed for reindex anyway).
@@ -84,7 +88,7 @@ It is currently **dead code**: `check_namespace_quota` has no callers. The defec
 
 ### BUG-024: the stack does not start when sparse embedding is enabled
 
-**Status**: completed (2026-07-13) | **Priority**: high | **Created**: 2026-07-13
+**Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #101
 **Origin**: BUG-023 verification (2026-07-13). The development stack failed to boot after an image rebuild; the container that had been running for days survived only because its image predated the defect.
 
 **Context**: `check_provider_registration` (`vektra-index/startup.py:37`) requires the sparse provider to be registered under the **name** taken from `VEKTRA_SPARSE_EMBEDDING_PROVIDER` (e.g. `fastembed-bm25`), but `main.py` registered it only under `"default"`:
@@ -100,6 +104,54 @@ The vector store registers both aliases (`"default"` **and** the provider name);
 **Resolution**: register the alias, as the vector store already does. `vektra-app/tests/test_provider_registration.py` wires the *real* registration step to the *real* check (confirmed to fail with the exact production error when the fix is reverted), and the app suite now runs in `make test` and in a new `test-app` CI job. The two app test files that need Docker said so in their own docstrings but lacked the `integration` marker; they now carry it.
 
 **Traceability**: ARCH-057 (startup validation), ARCH-039 (ProviderRegistry), ARCH-053 (sparse embeddings), BUG-023 (found during its verification)
+
+---
+
+### DEBT-029: test isolation from the local .env is incomplete (DEBT-025 was fixed in one package)
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Origin**: BUG-024 (2026-07-14). Writing the provider-registration test surfaced it.
+
+**Context**: DEBT-025 identified the root cause correctly — importing litellm runs `load_dotenv()`, which pulls the repo `.env` into `os.environ` for the rest of the pytest session — and fixed it with an autouse scrub fixture. But the fix does not reach most of the test suite:
+
+- The fixture lives in `vektra-shared/tests/conftest.py`, copy-pasted into `vektra-core/tests/` and `vektra-ingest/tests/`.
+- **Five test packages have no conftest at all**: `vektra-index`, `vektra-admin`, `vektra-analytics`, `vektra-learn`, `vektra-app`. Their tests read whatever the developer has in `.env`.
+
+And a scrub alone is not sufficient. Sub-configs (`QueryPipelineConfig`, `RerankConfig`) are constructed **inside** the functions that use them and resolve `env_file=".env"` relative to the working directory, so they bypass both the settings object passed in and the scrubbed environment. Demonstrated while writing `test_provider_registration.py`: with a developer's `VEKTRA_RERANK_ENABLED=true`, registration loaded a cross-encoder (`BAAI/bge-reranker-v2-m3`) that CI never loads. The test exercised a **different code path locally than in CI**, which is the exact failure mode a test is supposed to rule out.
+
+**Why medium, not low**: a test that passes locally and in CI for different reasons is worse than a missing test, because it is trusted. This class already hid two bugs (DEBT-025's original symptom, and the reranker path above).
+
+**Proposed approach**: a single root `conftest.py` with the autouse fixture (scrub `VEKTRA_*` + external keys, and `monkeypatch.chdir(tmp_path)` so the `.env` file itself is out of reach), replacing the three copies. Consider also making the sub-configs injectable rather than self-constructing, which is the underlying design smell.
+
+**Acceptance criteria**:
+- [ ] One autouse fixture applies to every test package, not three of eight
+- [ ] The scrub covers the `.env` **file**, not only `os.environ`
+- [ ] Heavy defaults are pinned off in tests that do not assert on them: reranking is enabled by default and is read from an internal config, so provider registration downloads and loads a cross-encoder on any test that touches it. Pinning it off in `test_provider_registration.py` took that file from 10.8s to 1.5s and removed its dependency on a model being downloadable.
+- [ ] A test proves it: with a populated `.env`, a config left at its default resolves to the default, not to the local value
+
+**Traceability**: DEBT-025 (incomplete fix), BUG-024
+
+---
+
+### DEBT-030: two vektra-app test files are run by nothing
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Origin**: BUG-024 (2026-07-14).
+
+**Context**: `vektra-app/tests/` was executed by neither `make test` nor CI, which is how a provider-wiring defect that stops the stack from booting shipped unnoticed (BUG-024). The unit tests are now wired into both. But two files in it are still orphaned:
+
+- `vektra-app/tests/test_app_integration.py` (the real 8-step ARCH-057 startup sequence against a live Postgres)
+- `vektra-app/tests/test_error_codes.py` (the REQ-011/NFR-009 error envelope for every triggerable code)
+
+They need Docker, and they now carry the `integration` marker, so the unit runs correctly exclude them. But `integration.yml` runs only `tests/integration/` and `tests/nfr/`, so **nothing runs them either**. They test the startup sequence and the error contract, which is exactly the surface that BUG-024 broke.
+
+**Proposed approach**: add `vektra-app/tests/ -m integration` to the integration workflow (they spin up their own testcontainer, so they do not need the compose stack), or move them under `tests/integration/`.
+
+**Acceptance criteria**:
+- [ ] Both files run in CI on every PR
+- [ ] They pass, or the reason they cannot is recorded and they are deleted rather than left as decoration
+
+**Traceability**: BUG-024, REQ-011, NFR-009, ARCH-057
 
 ---
 
@@ -801,12 +853,14 @@ Applies to both SimpleQueryPipeline and AdvancedQueryPipeline.
 - `GET /api/v1/metrics` (aggregated analytics)
 - `GET /api/v1/admin/conversations/{id}/turns` (decrypted conversation turns)
 - All `/api/v1/learn/*` endpoints
+- `POST /api/v1/reindex` and `GET /api/v1/reindex/{job_id}/status` (added 2026-07-14): **not documented at all**, although reindex is an operator-facing workflow with a manual index-version switch. The status response now carries `chunks_reindexed` (BUG-023), which is the field an operator needs in order to tell a real reindex from one that did nothing — it is worth documenting precisely because that distinction used to be invisible.
 
 Swagger at `/docs` is auto-generated and complete, but the markdown reference doc is stale.
 
 **Acceptance criteria**:
 - [ ] All live endpoints documented in `docs/reference/api.md`
 - [ ] Each entry includes: scopes, curl example, request/response schema
+- [ ] The reindex flow is documented end to end: trigger, poll status, verify `chunks_reindexed`, switch `VEKTRA_ACTIVE_INDEX_VERSION`, clean up the old version
 
 ---
 

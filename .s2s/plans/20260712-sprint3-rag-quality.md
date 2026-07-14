@@ -1,10 +1,14 @@
 # Implementation Plan: Sprint 3 — RAG quality
 
 **ID**: 20260712-sprint3-rag-quality
-**Status**: active
+**Status**: completed (2026-07-14)
 **Branch**: one branch/PR per item (`chore/debt-025-test-env-isolation`, `feat/feat-017-parent-chunk-expansion`, `feat/feat-021-namespace-citations`, FEAT-018 branch only if verification justifies it)
 **Created**: 2026-07-12T08:39:46Z
-**Updated**: 2026-07-12T09:35:00Z
+**Updated**: 2026-07-14T00:30:00Z
+
+> **Closed on 2026-07-14.** All five tasks are done (FEAT-018 closed as a deferral, with evidence).
+> The Qdrant-parity work that came out of this sprint's verification (BUG-023, BUG-024) is tracked in
+> its own plan: [`20260714-qdrant-parity.md`](20260714-qdrant-parity.md).
 
 ## Traceability
 

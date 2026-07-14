@@ -128,12 +128,29 @@ Turning the integration job into a matrix renamed it, so the required check neve
 sat `BLOCKED` with everything green. Fixed with an aggregator job carrying the required name, mirroring
 the existing `ci-gate` pattern — adding a third provider tomorrow needs no repo-settings change.
 
-**Test hermeticity is not what DEBT-025 thinks it is.** Its diagnosis was right (litellm's import-time
-`load_dotenv()` leaks the repo `.env` into `os.environ`), but the fix reaches three test packages out of
-eight, and a scrub alone is insufficient: sub-configs read the `.env` **file** relative to the working
-directory, bypassing both the settings object and the scrubbed environment. The new app test was loading
-a cross-encoder because of a developer's `VEKTRA_RERANK_ENABLED=true` — i.e. it ran a different code path
-locally than in CI. Filed as DEBT-029.
+**Test hermeticity is not what DEBT-025 thinks it is.** The carrier is real: litellm's import-time
+`load_dotenv()` leaks the repo `.env` into `os.environ`. The new app test was loading a cross-encoder
+because of a developer's `VEKTRA_RERANK_ENABLED=true` — i.e. it ran a different code path locally than
+in CI. Filed as DEBT-029.
+
+> **Corrected on 2026-07-14 (DEBT-029, PR #104).** The three mechanisms this note originally proposed
+> were all wrong, and measuring them is what corrected them. Recorded rather than quietly rewritten,
+> because plausible-and-wrong is the failure mode this whole plan is about:
+>
+> 1. *"The fix reaches three test packages out of eight."* It reached **zero**. The scrub fixture runs
+>    before the test body, while the product imports litellm lazily inside it, so the `.env` is
+>    re-injected after the scrub — including in the two packages that had the fixture.
+> 2. *"Sub-configs read the `.env` file relative to the working directory."* They do not: no `env_file`
+>    in their `SettingsConfigDict`, `os.environ` only. And `monkeypatch.chdir` cannot help anyway,
+>    since `load_dotenv` resolves the file relative to the **calling module** (litellm, inside `.venv/`,
+>    which lives in the repo), not the cwd.
+> 3. *"A root `conftest.py` applies it everywhere."* It would not be loaded in CI at all: each package
+>    declares its own `[tool.pytest.ini_options]`, so the rootdir is the package. Green locally, inert
+>    in CI — the very defect class the debt existed to remove.
+>
+> The actual fix: `vektra_shared.testing` sets `LITELLM_MODE` before litellm can be imported, so litellm
+> skips `load_dotenv` entirely; all eight packages import it, and a structural test fails if a new
+> package appears without it.
 
 **Spawned**: DEBT-028 (chunk quota counts `document_chunks` with raw SQL; dead code, latent),
 DEBT-029 (test isolation incomplete), DEBT-030 (two `vektra-app` test files still run by nothing).

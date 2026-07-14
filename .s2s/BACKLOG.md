@@ -163,6 +163,28 @@ They need Docker, and they now carry the `integration` marker, so the unit runs 
 
 ---
 
+### DEBT-031: nothing guarantees a test suite is actually executed
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Origin**: DEBT-029/030 (2026-07-14). The lesson the fix left behind, rather than a defect the fix left behind.
+
+**Context**: BUG-024 (a startup blocker) shipped because `vektra-app/tests/` was executed by nothing — neither `make test` nor CI. DEBT-030 wired that one package in, and the two files in it turned out to have **never worked at all** (`str(make_url(...))` masks the password as `***`, so alembic authenticated with `***` and every test died in setup). A test nobody runs rots.
+
+But the guard that came out of DEBT-029 (`test_env_isolation_coverage.py`) checks only that every test package **imports the isolation fixture**. Nothing checks that a test package is **run** by anything. Both `make test` and `ci-unit.yml` enumerate the eight packages **by hand**, so a `vektra-foo/tests/` added tomorrow is silently unexecuted, and no test fails.
+
+That is the exact shape of the hole BUG-024 fell through, still open one level up.
+
+**Proposed approach**: extend the structural test (or add a sibling) so that every `vektra-*/tests` directory, plus `tests/integration` and `tests/nfr`, is referenced by the `make test` target **and** by a CI job. Parsing the Makefile and the workflow YAML is enough; it does not need to run them. Consider also asserting that a package's `integration`-marked tests are named in some workflow, which is the specific gap DEBT-030 closed by hand.
+
+**Acceptance criteria**:
+- [ ] A test fails when a `vektra-*/tests` directory exists that no CI job runs
+- [ ] It fails for the unit path and the integration path independently (an `integration`-marked suite excluded from unit runs and named in no workflow is the DEBT-030 case, and must be caught)
+- [ ] Verified by deleting a package from the workflow and watching the test go red
+
+**Traceability**: BUG-024 (root cause), DEBT-029, DEBT-030
+
+---
+
 ### DEBT-027: VEKTRA_PARENT_CHILD_LEVELS is dead config
 
 **Status**: planned | **Priority**: low | **Created**: 2026-07-13

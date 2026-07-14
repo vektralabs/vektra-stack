@@ -1233,9 +1233,9 @@ Response (HTTP 200): a JSON array (not an object).
         "question": "What is RAG?",
         "answer": "RAG is ...",
         "response_id": "9f8e7d6c-...",
-        "model": "openai/qwen35-27b-fp8",
-        "prompt_tokens": 1204,
-        "completion_tokens": 87,
+        "model": null,
+        "prompt_tokens": null,
+        "completion_tokens": null,
         "created_at": "2026-07-14T10:00:00Z"
     }
 ]

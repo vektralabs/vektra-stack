@@ -872,7 +872,7 @@ Applies to both SimpleQueryPipeline and AdvancedQueryPipeline.
 
 ### DOCS-009: Document Phase 2 API endpoints in api.md
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-28
+**Status**: completed (2026-07-14) | **Priority**: medium | **Created**: 2026-03-28
 
 **Context**: `docs/reference/api.md` is missing documentation for several Phase 2 endpoints that are already functional:
 - `GET /api/v1/conversations/{id}` (conversation metadata)
@@ -889,9 +889,45 @@ Applies to both SimpleQueryPipeline and AdvancedQueryPipeline.
 Swagger at `/docs` is auto-generated and complete, but the markdown reference doc is stale.
 
 **Acceptance criteria**:
-- [ ] All live endpoints documented in `docs/reference/api.md`
-- [ ] Each entry includes: scopes, curl example, request/response schema
-- [ ] The reindex flow is documented end to end: trigger, poll status, verify `chunks_reindexed`, switch `VEKTRA_ACTIVE_INDEX_VERSION`, clean up the old version
+- [x] All live endpoints documented in `docs/reference/api.md`
+- [x] Each entry includes: scopes, curl example, request/response schema
+- [x] The reindex flow is documented end to end: trigger, poll status, verify `chunks_reindexed`, switch `VEKTRA_ACTIVE_INDEX_VERSION`, clean up the old version
+
+**Resolution** (2026-07-14): the `/learn/*` surface listed above turned out to be already documented; everything else was not. Added: reindex (with the end-to-end operator flow), conversations, feedback, traces, metrics, admin conversation turns, batch ingest/delete, the granular extract/chunk/embed endpoints, and `GET /api/v1/health`. The reindex flow was verified empirically against the dev stack, not transcribed from the code. Four doc/code discrepancies were corrected in passing (`GET /admin` is a 308 redirect to a cookie-authenticated UI, not a Bearer-authenticated dashboard; `GET /api/v1/stats` takes any scope, not `query`; the API-key body accepts `expires_at`; some endpoints do not use the REQ-010 error envelope). Two gaps discovered while documenting were filed as DEBT-032 and DEBT-033.
+
+---
+
+### DEBT-032: no way to clean up an old index version after a reindex
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Origin**: DOCS-009 (2026-07-14), found while documenting the reindex flow end to end.
+
+**Context**: reindex writes a second copy of every chunk under the target index version, alongside the live one. That is what makes it zero-downtime, and it is correct. But nothing ever removes the old copy. There is no cleanup endpoint, no cleanup flag on the reindex job, and no script step: `scripts/reindex.sh` stops after telling the operator to set `VEKTRA_ACTIVE_INDEX_VERSION`.
+
+The module docstring in `vektra-index/src/vektra_index/reindex.py` promises the opposite — "the operator sets VEKTRA_ACTIVE_INDEX_VERSION after reindex completes, then triggers cleanup of old-version chunks" — but there is nothing to trigger. The `VectorStoreProvider` protocol only exposes `delete(namespace, ids)`: no delete-by-version.
+
+Consequences: every reindex permanently doubles the storage for that namespace, and the only way to reclaim it is a hand-written delete against the store (a Qdrant filter delete, or `DELETE FROM document_chunks WHERE index_version = N`). That is an irreversible operation with no namespace guard, run by hand, at exactly the moment the operator is least sure of what is live — the failure mode being the deletion of the *active* version, which empties the live index. `docs/reference/api.md` documents the manual procedure with the warnings it needs, but the procedure should not be manual.
+
+**Acceptance criteria**:
+- [ ] `VectorStoreProvider` gains a version-scoped delete, implemented by both pgvector and Qdrant
+- [ ] An admin endpoint exposes it, refusing to delete the active index version
+- [ ] `scripts/reindex.sh` can complete the lifecycle
+- [ ] `docs/reference/api.md` replaces the manual store-level procedure with the endpoint
+
+---
+
+### DEBT-033: some endpoints bypass the REQ-010 error envelope
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-14
+**Origin**: DOCS-009 (2026-07-14).
+
+**Context**: REQ-010 defines a single error envelope (`{"error": {category, code, message, remediation, request_id, details}}`), and `docs/reference/api.md` presented it as universal. It is not. Reindex (`400`, `404`), conversations (`404`, `503`) and admin conversation turns (`404`, `501`, `503`) raise `HTTPException` with a plain string detail, so they return FastAPI's bare `{"detail": "..."}` — no code, no remediation, no request id.
+
+A client cannot branch on an error code for these endpoints, and the operator-facing reindex failures are exactly the ones where a machine-readable code would be worth having. The doc now warns that both shapes exist; the fix is to make the envelope actually universal.
+
+**Acceptance criteria**:
+- [ ] The endpoints above raise envelope errors with proper `ERR-*` codes
+- [ ] The "not every endpoint uses the envelope" caveat is removed from `docs/reference/api.md`
 
 ---
 

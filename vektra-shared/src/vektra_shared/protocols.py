@@ -148,6 +148,20 @@ class VectorStoreProvider(Protocol):
 
     async def delete(self, namespace: str, ids: list[str]) -> int: ...
 
+    async def delete_index_version(self, namespace: str, index_version: int) -> int:
+        """Delete every chunk of a namespace at one index version (REQ-064).
+
+        The counterpart of store(index_version=...): reindex writes a second
+        version alongside the live one, and this reclaims the version that lost.
+        Returns chunks_removed.
+
+        Implementations MUST refuse to delete their own active index version and
+        raise ActiveIndexVersionError. The destructive failure mode here is not
+        "an old version survives", it is "the live index is emptied": the store
+        is the only component that knows which version it is serving, so the
+        refusal belongs here rather than in whichever caller happens to ask."""
+        ...
+
     async def health_check(self) -> HealthStatus: ...
 
 

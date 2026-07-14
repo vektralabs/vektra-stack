@@ -941,7 +941,7 @@ Re-embed a namespace under a **new index version** without downtime (REQ-064, AR
 
 The mechanism: chunks are versioned. Every read (search, stats, chunk listing) filters on the **active** index version, set by `VEKTRA_ACTIVE_INDEX_VERSION` (default `1`). A reindex writes a second copy of the chunks under the target version, **alongside** the live ones, which keep serving traffic. The new version becomes live only when the operator changes the env var and restarts. Nothing is deleted along the way, so a bad reindex is rolled back by simply not switching.
 
-The switch and the cleanup are manual. There is **no** API to activate a version or to delete an old one: activation is an env var plus a restart, and cleanup is a store-level delete (see [Step 5](#step-5-clean-up-the-old-version)).
+The switch is manual: there is **no** API to activate a version, it is an env var plus a restart. The cleanup afterwards is an API call, `DELETE /api/v1/index-versions/{version}` (see [Step 5](#step-5-clean-up-the-old-version)), which refuses to delete whichever version is currently being served.
 
 ### POST /api/v1/reindex
 
@@ -1022,9 +1022,44 @@ Errors: `404` if the job id is unknown, or belongs to a different namespace than
 
 **Why `chunks_reindexed` matters.** Until BUG-023 the job read chunks from a Postgres table that is empty in Qdrant mode, re-embedded nothing, wrote nothing, and still reported `completed`. An operator polling `status` alone would have seen a green result and switched the active version to an **empty index**. The job now refuses to report success when it wrote nothing: a namespace with documents but zero reindexed chunks fails with `error_message` explaining that the store returned no chunks at the source version. `chunks_reindexed` makes the distinction visible rather than implied — treat a completed job whose `chunks_reindexed` is 0 (against a non-empty namespace) as a bug, not a no-op.
 
+### DELETE /api/v1/index-versions/{index_version}
+
+Reclaim the storage held by a superseded index version (REQ-064). Reindex leaves both versions in the store; this is the only thing that removes one.
+
+**Scopes**: `admin`
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/index-versions/1?namespace=default" | python3 -m json.tool
+```
+
+| Parameter | In | Default | Description |
+|-----------|-----|---------|-------------|
+| `index_version` | path | (required) | The version to delete. Must be `>= 1`, and must **not** be the active one. |
+| `namespace` | query | `default` | Namespace to clean up. A namespace-bound key may only name its own; naming another returns `403`. |
+
+```json
+{
+  "namespace": "default",
+  "index_version": 1,
+  "chunks_removed": 12
+}
+```
+
+Errors:
+
+- **`409`** if `index_version` is the version the system is currently serving. **This is the guard that matters.** The store refuses before deleting anything, so the request is a no-op, not a partial wipe. The failure mode it exists to prevent is not "an old version survives", it is "the live index is emptied": get the version number wrong by one and every query stops finding anything.
+- `400` if `index_version` is below 1.
+- `403` for a namespace-bound key naming another namespace. The delete is by filter, so a silently retargeted namespace would drop an entire version of a namespace the caller never named.
+
+The call is **idempotent**: deleting a version that is already gone returns `200` with `chunks_removed: 0`. That is the cheapest way to confirm a cleanup really happened, and it is safe to repeat.
+
+It is also the one **irreversible** step in the whole flow. Everything before it can be undone by not switching, or by switching back. Once the old version is deleted, rolling back means reindexing again from scratch.
+
 ### End-to-end operator flow
 
-`scripts/reindex.sh TARGET_VERSION [NAMESPACE]` automates steps 1 and 2. The steps below are what it does, plus the manual part it deliberately stops short of.
+`scripts/reindex.sh TARGET_VERSION [NAMESPACE]` automates steps 1 and 2; `scripts/reindex.sh --cleanup OLD_VERSION [NAMESPACE]` does step 5. They are two separate runs on purpose: between them sits the switch, which only a human can do, and until it happens the API will (correctly) refuse the cleanup.
 
 #### Step 1: trigger
 
@@ -1083,24 +1118,30 @@ To roll back, set the variable back to `1` and recreate again: version 1 is stil
 
 #### Step 5: clean up the old version
 
-**There is no API for this.** The old version's chunks stay in the store, invisible to reads but occupying space, until they are removed at the store level. Once the new version is verified in production, delete them directly:
+Until this step, the old version is still in the store: invisible to reads, but occupying exactly as much space as the live one. Every reindex you never clean up doubles the namespace again.
+
+Do it **after** step 4, once the new version has served real traffic and you are no longer going to roll back:
 
 ```bash
-# Qdrant
-curl -s -X POST "http://localhost:6333/collections/vektra/points/delete?wait=true" \
-  -H "Content-Type: application/json" \
-  -d '{"filter":{"must":[
-        {"key":"namespace_id","match":{"value":"default"}},
-        {"key":"index_version","match":{"value":1}}]}}'
+curl -s -X DELETE \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  "http://localhost:8000/api/v1/index-versions/1?namespace=default"
+# {"namespace":"default","index_version":1,"chunks_removed":12}
 ```
 
-```sql
--- pgvector
-DELETE FROM document_chunks
-WHERE namespace_id = 'default' AND index_version = 1;
+Or: `scripts/reindex.sh --cleanup 1 default`.
+
+Ordering is not left to your memory. If you run this **before** the switch, version 1 is still the active one and the API refuses with `409` — the request deletes nothing:
+
+```json
+{"detail": "Refusing to delete index version 1 of namespace 'default': it is the version currently being served. Switch VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart before cleaning up the old one."}
 ```
 
-Both are irreversible and neither is namespace-safe by default: **always filter on both `namespace_id` and `index_version`**, and count the matching rows/points before deleting. Deleting the version that is currently active empties the live index.
+That refusal is the whole reason this is an endpoint rather than a store-level delete. Reclaiming space is the small half of the job; the large half is that the obvious hand-written version of it — a Qdrant filter delete, or `DELETE FROM document_chunks WHERE index_version = 1` — has no idea which version is live, and is run by an operator at precisely the moment they are least sure. One wrong number and the live index is empty, with no error and nothing to roll back to.
+
+To confirm it is really gone, run it again: a second call returns `chunks_removed: 0`.
+
+This is the one irreversible step in the flow. Everything before it is undone by not switching, or by switching back.
 
 ## Analytics
 

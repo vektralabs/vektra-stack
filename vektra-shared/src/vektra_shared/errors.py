@@ -62,6 +62,30 @@ class ErrorResponse:
 
 
 # ---------------------------------------------------------------------------
+# Domain exceptions
+# ---------------------------------------------------------------------------
+
+
+class ActiveIndexVersionError(Exception):
+    """Raised when something tries to delete the index version being served.
+
+    The guard behind REQ-064's cleanup step. A vector store refuses this from
+    inside delete_index_version() rather than trusting callers to check first,
+    because it is the only component that knows which version it reads.
+    """
+
+    def __init__(self, namespace: str, index_version: int) -> None:
+        self.namespace = namespace
+        self.index_version = index_version
+        super().__init__(
+            f"Refusing to delete index version {index_version} of namespace "
+            f"'{namespace}': it is the version currently being served. Switch "
+            "VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart before "
+            "cleaning up the old one."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Normative error codes (REQ-011)
 # HTTP status mapping:
 #   TRANSIENT    -> 503

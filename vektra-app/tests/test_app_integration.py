@@ -55,7 +55,14 @@ def db_url():
         raw_url = postgres.get_connection_url()
         from sqlalchemy.engine import make_url
 
-        async_url = str(make_url(raw_url).set(drivername="postgresql+asyncpg"))
+        # render_as_string(hide_password=False), not str(): str() masks the password
+        # as "***", so alembic authenticated with a literal "***" and every test in
+        # this file errored out at setup. Nothing ran the file, so nothing noticed.
+        async_url = (
+            make_url(raw_url)
+            .set(drivername="postgresql+asyncpg")
+            .render_as_string(hide_password=False)
+        )
 
         env = os.environ.copy()
         env["VEKTRA_DATABASE_URL"] = async_url

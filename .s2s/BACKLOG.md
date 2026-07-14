@@ -107,36 +107,44 @@ The vector store registers both aliases (`"default"` **and** the provider name);
 
 ---
 
-### DEBT-029: test isolation from the local .env is incomplete (DEBT-025 was fixed in one package)
+### DEBT-029: the local .env reaches every test package, including the three that thought they were protected
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Status**: completed (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14 | **PR**: #104
 **Origin**: BUG-024 (2026-07-14). Writing the provider-registration test surfaced it.
 
-**Context**: DEBT-025 identified the root cause correctly — importing litellm runs `load_dotenv()`, which pulls the repo `.env` into `os.environ` for the rest of the pytest session — and fixed it with an autouse scrub fixture. But the fix does not reach most of the test suite:
+**Context**: DEBT-025 identified the carrier correctly — importing litellm runs `dotenv.load_dotenv()`, which pulls the repo `.env` into `os.environ` — and fixed it with an autouse scrub fixture, copy-pasted into three of the eight test packages. Five had no conftest at all.
 
-- The fixture lives in `vektra-shared/tests/conftest.py`, copy-pasted into `vektra-core/tests/` and `vektra-ingest/tests/`.
-- **Five test packages have no conftest at all**: `vektra-index`, `vektra-admin`, `vektra-analytics`, `vektra-learn`, `vektra-app`. Their tests read whatever the developer has in `.env`.
+**But the diagnosis in the first draft of this entry was wrong on two counts, and measuring it corrected them:**
 
-And a scrub alone is not sufficient. Sub-configs (`QueryPipelineConfig`, `RerankConfig`) are constructed **inside** the functions that use them and resolve `env_file=".env"` relative to the working directory, so they bypass both the settings object passed in and the scrubbed environment. Demonstrated while writing `test_provider_registration.py`: with a developer's `VEKTRA_RERANK_ENABLED=true`, registration loaded a cross-encoder (`BAAI/bge-reranker-v2-m3`) that CI never loads. The test exercised a **different code path locally than in CI**, which is the exact failure mode a test is supposed to rule out.
+1. **The scrub does not work, not even where it exists.** It runs *before the test body*, while the import that re-injects the `.env` happens *inside* it (the product imports litellm lazily). Measured: after `import litellm` in a test, `VectorStoreConfig().vector_store_provider` resolved to `qdrant` (the value in a developer's `.env`) instead of `pgvector` (the default) in **all four packages tested — including `vektra-core` and `vektra-shared`, which had the fixture**. The entry claimed three of eight were protected. None were.
+2. **`monkeypatch.chdir(tmp_path)` does nothing, and the settings classes never read the `.env` file.** They declare no `env_file` in their `SettingsConfigDict` and only read `os.environ`; `load_dotenv()` resolves the file relative to the *calling module* (litellm, inside `.venv/`, which lives inside the repo), not the working directory. Verified: from an empty cwd, `import litellm` still re-injected the `.env`.
 
-**Why medium, not low**: a test that passes locally and in CI for different reasons is worse than a missing test, because it is trusted. This class already hid two bugs (DEBT-025's original symptom, and the reranker path above).
+The reranker symptom in the first draft was also misattributed: `RerankConfig.enabled` defaults to `True`, so registration loads a cross-encoder on a **clean** environment too. That is a product default, not a leak.
 
-**Proposed approach**: a single root `conftest.py` with the autouse fixture (scrub `VEKTRA_*` + external keys, and `monkeypatch.chdir(tmp_path)` so the `.env` file itself is out of reach), replacing the three copies. Consider also making the sub-configs injectable rather than self-constructing, which is the underlying design smell.
+**Why medium, not low**: a test that passes locally and in CI for different reasons is worse than a missing test, because it is trusted.
+
+**Resolution**: `vektra_shared.testing` sets `LITELLM_MODE` before litellm can be imported, which makes litellm skip the `load_dotenv()` call outright — disarming the leak instead of trying to undo it. The autouse scrub stays, but only for what the developer exported in their own shell, and it exempts `integration`-marked tests, which need their real environment. Every one of the eight test packages now imports the single shared fixture; a structural test fails if a package is added without it.
 
 **Acceptance criteria**:
-- [ ] One autouse fixture applies to every test package, not three of eight
-- [ ] The scrub covers the `.env` **file**, not only `os.environ`
-- [ ] Heavy defaults are pinned off in tests that do not assert on them: reranking is enabled by default and is read from an internal config, so provider registration downloads and loads a cross-encoder on any test that touches it. Pinning it off in `test_provider_registration.py` took that file from 10.8s to 1.5s and removed its dependency on a model being downloadable.
-- [ ] A test proves it: with a populated `.env`, a config left at its default resolves to the default, not to the local value
+- [x] One autouse fixture applies to every test package, not three of eight
+- [x] The leak is closed at the source, not scrubbed after the fact (a scrub provably cannot close it)
+- [x] Heavy defaults are pinned off in tests that do not assert on them (`test_provider_registration.py`: 10.8s -> 1.5s, no model download)
+- [x] A test proves it: with a populated `.env` (which says `qdrant`), a config left at its default resolves to `pgvector`. It fails on the pre-fix code.
 
-**Traceability**: DEBT-025 (incomplete fix), BUG-024
+**Also found and fixed here**: `vektra-analytics/tests/` and `vektra-learn/tests/` carried empty `__init__.py` files, unlike the other six. With a conftest in each, pytest derived the same module name (`tests.conftest`) for both and refused to run the suite at all. Removed.
+
+**Traceability**: DEBT-025 (whose fix never worked), BUG-024
 
 ---
 
 ### DEBT-030: two vektra-app test files are run by nothing
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Status**: completed (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14 | **PR**: #104
 **Origin**: BUG-024 (2026-07-14).
+
+**Resolution**: both files now run in CI, in a dedicated `app-integration` job wired into the `integration-gate` aggregator (which keeps the name branch protection requires). They bring up their own Postgres via testcontainers, so they need Docker but not the compose stack.
+
+**And they had rotted, exactly as an unrun test does**: both derived the container's connection URL with `str(make_url(...))`, which **masks the password as `***`**. Alembic then authenticated with a literal `***` and every test in both files errored at setup. They had never worked. Fixed with `render_as_string(hide_password=False)`; 8 tests now pass. `vektra-app` also never registered the `integration` marker in its pytest config, so the marker it relied on was unknown to pytest.
 
 **Context**: `vektra-app/tests/` was executed by neither `make test` nor CI, which is how a provider-wiring defect that stops the stack from booting shipped unnoticed (BUG-024). The unit tests are now wired into both. But two files in it are still orphaned:
 
@@ -148,8 +156,8 @@ They need Docker, and they now carry the `integration` marker, so the unit runs 
 **Proposed approach**: add `vektra-app/tests/ -m integration` to the integration workflow (they spin up their own testcontainer, so they do not need the compose stack), or move them under `tests/integration/`.
 
 **Acceptance criteria**:
-- [ ] Both files run in CI on every PR
-- [ ] They pass, or the reason they cannot is recorded and they are deleted rather than left as decoration
+- [x] Both files run in CI on every PR (`app-integration` job, gated in `integration-gate`)
+- [x] They pass: 8 tests green, after fixing the password masking that had made them unrunnable from the start
 
 **Traceability**: BUG-024, REQ-011, NFR-009, ARCH-057
 

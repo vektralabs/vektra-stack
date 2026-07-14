@@ -1,4 +1,4 @@
-"""Test environment isolation for vektra-shared (DEBT-029).
+"""Test environment isolation for vektra-admin (DEBT-029).
 
 The fixture is autouse and shared: importing it here registers it for every test in
 this package. One implementation, one place to fix it. See `vektra_shared.testing`

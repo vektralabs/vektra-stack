@@ -899,8 +899,9 @@ Swagger at `/docs` is auto-generated and complete, but the markdown reference do
 
 ### DEBT-032: no way to clean up an old index version after a reindex
 
-**Status**: planned | **Priority**: high | **Created**: 2026-07-14 | **Raised to high**: 2026-07-14
+**Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-14 | **Raised to high**: 2026-07-14 | **PR**: #108
 **Origin**: DOCS-009 (2026-07-14), found while documenting the reindex flow end to end.
+**Resolution**: `VectorStoreProvider` gained `delete_index_version(namespace, index_version)`, implemented by Qdrant and pgvector, exposed as `DELETE /api/v1/index-versions/{version}` (admin). The guard lives in the providers, not the endpoint: a store is the only component that knows which version it reads, so it raises `ActiveIndexVersionError` (409) rather than trusting callers to check first. `scripts/reindex.sh --cleanup OLD_VERSION` completes the lifecycle as a second run, because the switch sits between the two and the API correctly refuses a cleanup before it. Verified on the dev stack: reindexing `default` to v2 doubled the namespace (12 -> 24 points), the switch left live search byte-identical, the cleanup reclaimed exactly the 12 old points, and the same call against the *active* version was refused with 409 while the six other namespaces (all at version 1) lost nothing.
 
 **Why high, and why this is not really "debt"**: REQ-064 spells the cleanup out as part of the requirement ("new chunks created with incremented version alongside old, atomic switch via config change, **cleanup of old version afterwards**"). So this is not a suboptimal-but-working solution: it is an acceptance criterion of a shipped requirement that was never built, while the module docstring tells the operator it exists. Code that promises a capability it does not have is the same disease as BUG-023, one level up.
 
@@ -913,10 +914,10 @@ The module docstring in `vektra-index/src/vektra_index/reindex.py` promises the 
 Consequences: every reindex permanently doubles the storage for that namespace, and the only way to reclaim it is a hand-written delete against the store (a Qdrant filter delete, or `DELETE FROM document_chunks WHERE index_version = N`). That is an irreversible operation with no namespace guard, run by hand, at exactly the moment the operator is least sure of what is live — the failure mode being the deletion of the *active* version, which empties the live index. `docs/reference/api.md` documents the manual procedure with the warnings it needs, but the procedure should not be manual.
 
 **Acceptance criteria**:
-- [ ] `VectorStoreProvider` gains a version-scoped delete, implemented by both pgvector and Qdrant
-- [ ] An admin endpoint exposes it and **refuses to delete the version the system is currently serving**, with a test that proves the refusal: the destructive failure mode here is not "an old version survives", it is "the live index is emptied"
-- [ ] `scripts/reindex.sh` can complete the lifecycle
-- [ ] `docs/reference/api.md` replaces the manual store-level procedure with the endpoint
+- [x] `VectorStoreProvider` gains a version-scoped delete, implemented by both pgvector and Qdrant
+- [x] An admin endpoint exposes it and **refuses to delete the version the system is currently serving**, with a test that proves the refusal: the destructive failure mode here is not "an old version survives", it is "the live index is emptied"
+- [x] `scripts/reindex.sh` can complete the lifecycle
+- [x] `docs/reference/api.md` replaces the manual store-level procedure with the endpoint
 
 **Traceability**: REQ-064 (unimplemented acceptance criterion), ARCH-045 (index versioning), ADR-0026 (the Protocol that needs the version-scoped delete), BUG-023 (whose fix made this live)
 
@@ -928,6 +929,8 @@ Consequences: every reindex permanently doubles the storage for that namespace, 
 **Origin**: DOCS-009 (2026-07-14).
 
 **Context**: REQ-010 defines a single error envelope (`{"error": {category, code, message, remediation, request_id, details}}`), and `docs/reference/api.md` presented it as universal. It is not. Reindex (`400`, `404`), conversations (`404`, `503`) and admin conversation turns (`404`, `501`, `503`) raise `HTTPException` with a plain string detail, so they return FastAPI's bare `{"detail": "..."}` — no code, no remediation, no request id.
+
+**Scope reduced (2026-07-14, DEBT-032 / #108)**: the new `DELETE /api/v1/index-versions/{version}` was built enveloped from the start (`ERR-INDEX-001`, `ERR-INDEX-002`), so it is *not* part of this cleanup. What remains is the pre-existing set: `POST /reindex`, `GET /reindex/{job_id}/status`, conversations, admin conversation turns.
 
 A client cannot branch on an error code for these endpoints, and the operator-facing reindex failures are exactly the ones where a machine-readable code would be worth having. The doc now warns that both shapes exist; the fix is to make the envelope actually universal.
 

@@ -177,6 +177,27 @@ class VectorStoreServiceAdapter:
                 raise
         return total
 
+    async def delete_index_version(self, namespace: str, index_version: int) -> int:
+        """Delete a namespace's chunks at one index version (REQ-064).
+
+        The active-version refusal is PgvectorProvider's, not this wrapper's:
+        keeping it below the session boundary means it holds for every caller
+        of the provider, not just the ones that come through here.
+        """
+        factory = self._get_session_factory()
+        pgvector = self._get_pgvector()
+
+        async with factory() as session:
+            try:
+                removed = await pgvector.delete_index_version(
+                    session, namespace, index_version
+                )
+                await session.commit()
+                return removed
+            except Exception:
+                await session.rollback()
+                raise
+
     async def health_check(self) -> HealthStatus:
         factory = self._get_session_factory()
         pgvector = self._get_pgvector()

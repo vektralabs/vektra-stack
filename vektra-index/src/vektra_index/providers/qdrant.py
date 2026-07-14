@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID, uuid4
 
+from vektra_shared.errors import ActiveIndexVersionError
 from vektra_shared.types import (
     ChunkEmbedding,
     HealthStatus,
@@ -529,6 +530,48 @@ class QdrantVectorStoreProvider:
                 models.FieldCondition(
                     key="namespace_id",
                     match=models.MatchValue(value=namespace),
+                ),
+            ]
+        )
+
+        count_result = await self._client.count(
+            collection_name=self._collection_name,
+            count_filter=selector,
+            exact=True,
+        )
+
+        await self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=models.FilterSelector(filter=selector),
+            wait=True,
+        )
+        return int(count_result.count)
+
+    async def delete_index_version(self, namespace: str, index_version: int) -> int:
+        """Delete a namespace's points at one index version (REQ-064).
+
+        Refuses the active version: both versions live in this one collection
+        and are told apart only by payload, so a filter that got the version
+        wrong would delete the points that are serving traffic.
+
+        Counts before deleting, as delete() does: Qdrant's UpdateResult does not
+        carry a count, and a second call returning 0 is how the operator
+        confirms the old version is really gone.
+        """
+        if index_version == self._active_index_version:
+            raise ActiveIndexVersionError(namespace, index_version)
+
+        from qdrant_client import models
+
+        selector = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="namespace_id",
+                    match=models.MatchValue(value=namespace),
+                ),
+                models.FieldCondition(
+                    key="index_version",
+                    match=models.MatchValue(value=index_version),
                 ),
             ]
         )

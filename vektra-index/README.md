@@ -24,4 +24,6 @@ The provider also exposes a `raw_filters` escape hatch for backend-specific meta
 
 Operator script `scripts/reindex.sh` triggers a full re-embedding into a new index version while serving from the active one. After completion, `VEKTRA_ACTIVE_INDEX_VERSION` is bumped atomically (provider-specific transaction).
 
+Both versions are then in the store. `scripts/reindex.sh --cleanup OLD_VERSION` (`DELETE /api/v1/index-versions/{version}`) reclaims the superseded one; skipping it leaves the namespace's storage permanently doubled. The store refuses to delete the version it is currently serving, so the cleanup cannot be run before the switch.
+
 See [architecture.md](../.s2s/architecture.md) for the component specification.

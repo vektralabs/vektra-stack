@@ -7,8 +7,11 @@ the target_index_version. Progress is tracked via the reindex_jobs table.
 GET /api/v1/reindex/{job_id}/status returns current progress.
 
 The active index version switch is manual: the operator sets
-VEKTRA_ACTIVE_INDEX_VERSION after reindex completes, then triggers
-cleanup of old-version chunks.
+VEKTRA_ACTIVE_INDEX_VERSION after reindex completes and restarts. Only then
+does DELETE /api/v1/index-versions/{version} reclaim the old version, which
+until that moment is the one serving traffic. That ordering is not a
+convention the operator is asked to honour: the store refuses to delete the
+version it is reading (DEBT-032).
 """
 
 from __future__ import annotations
@@ -18,13 +21,21 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.db import get_session
+from vektra_shared.errors import (
+    ERR_INDEX_001,
+    ERR_INDEX_002,
+    ActiveIndexVersionError,
+    ErrorCategory,
+    ErrorResponse,
+    http_status_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +73,50 @@ class ReindexStatusResponse(BaseModel):
     error_message: str | None = None
     created_at: str
     completed_at: str | None = None
+
+
+class DeleteIndexVersionResponse(BaseModel):
+    namespace: str
+    index_version: int
+    chunks_removed: int
+
+
+# ---------------------------------------------------------------------------
+# Errors (REQ-010 envelope)
+# ---------------------------------------------------------------------------
+
+
+def _active_index_version_refusal(exc: ActiveIndexVersionError) -> HTTPException:
+    """409 for a cleanup aimed at the version being served.
+
+    The one error on this endpoint a client would genuinely branch on, so it
+    carries a code rather than a bare string: an operator tool needs to tell
+    "wrong version, nothing happened" apart from "the store is down".
+    """
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_INDEX_001,
+        message=str(exc),
+        remediation=(
+            "Switch VEKTRA_ACTIVE_INDEX_VERSION to the new version and restart, "
+            "then delete the old one. To check which version is live, see "
+            "VEKTRA_ACTIVE_INDEX_VERSION in the running configuration."
+        ),
+        details={"namespace": exc.namespace, "index_version": exc.index_version},
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+
+def _invalid_index_version(index_version: int) -> HTTPException:
+    """400 for an index version below 1."""
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_INDEX_002,
+        message=f"index_version must be an integer >= 1, got {index_version}.",
+        remediation="Pass the index version you want to delete, as an integer >= 1.",
+        details={"index_version": index_version},
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +158,8 @@ async def run_reindex(
 
     The original chunks (source_version) are preserved for zero-downtime
     operation. Once the operator verifies the new index and switches
-    VEKTRA_ACTIVE_INDEX_VERSION, old-version chunks can be cleaned up.
+    VEKTRA_ACTIVE_INDEX_VERSION, the old version is reclaimed with
+    DELETE /api/v1/index-versions/{source_version}.
 
     This function runs outside the request lifecycle. It creates its own
     DB sessions as needed.
@@ -389,4 +445,62 @@ async def reindex_status(
         error_message=job.error_message,
         created_at=job.created_at.isoformat(),
         completed_at=job.completed_at.isoformat() if job.completed_at else None,
+    )
+
+
+@router.delete(
+    "/index-versions/{index_version}", response_model=DeleteIndexVersionResponse
+)
+async def delete_index_version(
+    index_version: int,
+    request: Request,
+    namespace: str | None = Query(None),
+    key: ApiKeyInfo = Depends(require_scope("admin")),
+) -> DeleteIndexVersionResponse:
+    """Reclaim the storage of a superseded index version (REQ-064, DEBT-032).
+
+    The last step of the reindex lifecycle, and the only irreversible one. Run
+    it once the new version has been switched in and verified: reindex leaves
+    both versions in the store, and nothing else removes the loser.
+
+    Refuses to delete the version the store is currently reading, with 409. The
+    refusal lives in the provider, not here, so it also covers callers that are
+    not this endpoint. Idempotent: a second call returns chunks_removed=0, which
+    is how the operator confirms the old version is really gone.
+    """
+    from vektra_index.api import _namespace_scope_violation
+
+    if index_version < 1:
+        raise _invalid_index_version(index_version)
+
+    vector_store = request.app.state.registry.get("vector_store", "default")
+
+    # Namespace binding (H5), as on DELETE /documents/{id}: refuse a mismatch
+    # rather than silently retargeting it. This endpoint deletes by filter, so a
+    # silent override would delete a whole version of a namespace the caller
+    # never named.
+    if key.namespace_id and namespace and namespace != key.namespace_id:
+        raise _namespace_scope_violation()
+    effective_ns = key.namespace_id or namespace or "default"
+
+    try:
+        chunks_removed = await vector_store.delete_index_version(
+            effective_ns, index_version
+        )
+    except ActiveIndexVersionError as exc:
+        raise _active_index_version_refusal(exc) from exc
+
+    logger.info(
+        "index_version_deleted",
+        extra={
+            "namespace": effective_ns,
+            "index_version": index_version,
+            "chunks_removed": chunks_removed,
+        },
+    )
+
+    return DeleteIndexVersionResponse(
+        namespace=effective_ns,
+        index_version=index_version,
+        chunks_removed=chunks_removed,
     )

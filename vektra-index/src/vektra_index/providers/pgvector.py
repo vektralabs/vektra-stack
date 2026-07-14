@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Float, delete, func, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vektra_shared.errors import ActiveIndexVersionError
 from vektra_shared.types import (
     ChunkEmbedding,
     HealthStatus,
@@ -546,6 +547,39 @@ class PgvectorProvider:
             stmt = stmt.where(DocumentChunkOrm.namespace_id == namespace)
 
         return int((await session.execute(stmt)).scalar_one())
+
+    async def delete_index_version(
+        self,
+        session: AsyncSession,
+        namespace: str,
+        index_version: int,
+    ) -> int:
+        """Delete a namespace's chunks at one index version (REQ-064).
+
+        Refuses the active version: that DELETE is the one that empties the
+        live index. Counts before deleting, so chunks_removed is the truth
+        rather than an assumption, and a second call returning 0 is how the
+        operator confirms the old version is really gone.
+        """
+        from vektra_index.models import DocumentChunkOrm
+
+        if index_version == self._active_index_version:
+            raise ActiveIndexVersionError(namespace, index_version)
+
+        where_clause = (
+            DocumentChunkOrm.namespace_id == namespace,
+            DocumentChunkOrm.index_version == index_version,
+        )
+
+        count_result = await session.execute(
+            select(func.count()).select_from(DocumentChunkOrm).where(*where_clause)
+        )
+        chunks_count = count_result.scalar_one()
+
+        await session.execute(delete(DocumentChunkOrm).where(*where_clause))
+
+        await session.flush()
+        return chunks_count
 
     async def health_check(self, session: AsyncSession) -> HealthStatus:
         """Quick connectivity check via SELECT 1 FROM document_chunks."""

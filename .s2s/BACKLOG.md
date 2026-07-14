@@ -178,8 +178,9 @@ That is the exact shape of the hole BUG-024 fell through, still open one level u
 
 **Acceptance criteria**:
 - [ ] A test fails when a `vektra-*/tests` directory exists that no CI job runs
+- [ ] A test fails when such a directory is missing from the `make test` target, so the local gate and CI cannot drift apart (they are two independent hand-maintained lists today)
 - [ ] It fails for the unit path and the integration path independently (an `integration`-marked suite excluded from unit runs and named in no workflow is the DEBT-030 case, and must be caught)
-- [ ] Verified by deleting a package from the workflow and watching the test go red
+- [ ] Verified by deleting a package from the workflow, and separately from the Makefile, and watching the test go red each time
 
 **Traceability**: BUG-024 (root cause), DEBT-029, DEBT-030
 

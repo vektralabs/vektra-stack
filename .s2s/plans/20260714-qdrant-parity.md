@@ -139,7 +139,8 @@ in CI. Filed as DEBT-029.
 >
 > 1. *"The fix reaches three test packages out of eight."* It reached **zero**. The scrub fixture runs
 >    before the test body, while the product imports litellm lazily inside it, so the `.env` is
->    re-injected after the scrub — including in the two packages that had the fixture.
+>    re-injected after the scrub — including in the three packages that did have the fixture
+>    (`vektra-shared`, `vektra-core`, `vektra-ingest`).
 > 2. *"Sub-configs read the `.env` file relative to the working directory."* They do not: no `env_file`
 >    in their `SettingsConfigDict`, `os.environ` only. And `monkeypatch.chdir` cannot help anyway,
 >    since `load_dotenv` resolves the file relative to the **calling module** (litellm, inside `.venv/`,

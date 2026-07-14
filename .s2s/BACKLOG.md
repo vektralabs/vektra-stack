@@ -163,6 +163,37 @@ They need Docker, and they now carry the `integration` marker, so the unit runs 
 
 ---
 
+### BUG-025: a startup failure prints a raw Python traceback next to the structured error
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Origin**: DEBT-031 (2026-07-14). Surfaced by running `tests/test_startup.py` for the first time.
+
+**Context**: ARCH-057 exists so that a misconfiguration is reported clearly (REQ-011, NFR-009): a structured, remediable error rather than a stack dump. Step 1 does emit exactly that —
+
+```
+{"event": "startup_failed", "error": "[STARTUP ERROR] Step: config_validation\n  Detail: ...\n  Remediation: Set all required environment variables. At minimum: VEKTRA_LLM_PROVIDER ..."}
+```
+
+— and then `raise SystemExit(1)` propagates out of the ASGI lifespan into uvicorn, which logs the exception with `Traceback (most recent call last)` before "Application startup failed. Exiting." So the operator who typo'd an env var gets the good message *and* a Python traceback. `tests/test_startup.py` has asserted the absence of that traceback since the day it was written; nothing ever ran it (DEBT-031), so nobody found out.
+
+This is not cosmetic: the traceback is the failure mode NFR-009 names, and it applies to **every** one of the 11 steps, not only config validation.
+
+**Proposed approach** (recommended): validate before serving rather than inside the lifespan. The container runs `exec uvicorn vektra_app.main:app` (`docker/entrypoint.sh`), so the 11-step sequence necessarily runs as ASGI startup and any abort must travel through uvicorn. Replacing the uvicorn CLI with a `main()` that runs the validation and only then calls `uvicorn.run()` lets a failed step print its structured error and `sys.exit(1)` with no ASGI involvement and no traceback.
+
+Alternatives considered: suppressing uvicorn's exception logging (fragile, and hides real errors); a preflight that validates only step 1 in the entrypoint (leaves steps 2-11 still leaking a traceback, so it fixes the test rather than the contract).
+
+**Caution**: this touches the boot path, which is the surface BUG-024 broke. `vektra-app/tests/test_app.py::test_missing_llm_provider_aborts_startup` drives the lifespan in-process and expects `SystemExit`; a change to a hard exit there would kill the test runner.
+
+**Acceptance criteria**:
+- [ ] A misconfigured env var produces the structured `[STARTUP ERROR]` block and **no** `Traceback (most recent call last)` in container output
+- [ ] Holds for a step other than config validation (e.g. database connectivity), not just step 1
+- [ ] The container still exits non-zero
+- [ ] The `xfail(strict=True)` on `tests/test_startup.py::test_no_raw_traceback_on_startup_failure` is removed; strict mode makes the suite go red if the fix lands and the marker is left behind
+
+**Traceability**: REQ-011, NFR-009, ARCH-057, DEBT-031 (found by), BUG-024 (same surface)
+
+---
+
 ### DEBT-031: nothing guarantees a test suite is actually executed
 
 **Status**: done (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14
@@ -188,7 +219,9 @@ Proven by breaking it five ways, each going red on the right assertion and green
 
 **Found by the guard, previously unknown** (see CHANGELOG): five suites executed by nothing. `tests/test_startup.py` (ARCH-057 startup validation — its docstring assumed integration.yml ran it; integration.yml names `tests/integration/`, never `tests/`), and the `integration`-marked suites of vektra-admin, vektra-index (×2) and vektra-ingest, which DEBT-030 left behind when it wired up vektra-app by hand. All now run. The `app-integration` job becomes `package-integration` over a `vektra-*/tests` glob so the list stops being hand-maintained.
 
-**And, on cue, one of them had rotted — and it was hiding a product bug.** The four package suites passed, but `tests/test_startup.py` went red in CI the first time it ever ran: `test_graceful_failure_on_missing_config` hung until timeout. It sets `-e VEKTRA_LLM_PROVIDER=`, believing that *unsets* the variable; it sets it to the **empty string**. `llm_provider` was a bare required `str`, and `""` is a valid `str`, so pydantic never raised, step 1 never fired, and **the stack booted and served with an empty LLM provider** — deferring the misconfiguration to the first query, which is precisely what ARCH-057 exists to prevent. Fixed at the source (`min_length=1`), not by weakening the test. Third time in this repo that a suite turned out to be broken the moment it was executed; the difference is that this one was also concealing a real defect.
+**And, on cue, one of them had rotted — and it was hiding two product bugs.** The four package suites passed, but `tests/test_startup.py` went red in CI the first time it ever ran: `test_graceful_failure_on_missing_config` hung until timeout. It sets `-e VEKTRA_LLM_PROVIDER=`, believing that *unsets* the variable; it sets it to the **empty string**. `llm_provider` was a bare required `str`, and `""` is a valid `str`, so pydantic never raised, step 1 never fired, and **the stack booted and served with an empty LLM provider** — deferring the misconfiguration to the first query, which is precisely what ARCH-057 exists to prevent. Fixed at the source (`min_length=1`), not by weakening the test. With that fixed, the same test surfaced **BUG-025**: the structured error is emitted and a raw uvicorn traceback follows it, where NFR-009 asks for the one instead of the other. That one needs the boot path restructured (validate before `uvicorn.run()`), which is the surface BUG-024 broke, so it is filed rather than rushed in here; the assertion is `xfail(strict=True)` so it cannot rot in turn.
+
+Third time in this repo that a suite turned out to be broken the moment it was executed. The difference is that this one was also concealing live defects — which is the argument for the guard, made better than the guard's own docstring makes it.
 
 **Traceability**: BUG-024 (root cause), DEBT-029, DEBT-030
 

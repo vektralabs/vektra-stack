@@ -101,13 +101,17 @@ This is the same family as DEBT-032 (REQ-064's "cleanup afterwards" clause): a c
 
 **Note on priority**: spec-priority and operational urgency diverge here, and honestly. REQ-048 is *must*, but quota enforcement matters for **multi-tenant** deployments; the current single-tenant e-learning deployment does not need it today. Tagged medium, not high, for that reason — raise it when multi-tenant / resource-capping actually lands on the roadmap. It should not sit at *low*, because a configurable-but-ignored control is a trap (an operator who sets a quota reasonably expects it to hold).
 
-**Proposed approach**: call `check_namespace_quota` in the ingest pipeline (`vektra-ingest/pipeline.py::run_ingest`, before the chunks are stored), counting the chunks the incoming document will add. On exceed, fail the ingest with the REQ-010 envelope (`ERR-QUOTA-001` already exists) and a clear remediation, and do not partially store. Decide explicitly where the check sits relative to extraction/chunking (you need the chunk count, so after chunking, before store) and what happens to a document already partway through.
+**Proposed approach**: the check must run where the chunk count is known — after chunking, before store — but **`vektra_ingest` cannot import `vektra_admin`**, where `check_namespace_quota` lives (import-linter contract "vektra_ingest must not import from other vektra components"). So do **not** call it directly from the pipeline. Two boundary-respecting options, to be decided as part of the design:
+1. **Move the quota logic into `vektra_shared`** (it is a cross-cutting concern like the other things there) and have both `vektra_admin` and the ingest path call it — `vektra_ingest` *is* allowed to import `vektra_shared`.
+2. **Inject an enforcement hook through the registry.** `run_ingest` already receives `registry` and pulls its providers from it; a quota-enforcement callable registered by the app layer (which can import both components) would let the pipeline enforce without importing `vektra_admin`. This matches the existing provider-injection pattern.
+On exceed, fail the ingest with the REQ-010 envelope (`ERR-QUOTA-001` already exists) and a clear remediation, and store nothing (decide what happens to a document already partway through extraction).
 
 **Acceptance criteria**:
 - [ ] An ingest that would exceed `quota_chunks` (or `quota_documents`) is rejected with the `ERR-QUOTA-001` envelope, and stores nothing
 - [ ] An ingest within quota is unaffected; a namespace with null quotas is unaffected (Phase 1 behaviour preserved)
 - [ ] Verified against `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, since the count now goes through the provider (this is the path DEBT-028 fixed) — a pgvector-only test would not exercise it
 - [ ] The cross-namespace / active-version subtleties of `count_chunks` are respected (a reindex mid-flight must not let a namespace slip its quota)
+- [ ] The import-linter contracts stay green: `vektra_ingest` does not import `vektra_admin` (the enforcement is wired through `vektra_shared` or the registry, per the approach above)
 
 **Traceability**: REQ-048 (must, Phase 2 clause), DEBT-028 (the count it builds on), ADR-0026 (the Protocol it counts through), ERR-QUOTA-001
 

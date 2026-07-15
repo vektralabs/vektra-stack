@@ -150,6 +150,10 @@ ERR_INDEX_002 = "ERR-INDEX-002"  # Invalid index version (< 1)
 ERR_INDEX_003 = "ERR-INDEX-003"  # Reindex target equals the active version
 ERR_INDEX_004 = "ERR-INDEX-004"  # Reindex job not found
 
+# Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
+# 008 is shared because it backs a factory reused within that module)
+ERR_ADMIN_008 = "ERR-ADMIN-008"  # Deep-health auth: registry/key store not yet ready
+
 
 # ---------------------------------------------------------------------------
 # HTTP status mapping helpers
@@ -283,5 +287,44 @@ def conversation_turns_unsupported(request_id: UUID | None = None) -> ErrorRespo
             "Configure a persistent conversation store with VEKTRA_CONVERSATION_KEY "
             "set; the in-memory store cannot decrypt turn history."
         ),
+        request_id=request_id or uuid4(),
+    )
+
+
+def query_pipeline_unavailable(request_id: UUID | None = None) -> ErrorResponse:
+    """503 when the query pipeline provider is not registered yet."""
+    return ErrorResponse(
+        category=ErrorCategory.TRANSIENT,
+        code=ERR_QUERY_005,
+        message="The query pipeline is not available.",
+        remediation=(
+            "The service may be starting up, or no query pipeline is configured. "
+            "Retry shortly."
+        ),
+        request_id=request_id or uuid4(),
+    )
+
+
+def key_store_unavailable(request_id: UUID | None = None) -> ErrorResponse:
+    """500 when the API key store provider is not configured."""
+    return ErrorResponse(
+        category=ErrorCategory.CONFIGURATION,
+        code=ERR_CONFIG_002,
+        message="The API key store is not configured.",
+        remediation=(
+            "Verify the key store provider is registered. Check the server logs "
+            "and restart the service."
+        ),
+        request_id=request_id or uuid4(),
+    )
+
+
+def service_initializing(request_id: UUID | None = None) -> ErrorResponse:
+    """503 for a deep-health auth check that ran before the store was ready."""
+    return ErrorResponse(
+        category=ErrorCategory.TRANSIENT,
+        code=ERR_ADMIN_008,
+        message="The service is still initializing.",
+        remediation="Retry shortly; the service is starting up.",
         request_id=request_id or uuid4(),
     )

@@ -3,6 +3,7 @@
 from uuid import UUID, uuid4
 
 from vektra_shared.errors import (
+    ERR_ADMIN_008,
     ERR_AUTH_001,
     ERR_AUTH_002,
     ERR_AUTH_003,
@@ -30,7 +31,10 @@ from vektra_shared.errors import (
     conversation_store_unavailable,
     conversation_turns_unsupported,
     http_status_for,
+    key_store_unavailable,
     provider_registry_unavailable,
+    query_pipeline_unavailable,
+    service_initializing,
 )
 
 
@@ -224,6 +228,7 @@ class TestDebt033Codes:
         assert ERR_CONV_002.startswith("ERR-CONV-")
         assert ERR_CONV_003.startswith("ERR-CONV-")
         assert ERR_QUERY_005 == "ERR-QUERY-005"
+        assert ERR_ADMIN_008 == "ERR-ADMIN-008"
         assert ERR_INDEX_003 == "ERR-INDEX-003"
         assert ERR_INDEX_004 == "ERR-INDEX-004"
 
@@ -248,13 +253,22 @@ class TestDebt033Codes:
         assert err.remediation != ""
 
     def test_query_pipeline_unavailable_is_503(self):
-        err = ErrorResponse(
-            category=ErrorCategory.TRANSIENT,
-            code=ERR_QUERY_005,
-            message="x",
-            remediation="y",
-        )
+        err = query_pipeline_unavailable()
+        assert err.code == ERR_QUERY_005
         assert http_status_for(err) == 503
+        assert err.remediation != ""
+
+    def test_service_initializing_is_503(self):
+        err = service_initializing()
+        assert err.code == ERR_ADMIN_008
+        assert http_status_for(err) == 503
+        assert err.remediation != ""
+
+    def test_key_store_unavailable_is_500(self):
+        err = key_store_unavailable()
+        assert err.code == ERR_CONFIG_002
+        assert http_status_for(err) == 500
+        assert err.remediation != ""
 
     def test_index_003_maps_to_400(self):
         err = ErrorResponse(

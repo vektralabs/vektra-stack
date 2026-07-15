@@ -38,7 +38,6 @@ from vektra_admin.keys import generate_key
 from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider, require_scope
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
-    ERR_CONFIG_002,
     ErrorCategory,
     ErrorResponse,
     auth_invalid_token,
@@ -46,7 +45,9 @@ from vektra_shared.errors import (
     conversation_store_unavailable,
     conversation_turns_unsupported,
     http_status_for,
+    key_store_unavailable,
     provider_registry_unavailable,
+    service_initializing,
 )
 
 # ---------------------------------------------------------------------------
@@ -122,15 +123,7 @@ async def _require_any_token(
     try:
         key_store: KeyStoreProvider = registry.get("key_store", "default")
     except ValueError:
-        err = ErrorResponse(
-            category=ErrorCategory.CONFIGURATION,
-            code=ERR_CONFIG_002,
-            message="The API key store is not configured.",
-            remediation=(
-                "Verify the key store provider is registered. Check the server "
-                "logs and restart the service."
-            ),
-        )
+        err = key_store_unavailable()
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     info = await key_store.lookup_by_token(token)
@@ -214,13 +207,10 @@ async def health(
             )
         # Validate token; fail closed if registry/key_store unavailable
         if registry is None:
-            err = ErrorResponse(
-                category=ErrorCategory.TRANSIENT,
-                code="ERR-ADMIN-008",
-                message="The service is still initializing.",
-                remediation="Retry shortly; the service is starting up.",
+            err = service_initializing()
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
             )
-            raise HTTPException(status_code=503, detail=err.to_envelope())
         try:
             key_store = registry.get("key_store", "default")
             info = await key_store.lookup_by_token(credentials.credentials)
@@ -232,13 +222,10 @@ async def health(
             # Expose key_id for AuditMiddleware (CR55)
             request.state.key_id = info.key_id
         except ValueError:
-            err = ErrorResponse(
-                category=ErrorCategory.TRANSIENT,
-                code="ERR-ADMIN-008",
-                message="The service is still initializing.",
-                remediation="Retry shortly; the service is starting up.",
+            err = service_initializing()
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
             )
-            raise HTTPException(status_code=503, detail=err.to_envelope())
 
         status_code = 503 if deep.status == "unhealthy" else 200
         return Response(

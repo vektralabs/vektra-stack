@@ -34,13 +34,13 @@ from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ERR_QUERY_002,
     ERR_QUERY_003,
-    ERR_QUERY_005,
     ErrorCategory,
     ErrorResponse,
     conversation_not_found,
     conversation_store_unavailable,
     http_status_for,
     provider_registry_unavailable,
+    query_pipeline_unavailable,
 )
 from vektra_shared.namespace import resolve_citations_enabled, resolve_grounding_mode
 from vektra_shared.types import (
@@ -214,15 +214,7 @@ async def query(
     try:
         pipeline = registry.get("query_pipeline", "default")
     except ValueError:
-        err = ErrorResponse(
-            category=ErrorCategory.TRANSIENT,
-            code=ERR_QUERY_005,
-            message="The query pipeline is not available.",
-            remediation=(
-                "The service may be starting up, or no query pipeline is "
-                "configured. Retry shortly."
-            ),
-        )
+        err = query_pipeline_unavailable()
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     # Safeguard pre_query (input validation trust boundary, REQ-044)

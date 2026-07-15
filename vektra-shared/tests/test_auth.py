@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
 from vektra_shared.errors import ERR_AUTH_001, ERR_AUTH_003
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 
 
@@ -26,6 +27,7 @@ def _make_app(key_store=None, register_store: bool = True) -> FastAPI:
     async def query_only(key: ApiKeyInfo = Depends(require_scope("query"))):
         return {"key_id": str(key.key_id)}
 
+    register_error_handlers(app)
     return app
 
 
@@ -57,9 +59,9 @@ class TestRequireScope:
         client = TestClient(_make_app(store))
         response = client.get("/admin-only")
         assert response.status_code == 401
-        # FastAPI wraps HTTPException detail as {"detail": <detail>}
+        # REQ-010 envelope at the document root (DEBT-034)
         body = response.json()
-        assert body["detail"]["error"]["code"] == ERR_AUTH_001
+        assert body["error"]["code"] == ERR_AUTH_001
 
     def test_invalid_token_returns_401(self):
         store = MockKeyStore({})
@@ -69,7 +71,7 @@ class TestRequireScope:
         )
         assert response.status_code == 401
         body = response.json()
-        assert body["detail"]["error"]["code"] == ERR_AUTH_001
+        assert body["error"]["code"] == ERR_AUTH_001
 
     def test_revoked_token_returns_401(self):
         # A revoked token would not be in the key store, same as invalid
@@ -91,8 +93,8 @@ class TestRequireScope:
         )
         assert response.status_code == 403
         body = response.json()
-        assert body["detail"]["error"]["code"] == ERR_AUTH_003
-        assert "admin" in body["detail"]["error"]["message"]
+        assert body["error"]["code"] == ERR_AUTH_003
+        assert "admin" in body["error"]["message"]
 
     def test_correct_scope_on_query_endpoint(self):
         store = MockKeyStore({"q-token": ApiKeyInfo(key_id=uuid4(), scopes=["query"])})

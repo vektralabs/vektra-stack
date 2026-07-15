@@ -30,6 +30,7 @@ from httpx import ASGITransport, AsyncClient
 
 from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.errors import ActiveIndexVersionError
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 
 # ---------------------------------------------------------------------------
@@ -228,6 +229,7 @@ def _make_app(
         ),
     )
     app.include_router(router)
+    register_error_handlers(app)
     return app
 
 
@@ -278,7 +280,7 @@ async def test_endpoint_refuses_to_delete_the_version_being_served() -> None:
     # REQ-010 envelope with a code: an operator tool has to tell "wrong version,
     # nothing happened" apart from "the store is down", and cannot do that from
     # a bare string.
-    err = body["detail"]["error"]
+    err = body["error"]
     assert err["code"] == "ERR-INDEX-001"
     assert err["details"] == {"namespace": "default", "index_version": 1}
     assert "currently being served" in err["message"]
@@ -293,7 +295,7 @@ async def test_endpoint_rejects_version_zero() -> None:
     status, body = await _delete_version(app, 0)
 
     assert status == 400
-    assert body["detail"]["error"]["code"] == "ERR-INDEX-002"
+    assert body["error"]["code"] == "ERR-INDEX-002"
     client.delete.assert_not_awaited()
 
 

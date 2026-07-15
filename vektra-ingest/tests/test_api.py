@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from vektra_shared.auth import ApiKeyInfo
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,7 @@ def _make_app(key_store=None, scopes: list[str] | None = None):
         yield session
 
     app.dependency_overrides[get_session] = _mock_get_session
+    register_error_handlers(app)
     return app
 
 
@@ -92,7 +94,7 @@ async def test_ingest_no_token_returns_401():
     ) as c:
         resp = await c.post("/api/v1/ingest", files={"file": ("test.pdf", b"data")})
     assert resp.status_code == 401
-    assert resp.json()["detail"]["error"]["code"] == "ERR-AUTH-001"
+    assert resp.json()["error"]["code"] == "ERR-AUTH-001"
 
 
 @pytest.mark.asyncio
@@ -109,7 +111,7 @@ async def test_ingest_query_scope_returns_403():
             headers={"Authorization": "Bearer anytoken"},
         )
     assert resp.status_code == 403
-    assert resp.json()["detail"]["error"]["code"] == "ERR-AUTH-003"
+    assert resp.json()["error"]["code"] == "ERR-AUTH-003"
 
 
 @pytest.mark.asyncio
@@ -164,7 +166,7 @@ async def test_file_too_large_returns_413():
     del os.environ["VEKTRA_MAX_FILE_SIZE_MB"]
 
     assert resp.status_code == 413
-    assert resp.json()["detail"]["error"]["code"] == "ERR-INGEST-002"
+    assert resp.json()["error"]["code"] == "ERR-INGEST-002"
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +274,7 @@ async def test_sync_ingest_scanned_pdf_returns_422():
             )
 
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"]["code"] == "ERR-INGEST-003"
+    assert resp.json()["error"]["code"] == "ERR-INGEST-003"
 
 
 # ---------------------------------------------------------------------------

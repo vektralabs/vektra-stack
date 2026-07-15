@@ -33,6 +33,7 @@ from vektra_app import __version__
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
 from vektra_shared.errors import ERR_CONFIG_001, ErrorCategory, ErrorResponse
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.protocols import EmbeddingProvider
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.startup import (
@@ -768,7 +769,12 @@ def create_app() -> FastAPI:
     # 5. Correlation ID (outermost - sets request_id before anything else)
     app.add_middleware(CorrelationIdMiddleware)
 
-    # --- Global exception handler ---
+    # --- Global exception handlers ---
+    # The REQ-010 envelope is unwrapped to the document root for every
+    # HTTPException whose detail is already an envelope (DEBT-034). Shared with
+    # the test apps via vektra_shared so both register identical behavior.
+    register_error_handlers(app)
+
     @app.exception_handler(Exception)
     async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", None)

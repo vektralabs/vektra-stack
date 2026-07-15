@@ -148,10 +148,11 @@ def query_key(running_app: Any, admin_key: str) -> str:
 
 def _assert_error_envelope(body: dict, expected_code: str) -> None:
     """Assert the response matches REQ-010 envelope with NFR-009 remediation."""
-    # FastAPI wraps HTTPException detail as {"detail": {...}}
-    envelope = body.get("detail", body)
-    assert "error" in envelope, f"Missing 'error' key in envelope: {envelope}"
-    error = envelope["error"]
+    # The REQ-010 envelope sits at the document root for every error path —
+    # explicit HTTPException raises (unwrapped by _envelope_http_exception) and
+    # uncaught 500s alike (DEBT-034).
+    assert "error" in body, f"Missing 'error' key at envelope root: {body}"
+    error = body["error"]
     assert error["code"] == expected_code, (
         f"Expected {expected_code}, got {error['code']}"
     )

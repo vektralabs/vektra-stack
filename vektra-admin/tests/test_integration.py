@@ -32,6 +32,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 
 # ---------------------------------------------------------------------------
@@ -171,6 +172,7 @@ def app(registry):
     _app.mount("/admin/static", get_static_files(), name="admin-static")
     _app.include_router(ui_router)
     register_ui_exception_handlers(_app)
+    register_error_handlers(_app)
     _app.include_router(router)
     return _app
 
@@ -408,9 +410,8 @@ async def test_no_auth_returns_error_envelope(client):
     resp = await client.get("/api/v1/api-keys")
     assert resp.status_code == 401
     body = resp.json()
-    detail = body.get("detail", {})
-    assert "error" in detail
-    assert detail["error"]["code"] == "ERR-AUTH-001"
+    assert "error" in body
+    assert body["error"]["code"] == "ERR-AUTH-001"
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +609,7 @@ async def test_namespace_config_patch_rejects_unknown_key(
         headers={"Authorization": f"Bearer {admin_key}"},
     )
     assert resp.status_code == 400, resp.text
-    err = resp.json()["detail"]["error"]
+    err = resp.json()["error"]
     assert err["code"] == "ERR-ADMIN-006"
     assert "not_a_real_key" in err["message"]
 
@@ -627,7 +628,7 @@ async def test_namespace_config_patch_rejects_invalid_value(
         headers={"Authorization": f"Bearer {admin_key}"},
     )
     assert resp.status_code == 400, resp.text
-    err = resp.json()["detail"]["error"]
+    err = resp.json()["error"]
     assert err["code"] == "ERR-ADMIN-007"
     assert "banana" in err["message"]
 
@@ -651,7 +652,7 @@ async def test_namespace_config_patch_rejects_non_string_value(
         headers={"Authorization": f"Bearer {admin_key}"},
     )
     assert resp.status_code == 400, resp.text
-    err = resp.json()["detail"]["error"]
+    err = resp.json()["error"]
     assert err["code"] == "ERR-ADMIN-007"
 
 
@@ -718,7 +719,7 @@ async def test_namespace_config_patch_not_found(client, bootstrap_key):
         headers={"Authorization": f"Bearer {admin_key}"},
     )
     assert resp.status_code == 404, resp.text
-    assert resp.json()["detail"]["error"]["code"] == "ERR-ADMIN-005"
+    assert resp.json()["error"]["code"] == "ERR-ADMIN-005"
 
 
 async def test_namespace_config_patch_requires_admin_scope(
@@ -829,7 +830,7 @@ async def test_namespace_config_patch_rejects_show_sources_non_bool(
             headers={"Authorization": f"Bearer {admin_key}"},
         )
         assert resp.status_code == 400, (bad_value, resp.text)
-        err = resp.json()["detail"]["error"]
+        err = resp.json()["error"]
         assert err["code"] == "ERR-ADMIN-007"
 
 
@@ -960,7 +961,7 @@ async def test_namespace_config_get_404_on_missing(client, bootstrap_key):
         headers={"Authorization": f"Bearer {admin_key}"},
     )
     assert resp.status_code == 404, resp.text
-    err = resp.json()["detail"]["error"]
+    err = resp.json()["error"]
     assert err["code"] == "ERR-ADMIN-005"
 
 
@@ -1028,5 +1029,5 @@ async def test_namespace_config_patch_rejects_citations_enabled_non_bool(
         headers={"Authorization": f"Bearer {admin_key}"},
     )
     assert resp.status_code == 400, resp.text
-    err = resp.json()["detail"]["error"]
+    err = resp.json()["error"]
     assert err["code"] == "ERR-ADMIN-007"

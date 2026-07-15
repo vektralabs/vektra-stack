@@ -165,7 +165,7 @@ They need Docker, and they now carry the `integration` marker, so the unit runs 
 
 ### BUG-025: a startup failure prints a raw Python traceback next to the structured error
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-14
+**Status**: done (2026-07-15) | **Priority**: medium | **Created**: 2026-07-14
 **Origin**: DEBT-031 (2026-07-14). Surfaced by running `tests/test_startup.py` for the first time.
 
 **Context**: ARCH-057 exists so that a misconfiguration is reported clearly (REQ-011, NFR-009): a structured, remediable error rather than a stack dump. Step 1 does emit exactly that —
@@ -185,10 +185,18 @@ Alternatives considered: suppressing uvicorn's exception logging (fragile, and h
 **Caution**: this touches the boot path, which is the surface BUG-024 broke. `vektra-app/tests/test_app.py::test_missing_llm_provider_aborts_startup` drives the lifespan in-process and expects `SystemExit`; a change to a hard exit there would kill the test runner.
 
 **Acceptance criteria**:
-- [ ] A misconfigured env var produces the structured `[STARTUP ERROR]` block and **no** `Traceback (most recent call last)` in container output
-- [ ] Holds for a step other than config validation (e.g. database connectivity), not just step 1
-- [ ] The container still exits non-zero
-- [ ] The `xfail(strict=True)` on `tests/test_startup.py::test_no_raw_traceback_on_startup_failure` is removed; strict mode makes the suite go red if the fix lands and the marker is left behind
+- [x] A misconfigured env var produces the structured `[STARTUP ERROR]` block and **no** `Traceback (most recent call last)` in container output
+- [x] Holds for a step other than config validation (e.g. database connectivity), not just step 1
+- [x] The container still exits non-zero
+- [x] The `xfail(strict=True)` on `tests/test_startup.py::test_no_raw_traceback_on_startup_failure` is removed; strict mode makes the suite go red if the fix lands and the marker is left behind
+
+**Resolution** (PR #111): the recommended approach, with one refinement kept from the caution. The 11-step sequence moved into a loop-agnostic `_run_startup()` that raises `StartupValidationError` (never `SystemExit`), plus a matching `_run_shutdown()`. A new `main()` container entrypoint (`python -m vektra_app.main`, wired in `docker/entrypoint.sh`) runs the validation in the very event loop that will serve, then calls uvicorn with `lifespan="off"`. A failed step logs its `[STARTUP ERROR]` and exits non-zero with no ASGI and no traceback; because startup and serving share one loop, the async resources built during validation (DB engine, HTTP clients) stay bound to the loop that serves.
+
+The refinement: rather than gutting the lifespan, it **keeps** validating and raising `SystemExit` — but only for the in-process/TestClient path. So `test_missing_llm_provider_aborts_startup` (the BUG-024 tripwire the caution named) is untouched and still green; the container simply never takes that path. The container serving through `main()` is the only shipped boot path, and it is traceback-free.
+
+One gotcha found on the container, not in tests: uvicorn 0.36 removed `Config.setup_event_loop()` in favour of `get_loop_factory()`; the first cut called the former and produced a *different* traceback. Fixed by `asyncio.run(_serve(...), loop_factory=config.get_loop_factory())`, which also preserves uvloop (the CLI default). The lesson is the one this file already preaches: verify on the container, not just the tests.
+
+**Proven on the container** (rebuilt image, throwaway `docker compose run`, dev stack left running): empty `VEKTRA_LLM_PROVIDER` → `[STARTUP ERROR] Step: config_validation`, exit 1, no traceback; unreachable DB → step 1 completes, then `[STARTUP ERROR] Step: database_connectivity`, exit 1, no traceback (the non-step-1 case the criteria demand); valid `.env` → all 11 steps logged, `startup_complete`, `Uvicorn running on http://0.0.0.0:8000`. Both integration jobs (pgvector, qdrant) pass in CI, exercising the un-`xfail`ed test end-to-end.
 
 **Traceability**: REQ-011, NFR-009, ARCH-057, DEBT-031 (found by), BUG-024 (same surface)
 

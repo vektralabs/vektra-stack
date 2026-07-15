@@ -21,9 +21,11 @@ case "$CMD_TARGET" in
     alembic upgrade head
 
     echo "Starting Vektra API server..."
-    exec uvicorn vektra_app.main:app \
-      --host 0.0.0.0 \
-      --port 8000
+    # main() validates (ARCH-057) before calling uvicorn, so a misconfiguration
+    # prints its structured [STARTUP ERROR] and exits non-zero without an ASGI
+    # traceback (BUG-025, NFR-009). Do not switch back to `uvicorn ...:app`: that
+    # runs the validation inside the lifespan and reintroduces the traceback.
+    exec python -m vektra_app.main
     ;;
 
   migrate)

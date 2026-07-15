@@ -10,6 +10,16 @@ assets at `/admin/static`.
 
 ## Usage
 
+Production / container: run the module entrypoint. It runs the ARCH-057
+validation before starting uvicorn, so a misconfiguration exits with a
+structured `[STARTUP ERROR]` and no traceback (BUG-025, NFR-009).
+
 ```bash
-uvicorn vektra_app.main:app --host 0.0.0.0 --port 8000
+python -m vektra_app.main
+```
+
+Local development with live reload (validation runs inside the ASGI lifespan):
+
+```bash
+uvicorn vektra_app.main:app --reload --host 0.0.0.0 --port 8000
 ```

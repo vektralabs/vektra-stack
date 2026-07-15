@@ -108,20 +108,14 @@ def test_graceful_failure_on_missing_config() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG-025: the structured [STARTUP ERROR] block is emitted, but `raise "
-        "SystemExit(1)` then travels out of the ASGI lifespan into uvicorn, which logs "
-        "the exception — so the operator gets the good message and a Python traceback. "
-        "NFR-009 asks for the former instead of the latter, not both. Fixing it means "
-        "validating before uvicorn.run() rather than inside the lifespan, which is the "
-        "boot path BUG-024 broke, so it is tracked separately. strict=True: when "
-        "BUG-025 lands this test XPASSes and the suite goes red until the marker goes."
-    ),
-)
 def test_no_raw_traceback_on_startup_failure() -> None:
-    """A misconfiguration is reported, not dumped as a stack trace (REQ-011, NFR-009)."""
+    """A misconfiguration is reported, not dumped as a stack trace (REQ-011, NFR-009).
+
+    BUG-025 fix: the container runs `python -m vektra_app.main`, which validates
+    (ARCH-057) before uvicorn.run(). A failed step logs its structured
+    [STARTUP ERROR] and exits non-zero without the ASGI lifespan, so uvicorn
+    never logs a traceback beside the good message.
+    """
     output = _run_with_empty_llm_provider()
     assert "Traceback (most recent call last)" not in output, (
         "Raw traceback leaked in startup failure output"

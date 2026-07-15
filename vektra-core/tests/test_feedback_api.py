@@ -295,6 +295,7 @@ async def test_get_conversation_not_found():
         )
 
     assert resp.status_code == 404
+    assert resp.json()["detail"]["error"]["code"] == "ERR-CONV-001"
 
 
 async def test_get_conversation_soft_deleted_returns_404():
@@ -364,6 +365,7 @@ async def test_delete_conversation_not_found():
         )
 
     assert resp.status_code == 404
+    assert resp.json()["detail"]["error"]["code"] == "ERR-CONV-001"
 
 
 async def test_conversation_no_persistent_store_returns_503():
@@ -381,6 +383,7 @@ async def test_conversation_no_persistent_store_returns_503():
         )
 
     assert resp.status_code == 503
+    assert resp.json()["detail"]["error"]["code"] == "ERR-CONV-002"
 
 
 # ---------------------------------------------------------------------------

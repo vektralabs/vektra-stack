@@ -974,7 +974,7 @@ Consequences: every reindex permanently doubles the storage for that namespace, 
 
 ### DEBT-033: some endpoints bypass the REQ-010 error envelope
 
-**Status**: planned | **Priority**: low | **Created**: 2026-07-14
+**Status**: completed | **Priority**: low | **Created**: 2026-07-14 | **Completed**: 2026-07-15 | **PR**: #112
 **Origin**: DOCS-009 (2026-07-14).
 
 **Context**: REQ-010 defines a single error envelope (`{"error": {category, code, message, remediation, request_id, details}}`), and `docs/reference/api.md` presented it as universal. It is not. Reindex (`400`, `404`), conversations (`404`, `503`) and admin conversation turns (`404`, `501`, `503`) raise `HTTPException` with a plain string detail, so they return FastAPI's bare `{"detail": "..."}` — no code, no remediation, no request id.
@@ -984,8 +984,28 @@ Consequences: every reindex permanently doubles the storage for that namespace, 
 A client cannot branch on an error code for these endpoints, and the operator-facing reindex failures are exactly the ones where a machine-readable code would be worth having. The doc now warns that both shapes exist; the fix is to make the envelope actually universal.
 
 **Acceptance criteria**:
-- [ ] The endpoints above raise envelope errors with proper `ERR-*` codes
-- [ ] The "not every endpoint uses the envelope" caveat is removed from `docs/reference/api.md`
+- [x] The endpoints above raise envelope errors with proper `ERR-*` codes
+- [x] The "not every endpoint uses the envelope" caveat is removed from `docs/reference/api.md`
+
+**Resolution** (2026-07-15): the four scoped endpoints were enveloped, and a grep of the handlers (`HTTPException(..., detail="...")`) found the DOCS-009 caveat had **undercounted** — the same bare shape lived on `POST /api/v1/query` (registry / pipeline-not-configured), the admin auth dependency and the API-key creation path (registry / key-store-not-configured), and `GET /api/v1/admin/health?detail=full` (service-initializing). Removing the caveat as written would have re-asserted a universality those still broke, so all of them were enveloped too (approved scope expansion). Each raise keeps its prior HTTP status (shape-only change; no test asserted the bare shape). Codes: reused `ERR-CONFIG-001` (registry not initialized) and `ERR-CONFIG-002` (key store not configured), matching the global handler's treatment of internal faults; added `ERR-CONV-001/002/003`, `ERR-QUERY-005`, `ERR-ADMIN-008`, `ERR-INDEX-003/004`, each registered in `errors.py` + `_CODE_STATUS_OVERRIDE` + `docs/reference/error-codes.md`. The api.md caveat is removed. Spawned **DEBT-034**: the wire shape is `{"detail": {"error": {...}}}` for every `HTTPException`-based error (FastAPI wraps the detail), while api.md shows the logical top-level `{"error": {...}}`; that representation gap predates this work and affects every enveloped endpoint.
+
+---
+
+### DEBT-034: the error envelope is nested under `detail` on the wire, but documented as top-level
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-15
+**Origin**: DEBT-033 (2026-07-15).
+
+**Context**: FastAPI serializes `raise HTTPException(status_code=..., detail=err.to_envelope())` as `{"detail": {"error": {...}}}` — the REQ-010 envelope sits one level down, under `detail`. This is how **every** enveloped endpoint behaves (auth, ingest, index, analytics, learn, admin, and the endpoints fixed in DEBT-033), and the whole test suite already asserts `resp.json()["detail"]["error"]["code"]`, so the nesting is the de-facto contract. The one exception is the global unhandled-exception handler in `vektra-app/main.py`, which returns top-level `{"error": {...}}` via `JSONResponse`. So there are two shapes after all — not "envelope vs bare" (DEBT-033 closed that), but "envelope under `detail`" (explicit raises) vs "envelope at top level" (uncaught 500s). `docs/reference/api.md` and `docs/reference/error-codes.md` show only the top-level form, so a client that follows the docs looks for `body.error.code` and finds nothing; the real path for almost every error is `body.detail.error.code`.
+
+**Options**:
+1. **(Recommended)** Register a custom `StarletteHTTPException` handler that, when `exc.detail` is already an envelope dict, returns it at top level via `JSONResponse(status_code=exc.status_code, content=exc.detail)`. One handler, no per-endpoint change, and both error paths converge on the documented top-level `{"error": {...}}`. Rationale: makes the wire match the docs and REQ-010's own shape, rather than teaching clients an accidental FastAPI wrapping.
+2. Document the nesting instead: change api.md/error-codes.md to show `{"detail": {"error": {...}}}` for `HTTPException`-based errors. Cheaper, but enshrines the artifact and leaves the two-shape split (nested vs top-level from the 500 handler) permanently in the contract.
+3. Leave as-is. Rejected: the docs actively mislead about where the code lives.
+
+**Acceptance criteria**:
+- [ ] The REQ-010 envelope is reachable at a single, documented JSON path across all error responses (explicit raises and uncaught 500s alike)
+- [ ] `docs/reference/api.md` and `docs/reference/error-codes.md` match the actual wire shape
 
 ---
 

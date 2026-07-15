@@ -41,7 +41,13 @@ from vektra_shared.errors import (
     ErrorCategory,
     ErrorResponse,
     auth_invalid_token,
+    conversation_not_found,
+    conversation_store_unavailable,
+    conversation_turns_unsupported,
     http_status_for,
+    key_store_unavailable,
+    provider_registry_unavailable,
+    service_initializing,
 )
 
 # ---------------------------------------------------------------------------
@@ -111,12 +117,14 @@ async def _require_any_token(
     token = credentials.credentials
     registry = getattr(request.app.state, "registry", None)
     if registry is None:
-        raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
+        err = provider_registry_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     try:
         key_store: KeyStoreProvider = registry.get("key_store", "default")
     except ValueError:
-        raise HTTPException(status_code=500, detail="Key store not configured")
+        err = key_store_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     info = await key_store.lookup_by_token(token)
     if info is None:
@@ -199,7 +207,10 @@ async def health(
             )
         # Validate token; fail closed if registry/key_store unavailable
         if registry is None:
-            raise HTTPException(status_code=503, detail="Service initializing")
+            err = service_initializing()
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
         try:
             key_store = registry.get("key_store", "default")
             info = await key_store.lookup_by_token(credentials.credentials)
@@ -211,7 +222,10 @@ async def health(
             # Expose key_id for AuditMiddleware (CR55)
             request.state.key_id = info.key_id
         except ValueError:
-            raise HTTPException(status_code=503, detail="Service initializing")
+            err = service_initializing()
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
 
         status_code = 503 if deep.status == "unhealthy" else 200
         return Response(
@@ -290,8 +304,9 @@ async def create_api_key(
     else:
         # Must be a valid admin-scoped key
         if registry is None:
+            err = provider_registry_unavailable()
             raise HTTPException(
-                status_code=500, detail="ProviderRegistry not initialized"
+                status_code=http_status_for(err), detail=err.to_envelope()
             )
         try:
             key_store = registry.get("key_store", "default")
@@ -516,22 +531,23 @@ async def get_conversation_turns(
     """Return decrypted conversation turns with full metadata (admin only)."""
     registry = getattr(request.app.state, "registry", None)
     if registry is None:
-        raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
+        err = provider_registry_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     try:
         conv_store = registry.get("conversation_store", "default")
     except ValueError:
-        raise HTTPException(status_code=503, detail="Conversation store not available")
+        err = conversation_store_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     if not hasattr(conv_store, "get_turns_detail"):
-        raise HTTPException(
-            status_code=501,
-            detail="Conversation decryption not available (in-memory store)",
-        )
+        err = conversation_turns_unsupported()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     turns = await conv_store.get_turns_detail(conversation_id)
     if turns is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        err = conversation_not_found(conversation_id)
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     # Audit log: sensitive content access
     request_id = _resolve_request_id(request)

@@ -977,11 +977,13 @@ Response (HTTP 202):
 
 The source version is not a parameter: the job always reads the active version, since that is the only version the store exposes for reading.
 
-Errors: `400` if `target_index_version` equals the active version (reindexing a version onto itself would overwrite the live chunks instead of writing beside them).
+Errors: `400` `ERR-INDEX-003` if `target_index_version` equals the active version (reindexing a version onto itself would overwrite the live chunks instead of writing beside them).
 
 ### GET /api/v1/reindex/{job_id}/status
 
 Poll a reindex job.
+
+Errors: `404` `ERR-INDEX-004` if no job with that id is visible to the key.
 
 **Scopes**: `admin`
 
@@ -1315,7 +1317,7 @@ curl -s http://localhost:8000/metrics
 
 ## Error responses
 
-Most errors follow a standard envelope (REQ-010):
+Every endpoint returns errors in the same envelope (REQ-010):
 
 ```json
 {
@@ -1330,12 +1332,5 @@ Most errors follow a standard envelope (REQ-010):
 }
 ```
 
-See [error codes reference](error-codes.md) for the complete list.
-
-Not every endpoint uses the envelope. `POST /api/v1/reindex`, `GET /api/v1/reindex/{job_id}/status`, conversations and admin conversation turns return FastAPI's bare shape instead:
-
-```json
-{"detail": "Reindex job not found"}
-```
-
-Clients that parse errors must handle both. The envelope is the intended contract; the bare form is a gap (DEBT-033), not a second contract to rely on. `DELETE /api/v1/index-versions/{version}` uses the envelope throughout, including its `409`.
+Clients can branch on `error.code`, which is stable, rather than parsing
+`message`. See [error codes reference](error-codes.md) for the complete list.

@@ -31,6 +31,8 @@ from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ERR_INDEX_001,
     ERR_INDEX_002,
+    ERR_INDEX_003,
+    ERR_INDEX_004,
     ActiveIndexVersionError,
     ErrorCategory,
     ErrorResponse,
@@ -115,6 +117,44 @@ def _invalid_index_version(index_version: int) -> HTTPException:
         message=f"index_version must be an integer >= 1, got {index_version}.",
         remediation="Pass the index version you want to delete, as an integer >= 1.",
         details={"index_version": index_version},
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+
+def _reindex_target_conflict(target_version: int, active_version: int) -> HTTPException:
+    """400 for a reindex whose target is the version already being served.
+
+    Reindexing a version onto itself would overwrite the live chunks in place
+    instead of writing a second copy beside them, defeating the zero-downtime
+    switch. A client can branch on this code to bump the target and retry.
+    """
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_INDEX_003,
+        message=(
+            f"target_index_version {target_version} must differ from the active "
+            f"index version {active_version}."
+        ),
+        remediation=(
+            "Pass a target_index_version different from the active version "
+            "(VEKTRA_ACTIVE_INDEX_VERSION)."
+        ),
+        details={
+            "target_index_version": target_version,
+            "active_index_version": active_version,
+        },
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+
+def _reindex_job_not_found(job_id: UUID) -> HTTPException:
+    """404 for a reindex job id that no key-visible job matches."""
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_INDEX_004,
+        message=f"Reindex job '{job_id}' not found.",
+        remediation="Verify the job_id returned by POST /api/v1/reindex.",
+        details={"job_id": str(job_id)},
     )
     return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
@@ -380,10 +420,7 @@ async def trigger_reindex(
     source_version = vs_config.active_index_version
 
     if body.target_index_version == source_version:
-        raise HTTPException(
-            status_code=400,
-            detail="target_index_version must differ from the active index version",
-        )
+        raise _reindex_target_conflict(body.target_index_version, source_version)
 
     job_id = uuid4()
     job = ReindexJobOrm(
@@ -431,7 +468,7 @@ async def reindex_status(
     result = await session.execute(select(ReindexJobOrm).where(*filters))
     job = result.scalar_one_or_none()
     if job is None:
-        raise HTTPException(status_code=404, detail="Reindex job not found")
+        raise _reindex_job_not_found(job_id)
 
     return ReindexStatusResponse(
         job_id=str(job.id),

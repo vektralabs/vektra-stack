@@ -77,6 +77,7 @@ async def test_returns_404_when_conversation_not_found():
     with pytest.raises(HTTPException) as exc_info:
         await get_conversation_turns(uuid4(), request, MagicMock(), key_info)
     assert exc_info.value.status_code == 404
+    assert exc_info.value.detail["error"]["code"] == "ERR-CONV-001"
 
 
 @pytest.mark.asyncio
@@ -166,3 +167,4 @@ async def test_returns_501_for_inmemory_store():
     with pytest.raises(HTTPException) as exc_info:
         await get_conversation_turns(uuid4(), request, MagicMock(), key_info)
     assert exc_info.value.status_code == 501
+    assert exc_info.value.detail["error"]["code"] == "ERR-CONV-003"

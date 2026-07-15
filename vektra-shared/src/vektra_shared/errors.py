@@ -109,6 +109,7 @@ ERR_QUERY_001 = "ERR-QUERY-001"  # No documents indexed in namespace
 ERR_QUERY_002 = "ERR-QUERY-002"  # LLM unavailable (both primary and fallback failed)
 ERR_QUERY_003 = "ERR-QUERY-003"  # Query too long (exceeds token limit)
 ERR_QUERY_004 = "ERR-QUERY-004"  # Vector store read failed
+ERR_QUERY_005 = "ERR-QUERY-005"  # Query pipeline provider not registered/available
 
 # Configuration errors
 ERR_CONFIG_001 = "ERR-CONFIG-001"  # Missing required configuration variable
@@ -129,6 +130,12 @@ ERR_QUOTA_001 = "ERR-QUOTA-001"  # Namespace quota exceeded
 ERR_ANALYTICS_001 = "ERR-ANALYTICS-001"  # Analytics service not available
 ERR_ANALYTICS_002 = "ERR-ANALYTICS-002"  # Trace not found
 
+# Conversation errors (core + admin conversation surface, distinct from the
+# learn vertical's ERR-LEARN-005/006 which are scoped to the widget's own path)
+ERR_CONV_001 = "ERR-CONV-001"  # Conversation not found
+ERR_CONV_002 = "ERR-CONV-002"  # Persistent conversation store not available
+ERR_CONV_003 = "ERR-CONV-003"  # Configured store cannot return decrypted turns
+
 # Learn errors (e-learning vertical)
 ERR_LEARN_001 = "ERR-LEARN-001"  # Learn service not available
 ERR_LEARN_002 = "ERR-LEARN-002"  # Enrollment not found
@@ -140,6 +147,8 @@ ERR_LEARN_006 = "ERR-LEARN-006"  # Conversation belongs to another course (WI-1)
 # Index errors (ARCH-045, index versioning)
 ERR_INDEX_001 = "ERR-INDEX-001"  # Refused: that index version is the one being served
 ERR_INDEX_002 = "ERR-INDEX-002"  # Invalid index version (< 1)
+ERR_INDEX_003 = "ERR-INDEX-003"  # Reindex target equals the active version
+ERR_INDEX_004 = "ERR-INDEX-004"  # Reindex job not found
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +176,12 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_LEARN_004: 409,
     ERR_LEARN_005: 404,
     ERR_LEARN_006: 403,
+    ERR_CONV_001: 404,
+    ERR_CONV_003: 501,  # Not Implemented: this store cannot decrypt turns
     ERR_INDEX_001: 409,  # Conflict: the version is live, deleting it is refused
     ERR_INDEX_002: 400,
+    ERR_INDEX_003: 400,  # Bad Request: target must differ from the active version
+    ERR_INDEX_004: 404,
 }
 
 
@@ -207,6 +220,68 @@ def auth_insufficient_scope(
         remediation=(
             f"Use an API key with the '{required_scope}' scope, or request a new key "
             "with the appropriate scope from your administrator."
+        ),
+        request_id=request_id or uuid4(),
+    )
+
+
+def provider_registry_unavailable(request_id: UUID | None = None) -> ErrorResponse:
+    """500 for a request that reached a handler before the app finished wiring.
+
+    Reuses ERR-CONFIG-001, the same code the global unhandled-exception handler
+    assigns to internal failures: from a client's point of view a missing
+    provider registry is an internal setup fault, not something it can fix.
+    """
+    return ErrorResponse(
+        category=ErrorCategory.CONFIGURATION,
+        code=ERR_CONFIG_001,
+        message="The provider registry is not initialized.",
+        remediation=(
+            "This indicates the service did not start up correctly. Check the "
+            "server logs and restart the service."
+        ),
+        request_id=request_id or uuid4(),
+    )
+
+
+def conversation_not_found(
+    conversation_id: object, request_id: UUID | None = None
+) -> ErrorResponse:
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_CONV_001,
+        message=f"Conversation '{conversation_id}' not found.",
+        remediation="Verify the conversation id; it may have been deleted.",
+        request_id=request_id or uuid4(),
+    )
+
+
+def conversation_store_unavailable(request_id: UUID | None = None) -> ErrorResponse:
+    return ErrorResponse(
+        category=ErrorCategory.TRANSIENT,
+        code=ERR_CONV_002,
+        message="Persistent conversation storage is not available.",
+        remediation=(
+            "The service may be starting up, or no persistent conversation store "
+            "is configured (set VEKTRA_CONVERSATION_KEY). Retry shortly."
+        ),
+        request_id=request_id or uuid4(),
+    )
+
+
+def conversation_turns_unsupported(request_id: UUID | None = None) -> ErrorResponse:
+    """501 when the configured store cannot return decrypted turns.
+
+    The in-memory store used in tests/dev has no decryption path; the request is
+    well-formed but this deployment cannot serve it.
+    """
+    return ErrorResponse(
+        category=ErrorCategory.CONFIGURATION,
+        code=ERR_CONV_003,
+        message="The configured conversation store cannot return decrypted turns.",
+        remediation=(
+            "Configure a persistent conversation store with VEKTRA_CONVERSATION_KEY "
+            "set; the in-memory store cannot decrypt turn history."
         ),
         request_id=request_id or uuid4(),
     )

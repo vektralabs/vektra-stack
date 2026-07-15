@@ -282,3 +282,24 @@ class TestRunReindex:
             )
 
         assert call_count == 2
+
+
+class TestReindexErrorEnvelope:
+    """DEBT-033: the reindex endpoints now raise the REQ-010 envelope."""
+
+    def test_target_conflict_is_400_with_index_003(self):
+        from vektra_index.reindex import _reindex_target_conflict
+
+        exc = _reindex_target_conflict(2, 2)
+        assert exc.status_code == 400
+        assert exc.detail["error"]["code"] == "ERR-INDEX-003"
+        assert exc.detail["error"]["details"]["active_index_version"] == 2
+
+    def test_job_not_found_is_404_with_index_004(self):
+        from vektra_index.reindex import _reindex_job_not_found
+
+        job_id = uuid4()
+        exc = _reindex_job_not_found(job_id)
+        assert exc.status_code == 404
+        assert exc.detail["error"]["code"] == "ERR-INDEX-004"
+        assert exc.detail["error"]["details"]["job_id"] == str(job_id)

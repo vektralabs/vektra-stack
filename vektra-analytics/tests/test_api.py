@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from vektra_analytics.api import _get_session, router
 from vektra_analytics.service import AnalyticsService, MetricsResponse
 from vektra_shared.auth import ApiKeyInfo
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.types import ChunkRef, QueryTrace, StepTrace
 
@@ -57,6 +58,7 @@ def _make_app(
 
     app.dependency_overrides[_get_session] = _mock_session
 
+    register_error_handlers(app)
     return app
 
 
@@ -189,8 +191,8 @@ class TestListTraces:
         resp = client.get("/api/v1/traces", headers=_auth_headers())
         assert resp.status_code == 503
         data = resp.json()
-        assert "error" in data["detail"]
-        assert data["detail"]["error"]["code"] == "ERR-ANALYTICS-001"
+        assert "error" in data
+        assert data["error"]["code"] == "ERR-ANALYTICS-001"
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +226,8 @@ class TestGetTrace:
         resp = client.get(f"/api/v1/traces/{uuid4()}", headers=_auth_headers())
         assert resp.status_code == 404
         data = resp.json()
-        assert "error" in data["detail"]
-        assert data["detail"]["error"]["code"] == "ERR-ANALYTICS-002"
+        assert "error" in data
+        assert data["error"]["code"] == "ERR-ANALYTICS-002"
 
     def test_get_trace_invalid_uuid(self):
         svc = _mock_service()

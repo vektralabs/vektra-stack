@@ -132,8 +132,7 @@ export class ApiClient {
           }
         }
         const errData = await response.json().catch(() => ({}));
-        const serverMessage =
-          errData?.error?.message || errData?.detail?.error?.message;
+        const serverMessage = errData?.error?.message;
         const msg =
           response.status === 401
             ? `HTTP 401${serverMessage ? `: ${serverMessage}` : ""}`

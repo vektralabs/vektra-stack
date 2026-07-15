@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 
 from vektra_core.api import router
 from vektra_shared.auth import ApiKeyInfo
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.types import (
     QueryChunk,
@@ -104,6 +105,7 @@ def _make_app(registry: ProviderRegistry) -> FastAPI:
     app = FastAPI()
     app.state.registry = registry
     app.include_router(router)
+    register_error_handlers(app)
     return app
 
 
@@ -149,7 +151,7 @@ async def test_query_requires_auth():
         )
     assert resp.status_code == 401
     body = resp.json()
-    assert body["detail"]["error"]["code"] == "ERR-AUTH-001"
+    assert body["error"]["code"] == "ERR-AUTH-001"
 
 
 async def test_query_wrong_key_returns_401():

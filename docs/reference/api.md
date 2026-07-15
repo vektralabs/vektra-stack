@@ -1332,5 +1332,7 @@ Every endpoint returns errors in the same envelope (REQ-010):
 }
 ```
 
-Clients can branch on `error.code`, which is stable, rather than parsing
-`message`. See [error codes reference](error-codes.md) for the complete list.
+The `error` object is at the JSON document root for every error response, so
+`error.code` is read at the top level with no `detail` wrapper. Clients can
+branch on `error.code`, which is stable, rather than parsing `message`. See
+[error codes reference](error-codes.md) for the complete list.

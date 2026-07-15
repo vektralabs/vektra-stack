@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from vektra_core.api import router
 from vektra_core.conversation import PersistentConversationStore
 from vektra_shared.auth import ApiKeyInfo
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.types import (
     QueryChunk,
@@ -100,6 +101,7 @@ def _make_app(
 
         app.dependency_overrides[get_session] = _override_session
 
+    register_error_handlers(app)
     return app
 
 
@@ -295,7 +297,7 @@ async def test_get_conversation_not_found():
         )
 
     assert resp.status_code == 404
-    assert resp.json()["detail"]["error"]["code"] == "ERR-CONV-001"
+    assert resp.json()["error"]["code"] == "ERR-CONV-001"
 
 
 async def test_get_conversation_soft_deleted_returns_404():
@@ -365,7 +367,7 @@ async def test_delete_conversation_not_found():
         )
 
     assert resp.status_code == 404
-    assert resp.json()["detail"]["error"]["code"] == "ERR-CONV-001"
+    assert resp.json()["error"]["code"] == "ERR-CONV-001"
 
 
 async def test_conversation_no_persistent_store_returns_503():
@@ -383,7 +385,7 @@ async def test_conversation_no_persistent_store_returns_503():
         )
 
     assert resp.status_code == 503
-    assert resp.json()["detail"]["error"]["code"] == "ERR-CONV-002"
+    assert resp.json()["error"]["code"] == "ERR-CONV-002"
 
 
 # ---------------------------------------------------------------------------

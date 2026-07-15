@@ -19,6 +19,8 @@ Every error response uses this shape:
 }
 ```
 
+The `error` object is at the JSON document root for **every** error response — both explicit errors and uncaught internal faults. Clients read `error.code` at the top level; there is no `detail` wrapper.
+
 **Fields**:
 - `category`: one of `TRANSIENT`, `PERMANENT`, `CONFIGURATION`, `UPSTREAM` (BR-001)
 - `code`: stable identifier in the format `ERR-{COMPONENT}-{NUMBER}`

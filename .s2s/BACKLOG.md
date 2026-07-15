@@ -993,7 +993,7 @@ A client cannot branch on an error code for these endpoints, and the operator-fa
 
 ### DEBT-034: the error envelope is nested under `detail` on the wire, but documented as top-level
 
-**Status**: planned | **Priority**: low | **Created**: 2026-07-15
+**Status**: completed | **Priority**: low | **Created**: 2026-07-15 | **Completed**: 2026-07-15
 **Origin**: DEBT-033 (2026-07-15).
 
 **Context**: FastAPI serializes `raise HTTPException(status_code=..., detail=err.to_envelope())` as `{"detail": {"error": {...}}}` — the REQ-010 envelope sits one level down, under `detail`. This is how **every** enveloped endpoint behaves (auth, ingest, index, analytics, learn, admin, and the endpoints fixed in DEBT-033), and the whole test suite already asserts `resp.json()["detail"]["error"]["code"]`, so the nesting is the de-facto contract. The one exception is the global unhandled-exception handler in `vektra-app/main.py`, which returns top-level `{"error": {...}}` via `JSONResponse`. So there are two shapes after all — not "envelope vs bare" (DEBT-033 closed that), but "envelope under `detail`" (explicit raises) vs "envelope at top level" (uncaught 500s). `docs/reference/api.md` and `docs/reference/error-codes.md` show only the top-level form, so a client that follows the docs looks for `body.error.code` and finds nothing; the real path for almost every error is `body.detail.error.code`.
@@ -1004,8 +1004,10 @@ A client cannot branch on an error code for these endpoints, and the operator-fa
 3. Leave as-is. Rejected: the docs actively mislead about where the code lives.
 
 **Acceptance criteria**:
-- [ ] The REQ-010 envelope is reachable at a single, documented JSON path across all error responses (explicit raises and uncaught 500s alike)
-- [ ] `docs/reference/api.md` and `docs/reference/error-codes.md` match the actual wire shape
+- [x] The REQ-010 envelope is reachable at a single, documented JSON path across all error responses (explicit raises and uncaught 500s alike)
+- [x] `docs/reference/api.md` and `docs/reference/error-codes.md` match the actual wire shape
+
+**Resolution** (2026-07-15): chose **option 1 (unwrap)**. A single `@app.exception_handler(StarletteHTTPException)` in `vektra-app/main.py` returns `exc.detail` at the document root via `JSONResponse(status_code=exc.status_code, content=exc.detail, headers=exc.headers)` when `exc.detail` is already an envelope dict (has an `error` key), and delegates to FastAPI's default `http_exception_handler` otherwise — so the admin-UI string-detail raises and FastAPI's own 404/405 keep the `{"detail": ...}` shape, and the rate-limit raise (`auth.py`) keeps its `X-RateLimit-*` headers. Both error paths (explicit raises and uncaught 500s) now converge on top-level `{"error": {...}}`, which the docs already showed; api.md and error-codes.md gained a one-line clarification that the envelope is at the root. **Consumer audit**: the widget already read both shapes (`errData?.error?.message || errData?.detail?.error?.message`) — dead branch removed, gitignored bundle rebuilt from source by the Docker `widget-builder` stage. 23 HTTP-wire test assertions flipped from `body["detail"]["error"]` to `body["error"]` across 7 files; the 16 `exc_info.value.detail["error"]` assertions (raised-object, never hit the handler) were left untouched. **Cross-repo**: `vektra-moodle`'s `parse_error_envelope` read only `detail.error` and would have degraded to `HTTP {code}`; updated in that repo (separate PR) to read the root `error` first with `detail.error` as fallback. Proven on the live wire with a real `curl` before/after.
 
 ---
 

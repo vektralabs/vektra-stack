@@ -157,5 +157,5 @@ def test_smoke_startup_health_and_auth(db_url: str) -> None:
             resp = client.get("/api/v1/providers")
             assert resp.status_code == 401
             err_body = resp.json()
-            # FastAPI wraps HTTPException detail as {"detail": ...}
-            assert "detail" in err_body
+            # REQ-010 envelope at the document root (DEBT-034)
+            assert "error" in err_body

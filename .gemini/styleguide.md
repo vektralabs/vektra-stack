@@ -25,8 +25,12 @@ interface instead.
 
 - All route handlers must be `async def`.
 - Authentication is dependency-injected via `Depends()`. Never inline auth logic in handlers.
-- HTTP error responses use `ErrorResponse.to_envelope()` for the `detail` field.
-  Tests must check `body["detail"]["error"]["code"]`, not `body["error"]["code"]`.
+- HTTP error responses raise `HTTPException(detail=ErrorResponse.to_envelope())`.
+  The `register_error_handlers` handler (`vektra_shared.http_errors`) unwraps the
+  envelope to the JSON document root, so on the wire it is `{"error": {...}}`
+  (DEBT-034). Tests must check `body["error"]["code"]`, not
+  `body["detail"]["error"]["code"]`. Test apps that mount a router directly must
+  call `register_error_handlers(app)` to get the same wire shape as production.
 - Use `app.dependency_overrides` in tests, not `patch()` for FastAPI dependencies.
 
 ## Error handling

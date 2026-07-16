@@ -175,11 +175,14 @@ class RerankConfig(BaseSettings):
         alias="VEKTRA_RERANK_MODEL",
         description="Provider-specific reranking model name.",
     )
-    top_k: int = Field(
-        5,
+    fetch_k: int = Field(
+        20,
         ge=1,
-        alias="VEKTRA_RERANK_TOP_K",
-        description="Final top-k results after reranking.",
+        alias="VEKTRA_RERANK_FETCH_K",
+        description=(
+            "Candidates fetched from vector search for reranking. "
+            "The post-rerank cut is the request's top_k."
+        ),
     )
     api_key: str | None = Field(
         None,

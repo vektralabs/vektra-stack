@@ -727,7 +727,6 @@ async def test_dual_ingest_links_children_to_stored_parent_ids(monkeypatch):
     from vektra_ingest.pipeline import run_ingest
 
     monkeypatch.setenv("VEKTRA_CHUNKING_STRATEGY", "dual")
-    monkeypatch.setenv("VEKTRA_PARENT_CHILD_LEVELS", "1")
 
     doc_id = uuid4()
 

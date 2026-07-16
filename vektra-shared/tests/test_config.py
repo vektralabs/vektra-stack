@@ -161,30 +161,11 @@ class TestIngestConfigDualStrategy:
     def test_fixed_strategy_default_passes(self) -> None:
         cfg = IngestConfig()
         assert cfg.chunking_strategy == "fixed"
-        assert cfg.parent_child_levels == 0
         assert cfg.table_split is False
 
-    def test_fixed_strategy_with_zero_levels_passes(self) -> None:
-        cfg = IngestConfig(
-            VEKTRA_CHUNKING_STRATEGY="fixed",
-            VEKTRA_PARENT_CHILD_LEVELS=0,
-        )
-        assert cfg.parent_child_levels == 0
-
-    def test_dual_strategy_with_valid_levels_passes(self) -> None:
-        cfg = IngestConfig(
-            VEKTRA_CHUNKING_STRATEGY="dual",
-            VEKTRA_PARENT_CHILD_LEVELS=2,
-        )
+    def test_dual_strategy_passes(self) -> None:
+        cfg = IngestConfig(VEKTRA_CHUNKING_STRATEGY="dual")
         assert cfg.chunking_strategy == "dual"
-        assert cfg.parent_child_levels == 2
-
-    def test_dual_strategy_with_zero_levels_raises(self) -> None:
-        with pytest.raises(ValidationError, match="parent_child_levels"):
-            IngestConfig(
-                VEKTRA_CHUNKING_STRATEGY="dual",
-                VEKTRA_PARENT_CHILD_LEVELS=0,
-            )
 
 
 class TestQueryPipelineConfigNested:

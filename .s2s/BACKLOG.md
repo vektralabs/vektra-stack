@@ -268,14 +268,18 @@ Third time in this repo that a suite turned out to be broken the moment it was e
 
 ### DEBT-027: VEKTRA_PARENT_CHILD_LEVELS is dead config
 
-**Status**: planned | **Priority**: low | **Created**: 2026-07-13
+**Status**: resolved (2026-07-16) | **Priority**: low | **Created**: 2026-07-13 | **PR**: #116
 **Origin**: TECH-005 ingest (2026-07-13).
 
 **Context**: the setting is validated (`>= 1`) but never used to control hierarchy depth: `DualStrategyChunking` builds exactly two levels (parent + child), hardcoded. The name promises configurable depth that does not exist, which is the same class of defect as DEBT-013 (`VEKTRA_RERANK_TOP_K` dead config).
 
+**Resolution**: removed, not wired. Configurable depth was rejected because the two-level shape is a structural assumption of the whole chain, not a chunker detail: the data model carries a single `parent_id` reference (no level field, no chain), `chunk_level` is a binary `"parent"`/`"child"`, both vector store providers filter retrieval on exactly `chunk_level == "parent"`, and parent expansion (FEAT-017) is a single hop. Wiring N levels would rework four modules for a capability nothing requests — the field's only origin is the Phase 2 shared-protocols plan, which speced it and never wired it. The setting was also worse than inert: its validator made `chunking_strategy=dual` fail ARCH-057 startup validation unless the do-nothing variable was set. Field and validator dropped; `dual` now boots without it; stale values in a deployment's `.env` are ignored (`extra="ignore"`).
+
 **Acceptance criteria**:
-- [ ] Either the setting drives the chunker's depth, or it is removed from config, `.env.example` and docs
-- [ ] If removed, the removal is noted in the changelog (deployments may have it set)
+- [x] Either the setting drives the chunker's depth, or it is removed from config, `.env.example` and docs
+- [x] If removed, the removal is noted in the changelog (deployments may have it set)
+
+**Traceability**: DEBT-013 (same class, still open), FEAT-017, ARCH-057
 
 ---
 

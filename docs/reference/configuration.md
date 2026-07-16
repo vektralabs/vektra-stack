@@ -120,7 +120,6 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_MAX_FILE_SIZE_MB` | int | `50` | Maximum file size for ingestion (megabytes) |
 | `VEKTRA_DOCUMENT_EXTRACTOR` | str | `pdfplumber` | Extractor implementation: `pdfplumber`, `unstructured` |
 | `VEKTRA_TABLE_SPLIT` | bool | `false` | Allow splitting table elements across chunks. Dual-strategy only. |
-| `VEKTRA_PARENT_CHILD_LEVELS` | int | `0` | Parent-child hierarchy depth. 0=disabled. Must be >= 1 for dual strategy. |
 
 ## Security
 

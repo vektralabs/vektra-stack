@@ -349,24 +349,10 @@ class IngestConfig(BaseSettings):
         alias="VEKTRA_TABLE_SPLIT",
         description="Allow splitting table elements across chunks. Phase 2 dual-strategy.",
     )
-    parent_child_levels: int = Field(
-        0,
-        ge=0,
-        alias="VEKTRA_PARENT_CHILD_LEVELS",
-        description="Parent-child hierarchy depth. 0=disabled.",
-    )
 
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True
     )
-
-    @model_validator(mode="after")
-    def validate_dual_strategy(self) -> IngestConfig:
-        if self.chunking_strategy == "dual" and self.parent_child_levels < 1:
-            raise ValueError(
-                "parent_child_levels must be >= 1 when chunking_strategy is 'dual'"
-            )
-        return self
 
 
 class SecurityConfig(BaseSettings):

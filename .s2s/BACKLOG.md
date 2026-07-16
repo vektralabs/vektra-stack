@@ -233,6 +233,23 @@ One gotcha found on the container, not in tests: uvicorn 0.36 removed `Config.se
 
 ---
 
+### BUG-026: query top_k is unbounded and drives the retrieval fetch
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-16
+**Origin**: DEBT-013 analysis (2026-07-16).
+
+**Context**: `QueryBody.top_k` (`POST /api/v1/query`, `vektra-core/api.py`) and `CourseQueryRequest.top_k` (`POST /api/v1/learn/query`, `vektra-learn/query.py`) are plain `int = 5` with no bounds, while `/api/v1/search` already validates `Field(5, ge=1, le=100)` (`vektra-index/api.py`). The pipeline computes `fetch_k = max(query.top_k, rerank.fetch_k)`, so a client holding any query-scope key that sends `top_k=100000` drives a vector search for 100000 candidates **and a cross-encoder scoring pass over everything returned** — CPU-bound work per request that rate limiting only linearly contains. Non-positive values are accepted too: with reranking enabled, `top_k=0` or negative yields an empty post-rerank list and the query answers `200` with `no_relevant_context` instead of failing validation — a request that lies about why it found nothing.
+
+**Proposed approach**: mirror the `/search` bounds on both query bodies (`ge=1, le=100`, or tighter): an explicit `422`, not a silent `min()` truncation — that alternative was considered and rejected in DEBT-013 for the same endpoint. Update the `top_k` rows in `docs/reference/api.md` accordingly.
+
+**Acceptance criteria**:
+- [ ] `top_k` bounds enforced on `POST /api/v1/query` and `POST /api/v1/learn/query` (422 on violation, tests for both edges)
+- [ ] Bounds documented in `docs/reference/api.md`
+
+**Traceability**: DEBT-013 (found by), REQ-010 (error envelope on the 422 path)
+
+---
+
 ### DEBT-031: nothing guarantees a test suite is actually executed
 
 **Status**: done (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14
@@ -1065,7 +1082,7 @@ A client cannot branch on an error code for these endpoints, and the operator-fa
 
 ### DEBT-013: VEKTRA_RERANK_TOP_K is dead config
 
-**Status**: planned | **Priority**: low | **Created**: 2026-03-28
+**Status**: resolved (2026-07-16) | **Priority**: low | **Created**: 2026-03-28 | **PR**: #117
 
 **Context**: `RerankConfig.top_k` (env var `VEKTRA_RERANK_TOP_K`) is defined in config, parsed, tested, and documented, but never read by any pipeline code. The `RerankerService.rerank()` method takes `top_k` as a call-time parameter. `AdvancedQueryPipeline` passes `query.top_k` (from the HTTP request body, default 5), ignoring the config value entirely.
 
@@ -1078,9 +1095,11 @@ Separately, `_REWRITE_TOP_K = 20` is hardcoded in `advanced_pipeline.py` and con
 
 Also consider making `_REWRITE_TOP_K=20` configurable or deriving it from the rerank config.
 
+**Resolution**: option 2 (remove), plus `_REWRITE_TOP_K` made configurable. The field's own description — "final top-k results after reranking" — is exactly what the request's `top_k` already does, so wiring it (option 1) would have either duplicated `query.top_k` or broken the invariant that `sources` are exactly the chunks the LLM saw, and the cap (option 3) would have silently truncated a client's request with a `200` and no signal, the reassuring-lie failure mode this repo has three lessons about. The post-rerank cut is legitimately per-request; server-side quality is guarded by the relevance threshold, the rescue (TECH-007) and the funnel width. That funnel width was the knob with real uses: `_REWRITE_TOP_K = 20` (a misnomer — nothing to do with rewriting) is now `RerankConfig.fetch_k` / `VEKTRA_RERANK_FETCH_K`, default 20, `ge=1`. Default semantics are byte-identical (`max(query.top_k, 20)` with a reranker, `query.top_k` without), so the Combo D baselines are untouched by construction and no eval run was needed. Stale `VEKTRA_RERANK_TOP_K` values in a deployment's `.env` are ignored (`extra="ignore"`). The analysis also surfaced that `top_k` on the query endpoints is unbounded and drives the fetch via `max()` — filed as BUG-026, not fixed here.
+
 **Acceptance criteria**:
-- [ ] `VEKTRA_RERANK_TOP_K` either wired into pipeline or removed from config
-- [ ] `_REWRITE_TOP_K` either configurable or documented as intentionally hardcoded
+- [x] `VEKTRA_RERANK_TOP_K` either wired into pipeline or removed from config
+- [x] `_REWRITE_TOP_K` either configurable or documented as intentionally hardcoded
 
 ---
 

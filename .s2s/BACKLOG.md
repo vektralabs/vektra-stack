@@ -256,6 +256,26 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
+### DEBT-035: validation errors (422) bypass the REQ-010 envelope
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-17
+**Origin**: BUG-026 (2026-07-16), which added `Field` bounds and made the gap concrete.
+
+**Context**: REQ-010 (priority **must**) says "**All** API error responses use a consistent JSON envelope", and its acceptance criterion "All error responses use REQ-010 envelope with message and remediation" is still unchecked. DEBT-033/DEBT-034 unified the envelope for every `HTTPException`-raised error and put it at the document root. But FastAPI raises a **`RequestValidationError`** for any Pydantic validation failure (a bad `top_k`, a missing body field, a wrong type), and that is a different mechanism: it serialises as `{"detail": [{"loc": ..., "msg": ..., "type": ...}]}`, and **no `RequestValidationError` handler is registered anywhere**. So every validation 422, on every endpoint, bypasses the envelope. Verified live in BUG-026: `/search`'s own `le=100` returns the `detail`-list shape, not the envelope.
+
+This is not BUG-026's fault — matching `/search` was the right call rather than inventing a third shape. But it means REQ-010's "all" is not actually met: a machine consumer parsing `response.error.code` (per REQ-010) gets `undefined` on any validation error, and must fall back to FastAPI's `detail` list. It is the one error class the envelope-unification work did not reach.
+
+**This is a decision, not just a fix** — propose one with reasoning:
+1. **Implement** a `RequestValidationError` handler (in `vektra_shared/http_errors.py`, alongside the existing one) that wraps validation errors in the REQ-010 envelope with a stable code (e.g. `ERR-VALIDATION-001`). This stays **inside the import boundary**: the handler is a pure Pydantic-error → envelope mapping in `vektra_shared` (which every component already imports) and calls into no other component, so unlike FEAT-025 there is no cross-component import to route through an integration layer. Meets REQ-010 literally, but it is a **wire-shape change** with the same weight as DEBT-034: audit the consumers first (the widget and the **vektra-moodle plugin** parse error bodies; the BUG-026 tests assert the `detail`-list shape and would flip). Getting the field mapping right (Pydantic's `loc`/`msg`/`type` into `message`/`details`) is the real work.
+2. **Scope it out**: amend REQ-010 to say "all *application* error responses", and document validation 422s as the accepted FastAPI-native exception. Zero code, zero wire risk, but it narrows a must requirement — a requirements change, so it needs the operator's sign-off, not just an engineer's.
+
+**Acceptance criteria**:
+- [ ] A decision is recorded (implement handler, or amend REQ-010), with the reasoning
+- [ ] If implemented: validation 422s carry the REQ-010 envelope at the document root; consumers (widget, vektra-moodle) audited and migrated; the BUG-026 `detail`-shape assertions updated
+- [ ] If scoped out: REQ-010 text amended and validation errors documented as the exception in `docs/reference/api.md` / `error-codes.md`
+
+**Traceability**: REQ-010 (must; the "all" its acceptance criterion promises), DEBT-033/DEBT-034 (the envelope-unification work this completes or formally bounds), BUG-026 (surfaced it)
+
 ### DEBT-031: nothing guarantees a test suite is actually executed
 
 **Status**: done (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14

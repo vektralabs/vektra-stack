@@ -8,7 +8,8 @@ from uuid import uuid4
 
 import jwt as pyjwt
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from httpx import ASGITransport, AsyncClient
 
 from vektra_learn.service import (
     ContentIngestRequest,
@@ -17,6 +18,7 @@ from vektra_learn.service import (
     LearnService,
     TokenRequest,
 )
+from vektra_shared.http_errors import register_error_handlers
 
 JWT_SECRET = "test-secret-key-for-api-tests!!x"  # 33 bytes for HS256
 
@@ -822,3 +824,71 @@ class TestShowSourcesPropagation:
         token_event = next(ev for ev in events if '"type": "token"' in ev)
         payload = _json.loads(token_event.removeprefix("data: ").strip())
         assert "show_sources" not in payload
+
+
+# ---------------------------------------------------------------------------
+# BUG-026: top_k bounds (ge=1, le=100) on POST /api/v1/learn/query
+# ---------------------------------------------------------------------------
+
+
+class TestCourseQueryTopKBounds:
+    """The query body must reject an out-of-bounds top_k with a 422, mirroring
+    /api/v1/search and QueryBody, instead of letting it drive the retrieval
+    fetch (top_k>100) or answer 200 no_relevant_context (top_k<=0)."""
+
+    @staticmethod
+    def _make_app() -> FastAPI:
+        from vektra_learn.api import (
+            _get_service,
+            _get_session,
+            _validate_dashboard_token,
+            router,
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        register_error_handlers(app)
+        # FastAPI resolves dependencies before validating the request body, so
+        # the auth dependency must pass for a Field-bound violation to surface
+        # as 422 (not 401). The token intentionally omits course_id: a valid
+        # top_k then clears validation and the handler raises ERR-LEARN-003, so
+        # one app proves both edges (invalid -> 422, valid -> reaches handler).
+        app.dependency_overrides[_validate_dashboard_token] = lambda: {"sub": "s1"}
+        app.dependency_overrides[_get_service] = lambda: MagicMock()
+        app.dependency_overrides[_get_session] = lambda: AsyncMock()
+        app.state.learn_require_enrollment = False
+        return app
+
+    @pytest.mark.parametrize("top_k", [0, -1, 101, 100000])
+    async def test_out_of_bounds_returns_422(self, top_k: int) -> None:
+        app = self._make_app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/learn/query",
+                json={"question": "What is ML?", "top_k": top_k},
+                headers={"Authorization": "Bearer test-token"},
+            )
+        assert resp.status_code == 422
+        # Consistent with /api/v1/search: a Field-bound violation is FastAPI's
+        # standard RequestValidationError shape, not the REQ-010 envelope.
+        body = resp.json()
+        assert isinstance(body["detail"], list)
+        assert body["detail"][0]["loc"][-1] == "top_k"
+
+    @pytest.mark.parametrize("top_k", [1, 5, 100])
+    async def test_within_bounds_clears_validation(self, top_k: int) -> None:
+        """A valid boundary value is not a 422: it clears validation and the
+        handler runs (raising ERR-LEARN-003 for the course_id-less token)."""
+        app = self._make_app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/learn/query",
+                json={"question": "What is ML?", "top_k": top_k},
+                headers={"Authorization": "Bearer test-token"},
+            )
+        assert resp.status_code != 422
+        assert resp.json()["error"]["code"] == "ERR-LEARN-003"

@@ -407,7 +407,7 @@ Request body:
 |-------|------|---------|-------------|
 | `question` | string | (required) | Query text (max 10,000 characters) |
 | `namespace` | string | `default` | Namespace to search |
-| `top_k` | int | `5` | Number of chunks to retrieve |
+| `top_k` | int | `5` | Number of chunks to retrieve (1-100) |
 | `stream` | bool | `false` | Enable Server-Sent Events streaming |
 | `conversation_id` | UUID | - | Continue an existing conversation |
 
@@ -703,7 +703,7 @@ Request body:
 |-------|------|---------|-------------|
 | `question` | string | (required) | Query text |
 | `conversation_id` | UUID | - | Continue an existing conversation |
-| `top_k` | int | `5` | Number of chunks to retrieve |
+| `top_k` | int | `5` | Number of chunks to retrieve (1-100) |
 | `stream` | bool | `false` | Enable Server-Sent Events streaming |
 
 Response (HTTP 200, JSON):

@@ -69,7 +69,11 @@ class QueryBody(BaseModel):
     question: str
     conversation_id: UUID | None = None
     namespace: str = "default"
-    top_k: int = 5
+    # Bounded like /api/v1/search (BUG-026): an unbounded top_k drives the
+    # retrieval fetch via max(top_k, rerank.fetch_k) and a cross-encoder pass
+    # over every candidate; top_k<=0 with reranking yields an empty list that
+    # answers 200 no_relevant_context. Reject both with a 422 instead.
+    top_k: int = Field(5, ge=1, le=100)
     stream: bool = False
 
 

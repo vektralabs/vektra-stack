@@ -235,18 +235,24 @@ One gotcha found on the container, not in tests: uvicorn 0.36 removed `Config.se
 
 ### BUG-026: query top_k is unbounded and drives the retrieval fetch
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-16
+**Status**: resolved (2026-07-17) | **Priority**: medium | **Created**: 2026-07-16 | **PR**: #118
 **Origin**: DEBT-013 analysis (2026-07-16).
 
 **Context**: `QueryBody.top_k` (`POST /api/v1/query`, `vektra-core/api.py`) and `CourseQueryRequest.top_k` (`POST /api/v1/learn/query`, `vektra-learn/query.py`) are plain `int = 5` with no bounds, while `/api/v1/search` already validates `Field(5, ge=1, le=100)` (`vektra-index/api.py`). The pipeline computes `fetch_k = max(query.top_k, rerank.fetch_k)`, so a client holding any query-scope key that sends `top_k=100000` drives a vector search for 100000 candidates **and a cross-encoder scoring pass over everything returned** — CPU-bound work per request that rate limiting only linearly contains. Non-positive values are accepted too: with reranking enabled, `top_k=0` or negative yields an empty post-rerank list and the query answers `200` with `no_relevant_context` instead of failing validation — a request that lies about why it found nothing.
 
 **Proposed approach**: mirror the `/search` bounds on both query bodies (`ge=1, le=100`, or tighter): an explicit `422`, not a silent `min()` truncation — that alternative was considered and rejected in DEBT-013 for the same endpoint. Update the `top_k` rows in `docs/reference/api.md` accordingly.
 
-**Acceptance criteria**:
-- [ ] `top_k` bounds enforced on `POST /api/v1/query` and `POST /api/v1/learn/query` (422 on violation, tests for both edges)
-- [ ] Bounds documented in `docs/reference/api.md`
+**Resolution**: both bodies now carry `Field(5, ge=1, le=100)`, byte-identical to `/search`. Out-of-bounds is an explicit `422`, not a silent `min()` (rejected in DEBT-013 for the same endpoint). The pre-fix behaviour was confirmed live before touching code: `/query` with `top_k=200` returned `200`, `top_k=0` returned `200 no_relevant_context`.
 
-**Traceability**: DEBT-013 (found by), REQ-010 (error envelope on the 422 path)
+The REQ-010 traceability note turned out to be wrong about the wire shape, and the fix follows the code rather than the note. A `Field`-bound violation is a FastAPI `RequestValidationError`, which has its own shape (`{"detail": [...]}`); the REQ-010 envelope handler (`vektra_shared/http_errors.py`) only unwraps `HTTPException`-raised envelopes, and no `RequestValidationError` handler is registered anywhere. Verified live: `/search`'s own `le=100` returns the `{"detail": [...]}` shape, not the envelope. So the query bodies match `/search` rather than inventing a second 422 shape. A test asserts the `detail`-list shape on both endpoints, so a future envelope handler that changed it would go red.
+
+One subtlety the learn test had to account for: FastAPI resolves dependencies **before** validating the request body, so a bound violation on `/learn/query` surfaces as `422` only once the JWT dependency passes (otherwise `401` wins). The HTTP test overrides the auth dependency for exactly this reason.
+
+**Acceptance criteria**:
+- [x] `top_k` bounds enforced on `POST /api/v1/query` and `POST /api/v1/learn/query` (422 on violation, tests for both edges)
+- [x] Bounds documented in `docs/reference/api.md`
+
+**Traceability**: DEBT-013 (found by), REQ-010 (the note predicted the envelope on the 422 path; the live behaviour is the FastAPI validation shape, and the fix matches `/search`)
 
 ---
 

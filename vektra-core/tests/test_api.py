@@ -269,7 +269,7 @@ async def test_query_no_relevant_context_flag():
 
 
 @pytest.mark.parametrize("top_k", [0, -1, 101, 100000])
-async def test_query_top_k_out_of_bounds_returns_422(top_k):
+async def test_query_top_k_out_of_bounds_returns_422(top_k: int) -> None:
     """Out-of-bounds top_k is rejected at validation, not silently accepted.
 
     top_k<=0 previously answered 200 no_relevant_context; top_k>100 drove an
@@ -295,7 +295,7 @@ async def test_query_top_k_out_of_bounds_returns_422(top_k):
 
 
 @pytest.mark.parametrize("top_k", [1, 5, 100])
-async def test_query_top_k_within_bounds_returns_200(top_k):
+async def test_query_top_k_within_bounds_returns_200(top_k: int) -> None:
     """Valid boundary values pass validation and reach the pipeline."""
     reg = _make_registry(TEST_KEY)
     app = _make_app(reg)

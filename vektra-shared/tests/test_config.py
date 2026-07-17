@@ -124,19 +124,24 @@ class TestRerankConfig:
         assert cfg.enabled is True
         assert cfg.provider == "cross-encoder"
         assert cfg.model == "BAAI/bge-reranker-v2-m3"
-        assert cfg.top_k == 5
+        assert cfg.fetch_k == 20
 
     def test_env_var_override(self) -> None:
         cfg = RerankConfig(
             VEKTRA_RERANK_ENABLED=False,
             VEKTRA_RERANK_PROVIDER="cohere",
             VEKTRA_RERANK_MODEL="rerank-english-v3.0",
-            VEKTRA_RERANK_TOP_K=10,
+            VEKTRA_RERANK_FETCH_K=40,
         )
         assert cfg.enabled is False
         assert cfg.provider == "cohere"
         assert cfg.model == "rerank-english-v3.0"
-        assert cfg.top_k == 10
+        assert cfg.fetch_k == 40
+
+    def test_stale_top_k_ignored(self) -> None:
+        """VEKTRA_RERANK_TOP_K was removed (DEBT-013): stale values must not break config."""
+        cfg = RerankConfig(VEKTRA_RERANK_TOP_K=10)
+        assert not hasattr(cfg, "top_k")
 
 
 class TestWebhookConfig:
@@ -175,7 +180,7 @@ class TestQueryPipelineConfigNested:
         assert cfg.rewrite.model is None
         assert cfg.rerank.enabled is True
         assert cfg.rerank.provider == "cross-encoder"
-        assert cfg.rerank.top_k == 5
+        assert cfg.rerank.fetch_k == 20
 
 
 class TestVektraSettings:

@@ -105,7 +105,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_RERANK_ENABLED` | bool | `true` | Enable cross-encoder reranking after retrieval |
 | `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere`, `tei` (remote) |
 | `VEKTRA_RERANK_MODEL` | str | `BAAI/bge-reranker-v2-m3` | Multilingual reranking model. For English-only lightweight deployments: provider=`flashrank`, model=`ms-marco-MiniLM-L-12-v2` |
-| `VEKTRA_RERANK_TOP_K` | int | `5` | Final top-k results after reranking |
+| `VEKTRA_RERANK_FETCH_K` | int | `20` | Candidates fetched from vector search for reranking. The post-rerank cut is the request's `top_k` |
 | `VEKTRA_RERANK_API_KEY` | str | - | API key for API-based providers (`cohere`) |
 | `VEKTRA_RERANK_TEI_URL` | str | `http://localhost:8080` | TEI reranker server base URL (one TEI instance per model, e.g. serving `BAAI/bge-reranker-v2-m3`). Used when provider is `tei`. Scores are sigmoid-normalized like the in-process path |
 | `VEKTRA_RERANK_TEI_API_KEY` | str | - | Bearer token for the TEI reranker server. Optional |

@@ -353,6 +353,45 @@ async def test_reranking_fallback_on_failure():
     assert rerank_step.metadata.get("skipped") is True
 
 
+async def test_rerank_fetch_defaults_to_20():
+    """Default funnel width is unchanged: max(query.top_k, 20) with a reranker (DEBT-013)."""
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[])
+    reranker = AsyncMock(spec=RerankerService)
+
+    pipeline = _make_pipeline(vector_store=vector_store, reranker=reranker)
+    await pipeline.execute(QueryRequest(question="test", top_k=5))
+
+    assert vector_store.search.await_args.kwargs["top_k"] == 20
+
+
+async def test_rerank_fetch_uses_configured_fetch_k(monkeypatch):
+    """VEKTRA_RERANK_FETCH_K controls how many candidates the reranker sees (DEBT-013)."""
+    monkeypatch.setenv("VEKTRA_RERANK_FETCH_K", "35")
+    config = _make_pipeline_config()
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[])
+    reranker = AsyncMock(spec=RerankerService)
+
+    pipeline = _make_pipeline(
+        vector_store=vector_store, pipeline_config=config, reranker=reranker
+    )
+    await pipeline.execute(QueryRequest(question="test", top_k=5))
+
+    assert vector_store.search.await_args.kwargs["top_k"] == 35
+
+
+async def test_no_reranker_fetches_query_top_k():
+    """Without a reranker the funnel is not widened: fetch equals query.top_k."""
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[])
+
+    pipeline = _make_pipeline(vector_store=vector_store)
+    await pipeline.execute(QueryRequest(question="test", top_k=7))
+
+    assert vector_store.search.await_args.kwargs["top_k"] == 7
+
+
 # ---------------------------------------------------------------------------
 # Hybrid search
 # ---------------------------------------------------------------------------

@@ -23,7 +23,10 @@ class CourseQueryRequest(BaseModel):
 
     question: str = Field(min_length=1)
     conversation_id: UUID | None = None
-    top_k: int = 5
+    # Bounded like /api/v1/search and QueryBody (BUG-026): an unbounded top_k
+    # drives the retrieval fetch and cross-encoder work per request, and a
+    # non-positive value answers 200 no_relevant_context instead of failing.
+    top_k: int = Field(5, ge=1, le=100)
     stream: bool = False
 
 

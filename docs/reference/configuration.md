@@ -182,10 +182,10 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 
 | Category | Count |
 |----------|-------|
-| VEKTRA_* variables in `VektraSettings` and sub-configs (Pydantic-validated) | 59 |
+| VEKTRA_* variables in `VektraSettings` and sub-configs (Pydantic-validated) | 66 |
 | VEKTRA_* variables read directly from env (`VEKTRA_CORS_ORIGINS`) | 1 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
-| **Total documented** | **64** |
+| **Total documented** | **71** |
 
-The 59 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
+The 66 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.

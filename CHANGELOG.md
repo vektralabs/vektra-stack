@@ -17,6 +17,8 @@ Convention (Keep a Changelog 1.1.0):
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-18
+
 ### Added
 
 - **ci**: a structural guard that fails when a test suite is executed by nothing (DEBT-031). Nothing checked this. `make test` and `ci-unit.yml` enumerate the packages in two independent hand-maintained lists, and the DEBT-029 guard verifies only that a package is *isolated*, never that anyone *runs* it — so a `vektra-foo/tests/` added tomorrow was silently unexecuted and no test went red. That is the exact shape of the hole BUG-024 fell through, still open one level up. `vektra-shared/tests/test_suite_execution_coverage.py` reads the runners instead of trusting them: it parses the `test:` recipe and every `pytest` invocation in every workflow, and asserts that each test file would actually be *collected* by one — which means honouring the `-m` filter and not just the paths, because a file can sit in a directory both runners name and still be run by neither, every unit run passing `-m "not integration"`. The unit path and the integration path are therefore checked independently. Workflow YAML is parsed, never grepped: `integration.yml` carries a commented-out `pytest` line, and a guard that counted it as coverage would certify a suite nobody runs. It executes in a `test-structure` job carrying **no path filter**, deliberately — every other unit job is gated on `dorny/paths-filter`, so a PR that only edits the Makefile, only edits a workflow, or adds a new package matches no filter and skips them all, and those are precisely the three changes this guard exists to catch. A guard a path filter can skip is not a guard, so the DEBT-029 guard (until now gated on `vektra-shared/**`) runs there too.

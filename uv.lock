@@ -5099,7 +5099,7 @@ wheels = [
 
 [[package]]
 name = "vektra-admin"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-admin" }
 dependencies = [
     { name = "argon2-cffi" },
@@ -5148,7 +5148,7 @@ dev = [
 
 [[package]]
 name = "vektra-analytics"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-analytics" }
 dependencies = [
     { name = "fastapi" },
@@ -5183,7 +5183,7 @@ dev = [
 
 [[package]]
 name = "vektra-app"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-app" }
 dependencies = [
     { name = "alembic" },
@@ -5232,7 +5232,7 @@ dev = [
 
 [[package]]
 name = "vektra-core"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-core" }
 dependencies = [
     { name = "fastapi" },
@@ -5277,7 +5277,7 @@ dev = [
 
 [[package]]
 name = "vektra-index"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-index" }
 dependencies = [
     { name = "asyncpg" },
@@ -5334,7 +5334,7 @@ dev = [
 
 [[package]]
 name = "vektra-ingest"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-ingest" }
 dependencies = [
     { name = "arq" },
@@ -5399,7 +5399,7 @@ dev = [
 
 [[package]]
 name = "vektra-learn"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-learn" }
 dependencies = [
     { name = "fastapi" },
@@ -5436,7 +5436,7 @@ dev = [
 
 [[package]]
 name = "vektra-shared"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "vektra-shared" }
 dependencies = [
     { name = "asyncpg" },

@@ -195,7 +195,17 @@ async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
     """arq cron task: hard-delete soft-deleted documents past retention period.
 
     Reads VEKTRA_RETENTION_DAYS from config. When None, no cleanup is performed.
-    For each expired document: hard-delete the row (CASCADE deletes document_chunks).
+    For each expired document: remove its chunks from the active vector store,
+    then hard-delete the row.
+
+    The chunk removal is explicit rather than left to the document_chunks CASCADE.
+    The CASCADE only ever deleted pgvector's rows, so in Qdrant mode retention
+    purged the Postgres record and left the content in Qdrant, still searchable
+    and no longer traceable to any document (BUG-023, ADR-0026, REQ-057).
+
+    A document whose chunks cannot be removed is kept: it stays soft-deleted and
+    the next run retries it. Dropping the row while its content survives is the
+    one outcome retention must never produce.
     """
     from vektra_shared.config import ObservabilityConfig
 
@@ -210,28 +220,56 @@ async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
         log.error("cleanup_no_session_factory")
         return
 
+    registry = ctx.get("registry")
+    if registry is None:
+        log.error("cleanup_no_registry")
+        return
+    vector_store = registry.get("vector_store", "default")
+
     try:
+        # First short-lived session: find expired soft-deleted documents, then
+        # close it before the external vector-store deletions so a large backlog
+        # does not hold a Postgres connection open across network I/O.
         async with _shared_db._session_factory() as session:
-            # Find expired soft-deleted documents
             result = await session.execute(
-                select(SourceDocumentOrm.id).where(
+                select(SourceDocumentOrm.id, SourceDocumentOrm.namespace_id).where(
                     SourceDocumentOrm.deleted_at.is_not(None),
                     SourceDocumentOrm.deleted_at < cutoff,
                 )
             )
-            expired_ids = [row[0] for row in result.all()]
+            expired = result.all()
 
-            if not expired_ids:
-                log.debug("cleanup_nothing_to_purge")
-                return
+        if not expired:
+            log.debug("cleanup_nothing_to_purge")
+            return
 
-            # Hard-delete (CASCADE handles document_chunks)
+        # External deletions run with no active database transaction.
+        purged_ids = []
+        for doc_id, namespace_id in expired:
+            try:
+                await vector_store.delete(namespace_id, [str(doc_id)])
+            except Exception as exc:
+                log.error(
+                    "cleanup_chunk_delete_failed",
+                    document_id=str(doc_id),
+                    namespace=namespace_id,
+                    error=str(exc),
+                )
+                continue
+            purged_ids.append(doc_id)
+
+        if not purged_ids:
+            return
+
+        # Second short-lived session: hard-delete only the rows whose chunks
+        # were successfully removed from the vector store.
+        async with _shared_db._session_factory() as session:
             await session.execute(
-                delete(SourceDocumentOrm).where(SourceDocumentOrm.id.in_(expired_ids))
+                delete(SourceDocumentOrm).where(SourceDocumentOrm.id.in_(purged_ids))
             )
             await session.commit()
 
-        log.info("cleanup_purged", count=len(expired_ids))
+        log.info("cleanup_purged", count=len(purged_ids), expired=len(expired))
 
     except Exception as exc:
         log.error("cleanup_failed", error=str(exc))

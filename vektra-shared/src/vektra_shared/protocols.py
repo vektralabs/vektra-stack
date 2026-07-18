@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, Protocol, runtime_checkable
+from uuid import UUID
 
 from vektra_shared.types import (
     ChunkEmbedding,
@@ -39,6 +40,7 @@ from vektra_shared.types import (
     SearchMode,
     SearchResult,
     SparseVector,
+    StoredChunk,
 )
 
 
@@ -105,7 +107,12 @@ class VectorStoreProvider(Protocol):
         self,
         namespace: str,
         chunks: Sequence[ChunkEmbedding],
-    ) -> list[str]: ...
+        index_version: int | None = None,
+    ) -> list[str]:
+        """Store chunks. index_version defaults to the provider's active version;
+        reindex passes the target version to write a second version alongside it
+        (ARCH-045, ADR-0026)."""
+        ...
 
     async def search(
         self,
@@ -123,7 +130,37 @@ class VectorStoreProvider(Protocol):
         chunk_ids: list[str],
     ) -> list[SearchResult]: ...
 
+    async def list_chunks(
+        self,
+        namespace: str,
+        document_id: UUID,
+    ) -> list[StoredChunk]:
+        """All chunks of a document at the active index version, ordered by position.
+
+        The chunk-enumeration counterpart of retrieve(), which needs ids the
+        caller does not have here. The vector store is the only source of truth
+        for chunk text (ADR-0026)."""
+        ...
+
+    async def count_chunks(self, namespace: str | None = None) -> int:
+        """Chunks at the active index version, optionally scoped to a namespace."""
+        ...
+
     async def delete(self, namespace: str, ids: list[str]) -> int: ...
+
+    async def delete_index_version(self, namespace: str, index_version: int) -> int:
+        """Delete every chunk of a namespace at one index version (REQ-064).
+
+        The counterpart of store(index_version=...): reindex writes a second
+        version alongside the live one, and this reclaims the version that lost.
+        Returns chunks_removed.
+
+        Implementations MUST refuse to delete their own active index version and
+        raise ActiveIndexVersionError. The destructive failure mode here is not
+        "an old version survives", it is "the live index is emptied": the store
+        is the only component that knows which version it is serving, so the
+        refusal belongs here rather than in whichever caller happens to ask."""
+        ...
 
     async def health_check(self) -> HealthStatus: ...
 

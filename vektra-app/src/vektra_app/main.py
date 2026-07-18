@@ -9,6 +9,7 @@ This is the ONLY module that imports from all vektra_* components.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -19,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import structlog
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -31,6 +33,7 @@ from vektra_app import __version__
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
 from vektra_shared.errors import ERR_CONFIG_001, ErrorCategory, ErrorResponse
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.protocols import EmbeddingProvider
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.startup import (
@@ -169,7 +172,15 @@ async def _step_5_register_providers(
 
         model_name = settings.sparse_embedding_model or "Qdrant/bm25"
         sparse_provider = FastEmbedBM25Provider(model_name=model_name)
+        # Both aliases, as the vector store does: callers resolve "default",
+        # while startup validation (ARCH-057) looks the provider up by its
+        # configured name. Registering only "default" made the check fail on
+        # every stack with sparse enabled, so hybrid search could not be turned
+        # on at all (BUG-024).
         registry.register("sparse_embedding", "default", sparse_provider)
+        registry.register(
+            "sparse_embedding", settings.sparse_embedding_provider, sparse_provider
+        )
         log.info(
             "sparse_embedding_registered",
             provider=settings.sparse_embedding_provider,
@@ -339,6 +350,15 @@ async def _step_5_register_providers(
 
     vektra_shared.audit.set_log_fn(_audit_impl)
 
+    # --- ARCH-057 step 5 (cont'd): verify provider registration ---
+    from vektra_index.startup import check_provider_registration
+
+    await check_provider_registration(
+        registry,
+        vector_store_provider=settings.vector_store_provider,
+        sparse_embedding_provider=settings.sparse_embedding_provider,
+    )
+
 
 async def _step_6_embedding_warmup(registry: ProviderRegistry) -> None:
     """ARCH-057 step 6: warm up the embedding model."""
@@ -471,9 +491,14 @@ async def _step_11_qdrant_check(
 # ---------------------------------------------------------------------------
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Run the 11-step startup validation, then yield for serving."""
+async def _run_startup(app: FastAPI) -> None:
+    """Run the ARCH-057 11-step validation and assemble application state.
+
+    Raises StartupValidationError if a hard step fails. The two callers decide
+    how that failure is surfaced: main() (the container path) logs it and exits
+    cleanly, with no ASGI and no traceback (BUG-025, NFR-009); the ASGI lifespan
+    re-raises SystemExit for the in-process/TestClient path.
+    """
     start_time = time.monotonic()
     configure_structlog()
 
@@ -481,16 +506,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         settings = VektraSettings()
     except ValidationError as exc:
-        err = StartupValidationError(
+        raise StartupValidationError(
             step="config_validation",
             detail=str(exc),
             remediation=(
                 "Set all required environment variables. At minimum: "
                 "VEKTRA_LLM_PROVIDER (e.g., 'ollama/llama3' or 'openai/gpt-4o')."
             ),
-        )
-        log.error("startup_failed", error=err.to_plain_text())
-        raise SystemExit(1) from exc
+        ) from exc
 
     # Initialize database engine (needed by steps 2-5)
     init_db(settings.database_url)
@@ -520,15 +543,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     step_1_ms = int((time.monotonic() - start_time) * 1000)
     log.info("startup_step_complete", step="config_validation", duration_ms=step_1_ms)
 
+    # A failed hard step raises StartupValidationError, which propagates to the
+    # caller; the step's own startup_step_complete line is then skipped.
     for step_name, step_fn in steps:
         step_start = time.monotonic()
-        try:
-            await step_fn()
-            duration_ms = int((time.monotonic() - step_start) * 1000)
-            log.info("startup_step_complete", step=step_name, duration_ms=duration_ms)
-        except StartupValidationError as exc:
-            log.error("startup_failed", error=exc.to_plain_text())
-            raise SystemExit(1) from exc
+        await step_fn()
+        duration_ms = int((time.monotonic() - step_start) * 1000)
+        log.info("startup_step_complete", step=step_name, duration_ms=duration_ms)
 
     total_ms = int((time.monotonic() - start_time) * 1000)
     log.info("startup_complete", total_duration_ms=total_ms)
@@ -558,10 +579,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.learn_service = registry.get("learn", "default")
         app.state.learn_require_enrollment = settings.learn_require_enrollment
 
-    yield
 
-    # Shutdown
+async def _run_shutdown(app: FastAPI) -> None:
+    """Best-effort teardown: close remote provider clients and the DB engine."""
     log.info("shutdown_started")
+    registry: ProviderRegistry = app.state.registry
     # Close remote provider HTTP clients (TEI, FEAT-024) best-effort
     for category in ("embedding", "reranker"):
         try:
@@ -579,6 +601,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     engine = get_engine()
     await engine.dispose()
     log.info("shutdown_complete")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """ASGI lifespan for in-process serving (tests, local `uvicorn ...:app`).
+
+    The shipped container serves through main() (validate-before-serve, so a
+    misconfiguration never reaches uvicorn's ASGI machinery — BUG-025). This
+    path remains for TestClient and local runs: a failed step can only abort
+    ASGI startup by raising, and uvicorn logs that as a traceback, which is
+    acceptable here because it never runs in the container.
+    """
+    try:
+        await _run_startup(app)
+    except StartupValidationError as exc:
+        log.error("startup_failed", error=exc.to_plain_text())
+        raise SystemExit(1) from exc
+    try:
+        yield
+    finally:
+        await _run_shutdown(app)
 
 
 # ---------------------------------------------------------------------------
@@ -726,7 +769,12 @@ def create_app() -> FastAPI:
     # 5. Correlation ID (outermost - sets request_id before anything else)
     app.add_middleware(CorrelationIdMiddleware)
 
-    # --- Global exception handler ---
+    # --- Global exception handlers ---
+    # The REQ-010 envelope is unwrapped to the document root for every
+    # HTTPException whose detail is already an envelope (DEBT-034). Shared with
+    # the test apps via vektra_shared so both register identical behavior.
+    register_error_handlers(app)
+
     @app.exception_handler(Exception)
     async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", None)
@@ -762,3 +810,53 @@ def _get_cors_origins() -> list[str]:
 
 
 app = create_app()
+
+
+# ---------------------------------------------------------------------------
+# Container entrypoint: validate before serving (BUG-025, NFR-009)
+# ---------------------------------------------------------------------------
+
+
+async def _serve(app: FastAPI, server: uvicorn.Server) -> int:
+    """Validate, then serve, then tear down — all in one event loop.
+
+    Returns the process exit code. A failed validation step logs its structured
+    error and returns 1 without ever starting the ASGI server, so uvicorn never
+    logs a traceback (BUG-025). Startup and serving share a single loop, so the
+    async resources built during validation (DB engine, HTTP clients) stay bound
+    to the loop that goes on to serve requests.
+    """
+    try:
+        await _run_startup(app)
+    except StartupValidationError as exc:
+        log.error("startup_failed", error=exc.to_plain_text())
+        return 1
+    try:
+        await server.serve()
+    finally:
+        await _run_shutdown(app)
+    return 0
+
+
+def main() -> None:
+    """Run the ARCH-057 validation ahead of uvicorn, then serve.
+
+    docker/entrypoint.sh invokes `python -m vektra_app.main`. Validating before
+    uvicorn.run() (rather than inside the ASGI lifespan) lets a failed step print
+    its structured [STARTUP ERROR] and exit non-zero with no traceback, which is
+    what NFR-009 asks for. `lifespan="off"` keeps uvicorn from also driving the
+    lifespan, so the sequence never runs twice.
+    """
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, lifespan="off")
+    server = uvicorn.Server(config)
+    # Validation and serving share one loop, built from uvicorn's own factory so
+    # the server still gets uvloop (the CLI default) rather than plain asyncio.
+    # get_loop_factory() is uvicorn's supported hook for this since it dropped
+    # setup_event_loop() in 0.36.
+    raise SystemExit(
+        asyncio.run(_serve(app, server), loop_factory=config.get_loop_factory())
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -25,6 +25,7 @@ jobs:
       admin:     ${{ steps.filter.outputs.admin }}
       analytics: ${{ steps.filter.outputs.analytics }}
       learn:     ${{ steps.filter.outputs.learn }}
+      app:       ${{ steps.filter.outputs.app }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -51,6 +52,9 @@ jobs:
             learn:
               - 'vektra-learn/**'
               - 'vektra-shared/**'
+            app:
+              - 'vektra-app/**'
+              - 'vektra-*/**'
 
   test-shared:
     name: Test vektra-shared
@@ -171,11 +175,62 @@ jobs:
           uv run pytest vektra-learn/tests/ -v --tb=short -m "not integration"
           --cov=vektra_learn --cov-report=term-missing --cov-fail-under=80
 
+  # vektra-app wires every component together (provider registration, startup
+  # validation). Its tests existed but nothing ran them, in CI or in `make test`,
+  # which is how a registration/validation mismatch shipped on develop and stopped
+  # the stack from booting with sparse embeddings enabled (BUG-024).
+  test-app:
+    name: Test vektra-app
+    needs: detect-changes
+    if: needs.detect-changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # This job runs PR-authored test code; don't leave the token in .git/config
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen
+      - name: Run unit tests
+        run: uv run pytest vektra-app/tests/ -v --tb=short -m "not integration"
+
+  # The structural guards, and the only job here that no path filter can skip. That is
+  # the whole point of it. Every other job is gated on dorny/paths-filter, so a PR that
+  # only edits the Makefile, only edits a workflow, or adds a brand-new vektra-foo/
+  # package matches no filter and skips them all — and those are exactly the three
+  # changes a guard over the runner lists exists to catch. A guard a path filter can
+  # skip is not a guard (DEBT-031), which also applies to the DEBT-029 guard that until
+  # now ran only when vektra-shared itself changed.
+  #
+  # It parses the Makefile and the workflows; it runs no suite and needs no services.
+  test-structure:
+    name: Structural guards (suite execution, env isolation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Runs PR-authored test code; don't leave the token in .git/config
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-shared
+      - name: Check every suite is executed, and every package is env-isolated
+        run: >
+          uv run pytest
+          vektra-shared/tests/test_suite_execution_coverage.py
+          vektra-shared/tests/test_env_isolation_coverage.py
+          -v --tb=short
+
   # Aggregator job used as the single required status check in branch protection.
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-app, test-structure]
     runs-on: ubuntu-latest
     if: always()
     steps:

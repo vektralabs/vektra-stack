@@ -10,17 +10,19 @@ Phase 1 endpoints:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_shared.auth import ApiKeyInfo, require_scope
-from vektra_shared.config import VectorStoreConfig
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
+    ERR_AUTH_003,
     ERR_INGEST_004,
     ERR_QUERY_004,
     ErrorCategory,
@@ -34,9 +36,6 @@ from vektra_shared.types import (
     SearchMode,
     SparseVector,
 )
-
-# Read from env once at import time (immutable for process lifetime)
-_VS_CONFIG = VectorStoreConfig()
 
 router = APIRouter(prefix="/api/v1", tags=["index"])
 
@@ -109,6 +108,23 @@ class SearchResultPayload(BaseModel):
     metadata: dict[str, Any]
 
 
+class StoredChunkPayload(BaseModel):
+    """A stored chunk as held by the active vector store (no embedding)."""
+
+    chunk_id: str
+    text: str
+    position: int
+    parent_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListChunksResponse(BaseModel):
+    document_id: str
+    namespace: str
+    chunks: list[StoredChunkPayload]
+    total: int
+
+
 class DeleteDocumentResponse(BaseModel):
     document_id: str
     chunks_removed: int
@@ -135,20 +151,22 @@ class HealthResponse(BaseModel):
 async def store_chunks(
     document_id: UUID,
     body: StoreChunksRequest,
+    request: Request,
     key: ApiKeyInfo = Depends(require_scope("ingest")),
-    session: AsyncSession = Depends(get_session),
 ) -> StoreChunksResponse:
     """Store embeddings for a document's chunks.
 
     Called by vektra-ingest after generating embeddings. Requires 'ingest'
-    or 'admin' scope.
+    or 'admin' scope. Writes to the active vector store: a hardcoded pgvector
+    here wrote to the inactive store in Qdrant mode (BUG-023, ADR-0026).
     """
-    from vektra_index.providers.pgvector import PgvectorProvider
+    vector_store = request.app.state.registry.get("vector_store", "default")
 
     # Enforce namespace binding for scoped keys (H5)
     effective_ns = key.namespace_id or body.namespace
 
-    # Build ChunkEmbedding objects from the request payload
+    # Build ChunkEmbedding objects from the request payload. The store resolves
+    # the document from chunk metadata, so it must carry the path parameter.
     chunk_embeddings = [
         ChunkEmbedding(
             chunk_id=item.chunk_id or "",
@@ -157,28 +175,20 @@ async def store_chunks(
             sparse=SparseVector(indices=item.sparse.indices, values=item.sparse.values)
             if item.sparse
             else None,
-            metadata=item.metadata,
+            metadata={**item.metadata, "document_id": str(document_id)},
         )
         for item in body.chunks
     ]
 
-    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
-
     try:
-        async with session.begin():
-            chunk_ids = await provider.store(
-                session=session,
-                namespace=effective_ns,
-                document_id=document_id,
-                chunks=chunk_embeddings,
-            )
+        chunk_ids = await vector_store.store(effective_ns, chunk_embeddings)
     except Exception as exc:
         err = ErrorResponse(
             category=ErrorCategory.UPSTREAM,
             code=ERR_INGEST_004,
             message=f"Vector store write failed: {exc}",
             remediation=(
-                "Check PostgreSQL connectivity and pgvector extension status. "
+                "Check vector store connectivity and status. "
                 "Run GET /health for component status."
             ),
         )
@@ -190,6 +200,60 @@ async def store_chunks(
         document_id=str(document_id),
         chunk_ids=chunk_ids,
         chunks_stored=len(chunk_ids),
+    )
+
+
+def _namespace_scope_violation() -> HTTPException:
+    """403 for a namespace-bound key reaching outside its namespace (H5)."""
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_AUTH_003,
+        message="Namespace scope violation",
+        remediation=(
+            "This API key is bound to a single namespace. Omit the namespace "
+            "parameter, or set it to the namespace the key is bound to."
+        ),
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+
+@router.get("/documents/{document_id}/chunks", response_model=ListChunksResponse)
+async def list_document_chunks(
+    document_id: UUID,
+    request: Request,
+    namespace: str | None = Query(None),
+    key: ApiKeyInfo = Depends(require_scope(None)),
+) -> ListChunksResponse:
+    """List a document's stored chunks at the active index version.
+
+    Reads from the active vector store, which is the only source of truth for
+    chunk text (ADR-0026). Accepts any valid API key scope.
+    """
+    vector_store = request.app.state.registry.get("vector_store", "default")
+
+    # namespace defaults to None, not "default": a namespace-bound key that omits
+    # the parameter must fall through to its own namespace, not collide with the
+    # literal "default" and be rejected as a scope violation.
+    if key.namespace_id and namespace and namespace != key.namespace_id:
+        raise _namespace_scope_violation()
+    effective_ns = key.namespace_id or namespace or "default"
+
+    chunks = await vector_store.list_chunks(effective_ns, document_id)
+
+    return ListChunksResponse(
+        document_id=str(document_id),
+        namespace=effective_ns,
+        chunks=[
+            StoredChunkPayload(
+                chunk_id=chunk.chunk_id,
+                text=chunk.text,
+                position=chunk.position,
+                parent_id=chunk.parent_id,
+                metadata=chunk.metadata,
+            )
+            for chunk in chunks
+        ],
+        total=len(chunks),
     )
 
 
@@ -309,24 +373,49 @@ async def search(
 @router.delete("/documents/{document_id}", response_model=DeleteDocumentResponse)
 async def delete_document(
     document_id: UUID,
-    namespace: str = Query("default"),
+    request: Request,
+    namespace: str | None = Query(None),
     key: ApiKeyInfo = Depends(require_scope("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> DeleteDocumentResponse:
-    """Delete all chunks for a document and soft-delete the document.
+    """Remove a document's chunks from the active vector store, then soft-delete
+    the document record.
 
-    Implements BLOCKER B-1/B-3 resolution: SELECT COUNT then DELETE chunks
-    in one transaction, then soft-delete source_document.
+    The chunks go through the provider, so the deletion reaches whichever store
+    holds them: this used to delete Postgres rows only, leaving the document
+    retrievable from Qdrant after a 200 (BUG-023, ADR-0026).
+
+    Chunk removal is not transactional with the soft delete (an external vector
+    store cannot join the Postgres transaction). Chunks are removed first: the
+    failure mode is then a document still marked live with no chunks, which a
+    retry fixes, rather than a deleted document whose content still answers.
     """
-    from vektra_index.providers.pgvector import PgvectorProvider
+    from vektra_index.models import SourceDocumentOrm
 
-    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
+    vector_store = request.app.state.registry.get("vector_store", "default")
+
+    # Namespace binding (H5), which this endpoint never enforced: a namespace-bound
+    # admin key could name any namespace and have it honoured. That was survivable
+    # only while the delete was a no-op against the active store; now that it
+    # actually removes the chunks, it would be a cross-namespace deletion.
+    if key.namespace_id and namespace and namespace != key.namespace_id:
+        raise _namespace_scope_violation()
+    effective_ns = key.namespace_id or namespace or "default"
+
+    chunks_removed = await vector_store.delete(effective_ns, [str(document_id)])
 
     async with session.begin():
-        chunks_removed = await provider.delete(
-            session=session,
-            namespace=namespace,
-            document_id=document_id,
+        await session.execute(
+            update(SourceDocumentOrm)
+            .where(
+                SourceDocumentOrm.id == document_id,
+                SourceDocumentOrm.namespace_id == effective_ns,
+                SourceDocumentOrm.deleted_at.is_(None),
+            )
+            .values(
+                deleted_at=datetime.now(UTC),
+                deletion_reason="user_request",
+            )
         )
 
     return DeleteDocumentResponse(
@@ -337,35 +426,54 @@ async def delete_document(
 
 @router.get("/stats", response_model=StatsResponse)
 async def stats(
+    request: Request,
     namespace: str | None = Query(None),
     key: ApiKeyInfo = Depends(require_scope(None)),
     session: AsyncSession = Depends(get_session),
 ) -> StatsResponse:
     """Return document and chunk counts (optionally scoped to a namespace).
 
+    Documents are counted in Postgres (document-level bookkeeping); chunks are
+    counted in the active vector store, which owns them. Counting chunks in
+    Postgres reported 0 for every namespace in Qdrant mode (BUG-023, ADR-0026).
+
     Accepts any valid API key scope (ARCH-059).
     """
-    from vektra_index.providers.pgvector import PgvectorProvider
+    from vektra_index.models import SourceDocumentOrm
 
-    effective_ns = key.namespace_id or namespace
+    vector_store = request.app.state.registry.get("vector_store", "default")
+
     if key.namespace_id and namespace and namespace != key.namespace_id:
-        raise HTTPException(status_code=403, detail="Namespace scope violation")
+        raise _namespace_scope_violation()
+    effective_ns = key.namespace_id or namespace
 
-    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
-    data = await provider.namespace_stats(session=session, namespace=effective_ns)
+    doc_stmt = (
+        select(func.count())
+        .select_from(SourceDocumentOrm)
+        .where(SourceDocumentOrm.deleted_at.is_(None))
+    )
+    if effective_ns:
+        doc_stmt = doc_stmt.where(SourceDocumentOrm.namespace_id == effective_ns)
 
-    return StatsResponse(**data)
+    document_count = (await session.execute(doc_stmt)).scalar_one()
+    chunk_count = await vector_store.count_chunks(effective_ns)
+
+    return StatsResponse(
+        document_count=document_count,
+        chunk_count=chunk_count,
+        namespace=effective_ns or "all",
+    )
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health(
-    session: AsyncSession = Depends(get_session),
-) -> HealthResponse:
-    """Unauthenticated component health check."""
-    from vektra_index.providers.pgvector import PgvectorProvider
+async def health(request: Request) -> HealthResponse:
+    """Unauthenticated component health check.
 
-    provider = PgvectorProvider(active_index_version=_VS_CONFIG.active_index_version)
-    status = await provider.health_check(session=session)
+    Checks the active vector store: a hardcoded pgvector check reported the
+    index healthy while Qdrant, the store actually backing it, was unreachable.
+    """
+    vector_store = request.app.state.registry.get("vector_store", "default")
+    status = await vector_store.health_check()
 
     return HealthResponse(
         status=status.status,

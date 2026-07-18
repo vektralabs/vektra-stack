@@ -40,6 +40,8 @@ make demo
 
 See [docs/getting-started/](docs/getting-started/index.md) for the full walkthrough. Target: from clone to first RAG query in under 30 minutes.
 
+For production hosts, pull a versioned release image instead of building from source: see [Alternative: pull a published image](docs/getting-started/index.md#alternative-pull-a-published-image).
+
 ## Repository structure
 
 Vektra uses a hybrid monorepo approach ([ADR-0001](.s2s/decisions/ADR-0001-hybrid-monorepo-strategy.md)):

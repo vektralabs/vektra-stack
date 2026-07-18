@@ -10,11 +10,13 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from vektra_core.api import router
 from vektra_shared.auth import ApiKeyInfo
+from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 from vektra_shared.types import (
     QueryChunk,
@@ -104,6 +106,7 @@ def _make_app(registry: ProviderRegistry) -> FastAPI:
     app = FastAPI()
     app.state.registry = registry
     app.include_router(router)
+    register_error_handlers(app)
     return app
 
 
@@ -149,7 +152,7 @@ async def test_query_requires_auth():
         )
     assert resp.status_code == 401
     body = resp.json()
-    assert body["detail"]["error"]["code"] == "ERR-AUTH-001"
+    assert body["error"]["code"] == "ERR-AUTH-001"
 
 
 async def test_query_wrong_key_returns_401():
@@ -258,3 +261,50 @@ async def test_query_no_relevant_context_flag():
     body = resp.json()
     assert body["no_relevant_context"] is True
     assert body["answer"] is None
+
+
+# ---------------------------------------------------------------------------
+# BUG-026: top_k bounds (ge=1, le=100), mirroring /api/v1/search
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("top_k", [0, -1, 101, 100000])
+async def test_query_top_k_out_of_bounds_returns_422(top_k: int) -> None:
+    """Out-of-bounds top_k is rejected at validation, not silently accepted.
+
+    top_k<=0 previously answered 200 no_relevant_context; top_k>100 drove an
+    unbounded retrieval fetch and cross-encoder pass. Both are now 422.
+    """
+    reg = _make_registry(TEST_KEY)
+    app = _make_app(reg)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/api/v1/query",
+            json={"question": "What is RAG?", "top_k": top_k},
+            headers={"Authorization": f"Bearer {TEST_KEY}"},
+        )
+    assert resp.status_code == 422
+    # Consistent with /api/v1/search: a Field-bound violation is FastAPI's
+    # standard RequestValidationError shape ({"detail": [...]}), not the
+    # REQ-010 envelope (which only wraps HTTPException-raised errors).
+    body = resp.json()
+    assert isinstance(body["detail"], list)
+    assert body["detail"][0]["loc"][-1] == "top_k"
+
+
+@pytest.mark.parametrize("top_k", [1, 5, 100])
+async def test_query_top_k_within_bounds_returns_200(top_k: int) -> None:
+    """Valid boundary values pass validation and reach the pipeline."""
+    reg = _make_registry(TEST_KEY)
+    app = _make_app(reg)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/api/v1/query",
+            json={"question": "What is RAG?", "top_k": top_k},
+            headers={"Authorization": f"Bearer {TEST_KEY}"},
+        )
+    assert resp.status_code == 200

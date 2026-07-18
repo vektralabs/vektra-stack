@@ -24,6 +24,9 @@ import time
 import httpx
 import pytest
 
+# Runs against the live stack (integration.yml), so every unit run must exclude it.
+pytestmark = pytest.mark.integration
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

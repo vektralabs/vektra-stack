@@ -88,8 +88,8 @@ class TestPgvectorProvider:
         from vektra_index.providers.pgvector import PgvectorProvider
 
         session = self._make_session()
-        # All three session.execute() calls (COUNT, DELETE, UPDATE) return
-        # the same mock; only the first one's .scalar_one() is checked.
+        # Both session.execute() calls (COUNT, DELETE) return the same mock;
+        # only the first one's .scalar_one() is checked.
         count_result = MagicMock()
         count_result.scalar_one.return_value = 5
         session.execute = AsyncMock(return_value=count_result)
@@ -100,27 +100,22 @@ class TestPgvectorProvider:
 
         result = await provider.delete(session, "default", doc_id)
         assert result == 5
-        # Verify execute was called at least 3 times: COUNT + DELETE + UPDATE
-        assert session.execute.call_count >= 3
+        # COUNT + DELETE. Soft-deleting the source document is the caller's job
+        # (ADR-0026), so the provider no longer issues an UPDATE.
+        assert session.execute.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_namespace_stats_returns_counts(self):
+    async def test_count_chunks_returns_count(self):
         from vektra_index.providers.pgvector import PgvectorProvider
 
         session = self._make_session()
-        # Two calls: doc_count=10, chunk_count=100
-        results = [
-            MagicMock(**{"scalar_one.return_value": 10}),
-            MagicMock(**{"scalar_one.return_value": 100}),
-        ]
-        session.execute = AsyncMock(side_effect=results)
+        session.execute = AsyncMock(
+            return_value=MagicMock(**{"scalar_one.return_value": 100})
+        )
 
         provider = PgvectorProvider()
-        stats = await provider.namespace_stats(session, "default")
 
-        assert stats["document_count"] == 10
-        assert stats["chunk_count"] == 100
-        assert stats["namespace"] == "default"
+        assert await provider.count_chunks(session, "default") == 100
 
     @pytest.mark.asyncio
     async def test_health_check_returns_healthy(self):
@@ -181,6 +176,8 @@ class TestPgvectorParentChunks:
         from vektra_index.providers.pgvector import PgvectorProvider
 
         session = self._make_session()
+        added_orms = []
+        session.add.side_effect = added_orms.append
         provider = PgvectorProvider()
 
         parent_uuid = uuid4()
@@ -201,16 +198,13 @@ class TestPgvectorParentChunks:
             ),
         ]
 
-        with patch("vektra_index.models.DocumentChunkOrm") as MockOrm:
-            MockOrm.return_value = MagicMock()
-            result = await provider.store(session, "default", uuid4(), chunks)
+        result = await provider.store(session, "default", uuid4(), chunks)
 
         assert result == [str(parent_uuid), str(child_uuid)]
-        orm_kwargs = [c.kwargs for c in MockOrm.call_args_list]
-        assert orm_kwargs[0]["id"] == parent_uuid
-        assert orm_kwargs[0]["parent_id"] is None
-        assert orm_kwargs[1]["id"] == child_uuid
-        assert orm_kwargs[1]["parent_id"] == parent_uuid
+        assert added_orms[0].id == parent_uuid
+        assert added_orms[0].parent_id is None
+        assert added_orms[1].id == child_uuid
+        assert added_orms[1].parent_id == parent_uuid
 
     @pytest.mark.asyncio
     async def test_store_falls_back_to_random_id_on_non_uuid(self):
@@ -218,6 +212,8 @@ class TestPgvectorParentChunks:
         from vektra_index.providers.pgvector import PgvectorProvider
 
         session = self._make_session()
+        added_orms = []
+        session.add.side_effect = added_orms.append
         provider = PgvectorProvider()
 
         chunks = [
@@ -230,12 +226,10 @@ class TestPgvectorParentChunks:
             ),
         ]
 
-        with patch("vektra_index.models.DocumentChunkOrm") as MockOrm:
-            MockOrm.return_value = MagicMock()
-            result = await provider.store(session, "default", uuid4(), chunks)
+        result = await provider.store(session, "default", uuid4(), chunks)
 
         UUID(result[0])  # random but valid
-        assert MockOrm.call_args.kwargs["parent_id"] is None
+        assert added_orms[0].parent_id is None
 
     @pytest.mark.asyncio
     async def test_dense_search_excludes_parent_chunks(self):

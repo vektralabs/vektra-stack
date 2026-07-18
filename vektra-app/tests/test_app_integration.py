@@ -32,6 +32,7 @@ def _docker_available() -> bool:
 
 
 pytestmark = [
+    pytest.mark.integration,
     pytest.mark.skipif(
         not _docker_available(),
         reason="Docker not available - skipping integration tests",
@@ -54,7 +55,14 @@ def db_url():
         raw_url = postgres.get_connection_url()
         from sqlalchemy.engine import make_url
 
-        async_url = str(make_url(raw_url).set(drivername="postgresql+asyncpg"))
+        # render_as_string(hide_password=False), not str(): str() masks the password
+        # as "***", so alembic authenticated with a literal "***" and every test in
+        # this file errored out at setup. Nothing ran the file, so nothing noticed.
+        async_url = (
+            make_url(raw_url)
+            .set(drivername="postgresql+asyncpg")
+            .render_as_string(hide_password=False)
+        )
 
         env = os.environ.copy()
         env["VEKTRA_DATABASE_URL"] = async_url
@@ -149,5 +157,5 @@ def test_smoke_startup_health_and_auth(db_url: str) -> None:
             resp = client.get("/api/v1/providers")
             assert resp.status_code == 401
             err_body = resp.json()
-            # FastAPI wraps HTTPException detail as {"detail": ...}
-            assert "detail" in err_body
+            # REQ-010 envelope at the document root (DEBT-034)
+            assert "error" in err_body

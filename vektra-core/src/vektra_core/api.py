@@ -36,7 +36,11 @@ from vektra_shared.errors import (
     ERR_QUERY_003,
     ErrorCategory,
     ErrorResponse,
+    conversation_not_found,
+    conversation_store_unavailable,
     http_status_for,
+    provider_registry_unavailable,
+    query_pipeline_unavailable,
 )
 from vektra_shared.namespace import resolve_citations_enabled, resolve_grounding_mode
 from vektra_shared.types import (
@@ -65,7 +69,11 @@ class QueryBody(BaseModel):
     question: str
     conversation_id: UUID | None = None
     namespace: str = "default"
-    top_k: int = 5
+    # Bounded like /api/v1/search (BUG-026): an unbounded top_k drives the
+    # retrieval fetch via max(top_k, rerank.fetch_k) and a cross-encoder pass
+    # over every candidate; top_k<=0 with reranking yields an empty list that
+    # answers 200 no_relevant_context. Reject both with a 422 instead.
+    top_k: int = Field(5, ge=1, le=100)
     stream: bool = False
 
 
@@ -204,12 +212,14 @@ async def query(
 
     registry = getattr(request.app.state, "registry", None)
     if registry is None:
-        raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
+        err = provider_registry_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     try:
         pipeline = registry.get("query_pipeline", "default")
     except ValueError:
-        raise HTTPException(status_code=503, detail="Query pipeline not configured")
+        err = query_pipeline_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     # Safeguard pre_query (input validation trust boundary, REQ-044)
     try:
@@ -411,21 +421,18 @@ def _get_conversation_store(request: Request) -> PersistentConversationStore:
     """
     registry = getattr(request.app.state, "registry", None)
     if registry is None:
-        raise HTTPException(status_code=500, detail="ProviderRegistry not initialized")
+        err = provider_registry_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     try:
         store = registry.get("conversation_store", "default")
     except ValueError:
-        raise HTTPException(
-            status_code=503,
-            detail="Persistent conversation storage is not configured",
-        )
+        err = conversation_store_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     if not isinstance(store, PersistentConversationStore):
-        raise HTTPException(
-            status_code=503,
-            detail="Persistent conversation storage is not configured",
-        )
+        err = conversation_store_unavailable()
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     return store
 
@@ -443,7 +450,8 @@ async def get_conversation(
     store = _get_conversation_store(request)
     meta = await store.get_metadata(conversation_id, namespace=_key.namespace_id)
     if meta is None or meta.get("deleted_at") is not None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        err = conversation_not_found(conversation_id)
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     return ConversationMetadata(
         id=meta["id"],
@@ -468,7 +476,8 @@ async def delete_conversation(
     store = _get_conversation_store(request)
     deleted = await store.soft_delete(conversation_id, namespace=_key.namespace_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        err = conversation_not_found(conversation_id)
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
     log.info(
         "conversation_deleted",

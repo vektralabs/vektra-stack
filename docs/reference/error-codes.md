@@ -19,6 +19,8 @@ Every error response uses this shape:
 }
 ```
 
+The `error` object is at the JSON document root for **every** error response — both explicit errors and uncaught internal faults. Clients read `error.code` at the top level; there is no `detail` wrapper.
+
 **Fields**:
 - `category`: one of `TRANSIENT`, `PERMANENT`, `CONFIGURATION`, `UPSTREAM` (BR-001)
 - `code`: stable identifier in the format `ERR-{COMPONENT}-{NUMBER}`
@@ -92,6 +94,15 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-LEARN-004 | vektra-learn | 409 | Duplicate enrollment (student already enrolled in course) |
 | ERR-LEARN-005 | vektra-learn | 404 | Conversation not found (GET conversations/turns) |
 | ERR-LEARN-006 | vektra-learn | 403 | Conversation belongs to a different course/namespace |
+| ERR-CONV-001 | vektra-core / vektra-admin | 404 | Conversation not found (core `GET`/`DELETE conversations/{id}`, admin turns) |
+| ERR-CONV-002 | vektra-core / vektra-admin | 503 | Persistent conversation store not available (starting up, or none configured) |
+| ERR-CONV-003 | vektra-admin | 501 | Configured conversation store cannot return decrypted turns (in-memory store) |
+| ERR-QUERY-005 | vektra-core | 503 | Query pipeline provider not available (starting up, or none configured) |
+| ERR-ADMIN-008 | vektra-admin | 503 | Service initializing (deep health check auth: registry/key store not ready) |
+| ERR-INDEX-001 | vektra-index | 409 | Refused: the index version named for deletion is the one currently being served. Nothing was deleted (REQ-064) |
+| ERR-INDEX-002 | vektra-index | 400 | Invalid index version (below 1) |
+| ERR-INDEX-003 | vektra-index | 400 | Reindex target must differ from the active version |
+| ERR-INDEX-004 | vektra-index | 404 | Reindex job not found |
 
 ## Adding new error codes
 

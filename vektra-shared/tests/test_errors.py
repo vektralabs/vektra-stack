@@ -3,11 +3,17 @@
 from uuid import UUID, uuid4
 
 from vektra_shared.errors import (
+    ERR_ADMIN_008,
     ERR_AUTH_001,
     ERR_AUTH_002,
     ERR_AUTH_003,
     ERR_CONFIG_001,
     ERR_CONFIG_002,
+    ERR_CONV_001,
+    ERR_CONV_002,
+    ERR_CONV_003,
+    ERR_INDEX_003,
+    ERR_INDEX_004,
     ERR_INGEST_001,
     ERR_INGEST_002,
     ERR_INGEST_003,
@@ -16,11 +22,19 @@ from vektra_shared.errors import (
     ERR_QUERY_002,
     ERR_QUERY_003,
     ERR_QUERY_004,
+    ERR_QUERY_005,
     ErrorCategory,
     ErrorResponse,
     auth_insufficient_scope,
     auth_invalid_token,
+    conversation_not_found,
+    conversation_store_unavailable,
+    conversation_turns_unsupported,
     http_status_for,
+    key_store_unavailable,
+    provider_registry_unavailable,
+    query_pipeline_unavailable,
+    service_initializing,
 )
 
 
@@ -199,4 +213,83 @@ class TestErrorFactories:
         err = auth_insufficient_scope("admin")
         assert err.code == ERR_AUTH_003
         assert "admin" in err.message
+        assert err.remediation != ""
+
+
+class TestDebt033Codes:
+    """DEBT-033: the pre-existing bare-detail endpoints now use the envelope.
+
+    Each code preserves the HTTP status the endpoint returned before the fix, so
+    the change is shape-only, not a behaviour change.
+    """
+
+    def test_new_codes_have_expected_prefixes(self):
+        assert ERR_CONV_001.startswith("ERR-CONV-")
+        assert ERR_CONV_002.startswith("ERR-CONV-")
+        assert ERR_CONV_003.startswith("ERR-CONV-")
+        assert ERR_QUERY_005 == "ERR-QUERY-005"
+        assert ERR_ADMIN_008 == "ERR-ADMIN-008"
+        assert ERR_INDEX_003 == "ERR-INDEX-003"
+        assert ERR_INDEX_004 == "ERR-INDEX-004"
+
+    def test_conversation_not_found_is_404(self):
+        err = conversation_not_found("abc")
+        assert err.code == ERR_CONV_001
+        assert http_status_for(err) == 404
+        assert "abc" in err.message
+        assert err.remediation != ""
+
+    def test_conversation_store_unavailable_is_503(self):
+        err = conversation_store_unavailable()
+        assert err.code == ERR_CONV_002
+        assert err.category == ErrorCategory.TRANSIENT
+        assert http_status_for(err) == 503
+        assert err.remediation != ""
+
+    def test_conversation_turns_unsupported_is_501(self):
+        err = conversation_turns_unsupported()
+        assert err.code == ERR_CONV_003
+        assert http_status_for(err) == 501
+        assert err.remediation != ""
+
+    def test_query_pipeline_unavailable_is_503(self):
+        err = query_pipeline_unavailable()
+        assert err.code == ERR_QUERY_005
+        assert http_status_for(err) == 503
+        assert err.remediation != ""
+
+    def test_service_initializing_is_503(self):
+        err = service_initializing()
+        assert err.code == ERR_ADMIN_008
+        assert http_status_for(err) == 503
+        assert err.remediation != ""
+
+    def test_key_store_unavailable_is_500(self):
+        err = key_store_unavailable()
+        assert err.code == ERR_CONFIG_002
+        assert http_status_for(err) == 500
+        assert err.remediation != ""
+
+    def test_index_003_maps_to_400(self):
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_INDEX_003,
+            message="x",
+            remediation="y",
+        )
+        assert http_status_for(err) == 400
+
+    def test_index_004_maps_to_404(self):
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_INDEX_004,
+            message="x",
+            remediation="y",
+        )
+        assert http_status_for(err) == 404
+
+    def test_provider_registry_unavailable_reuses_config_001(self):
+        err = provider_registry_unavailable()
+        assert err.code == ERR_CONFIG_001
+        assert http_status_for(err) == 500
         assert err.remediation != ""

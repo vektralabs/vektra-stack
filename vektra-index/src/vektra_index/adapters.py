@@ -31,6 +31,7 @@ from vektra_shared.types import (
     SearchFilters,
     SearchMode,
     SearchResult,
+    StoredChunk,
 )
 
 log = structlog.get_logger(__name__)
@@ -61,6 +62,7 @@ class VectorStoreServiceAdapter:
         self,
         namespace: str,
         chunks: Sequence[ChunkEmbedding],
+        index_version: int | None = None,
     ) -> list[str]:
         """Store chunks for a document.
 
@@ -90,7 +92,13 @@ class VectorStoreServiceAdapter:
 
         async with factory() as session:
             try:
-                ids = await pgvector.store(session, namespace, document_id, chunks)
+                ids = await pgvector.store(
+                    session,
+                    namespace,
+                    document_id,
+                    chunks,
+                    index_version=index_version,
+                )
                 await session.commit()
                 return ids
             except Exception:
@@ -131,6 +139,24 @@ class VectorStoreServiceAdapter:
         async with factory() as session:
             return await pgvector.retrieve(session, namespace, chunk_ids)
 
+    async def list_chunks(
+        self,
+        namespace: str,
+        document_id: UUID,
+    ) -> list[StoredChunk]:
+        factory = self._get_session_factory()
+        pgvector = self._get_pgvector()
+
+        async with factory() as session:
+            return await pgvector.list_chunks(session, namespace, document_id)
+
+    async def count_chunks(self, namespace: str | None = None) -> int:
+        factory = self._get_session_factory()
+        pgvector = self._get_pgvector()
+
+        async with factory() as session:
+            return await pgvector.count_chunks(session, namespace)
+
     async def delete(self, namespace: str, ids: list[str]) -> int:
         """Delete all chunks for each document_id in ids.
 
@@ -150,6 +176,27 @@ class VectorStoreServiceAdapter:
                 await session.rollback()
                 raise
         return total
+
+    async def delete_index_version(self, namespace: str, index_version: int) -> int:
+        """Delete a namespace's chunks at one index version (REQ-064).
+
+        The active-version refusal is PgvectorProvider's, not this wrapper's:
+        keeping it below the session boundary means it holds for every caller
+        of the provider, not just the ones that come through here.
+        """
+        factory = self._get_session_factory()
+        pgvector = self._get_pgvector()
+
+        async with factory() as session:
+            try:
+                removed = await pgvector.delete_index_version(
+                    session, namespace, index_version
+                )
+                await session.commit()
+                return removed
+            except Exception:
+                await session.rollback()
+                raise
 
     async def health_check(self) -> HealthStatus:
         factory = self._get_session_factory()

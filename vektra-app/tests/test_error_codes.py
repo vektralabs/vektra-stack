@@ -47,6 +47,7 @@ def _docker_available() -> bool:
 
 
 pytestmark = [
+    pytest.mark.integration,
     pytest.mark.skipif(
         not _docker_available(),
         reason="Docker not available - skipping integration tests",
@@ -71,7 +72,13 @@ def db_url():
         raw_url = postgres.get_connection_url()
         from sqlalchemy.engine import make_url
 
-        async_url = str(make_url(raw_url).set(drivername="postgresql+asyncpg"))
+        # render_as_string(hide_password=False), not str(): str() masks the password
+        # as "***" (see test_app_integration.py).
+        async_url = (
+            make_url(raw_url)
+            .set(drivername="postgresql+asyncpg")
+            .render_as_string(hide_password=False)
+        )
 
         env = os.environ.copy()
         env["VEKTRA_DATABASE_URL"] = async_url
@@ -141,10 +148,11 @@ def query_key(running_app: Any, admin_key: str) -> str:
 
 def _assert_error_envelope(body: dict, expected_code: str) -> None:
     """Assert the response matches REQ-010 envelope with NFR-009 remediation."""
-    # FastAPI wraps HTTPException detail as {"detail": {...}}
-    envelope = body.get("detail", body)
-    assert "error" in envelope, f"Missing 'error' key in envelope: {envelope}"
-    error = envelope["error"]
+    # The REQ-010 envelope sits at the document root for every error path —
+    # explicit HTTPException raises (unwrapped by _envelope_http_exception) and
+    # uncaught 500s alike (DEBT-034).
+    assert "error" in body, f"Missing 'error' key at envelope root: {body}"
+    error = body["error"]
     assert error["code"] == expected_code, (
         f"Expected {expected_code}, got {error['code']}"
     )

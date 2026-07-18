@@ -22,6 +22,364 @@
 
 ## Planned
 
+### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
+
+**Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #102
+**Resolution**: [ADR-0026](decisions/ADR-0026-document-chunks-pgvector-internal.md). `document_chunks` is now formally private to the pgvector provider; every chunk path goes through the `VectorStoreProvider` Protocol, which grew `list_chunks()`, `count_chunks()` and an optional `index_version` on `store()`. Migration `0007` adds `reindex_jobs.chunks_reindexed`, which makes the work a reindex did observable. The integration suite runs as a CI matrix over both providers.
+
+**Evidence** (measured on the live Qdrant stack, before and after): `document_chunks` held 0 rows against 1323 Qdrant points; reindex reported `completed 3/3` while writing zero points (after: `v2` 0 -> 12, source version intact, `chunks_reindexed=12`); `/stats` reported `chunk_count: 0` for namespaces holding 12 / 105 / 562 (after: exact); `DELETE` returned `200 {"chunks_removed": 0}` and the deleted document still answered queries at score 0.559 (after: `chunks_removed: 2`, points 2 -> 0, search 1 -> 0). Full record in `vektra-internal/stack/20260714-bug023-qdrant-chunk-paths-evidence.md`.
+
+**Also fixed here, found in review**: `DELETE /documents/{id}` never enforced namespace binding (H5). The gap predates this work, but it was dormant only because the delete was a no-op against the active store: once the delete actually removes the chunks, the same request is a **cross-namespace deletion**. Covered by `test_api_namespace_binding.py`.
+
+**Corrections to this entry, found while fixing it**:
+- `GET /api/v1/documents/{id}/chunks` **did not exist**. It was created as part of the fix (`list_chunks()` was needed for reindex anyway).
+- `DELETE` was worse than "needs verification": it returned `200 {"chunks_removed": 0}`, left every Qdrant point in place, and the deleted document went on answering queries (reproduced live: score 0.559 after a 200).
+- Two paths the entry did not list had the same root cause: `POST /documents/{id}/chunks` wrote to the *inactive* store, and `GET /api/v1/health` reported the index healthy without ever looking at the store backing it.
+- The **retention purge** (REQ-057, `cleanup_soft_deleted_task`) had the same defect and the worst consequence: it hard-deleted the Postgres row and relied on the `document_chunks` CASCADE, so in Qdrant mode it purged nothing, and the surviving content was no longer traceable to any document. Fixed here.
+- The chunk quota in `vektra-admin/quotas.py` is the same violation but is **dead code** (no callers), so it is latent rather than live. Filed as DEBT-028.
+
+**Origin**: TECH-005 ingest (2026-07-13). Verifying a fresh ingest showed `document_chunks` empty for the namespace, then empty for the *entire* database, on a stack that had ingested 15 documents.
+
+**Context**: `DocumentChunkOrm` (the `document_chunks` table) is written **only** by `PgvectorProvider` (`vektra-index/src/vektra_index/providers/pgvector.py:94`). `QdrantVectorStoreProvider` keeps chunk text and metadata in the Qdrant payload (`providers/qdrant.py:204`: `text`, `namespace_id`, `document_id`, `parent_id`, `metadata.chunk_level`). So with `VEKTRA_VECTOR_STORE_PROVIDER=qdrant` (the configuration every real deployment runs) the table is empty and Postgres only holds `source_documents`.
+
+Every code path that still reads chunks from Postgres therefore operates on an empty table and reports success:
+
+- `run_reindex` (`vektra-index/src/vektra_index/reindex.py`): reads zero chunks, re-embeds nothing, stores through a hardcoded `PgvectorProvider`, and marks the job `completed`. Confirmed live on 2026-07-13 (reindexing `eval-full` to v2 produced zero Qdrant points). **This is the root cause of the reindex no-op noted under BUG-021**, which was previously (and wrongly) attributed to the hardcoded provider alone.
+- `GET /api/v1/stats`: reports `chunk_count: 0` globally.
+- `GET /api/v1/documents/{id}/chunks`: returns an empty list for documents that have chunks.
+- `DELETE /api/v1/documents/{id}`: deletes the Postgres rows; needs verification that Qdrant points are actually removed.
+
+The RAG pipeline and `/api/v1/search` are unaffected: they resolve the provider from the registry (fixed in BUG-021).
+
+**Why high**: these endpoints do not fail, they lie. An operator cannot tell a broken reindex from a successful one, and `stats` is the first thing anyone looks at.
+
+**Proposed approach**: route every chunk-reading path through the `VectorStoreProvider` Protocol instead of SQL. The Protocol already has `retrieve()` (added for FEAT-017); assess whether it needs a `list_by_document()` / `count()` extension, or whether `source_documents.chunk_count` plus Qdrant counts are enough for stats. Decide explicitly whether `document_chunks` remains a pgvector-only implementation detail (then no other module may read it) or becomes a provider-agnostic store written by both providers. The first option is smaller and matches ARCH-051.
+
+**Acceptance criteria**:
+- [x] Decision recorded: `document_chunks` is pgvector-internal (ADR-0026). The rejected alternative would have made Postgres a mandatory co-store under every provider, i.e. the redundancy the pluggable-store design exists to avoid.
+- [x] `run_reindex` re-embeds and stores through the registry's active vector store. Verified live on the Qdrant stack: namespace `default` went from `v1=12 v2=0` to `v1=12 v2=12` points, `chunks_reindexed=12`, source version preserved. Before the fix the same job reported `completed 3/3` and wrote zero.
+- [x] A reindex that stores nothing fails loudly instead of reporting `completed`
+- [x] `GET /api/v1/stats` returns real counts in Qdrant mode (verified: 12 / 105 / 562, matching the Qdrant point counts; was 0 / 0 / 0)
+- [x] `GET /api/v1/documents/{id}/chunks` returns the chunks in Qdrant mode (the endpoint did not exist; created)
+- [x] `DELETE /api/v1/documents/{id}` removes the points, not just the Postgres rows (verified: `chunks_removed` 0 -> 2, Qdrant points 2 -> 0, and the deleted document dropped out of search)
+- [x] Integration test that runs the suite against `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`: `.github/workflows/integration.yml` is now a matrix over both providers, and `tests/integration/test_chunk_lifecycle.py` asserts the lifecycle through the public API, including that a deleted document is not retrievable
+- [x] `QdrantVectorStoreProvider.retrieve()` scopes by `index_version`
+
+**Traceability**: BUG-021 (same family, search endpoint), ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), FEAT-017 (`retrieve()`), ADR-0026. Spawned DEBT-028; verifying this fix also surfaced BUG-024 (filed and fixed separately).
+
+---
+
+### DEBT-028: chunk quota counts a table the active provider may not write
+
+**Status**: resolved (2026-07-15) | **Priority**: low | **Created**: 2026-07-13 | **PR**: #114
+**Origin**: BUG-023 (2026-07-13).
+
+**Context**: `check_namespace_quota` (`vektra-admin/quotas.py:91`) counts `document_chunks` with raw SQL ("to avoid cross-module imports"). Under ADR-0026 that table is private to the pgvector provider, so in Qdrant mode the count is always 0 and the chunk quota would never be enforced.
+
+It is currently **dead code**: `check_namespace_quota` has no callers. The defect is therefore latent, not live, which is the only reason it is not filed as a bug.
+
+**Resolution**: routed, not removed. `check_namespace_quota` now counts chunks through `VectorStoreProvider.count_chunks()` (the provider injected as the `vektra_shared` Protocol, so the import-linter boundary holds) instead of the pgvector-private `document_chunks`. Kept rather than deleted because the quota is a live requirement (REQ-048, must) — the function is parked scaffolding of the admin-enforcement plan, with no production callers yet.
+
+**Acceptance criteria**:
+- [x] The chunk count goes through `VectorStoreProvider.count_chunks()`
+- [x] Kept (not removed): the quota backs a live requirement, so the function is corrected rather than deleted
+
+**Scope note**: this de-trapped the *counting* only. Nothing in the ingest path calls `check_namespace_quota`, so the quota is still enforced nowhere — see FEAT-025.
+
+**Traceability**: ADR-0026, BUG-023, REQ-048 (spawned FEAT-025)
+
+---
+
+### FEAT-025: wire namespace quota enforcement into the ingest path
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-15
+**Origin**: DEBT-028 (2026-07-15), which fixed the quota *count* and surfaced that nothing enforces it.
+
+**Context**: REQ-048 (priority **must**) names quota enforcement as part of its Phase 2 scope — "Phase 2: multi-namespace with per-API-key namespace restrictions, **quota enforcement**, and per-namespace configuration overrides". The pieces exist: the `namespaces` table carries `quota_documents` / `quota_chunks`, and `check_namespace_quota` (`vektra-admin/quotas.py`) now counts correctly through the vector store (DEBT-028). But **no path calls it**: an operator can set `quota_chunks=1000` on a namespace and ingest will blow straight past it. The control is configurable and unenforced.
+
+This is the same family as DEBT-032 (REQ-064's "cleanup afterwards" clause): a clause of a **must** requirement, named in the requirement, never built — not debt, an unbuilt obligation. It is filed as a FEAT because it is a capability to build, not a regression to fix.
+
+**Note on priority**: spec-priority and operational urgency diverge here, and honestly. REQ-048 is *must*, but quota enforcement matters for **multi-tenant** deployments; the current single-tenant e-learning deployment does not need it today. Tagged medium, not high, for that reason — raise it when multi-tenant / resource-capping actually lands on the roadmap. It should not sit at *low*, because a configurable-but-ignored control is a trap (an operator who sets a quota reasonably expects it to hold).
+
+**Proposed approach**: the check must run where the chunk count is known — after chunking, before store — but **`vektra_ingest` cannot import `vektra_admin`**, where `check_namespace_quota` lives (import-linter contract "vektra_ingest must not import from other vektra components"). So do **not** call it directly from the pipeline. Two boundary-respecting options, to be decided as part of the design:
+1. **Move the quota logic into `vektra_shared`** (it is a cross-cutting concern like the other things there) and have both `vektra_admin` and the ingest path call it — `vektra_ingest` *is* allowed to import `vektra_shared`.
+2. **Inject an enforcement hook through the registry.** `run_ingest` already receives `registry` and pulls its providers from it; a quota-enforcement callable registered by the app layer (which can import both components) would let the pipeline enforce without importing `vektra_admin`. This matches the existing provider-injection pattern.
+On exceed, fail the ingest with the REQ-010 envelope (`ERR-QUOTA-001` already exists) and a clear remediation, and store nothing (decide what happens to a document already partway through extraction).
+
+**Acceptance criteria**:
+- [ ] An ingest that would exceed `quota_chunks` (or `quota_documents`) is rejected with the `ERR-QUOTA-001` envelope, and stores nothing
+- [ ] An ingest within quota is unaffected; a namespace with null quotas is unaffected (Phase 1 behaviour preserved)
+- [ ] Verified against `VEKTRA_VECTOR_STORE_PROVIDER=qdrant`, since the count now goes through the provider (this is the path DEBT-028 fixed) — a pgvector-only test would not exercise it
+- [ ] The cross-namespace / active-version subtleties of `count_chunks` are respected (a reindex mid-flight must not let a namespace slip its quota)
+- [ ] The import-linter contracts stay green: `vektra_ingest` does not import `vektra_admin` (the enforcement is wired through `vektra_shared` or the registry, per the approach above)
+
+**Traceability**: REQ-048 (must, Phase 2 clause), DEBT-028 (the count it builds on), ADR-0026 (the Protocol it counts through), ERR-QUOTA-001
+
+---
+
+### BUG-024: the stack does not start when sparse embedding is enabled
+
+**Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #101
+**Origin**: BUG-023 verification (2026-07-13). The development stack failed to boot after an image rebuild; the container that had been running for days survived only because its image predated the defect.
+
+**Context**: `check_provider_registration` (`vektra-index/startup.py:37`) requires the sparse provider to be registered under the **name** taken from `VEKTRA_SPARSE_EMBEDDING_PROVIDER` (e.g. `fastembed-bm25`), but `main.py` registered it only under `"default"`:
+
+```
+Provider 'fastembed-bm25' not registered in category 'sparse_embedding'. Available: ['default']
+```
+
+The vector store registers both aliases (`"default"` **and** the provider name); the sparse provider registered only the first. So **any deployment with `VEKTRA_SPARSE_EMBEDDING_PROVIDER` set failed to start**, which means hybrid search could not be enabled at all. Introduced by `b49ce23`, which wired up the check that had until then been dead code.
+
+**Why nothing caught it** (the more important half): `vektra-app/tests/` was executed by **nothing** — not `make test`, not CI — despite holding the tests for the module that wires every provider together. And the existing check tests could not have caught it anyway: they hand `check_provider_registration` a mock registry that already contains the name, so they assert the check against a fiction. A test of the registration and a test of the validation both passed while the two disagreed.
+
+**Resolution**: register the alias, as the vector store already does. `vektra-app/tests/test_provider_registration.py` wires the *real* registration step to the *real* check (confirmed to fail with the exact production error when the fix is reverted), and the app suite now runs in `make test` and in a new `test-app` CI job. The two app test files that need Docker said so in their own docstrings but lacked the `integration` marker; they now carry it.
+
+**Traceability**: ARCH-057 (startup validation), ARCH-039 (ProviderRegistry), ARCH-053 (sparse embeddings), BUG-023 (found during its verification)
+
+---
+
+### DEBT-029: the local .env reaches every test package, including the three that thought they were protected
+
+**Status**: completed (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14 | **PR**: #104
+**Origin**: BUG-024 (2026-07-14). Writing the provider-registration test surfaced it.
+
+**Context**: DEBT-025 identified the carrier correctly — importing litellm runs `dotenv.load_dotenv()`, which pulls the repo `.env` into `os.environ` — and fixed it with an autouse scrub fixture, copy-pasted into three of the eight test packages. Five had no conftest at all.
+
+**But the diagnosis in the first draft of this entry was wrong on two counts, and measuring it corrected them:**
+
+1. **The scrub does not work, not even where it exists.** It runs *before the test body*, while the import that re-injects the `.env` happens *inside* it (the product imports litellm lazily). Measured: after `import litellm` in a test, `VectorStoreConfig().vector_store_provider` resolved to `qdrant` (the value in a developer's `.env`) instead of `pgvector` (the default) in **all four packages tested — including `vektra-core` and `vektra-shared`, which had the fixture**. The entry claimed three of eight were protected. None were.
+2. **`monkeypatch.chdir(tmp_path)` does nothing, and the settings classes never read the `.env` file.** They declare no `env_file` in their `SettingsConfigDict` and only read `os.environ`; `load_dotenv()` resolves the file relative to the *calling module* (litellm, inside `.venv/`, which lives inside the repo), not the working directory. Verified: from an empty cwd, `import litellm` still re-injected the `.env`.
+
+The reranker symptom in the first draft was also misattributed: `RerankConfig.enabled` defaults to `True`, so registration loads a cross-encoder on a **clean** environment too. That is a product default, not a leak.
+
+**Why medium, not low**: a test that passes locally and in CI for different reasons is worse than a missing test, because it is trusted.
+
+**Resolution**: `vektra_shared.testing` sets `LITELLM_MODE` before litellm can be imported, which makes litellm skip the `load_dotenv()` call outright — disarming the leak instead of trying to undo it. The autouse scrub stays, but only for what the developer exported in their own shell, and it exempts `integration`-marked tests, which need their real environment. Every one of the eight test packages now imports the single shared fixture; a structural test fails if a package is added without it.
+
+**Acceptance criteria**:
+- [x] One autouse fixture applies to every test package, not three of eight
+- [x] The leak is closed at the source, not scrubbed after the fact (a scrub provably cannot close it)
+- [x] Heavy defaults are pinned off in tests that do not assert on them (`test_provider_registration.py`: 10.8s -> 1.5s, no model download)
+- [x] A test proves it: with a populated `.env` (which says `qdrant`), a config left at its default resolves to `pgvector`. It fails on the pre-fix code.
+
+**Also found and fixed here**: `vektra-analytics/tests/` and `vektra-learn/tests/` carried empty `__init__.py` files, unlike the other six. With a conftest in each, pytest derived the same module name (`tests.conftest`) for both and refused to run the suite at all. Removed.
+
+**Traceability**: DEBT-025 (whose fix never worked), BUG-024
+
+---
+
+### DEBT-030: two vektra-app test files are run by nothing
+
+**Status**: completed (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14 | **PR**: #104
+**Origin**: BUG-024 (2026-07-14).
+
+**Resolution**: both files now run in CI, in a dedicated `app-integration` job wired into the `integration-gate` aggregator (which keeps the name branch protection requires). They bring up their own Postgres via testcontainers, so they need Docker but not the compose stack.
+
+**And they had rotted, exactly as an unrun test does**: both derived the container's connection URL with `str(make_url(...))`, which **masks the password as `***`**. Alembic then authenticated with a literal `***` and every test in both files errored at setup. They had never worked. Fixed with `render_as_string(hide_password=False)`; 8 tests now pass. `vektra-app` also never registered the `integration` marker in its pytest config, so the marker it relied on was unknown to pytest.
+
+**Context**: `vektra-app/tests/` was executed by neither `make test` nor CI, which is how a provider-wiring defect that stops the stack from booting shipped unnoticed (BUG-024). The unit tests are now wired into both. But two files in it are still orphaned:
+
+- `vektra-app/tests/test_app_integration.py` (the real 8-step ARCH-057 startup sequence against a live Postgres)
+- `vektra-app/tests/test_error_codes.py` (the REQ-011/NFR-009 error envelope for every triggerable code)
+
+They need Docker, and they now carry the `integration` marker, so the unit runs correctly exclude them. But `integration.yml` runs only `tests/integration/` and `tests/nfr/`, so **nothing runs them either**. They test the startup sequence and the error contract, which is exactly the surface that BUG-024 broke.
+
+**Proposed approach**: add `vektra-app/tests/ -m integration` to the integration workflow (they spin up their own testcontainer, so they do not need the compose stack), or move them under `tests/integration/`.
+
+**Acceptance criteria**:
+- [x] Both files run in CI on every PR (`app-integration` job, gated in `integration-gate`)
+- [x] They pass: 8 tests green, after fixing the password masking that had made them unrunnable from the start
+
+**Traceability**: BUG-024, REQ-011, NFR-009, ARCH-057
+
+---
+
+### BUG-025: a startup failure prints a raw Python traceback next to the structured error
+
+**Status**: done (2026-07-15) | **Priority**: medium | **Created**: 2026-07-14
+**Origin**: DEBT-031 (2026-07-14). Surfaced by running `tests/test_startup.py` for the first time.
+
+**Context**: ARCH-057 exists so that a misconfiguration is reported clearly (REQ-011, NFR-009): a structured, remediable error rather than a stack dump. Step 1 does emit exactly that —
+
+```
+{"event": "startup_failed", "error": "[STARTUP ERROR] Step: config_validation\n  Detail: ...\n  Remediation: Set all required environment variables. At minimum: VEKTRA_LLM_PROVIDER ..."}
+```
+
+— and then `raise SystemExit(1)` propagates out of the ASGI lifespan into uvicorn, which logs the exception with `Traceback (most recent call last)` before "Application startup failed. Exiting." So the operator who typo'd an env var gets the good message *and* a Python traceback. `tests/test_startup.py` has asserted the absence of that traceback since the day it was written; nothing ever ran it (DEBT-031), so nobody found out.
+
+This is not cosmetic: the traceback is the failure mode NFR-009 names, and it applies to **every** one of the 11 steps, not only config validation.
+
+**Proposed approach** (recommended): validate before serving rather than inside the lifespan. The container runs `exec uvicorn vektra_app.main:app` (`docker/entrypoint.sh`), so the 11-step sequence necessarily runs as ASGI startup and any abort must travel through uvicorn. Replacing the uvicorn CLI with a `main()` that runs the validation and only then calls `uvicorn.run()` lets a failed step print its structured error and `sys.exit(1)` with no ASGI involvement and no traceback.
+
+Alternatives considered: suppressing uvicorn's exception logging (fragile, and hides real errors); a preflight that validates only step 1 in the entrypoint (leaves steps 2-11 still leaking a traceback, so it fixes the test rather than the contract).
+
+**Caution**: this touches the boot path, which is the surface BUG-024 broke. `vektra-app/tests/test_app.py::test_missing_llm_provider_aborts_startup` drives the lifespan in-process and expects `SystemExit`; a change to a hard exit there would kill the test runner.
+
+**Acceptance criteria**:
+- [x] A misconfigured env var produces the structured `[STARTUP ERROR]` block and **no** `Traceback (most recent call last)` in container output
+- [x] Holds for a step other than config validation (e.g. database connectivity), not just step 1
+- [x] The container still exits non-zero
+- [x] The `xfail(strict=True)` on `tests/test_startup.py::test_no_raw_traceback_on_startup_failure` is removed; strict mode makes the suite go red if the fix lands and the marker is left behind
+
+**Resolution** (PR #111): the recommended approach, with one refinement kept from the caution. The 11-step sequence moved into a loop-agnostic `_run_startup()` that raises `StartupValidationError` (never `SystemExit`), plus a matching `_run_shutdown()`. A new `main()` container entrypoint (`python -m vektra_app.main`, wired in `docker/entrypoint.sh`) runs the validation in the very event loop that will serve, then calls uvicorn with `lifespan="off"`. A failed step logs its `[STARTUP ERROR]` and exits non-zero with no ASGI and no traceback; because startup and serving share one loop, the async resources built during validation (DB engine, HTTP clients) stay bound to the loop that serves.
+
+The refinement: rather than gutting the lifespan, it **keeps** validating and raising `SystemExit` — but only for the in-process/TestClient path. So `test_missing_llm_provider_aborts_startup` (the BUG-024 tripwire the caution named) is untouched and still green; the container simply never takes that path. The container serving through `main()` is the only shipped boot path, and it is traceback-free.
+
+One gotcha found on the container, not in tests: uvicorn 0.36 removed `Config.setup_event_loop()` in favour of `get_loop_factory()`; the first cut called the former and produced a *different* traceback. Fixed by `asyncio.run(_serve(...), loop_factory=config.get_loop_factory())`, which also preserves uvloop (the CLI default). The lesson is the one this file already preaches: verify on the container, not just the tests.
+
+**Proven on the container** (rebuilt image, throwaway `docker compose run`, dev stack left running): empty `VEKTRA_LLM_PROVIDER` → `[STARTUP ERROR] Step: config_validation`, exit 1, no traceback; unreachable DB → step 1 completes, then `[STARTUP ERROR] Step: database_connectivity`, exit 1, no traceback (the non-step-1 case the criteria demand); valid `.env` → all 11 steps logged, `startup_complete`, `Uvicorn running on http://0.0.0.0:8000`. Both integration jobs (pgvector, qdrant) pass in CI, exercising the un-`xfail`ed test end-to-end.
+
+**Traceability**: REQ-011, NFR-009, ARCH-057, DEBT-031 (found by), BUG-024 (same surface)
+
+---
+
+### BUG-026: query top_k is unbounded and drives the retrieval fetch
+
+**Status**: resolved (2026-07-17) | **Priority**: medium | **Created**: 2026-07-16 | **PR**: #118
+**Origin**: DEBT-013 analysis (2026-07-16).
+
+**Context**: `QueryBody.top_k` (`POST /api/v1/query`, `vektra-core/api.py`) and `CourseQueryRequest.top_k` (`POST /api/v1/learn/query`, `vektra-learn/query.py`) are plain `int = 5` with no bounds, while `/api/v1/search` already validates `Field(5, ge=1, le=100)` (`vektra-index/api.py`). The pipeline computes `fetch_k = max(query.top_k, rerank.fetch_k)`, so a client holding any query-scope key that sends `top_k=100000` drives a vector search for 100000 candidates **and a cross-encoder scoring pass over everything returned** — CPU-bound work per request that rate limiting only linearly contains. Non-positive values are accepted too: with reranking enabled, `top_k=0` or negative yields an empty post-rerank list and the query answers `200` with `no_relevant_context` instead of failing validation — a request that lies about why it found nothing.
+
+**Proposed approach**: mirror the `/search` bounds on both query bodies (`ge=1, le=100`, or tighter): an explicit `422`, not a silent `min()` truncation — that alternative was considered and rejected in DEBT-013 for the same endpoint. Update the `top_k` rows in `docs/reference/api.md` accordingly.
+
+**Resolution**: both bodies now carry `Field(5, ge=1, le=100)`, byte-identical to `/search`. Out-of-bounds is an explicit `422`, not a silent `min()` (rejected in DEBT-013 for the same endpoint). The pre-fix behaviour was confirmed live before touching code: `/query` with `top_k=200` returned `200`, `top_k=0` returned `200 no_relevant_context`.
+
+The REQ-010 traceability note turned out to be wrong about the wire shape, and the fix follows the code rather than the note. A `Field`-bound violation is a FastAPI `RequestValidationError`, which has its own shape (`{"detail": [...]}`); the REQ-010 envelope handler (`vektra_shared/http_errors.py`) only unwraps `HTTPException`-raised envelopes, and no `RequestValidationError` handler is registered anywhere. Verified live: `/search`'s own `le=100` returns the `{"detail": [...]}` shape, not the envelope. So the query bodies match `/search` rather than inventing a second 422 shape. A test asserts the `detail`-list shape on both endpoints, so a future envelope handler that changed it would go red.
+
+One subtlety the learn test had to account for: FastAPI resolves dependencies **before** validating the request body, so a bound violation on `/learn/query` surfaces as `422` only once the JWT dependency passes (otherwise `401` wins). The HTTP test overrides the auth dependency for exactly this reason.
+
+**Acceptance criteria**:
+- [x] `top_k` bounds enforced on `POST /api/v1/query` and `POST /api/v1/learn/query` (422 on violation, tests for both edges)
+- [x] Bounds documented in `docs/reference/api.md`
+
+**Traceability**: DEBT-013 (found by), REQ-010 (the note predicted the envelope on the 422 path; the live behaviour is the FastAPI validation shape, and the fix matches `/search`)
+
+---
+
+### DEBT-036: deferred minor findings from the v0.7.0 release review
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-18
+**Origin**: CodeRabbit's full review of the v0.7.0 `develop → main` promotion PR #121. The four Major production findings were fixed pre-release (#123); these nine are genuine but non-blocking (test-strengthening plus two minor edges), deferred so the release promotion stayed scoped.
+
+**Context**: a release-promotion PR re-reviews the entire release delta, so it surfaces observations on already-merged, already-reviewed code. Each item below was verified against source; none is a correctness regression. Grouped for one follow-up pass.
+
+**Minor production edges**:
+- `vektra-shared/src/vektra_shared/config.py` — `llm_provider` uses `min_length=1`, which still accepts a whitespace-only value (`"   "`); strip before validating (or `StringConstraints(strip_whitespace=True)`). Complements the empty-provider rejection already shipped.
+- `vektra-app/src/vektra_app/main.py` — the startup-step loop lets an *unexpected* exception (one a step does not self-wrap) escape as a raw traceback; wrap non-`StartupValidationError` exceptions into the structured type so `_serve()` handles them. Defensive: every current step already self-wraps, so no live path is known.
+- `scripts/reindex.sh` — validate `chunks_removed` / `chunks_reindexed` / `source_index_version` exist and are the expected JSON types before indexing them, so a malformed 200 fails with an API-contract error instead of a Python traceback.
+
+**Test-strengthening (assert behaviour, not just call shape)**:
+- `vektra-index/tests/test_index_version_cleanup.py` — assert the pgvector DELETE carries both the namespace and index-version predicates, not only the call count.
+- `vektra-index/tests/test_qdrant_provider.py` — assert `count()`'s filter includes `namespace_id` and `index_version`, not only `exact=True`.
+- `vektra-ingest/tests/test_cleanup.py` — assert `vector_store.delete` was actually awaited with the expired id.
+- `vektra-shared/tests/test_env_isolation_coverage.py` — parse the conftest with AST and require an actual `hermetic_env` import, not a substring match.
+- `vektra-shared/tests/test_errors.py` — assert exact `ERR-CONV-00x` values rather than the `ERR-CONV-` prefix.
+- `vektra-shared/tests/test_suite_execution_coverage.py` — `_suites()` should collect both pytest patterns (`test_*.py` and `*_test.py`) to mirror default discovery.
+
+**Rejected (recorded, not deferred)**: CodeRabbit also asked to restore the removed `VEKTRA_RERANK_TOP_K` as a deprecated `top_k` property on `RerankConfig` for backward compatibility. Declined: it contradicts DEBT-013's intent (the variable was dead) and the project's no-backward-compatibility policy (no production releases exist). `test_stale_top_k_ignored` correctly asserts the stale value is ignored.
+
+**Acceptance criteria**:
+- [ ] The two minor production edges are addressed or explicitly waived with reasoning
+- [ ] The six test-strengthening items assert behaviour rather than mocked interactions
+- [ ] No backward-compat shim for `VEKTRA_RERANK_TOP_K` is introduced (policy)
+
+**Traceability**: PR #121 (v0.7.0 promotion review), #123 (the Major fixes shipped pre-release), DEBT-013 (the `RERANK_TOP_K` removal the rejected item would undo)
+
+### DEBT-035: validation errors (422) bypass the REQ-010 envelope
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-17
+**Origin**: BUG-026 (2026-07-16), which added `Field` bounds and made the gap concrete.
+
+**Context**: REQ-010 (priority **must**) says "**All** API error responses use a consistent JSON envelope", and its acceptance criterion "All error responses use REQ-010 envelope with message and remediation" is still unchecked. DEBT-033/DEBT-034 unified the envelope for every `HTTPException`-raised error and put it at the document root. But FastAPI raises a **`RequestValidationError`** for any Pydantic validation failure (a bad `top_k`, a missing body field, a wrong type), and that is a different mechanism: it serialises as `{"detail": [{"loc": ..., "msg": ..., "type": ...}]}`, and **no `RequestValidationError` handler is registered anywhere**. So every validation 422, on every endpoint, bypasses the envelope. Verified live in BUG-026: `/search`'s own `le=100` returns the `detail`-list shape, not the envelope.
+
+This is not BUG-026's fault — matching `/search` was the right call rather than inventing a third shape. But it means REQ-010's "all" is not actually met: a machine consumer parsing `response.error.code` (per REQ-010) gets `undefined` on any validation error, and must fall back to FastAPI's `detail` list. It is the one error class the envelope-unification work did not reach.
+
+**This is a decision, not just a fix** — propose one with reasoning:
+1. **Implement** a `RequestValidationError` handler (in `vektra_shared/http_errors.py`, alongside the existing one) that wraps validation errors in the REQ-010 envelope with a stable code (e.g. `ERR-VALIDATION-001`). This stays **inside the import boundary**: the handler is a pure Pydantic-error → envelope mapping in `vektra_shared` (which every component already imports) and calls into no other component, so unlike FEAT-025 there is no cross-component import to route through an integration layer. Meets REQ-010 literally, but it is a **wire-shape change** with the same weight as DEBT-034: audit the consumers first (the widget and the **vektra-moodle plugin** parse error bodies; the BUG-026 tests assert the `detail`-list shape and would flip). Getting the field mapping right (Pydantic's `loc`/`msg`/`type` into `message`/`details`) is the real work.
+2. **Scope it out**: amend REQ-010 to say "all *application* error responses", and document validation 422s as the accepted FastAPI-native exception. Zero code, zero wire risk, but it narrows a must requirement — a requirements change, so it needs the operator's sign-off, not just an engineer's.
+
+**Acceptance criteria**:
+- [ ] A decision is recorded (implement handler, or amend REQ-010), with the reasoning
+- [ ] If implemented: validation 422s carry the REQ-010 envelope at the document root; consumers (widget, vektra-moodle) audited and migrated; the BUG-026 `detail`-shape assertions updated
+- [ ] If scoped out: REQ-010 text amended and validation errors documented as the exception in `docs/reference/api.md` / `error-codes.md`
+
+**Traceability**: REQ-010 (must; the "all" its acceptance criterion promises), DEBT-033/DEBT-034 (the envelope-unification work this completes or formally bounds), BUG-026 (surfaced it)
+
+### DEBT-031: nothing guarantees a test suite is actually executed
+
+**Status**: done (2026-07-14) | **Priority**: medium | **Created**: 2026-07-14
+**Origin**: DEBT-029/030 (2026-07-14). The lesson the fix left behind, rather than a defect the fix left behind.
+
+**Context**: BUG-024 (a startup blocker) shipped because `vektra-app/tests/` was executed by nothing — neither `make test` nor CI. DEBT-030 wired that one package in, and the two files in it turned out to have **never worked at all** (`str(make_url(...))` masks the password as `***`, so alembic authenticated with `***` and every test died in setup). A test nobody runs rots.
+
+But the guard that came out of DEBT-029 (`test_env_isolation_coverage.py`) checks only that every test package **imports the isolation fixture**. Nothing checks that a test package is **run** by anything. Both `make test` and `ci-unit.yml` enumerate the eight packages **by hand**, so a `vektra-foo/tests/` added tomorrow is silently unexecuted, and no test fails.
+
+That is the exact shape of the hole BUG-024 fell through, still open one level up.
+
+**Proposed approach**: extend the structural test (or add a sibling) so that every `vektra-*/tests` directory, plus `tests/integration` and `tests/nfr`, is referenced by the `make test` target **and** by a CI job. Parsing the Makefile and the workflow YAML is enough; it does not need to run them. Consider also asserting that a package's `integration`-marked tests are named in some workflow, which is the specific gap DEBT-030 closed by hand.
+
+**Acceptance criteria**:
+- [x] A test fails when a `vektra-*/tests` directory exists that no CI job runs
+- [x] A test fails when such a directory is missing from the `make test` target, so the local gate and CI cannot drift apart (they are two independent hand-maintained lists today)
+- [x] It fails for the unit path and the integration path independently (an `integration`-marked suite excluded from unit runs and named in no workflow is the DEBT-030 case, and must be caught)
+- [x] Verified by deleting a package from the workflow, and separately from the Makefile, and watching the test go red each time
+
+**Resolution**: `vektra-shared/tests/test_suite_execution_coverage.py` parses the `test:` recipe and every workflow's `pytest` invocations, and asserts each test file would actually be *collected* — honouring the `-m` filter, not just the paths. That distinction is the whole thing: a directory-level check would have passed, because `vektra-admin/tests/` **is** named in both lists; what nobody ran was the `integration`-marked file inside it. YAML is parsed, not grepped, so the commented-out `pytest` line in `integration.yml` grants no coverage. The guard runs in a `test-structure` job with **no path filter** — every other unit job is gated on `paths-filter`, so a Makefile-only edit, a workflow-only edit, or a new package skips them all, which are exactly the three cases the guard is for. The DEBT-029 guard now runs there too.
+
+Proven by breaking it five ways, each going red on the right assertion and green on restore: package dropped from the workflow; package dropped from the Makefile; the integration glob narrowed back to `vektra-app` (the DEBT-030 regression); a `vektra-foo/tests/` nobody wired up; and the allowlist emptied, which correctly re-flags the commented-out line as no coverage.
+
+**Found by the guard, previously unknown** (see CHANGELOG): five suites executed by nothing. `tests/test_startup.py` (ARCH-057 startup validation — its docstring assumed integration.yml ran it; integration.yml names `tests/integration/`, never `tests/`), and the `integration`-marked suites of vektra-admin, vektra-index (×2) and vektra-ingest, which DEBT-030 left behind when it wired up vektra-app by hand. All now run. The `app-integration` job becomes `package-integration` over a `vektra-*/tests` glob so the list stops being hand-maintained.
+
+**And, on cue, one of them had rotted — and it was hiding two product bugs.** The four package suites passed, but `tests/test_startup.py` went red in CI the first time it ever ran: `test_graceful_failure_on_missing_config` hung until timeout. It sets `-e VEKTRA_LLM_PROVIDER=`, believing that *unsets* the variable; it sets it to the **empty string**. `llm_provider` was a bare required `str`, and `""` is a valid `str`, so pydantic never raised, step 1 never fired, and **the stack booted and served with an empty LLM provider** — deferring the misconfiguration to the first query, which is precisely what ARCH-057 exists to prevent. Fixed at the source (`min_length=1`), not by weakening the test. With that fixed, the same test surfaced **BUG-025**: the structured error is emitted and a raw uvicorn traceback follows it, where NFR-009 asks for the one instead of the other. That one needs the boot path restructured (validate before `uvicorn.run()`), which is the surface BUG-024 broke, so it is filed rather than rushed in here; the assertion is `xfail(strict=True)` so it cannot rot in turn.
+
+Third time in this repo that a suite turned out to be broken the moment it was executed. The difference is that this one was also concealing live defects — which is the argument for the guard, made better than the guard's own docstring makes it.
+
+**Traceability**: BUG-024 (root cause), DEBT-029, DEBT-030
+
+---
+
+### DEBT-027: VEKTRA_PARENT_CHILD_LEVELS is dead config
+
+**Status**: resolved (2026-07-16) | **Priority**: low | **Created**: 2026-07-13 | **PR**: #116
+**Origin**: TECH-005 ingest (2026-07-13).
+
+**Context**: the setting is validated (`>= 1`) but never used to control hierarchy depth: `DualStrategyChunking` builds exactly two levels (parent + child), hardcoded. The name promises configurable depth that does not exist, which is the same class of defect as DEBT-013 (`VEKTRA_RERANK_TOP_K` dead config).
+
+**Resolution**: removed, not wired. Configurable depth was rejected because the two-level shape is a structural assumption of the whole chain, not a chunker detail: the data model carries a single `parent_id` reference (no level field, no chain), `chunk_level` is a binary `"parent"`/`"child"`, both vector store providers filter retrieval on exactly `chunk_level == "parent"`, and parent expansion (FEAT-017) is a single hop. Wiring N levels would rework four modules for a capability nothing requests — the field's only origin is the Phase 2 shared-protocols plan, which speced it and never wired it. The setting was also worse than inert: its validator made `chunking_strategy=dual` fail ARCH-057 startup validation unless the do-nothing variable was set. Field and validator dropped; `dual` now boots without it; stale values in a deployment's `.env` are ignored (`extra="ignore"`).
+
+**Acceptance criteria**:
+- [x] Either the setting drives the chunker's depth, or it is removed from config, `.env.example` and docs
+- [x] If removed, the removal is noted in the changelog (deployments may have it set)
+
+**Traceability**: DEBT-013 (same class, still open), FEAT-017, ARCH-057
+
+---
+
+### TECH-008: Chunk-RAG vs graph navigation on a structured markdown wiki
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-07-13
+**Origin**: operator request (2026-07-13), during the TECH-005 corpus discussion.
+
+**Context**: our retrieval is chunk-based: embed, search, rerank, stuff the winners into the prompt. An alternative exists and is increasingly viable: give the model the corpus *structure* (index plus links) and let it navigate the link graph, opening pages and following references, the way a coding agent walks a repository. On small, well-structured, densely linked corpora, navigation can beat chunk retrieval; on large, messy corpora, and whenever latency and cost per query matter, chunk RAG wins. Where that boundary sits **for this product** is an architectural question we will have to answer eventually, and an LLM-authored wiki written to explicit guidelines (structured markdown, wikilinks) is the ideal test bench: the operator already has such material.
+
+**Two things this must not get wrong**:
+1. **Closed-book control is mandatory.** A wiki written by an LLM is exactly the corpus a model may answer from parametric memory. Without a no-context baseline, retrieval could contribute nothing while the numbers look excellent. Any question the model answers correctly with no context is not a retrieval question and must be dropped. (Same control now applied to TECH-005; see that entry.)
+2. **It is not a TECH-005 collection.** TECH-005 measures the current pipeline against a hard corpus. This item compares two paradigms. Mixing them confounds both.
+
+**Possible outcome, not just a study**: if navigation wins on linked corpora, the cheap version of it is a *link-aware expansion* step, the same shape as FEAT-017's parent expansion but following the wiki graph instead of the document hierarchy. That would be a feature, not a paper.
+
+**Proposed approach**: ingest the wiki as its own namespace, generate ground truth with the TECH-005 methodology (full-page reading, discriminative keywords, closed-book control), then run three arms on identical questions: (a) the current pipeline, (b) the pipeline plus link-aware expansion, (c) an agentic baseline that receives the index and a tool to open a page and follow its links. Compare grounded accuracy, latency and token cost, not just retrieval hit rate: cost is the whole reason chunk RAG exists.
+
+**Acceptance criteria**:
+- [ ] Wiki ingested; ground truth generated with the TECH-005 methodology and spot-checked
+- [ ] Closed-book baseline run; questions answerable without context are removed and the count reported
+- [ ] Three arms measured on the same questions: grounded accuracy, p50 latency, tokens per query
+- [ ] Recommendation recorded: keep chunk RAG, add link-aware expansion, or investigate agentic navigation further. Whichever it is, say what the evidence was.
+
+**Depends on**: TECH-005 (needs a second-corpus baseline first, so we are not comparing paradigms on a single corpus)
+
+---
+
 ### BUG-020: System prompt "use only this material" conflicts with multi-turn history
 
 **Status**: completed | **Priority**: high | **Created**: 2026-03-28 | **Completed**: 2026-04-04 | **PR**: #54
@@ -330,8 +688,16 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 **Generative metrics**: TECH-002's RAGAS AC was never implemented (no `ground_truth_answer` in datasets, no judge). Decide whether to add an LLM-judge stage (local vLLM as judge) with ground-truth answers on a subset.
 
+**Progress 2026-07-13 (collection 1 built, awaiting operator spot-check)**: corpus chosen and cleaned (Carlo Smuraglia, *Diritto penale del lavoro*, Milano University Press, CC BY-SA 4.0: 89.6k words of prose, 13 chapters, dense implicit cross-references, which is what makes parent expansion meaningful). Ingested into namespace `eval-textbook` (562 points: 113 parents + 449 children). 60 questions generated (24 factual, 15 reasoning, 12 multi-chunk, 9 adversarial) by agents reading full chapters, never chunks. Machine-validated: every keyword occurs in the corpus and in exactly one chapter (two for multi-chunk). **Nothing is committed here yet: the human spot-check is an acceptance criterion and it has not run.** Evidence and artifacts: `vektra-internal/stack/20260713-tech005-collection1-textbook.md`.
+
+Licensing lesson worth keeping: OpenStax advertises CC BY but its live per-book metadata says CC BY-NC-SA, and Italian university "dispense" are almost always CC BY-NC-ND. The ND clause forbids distributing a cleaned/chunked derivative, so those corpora cannot ship with a public eval.
+
+**Closed-book control (new mandatory step for every dataset)**: put each question to the answering LLM with NO context and an instruction to answer only if certain. Any question answered correctly from parametric memory does not measure retrieval and must be dropped or rewritten. On collection 1: 0 expected keywords leaked, 53/60 answered "NON SO". The three questions the model guessed from general legal knowledge are flagged for rewriting. This control must be documented in `tests/eval/README.md` and applied to the existing datasets too.
+
 **Acceptance criteria**:
 - [ ] At least the textbook collection + multi-turn runner implemented with documented ground-truth methodology
+- [ ] Human spot-check of a stratified sample of the LLM-generated ground truth, with the verdicts recorded (blocked on the operator: sample in `vektra-internal/stack/20260713-tech005-groundtruth-review.md`)
+- [ ] Closed-book control documented in `tests/eval/README.md` as a required step, and run on the existing datasets
 - [ ] Public regression slice runnable via `make eval-retrieval EVAL_ARGS=...` with recorded baseline
 - [ ] `tests/eval/README.md` updated with collection matrix and when to use which
 - [ ] Decision recorded on RAGAS/LLM-judge (implement or drop the TECH-002 AC)
@@ -422,18 +788,20 @@ The `title` field would contain `filename + page` (e.g., "Costituzione italiana.
 
 ### INFRA-007: Publish versioned container images on release (GHCR)
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-07-12
+**Status**: completed | **Priority**: medium | **Created**: 2026-07-12 | **Completed**: 2026-07-13
 **Origin**: system-instance deployment 2026-07-12 - updates currently require a local `docker build` from a git checkout on every host.
 
 **Context**: no workflow publishes images (`release.yml` is a disabled placeholder, `if: false`, "Phase 1 releases are tagged manually"); the integration workflow builds only for its own tests. Deployments (e.g. the workstation rootful instance) must clone + build locally, which is slow and duplicates work per host.
 
 **Proposed approach**: GitHub Actions workflow on tag push (`v*`): build the image (both `INSTALL_UNSTRUCTURED=true` and `false` variants, e.g. tags `X.Y.Z` and `X.Y.Z-ocr`) and push to `ghcr.io/vektralabs/vektra`. Deployment update flow becomes `docker compose pull && docker compose up -d`. Consider enabling the semantic-release placeholder later; out of scope here.
 
+**Resolution**: added `.github/workflows/publish.yml`, triggered on `v*` tag push only (the manual tagging flow is unchanged; `release.yml` stays a disabled placeholder). A matrix job builds the standard and `INSTALL_UNSTRUCTURED=true` variants via `docker/build-push-action`, pushes `ghcr.io/vektralabs/vektra:{version}` and `:{version}-ocr` (version = tag stripped of its leading `v`) with GHA layer caching (`type=gha`, per-variant scope) and OCI `version`/`revision` labels via `docker/metadata-action`, authenticated with the built-in `GITHUB_TOKEN` (`contents: read`, `packages: write`, no new secrets). No `latest` tag, per the AC. Since the existing `docker-compose.yml` builds the `vektra` service from source (`build:` + static `image: vektra-stack`), pull-based deployment needed a way to point compose at the published image without touching that file: added `deploy/docker-compose.image.yml.example` (same pattern as the existing `deploy/traefik` and `deploy/nginx` examples), an overlay that resets `build:` and sets `image: ghcr.io/vektralabs/vektra:${VEKTRA_VERSION}`. Documented in `docs/getting-started/index.md` ("Alternative: pull a published image") with a pointer from `README.md`. Verified the overlay merges correctly with `docker compose config` (both against a scratch compose file and the repo's actual `docker-compose.yml`).
+
 **Acceptance criteria**:
-- [ ] Tag push publishes `ghcr.io/vektralabs/vektra:{version}` and `{version}-ocr` (multi-stage cache enabled)
-- [ ] Image labels carry version + commit (OCI labels)
-- [ ] README/deploy docs updated: pull-based deployment documented
-- [ ] Existing tag flow unchanged (manual tagging still cuts the release)
+- [x] Tag push publishes `ghcr.io/vektralabs/vektra:{version}` and `{version}-ocr` (multi-stage cache enabled)
+- [x] Image labels carry version + commit (OCI labels)
+- [x] README/deploy docs updated: pull-based deployment documented
+- [x] Existing tag flow unchanged (manual tagging still cuts the release)
 
 ---
 
@@ -660,7 +1028,7 @@ Applies to both SimpleQueryPipeline and AdvancedQueryPipeline.
 
 ### DOCS-009: Document Phase 2 API endpoints in api.md
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-03-28
+**Status**: completed (2026-07-14) | **Priority**: medium | **Created**: 2026-03-28
 
 **Context**: `docs/reference/api.md` is missing documentation for several Phase 2 endpoints that are already functional:
 - `GET /api/v1/conversations/{id}` (conversation metadata)
@@ -672,12 +1040,81 @@ Applies to both SimpleQueryPipeline and AdvancedQueryPipeline.
 - `GET /api/v1/metrics` (aggregated analytics)
 - `GET /api/v1/admin/conversations/{id}/turns` (decrypted conversation turns)
 - All `/api/v1/learn/*` endpoints
+- `POST /api/v1/reindex` and `GET /api/v1/reindex/{job_id}/status` (added 2026-07-14): **not documented at all**, although reindex is an operator-facing workflow with a manual index-version switch. The status response now carries `chunks_reindexed` (BUG-023), which is the field an operator needs in order to tell a real reindex from one that did nothing — it is worth documenting precisely because that distinction used to be invisible.
 
 Swagger at `/docs` is auto-generated and complete, but the markdown reference doc is stale.
 
 **Acceptance criteria**:
-- [ ] All live endpoints documented in `docs/reference/api.md`
-- [ ] Each entry includes: scopes, curl example, request/response schema
+- [x] All live endpoints documented in `docs/reference/api.md`
+- [x] Each entry includes: scopes, curl example, request/response schema
+- [x] The reindex flow is documented end to end: trigger, poll status, verify `chunks_reindexed`, switch `VEKTRA_ACTIVE_INDEX_VERSION`, clean up the old version
+
+**Resolution** (2026-07-14): the `/learn/*` surface listed above turned out to be already documented; everything else was not. Added: reindex (with the end-to-end operator flow), conversations, feedback, traces, metrics, admin conversation turns, batch ingest/delete, the granular extract/chunk/embed endpoints, and `GET /api/v1/health`. The reindex flow was verified empirically against the dev stack, not transcribed from the code. Four doc/code discrepancies were corrected in passing (`GET /admin` is a 308 redirect to a cookie-authenticated UI, not a Bearer-authenticated dashboard; `GET /api/v1/stats` takes any scope, not `query`; the API-key body accepts `expires_at`; some endpoints do not use the REQ-010 error envelope). Two gaps discovered while documenting were filed as DEBT-032 and DEBT-033.
+
+---
+
+### DEBT-032: no way to clean up an old index version after a reindex
+
+**Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-14 | **Raised to high**: 2026-07-14 | **PR**: #108
+**Origin**: DOCS-009 (2026-07-14), found while documenting the reindex flow end to end.
+**Resolution**: `VectorStoreProvider` gained `delete_index_version(namespace, index_version)`, implemented by Qdrant and pgvector, exposed as `DELETE /api/v1/index-versions/{version}` (admin). The guard lives in the providers, not the endpoint: a store is the only component that knows which version it reads, so it raises `ActiveIndexVersionError` (409) rather than trusting callers to check first. `scripts/reindex.sh --cleanup OLD_VERSION` completes the lifecycle as a second run, because the switch sits between the two and the API correctly refuses a cleanup before it. Verified on the dev stack: reindexing `default` to v2 doubled the namespace (12 -> 24 points), the switch left live search byte-identical, the cleanup reclaimed exactly the 12 old points, and the same call against the *active* version was refused with 409 while the six other namespaces (all at version 1) lost nothing.
+
+**Why high, and why this is not really "debt"**: REQ-064 spells the cleanup out as part of the requirement ("new chunks created with incremented version alongside old, atomic switch via config change, **cleanup of old version afterwards**"). So this is not a suboptimal-but-working solution: it is an acceptance criterion of a shipped requirement that was never built, while the module docstring tells the operator it exists. Code that promises a capability it does not have is the same disease as BUG-023, one level up.
+
+It is also **live only because we fixed BUG-023**. Until 2026-07-14 a reindex in Qdrant mode wrote nothing, so there was never an old version to clean up and the gap was harmless. The moment reindex started actually writing, every reindex began doubling a namespace's storage permanently, and the only exit became a hand-written destructive delete. This is the third gap in this family that was **armed by its own fix** (see also: the namespace binding on `DELETE`, dormant while the delete was a no-op; and the `vektra-app` tests, which had never worked because nobody ran them).
+
+**Context**: reindex writes a second copy of every chunk under the target index version, alongside the live one. That is what makes it zero-downtime, and it is correct. But nothing ever removes the old copy. There is no cleanup endpoint, no cleanup flag on the reindex job, and no script step: `scripts/reindex.sh` stops after telling the operator to set `VEKTRA_ACTIVE_INDEX_VERSION`.
+
+The module docstring in `vektra-index/src/vektra_index/reindex.py` promises the opposite — "the operator sets VEKTRA_ACTIVE_INDEX_VERSION after reindex completes, then triggers cleanup of old-version chunks" — but there is nothing to trigger. The `VectorStoreProvider` protocol only exposes `delete(namespace, ids)`: no delete-by-version.
+
+Consequences: every reindex permanently doubles the storage for that namespace, and the only way to reclaim it is a hand-written delete against the store (a Qdrant filter delete, or `DELETE FROM document_chunks WHERE index_version = N`). That is an irreversible operation with no namespace guard, run by hand, at exactly the moment the operator is least sure of what is live — the failure mode being the deletion of the *active* version, which empties the live index. `docs/reference/api.md` documents the manual procedure with the warnings it needs, but the procedure should not be manual.
+
+**Acceptance criteria**:
+- [x] `VectorStoreProvider` gains a version-scoped delete, implemented by both pgvector and Qdrant
+- [x] An admin endpoint exposes it and **refuses to delete the version the system is currently serving**, with a test that proves the refusal: the destructive failure mode here is not "an old version survives", it is "the live index is emptied"
+- [x] `scripts/reindex.sh` can complete the lifecycle
+- [x] `docs/reference/api.md` replaces the manual store-level procedure with the endpoint
+
+**Traceability**: REQ-064 (unimplemented acceptance criterion), ARCH-045 (index versioning), ADR-0026 (the Protocol that needs the version-scoped delete), BUG-023 (whose fix made this live)
+
+---
+
+### DEBT-033: some endpoints bypass the REQ-010 error envelope
+
+**Status**: completed | **Priority**: low | **Created**: 2026-07-14 | **Completed**: 2026-07-15 | **PR**: #112
+**Origin**: DOCS-009 (2026-07-14).
+
+**Context**: REQ-010 defines a single error envelope (`{"error": {category, code, message, remediation, request_id, details}}`), and `docs/reference/api.md` presented it as universal. It is not. Reindex (`400`, `404`), conversations (`404`, `503`) and admin conversation turns (`404`, `501`, `503`) raise `HTTPException` with a plain string detail, so they return FastAPI's bare `{"detail": "..."}` — no code, no remediation, no request id.
+
+**Scope reduced (2026-07-14, DEBT-032 / #108)**: the new `DELETE /api/v1/index-versions/{version}` was built enveloped from the start (`ERR-INDEX-001`, `ERR-INDEX-002`), so it is *not* part of this cleanup. What remains is the pre-existing set: `POST /reindex`, `GET /reindex/{job_id}/status`, conversations, admin conversation turns.
+
+A client cannot branch on an error code for these endpoints, and the operator-facing reindex failures are exactly the ones where a machine-readable code would be worth having. The doc now warns that both shapes exist; the fix is to make the envelope actually universal.
+
+**Acceptance criteria**:
+- [x] The endpoints above raise envelope errors with proper `ERR-*` codes
+- [x] The "not every endpoint uses the envelope" caveat is removed from `docs/reference/api.md`
+
+**Resolution** (2026-07-15): the four scoped endpoints were enveloped, and a grep of the handlers (`HTTPException(..., detail="...")`) found the DOCS-009 caveat had **undercounted** — the same bare shape lived on `POST /api/v1/query` (registry / pipeline-not-configured), the admin auth dependency and the API-key creation path (registry / key-store-not-configured), and `GET /api/v1/admin/health?detail=full` (service-initializing). Removing the caveat as written would have re-asserted a universality those still broke, so all of them were enveloped too (approved scope expansion). Each raise keeps its prior HTTP status (shape-only change; no test asserted the bare shape). Codes: reused `ERR-CONFIG-001` (registry not initialized) and `ERR-CONFIG-002` (key store not configured), matching the global handler's treatment of internal faults; added `ERR-CONV-001/002/003`, `ERR-QUERY-005`, `ERR-ADMIN-008`, `ERR-INDEX-003/004`, each registered in `errors.py` + `_CODE_STATUS_OVERRIDE` + `docs/reference/error-codes.md`. The api.md caveat is removed. Spawned **DEBT-034**: the wire shape is `{"detail": {"error": {...}}}` for every `HTTPException`-based error (FastAPI wraps the detail), while api.md shows the logical top-level `{"error": {...}}`; that representation gap predates this work and affects every enveloped endpoint.
+
+---
+
+### DEBT-034: the error envelope is nested under `detail` on the wire, but documented as top-level
+
+**Status**: completed | **Priority**: low | **Created**: 2026-07-15 | **Completed**: 2026-07-15
+**Origin**: DEBT-033 (2026-07-15).
+
+**Context**: FastAPI serializes `raise HTTPException(status_code=..., detail=err.to_envelope())` as `{"detail": {"error": {...}}}` — the REQ-010 envelope sits one level down, under `detail`. This is how **every** enveloped endpoint behaves (auth, ingest, index, analytics, learn, admin, and the endpoints fixed in DEBT-033), and the whole test suite already asserts `resp.json()["detail"]["error"]["code"]`, so the nesting is the de-facto contract. The one exception is the global unhandled-exception handler in `vektra-app/main.py`, which returns top-level `{"error": {...}}` via `JSONResponse`. So there are two shapes after all — not "envelope vs bare" (DEBT-033 closed that), but "envelope under `detail`" (explicit raises) vs "envelope at top level" (uncaught 500s). `docs/reference/api.md` and `docs/reference/error-codes.md` show only the top-level form, so a client that follows the docs looks for `body.error.code` and finds nothing; the real path for almost every error is `body.detail.error.code`.
+
+**Options**:
+1. **(Recommended)** Register a custom `StarletteHTTPException` handler that, when `exc.detail` is already an envelope dict, returns it at top level via `JSONResponse(status_code=exc.status_code, content=exc.detail)`. One handler, no per-endpoint change, and both error paths converge on the documented top-level `{"error": {...}}`. Rationale: makes the wire match the docs and REQ-010's own shape, rather than teaching clients an accidental FastAPI wrapping.
+2. Document the nesting instead: change api.md/error-codes.md to show `{"detail": {"error": {...}}}` for `HTTPException`-based errors. Cheaper, but enshrines the artifact and leaves the two-shape split (nested vs top-level from the 500 handler) permanently in the contract.
+3. Leave as-is. Rejected: the docs actively mislead about where the code lives.
+
+**Acceptance criteria**:
+- [x] The REQ-010 envelope is reachable at a single, documented JSON path across all error responses (explicit raises and uncaught 500s alike)
+- [x] `docs/reference/api.md` and `docs/reference/error-codes.md` match the actual wire shape
+
+**Resolution** (2026-07-15): chose **option 1 (unwrap)**. A single `@app.exception_handler(StarletteHTTPException)` in `vektra-app/main.py` returns `exc.detail` at the document root via `JSONResponse(status_code=exc.status_code, content=exc.detail, headers=exc.headers)` when `exc.detail` is already an envelope dict (has an `error` key), and delegates to FastAPI's default `http_exception_handler` otherwise — so the admin-UI string-detail raises and FastAPI's own 404/405 keep the `{"detail": ...}` shape, and the rate-limit raise (`auth.py`) keeps its `X-RateLimit-*` headers. Both error paths (explicit raises and uncaught 500s) now converge on top-level `{"error": {...}}`, which the docs already showed; api.md and error-codes.md gained a one-line clarification that the envelope is at the root. **Consumer audit**: the widget already read both shapes (`errData?.error?.message || errData?.detail?.error?.message`) — dead branch removed, gitignored bundle rebuilt from source by the Docker `widget-builder` stage. 23 HTTP-wire test assertions flipped from `body["detail"]["error"]` to `body["error"]` across 7 files; the 16 `exc_info.value.detail["error"]` assertions (raised-object, never hit the handler) were left untouched. **Cross-repo**: `vektra-moodle`'s `parse_error_envelope` read only `detail.error` and would have degraded to `HTTP {code}`; updated in that repo (separate PR) to read the root `error` first with `detail.error` as fallback. Proven on the live wire with a real `curl` before/after.
 
 ---
 
@@ -700,7 +1137,7 @@ Swagger at `/docs` is auto-generated and complete, but the markdown reference do
 
 ### DEBT-013: VEKTRA_RERANK_TOP_K is dead config
 
-**Status**: planned | **Priority**: low | **Created**: 2026-03-28
+**Status**: resolved (2026-07-16) | **Priority**: low | **Created**: 2026-03-28 | **PR**: #117
 
 **Context**: `RerankConfig.top_k` (env var `VEKTRA_RERANK_TOP_K`) is defined in config, parsed, tested, and documented, but never read by any pipeline code. The `RerankerService.rerank()` method takes `top_k` as a call-time parameter. `AdvancedQueryPipeline` passes `query.top_k` (from the HTTP request body, default 5), ignoring the config value entirely.
 
@@ -713,9 +1150,11 @@ Separately, `_REWRITE_TOP_K = 20` is hardcoded in `advanced_pipeline.py` and con
 
 Also consider making `_REWRITE_TOP_K=20` configurable or deriving it from the rerank config.
 
+**Resolution**: option 2 (remove), plus `_REWRITE_TOP_K` made configurable. The field's own description — "final top-k results after reranking" — is exactly what the request's `top_k` already does, so wiring it (option 1) would have either duplicated `query.top_k` or broken the invariant that `sources` are exactly the chunks the LLM saw, and the cap (option 3) would have silently truncated a client's request with a `200` and no signal, the reassuring-lie failure mode this repo has three lessons about. The post-rerank cut is legitimately per-request; server-side quality is guarded by the relevance threshold, the rescue (TECH-007) and the funnel width. That funnel width was the knob with real uses: `_REWRITE_TOP_K = 20` (a misnomer — nothing to do with rewriting) is now `RerankConfig.fetch_k` / `VEKTRA_RERANK_FETCH_K`, default 20, `ge=1`. Default semantics are byte-identical (`max(query.top_k, 20)` with a reranker, `query.top_k` without), so the Combo D baselines are untouched by construction and no eval run was needed. Stale `VEKTRA_RERANK_TOP_K` values in a deployment's `.env` are ignored (`extra="ignore"`). The analysis also surfaced that `top_k` on the query endpoints is unbounded and drives the fetch via `max()` — filed as BUG-026, not fixed here.
+
 **Acceptance criteria**:
-- [ ] `VEKTRA_RERANK_TOP_K` either wired into pipeline or removed from config
-- [ ] `_REWRITE_TOP_K` either configurable or documented as intentionally hardcoded
+- [x] `VEKTRA_RERANK_TOP_K` either wired into pipeline or removed from config
+- [x] `_REWRITE_TOP_K` either configurable or documented as intentionally hardcoded
 
 ---
 
@@ -1090,7 +1529,7 @@ Three near-duplicates is the threshold where extraction starts to pay off (a fou
 
 **Resolution**: the endpoint now resolves embedding, sparse embedding, and vector store from `request.app.state.registry` (same contract as the pipeline). The per-request `SentenceTransformersProvider` instantiation and the now-unused `session` dependency were removed. Unit tests added (`vektra-index/tests/test_api_search.py`): registry resolution, hybrid→dense fallback without sparse, hybrid with sparse.
 
-**Same family, not fixed here**: `POST /documents/{id}/chunks`, `DELETE /documents/{id}` and `GET /stats` still hardcode pgvector (the stats-vs-Qdrant mismatch was already a known issue). Also `run_reindex` (`vektra-index/reindex.py`): it re-embeds with the registry's active embedding provider but stores through a hardcoded `PgvectorProvider`, so in Qdrant mode a reindex reports "completed" while the Qdrant collection receives nothing (found during the FEAT-024 live smoke, 2026-07-13: reindexing eval-full to v2 wrote to Postgres only). Track separately if needed.
+**Same family, not fixed here**: `POST /documents/{id}/chunks`, `DELETE /documents/{id}` and `GET /stats` still hardcode pgvector (the stats-vs-Qdrant mismatch was already a known issue). Also `run_reindex` (`vektra-index/reindex.py`): it re-embeds with the registry's active embedding provider but stores through a hardcoded `PgvectorProvider`, so in Qdrant mode a reindex reports "completed" while the Qdrant collection receives nothing (found during the FEAT-024 live smoke, 2026-07-13: reindexing eval-full to v2 wrote to Postgres only). **Root cause established 2026-07-13** (TECH-005 ingest): `document_chunks` is written *only* by `PgvectorProvider` (`providers/pgvector.py:94`); in Qdrant mode the table is empty for every namespace, because the Qdrant provider keeps chunk text in the Qdrant payload. So `run_reindex` reads zero chunks from an empty table, re-embeds nothing, and writes nothing — while still reporting success. Any code path that reads chunk text from Postgres (reindex, stats, `GET /documents/{id}/chunks`) is broken the same way in Qdrant mode. Track separately if needed. **Also found in review (2026-07-13)**: `QdrantVectorStoreProvider.retrieve()` (`vektra-index/src/vektra_index/providers/qdrant.py:357-388`, used for FEAT-017 parent chunk expansion) filters returned points only by `namespace_id`, with no `index_version` check — unlike `PgvectorProvider.retrieve()`, which filters on both `namespace_id` and `index_version == self._active_index_version`. In Qdrant mode, retrieving a chunk_id that belongs to a stale index version (e.g. pre-reindex) would still succeed instead of being excluded. Not fixed here.
 
 **Traceability**: ARCH-039 (ProviderRegistry), ARCH-051 (full-store contract), TECH-002 (eval harness)
 

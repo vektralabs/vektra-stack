@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID, uuid4
 
+from vektra_shared.errors import ActiveIndexVersionError
 from vektra_shared.types import (
     ChunkEmbedding,
     HealthStatus,
@@ -27,12 +28,18 @@ from vektra_shared.types import (
     SearchFilters,
     SearchMode,
     SearchResult,
+    SparseVector,
+    StoredChunk,
 )
 
 logger = logging.getLogger(__name__)
 
 # RRF constant (matches PgvectorProvider)
 _RRF_K = 60
+
+# Page size for scroll() in list_chunks: a document's chunks are read in full,
+# so this bounds memory per round trip, not the result.
+_SCROLL_PAGE_SIZE = 256
 
 
 def _is_timeout(exc: BaseException) -> bool:
@@ -166,18 +173,28 @@ class QdrantVectorStoreProvider:
         self,
         namespace: str,
         chunks: Sequence[ChunkEmbedding],
+        index_version: int | None = None,
     ) -> list[str]:
         """Upsert points with named vectors and payload.
 
         Uses wait=True for synchronous confirmation. On exception after
         partial upsert, executes compensating delete for all point IDs
         in the batch (ARCH-052).
+
+        index_version defaults to the active version. Reindex passes the target
+        version: both versions share this collection and are told apart by the
+        index_version payload field, so the caller must also supply chunk ids
+        distinct from the source version's, or the upsert would overwrite it
+        instead of writing alongside it (ADR-0026).
         """
         if not chunks:
             return []
 
         from qdrant_client import models
 
+        target_version = (
+            index_version if index_version is not None else self._active_index_version
+        )
         points: list[models.PointStruct] = []
         point_ids: list[str] = []
 
@@ -200,7 +217,7 @@ class QdrantVectorStoreProvider:
                     vector=vectors,
                     payload={
                         "namespace_id": namespace,
-                        "index_version": self._active_index_version,
+                        "index_version": target_version,
                         "text": chunk.text,
                         "metadata": chunk.metadata,
                         "document_id": chunk.metadata.get("document_id", ""),
@@ -362,8 +379,10 @@ class QdrantVectorStoreProvider:
         """Fetch points by id (no vector search). Used for parent chunk
         expansion (FEAT-017); score is 0.0 by convention.
 
-        Points whose payload namespace does not match are dropped (namespace
-        isolation): Qdrant retrieve() takes no filter.
+        Qdrant retrieve() takes no filter, so namespace and index version are
+        enforced on the payload afterwards: without the version check a chunk
+        from a stale index version would still be retrievable, which search
+        (which does filter on it) would never return.
         """
         valid_ids: list[str] = []
         for cid in chunk_ids:
@@ -382,39 +401,193 @@ class QdrantVectorStoreProvider:
             with_payload=True,
         )
         matching = [
-            r for r in records if (r.payload or {}).get("namespace_id") == namespace
+            r
+            for r in records
+            if (r.payload or {}).get("namespace_id") == namespace
+            and (r.payload or {}).get("index_version") == self._active_index_version
         ]
         return self._points_to_results(matching)
 
-    async def delete(self, namespace: str, ids: list[str]) -> int:
-        """Delete points by document_id payload filter.
+    async def list_chunks(
+        self,
+        namespace: str,
+        document_id: UUID,
+    ) -> list[StoredChunk]:
+        """All chunks of a document at the active index version, by position.
 
-        ids: list of document_id strings. Uses wait=True for synchronous
-        confirmation. Returns count of deleted points.
+        Scrolls the collection: unlike retrieve(), the caller does not know the
+        point ids. Parent chunks are included (they are stored content and must
+        be re-embedded on reindex), unlike search, which filters them out.
         """
         from qdrant_client import models
 
+        scroll_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchValue(value=str(document_id)),
+                ),
+                models.FieldCondition(
+                    key="namespace_id",
+                    match=models.MatchValue(value=namespace),
+                ),
+                models.FieldCondition(
+                    key="index_version",
+                    match=models.MatchValue(value=self._active_index_version),
+                ),
+            ]
+        )
+
+        chunks: list[StoredChunk] = []
+        offset: Any = None
+        while True:
+            # Sparse vectors are carried over verbatim on reindex (BM25 does not
+            # depend on the embedding model), so fetch them; the dense vector is
+            # recomputed and deliberately not fetched.
+            records, offset = await self._client.scroll(
+                collection_name=self._collection_name,
+                scroll_filter=scroll_filter,
+                limit=_SCROLL_PAGE_SIZE,
+                offset=offset,
+                with_payload=True,
+                with_vectors=["sparse"],
+            )
+            for record in records:
+                payload = record.payload or {}
+                metadata = payload.get("metadata", {}) or {}
+                chunks.append(
+                    StoredChunk(
+                        chunk_id=str(record.id),
+                        text=payload.get("text", ""),
+                        metadata=metadata,
+                        position=metadata.get("position", 0),
+                        parent_id=payload.get("parent_id"),
+                        sparse=self._extract_sparse(record),
+                    )
+                )
+            if offset is None:
+                break
+
+        chunks.sort(key=lambda c: c.position)
+        return chunks
+
+    @staticmethod
+    def _extract_sparse(record: Any) -> SparseVector | None:
+        """Pull the "sparse" named vector off a scrolled record, if present."""
+        vectors = getattr(record, "vector", None)
+        if not isinstance(vectors, dict):
+            return None
+        sparse = vectors.get("sparse")
+        if sparse is None:
+            return None
+        indices = getattr(sparse, "indices", None)
+        values = getattr(sparse, "values", None)
+        if indices is None or values is None:
+            return None
+        return SparseVector(indices=list(indices), values=list(values))
+
+    async def count_chunks(self, namespace: str | None = None) -> int:
+        """Points at the active index version, optionally scoped to a namespace."""
+        from qdrant_client import models
+
+        must: list[Any] = [
+            models.FieldCondition(
+                key="index_version",
+                match=models.MatchValue(value=self._active_index_version),
+            )
+        ]
+        if namespace:
+            must.append(
+                models.FieldCondition(
+                    key="namespace_id",
+                    match=models.MatchValue(value=namespace),
+                )
+            )
+
+        result = await self._client.count(
+            collection_name=self._collection_name,
+            count_filter=models.Filter(must=must),
+            exact=True,
+        )
+        return int(result.count)
+
+    async def delete(self, namespace: str, ids: list[str]) -> int:
+        """Delete a document's points, across every index version.
+
+        ids: list of document_id strings. Counts before deleting so the caller
+        gets a truthful chunks_removed: Qdrant's UpdateResult does not carry it,
+        and returning a made-up 0 is how DELETE came to report that it had
+        removed nothing while the points were still there (BUG-023).
+        """
+        from qdrant_client import models
+
+        selector = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchAny(any=ids),
+                ),
+                models.FieldCondition(
+                    key="namespace_id",
+                    match=models.MatchValue(value=namespace),
+                ),
+            ]
+        )
+
+        count_result = await self._client.count(
+            collection_name=self._collection_name,
+            count_filter=selector,
+            exact=True,
+        )
+
         await self._client.delete(
             collection_name=self._collection_name,
-            points_selector=models.FilterSelector(
-                filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="document_id",
-                            match=models.MatchAny(any=ids),
-                        ),
-                        models.FieldCondition(
-                            key="namespace_id",
-                            match=models.MatchValue(value=namespace),
-                        ),
-                    ]
-                )
-            ),
+            points_selector=models.FilterSelector(filter=selector),
             wait=True,
         )
-        # Qdrant delete returns UpdateResult; count not directly available.
-        # Return 0 as a convention; the caller should not depend on exact count.
-        return 0
+        return int(count_result.count)
+
+    async def delete_index_version(self, namespace: str, index_version: int) -> int:
+        """Delete a namespace's points at one index version (REQ-064).
+
+        Refuses the active version: both versions live in this one collection
+        and are told apart only by payload, so a filter that got the version
+        wrong would delete the points that are serving traffic.
+
+        Counts before deleting, as delete() does: Qdrant's UpdateResult does not
+        carry a count, and a second call returning 0 is how the operator
+        confirms the old version is really gone.
+        """
+        if index_version == self._active_index_version:
+            raise ActiveIndexVersionError(namespace, index_version)
+
+        from qdrant_client import models
+
+        selector = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="namespace_id",
+                    match=models.MatchValue(value=namespace),
+                ),
+                models.FieldCondition(
+                    key="index_version",
+                    match=models.MatchValue(value=index_version),
+                ),
+            ]
+        )
+
+        count_result = await self._client.count(
+            collection_name=self._collection_name,
+            count_filter=selector,
+            exact=True,
+        )
+
+        await self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=models.FilterSelector(filter=selector),
+            wait=True,
+        )
+        return int(count_result.count)
 
     async def health_check(self) -> HealthStatus:
         """Check Qdrant connectivity via get_collections()."""

@@ -11,9 +11,18 @@ permissions:
 
 jobs:
   integration:
-    name: Integration tests + NFR gates
+    # The suite runs against every supported vector store, not just the default.
+    # BUG-023 survived for months because it ran against pgvector only: with
+    # Qdrant active, endpoints that read chunks from Postgres worked on an empty
+    # table and reported success. A provider-specific regression fails here now.
+    name: Integration tests (${{ matrix.vector_store }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        vector_store: [pgvector, qdrant]
 
     steps:
       - uses: actions/checkout@v7
@@ -36,13 +45,20 @@ jobs:
             echo 'VEKTRA_STARTUP_LLM_CHECK=false'
             echo 'VEKTRA_LLM_CONTEXT_ONLY_ENABLED=true'
             echo 'VEKTRA_ADMIN_BOOTSTRAP_KEY=ci-bootstrap-key'
+            echo "VEKTRA_VECTOR_STORE_PROVIDER=${{ matrix.vector_store }}"
           } > .env
+          if [ "${{ matrix.vector_store }}" = "qdrant" ]; then
+            echo 'VEKTRA_QDRANT_URL=http://qdrant:6333' >> .env
+          fi
 
       - name: Build Docker image
         run: docker compose build
 
       - name: Start stack and measure startup (NFR-004)
         id: startup
+        env:
+          # The qdrant service sits behind a compose profile
+          COMPOSE_PROFILES: ${{ matrix.vector_store == 'qdrant' && 'qdrant' || '' }}
         run: |
           START_NS=$(date +%s%N)
           docker compose up -d
@@ -56,17 +72,26 @@ jobs:
           echo "startup_ms=$ELAPSED_MS" >> "$GITHUB_OUTPUT"
           echo "::notice::Container startup: ${ELAPSED_MS}ms (NFR-004 limit: 60000ms)"
 
-      - name: Run integration tests (REQ-032)
+      # test_startup.py (ARCH-057) asserts the 11 startup steps against the logs of the
+      # stack this job has just brought up. Its docstring said it ran here; it did not,
+      # because this step named tests/integration/ and nothing named tests/ (DEBT-031).
+      # It is the same startup surface BUG-024 broke, and it was watching nothing.
+      - name: Run integration tests (REQ-032) and startup validation (ARCH-057)
         id: integration
         run: |
-          uv run pytest tests/integration/ \
-            -v --tb=short --junitxml=test-results/integration.xml
+          uv run pytest tests/integration/ tests/test_startup.py \
+            -v --tb=short \
+            --junitxml=test-results/integration-${{ matrix.vector_store }}.xml
         timeout-minutes: 10
         env:
           VEKTRA_API_URL: http://localhost:8000
           VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
 
+      # NFR gates seed and count chunks in Postgres directly, so they are bound
+      # to pgvector by construction. Running them once is enough: they measure
+      # latency and startup, not chunk paths.
       - name: NFR hard gates (NFR-002/004/007/009)
+        if: matrix.vector_store == 'pgvector'
         run: |
           uv run pytest tests/nfr/test_nfr_hard.py \
             -v --tb=short --junitxml=test-results/nfr-hard.xml
@@ -85,12 +110,87 @@ jobs:
 
       - name: Tear down
         if: always()
+        env:
+          COMPOSE_PROFILES: ${{ matrix.vector_store == 'qdrant' && 'qdrant' || '' }}
         run: docker compose down -v --remove-orphans
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: integration-test-results
+          name: integration-test-results-${{ matrix.vector_store }}
           path: test-results/
           retention-days: 14
+
+  # Every `integration`-marked test in every package, vektra-app included (its own
+  # suite is the ARCH-057 startup sequence and the REQ-011/NFR-009 error contract).
+  # DEBT-030 wired up vektra-app by hand and left the identical hole open next door:
+  # the integration suites of vektra-admin, vektra-index and vektra-ingest are excluded
+  # from every unit run by `-m "not integration"` and were named by no workflow, so they
+  # had never been executed once (DEBT-031).
+  #
+  # The target is a glob deliberately. A hand-written package list is the thing that
+  # keeps failing here — twice now — so a package added tomorrow is picked up with no
+  # edit to this file. These suites bring up their own postgres via testcontainers, so
+  # they need Docker but not the compose stack.
+  package-integration:
+    name: Package integration tests (all packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Runs PR-authored test code; no reason to keep the token in .git/config
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: Prepare test results directory
+        run: mkdir -p test-results
+
+      - name: Run every package's integration tests
+        run: |
+          uv run pytest vektra-*/tests -m integration \
+            -v --tb=short --junitxml=test-results/package-integration.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-integration-test-results
+          path: test-results/
+          retention-days: 14
+
+  # Aggregator, and the single required status check in branch protection. The
+  # matrix reports one check per provider ("Integration tests (pgvector)", "…
+  # (qdrant)"), so without a job carrying the required name the check would never
+  # report and every PR would sit BLOCKED. Same pattern as ci-gate in ci-unit.yml:
+  # adding a provider to the matrix, or a job like package-integration, then needs no
+  # change to branch protection. The name below is load-bearing: change it and every PR
+  # sits BLOCKED with all checks green.
+  integration-gate:
+    name: Integration tests + NFR gates
+    needs: [integration, package-integration]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check every integration job passed
+        run: |
+          MATRIX="${{ needs.integration.result }}"
+          PACKAGES="${{ needs.package-integration.result }}"
+          if [[ "$MATRIX" != "success" ]]; then
+            echo "Integration matrix did not pass (result: $MATRIX)."
+            exit 1
+          fi
+          if [[ "$PACKAGES" != "success" ]]; then
+            echo "Package integration tests did not pass (result: $PACKAGES)."
+            exit 1
+          fi
+          echo "Integration tests passed on every vector store provider, and every package's integration suite passed."

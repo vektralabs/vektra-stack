@@ -124,19 +124,24 @@ class TestRerankConfig:
         assert cfg.enabled is True
         assert cfg.provider == "cross-encoder"
         assert cfg.model == "BAAI/bge-reranker-v2-m3"
-        assert cfg.top_k == 5
+        assert cfg.fetch_k == 20
 
     def test_env_var_override(self) -> None:
         cfg = RerankConfig(
             VEKTRA_RERANK_ENABLED=False,
             VEKTRA_RERANK_PROVIDER="cohere",
             VEKTRA_RERANK_MODEL="rerank-english-v3.0",
-            VEKTRA_RERANK_TOP_K=10,
+            VEKTRA_RERANK_FETCH_K=40,
         )
         assert cfg.enabled is False
         assert cfg.provider == "cohere"
         assert cfg.model == "rerank-english-v3.0"
-        assert cfg.top_k == 10
+        assert cfg.fetch_k == 40
+
+    def test_stale_top_k_ignored(self) -> None:
+        """VEKTRA_RERANK_TOP_K was removed (DEBT-013): stale values must not break config."""
+        cfg = RerankConfig(VEKTRA_RERANK_TOP_K=10)
+        assert not hasattr(cfg, "top_k")
 
 
 class TestWebhookConfig:
@@ -161,30 +166,11 @@ class TestIngestConfigDualStrategy:
     def test_fixed_strategy_default_passes(self) -> None:
         cfg = IngestConfig()
         assert cfg.chunking_strategy == "fixed"
-        assert cfg.parent_child_levels == 0
         assert cfg.table_split is False
 
-    def test_fixed_strategy_with_zero_levels_passes(self) -> None:
-        cfg = IngestConfig(
-            VEKTRA_CHUNKING_STRATEGY="fixed",
-            VEKTRA_PARENT_CHILD_LEVELS=0,
-        )
-        assert cfg.parent_child_levels == 0
-
-    def test_dual_strategy_with_valid_levels_passes(self) -> None:
-        cfg = IngestConfig(
-            VEKTRA_CHUNKING_STRATEGY="dual",
-            VEKTRA_PARENT_CHILD_LEVELS=2,
-        )
+    def test_dual_strategy_passes(self) -> None:
+        cfg = IngestConfig(VEKTRA_CHUNKING_STRATEGY="dual")
         assert cfg.chunking_strategy == "dual"
-        assert cfg.parent_child_levels == 2
-
-    def test_dual_strategy_with_zero_levels_raises(self) -> None:
-        with pytest.raises(ValidationError, match="parent_child_levels"):
-            IngestConfig(
-                VEKTRA_CHUNKING_STRATEGY="dual",
-                VEKTRA_PARENT_CHILD_LEVELS=0,
-            )
 
 
 class TestQueryPipelineConfigNested:
@@ -194,7 +180,7 @@ class TestQueryPipelineConfigNested:
         assert cfg.rewrite.model is None
         assert cfg.rerank.enabled is True
         assert cfg.rerank.provider == "cross-encoder"
-        assert cfg.rerank.top_k == 5
+        assert cfg.rerank.fetch_k == 20
 
 
 class TestVektraSettings:

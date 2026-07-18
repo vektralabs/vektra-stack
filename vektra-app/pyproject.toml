@@ -1,6 +1,6 @@
 [project]
 name = "vektra-app"
-version = "0.6.0"
+version = "0.7.0"
 description = "FastAPI application assembly and startup validation (ARCH-015, ARCH-057)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -29,6 +29,7 @@ packages = ["src/vektra_app"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
+markers = ["integration: integration tests requiring Docker (excluded from ci-unit)"]
 
 [tool.uv.sources]
 vektra-shared = { workspace = true }

@@ -90,6 +90,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_CONTEXT_CHUNK_RATIO` | float | `0.6` | Fraction of context window allocated to retrieved chunks (0.0-1.0) |
 | `VEKTRA_PROMPT_TEMPLATES_DIR` | str | - | Directory for custom Jinja2 prompt templates (`system.j2`, `context.j2`, `conversation.j2`). Uses built-in defaults if unset. |
 | `VEKTRA_PROMPT_GROUNDING_MODE` | str | `strict` | Default RAG grounding policy. `strict` answers from retrieved context + history only; `hybrid` falls back to model knowledge when confident. Per-namespace override via `PATCH /api/v1/admin/namespaces/{id}/config`. |
+| `VEKTRA_DEBUG_LOG_QUERIES` | bool | `false` | Log original and rewritten query text at debug level. Development only. |
 
 ### Query rewriting
 
@@ -105,7 +106,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_RERANK_ENABLED` | bool | `true` | Enable cross-encoder reranking after retrieval |
 | `VEKTRA_RERANK_PROVIDER` | str | `cross-encoder` | Reranking provider: `flashrank`, `cross-encoder`, `cohere`, `tei` (remote) |
 | `VEKTRA_RERANK_MODEL` | str | `BAAI/bge-reranker-v2-m3` | Multilingual reranking model. For English-only lightweight deployments: provider=`flashrank`, model=`ms-marco-MiniLM-L-12-v2` |
-| `VEKTRA_RERANK_TOP_K` | int | `5` | Final top-k results after reranking |
+| `VEKTRA_RERANK_FETCH_K` | int | `20` | Candidates fetched from vector search for reranking. The post-rerank cut is the request's `top_k` |
 | `VEKTRA_RERANK_API_KEY` | str | - | API key for API-based providers (`cohere`) |
 | `VEKTRA_RERANK_TEI_URL` | str | `http://localhost:8080` | TEI reranker server base URL (one TEI instance per model, e.g. serving `BAAI/bge-reranker-v2-m3`). Used when provider is `tei`. Scores are sigmoid-normalized like the in-process path |
 | `VEKTRA_RERANK_TEI_API_KEY` | str | - | Bearer token for the TEI reranker server. Optional |
@@ -120,7 +121,6 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_MAX_FILE_SIZE_MB` | int | `50` | Maximum file size for ingestion (megabytes) |
 | `VEKTRA_DOCUMENT_EXTRACTOR` | str | `pdfplumber` | Extractor implementation: `pdfplumber`, `unstructured` |
 | `VEKTRA_TABLE_SPLIT` | bool | `false` | Allow splitting table elements across chunks. Dual-strategy only. |
-| `VEKTRA_PARENT_CHILD_LEVELS` | int | `0` | Parent-child hierarchy depth. 0=disabled. Must be >= 1 for dual strategy. |
 
 ## Security
 
@@ -157,6 +157,7 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_AUDIT_RETENTION_DAYS` | int | `90` | Audit log retention period in days |
 | `VEKTRA_RETENTION_DAYS` | int | - | Soft-deleted record retention period (cleanup job) |
 | `VEKTRA_ANALYTICS_RETENTION_DAYS` | int | - | QueryTrace storage retention days |
+| `VEKTRA_ANALYTICS_STORE_TRACES` | bool | - | Persist QueryTrace to the database. Unset = auto (on in dev, off in prod). |
 | `VEKTRA_EVAL_MODE` | bool | `false` | Enable temporary text capture for batch RAG evaluation (staging only) |
 
 ## Server
@@ -183,10 +184,10 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 
 | Category | Count |
 |----------|-------|
-| VEKTRA_* variables in `VektraSettings` and sub-configs (Pydantic-validated) | 59 |
+| VEKTRA_* variables in `VektraSettings` and sub-configs (Pydantic-validated) | 66 |
 | VEKTRA_* variables read directly from env (`VEKTRA_CORS_ORIGINS`) | 1 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
-| **Total documented** | **64** |
+| **Total documented** | **71** |
 
-The 59 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
+The 66 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.

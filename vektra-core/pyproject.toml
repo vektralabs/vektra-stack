@@ -1,6 +1,6 @@
 [project]
 name = "vektra-core"
-version = "0.6.0"
+version = "0.7.0"
 description = "RAG engine, LLM abstraction, and conversation management"
 readme = "README.md"
 requires-python = ">=3.12"

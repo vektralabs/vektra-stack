@@ -13,6 +13,14 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
+# Needs the running stack, so it is an integration test and now says so. Unmarked, it
+# was indistinguishable from a unit test that `make test` had merely forgotten — and
+# in fact no runner ran it at all, despite the docstring above assuming otherwise
+# (DEBT-031).
+pytestmark = pytest.mark.integration
+
 # All 11 ARCH-057 startup step names in execution order
 _STARTUP_STEPS = [
     "config_validation",
@@ -59,10 +67,15 @@ def test_startup_complete_logged() -> None:
     )
 
 
-def test_graceful_failure_on_missing_config() -> None:
-    """Missing required env var produces a structured error, not a traceback.
+def _run_with_empty_llm_provider() -> str:
+    """Boot a throwaway container whose VEKTRA_LLM_PROVIDER is the empty string.
 
-    Runs a separate short-lived container with VEKTRA_LLM_PROVIDER unset.
+    `-e VEKTRA_LLM_PROVIDER=` sets the variable to `""`; it does not unset it, as this
+    module used to claim. That mattered: `llm_provider` was a bare required `str`, `""`
+    is a valid `str`, so nothing raised, the container booted and served, and the
+    misconfiguration surfaced at the first query instead of at startup. The test never
+    once ran (DEBT-031), so nobody found out. The field is now `min_length=1`, and an
+    empty value fails at step 1 exactly as an absent one does.
     """
     result = subprocess.run(
         [
@@ -81,15 +94,29 @@ def test_graceful_failure_on_missing_config() -> None:
         text=True,
         timeout=30,
     )
-
-    output = result.stdout + result.stderr
     assert result.returncode != 0, (
-        "Container should have exited non-zero with missing VEKTRA_LLM_PROVIDER"
+        "Container should have exited non-zero with an empty VEKTRA_LLM_PROVIDER"
     )
+    return result.stdout + result.stderr
+
+
+def test_graceful_failure_on_missing_config() -> None:
+    """A required env var with no usable value fails startup, not the first query."""
+    output = _run_with_empty_llm_provider()
     assert "startup_failed" in output, (
         "Expected 'startup_failed' in output, got: " + output[:500]
     )
-    # No raw Python tracebacks should leak to the user
+
+
+def test_no_raw_traceback_on_startup_failure() -> None:
+    """A misconfiguration is reported, not dumped as a stack trace (REQ-011, NFR-009).
+
+    BUG-025 fix: the container runs `python -m vektra_app.main`, which validates
+    (ARCH-057) before uvicorn.run(). A failed step logs its structured
+    [STARTUP ERROR] and exits non-zero without the ASGI lifespan, so uvicorn
+    never logs a traceback beside the good message.
+    """
+    output = _run_with_empty_llm_provider()
     assert "Traceback (most recent call last)" not in output, (
         "Raw traceback leaked in startup failure output"
     )

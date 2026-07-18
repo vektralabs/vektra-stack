@@ -66,8 +66,6 @@ from vektra_shared.types import (
 
 log = structlog.get_logger(__name__)
 
-_REWRITE_TOP_K = 20  # Fetch more candidates for reranking
-
 
 class AdvancedQueryPipeline:
     """Phase 2 QueryPipeline with query rewriting, hybrid search, and reranking.
@@ -288,8 +286,12 @@ class AdvancedQueryPipeline:
         # Step 3: Vector search
         t0 = time.monotonic()
         search_mode = SearchMode.HYBRID if sparse is not None else SearchMode.DENSE
-        # Fetch more candidates for reranking
-        fetch_k = max(query.top_k, _REWRITE_TOP_K) if self._reranker else query.top_k
+        # Fetch more candidates for reranking (funnel width, DEBT-013)
+        fetch_k = (
+            max(query.top_k, self._config.rerank.fetch_k)
+            if self._reranker
+            else query.top_k
+        )
         results = await self._vector_store.search(
             namespace=query.namespace,
             query_embedding=QueryEmbedding(dense=dense, sparse=sparse),

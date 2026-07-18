@@ -64,8 +64,12 @@ for arg in "$@"; do
     *)
       if [ "$POSITIONAL" -eq 0 ]; then
         VERSION="$arg"
-      else
+      elif [ "$POSITIONAL" -eq 1 ]; then
         NAMESPACE="$arg"
+      else
+        echo "Error: too many positional arguments" >&2
+        usage >&2
+        exit 1
       fi
       POSITIONAL=$((POSITIONAL + 1))
       ;;

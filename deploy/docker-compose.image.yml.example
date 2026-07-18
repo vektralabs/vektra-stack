@@ -4,7 +4,7 @@
 # Usage:
 #   1. Copy to docker-compose.image.yml (repo root)
 #   2. Set VEKTRA_VERSION in .env (or the shell) to a published tag, e.g.
-#      0.6.1, or 0.6.1-ocr for the OCR-enabled variant
+#      0.7.0, or 0.7.0-ocr for the OCR-enabled variant
 #   3. Set COMPOSE_FILE=docker-compose.yml:docker-compose.image.yml in .env,
 #      so every compose command (pull, up, ps, logs) merges both files
 #   4. docker compose pull
@@ -21,4 +21,4 @@
 services:
   vektra:
     build: !reset null
-    image: ghcr.io/vektralabs/vektra:${VEKTRA_VERSION:?set VEKTRA_VERSION, e.g. 0.6.1 or 0.6.1-ocr}
+    image: ghcr.io/vektralabs/vektra:${VEKTRA_VERSION:?set VEKTRA_VERSION, e.g. 0.7.0 or 0.7.0-ocr}

@@ -161,7 +161,10 @@ def test_deleted_document_is_not_retrievable(api: httpx.Client, admin_key: str) 
             "top_k": 5,
         },
     ).json()
-    assert found["total"] > 0, "precondition: the document must be searchable first"
+    found_docs = {r["document_id"] for r in found["results"]}
+    assert doomed_id in found_docs, (
+        "precondition: the document must be searchable before deletion"
+    )
 
     deleted = api.delete(
         f"/api/v1/documents/{doomed_id}",

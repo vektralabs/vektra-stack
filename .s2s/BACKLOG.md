@@ -256,6 +256,35 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
+### DEBT-036: deferred minor findings from the v0.7.0 release review
+
+**Status**: planned | **Priority**: low | **Created**: 2026-07-18
+**Origin**: CodeRabbit's full review of the v0.7.0 `develop → main` promotion PR #121. The four Major production findings were fixed pre-release (#123); these nine are genuine but non-blocking (test-strengthening plus two minor edges), deferred so the release promotion stayed scoped.
+
+**Context**: a release-promotion PR re-reviews the entire release delta, so it surfaces observations on already-merged, already-reviewed code. Each item below was verified against source; none is a correctness regression. Grouped for one follow-up pass.
+
+**Minor production edges**:
+- `vektra-shared/src/vektra_shared/config.py` — `llm_provider` uses `min_length=1`, which still accepts a whitespace-only value (`"   "`); strip before validating (or `StringConstraints(strip_whitespace=True)`). Complements the empty-provider rejection already shipped.
+- `vektra-app/src/vektra_app/main.py` — the startup-step loop lets an *unexpected* exception (one a step does not self-wrap) escape as a raw traceback; wrap non-`StartupValidationError` exceptions into the structured type so `_serve()` handles them. Defensive: every current step already self-wraps, so no live path is known.
+- `scripts/reindex.sh` — validate `chunks_removed` / `chunks_reindexed` / `source_index_version` exist and are the expected JSON types before indexing them, so a malformed 200 fails with an API-contract error instead of a Python traceback.
+
+**Test-strengthening (assert behaviour, not just call shape)**:
+- `vektra-index/tests/test_index_version_cleanup.py` — assert the pgvector DELETE carries both the namespace and index-version predicates, not only the call count.
+- `vektra-index/tests/test_qdrant_provider.py` — assert `count()`'s filter includes `namespace_id` and `index_version`, not only `exact=True`.
+- `vektra-ingest/tests/test_cleanup.py` — assert `vector_store.delete` was actually awaited with the expired id.
+- `vektra-shared/tests/test_env_isolation_coverage.py` — parse the conftest with AST and require an actual `hermetic_env` import, not a substring match.
+- `vektra-shared/tests/test_errors.py` — assert exact `ERR-CONV-00x` values rather than the `ERR-CONV-` prefix.
+- `vektra-shared/tests/test_suite_execution_coverage.py` — `_suites()` should collect both pytest patterns (`test_*.py` and `*_test.py`) to mirror default discovery.
+
+**Rejected (recorded, not deferred)**: CodeRabbit also asked to restore the removed `VEKTRA_RERANK_TOP_K` as a deprecated `top_k` property on `RerankConfig` for backward compatibility. Declined: it contradicts DEBT-013's intent (the variable was dead) and the project's no-backward-compatibility policy (no production releases exist). `test_stale_top_k_ignored` correctly asserts the stale value is ignored.
+
+**Acceptance criteria**:
+- [ ] The two minor production edges are addressed or explicitly waived with reasoning
+- [ ] The six test-strengthening items assert behaviour rather than mocked interactions
+- [ ] No backward-compat shim for `VEKTRA_RERANK_TOP_K` is introduced (policy)
+
+**Traceability**: PR #121 (v0.7.0 promotion review), #123 (the Major fixes shipped pre-release), DEBT-013 (the `RERANK_TOP_K` removal the rejected item would undo)
+
 ### DEBT-035: validation errors (422) bypass the REQ-010 envelope
 
 **Status**: planned | **Priority**: low | **Created**: 2026-07-17

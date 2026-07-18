@@ -227,8 +227,10 @@ async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
     vector_store = registry.get("vector_store", "default")
 
     try:
+        # First short-lived session: find expired soft-deleted documents, then
+        # close it before the external vector-store deletions so a large backlog
+        # does not hold a Postgres connection open across network I/O.
         async with _shared_db._session_factory() as session:
-            # Find expired soft-deleted documents
             result = await session.execute(
                 select(SourceDocumentOrm.id, SourceDocumentOrm.namespace_id).where(
                     SourceDocumentOrm.deleted_at.is_not(None),
@@ -237,27 +239,31 @@ async def cleanup_soft_deleted_task(ctx: dict[str, Any]) -> None:
             )
             expired = result.all()
 
-            if not expired:
-                log.debug("cleanup_nothing_to_purge")
-                return
+        if not expired:
+            log.debug("cleanup_nothing_to_purge")
+            return
 
-            purged_ids = []
-            for doc_id, namespace_id in expired:
-                try:
-                    await vector_store.delete(namespace_id, [str(doc_id)])
-                except Exception as exc:
-                    log.error(
-                        "cleanup_chunk_delete_failed",
-                        document_id=str(doc_id),
-                        namespace=namespace_id,
-                        error=str(exc),
-                    )
-                    continue
-                purged_ids.append(doc_id)
+        # External deletions run with no active database transaction.
+        purged_ids = []
+        for doc_id, namespace_id in expired:
+            try:
+                await vector_store.delete(namespace_id, [str(doc_id)])
+            except Exception as exc:
+                log.error(
+                    "cleanup_chunk_delete_failed",
+                    document_id=str(doc_id),
+                    namespace=namespace_id,
+                    error=str(exc),
+                )
+                continue
+            purged_ids.append(doc_id)
 
-            if not purged_ids:
-                return
+        if not purged_ids:
+            return
 
+        # Second short-lived session: hard-delete only the rows whose chunks
+        # were successfully removed from the vector store.
+        async with _shared_db._session_factory() as session:
             await session.execute(
                 delete(SourceDocumentOrm).where(SourceDocumentOrm.id.in_(purged_ids))
             )

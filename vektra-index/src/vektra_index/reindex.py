@@ -322,6 +322,11 @@ async def run_reindex(
                         chunk_embeddings,
                         index_version=target_version,
                     )
+                    if len(stored) != len(chunk_embeddings):
+                        raise RuntimeError(
+                            f"Vector store wrote {len(stored)} of "
+                            f"{len(chunk_embeddings)} chunks for document {doc_id}"
+                        )
                     chunks_reindexed += len(stored)
 
                 # Update progress

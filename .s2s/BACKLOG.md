@@ -22,6 +22,23 @@
 
 ## Planned
 
+### DEBT-037: triare le 6 violazioni che il validatore ADR riporta su .s2s/decisions/
+
+**Status**: planned | **Created**: 2026-08-27 | **Priority**: low
+
+**Context**: il plugin `decision-records` (marketplace `fvadicamo/dev-agent-skills`, v0.1.0) valida una collezione di ADR contro la convenzione che **gia' segue**, invece che contro una spec pubblicata. Su questa collezione deduce correttamente lo schema (`prefixed, <prefix>-NNN-slug.md`, 26 su 26) e la forma dello status (`bold-field`), e riporta **6 violazioni su 26 record**.
+
+```sh
+check-decisions.sh .s2s/decisions
+```
+
+Non sono state guardate: possono essere difetti veri (link di supersede che non risolvono, sezioni mancanti, status scritti in due grafie) oppure altre forme di casa che il validatore non conosce ancora. **La distinzione va fatta record per record**, e se una violazione risulta essere una forma legittima non riconosciuta, il difetto e' del validatore e va segnalato a monte.
+
+**Nota**: il validatore dice anche quali controlli **non hanno girato** su questa collezione. Qui `INDEX` non gira perche' non c'e' ne' `README.md` ne' `index.md` in `.s2s/decisions/`: 26 record senza un indice sono difficili da leggere in ordine, e vale la pena valutarlo a parte.
+
+**Definizione di fatto**: ogni violazione o corretta, o dichiarata accettabile con il perche', o riportata a monte come difetto del validatore.
+
+
 ### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
 
 **Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #102

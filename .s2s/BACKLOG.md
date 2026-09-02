@@ -281,7 +281,13 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 **Two phases on purpose, in one entry because the second only makes sense after the first.** Splitting into two entries is a one-line edit if it ever needs separate scheduling.
 
-*Phase 1, low risk, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools. Patch or minor bumps of libraries with no bearing on retrieval quality, closing **27 of the 30**. A single coordinated `uv lock` pass, one PR, `make lint` + `make test` + the integration matrix are enough evidence.
+*Phase 1, low risk, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools. Closes **27 of the 30**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
+
+```
+uv lock -P pillow -P pypdf -P aiohttp -P pyasn1 -P cryptography -P h2 -P setuptools
+```
+
+and the blast radius is eight lines, nothing else in the lock moves: pillow 12.2.0 -> 12.3.0, pypdf 6.14.2 -> 6.16.2, aiohttp 3.14.1 -> 3.14.3, pyasn1 0.6.3 -> 0.6.4, cryptography 49.0.0 -> 50.0.1, h2 4.3.0 -> 4.4.1 (which pulls hpack 4.1.0 -> 4.2.0), setuptools 82.0.0 -> 84.0.0. Who pulls them in, for the record: pillow via pdfplumber / pikepdf / python-pptx / torchvision / fastembed, pypdf via unstructured, aiohttp via litellm, cryptography via pdfminer / google-auth / presidio, setuptools via torch / spacy. `make lint` + `make test` + the integration matrix are enough evidence for this phase.
 
 *Phase 2, measure before taking*: `transformers` 5.3.0 -> 5.10.0 and `torch` 2.10.0 -> 2.13.0. These carry the embedding model and the cross-encoder reranker, so "it builds and the tests pass" is **not** evidence that retrieval is unchanged: a bump here can move scores without failing anything. Run the eval corpus before and after and compare hit rate and MRR against the recorded Combo D baselines. The existing Dependabot PR #100 (transformers 5.3.0 -> 5.5.0) belongs to this phase and closes only one of the two transformers advisories; 5.10.0 closes both.
 

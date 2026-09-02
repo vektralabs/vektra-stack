@@ -256,17 +256,17 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
-### DEBT-039: 30 known advisories ship inside the published image, all of them fixable
+### DEBT-039: 31 known advisories ship inside the published image, all of them fixable
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-09-02
 **Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02) and then auditing what that exposes.
 
-**Context**: GitHub reports 30 open Dependabot advisories on `develop`, 17 high and 12 moderate, **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
+**Context**: GitHub reports 31 open Dependabot advisories on `develop`, 17 high and 13 moderate (30 when this entry was first written a few hours earlier: **the number moves**, which is why the acceptance criteria below ask for the remaining count rather than fixing a target), **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
 
 | Package | In the image | Advisories | First patched |
 |---|---|---|---|
 | pillow | 12.2.0 | 13 | 12.3.0 |
-| pypdf | 6.14.2 | 5 | 6.16.1 |
+| pypdf | 6.14.2 | 6 | 6.16.2 |
 | aiohttp | 3.14.1 | 3 | 3.14.3 |
 | pyasn1 | 0.6.3 | 3 | 0.6.4 |
 | transformers | 5.3.0 | 2 | 5.10.0 |
@@ -277,11 +277,11 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 **None is unfixable**: every alert carries a `first_patched_version`, so there is no "no upstream fix yet" tail to argue about.
 
-**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 30 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
+**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 31 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
 
 **Two phases on purpose, in one entry because the second only makes sense after the first.** Splitting into two entries is a one-line edit if it ever needs separate scheduling.
 
-*Phase 1, low risk, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools. Closes **27 of the 30**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
+*Phase 1, low risk, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools. Closes **28 of the 31**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
 
 ```
 uv lock -P pillow -P pypdf -P aiohttp -P pyasn1 -P cryptography -P h2 -P setuptools

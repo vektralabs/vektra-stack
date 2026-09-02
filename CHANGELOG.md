@@ -17,6 +17,10 @@ Convention (Keep a Changelog 1.1.0):
 
 ## [Unreleased]
 
+### Fixed
+
+- **docker**: the `ollama` service healthcheck (`docker-compose.yml`, `local-llm` profile) shelled out to `curl`, which the `ollama/ollama` image does not ship, so the probe could never run: the container was reported `unhealthy` for its whole lifetime while the API served normally, and `dockerd` logged a warning on every 30s interval. This is the same defect fixed for `qdrant` in 0.7.0, on the one service that still carried it. Replaced with a `bash`-only check that opens `/dev/tcp` and matches the status line on `/api/tags`; `interval`, `timeout`, `retries` and `start_period` are unchanged. Verified against the pinned `ollama/ollama:0.17.0`: `curl`, `wget`, `nc` and `python3` are all absent and `bash` is present, the old command exits `127` inside the image, the new one exits `0` while the API serves and `1` with the port closed. `CMD-SHELL` would not have worked: `/bin/sh` in that image is `dash`, which cannot open `/dev/tcp`, so `bash` has to be invoked explicitly. The changelog entry was missed by the PR that shipped the fix (#128) and is recorded here.
+
 ## [0.7.0] - 2026-07-18
 
 ### Added

@@ -282,8 +282,12 @@ The controls matter: without them "no `.env` in the image" is also what an empty
 
 It runs in the `test-structure` job, which carries **no path filter** on purpose. Every other unit job is gated on `dorny/paths-filter`, and `test-shared` is gated on `vektra-shared/**`, so a PR that edits only `Dockerfile` or only `.dockerignore` matches no filter and skips them all. Those two files are precisely what this guard exists to watch. Same reasoning as DEBT-031, same job.
 
+**Found in review** (CodeRabbit on #133, both reproduced before being applied): the sweep check compared the **literal** source string, so `COPY ././ /app` slipped through although a real build copies the whole context with it (verified: a planted file at the context root landed in the image while the guard reported no sweep); and `copied_directories` skipped **wildcard** sources, so rewriting the Dockerfile as `COPY vektra-*/src ...` would have dropped all eight package directories from the check with the guard still green. Sources are now normalised with `posixpath.normpath` after leading slashes are stripped, the way a builder cleans them, and wildcard sources are expanded against the real tree instead of skipped. Both have their own mutants, and the sweep check carries the opposite control too: `vektra-shared/src`, `migrations/` and `alembic.ini` must **not** read as sweeps, so a check that flagged everything could not pass either.
+
 **Acceptance criteria**:
 - [x] A `COPY . .` (and `COPY ./`, and the `ADD ["./", ...]` form) fails the build
+- [x] Path-equivalent sweeps (`././`, `./.`, `.//`, `a/..`, `./*`, `/`, `*`) fail too, compared after normalisation rather than as literals
+- [x] A wildcard directory source is expanded, never silently skipped
 - [x] Dropping or un-`**`-ing the `.env` rule fails the build
 - [x] The guard proves it can say no: the mutants above are asserted, and the matcher is asserted **not** to exclude files the image needs, so a matcher that excluded everything cannot pass
 - [x] It runs where a Dockerfile-only PR reaches it

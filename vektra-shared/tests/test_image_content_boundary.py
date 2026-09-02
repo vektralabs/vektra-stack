@@ -29,6 +29,7 @@ hypothetical one.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import shlex
 from pathlib import Path
@@ -109,23 +110,47 @@ def context_copy_sources(dockerfile_text: str) -> list[str]:
     return sources
 
 
+def _normalise(source: str) -> str:
+    """The path Docker will actually resolve, not the string that was typed.
+
+    A builder cleans a COPY source and drops leading slashes before resolving it
+    against the context, so `././`, `./.` and `a/..` all name the context root.
+    Comparing the literal string sees three different strings and waves all three
+    through: reproduced against a real build, `COPY ././ /app` copies the entire
+    context, gitignored files included.
+    """
+    return posixpath.normpath(source.strip().lstrip("/") or ".")
+
+
 def sweeps_the_context_root(source: str) -> bool:
     """True when a source pulls in the whole context, dotfiles included."""
-    normalised = source.strip().rstrip("/")
-    return normalised in {"", ".", "./", "*", "/"} or normalised.startswith("..")
+    normalised = _normalise(source)
+    return normalised in {".", "", "*"} or normalised.startswith("..")
 
 
 def copied_directories(dockerfile_text: str) -> list[str]:
     """The COPY sources that are directories, i.e. the ones that can *contain* a file.
 
     A source naming a single file (`alembic.ini`, `vektra-shared/pyproject.toml`)
-    smuggles nothing on its own, and a glob that matches no directory is skipped;
+    smuggles nothing on its own. A **wildcard** source is expanded rather than
+    skipped: `COPY vektra-*/src ...` is a legitimate way to write this Dockerfile,
+    and skipping it would silently drop eight directories from the check while the
+    guard went on passing, which is the exact failure this file exists to prevent.
     `test_the_dockerfile_is_parsed` fails if this filter ever leaves nothing behind.
     """
-    directories = []
+    directories: list[str] = []
     for source in context_copy_sources(dockerfile_text):
-        base = source.strip().rstrip("/")
-        if base and (REPO_ROOT / base).is_dir():
+        base = _normalise(source)
+        if base in {".", ""} or base.startswith(".."):
+            continue  # a context sweep; the check above fails the build for it
+        if any(ch in base for ch in "*?["):
+            directories.extend(
+                str(match.relative_to(REPO_ROOT))
+                for match in REPO_ROOT.glob(base)
+                if match.is_dir()
+            )
+            continue
+        if (REPO_ROOT / base).is_dir():
             directories.append(base)
     return sorted(set(directories))
 
@@ -231,6 +256,31 @@ def test_the_guard_detects_a_context_sweep() -> None:
         assert any(sweeps_the_context_root(s) for s in context_copy_sources(form)), (
             f"a context sweep written as {form!r} slipped past the guard"
         )
+
+
+def test_the_guard_detects_a_sweep_written_as_an_equivalent_path() -> None:
+    """`COPY ././ /app` is the context root; only a normalised comparison sees it."""
+    for form in ("././", "./.", ".//", "a/..", "./*", "/", "*"):
+        sources = context_copy_sources(f"FROM x\nCOPY {form} /app\n")
+        assert any(sweeps_the_context_root(s) for s in sources), (
+            f"{form!r} resolves to the build context root and was not flagged"
+        )
+    for legitimate in ("vektra-shared/src", "migrations/", "alembic.ini"):
+        assert not sweeps_the_context_root(legitimate), (
+            f"{legitimate!r} read as a context sweep; a guard that flags everything "
+            "is as useless as one that flags nothing"
+        )
+
+
+def test_wildcard_directory_sources_are_expanded_not_skipped() -> None:
+    """A glob source must widen the check, never silently narrow it."""
+    expanded = copied_directories("FROM x\nCOPY vektra-*/src /app/src\n")
+    assert len(expanded) >= 8, (
+        f"a wildcard COPY source expanded to {expanded}: written that way, the "
+        "Dockerfile would drop those directories from the check and the guard "
+        "would still pass"
+    )
+    assert all(p.endswith("/src") for p in expanded), expanded
 
 
 def test_the_guard_detects_a_lost_dockerignore_rule() -> None:

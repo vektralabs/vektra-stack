@@ -256,6 +256,41 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
+### DEBT-038: the NFR-004 startup gate fails at random on GitHub runners
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-09-02
+**Origin**: the v0.7.1 release promotion PR #131, which went red on a tree that had just gone green.
+
+**Context**: `tests/nfr/test_nfr_hard.py::test_nfr_004_startup_time` asserts `startup_ms < 60_000` against the wall-clock time the CI job measures for the container to become healthy. That budget is a GitHub-runner measurement of a HARD NFR, and the runner's variance is now the same order as the headroom.
+
+Measured on 2026-09-02, all on identical code:
+
+| Run | Branch | SHA | `STARTUP_MS` | Result |
+|---|---|---|---|---|
+| 33624494935 | `chore/v0.7.1-release` | `349068c` | 45968 | pass |
+| 33626475891 | `develop` | `eb3ba70` | 44715 | pass |
+| 33626510441 | `develop` (PR #131) | `eb3ba70` | **62992** | **fail** |
+| 33626510441 (rerun) | `develop` (PR #131) | `eb3ba70` | 45715 | pass |
+
+The third and fourth rows are the **same job on the same commit**, and the second and third are the same commit measured 23 seconds apart. So the failure carries no information about the code: it is the runner, and `Integration tests + NFR gates` is a required check on both `develop` and `main`, so a random red blocks a merge until someone reruns it by hand.
+
+**Why medium**: a required check that fails for reasons unrelated to the diff trains everyone to rerun without reading, which is exactly how a real regression gets waved through. The direction of the error is the dangerous one: it looks like diligence.
+
+**Not to be fixed by raising the number until it stops hurting.** `requirements.md` NFR-004 reads: *Target <60 seconds to healthy, Minimum <60 seconds, Measurement: time from `docker compose up` to `/health` 200, Classification: HARD (blocks release)*. The test is therefore a faithful implementation of the requirement as written, and the requirement is what puts a shared 2-core runner in charge of a claim about an operator's machine. Options, in the order they should be considered:
+
+1. Keep the requirement, change where it is enforced: measure the budget on a machine the claim is about, and keep CI as a coarse regression guard with a wider bound (fail over 90s, warn over 60s). Smallest change, keeps a hard promise hard, stops runner variance from arbitrating it.
+2. Split the metric, which means **amending NFR-004's `Measurement` field**, not just the test: assert the application's own startup sequence (the ARCH-057 11 steps, which the app already times and logs) separately from image pull plus container create plus healthcheck poll. Bigger, and it changes what is promised, so it needs the requirement edited in the same pass or the doc and the code diverge.
+3. Record the distribution before choosing either: the four measures above are one afternoon, not a baseline.
+
+**Acceptance criteria**:
+- [ ] A decision recorded on what NFR-004 measures and where, not just a new threshold
+- [ ] The required check no longer goes red on an unchanged tree across at least 10 consecutive runs
+- [ ] `requirements.md` NFR-004 and `tests/nfr/test_nfr_hard.py` still agree after the change, whichever option is taken
+
+**Traceability**: NFR-004, `tests/nfr/test_nfr_hard.py`, `.github/workflows/integration.yml`.
+
+---
+
 ### DEBT-036: deferred minor findings from the v0.7.0 release review
 
 **Status**: planned | **Priority**: low | **Created**: 2026-07-18

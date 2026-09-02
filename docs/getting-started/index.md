@@ -58,7 +58,7 @@ versioned release instead of building locally:
 
 ```bash
 cp deploy/docker-compose.image.yml.example docker-compose.image.yml
-echo "VEKTRA_VERSION=0.7.0" >> .env   # pick a published tag; add -ocr for the OCR variant
+echo "VEKTRA_VERSION=0.7.1" >> .env   # pick a published tag; add -ocr for the OCR variant
 echo "COMPOSE_FILE=docker-compose.yml:docker-compose.image.yml" >> .env
 docker compose pull
 docker compose up -d

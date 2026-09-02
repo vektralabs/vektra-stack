@@ -256,6 +256,45 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
+### DEBT-039: 30 known advisories ship inside the published image, all of them fixable
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-09-02
+**Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02) and then auditing what that exposes.
+
+**Context**: GitHub reports 30 open Dependabot advisories on `develop`, 17 high and 12 moderate, **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
+
+| Package | In the image | Advisories | First patched |
+|---|---|---|---|
+| pillow | 12.2.0 | 13 | 12.3.0 |
+| pypdf | 6.14.2 | 5 | 6.16.1 |
+| aiohttp | 3.14.1 | 3 | 3.14.3 |
+| pyasn1 | 0.6.3 | 3 | 0.6.4 |
+| transformers | 5.3.0 | 2 | 5.10.0 |
+| cryptography | 49.0.0 | 1 | 50.0.0 |
+| h2 | 4.3.0 | 1 | 4.4.1 |
+| setuptools | 82.0.0 | 1 | 83.0.0 |
+| torch | 2.10.0+cpu | 1 | 2.13.0 |
+
+**None is unfixable**: every alert carries a `first_patched_version`, so there is no "no upstream fix yet" tail to argue about.
+
+**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 30 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
+
+**Two phases on purpose, in one entry because the second only makes sense after the first.** Splitting into two entries is a one-line edit if it ever needs separate scheduling.
+
+*Phase 1, low risk, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools. Patch or minor bumps of libraries with no bearing on retrieval quality, closing **27 of the 30**. A single coordinated `uv lock` pass, one PR, `make lint` + `make test` + the integration matrix are enough evidence.
+
+*Phase 2, measure before taking*: `transformers` 5.3.0 -> 5.10.0 and `torch` 2.10.0 -> 2.13.0. These carry the embedding model and the cross-encoder reranker, so "it builds and the tests pass" is **not** evidence that retrieval is unchanged: a bump here can move scores without failing anything. Run the eval corpus before and after and compare hit rate and MRR against the recorded Combo D baselines. The existing Dependabot PR #100 (transformers 5.3.0 -> 5.5.0) belongs to this phase and closes only one of the two transformers advisories; 5.10.0 closes both.
+
+**Acceptance criteria**:
+- [ ] Phase 1 merged, and the alert count for those seven packages is 0 (checked against the API, not assumed from the diff)
+- [ ] Phase 2 taken or explicitly deferred **with the eval numbers in hand**, not on the strength of a green suite
+- [ ] A patch release cut afterwards, so the images on GHCR actually carry the fixes: a merged bump that is never tagged changes nothing for anyone pulling
+- [ ] The remaining count is stated, including any alert deliberately not taken and why
+
+**Traceability**: INFRA-007 (the images exist), INFRA-008 (what else the image carries), the RAG tuning baselines for the Phase 2 comparison.
+
+---
+
 ### INFRA-008: nothing sensitive may reach the published image, checked rather than assumed
 
 **Status**: resolved (2026-09-02) | **Priority**: medium | **Created**: 2026-09-02 | **PR**: #133

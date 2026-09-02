@@ -111,7 +111,7 @@ These codes are used by specific components and are not part of the REQ-011 regi
 ### Deliberately not listed
 
 `ERR-QUOTA-001` (namespace quota exceeded) is defined in `vektra_shared/errors.py` and
-raised in `vektra-admin/quotas.py`, but `check_namespace_quota` has no production
+raised in `vektra_admin/quotas.py`, but `check_namespace_quota` has no production
 caller: the ingest wiring is still open as FEAT-025. Documenting it today would
 describe a response no client can receive. Add the row when the enforcement lands.
 

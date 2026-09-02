@@ -256,6 +256,43 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
+### INFRA-008: nothing sensitive may reach the published image, checked rather than assumed
+
+**Status**: resolved (2026-09-02) | **Priority**: medium | **Created**: 2026-09-02 | **PR**: #133
+**Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02). Verifying that the image carried nothing private turned up a second, live defect in the mechanism that was supposed to guarantee it.
+
+**Context**: `publish.yml` pushes two images on every `v*` tag, with no human between the push and the registry, and the package is now **public** and cannot be made private again. What kept secrets out was two conventions, neither of them checked: the Dockerfile copies named paths and never the context root, and `.dockerignore` excludes `.env`, `CLAUDE.local.md` and `.claude/`. Either could be removed by one edit with nothing going red.
+
+**The defect found while writing the check**: a `.dockerignore` entry without a slash matches **the context root only**. The file had `.env`, so `migrations/.env` and `vektra-*/src/.env` were never excluded, and the Dockerfile copies those directories whole. Measured against a real `docker build`, first with the old rules and then with the new ones, on a context mirroring the repo layout:
+
+| Planted file | Old `.dockerignore` | New `.dockerignore` |
+|---|---|---|
+| `migrations/.env` | **in the image** | excluded |
+| `vektra-shared/src/.env` | **in the image** | excluded |
+| `vektra-shared/src/vektra_shared/.env.local` | **in the image** | excluded |
+| `vektra-shared/src/CLAUDE.local.md` | **in the image** | excluded |
+| `vektra-learn/widget/src/.env` | **in the image** | excluded |
+| `migrations/env.py`, `config.py`, `api-client.js` (controls) | present | present |
+
+The controls matter: without them "no `.env` in the image" is also what an empty build context looks like.
+
+**Never exercised, and that is a measurement, not a hope**: no sensitive file has ever sat inside a copied directory (`find` over the working tree returns `.env`, `.env.example`, `CLAUDE.local.md` and `.claude/` at the **root** only), and CI builds from a git checkout, where an untracked file is not in the context at all. The four tracked paths matching the sensitive patterns are `.claude/CLAUDE.md`, `.claude/settings.json` and two scripts, all under the root `.claude/` that nothing copies. Direct inspection of the published `0.7.0` image agrees: no `.env` under `/app`, and zero hits passing the full node privacy denylist over its extracted code and the widget bundle, with an injected canary proving the scan could still say yes.
+
+**Resolution**: `.dockerignore` rules for secret-bearing files are `**`-prefixed (`**/.env`, `**/.env.*`, `**/CLAUDE.local.md`, `**/.claude/`, `**/.local/`, the last one new), and `vektra-shared/tests/test_image_content_boundary.py` fails if either convention regresses. It parses the Dockerfile (continuations, comments, the JSON array form, `--from=` stages skipped since those read a build stage and not the context), keeps the sources that are real directories, and asserts that for each of them every forbidden name is excluded by `.dockerignore`, one level down and deeper. It reasons about paths and never about what happens to be on disk: CI checks out a clean tree with no `.env` in it, so a guard that scanned the working tree would pass for the wrong reason on the very machine that publishes the image.
+
+It runs in the `test-structure` job, which carries **no path filter** on purpose. Every other unit job is gated on `dorny/paths-filter`, and `test-shared` is gated on `vektra-shared/**`, so a PR that edits only `Dockerfile` or only `.dockerignore` matches no filter and skips them all. Those two files are precisely what this guard exists to watch. Same reasoning as DEBT-031, same job.
+
+**Acceptance criteria**:
+- [x] A `COPY . .` (and `COPY ./`, and the `ADD ["./", ...]` form) fails the build
+- [x] Dropping or un-`**`-ing the `.env` rule fails the build
+- [x] The guard proves it can say no: the mutants above are asserted, and the matcher is asserted **not** to exclude files the image needs, so a matcher that excluded everything cannot pass
+- [x] It runs where a Dockerfile-only PR reaches it
+- [x] The `.dockerignore` gap it found is closed, verified with a real `docker build` in both directions and with positive controls
+
+**Traceability**: INFRA-007 (image publishing), DEBT-031 (the `test-structure` job and why it carries no path filter), ADR-0012.
+
+---
+
 ### DEBT-038: the NFR-004 startup gate fails at random on GitHub runners
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-09-02

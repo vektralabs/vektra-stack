@@ -207,7 +207,7 @@ jobs:
   #
   # It parses the Makefile and the workflows; it runs no suite and needs no services.
   test-structure:
-    name: Structural guards (suite execution, env isolation)
+    name: Structural guards (suite execution, env isolation, image boundary)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -219,11 +219,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --dev --frozen --package vektra-shared
-      - name: Check every suite is executed, and every package is env-isolated
+      - name: Check suite execution, env isolation, and the image content boundary
         run: >
           uv run pytest
           vektra-shared/tests/test_suite_execution_coverage.py
           vektra-shared/tests/test_env_isolation_coverage.py
+          vektra-shared/tests/test_image_content_boundary.py
           -v --tb=short
 
   # Aggregator job used as the single required status check in branch protection.

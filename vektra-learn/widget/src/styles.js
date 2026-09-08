@@ -114,6 +114,7 @@ export function buildStyles(theme) {
   gap: 4px;
 }
 .vektra-chat-new,
+.vektra-chat-delete,
 .vektra-chat-close {
   background: none;
   border: none;
@@ -123,12 +124,19 @@ export function buildStyles(theme) {
   padding: 4px;
   line-height: 1;
 }
-.vektra-chat-new {
+.vektra-chat-new,
+.vektra-chat-delete {
   font-size: 16px;
 }
 .vektra-chat-new:hover,
+.vektra-chat-delete:hover,
 .vektra-chat-close:hover {
   color: ${t.text};
+}
+/* Armed state of the two-step delete: the icon says what the next click does. */
+.vektra-chat-delete.armed {
+  color: #c0392b;
+  transform: scale(1.15);
 }
 
 .vektra-chat-messages {

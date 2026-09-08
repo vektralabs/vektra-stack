@@ -78,6 +78,26 @@ function _writeStored(courseId, conversationId) {
   }
 }
 
+// A "new chat" or a deletion is a decision, not an accident: remember it for
+// this tab so the server-side resume (FEAT-027) does not undo it on reload.
+const FRESH_PREFIX = "vektra-fresh:";
+
+function _markFreshStart(courseId) {
+  try {
+    window.sessionStorage.setItem(FRESH_PREFIX + courseId, String(Date.now()));
+  } catch {
+    // ignore
+  }
+}
+
+function _startedFresh(courseId) {
+  try {
+    return window.sessionStorage.getItem(FRESH_PREFIX + courseId) !== null;
+  } catch {
+    return false;
+  }
+}
+
 function _clearStored(courseId) {
   try {
     window.sessionStorage.removeItem(STORAGE_PREFIX + courseId);
@@ -196,6 +216,26 @@ function _clearStored(courseId) {
         // creates a fresh conversation.
         _clearStored(courseId);
         client.setConversationId(null);
+        // Server-side history exists now (FEAT-027), so "new chat" has to be
+        // remembered for this tab: without the marker, the next load would
+        // helpfully resume the very conversation the student just left.
+        _markFreshStart(courseId);
+      },
+      async onDeleteHistory() {
+        const target = client.getConversationId() || (await _resolveConversationId());
+        if (!target) {
+          // Nothing stored server-side: the local reset is the whole deletion.
+          _clearStored(courseId);
+          _markFreshStart(courseId);
+          return true;
+        }
+        const deleted = await client.deleteConversation(target);
+        if (deleted) {
+          _clearStored(courseId);
+          _markFreshStart(courseId);
+          client.setConversationId(null);
+        }
+        return deleted;
       },
     });
 
@@ -209,14 +249,28 @@ function _clearStored(courseId) {
     // message. The fetch has an 8s timeout (api-client.js) so the input
     // lock never persists indefinitely. Any failure keeps the stored id
     // for the next load.
-    async function restoreConversation() {
+    // Which conversation to offer: the one this tab was using, or — when the
+    // tab has none, which is every new device, browser or reopened window —
+    // the student's most recent one on the server (FEAT-027). The server
+    // knows it because conversations are owned by the token's subject; before
+    // that, history could not outlive a sessionStorage entry.
+    async function _resolveConversationId() {
       const stored = _readStored(courseId);
-      if (!stored) return;
+      if (stored) return stored.conversation_id;
+      if (_startedFresh(courseId)) return null;
+      const mine = await client.listConversations(1);
+      return mine.length > 0 ? mine[0].conversation_id : null;
+    }
+
+    async function restoreConversation() {
       ui.setRestoring(true);
       try {
-        const payload = await client.getConversationTurns(stored.conversation_id);
+        const conversationId = await _resolveConversationId();
+        if (!conversationId) return;
+        const payload = await client.getConversationTurns(conversationId);
         if (payload && Array.isArray(payload.turns) && payload.turns.length > 0) {
-          client.setConversationId(stored.conversation_id);
+          client.setConversationId(conversationId);
+          _writeStored(courseId, conversationId);
           ui.replayTurns(payload.turns);
         } else {
           // Returned null (404/403) or empty turns — abandon stored id

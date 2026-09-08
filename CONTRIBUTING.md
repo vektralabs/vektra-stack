@@ -128,7 +128,11 @@ git commit --allow-empty -m "chore: verify signing setup"
 git log --show-signature -1   # should show "Good ssh signature"
 
 # 5. Test tags too: the settings are independent, so this can fail while step 4 passes
-git tag -a -m probe _probe && git verify-tag _probe && git tag -d _probe
+git tag -a -m probe _probe
+git verify-tag _probe; signed=$?
+git tag -d _probe   # unconditionally: a leftover _probe makes the next run die on
+                    # "tag already exists", hiding the "no signature found" you came for
+[ $signed -eq 0 ] && echo "tags are signed" || echo "tags are NOT signed: set tag.gpgsign"
 ```
 
 **Remote servers without browser**: use `gh auth login --with-token` and add the
@@ -175,10 +179,20 @@ Pushing the tag is what triggers `publish.yml` to build and push
 cheap to redo**: moving it re-triggers the build and the images come back with
 different digests, so verify the signature *before* pushing rather than after.
 
-Finally, create the GitHub Release from the CHANGELOG section
-(`gh release create vX.Y.Z --notes-file ...`). Nothing does this automatically:
-`release.yml` is a disabled placeholder, and the Releases page silently fell three
-versions behind before anyone noticed.
+Finally, create the GitHub Release. Nothing does this automatically: `release.yml` is a
+disabled placeholder, and the Releases page silently fell three versions behind before
+anyone noticed. The notes are the CHANGELOG section for the version, so extract it to a
+file rather than retyping it:
+
+```bash
+# everything between this version's heading and the next one
+awk '/^## \[X\.Y\.Z\]/{f=1; next} /^## \[/{f=0} f' CHANGELOG.md > /tmp/notes-X.Y.Z.md
+
+gh release create vX.Y.Z \
+  --title "vX.Y.Z - <one-line theme>" \
+  --notes-file /tmp/notes-X.Y.Z.md \
+  --verify-tag        # fails instead of creating a tag if vX.Y.Z is not pushed yet
+```
 
 ## PR workflow
 

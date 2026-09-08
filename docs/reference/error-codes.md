@@ -96,6 +96,7 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-LEARN-004 | vektra-learn | 409 | Duplicate enrollment (student already enrolled in course) |
 | ERR-LEARN-005 | vektra-learn | 404 | Conversation not found (GET conversations/turns) |
 | ERR-LEARN-006 | vektra-learn | 403 | Conversation belongs to a different course/namespace |
+| ERR-LEARN-007 | vektra-learn | 403 | Conversation belongs to another student, or predates per-student ownership |
 | ERR-CONV-001 | vektra-core / vektra-admin | 404 | Conversation not found (core `GET`/`DELETE conversations/{id}`, admin turns) |
 | ERR-CONV-002 | vektra-core / vektra-admin | 503 | Persistent conversation store not available (starting up, or none configured) |
 | ERR-CONV-003 | vektra-admin | 501 | Configured conversation store cannot return decrypted turns (in-memory store) |

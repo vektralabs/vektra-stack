@@ -471,6 +471,7 @@ class TestConversationTurnsEndpoint:
             return_value={
                 "id": cid,
                 "namespace_id": "CS101",
+                "owner_subject": "s1",
                 "deleted_at": None,
                 "turn_count": 2,
             }
@@ -616,6 +617,7 @@ class TestConversationTurnsEndpoint:
             return_value={
                 "id": cid,
                 "namespace_id": "shared-materials",
+                "owner_subject": "s1",
                 "deleted_at": None,
                 "turn_count": 0,
             }
@@ -670,6 +672,7 @@ class TestConversationTurnsEndpoint:
             return_value={
                 "id": cid,
                 "namespace_id": "CS101",
+                "owner_subject": "s1",
                 "deleted_at": None,
                 "turn_count": 0,
             }
@@ -892,3 +895,209 @@ class TestCourseQueryTopKBounds:
             )
         assert resp.status_code != 422
         assert resp.json()["error"]["code"] == "ERR-LEARN-003"
+
+
+class TestConversationOwnership:
+    """Per-student ownership of conversations (FEAT-027)."""
+
+    @staticmethod
+    def _make_request(conv_store):
+        app = MagicMock()
+        registry = MagicMock()
+        registry.get = MagicMock(return_value=conv_store)
+        app.state.registry = registry
+        request = MagicMock()
+        request.app = app
+        return request
+
+    @staticmethod
+    def _store_with_meta(owner):
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": uuid4(),
+                "namespace_id": "CS101",
+                "owner_subject": owner,
+                "deleted_at": None,
+                "turn_count": 1,
+            }
+        )
+        conv_store.get_turns_detail = AsyncMock(return_value=[])
+        return conv_store
+
+    async def test_another_students_conversation_is_refused(self):
+        """The hole this closes: same course, same token shape, other student."""
+        from vektra_learn.api import get_conversation_turns
+
+        conv_store = self._store_with_meta("student-b")
+        request = self._make_request(conv_store)
+
+        with pytest.raises(HTTPException) as exc:
+            await get_conversation_turns(
+                uuid4(),
+                request,
+                MagicMock(),
+                {"sub": "student-a", "course_id": "CS101"},
+            )
+
+        assert exc.value.status_code == 403
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-007"
+        # The refusal happens before any content is decrypted.
+        conv_store.get_turns_detail.assert_not_called()
+
+    async def test_ownerless_conversation_is_refused(self):
+        """Rows predating ownership are nobody's, not everybody's."""
+        from vektra_learn.api import get_conversation_turns
+
+        conv_store = self._store_with_meta(None)
+        request = self._make_request(conv_store)
+
+        with pytest.raises(HTTPException) as exc:
+            await get_conversation_turns(
+                uuid4(),
+                request,
+                MagicMock(),
+                {"sub": "student-a", "course_id": "CS101"},
+            )
+
+        assert exc.value.status_code == 403
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-007"
+
+    async def test_own_conversation_is_returned(self):
+        from vektra_learn.api import get_conversation_turns
+
+        conv_store = self._store_with_meta("student-a")
+        request = self._make_request(conv_store)
+
+        resp = await get_conversation_turns(
+            uuid4(), request, MagicMock(), {"sub": "student-a", "course_id": "CS101"}
+        )
+        assert resp.namespace == "CS101"
+
+    async def test_token_without_subject_is_refused(self):
+        """No subject means no ownership; it must not fall back to the course."""
+        from vektra_learn.api import get_conversation_turns
+
+        conv_store = self._store_with_meta("student-a")
+        request = self._make_request(conv_store)
+
+        with pytest.raises(HTTPException) as exc:
+            await get_conversation_turns(
+                uuid4(), request, MagicMock(), {"course_id": "CS101"}
+            )
+
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-003"
+
+    async def test_list_returns_only_the_callers_conversations(self):
+        from vektra_learn.api import list_my_conversations
+
+        now = datetime.now(UTC)
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock()
+        conv_store.list_conversations = AsyncMock(
+            return_value=[
+                {
+                    "id": uuid4(),
+                    "title": None,
+                    "turn_count": 3,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ]
+        )
+        request = self._make_request(conv_store)
+
+        resp = await list_my_conversations(
+            request, 20, {"sub": "student-a", "course_id": "CS101"}
+        )
+
+        assert len(resp.conversations) == 1
+        assert resp.namespace == "CS101"
+        conv_store.list_conversations.assert_awaited_once_with(
+            namespace_id="CS101", owner_subject="student-a", limit=20
+        )
+
+    async def test_delete_is_scoped_to_the_caller(self):
+        from vektra_learn.api import delete_my_conversation
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock()
+        conv_store.soft_delete = AsyncMock(return_value=True)
+        request = self._make_request(conv_store)
+        bg = MagicMock()
+
+        resp = await delete_my_conversation(
+            cid, request, bg, {"sub": "student-a", "course_id": "CS101"}
+        )
+
+        assert resp.status_code == 204
+        conv_store.soft_delete.assert_awaited_once_with(
+            cid, namespace="CS101", owner_subject="student-a"
+        )
+        assert bg.add_task.call_args.kwargs["action"] == "learn_conversation_deleted"
+
+    async def test_deleting_someone_elses_conversation_is_a_404(self):
+        """Not 403: a student must not learn which conversation ids exist."""
+        from vektra_learn.api import delete_my_conversation
+
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock()
+        conv_store.soft_delete = AsyncMock(return_value=False)
+        request = self._make_request(conv_store)
+
+        with pytest.raises(HTTPException) as exc:
+            await delete_my_conversation(
+                uuid4(),
+                request,
+                MagicMock(),
+                {"sub": "student-a", "course_id": "CS101"},
+            )
+
+        assert exc.value.status_code == 404
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-005"
+
+
+class TestConversationOwnerRecording:
+    """The query endpoint is the only place a conversation's owner is set."""
+
+    async def test_query_records_the_token_subject_as_owner(self):
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        req = CourseQueryRequest(question="What is ML?")
+
+        conv_store = MagicMock()
+        conv_store.ensure_conversation = AsyncMock()
+
+        mock_pipeline = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response_id = uuid4()
+        mock_response.answer = "ML is..."
+        mock_response.sources = []
+        mock_response.conversation_id = uuid4()
+        mock_response.no_relevant_context = False
+        mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
+
+        def _get(category, name="default"):
+            return conv_store if category == "conversation_store" else mock_pipeline
+
+        mock_app = MagicMock()
+        mock_app.state.learn_require_enrollment = False
+        mock_registry = MagicMock()
+        mock_registry.get = MagicMock(side_effect=_get)
+        mock_app.state.registry = mock_registry
+        mock_request = MagicMock()
+        mock_request.app = mock_app
+
+        await course_query(
+            req,
+            mock_request,
+            {"sub": "student-a", "course_id": "CS101"},
+            MagicMock(),
+            AsyncMock(),
+        )
+
+        kwargs = conv_store.ensure_conversation.call_args.kwargs
+        assert kwargs["owner_subject"] == "student-a"
+        assert kwargs["namespace_id"] == "CS101"

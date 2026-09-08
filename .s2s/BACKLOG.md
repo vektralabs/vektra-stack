@@ -22,6 +22,39 @@
 
 ## Planned
 
+### BUG-027: the published image cannot start on a pre-x86-64-v2 CPU
+
+**Status**: completed (2026-09-08) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: production deployment on the university VM (2026-09-02). The GHCR image would not boot; the host has been running a hand-patched derivative ever since.
+
+**Context**: the deployment VM's CPU predates x86-64-v2 (`lscpu` shows `sse4_2` but no `popcnt`, no `avx`, so it is not a v2 host). Every numpy >= 2.0 x86_64 wheel on PyPI is built with an X86_V2 baseline and executes a v2 instruction while loading, so `import numpy` aborts the interpreter — before the ARCH-057 startup sequence, before any structured error, with `Illegal instruction (core dumped)` or numpy's own `RuntimeError: NumPy was built with baseline optimizations: (X86_V2)`. Since numpy backs embeddings and the whole retrieval path, nothing in Vektra runs.
+
+The workaround in production is an image derived from the published one (`FROM ghcr.io/vektralabs/vektra:0.7.1`, `ensurepip` then `pip install "numpy<2"`, deployed as `0.7.1-np1`). It works — numpy 1.26.4 with scipy 1.17, scikit-learn 1.8, onnxruntime 1.24, torch 2.10+cpu, fastembed 0.8, sentence-transformers 5.2, transformers 5.3 all import and serve — but it lives outside the repository and has to be rebuilt by hand after every release. That is the defect: not that the host is old, but that the repository does not know it exists.
+
+**Resolution**: `[tool.uv] constraint-dependencies = ["numpy<2"]` in the root pyproject, lock regenerated. A constraint rather than a dependency, because no workspace package imports numpy: it arrives transitively through sentence-transformers, scipy, scikit-learn, fastembed, onnxruntime, torch, qdrant-client and pgvector.
+
+Resolution impact, measured on the container's environment (linux, x86_64, CPython 3.12) by evaluating the lock's markers rather than reading uv's universal-resolution summary:
+
+- standard image (`--extra sparse --extra qdrant`): numpy 2.4.2 -> 1.26.4 is the only change. torch 2.10.0+cpu, transformers 5.3.0, scipy 1.17.0, scikit-learn 1.8.0, onnxruntime 1.24.2, sentence-transformers 5.2.3, fastembed 0.8.0, qdrant-client 1.17.0 unmoved.
+- OCR image (`--extra ocr`): unstructured 0.21.5 -> 0.18.32, unstructured-inference 1.5.2 -> 1.1.1, opencv-python 4.13 -> 4.11. Production runs the standard variant; if that host ever needs OCR, the choice has to be made again.
+- every package with an open advisory under DEBT-039 keeps its exact version (pillow 12.2.0, pypdf 6.14.2, aiohttp 3.14.1, pyasn1 0.6.3, cryptography 49.0.0, h2 4.3.0, setuptools 82.0.0, torch 2.10.0): the constraint reopens nothing.
+
+**Verification** (three levels, because none of the cheap ones can see the real failure):
+1. unit guard `vektra-index/tests/test_numpy_cpu_baseline.py` — the wheel's compiled-in `__cpu_baseline__` must stay within `{SSE, SSE2, SSE3}`. A property of the wheel, so a runner supporting AVX-512 still gives a real verdict; negative control run by forcing `platform.machine()` to x86_64 on arm64.
+2. integration step under `qemu-x86_64 -cpu qemu64,+sse3`, which masks CPUID exactly like the target host. Measured in a scratch amd64 container: numpy 1.26.4 imports (baseline `['SSE', 'SSE2', 'SSE3']`), numpy 2.4.2 dies with `uncaught target signal 4 (Illegal instruction)`. A control asserts the emulation really masks POPCNT/SSE41/SSE42 first, since otherwise the check would pass on any CPU.
+3. manual run of the image on the VM itself before the release is tagged (`/health` 200 plus one real query).
+
+**Traceability**: INFRA-007 (the GHCR publish flow this unblocks), DEBT-039 (advisory sweep, unaffected)
+
+**Acceptance criteria**:
+- [x] numpy pinned in the lock, with the resolution delta measured rather than assumed
+- [x] regression guard on the wheel baseline
+- [x] the image is exercised on an emulated pre-v2 CPU in CI, with a control that proves the emulation masks
+- [x] CPU requirement, host check and OCR caveat documented for operators
+- [ ] verified on the production VM and the hand-patched `0.7.1-np1` image retired
+
+---
+
 ### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
 
 **Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #102

@@ -8,6 +8,49 @@ Get Vektra running and execute your first RAG query. Total time: under 30 minute
 - GNU Make (for `make health`, `make demo`, etc.) or run the equivalent commands directly
 - 4 GB free RAM (embedding model loads at startup)
 - An LLM provider: either [Ollama](https://ollama.com) running locally, or an OpenAI / Anthropic API key
+- An x86-64 or arm64 CPU. No instruction-set extensions are required beyond the
+  x86-64 baseline — see [CPU requirements](#cpu-requirements) if you run on an
+  older virtualised host
+
+### CPU requirements
+
+Vektra runs on plain x86-64 (and on arm64). It does **not** require x86-64-v2, which
+matters on virtual machines whose hypervisor exposes a conservative CPU model: those
+guests often report `sse4_2` but no `popcnt`, and are therefore not v2 hosts.
+
+The constraint is not ours, it is numpy's. Every numpy 2.x x86_64 wheel on PyPI is
+compiled with an X86_V2 baseline and executes a v2 instruction while loading, so on
+such a host `import numpy` kills the interpreter — the container never reaches its
+startup validation and reports either
+
+```
+RuntimeError: NumPy was built with baseline optimizations: (X86_V2)
+but your machine doesn't support: (X86_V2).
+```
+
+or a bare `Illegal instruction (core dumped)`, depending on which check trips first.
+The published image therefore pins numpy to the 1.26 line, whose wheels keep an SSE3
+baseline. Nothing in Vektra calls numpy directly; the pin exists solely to keep the
+image bootable on these hosts, and CI verifies it on an emulated pre-v2 CPU on every
+integration run.
+
+To check a host before deploying:
+
+```bash
+lscpu | grep -o -E 'sse4_2|popcnt|avx' | sort -u   # a v2 CPU shows all three
+docker run --rm ghcr.io/vektralabs/vektra:0.7.1 \
+  python -c "import numpy; print(numpy.__version__)"
+```
+
+Two consequences worth knowing:
+
+- **The OCR image variant (`-ocr`) is not covered by the same evidence.** Holding
+  numpy on 1.26 also holds `unstructured` at 0.18.x in that variant. The standard
+  image is what production runs and what the CPU check above exercises; if you need
+  OCR on a pre-v2 host, validate that variant separately.
+- **If your hypervisor can expose a modern CPU model** (`host` passthrough, or any
+  model with POPCNT), prefer that: it removes the constraint entirely and lets the
+  stack follow current numpy.
 
 ## 1. Clone and configure
 
@@ -200,6 +243,14 @@ The LLM provider string is not recognized by litellm. Use the format `provider/m
 ### Health endpoint returns 503
 
 The stack is starting. Wait up to 60 seconds for the embedding model to load. If it persists, check `docker compose logs vektra` for startup errors.
+
+### Container exits immediately, `Illegal instruction` or `NumPy was built with baseline optimizations`
+
+The host CPU is older than the wheels in the image expect. See
+[CPU requirements](#cpu-requirements): every release after 0.7.1 is built against numpy
+1.26 for exactly this case, so upgrading the image is the fix. On 0.7.1 and earlier,
+derive a patched image (`FROM ghcr.io/vektralabs/vektra:0.7.1` plus a numpy downgrade)
+or move the VM to a CPU model that exposes POPCNT.
 
 ### Bootstrap key rejected
 

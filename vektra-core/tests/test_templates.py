@@ -173,3 +173,45 @@ def test_render_context_without_title_key_unchanged():
     result = renderer.render_context(chunks)
     assert '<source id="1">Plain chunk.</source>' in result
     assert "title=" not in result
+
+
+# ---------------------------------------------------------------------------
+# Non-citable sources (FEAT-026)
+# ---------------------------------------------------------------------------
+
+
+def test_render_context_marks_non_citable_source():
+    """A withheld source is numbered like any other, but flagged uncitable."""
+    renderer = TemplateRenderer()
+    chunks = [
+        {"text": "Public chunk.", "score": 0.9, "citable": True},
+        {"text": "Publisher chunk.", "score": 0.8, "citable": False},
+    ]
+    result = renderer.render_context(chunks)
+    assert '<source id="1">Public chunk.</source>' in result
+    assert '<source id="2" citable="false">Publisher chunk.</source>' in result
+
+
+def test_render_context_without_citable_key_unchanged():
+    """Callers that never set 'citable' render exactly as before FEAT-026."""
+    renderer = TemplateRenderer()
+    chunks = [{"text": "Plain chunk.", "score": 0.5}]
+    result = renderer.render_context(chunks)
+    assert result == '<context>\n<source id="1">Plain chunk.</source>\n</context>'
+
+
+def test_render_system_citations_enabled_forbids_citing_uncitable_sources():
+    renderer = TemplateRenderer()
+    result = renderer.render_system(citations_enabled=True, has_context=True)
+    assert 'citable="false"' in result
+    # The rule must protect the attribution without discouraging use: hidden
+    # material is ingested precisely so it can inform answers.
+    assert "draw on its content as" in result
+    assert "attribute" in result
+
+
+def test_render_system_citations_disabled_says_nothing_about_citable():
+    """With citations off, rule 1 already forbids mentioning any source."""
+    renderer = TemplateRenderer()
+    result = renderer.render_system(citations_enabled=False, has_context=True)
+    assert 'citable="false"' not in result

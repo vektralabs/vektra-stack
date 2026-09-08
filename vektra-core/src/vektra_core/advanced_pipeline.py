@@ -62,6 +62,7 @@ from vektra_shared.types import (
     SearchResult,
     SourceRef,
     StepTrace,
+    is_hidden_source,
 )
 
 log = structlog.get_logger(__name__)
@@ -556,9 +557,14 @@ class AdvancedQueryPipeline:
                     {
                         "text": r.text_snippet,
                         "score": r.score,
+                        # A hidden source is used but never attributed
+                        # (FEAT-026), so it carries neither a citation marker
+                        # nor a title the model could quote in prose.
+                        "citable": not is_hidden_source(r.metadata),
                         "title": (
                             self._chunk_title(r, _names)
                             if query.citations_enabled
+                            and not is_hidden_source(r.metadata)
                             else None
                         ),
                     }
@@ -669,9 +675,15 @@ class AdvancedQueryPipeline:
                 metadata={
                     "requested": len(selected_chunks),
                     "resolved": len(name_map),
+                    "sources_withheld": sum(
+                        1 for r in selected_chunks if is_hidden_source(r.metadata)
+                    ),
                 },
             )
         )
+        visible_chunks = [
+            r for r in selected_chunks if not is_hidden_source(r.metadata)
+        ]
         sources = [
             SourceRef(
                 doc_id=r.document_id,
@@ -685,7 +697,7 @@ class AdvancedQueryPipeline:
                     self._chunk_title(r, name_map) if query.citations_enabled else None
                 ),
             )
-            for r in selected_chunks
+            for r in visible_chunks
         ]
 
         # Step 8: LLM call with graceful degradation
@@ -942,9 +954,15 @@ class AdvancedQueryPipeline:
                 metadata={
                     "requested": len(selected_chunks),
                     "resolved": len(name_map),
+                    "sources_withheld": sum(
+                        1 for r in selected_chunks if is_hidden_source(r.metadata)
+                    ),
                 },
             )
         )
+        visible_chunks = [
+            r for r in selected_chunks if not is_hidden_source(r.metadata)
+        ]
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -958,7 +976,7 @@ class AdvancedQueryPipeline:
                     self._chunk_title(r, name_map) if query.citations_enabled else None
                 ),
             }
-            for r in selected_chunks
+            for r in visible_chunks
         ]
         yield QueryChunk(type="sources", data=sources_data)
 

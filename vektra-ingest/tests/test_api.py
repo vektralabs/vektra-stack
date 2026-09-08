@@ -649,3 +649,159 @@ async def test_job_status_not_found_returns_404():
             )
 
     assert resp.status_code in (404, 500)
+
+
+# ---------------------------------------------------------------------------
+# Per-document metadata (FEAT-026)
+# ---------------------------------------------------------------------------
+
+
+def _parse(raw):
+    """Call the form parser, returning either its value or the raised code."""
+    from fastapi import HTTPException
+
+    from vektra_ingest.api import _parse_metadata_form
+
+    try:
+        return _parse_metadata_form(raw)
+    except HTTPException as exc:
+        return exc.status_code, exc.detail["error"]["code"]
+
+
+def test_metadata_absent_is_not_an_empty_object():
+    """An absent field attaches nothing, and says so as None rather than {}."""
+    assert _parse(None) is None
+    assert _parse("{}") == {}
+
+
+def test_metadata_accepts_scalars_and_the_reserved_flag():
+    parsed = _parse(
+        '{"hidden_from_students": true, "course_id": "INF-2026", "week": 3}'
+    )
+    assert parsed == {
+        "hidden_from_students": True,
+        "course_id": "INF-2026",
+        "week": 3,
+    }
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not json at all",
+        '["a", "list"]',
+        '"a string"',
+        '{"Course-Id": "x"}',  # key outside [a-z][a-z0-9_]*
+        '{"nested": {"a": 1}}',  # values must be scalar
+        '{"tags": ["a"]}',
+        '{"course_id": null}',  # null is not a scalar we store
+    ],
+)
+def test_metadata_rejects_malformed_payloads(raw):
+    assert _parse(raw) == (422, "ERR-INGEST-005")
+
+
+def test_metadata_rejects_oversized_payload():
+    raw = '{"note": "' + "x" * 5000 + '"}'
+    assert _parse(raw) == (422, "ERR-INGEST-005")
+
+
+@pytest.mark.parametrize("value", ['"true"', '"false"', "1", "0"])
+def test_hidden_flag_must_be_a_real_boolean(value):
+    """A quoted "false" is truthy in Python: coercing here would hide everything."""
+    assert _parse(f'{{"hidden_from_students": {value}}}') == (422, "ERR-INGEST-005")
+
+
+@pytest.mark.asyncio
+async def test_ingest_passes_metadata_to_the_pipeline():
+    """The flag reaches run_ingest, which merges it into every chunk."""
+    app = _make_app()
+
+    with patch("vektra_ingest.api.run_ingest") as mock_ingest:
+        from vektra_ingest.pipeline import IngestResult
+
+        mock_ingest.return_value = IngestResult(
+            status="new", document_id=uuid4(), chunk_count=3
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post(
+                "/api/v1/ingest",
+                files={"file": ("lecture.pdf", _make_pdf_file())},
+                data={"metadata": '{"hidden_from_students": true}'},
+                headers={"Authorization": "Bearer token"},
+            )
+
+    assert resp.status_code == 200
+    assert mock_ingest.call_args.kwargs["extra_metadata"] == {
+        "hidden_from_students": True
+    }
+
+
+@pytest.mark.asyncio
+async def test_ingest_without_metadata_passes_none():
+    app = _make_app()
+
+    with patch("vektra_ingest.api.run_ingest") as mock_ingest:
+        from vektra_ingest.pipeline import IngestResult
+
+        mock_ingest.return_value = IngestResult(
+            status="new", document_id=uuid4(), chunk_count=3
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post(
+                "/api/v1/ingest",
+                files={"file": ("lecture.pdf", _make_pdf_file())},
+                headers={"Authorization": "Bearer token"},
+            )
+
+    assert resp.status_code == 200
+    assert mock_ingest.call_args.kwargs["extra_metadata"] is None
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejects_bad_metadata_before_reading_the_file():
+    """Invalid metadata is the caller's mistake: 422, and no ingestion runs."""
+    app = _make_app()
+
+    with patch("vektra_ingest.api.run_ingest") as mock_ingest:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post(
+                "/api/v1/ingest",
+                files={"file": ("lecture.pdf", _make_pdf_file())},
+                data={"metadata": '{"hidden_from_students": "true"}'},
+                headers={"Authorization": "Bearer token"},
+            )
+
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "ERR-INGEST-005"
+    mock_ingest.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_batch_ingest_rejects_bad_metadata_for_the_whole_request():
+    """Half a batch ingested without the visibility flag is worse than none."""
+    app = _make_app()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            "/api/v1/ingest/batch",
+            files=[
+                ("files", ("a.pdf", _make_pdf_file(), "application/pdf")),
+                ("files", ("b.pdf", _make_pdf_file(), "application/pdf")),
+            ],
+            data={"metadata": '{"nested": {"no": 1}}'},
+            headers={"Authorization": "Bearer token"},
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "ERR-INGEST-005"

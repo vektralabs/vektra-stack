@@ -95,6 +95,7 @@ async def ingest_document_task(
     namespace_id: str,
     filename: str,
     file_bytes: bytes,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> None:
     """arq task: perform async document ingestion.
 
@@ -104,6 +105,10 @@ async def ingest_document_task(
         namespace_id: Target namespace.
         filename: Original filename.
         file_bytes: Raw file content.
+        extra_metadata: Per-document metadata from the ingest request, merged
+            into every chunk (FEAT-026). Defaults to None so a job enqueued by
+            a previous version, still sitting in the queue across a deploy,
+            runs with the signature it was serialized against.
     """
     job_uuid = UUID(job_id)
     registry = ctx.get("registry")
@@ -142,6 +147,7 @@ async def ingest_document_task(
                 session=session,
                 registry=registry,
                 on_phase=_on_phase,
+                extra_metadata=extra_metadata,
             )
 
         await _update_job(

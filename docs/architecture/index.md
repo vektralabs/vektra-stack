@@ -33,7 +33,7 @@ Optional profiles:
 
 Architecture documentation is maintained in the `.s2s/` directory:
 
-- [`.s2s/architecture.md`](../../.s2s/architecture.md) - arc42 architecture document (64 decisions, 9 Protocol interfaces)
+- [`.s2s/architecture.md`](../../.s2s/architecture.md) - arc42 architecture document (64 decisions, 10 Protocol interfaces)
 - [`.s2s/decisions/`](../../.s2s/decisions/) - Architecture Decision Records (ADR-0001 through ADR-0025)
 - [`.s2s/requirements.md`](../../.s2s/requirements.md) - Software Requirements Specification (61 REQs, 13 NFRs)
 
@@ -55,10 +55,10 @@ Architecture documentation is maintained in the `.s2s/` directory:
 
 ### Protocol interfaces
 
-Vektra defines 9 Protocol interfaces in `vektra_shared` for pluggability:
+Vektra defines 10 Protocol interfaces in `vektra_shared` for pluggability:
 
 1. **LLMProvider** - multi-provider LLM abstraction (litellm) with graceful degradation to fallback model and context-only mode.
-2. **EmbeddingProvider** - dense embedding generation. Default: `sentence-transformers` with `paraphrase-multilingual-MiniLM-L12-v2`.
+2. **EmbeddingProvider** - dense embedding generation. Default: `sentence-transformers` with `paraphrase-multilingual-MiniLM-L12-v2`. Phase 2: also `TEIEmbeddingProvider` against a remote Text Embeddings Inference server (`VEKTRA_EMBEDDING_PROVIDER=tei`).
 3. **SparseEmbeddingProvider** - sparse vectors for hybrid search. Phase 1: not registered. Phase 2: `FastEmbedBM25Provider` via `fastembed`.
 4. **VectorStoreProvider** - pluggable vector store with `SearchMode` enum (DENSE/SPARSE/HYBRID). Phase 1: pgvector. Phase 2: also Qdrant with native hybrid search.
 5. **DocumentExtractor** - PDF, DOCX, PPTX extraction. Phase 1: pdfplumber. Phase 2: also Unstructured (opt-in, adds OCR).
@@ -66,6 +66,7 @@ Vektra defines 9 Protocol interfaces in `vektra_shared` for pluggability:
 7. **QueryPipeline** - RAG pipeline orchestration returning `QueryResponse` + `QueryTrace`. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline (query rewriting, reranking, hybrid retrieval).
 8. **SafeguardHook** - pre/post query safeguards at the three trust boundaries. Phase 1: passthrough. Phase 2: also Presidio (PII detection with content modification, ARCH-049).
 9. **EventEmitter** - internal event hooks. Phase 1: NoOpEventEmitter. Phase 2: WebhookEventEmitter (HMAC-SHA256 signed HTTP POST, activated via `VEKTRA_WEBHOOK_URL`).
+10. **KeyStoreProvider** - API key lookup for the auth middleware: validates a Bearer token and returns its scopes, namespace binding and rate limit (ADR-0010). Registered under the `key_store` slot; defined in `vektra_shared/auth.py` rather than the protocols module, which is why it went unlisted here until now.
 
 ### Startup validation
 

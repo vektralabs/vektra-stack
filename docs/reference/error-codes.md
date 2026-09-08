@@ -48,6 +48,8 @@ The `error` object is at the JSON document root for **every** error response —
 | ERR-AUTH-001 | PERMANENT | 401 | Token is missing, malformed, unrecognized, or revoked | Include a valid API key as Bearer token. Create a new key via POST /api/v1/api-keys if revoked. |
 | ERR-AUTH-002 | PERMANENT | 401 | Token has expired | Refresh or create a new API key. (Reserved, not yet enforced.) |
 | ERR-AUTH-003 | PERMANENT | 403 | Insufficient scope for requested operation | Use an API key with the required scope, or request one from your administrator. |
+| ERR-AUTH-004 | TRANSIENT | 429 | Rate limit exceeded | Wait and retry after the rate limit window resets. The response carries `X-RateLimit-*` headers; the per-key limit is set on the API key (`rate_limit_rpm`). |
+| ERR-AUTH-005 | TRANSIENT | 503 | Auth service unavailable | Retry shortly. (Reserved by REQ-041, not yet raised by any code path.) |
 
 ### Ingest errors
 
@@ -103,6 +105,15 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-INDEX-002 | vektra-index | 400 | Invalid index version (below 1) |
 | ERR-INDEX-003 | vektra-index | 400 | Reindex target must differ from the active version |
 | ERR-INDEX-004 | vektra-index | 404 | Reindex job not found |
+| ERR-ANALYTICS-001 | vektra-analytics | 503 | Analytics service or database session not available (starting up, or none configured) |
+| ERR-ANALYTICS-002 | vektra-analytics | 404 | Trace not found for the given `response_id` |
+
+### Deliberately not listed
+
+`ERR-QUOTA-001` (namespace quota exceeded) is defined in `vektra_shared/errors.py` and
+raised in `vektra_admin/quotas.py`, but `check_namespace_quota` has no production
+caller: the ingest wiring is still open as FEAT-025. Documenting it today would
+describe a response no client can receive. Add the row when the enforcement lands.
 
 ## Adding new error codes
 

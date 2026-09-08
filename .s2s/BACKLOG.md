@@ -22,6 +22,39 @@
 
 ## Planned
 
+### FEAT-027: conversations belong to a student, not to a course
+
+**Status**: completed (2026-09-09) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: deployment review (2026-09-08). Students lose their chat history whenever they close the tab or move to another device, and the fix exposed an authorization gap that had been sitting in the same endpoint.
+
+**Context**: `PersistentConversationStore` has existed since Phase 2 (Postgres + pgcrypto, ADR-0011) and is selected at startup by `VEKTRA_CONVERSATION_KEY`. Production never set it, so the app registered the in-memory store and every conversation died with the process. The widget compensated with a `sessionStorage` entry per course — which is tab-scoped by design, so history never survived a new device, a reopened window, or a browser restart.
+
+The reason it could not simply be turned on: a stored conversation had no owner. The `conversations` row carried `namespace_id` and `key_id`, and learn-originated conversations all use the same sentinel `key_id` because the widget authenticates with a JWT and holds no API key. So a conversation was identified as "belonging to a course", and the only authorization `GET /conversations/{id}/turns` could perform was a namespace match.
+
+**Security consequence** (found while designing the feature, fixed here): every student of a course holds a token for that namespace, so any of them could read any other student's turns given a conversation id. Exploitation needed a guessed v4 UUID, and no deployment had persistence enabled, so nothing stored was ever exposed — but the check did not exist; it was unreachable, which is not the same thing. Turning persistence on without fixing it would have armed it, the pattern this repo has already paid for three times (BUG-023's delete, DEBT-030's tests, DEBT-032's index versions).
+
+**Resolution**: migration `0008` adds `conversations.owner_subject` (nullable `VARCHAR(255)`) plus a partial index on `(namespace_id, owner_subject, updated_at DESC) WHERE deleted_at IS NULL`, which backs the one query that reads it. The learn query endpoint records the JWT `sub` when it creates the row — `ensure_conversation` writes it on insert only (`ON CONFLICT DO NOTHING`), so sending someone else's conversation id cannot claim it. The turns endpoint checks namespace **and** owner, refusing anything else with `ERR-LEARN-007` before decrypting a turn, and refusing ownerless rows rather than treating them as public. Two endpoints follow from ownership: `GET /api/v1/learn/conversations` (the caller's own, metadata only) and `DELETE /api/v1/learn/conversations/{id}` (soft delete, REQ-057), the second answering `404` for "not yours" as well as "not found", so it cannot enumerate ids.
+
+Decisions worth recording:
+
+1. **The owner is the JWT `sub`, stored in clear.** It is the Moodle username the token was issued for — a pseudonymous LMS identifier, the same value already stored in `dashboard_tokens.student_id` and `enrollments.student_id`. Hashing it would have pseudonymised one column while two neighbouring tables keep the plaintext, buying nothing and making operator debugging harder.
+2. **Ownerless rows are refused, not grandfathered.** This is free today (production has no persisted conversations) and it is the safe default when it stops being free.
+3. **The widget keeps `sessionStorage`, demoted.** It is now a fast path for the current tab; the server list is the fallback that makes history portable. A "new chat" or a deletion writes a tab-local marker, because otherwise the next load would helpfully restore the very conversation the student chose to leave.
+
+**Operational note**: enabling `VEKTRA_CONVERSATION_KEY` starts persisting personal data (pseudonymous and encrypted at rest, still personal). Set `VEKTRA_RETENTION_DAYS` in the same change. The key cannot be rotated in place — existing turns become undecryptable — and losing it loses the history; both are documented in `docs/reference/configuration.md`.
+
+**Acceptance criteria**:
+- [x] conversations carry an owner, recorded from the JWT subject at creation
+- [x] a student cannot read another student's turns, and the refusal precedes decryption
+- [x] a token with no subject cannot read history at all
+- [x] "my conversations" endpoint, scoped to owner and namespace
+- [x] student-initiated deletion, owner-scoped, audited, indistinguishable from "not found"
+- [x] widget resumes from the server when the tab has no stored id, and respects an explicit fresh start
+- [x] deployment documentation for the encryption key, its one-way nature and the GDPR consequence
+- [ ] verified end-to-end on a stack with `VEKTRA_CONVERSATION_KEY` set: same student on two devices sees one history, a second student gets 403, deletion sticks
+
+---
+
 ### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
 
 **Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #102

@@ -70,6 +70,10 @@ class ConversationOrm(Base):
         nullable=False,
     )
     key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    # JWT `sub` of the end user the conversation belongs to (FEAT-027). NULL for
+    # conversations created through the core API, which authenticate with an API
+    # key and have no subject, and for rows predating migration 0008.
+    owner_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     turn_count: Mapped[int] = mapped_column(
         INTEGER, nullable=False, server_default=text("0")
@@ -92,6 +96,14 @@ class ConversationOrm(Base):
             "ix_conversations_active",
             "namespace_id",
             "updated_at",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # Backs "this student's conversations in this course" (FEAT-027).
+        Index(
+            "ix_conversations_owner",
+            "namespace_id",
+            "owner_subject",
+            text("updated_at DESC"),
             postgresql_where=text("deleted_at IS NULL"),
         ),
     )

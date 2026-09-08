@@ -292,3 +292,99 @@ async def test_soft_delete_returns_false_when_not_found():
     result = await store.soft_delete(uuid4())
 
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Conversation ownership (FEAT-027)
+# ---------------------------------------------------------------------------
+
+
+def _compiled_sql(session) -> str:
+    """The SQL of the last statement the store executed, as text."""
+    stmt = session.execute.call_args.args[0]
+    return str(stmt.compile(compile_kwargs={"literal_binds": False}))
+
+
+async def test_create_conversation_records_the_owner():
+    factory = _mock_session_factory()
+    session = factory._mock_session
+    mock_result = MagicMock()
+    mock_result.scalar_one.return_value = uuid4()
+    session.execute.return_value = mock_result
+
+    store = PersistentConversationStore(factory, "key123")
+    await store.create_conversation(
+        namespace_id="CS101", key_id=uuid4(), owner_subject="student-42"
+    )
+
+    assert "owner_subject" in _compiled_sql(session)
+
+
+async def test_ensure_conversation_records_the_owner():
+    factory = _mock_session_factory()
+    session = factory._mock_session
+    store = PersistentConversationStore(factory, "key123")
+
+    await store.ensure_conversation(
+        conversation_id=uuid4(),
+        namespace_id="CS101",
+        key_id=uuid4(),
+        owner_subject="student-42",
+    )
+
+    sql = _compiled_sql(session)
+    assert "owner_subject" in sql
+    # ON CONFLICT DO NOTHING: a second caller sending someone else's
+    # conversation id must not overwrite the owner.
+    assert "ON CONFLICT" in sql.upper()
+    assert "DO UPDATE" not in sql.upper()
+
+
+async def test_list_conversations_scopes_to_owner_and_excludes_deleted():
+    factory = _mock_session_factory()
+    session = factory._mock_session
+    mock_result = MagicMock()
+    mock_result.all.return_value = []
+    session.execute.return_value = mock_result
+
+    store = PersistentConversationStore(factory, "key123")
+    rows = await store.list_conversations(
+        namespace_id="CS101", owner_subject="student-42"
+    )
+
+    assert rows == []
+    sql = _compiled_sql(session)
+    assert "owner_subject" in sql
+    assert "namespace_id" in sql
+    assert "deleted_at IS NULL" in sql
+    assert "ORDER BY" in sql.upper()
+
+
+async def test_soft_delete_can_be_scoped_to_the_owner():
+    factory = _mock_session_factory()
+    session = factory._mock_session
+    mock_result = MagicMock()
+    mock_result.rowcount = 1
+    session.execute.return_value = mock_result
+
+    store = PersistentConversationStore(factory, "key123")
+    deleted = await store.soft_delete(
+        uuid4(), namespace="CS101", owner_subject="student-42"
+    )
+
+    assert deleted is True
+    assert "owner_subject" in _compiled_sql(session)
+
+
+async def test_soft_delete_without_owner_is_unscoped():
+    """Admin deletion keeps working: the scoping is opt-in, per caller."""
+    factory = _mock_session_factory()
+    session = factory._mock_session
+    mock_result = MagicMock()
+    mock_result.rowcount = 1
+    session.execute.return_value = mock_result
+
+    store = PersistentConversationStore(factory, "key123")
+    await store.soft_delete(uuid4(), namespace="CS101")
+
+    assert "owner_subject" not in _compiled_sql(session)

@@ -22,6 +22,8 @@ logs/
 .env
 .env.local
 .env.*.local
+.env.bak*
+.env.*.bak
 .claude/settings.local.json
 CLAUDE.local.md
 docker-compose.ports.yml

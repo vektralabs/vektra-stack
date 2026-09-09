@@ -51,7 +51,8 @@ Decisions worth recording:
 - [x] student-initiated deletion, owner-scoped, audited, indistinguishable from "not found"
 - [x] widget resumes from the server when the tab has no stored id, and respects an explicit fresh start
 - [x] deployment documentation for the encryption key, its one-way nature and the GDPR consequence
-- [ ] verified end-to-end on a stack with `VEKTRA_CONVERSATION_KEY` set: same student on two devices sees one history, a second student gets 403, deletion sticks
+- [x] verified end-to-end on a stack with `VEKTRA_CONVERSATION_KEY` set (2026-09-09, local, isolated compose project, LLM stubbed): migration `0008` applied from an empty database; a second turn was given the first as history; the owner listed their conversation and a second student's token listed nothing; that second token was refused on the turns endpoint with `ERR-LEARN-007` and got a 404 (not a 403) when deleting; the owner read their two turns, deleted them, and the conversation vanished from both the API and the list while the row survived with `deleted_at` set and a fresh query opened a new conversation; `conversations.owner_subject` held the JWT subject, `conversation_turns.question` was `bytea` whose raw bytes do not contain the question and which decrypts with the configured key; the delete wrote its audit row
+- [ ] the same through the widget in a browser, on two real devices — the run above exercises the HTTP API directly, so the server-side resume is proven and the client-side "continua o riparti" behaviour is not
 
 ---
 

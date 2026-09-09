@@ -54,6 +54,69 @@ jobs:
       - name: Build Docker image
         run: docker compose build
 
+      # The production VM's CPU predates x86-64-v2, and a wheel built for a newer
+      # baseline does not degrade there: it aborts the interpreter at import
+      # (BUG-027). Every GitHub runner supports far more than that host, so no
+      # native test on this machine can see the failure. qemu-user masks CPUID to
+      # the model given by -cpu, which is enough to reproduce it exactly.
+      #
+      # This runs once, on the pgvector leg: it is a property of the image, not of
+      # the vector store.
+      - name: Image imports on a pre-x86-64-v2 CPU (BUG-027)
+        if: matrix.vector_store == 'pgvector'
+        timeout-minutes: 15
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+
+          # Control first. qemu-user masks CPUID but leaves /proc/cpuinfo showing
+          # the host's flags, so an emulation that silently failed to mask would
+          # make the check below pass on any CPU — the same shape as a build-context
+          # test that passes because the context is empty. Assert the emulated CPU
+          # really lacks the features before trusting anything it says.
+          docker run --rm \
+            -v /usr/bin/qemu-x86_64-static:/usr/bin/qemu-x86_64-static:ro \
+            --entrypoint /usr/bin/qemu-x86_64-static \
+            vektra-stack -cpu qemu64,+sse3 /app/.venv/bin/python -c '
+          import numpy
+          try:
+              from numpy._core._multiarray_umath import __cpu_features__ as feats
+          except ImportError:
+              from numpy.core._multiarray_umath import __cpu_features__ as feats
+          present = [n for n in ("POPCNT", "SSE41", "SSE42") if feats.get(n)]
+          assert not present, f"emulation is not masking {present}; this check would pass anywhere"
+          print("control ok: numpy", numpy.__version__, "sees no POPCNT/SSE41/SSE42")
+          '
+
+          # The real check: everything the container loads must import on that CPU.
+          # A failure here is a genuine signal, not a flake to retry — it is the
+          # production stack refusing to boot, reproduced.
+          docker run --rm \
+            -e OMP_NUM_THREADS=1 \
+            -v /usr/bin/qemu-x86_64-static:/usr/bin/qemu-x86_64-static:ro \
+            --entrypoint /usr/bin/qemu-x86_64-static \
+            vektra-stack -cpu qemu64,+sse3 /app/.venv/bin/python -c '
+          import importlib
+          for name in (
+              "numpy", "scipy", "sklearn", "onnxruntime", "fastembed",
+              "torch", "transformers", "sentence_transformers",
+              "qdrant_client", "pgvector",
+              # Every workspace package the image installs, not just the two
+              # that happen to pull the ML stack: the failure this guards is an
+              # import-time CPU fault, and it would land in whichever package
+              # first touches a bad wheel.
+              "vektra_shared", "vektra_core", "vektra_index", "vektra_ingest",
+              "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app",
+          ):
+              importlib.import_module(name)
+              print("imported", name, flush=True)
+          # The module the container runs. Importing it builds the FastAPI app,
+          # which is the closest this check gets to the real startup path
+          # without a database behind it.
+          import vektra_app.main
+          print("imported vektra_app.main", flush=True)
+          '
+
       - name: Start stack and measure startup (NFR-004)
         id: startup
         env:

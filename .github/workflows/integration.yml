@@ -100,10 +100,21 @@ jobs:
           for name in (
               "numpy", "scipy", "sklearn", "onnxruntime", "fastembed",
               "torch", "transformers", "sentence_transformers",
-              "qdrant_client", "pgvector", "vektra_core", "vektra_index",
+              "qdrant_client", "pgvector",
+              # Every workspace package the image installs, not just the two
+              # that happen to pull the ML stack: the failure this guards is an
+              # import-time CPU fault, and it would land in whichever package
+              # first touches a bad wheel.
+              "vektra_shared", "vektra_core", "vektra_index", "vektra_ingest",
+              "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app",
           ):
               importlib.import_module(name)
               print("imported", name, flush=True)
+          # The module the container runs. Importing it builds the FastAPI app,
+          # which is the closest this check gets to the real startup path
+          # without a database behind it.
+          import vektra_app.main
+          print("imported vektra_app.main", flush=True)
           '
 
       - name: Start stack and measure startup (NFR-004)

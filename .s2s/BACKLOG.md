@@ -289,12 +289,12 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
-### DEBT-039: 31 known advisories ship inside the published image, all of them fixable
+### DEBT-039: 32 known advisories ship inside the published images, all of them fixable
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-09-02
 **Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02) and then auditing what that exposes.
 
-**Context**: GitHub reports 31 open Dependabot advisories on `develop`, 17 high and 13 moderate (30 when this entry was first written a few hours earlier: **the number moves**, which is why the acceptance criteria below ask for the remaining count rather than fixing a target), **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
+**Context**: GitHub reports 32 open Dependabot advisories on `develop`, 1 critical, 17 high, 13 moderate and 1 low (30 when this entry was first written on 2026-09-02, 31 hours later, 32 the next day: **the number moves**, which is why the acceptance criteria below ask for the remaining count rather than fixing a target), **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
 
 | Package | In the image | Advisories | First patched |
 |---|---|---|---|
@@ -307,14 +307,24 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 | h2 | 4.3.0 | 1 | 4.4.1 |
 | setuptools | 82.0.0 | 1 | 83.0.0 |
 | torch | 2.10.0+cpu | 1 | 2.13.0 |
+| unstructured | 0.21.5 | 1 (**critical**) | 0.24.0 |
+
+**A critical arrived on 2026-09-03, and it needs its own reading rather than its severity label.** `unstructured` 0.21.5 carries a full-read SSRF: the `url=` argument of `partition()`, `partition_html()` and `partition_md()` is fetched with no host validation and the response body is returned as element text, so a caller who controls that argument reaches loopback admin APIs and cloud metadata endpoints. Two measurements bound it, both taken on the artifacts rather than reasoned about:
+
+- **The entry point is not reachable through Vektra.** `UnstructuredExtractor._extract_impl` calls `partition_pdf(file=io.BytesIO(request.content), strategy="auto")`: bytes already in memory, never a `url=`, and `partition_pdf` is not one of the three functions the advisory names.
+- **Only one of the two published images contains the library at all.** Verified by pulling `ghcr.io/vektralabs/vektra:0.7.1` and listing `site-packages`: it has `pdfplumber` and no `unstructured`. The `-ocr` variant has `unstructured-0.21.5`, because the extra is installed only when `INSTALL_UNSTRUCTURED=true`.
+
+So it is present-but-not-exercised, the same shape as the `.dockerignore` gap in INFRA-008, and it does **not** turn this entry into an incident. It does belong in Phase 1: the jump is 0.21.5 -> 0.24.0, three minors rather than a patch, so unlike its seven neighbours it needs the OCR image to be built and an extraction run against a real PDF before it is taken. `docker-ocr-build.yml` already builds that variant whenever `uv.lock` changes, which covers the build half.
+
+**Take the reachability finding as a bound, not as permission to defer indefinitely.** It says today's callers are safe; it says nothing about a future endpoint that accepts a URL, and the repo's own record is that a dormant path gets armed by an unrelated fix.
 
 **None is unfixable**: every alert carries a `first_patched_version`, so there is no "no upstream fix yet" tail to argue about.
 
-**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 31 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
+**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 32 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
 
 **Two phases on purpose, in one entry because the second only makes sense after the first.** Splitting into two entries is a one-line edit if it ever needs separate scheduling.
 
-*Phase 1, low risk, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools. Closes **28 of the 31**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
+*Phase 1, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools (low risk), plus `unstructured` (see the critical above: same phase, but it needs the OCR image built and one real extraction run, because the jump is three minors). Closes **29 of the 32**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
 
 ```
 uv lock -P pillow -P pypdf -P aiohttp -P pyasn1 -P cryptography -P h2 -P setuptools

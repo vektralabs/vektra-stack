@@ -300,9 +300,16 @@ async def test_soft_delete_returns_false_when_not_found():
 
 
 def _compiled_sql(session) -> str:
-    """The SQL of the last statement the store executed, as text."""
+    """The SQL of the last statement the store executed, as text.
+
+    Compiled against the PostgreSQL dialect on purpose: `ON CONFLICT` is
+    postgresql-specific, and the default dialect is not the one that renders
+    the clause these tests assert on.
+    """
+    from sqlalchemy.dialects import postgresql
+
     stmt = session.execute.call_args.args[0]
-    return str(stmt.compile(compile_kwargs={"literal_binds": False}))
+    return str(stmt.compile(dialect=postgresql.dialect()))
 
 
 async def test_create_conversation_records_the_owner():

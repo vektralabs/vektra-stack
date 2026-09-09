@@ -151,7 +151,11 @@ export class ApiClient {
         return this.deleteConversation(conversationId, true);
       }
     }
-    return resp.status === 204;
+    // 204 is the delete; 404 means it is already gone, which is the same
+    // outcome for the student and must not surface as an error. The server
+    // answers 404 for "not yours" too, and that is deliberate there: it must
+    // not confirm which conversation ids exist.
+    return resp.status === 204 || resp.status === 404;
   }
 
   /**

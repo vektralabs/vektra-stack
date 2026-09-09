@@ -92,7 +92,17 @@ function _markFreshStart(courseId) {
 
 function _startedFresh(courseId) {
   try {
-    return window.sessionStorage.getItem(FRESH_PREFIX + courseId) !== null;
+    const raw = window.sessionStorage.getItem(FRESH_PREFIX + courseId);
+    if (!raw) return false;
+    // Same expiry as the stored conversation: a tab left open for days should
+    // not keep suppressing the server-side resume forever. The marker records
+    // when the choice was made, so honour it rather than storing it for show.
+    const age = Date.now() - (parseInt(raw, 10) || 0);
+    if (age < 0 || age > STALE_AFTER_MS) {
+      window.sessionStorage.removeItem(FRESH_PREFIX + courseId);
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -222,17 +232,21 @@ function _clearStored(courseId) {
         _markFreshStart(courseId);
       },
       async onDeleteHistory() {
+        // Deletes the conversation on screen, which is what the control says.
+        // Deliberately no fresh-start marker: the student removed one
+        // conversation, not their history, so an older one is still theirs to
+        // resume on the next load. A course-wide erasure would need a bulk
+        // endpoint and is a separate feature.
         const target = client.getConversationId() || (await _resolveConversationId());
         if (!target) {
-          // Nothing stored server-side: the local reset is the whole deletion.
+          // Nothing to delete server-side: clearing the local pointer is all
+          // there is to do, and it succeeded.
           _clearStored(courseId);
-          _markFreshStart(courseId);
           return true;
         }
         const deleted = await client.deleteConversation(target);
         if (deleted) {
           _clearStored(courseId);
-          _markFreshStart(courseId);
           client.setConversationId(null);
         }
         return deleted;

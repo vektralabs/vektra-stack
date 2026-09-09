@@ -21,9 +21,9 @@ const I18N = {
     sessionExpired: "Your session has expired. Please reload the page.",
     close: "Close",
     newChat: "New chat",
-    deleteHistory: "Delete my history",
+    deleteHistory: "Delete this conversation",
     confirmDelete: "Delete? Click again",
-    historyDeleted: "Your conversation history for this course has been deleted.",
+    historyDeleted: "This conversation has been deleted.",
     poweredBy: "Powered by",
   },
   it: {
@@ -40,9 +40,9 @@ const I18N = {
     sessionExpired: "La sessione è scaduta. Ricarica la pagina.",
     close: "Chiudi",
     newChat: "Nuova chat",
-    deleteHistory: "Elimina la mia cronologia",
+    deleteHistory: "Elimina questa conversazione",
     confirmDelete: "Eliminare? Clicca ancora",
-    historyDeleted: "La tua cronologia per questo corso è stata eliminata.",
+    historyDeleted: "Questa conversazione è stata eliminata.",
     poweredBy: "Offerto da",
   },
 };
@@ -194,7 +194,7 @@ export class ChatUI {
           <button class="vektra-chat-new" aria-label="${this._lang.newChat}" title="${this._lang.newChat}">&#10227;</button>
           ${
             this._onDeleteHistory
-              ? `<button class="vektra-chat-delete" aria-label="${this._lang.deleteHistory}" title="${this._lang.deleteHistory}">&#128465;</button>`
+              ? `<button class="vektra-chat-delete" aria-label="${this._lang.deleteHistory}" aria-pressed="false" title="${this._lang.deleteHistory}">&#128465;</button>`
               : ""
           }
           <button class="vektra-chat-close" aria-label="${this._lang.close}">&times;</button>
@@ -279,8 +279,11 @@ export class ChatUI {
     if (!this._deleteArmed) {
       this._deleteArmed = true;
       this._deleteBtn.classList.add("armed");
+      // The accessible name stays put: a screen reader that re-announces the
+      // control should still say what it is. The armed state is state, so it
+      // travels on aria-pressed, with the pending action in the tooltip.
+      this._deleteBtn.setAttribute("aria-pressed", "true");
       this._deleteBtn.title = this._lang.confirmDelete;
-      this._deleteBtn.setAttribute("aria-label", this._lang.confirmDelete);
       this._disarmTimer = setTimeout(() => this._disarmDelete(), 5000);
       return;
     }
@@ -303,8 +306,8 @@ export class ChatUI {
     this._deleteArmed = false;
     if (this._deleteBtn) {
       this._deleteBtn.classList.remove("armed");
+      this._deleteBtn.setAttribute("aria-pressed", "false");
       this._deleteBtn.title = this._lang.deleteHistory;
-      this._deleteBtn.setAttribute("aria-label", this._lang.deleteHistory);
     }
   }
 

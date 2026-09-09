@@ -180,8 +180,8 @@ def test_render_context_without_title_key_unchanged():
 # ---------------------------------------------------------------------------
 
 
-def test_render_context_marks_non_citable_source():
-    """A withheld source is numbered like any other, but flagged uncitable."""
+def test_render_context_gives_a_non_citable_source_no_id():
+    """A withheld source carries no id, so no marker can point at it."""
     renderer = TemplateRenderer()
     chunks = [
         {"text": "Public chunk.", "score": 0.9, "citable": True},
@@ -189,7 +189,28 @@ def test_render_context_marks_non_citable_source():
     ]
     result = renderer.render_context(chunks)
     assert '<source id="1">Public chunk.</source>' in result
-    assert '<source id="2" citable="false">Publisher chunk.</source>' in result
+    assert '<source citable="false">Publisher chunk.</source>' in result
+
+
+def test_render_context_numbers_only_citable_sources():
+    """Ids count citable sources only, so [n] lines up with sources[n-1].
+
+    With `loop.index` a withheld chunk consumed a number: three chunks with the
+    middle one hidden produced ids 1 and 3 while the response carried two
+    sources, so the model's [3] pointed at a source the client did not have —
+    and, before that, at the withheld one.
+    """
+    renderer = TemplateRenderer()
+    chunks = [
+        {"text": "First.", "score": 0.9, "citable": True},
+        {"text": "Withheld.", "score": 0.85, "citable": False},
+        {"text": "Second.", "score": 0.8, "citable": True},
+    ]
+    result = renderer.render_context(chunks)
+    assert '<source id="1">First.</source>' in result
+    assert '<source citable="false">Withheld.</source>' in result
+    assert '<source id="2">Second.</source>' in result
+    assert 'id="3"' not in result
 
 
 def test_render_context_without_citable_key_unchanged():
@@ -206,8 +227,9 @@ def test_render_system_citations_enabled_forbids_citing_uncitable_sources():
     assert 'citable="false"' in result
     # The rule must protect the attribution without discouraging use: hidden
     # material is ingested precisely so it can inform answers.
-    assert "draw on its content as" in result
-    assert "attribute" in result
+    assert "draw on its" in result
+    assert "attribute nothing to it" in result
+    assert "has no id" in result
 
 
 def test_render_system_citations_disabled_says_nothing_about_citable():

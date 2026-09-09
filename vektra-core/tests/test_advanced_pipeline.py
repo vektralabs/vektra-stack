@@ -1245,3 +1245,53 @@ async def test_a_quoted_true_does_not_hide_a_source():
     response, _trace = await pipeline.execute(QueryRequest(question="test"))
 
     assert [s.chunk_id for s in response.sources] == [quoted.chunk_id]
+
+
+async def test_citation_ids_line_up_with_the_returned_sources():
+    """[n] must address sources[n-1], with a withheld chunk in the middle.
+
+    The widget maps a marker to `sources[n-1]` on the assumption that the
+    prompt's ids follow the returned list. A withheld chunk used to consume an
+    id, so with one in the middle the model's [2] addressed a source the client
+    never received, and the ids of everything after it were off by one.
+    """
+    first = _make_search_result(0.9, "first public passage")
+    hidden = _make_hidden_result(0.85, "publisher-only passage")
+    second = _make_search_result(0.8, "second public passage")
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[first, hidden, second])
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    llm.complete = AsyncMock(
+        return_value=CompletionResponse(
+            content="Answer [1][2].",
+            model="ollama/llama3",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+    )
+
+    pipeline = _make_pipeline(llm=llm, vector_store=vector_store)
+    response, _trace = await pipeline.execute(
+        QueryRequest(question="test", citations_enabled=True)
+    )
+
+    prompt = _user_message(llm)
+    # Exactly as many ids as sources, numbered from 1 without gaps.
+    assert 'id="1"' in prompt and 'id="2"' in prompt
+    assert 'id="3"' not in prompt
+    assert len(response.sources) == 2
+
+    # And each id sits on the source at that position in the response.
+    for n, source in enumerate(response.sources, start=1):
+        element = next(line for line in prompt.splitlines() if f'id="{n}"' in line)
+        assert source.snippet in element
+
+    # The withheld passage is in the prompt, and carries no id to cite.
+    hidden_element = next(
+        line for line in prompt.splitlines() if "publisher-only passage" in line
+    )
+    assert 'citable="false"' in hidden_element
+    assert "id=" not in hidden_element

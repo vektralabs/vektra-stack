@@ -28,6 +28,28 @@ JWT_SECRET = "test-secret-key-for-api-tests!!x"  # 33 bytes for HS256
 # ---------------------------------------------------------------------------
 
 
+def _registry_returning(pipeline, conv_store=None):
+    """Registry mock that answers per slot, not one object for everything.
+
+    `course_query` reads the conversation store to check ownership before it
+    reaches the pipeline (FEAT-027), so a registry that hands back the pipeline
+    for every slot makes the endpoint look at a conversation that is not one.
+    The default store reports "no such conversation", which is what these tests
+    mean when they pass no conversation_id.
+    """
+    if conv_store is None:
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(return_value=None)
+        conv_store.ensure_conversation = AsyncMock()
+
+    def _get(category, name="default"):
+        return conv_store if category == "conversation_store" else pipeline
+
+    registry = MagicMock()
+    registry.get = MagicMock(side_effect=_get)
+    return registry
+
+
 class TestEnrollmentEndpoints:
     async def test_create_enrollment_service_call(self):
         """Test enrollment creation through the service directly."""
@@ -197,8 +219,7 @@ class TestCourseQueryEnrollmentMode:
         mock_response.conversation_id = None
         mock_response.no_relevant_context = False
         mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_pipeline
+        mock_registry = _registry_returning(mock_pipeline)
         mock_app.state.registry = mock_registry
         mock_request = MagicMock()
         mock_request.app = mock_app
@@ -266,8 +287,7 @@ class TestCourseQueryEnrollmentMode:
         mock_response.conversation_id = None
         mock_response.no_relevant_context = False
         mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_pipeline
+        mock_registry = _registry_returning(mock_pipeline)
         mock_app.state.registry = mock_registry
         mock_request = MagicMock()
         mock_request.app = mock_app
@@ -301,8 +321,7 @@ class TestCourseQueryEnrollmentMode:
         mock_response.conversation_id = None
         mock_response.no_relevant_context = False
         mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_pipeline
+        mock_registry = _registry_returning(mock_pipeline)
         mock_app.state.registry = mock_registry
         mock_request = MagicMock()
         mock_request.app = mock_app
@@ -348,8 +367,7 @@ class TestConversationAutoCreation:
         mock_response.conversation_id = uuid4()
         mock_response.no_relevant_context = False
         mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_pipeline
+        mock_registry = _registry_returning(mock_pipeline)
         mock_app.state.registry = mock_registry
         mock_request = MagicMock()
         mock_request.app = mock_app
@@ -384,8 +402,7 @@ class TestConversationAutoCreation:
         mock_response.conversation_id = existing_id
         mock_response.no_relevant_context = False
         mock_pipeline.execute = AsyncMock(return_value=(mock_response, None))
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_pipeline
+        mock_registry = _registry_returning(mock_pipeline)
         mock_app.state.registry = mock_registry
         mock_request = MagicMock()
         mock_request.app = mock_app
@@ -727,8 +744,7 @@ class TestShowSourcesPropagation:
         mock_app.state.learn_show_sources_default = show_sources_default
         # No DB factory: the resolver falls back to the env-default directly.
         mock_app.state.db_session_factory = None
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = pipeline
+        mock_registry = _registry_returning(pipeline)
         mock_app.state.registry = mock_registry
         return mock_app
 
@@ -1101,3 +1117,121 @@ class TestConversationOwnerRecording:
         kwargs = conv_store.ensure_conversation.call_args.kwargs
         assert kwargs["owner_subject"] == "student-a"
         assert kwargs["namespace_id"] == "CS101"
+
+
+class TestQueryPathOwnership:
+    """The query endpoint takes a client-supplied conversation_id (FEAT-027)."""
+
+    @staticmethod
+    def _make_request(conv_store, pipeline):
+        def _get(category, name="default"):
+            return conv_store if category == "conversation_store" else pipeline
+
+        app = MagicMock()
+        app.state.learn_require_enrollment = False
+        registry = MagicMock()
+        registry.get = MagicMock(side_effect=_get)
+        app.state.registry = registry
+        request = MagicMock()
+        request.app = app
+        return request
+
+    @staticmethod
+    def _pipeline():
+        pipeline = AsyncMock()
+        resp = MagicMock()
+        resp.response_id = uuid4()
+        resp.answer = "..."
+        resp.sources = []
+        resp.conversation_id = uuid4()
+        resp.no_relevant_context = False
+        pipeline.execute = AsyncMock(return_value=(resp, None))
+        return pipeline
+
+    async def test_querying_someone_elses_conversation_is_refused(self):
+        """Reading turns was owner-scoped; asking a question was not.
+
+        `ensure_conversation` does nothing when the row exists, so student A
+        sending B's id had B's history loaded into A's prompt and A's turn
+        appended to B's conversation.
+        """
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": uuid4(),
+                "namespace_id": "CS101",
+                "owner_subject": "student-b",
+                "deleted_at": None,
+                "turn_count": 4,
+            }
+        )
+        conv_store.ensure_conversation = AsyncMock()
+        pipeline = self._pipeline()
+
+        with pytest.raises(HTTPException) as exc:
+            await course_query(
+                CourseQueryRequest(
+                    question="What did they ask?", conversation_id=uuid4()
+                ),
+                self._make_request(conv_store, pipeline),
+                {"sub": "student-a", "course_id": "CS101"},
+                MagicMock(),
+                AsyncMock(),
+            )
+
+        assert exc.value.status_code == 403
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-007"
+        # Refused before the pipeline could read the other student's history,
+        # and before anything was written to their conversation.
+        pipeline.execute.assert_not_called()
+        conv_store.ensure_conversation.assert_not_called()
+
+    async def test_own_conversation_still_works(self):
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        cid = uuid4()
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(
+            return_value={
+                "id": cid,
+                "namespace_id": "CS101",
+                "owner_subject": "student-a",
+                "deleted_at": None,
+                "turn_count": 2,
+            }
+        )
+        conv_store.ensure_conversation = AsyncMock()
+
+        result = await course_query(
+            CourseQueryRequest(question="Follow up", conversation_id=cid),
+            self._make_request(conv_store, self._pipeline()),
+            {"sub": "student-a", "course_id": "CS101"},
+            MagicMock(),
+            AsyncMock(),
+        )
+        assert result.answer == "..."
+
+    async def test_unknown_conversation_id_is_created_for_the_caller(self):
+        """A first query carries an id nobody owns yet: it becomes the caller's."""
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(return_value=None)
+        conv_store.ensure_conversation = AsyncMock()
+
+        await course_query(
+            CourseQueryRequest(question="First"),
+            self._make_request(conv_store, self._pipeline()),
+            {"sub": "student-a", "course_id": "CS101"},
+            MagicMock(),
+            AsyncMock(),
+        )
+        assert (
+            conv_store.ensure_conversation.call_args.kwargs["owner_subject"]
+            == "student-a"
+        )

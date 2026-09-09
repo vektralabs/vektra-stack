@@ -737,7 +737,12 @@ async def get_conversation_turns(
     background_tasks: BackgroundTasks,
     token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
 ) -> ConversationTurnsResponse:
-    """Return decrypted turns for a conversation belonging to the token's course.
+    """Return decrypted turns of the caller's own conversation.
+
+    Two checks, both required: the conversation must belong to the token's
+    namespace, and to the token's subject. Namespace alone is not
+    authorization — every student of a course holds a token for the same
+    namespace (FEAT-027).
 
     Authorization is namespace-scoped: the conversation must match the namespace
     derived from the JWT (``namespace`` claim or ``course_id`` fallback). A
@@ -918,9 +923,43 @@ async def course_query(
     # Ensure conversation row exists for persistent multi-turn (BUG-014).
     # The learn endpoint uses JWT auth (no API key), so key_id is a sentinel.
     registry = getattr(request.app.state, "registry", None)
+    conv_store = None
     if registry is not None:
         try:
             conv_store = registry.get("conversation_store", "default")
+        except ValueError:
+            conv_store = None  # conversation store not registered
+
+    # The conversation id comes from the client, and `ensure_conversation` does
+    # nothing when the row already exists — so without this check a student who
+    # sends someone else's id has that conversation's history loaded into their
+    # own prompt, and their turn appended to it. Reading the turns has been
+    # owner-scoped since FEAT-027; this is the same door on the query side.
+    #
+    # Raised outside the try/except below on purpose: a 403 must reach the
+    # client, not be swallowed as a failed conversation write.
+    if conv_store is not None and req.conversation_id is not None:
+        existing = None
+        if hasattr(conv_store, "get_metadata"):
+            try:
+                existing = await conv_store.get_metadata(req.conversation_id)
+            except Exception as exc:  # store unavailable: fall through
+                structlog.get_logger(__name__).warning(
+                    "conversation_owner_check_failed", error=str(exc)
+                )
+        if existing is not None and existing.get("owner_subject") != student_id:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_007,
+                message="Conversation belongs to another student.",
+                remediation="Omit conversation_id to start your own conversation.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
+
+    if conv_store is not None:
+        try:
             if (
                 hasattr(conv_store, "ensure_conversation")
                 and req.conversation_id is not None
@@ -934,8 +973,6 @@ async def course_query(
                     # (FEAT-027). Written on creation only.
                     owner_subject=student_id or None,
                 )
-        except ValueError:
-            pass  # conversation store not registered
         except Exception as exc:
             structlog.get_logger(__name__).warning(
                 "conversation_create_failed", error=str(exc)

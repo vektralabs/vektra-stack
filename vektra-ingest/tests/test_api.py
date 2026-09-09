@@ -695,6 +695,7 @@ def test_metadata_accepts_scalars_and_the_reserved_flag():
         '{"nested": {"a": 1}}',  # values must be scalar
         '{"tags": ["a"]}',
         '{"course_id": null}',  # null is not a scalar we store
+        '{"course_id\n": "x"}',  # `$` matches before a trailing newline
     ],
 )
 def test_metadata_rejects_malformed_payloads(raw):

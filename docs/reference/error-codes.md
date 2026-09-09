@@ -59,7 +59,7 @@ The `error` object is at the JSON document root for **every** error response —
 | ERR-INGEST-002 | PERMANENT | 413 | File exceeds maximum size | Reduce file size below the configured limit, or split into smaller documents. |
 | ERR-INGEST-003 | PERMANENT | 422 | Scanned PDF detected (no extractable text layer) | Use a PDF with selectable text, or run OCR before ingesting. |
 | ERR-INGEST-004 | TRANSIENT | 503 | Vector store write failed during indexing | Retry the ingestion. If the problem persists, check database connectivity and disk space. |
-| ERR-INGEST-005 | PERMANENT | 422 | Invalid `metadata` form field | Send a flat JSON object (scalar values only, keys `[a-z][a-z0-9_]*`, 4 KB max). `hidden_from_students` must be a JSON boolean, not the string `"true"`. |
+| ERR-INGEST-005 | PERMANENT | 422 | Invalid `metadata` form field | Send a flat JSON object (scalar values only, keys `[a-z][a-z0-9_]{0,63}`, 4 KB max). `hidden_from_students` must be a JSON boolean, not the string `"true"`. |
 
 ### Query errors
 

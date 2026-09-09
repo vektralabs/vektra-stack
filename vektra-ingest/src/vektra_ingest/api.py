@@ -119,7 +119,10 @@ def _parse_metadata_form(raw: str | None) -> dict[str, Any] | None:
         )
 
     for key, value in parsed.items():
-        if not METADATA_KEY_PATTERN.match(key):
+        # fullmatch, not match: `$` also matches before a trailing newline, so
+        # `match` accepts the key "course_id\n" and lets it through to the
+        # vector store payload (verified against a running stack).
+        if not METADATA_KEY_PATTERN.fullmatch(key):
             raise _metadata_error(
                 f"metadata key {key!r} is not allowed.",
                 "Keys must match [a-z][a-z0-9_]{0,63}.",

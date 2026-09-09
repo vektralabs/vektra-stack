@@ -1,3 +1,13 @@
+# Resolution constraint, not a dependency: nothing here imports numpy directly,
+# but the deployment target does. The production VM's CPU predates x86-64-v2
+# (it has SSE4.2 but no POPCNT), and every numpy >= 2.0 x86_64 wheel on PyPI is
+# built with an X86_V2 baseline, so `import numpy` aborts the process before any
+# Vektra code runs. numpy 1.26 wheels keep the SSE3 baseline. See
+# docs/getting-started/index.md#cpu-requirements and the guard in
+# vektra-index/tests/test_numpy_cpu_baseline.py.
+[tool.uv]
+constraint-dependencies = ["numpy<2"]
+
 [tool.uv.workspace]
 members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-app"]
 

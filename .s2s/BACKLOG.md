@@ -54,6 +54,79 @@ Decisions worth recording:
 - [x] verified end-to-end on a stack with `VEKTRA_CONVERSATION_KEY` set (2026-09-09, local, isolated compose project, LLM stubbed): migration `0008` applied from an empty database; a second turn was given the first as history; the owner listed their conversation and a second student's token listed nothing; that second token was refused on the turns endpoint with `ERR-LEARN-007` and got a 404 (not a 403) when deleting; the owner read their two turns, deleted them, and the conversation vanished from both the API and the list while the row survived with `deleted_at` set and a fresh query opened a new conversation; `conversations.owner_subject` held the JWT subject, `conversation_turns.question` was `bytea` whose raw bytes do not contain the question and which decrypts with the configured key; the delete wrote its audit row
 - [ ] the same through the widget in a browser, on two real devices — the run above exercises the HTTP API directly, so the server-side resume is proven and the client-side "continua o riparti" behaviour is not
 
+### FEAT-026: retrieved but never cited - per-document source visibility
+
+**Status**: completed (2026-09-08) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: university deployment review (2026-09-08). Course pages carry publisher material that Moodle marks not visible to students; it must feed the assistant's answers without being handed back as a citable source.
+
+**Context**: ingestion had no channel for per-document attributes at all. `run_ingest` has taken an `extra_metadata` argument since the learn vertical needed `course_id`, and `ChunkMetadata` documents `course_id`, `module_id` and `academic_year` as supported keys, but no HTTP request could set any of them: the endpoint accepted a file and a namespace, nothing else. So the first requirement was a metadata channel, and the visibility flag is its first reserved key.
+
+The retrieval requirement is unusual and worth stating precisely: the content must stay **fully** retrievable — embedded, searched, reranked, parent-expanded, placed in the prompt — while the *attribution* disappears. This is not a relevance filter and must never become one: filtering at retrieval would degrade answers, which is the opposite of what the operator asked for.
+
+**Contract** (frozen before implementation so the n8n pipeline could be built against it):
+
+```
+POST /api/v1/ingest          multipart/form-data
+  file, namespace, metadata=<JSON object string>
+```
+
+- flat object, scalar values, keys `[a-z][a-z0-9_]{0,63}`, 4 KB; violations are `ERR-INGEST-005` (422)
+- reserved key `hidden_from_students` (JSON boolean, default false)
+- same field on `/api/v1/ingest/batch`, applying to every file in the request; an invalid value rejects the whole batch rather than ingesting some files without the visibility their caller asked for
+- producer-side rule agreed with the pipeline: the flag mirrors the course module's `visible === 0`, **not** `uservisible`, which reflects the *caller's* access and is true for an admin token even on hidden modules — reading it would invert the behaviour
+
+**Resolution**: metadata parsed and validated at the API boundary, threaded through the sync path, the arq task (new trailing optional argument, so a job enqueued by the previous version and still queued across a deploy runs with the signature it was serialized against) and the in-process fallback. The withholding itself is a two-line predicate (`vektra_shared.types.is_hidden_source`) applied at the four points where a pipeline turns selected chunks into a source list: `SimpleQueryPipeline` and `AdvancedQueryPipeline`, sync and SSE.
+
+Three decisions worth recording:
+
+1. **The filter is server-side and unconditional**, not a rendering hint. FEAT-014 established the opposite pattern for citation visibility (`show_sources` tells the widget what to draw while the API returns everything, so analytics keep full information). That is wrong here: the JSON body is readable in a browser's devtools, so chunk ids, snippets and filenames of publisher material would be one keypress away. Admin-scope callers are filtered too; inspection goes through the QueryTrace and `GET /documents/{id}/chunks`, which are already admin surfaces.
+2. **Citations (FEAT-021) had to be taught about it.** The first shape of this kept `loop.index` as the source id and relied on a prompt rule not to cite withheld chunks. Two defects: a prompt rule is advisory, so a marker could still disclose that a withheld source exists; and worse, a withheld chunk *consumed a number*, so with one in the middle every later id was off by one and the model's `[2]` addressed a source the client never received — the widget maps `[n]` to `sources[n-1]`. Withheld chunks now render with `citable="false"`, no `title` (a title is a filename the model could quote in prose) and **no id at all**: the context numbers only the sources the response carries, which makes a wrong marker impossible by construction rather than by instruction. Raised by CodeRabbit on #139 (comment 3969533968), which saw the disclosure half; the numbering half turned up while fixing it.
+3. **The flag must be a real boolean.** `"true"` is rejected rather than coerced, because `"false"` is truthy in Python: a coercing parser would hide every source in a namespace the first time the pipeline quoted the value, and would work by accident until then.
+
+**Known limitation, deliberate**: dedup is by content hash over live rows, so re-ingesting an unchanged file returns `exists`/`alias` and does not update metadata. Flipping visibility on an already ingested document requires `DELETE /api/v1/documents/{id}` then re-ingest; a content change needs no delete (the versioning path rewrites the chunks). A `PATCH` for document metadata is not filed yet and would remove this step.
+
+**Out of scope, needs a product decision**: modules that are visible but access-restricted (`availability`: group, date, completion). They keep their sources visible today. Widening the rule is a decision about what "restricted" means to a student, not a technical gap.
+
+**Acceptance criteria**:
+- [x] ingest API accepts and persists per-document metadata, on every ingestion path
+- [x] a chunk marked `hidden_from_students` is used in the answer and absent from the returned sources
+- [x] the same holds on the SSE path and in both pipelines
+- [x] citation markers cannot reference a withheld source
+- [x] contract documented in `docs/reference/api.md` with the delete-and-reingest caveat
+- [x] end-to-end check against a live stack (2026-09-09, local, isolated compose project, LLM stubbed): a document ingested with `hidden_from_students: true` reached the model (the stub records the prompt it was handed and saw the document's sentinel), the answer was built from it, and its `doc_id`, snippet and filename were absent from `sources` on both the JSON and the SSE path, with `sources_withheld=1` in the trace and the flag present on exactly that document's Qdrant points. A neighbouring visible document was still cited normally, and all four malformed-metadata probes returned `ERR-INGEST-005`. Log: `vektra-internal` session artifacts
+- [ ] the same, through the widget in a browser and with a document actually exported from Moodle by the ingestion pipeline — the run above drives the HTTP API with a synthetic document, so it proves the backend contract and not the integration around it
+
+### BUG-027: the published image cannot start on a pre-x86-64-v2 CPU
+
+**Status**: completed (2026-09-08) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: production deployment on the university VM (2026-09-02). The GHCR image would not boot; the host has been running a hand-patched derivative ever since.
+
+**Context**: the deployment VM's CPU predates x86-64-v2 (`lscpu` shows `sse4_2` but no `popcnt`, no `avx`, so it is not a v2 host). Every numpy >= 2.0 x86_64 wheel on PyPI is built with an X86_V2 baseline and executes a v2 instruction while loading, so `import numpy` aborts the interpreter — before the ARCH-057 startup sequence, before any structured error, with `Illegal instruction (core dumped)` or numpy's own `RuntimeError: NumPy was built with baseline optimizations: (X86_V2)`. Since numpy backs embeddings and the whole retrieval path, nothing in Vektra runs.
+
+The workaround in production is an image derived from the published one (`FROM ghcr.io/vektralabs/vektra:0.7.1`, `ensurepip` then `pip install "numpy<2"`, deployed as `0.7.1-np1`). It works — numpy 1.26.4 with scipy 1.17, scikit-learn 1.8, onnxruntime 1.24, torch 2.10+cpu, fastembed 0.8, sentence-transformers 5.2, transformers 5.3 all import and serve — but it lives outside the repository and has to be rebuilt by hand after every release. That is the defect: not that the host is old, but that the repository does not know it exists.
+
+**Resolution**: `[tool.uv] constraint-dependencies = ["numpy<2"]` in the root pyproject, lock regenerated. A constraint rather than a dependency, because no workspace package imports numpy: it arrives transitively through sentence-transformers, scipy, scikit-learn, fastembed, onnxruntime, torch, qdrant-client and pgvector.
+
+Resolution impact, measured on the container's environment (linux, x86_64, CPython 3.12) by evaluating the lock's markers rather than reading uv's universal-resolution summary:
+
+- standard image (`--extra sparse --extra qdrant`): numpy 2.4.2 -> 1.26.4 is the only change. torch 2.10.0+cpu, transformers 5.3.0, scipy 1.17.0, scikit-learn 1.8.0, onnxruntime 1.24.2, sentence-transformers 5.2.3, fastembed 0.8.0, qdrant-client 1.17.0 unmoved.
+- OCR image (`--extra ocr`): unstructured 0.21.5 -> 0.18.32, unstructured-inference 1.5.2 -> 1.1.1, opencv-python 4.13 -> 4.11. Production runs the standard variant; if that host ever needs OCR, the choice has to be made again.
+- every package with an open advisory under DEBT-039 keeps its exact version (pillow 12.2.0, pypdf 6.14.2, aiohttp 3.14.1, pyasn1 0.6.3, cryptography 49.0.0, h2 4.3.0, setuptools 82.0.0, torch 2.10.0): the constraint reopens nothing.
+
+**Verification** (three levels, because none of the cheap ones can see the real failure):
+1. unit guard `vektra-index/tests/test_numpy_cpu_baseline.py` — the wheel's compiled-in `__cpu_baseline__` must stay within `{SSE, SSE2, SSE3}`. A property of the wheel, so a runner supporting AVX-512 still gives a real verdict; negative control run by forcing `platform.machine()` to x86_64 on arm64.
+2. integration step under `qemu-x86_64 -cpu qemu64,+sse3`, which masks CPUID exactly like the target host. Measured in a scratch amd64 container: numpy 1.26.4 imports (baseline `['SSE', 'SSE2', 'SSE3']`), numpy 2.4.2 dies with `uncaught target signal 4 (Illegal instruction)`. A control asserts the emulation really masks POPCNT/SSE41/SSE42 first, since otherwise the check would pass on any CPU.
+3. manual run of the image on the VM itself before the release is tagged (`/health` 200 plus one real query).
+
+**Traceability**: INFRA-007 (the GHCR publish flow this unblocks), DEBT-039 (advisory sweep, unaffected)
+
+**Acceptance criteria**:
+- [x] numpy pinned in the lock, with the resolution delta measured rather than assumed
+- [x] regression guard on the wheel baseline
+- [x] the image is exercised on an emulated pre-v2 CPU in CI, with a control that proves the emulation masks
+- [x] CPU requirement, host check and OCR caveat documented for operators
+- [ ] verified on the production VM and the hand-patched `0.7.1-np1` image retired
+
 ---
 
 ### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
@@ -290,12 +363,12 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
-### DEBT-039: 31 known advisories ship inside the published image, all of them fixable
+### DEBT-039: 32 known advisories ship inside the published images, all of them fixable
 
 **Status**: planned | **Priority**: medium | **Created**: 2026-09-02
 **Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02) and then auditing what that exposes.
 
-**Context**: GitHub reports 31 open Dependabot advisories on `develop`, 17 high and 13 moderate (30 when this entry was first written a few hours earlier: **the number moves**, which is why the acceptance criteria below ask for the remaining count rather than fixing a target), **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
+**Context**: GitHub reports 32 open Dependabot advisories on `develop`, 1 critical, 17 high, 13 moderate and 1 low (30 when this entry was first written on 2026-09-02, 31 hours later, 32 the next day: **the number moves**, which is why the acceptance criteria below ask for the remaining count rather than fixing a target), **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
 
 | Package | In the image | Advisories | First patched |
 |---|---|---|---|
@@ -308,14 +381,24 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 | h2 | 4.3.0 | 1 | 4.4.1 |
 | setuptools | 82.0.0 | 1 | 83.0.0 |
 | torch | 2.10.0+cpu | 1 | 2.13.0 |
+| unstructured | 0.21.5 | 1 (**critical**) | 0.24.0 |
+
+**A critical arrived on 2026-09-03, and it needs its own reading rather than its severity label.** `unstructured` 0.21.5 carries a full-read SSRF: the `url=` argument of `partition()`, `partition_html()` and `partition_md()` is fetched with no host validation and the response body is returned as element text, so a caller who controls that argument reaches loopback admin APIs and cloud metadata endpoints. Two measurements bound it, both taken on the artifacts rather than reasoned about:
+
+- **The entry point is not reachable through Vektra.** `UnstructuredExtractor._extract_impl` calls `partition_pdf(file=io.BytesIO(request.content), strategy="auto")`: bytes already in memory, never a `url=`, and `partition_pdf` is not one of the three functions the advisory names.
+- **Only one of the two published images contains the library at all.** Verified by pulling `ghcr.io/vektralabs/vektra:0.7.1` and listing `site-packages`: it has `pdfplumber` and no `unstructured`. The `-ocr` variant has `unstructured-0.21.5`, because the extra is installed only when `INSTALL_UNSTRUCTURED=true`.
+
+So it is present-but-not-exercised, the same shape as the `.dockerignore` gap in INFRA-008, and it does **not** turn this entry into an incident. It does belong in Phase 1: the jump is 0.21.5 -> 0.24.0, three minors rather than a patch, so unlike its seven neighbours it needs the OCR image to be built and an extraction run against a real PDF before it is taken. `docker-ocr-build.yml` already builds that variant whenever `uv.lock` changes, which covers the build half.
+
+**Take the reachability finding as a bound, not as permission to defer indefinitely.** It says today's callers are safe; it says nothing about a future endpoint that accepts a URL, and the repo's own record is that a dormant path gets armed by an unrelated fix.
 
 **None is unfixable**: every alert carries a `first_patched_version`, so there is no "no upstream fix yet" tail to argue about.
 
-**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 31 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
+**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 32 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
 
 **Two phases on purpose, in one entry because the second only makes sense after the first.** Splitting into two entries is a one-line edit if it ever needs separate scheduling.
 
-*Phase 1, low risk, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools. Closes **28 of the 31**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
+*Phase 1, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools (low risk), plus `unstructured` (see the critical above: same phase, but it needs the OCR image built and one real extraction run, because the jump is three minors). Closes **29 of the 32**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
 
 ```
 uv lock -P pillow -P pypdf -P aiohttp -P pyasn1 -P cryptography -P h2 -P setuptools

@@ -472,8 +472,11 @@ export class ChatUI {
     if (!sources || sources.length === 0) return;
 
     // FEAT-021: link [n] citation markers in the answer to their source.
-    // Marker order matches the sources order (both follow the prompt's
-    // budget-selected chunk order), so [n] -> sources[n-1].
+    // Marker order matches the sources order because the prompt numbers only
+    // the sources the response carries: a withheld chunk (FEAT-026) is handed
+    // to the model without an id, so it consumes no number. Hence [n] ->
+    // sources[n-1]. A marker outside the list is left unlinked rather than
+    // guessed at.
     for (const cite of msgEl.querySelectorAll("sup.vektra-cite")) {
       const idx = parseInt(cite.getAttribute("data-cite"), 10) - 1;
       const src = sources[idx];

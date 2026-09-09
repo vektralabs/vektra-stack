@@ -249,7 +249,40 @@ Query parameters:
 |-------|------|---------|-------------|
 | `namespace` | string | `default` | Target namespace for the document |
 
+Form fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | file | yes | The document to ingest |
+| `namespace` | string | no | Overrides the query parameter when present |
+| `metadata` | string (JSON) | no | Flat JSON object merged into every chunk of this document |
+
 Supported formats: PDF, DOCX, PPTX, Markdown (`text/markdown`). Maximum file size: 50 MB (configurable via `VEKTRA_MAX_FILE_SIZE_MB`).
+
+#### Per-document metadata
+
+`metadata` carries attributes that belong to the document rather than to its text. They are merged into every chunk's metadata, stored in the vector store payload, and available for filtering.
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $VEKTRA_API_KEY" \
+  -F "file=@chapter-04.pdf;type=application/pdf" \
+  -F 'metadata={"hidden_from_students": true, "course_id": "INF-2026"}' \
+  "http://localhost:8000/api/v1/ingest?namespace=INF-2026"
+```
+
+Rules, all enforced with `ERR-INGEST-005` (HTTP 422):
+
+- a JSON **object**, not an array or a scalar
+- **flat**: values must be strings, numbers or booleans (no nested objects or arrays, no `null`)
+- keys match `[a-z][a-z0-9_]{0,63}`
+- 4 KB maximum
+
+**Reserved key — `hidden_from_students`** (boolean, default `false`): the document's content stays fully retrievable and is used to answer questions, but its **source is never returned**. Chunks marked this way are absent from the `sources` array of `POST /api/v1/query` and `POST /api/v1/learn/query`, and from the `sources` SSE event when streaming; with citations enabled they are handed to the model marked as non-citable so no `[n]` marker can point at them. This is for material that may be consulted but not attributed or redistributed — licensed textbook chapters, for instance.
+
+It must be a JSON boolean. The string `"true"` is rejected rather than coerced: `"false"` is truthy in Python, and a parser that guessed would hide every source in the namespace on a quoting mistake.
+
+**Changing the flag on an already ingested document does not work by re-ingesting it.** Deduplication is by content hash: an unchanged file returns `status: "exists"` (or `"alias"` under a new filename) without touching the stored chunks or their metadata. To flip visibility, `DELETE /api/v1/documents/{document_id}` first, then ingest again. If the file's **content** also changed, no delete is needed: that path creates a new version and rewrites the chunks with the metadata of the new request.
 
 Sync response (HTTP 200, files <= 10 MB):
 
@@ -272,7 +305,7 @@ Async response (HTTP 202, files > 10 MB):
 }
 ```
 
-Error responses: 409 (duplicate filename with different content), 413 (file too large), 422 (unsupported format or scanned PDF).
+Error responses: 409 (duplicate filename with different content), 413 (file too large), 422 (unsupported format, scanned PDF, or invalid `metadata`).
 
 ### GET /api/v1/ingest/jobs/{job_id}/status
 
@@ -316,6 +349,8 @@ curl -s \
 ```
 
 Query parameters: `namespace` (default `default`). Files must be sent as repeated `files` fields.
+
+An optional `metadata` form field applies to every file in the request, with the same shape and rules as `POST /api/v1/ingest`. Invalid metadata rejects the whole batch with `ERR-INGEST-005` (422): ingesting half the files without the visibility their caller asked for is worse than ingesting none.
 
 Response (HTTP 202): one entry per submitted file, in submission order.
 
@@ -438,7 +473,7 @@ Response:
 |-------|-------------|
 | `response_id` | Unique response identifier |
 | `answer` | LLM-generated answer grounded in sources |
-| `sources` | Ranked list of source chunks |
+| `sources` | Ranked list of source chunks. Chunks ingested with `hidden_from_students: true` are **omitted**: their content is still retrieved and used to build the answer, but nothing identifying them (chunk id, snippet, filename) is returned. The filter applies to every caller, including admin-scope keys; use the QueryTrace or `GET /api/v1/documents/{id}/chunks` to inspect what was retrieved. |
 | `sources[].document_name` | Filename of the source document (e.g. `lecture-07.pdf`), or `null` when the document join returns no row. Soft-deleted documents (REQ-057) keep their citation with an `(archived)` suffix so traceability is preserved. |
 | `sources[].title` | FEAT-021: human-readable citation label ("filename, p.N") matching the `[n]` markers in the answer. Set only when the namespace has `citations_enabled`; `null` otherwise. |
 | `conversation_id` | Echoed back if provided in request |

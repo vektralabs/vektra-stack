@@ -23,7 +23,7 @@ compiled with an X86_V2 baseline and executes a v2 instruction while loading, so
 such a host `import numpy` kills the interpreter — the container never reaches its
 startup validation and reports either
 
-```
+```text
 RuntimeError: NumPy was built with baseline optimizations: (X86_V2)
 but your machine doesn't support: (X86_V2).
 ```
@@ -37,10 +37,20 @@ integration run.
 To check a host before deploying:
 
 ```bash
-lscpu | grep -o -E 'sse4_2|popcnt|avx' | sort -u   # a v2 CPU shows all three
-docker run --rm ghcr.io/vektralabs/vektra:0.7.1 \
+# x86-64-v2 is SSSE3 + SSE4.1 + SSE4.2 + POPCNT + CMPXCHG16B. AVX belongs to
+# v3 and is NOT required: a host without it can still be a perfectly good v2.
+lscpu | grep -o -E 'ssse3|sse4_1|sse4_2|popcnt|cx16' | sort -u
+
+# Then confirm on the image you are about to run. Use a release later than
+# 0.7.1: 0.7.1 and earlier carry the numpy that fails on these hosts, so they
+# tell you nothing about the host that the line above did not already say.
+docker run --rm ghcr.io/vektralabs/vektra:<version> \
   python -c "import numpy; print(numpy.__version__)"
 ```
+
+A host missing any of those five flags is pre-v2, and needs an image built after
+this fix. If you want to *see* the failure on such a host, run the same command
+against `0.7.1`: that is the crash this section is about.
 
 Two consequences worth knowing:
 

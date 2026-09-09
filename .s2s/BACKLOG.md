@@ -61,7 +61,8 @@ Three decisions worth recording:
 - [x] the same holds on the SSE path and in both pipelines
 - [x] citation markers cannot reference a withheld source
 - [x] contract documented in `docs/reference/api.md` with the delete-and-reingest caveat
-- [ ] end-to-end check against a live stack with a real Moodle-sourced document (the unit and API tests cover the logic; nobody has yet watched a hidden PDF answer a question in the widget without appearing under it)
+- [x] end-to-end check against a live stack (2026-09-09, local, isolated compose project, LLM stubbed): a document ingested with `hidden_from_students: true` reached the model (the stub records the prompt it was handed and saw the document's sentinel), the answer was built from it, and its `doc_id`, snippet and filename were absent from `sources` on both the JSON and the SSE path, with `sources_withheld=1` in the trace and the flag present on exactly that document's Qdrant points. A neighbouring visible document was still cited normally, and all four malformed-metadata probes returned `ERR-INGEST-005`. Log: `vektra-internal` session artifacts
+- [ ] the same, through the widget in a browser and with a document actually exported from Moodle by the ingestion pipeline — the run above drives the HTTP API with a synthetic document, so it proves the backend contract and not the integration around it
 
 ---
 

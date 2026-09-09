@@ -15,6 +15,8 @@ Batch endpoint: all files are processed asynchronously (always 202).
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -44,12 +46,103 @@ from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ERR_INGEST_001,
     ERR_INGEST_002,
+    ERR_INGEST_005,
     ErrorCategory,
     ErrorResponse,
     http_status_for,
 )
+from vektra_shared.types import HIDDEN_SOURCE_KEY
 
 log = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Per-document metadata (FEAT-026)
+# ---------------------------------------------------------------------------
+
+# One JSON field rather than one form field per attribute: the caller is an
+# automation pipeline that already needs course_id/module_id (documented in
+# ChunkMetadata, never passable until now), and a new attribute must not mean
+# a new API field every time.
+METADATA_MAX_BYTES = 4096
+METADATA_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# Flat and scalar on purpose: the value ends up in a vector store payload that
+# has to stay filterable, and `bool` before `int` matters nowhere here because
+# isinstance covers both, but nesting would.
+METADATA_SCALAR_TYPES = (str, int, float, bool)
+
+
+def _metadata_error(message: str, remediation: str) -> HTTPException:
+    err = ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_INGEST_005,
+        message=message,
+        remediation=remediation,
+    )
+    return HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+
+def _parse_metadata_form(raw: str | None) -> dict[str, Any] | None:
+    """Validate the ``metadata`` form field into chunk metadata (FEAT-026).
+
+    Returns None when the field is absent, which is not the same as an empty
+    object: absent means "attach nothing", `{}` means the caller sent an empty
+    document metadata set. Both end up attaching nothing, but only the second
+    is a caller decision, and the distinction keeps the audit log honest.
+
+    Rejects rather than coerces. `hidden_from_students` in particular must be a
+    JSON boolean: the string "false" is truthy in Python, so a coercing parser
+    would hide every source in a namespace on a pipeline's quoting mistake, and
+    the string "true" would work by accident, which is worse — it would teach
+    the caller that quoting does not matter until the day it does.
+    """
+    if raw is None:
+        return None
+
+    if len(raw.encode("utf-8")) > METADATA_MAX_BYTES:
+        raise _metadata_error(
+            f"metadata exceeds {METADATA_MAX_BYTES} bytes.",
+            "Send only the attributes needed for filtering and visibility.",
+        )
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise _metadata_error(
+            f"metadata is not valid JSON: {exc.msg} (line {exc.lineno}, column {exc.colno}).",
+            'Send a JSON object, for example {"hidden_from_students": true}.',
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise _metadata_error(
+            f"metadata must be a JSON object, got {type(parsed).__name__}.",
+            'Send a JSON object, for example {"course_id": "INF-2026"}.',
+        )
+
+    for key, value in parsed.items():
+        # fullmatch, not match: `$` also matches before a trailing newline, so
+        # `match` accepts the key "course_id\n" and lets it through to the
+        # vector store payload (verified against a running stack).
+        if not METADATA_KEY_PATTERN.fullmatch(key):
+            raise _metadata_error(
+                f"metadata key {key!r} is not allowed.",
+                "Keys must match [a-z][a-z0-9_]{0,63}.",
+            )
+        if not isinstance(value, METADATA_SCALAR_TYPES):
+            raise _metadata_error(
+                f"metadata value for {key!r} must be a string, number or boolean, "
+                f"got {type(value).__name__}.",
+                "Flatten nested values; the vector store payload holds scalars.",
+            )
+
+    hidden = parsed.get(HIDDEN_SOURCE_KEY)
+    if hidden is not None and not isinstance(hidden, bool):
+        raise _metadata_error(
+            f"metadata field {HIDDEN_SOURCE_KEY!r} must be a JSON boolean, "
+            f"got {type(hidden).__name__}.",
+            f"Send {HIDDEN_SOURCE_KEY}: true or false, unquoted.",
+        )
+
+    return parsed
 
 
 def _resolve_request_id(request: Request) -> UUID:
@@ -134,6 +227,14 @@ async def ingest(
     namespace_form: str | None = Form(
         None, description="Target namespace (overrides query param)"
     ),
+    metadata: str | None = Form(
+        None,
+        description=(
+            "Flat JSON object merged into every chunk's metadata (FEAT-026). "
+            'Reserved key: {"hidden_from_students": true} keeps the content '
+            "retrievable but withholds its source from query responses."
+        ),
+    ),
     session: AsyncSession = Depends(get_session),
     key_info: ApiKeyInfo = Depends(require_scope("ingest")),
 ) -> Any:
@@ -142,16 +243,22 @@ async def ingest(
     Accepts multipart/form-data with:
     - file: the document to ingest (PDF, DOCX, PPTX)
     - namespace: target namespace (query param or form field, default "default")
+    - metadata: optional flat JSON object attached to every chunk (FEAT-026)
 
     Returns:
     - 200 + {document_id, chunk_count, status} for sync path (<= 10MB)
     - 202 + {job_id, status} for async path (> 10MB)
     - 409 for same filename with different content (REQ-033)
     - 413 for file too large (ERR-INGEST-002)
+    - 422 for malformed metadata (ERR-INGEST-005)
     """
     # Form field overrides query param when explicitly provided
     if namespace_form is not None:
         namespace = namespace_form
+
+    # Before reading the upload: a malformed metadata field is the caller's
+    # mistake and costs nothing to reject early.
+    extra_metadata = _parse_metadata_form(metadata)
 
     ingest_config = IngestConfig()
     max_bytes = ingest_config.max_file_size_mb * 1024 * 1024
@@ -187,6 +294,7 @@ async def ingest(
             background_tasks=background_tasks,
             key_info=key_info,
             request=request,
+            extra_metadata=extra_metadata,
         )
         return JSONResponse(
             content=async_response.model_dump(mode="json"),
@@ -206,6 +314,7 @@ async def ingest(
             namespace=namespace,
             session=session,
             registry=registry,
+            extra_metadata=extra_metadata,
         )
     except IngestConflictError as exc:
         error = exc
@@ -289,6 +398,13 @@ async def batch_ingest(
     background_tasks: BackgroundTasks,
     files: list[UploadFile],
     namespace: str = "default",
+    metadata: str | None = Form(
+        None,
+        description=(
+            "Flat JSON object merged into every chunk of every file in this "
+            "request (FEAT-026). Same shape as POST /api/v1/ingest."
+        ),
+    ),
     session: AsyncSession = Depends(get_session),
     key_info: ApiKeyInfo = Depends(require_scope("ingest")),
 ) -> JSONResponse:
@@ -298,7 +414,13 @@ async def batch_ingest(
     All files are processed asynchronously (always 202). Files exceeding
     VEKTRA_MAX_FILE_SIZE_MB are reported as 'rejected' in the response
     array without creating a job.
+
+    An optional `metadata` field applies to every file in the request
+    (FEAT-026); a 422 rejects the whole batch rather than ingesting some of
+    the files without the visibility flag the caller asked for.
     """
+    extra_metadata = _parse_metadata_form(metadata)
+
     if not files:
         raise HTTPException(
             status_code=422,
@@ -350,6 +472,7 @@ async def batch_ingest(
             registry=registry,
             background_tasks=background_tasks,
             request=request,
+            extra_metadata=extra_metadata,
         )
 
         items.append(
@@ -745,6 +868,7 @@ async def _enqueue_ingest_job(
     background_tasks: BackgroundTasks,
     key_info: ApiKeyInfo,
     request: Request,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> AsyncIngestResponse:
     """Create an IngestJobOrm and enqueue an arq task. Returns 202."""
     from arq import ArqRedis
@@ -778,6 +902,7 @@ async def _enqueue_ingest_job(
                 namespace,
                 filename,
                 file_content,
+                extra_metadata,
             )
         except Exception as exc:
             log.error("enqueue_failed", job_id=str(job.id), error=str(exc))
@@ -802,6 +927,7 @@ async def _enqueue_ingest_job(
             filename=filename,
             file_bytes=file_content,
             registry=registry,
+            extra_metadata=extra_metadata,
         )
 
     _write_audit_log(
@@ -836,6 +962,7 @@ async def _enqueue_batch_file(
     registry: Any,
     background_tasks: BackgroundTasks,
     request: Request,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> bool:
     """Enqueue a single file from a batch ingest request.
 
@@ -858,6 +985,7 @@ async def _enqueue_batch_file(
                 namespace,
                 filename,
                 file_content,
+                extra_metadata,
             )
         except Exception as exc:
             log.error("batch_enqueue_failed", job_id=str(job_id), error=str(exc))
@@ -878,6 +1006,7 @@ async def _enqueue_batch_file(
             filename=filename,
             file_bytes=file_content,
             registry=registry,
+            extra_metadata=extra_metadata,
         )
     return True
 
@@ -889,12 +1018,15 @@ async def _run_task_in_background(
     filename: str,
     file_bytes: bytes,
     registry: Any,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Background fallback for async ingest when arq is not configured."""
     from vektra_ingest.jobs import ingest_document_task
 
     ctx = {"registry": registry}
-    await ingest_document_task(ctx, job_id, namespace_id, filename, file_bytes)
+    await ingest_document_task(
+        ctx, job_id, namespace_id, filename, file_bytes, extra_metadata
+    )
 
 
 def _write_audit_log(

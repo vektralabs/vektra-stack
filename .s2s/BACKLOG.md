@@ -22,6 +22,48 @@
 
 ## Planned
 
+### FEAT-026: retrieved but never cited - per-document source visibility
+
+**Status**: completed (2026-09-08) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: university deployment review (2026-09-08). Course pages carry publisher material that Moodle marks not visible to students; it must feed the assistant's answers without being handed back as a citable source.
+
+**Context**: ingestion had no channel for per-document attributes at all. `run_ingest` has taken an `extra_metadata` argument since the learn vertical needed `course_id`, and `ChunkMetadata` documents `course_id`, `module_id` and `academic_year` as supported keys, but no HTTP request could set any of them: the endpoint accepted a file and a namespace, nothing else. So the first requirement was a metadata channel, and the visibility flag is its first reserved key.
+
+The retrieval requirement is unusual and worth stating precisely: the content must stay **fully** retrievable — embedded, searched, reranked, parent-expanded, placed in the prompt — while the *attribution* disappears. This is not a relevance filter and must never become one: filtering at retrieval would degrade answers, which is the opposite of what the operator asked for.
+
+**Contract** (frozen before implementation so the n8n pipeline could be built against it):
+
+```
+POST /api/v1/ingest          multipart/form-data
+  file, namespace, metadata=<JSON object string>
+```
+
+- flat object, scalar values, keys `[a-z][a-z0-9_]{0,63}`, 4 KB; violations are `ERR-INGEST-005` (422)
+- reserved key `hidden_from_students` (JSON boolean, default false)
+- same field on `/api/v1/ingest/batch`, applying to every file in the request; an invalid value rejects the whole batch rather than ingesting some files without the visibility their caller asked for
+- producer-side rule agreed with the pipeline: the flag mirrors the course module's `visible === 0`, **not** `uservisible`, which reflects the *caller's* access and is true for an admin token even on hidden modules — reading it would invert the behaviour
+
+**Resolution**: metadata parsed and validated at the API boundary, threaded through the sync path, the arq task (new trailing optional argument, so a job enqueued by the previous version and still queued across a deploy runs with the signature it was serialized against) and the in-process fallback. The withholding itself is a two-line predicate (`vektra_shared.types.is_hidden_source`) applied at the four points where a pipeline turns selected chunks into a source list: `SimpleQueryPipeline` and `AdvancedQueryPipeline`, sync and SSE.
+
+Three decisions worth recording:
+
+1. **The filter is server-side and unconditional**, not a rendering hint. FEAT-014 established the opposite pattern for citation visibility (`show_sources` tells the widget what to draw while the API returns everything, so analytics keep full information). That is wrong here: the JSON body is readable in a browser's devtools, so chunk ids, snippets and filenames of publisher material would be one keypress away. Admin-scope callers are filtered too; inspection goes through the QueryTrace and `GET /documents/{id}/chunks`, which are already admin surfaces.
+2. **Citations (FEAT-021) had to be taught about it.** The first shape of this kept `loop.index` as the source id and relied on a prompt rule not to cite withheld chunks. Two defects: a prompt rule is advisory, so a marker could still disclose that a withheld source exists; and worse, a withheld chunk *consumed a number*, so with one in the middle every later id was off by one and the model's `[2]` addressed a source the client never received — the widget maps `[n]` to `sources[n-1]`. Withheld chunks now render with `citable="false"`, no `title` (a title is a filename the model could quote in prose) and **no id at all**: the context numbers only the sources the response carries, which makes a wrong marker impossible by construction rather than by instruction. Raised by CodeRabbit on #139 (comment 3969533968), which saw the disclosure half; the numbering half turned up while fixing it.
+3. **The flag must be a real boolean.** `"true"` is rejected rather than coerced, because `"false"` is truthy in Python: a coercing parser would hide every source in a namespace the first time the pipeline quoted the value, and would work by accident until then.
+
+**Known limitation, deliberate**: dedup is by content hash over live rows, so re-ingesting an unchanged file returns `exists`/`alias` and does not update metadata. Flipping visibility on an already ingested document requires `DELETE /api/v1/documents/{id}` then re-ingest; a content change needs no delete (the versioning path rewrites the chunks). A `PATCH` for document metadata is not filed yet and would remove this step.
+
+**Out of scope, needs a product decision**: modules that are visible but access-restricted (`availability`: group, date, completion). They keep their sources visible today. Widening the rule is a decision about what "restricted" means to a student, not a technical gap.
+
+**Acceptance criteria**:
+- [x] ingest API accepts and persists per-document metadata, on every ingestion path
+- [x] a chunk marked `hidden_from_students` is used in the answer and absent from the returned sources
+- [x] the same holds on the SSE path and in both pipelines
+- [x] citation markers cannot reference a withheld source
+- [x] contract documented in `docs/reference/api.md` with the delete-and-reingest caveat
+- [x] end-to-end check against a live stack (2026-09-09, local, isolated compose project, LLM stubbed): a document ingested with `hidden_from_students: true` reached the model (the stub records the prompt it was handed and saw the document's sentinel), the answer was built from it, and its `doc_id`, snippet and filename were absent from `sources` on both the JSON and the SSE path, with `sources_withheld=1` in the trace and the flag present on exactly that document's Qdrant points. A neighbouring visible document was still cited normally, and all four malformed-metadata probes returned `ERR-INGEST-005`. Log: `vektra-internal` session artifacts
+- [ ] the same, through the widget in a browser and with a document actually exported from Moodle by the ingestion pipeline — the run above drives the HTTP API with a synthetic document, so it proves the backend contract and not the integration around it
+
 ### BUG-027: the published image cannot start on a pre-x86-64-v2 CPU
 
 **Status**: completed (2026-09-08) | **Priority**: high | **Created**: 2026-09-08

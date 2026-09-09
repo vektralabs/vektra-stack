@@ -103,6 +103,7 @@ ERR_INGEST_001 = (
 ERR_INGEST_002 = "ERR-INGEST-002"  # File too large
 ERR_INGEST_003 = "ERR-INGEST-003"  # Scanned PDF detected (no text layer)
 ERR_INGEST_004 = "ERR-INGEST-004"  # Vector store write failed
+ERR_INGEST_005 = "ERR-INGEST-005"  # Invalid per-document metadata (FEAT-026)
 
 # Query errors
 ERR_QUERY_001 = "ERR-QUERY-001"  # No documents indexed in namespace

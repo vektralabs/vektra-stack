@@ -1,6 +1,6 @@
 """Unit tests for AdvancedQueryPipeline (Phase 2)."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 from vektra_core.advanced_pipeline import AdvancedQueryPipeline
@@ -1097,3 +1097,201 @@ async def test_citations_disabled_by_default_leaves_prompt_untouched():
     assert "Cite the sources" not in system_msg["content"]
     assert "title=" not in user_msg["content"]
     assert response.sources[0].title is None
+
+
+# ---------------------------------------------------------------------------
+# Source visibility (FEAT-026)
+# ---------------------------------------------------------------------------
+
+
+def _make_hidden_result(score: float, text: str) -> SearchResult:
+    """A chunk whose content may be used but whose source must not be shown."""
+    return SearchResult(
+        chunk_id=str(uuid4()),
+        score=score,
+        text_snippet=text,
+        document_id=uuid4(),
+        document_version=1,
+        metadata={"hidden_from_students": True},
+    )
+
+
+def _user_message(llm) -> str:
+    messages = llm.complete.call_args.args[0]
+    return messages[-1].content
+
+
+async def test_hidden_chunk_answers_the_question_but_never_appears_in_sources():
+    """The whole point: content is used, attribution is withheld."""
+    visible = _make_search_result(0.9, "public lecture notes")
+    hidden = _make_hidden_result(0.8, "publisher-only chapter text")
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[visible, hidden])
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    llm.complete = AsyncMock(
+        return_value=CompletionResponse(
+            content="The answer.",
+            model="ollama/llama3",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+    )
+
+    pipeline = _make_pipeline(llm=llm, vector_store=vector_store)
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    prompt = _user_message(llm)
+    assert "publisher-only chapter text" in prompt  # used
+    returned = {s.chunk_id for s in response.sources}
+    assert visible.chunk_id in returned
+    assert hidden.chunk_id not in returned  # not attributed
+    assert not any("publisher-only" in s.snippet for s in response.sources)
+
+    names_step = next(s for s in trace.steps if s.name == "document_names")
+    assert names_step.metadata["sources_withheld"] == 1
+
+
+async def test_hidden_chunk_is_marked_non_citable_in_the_prompt():
+    """FEAT-021 numbers every source; a withheld one must not be citable (D2)."""
+    visible = _make_search_result(0.9, "public lecture notes")
+    hidden = _make_hidden_result(0.8, "publisher-only chapter text")
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[visible, hidden])
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    llm.complete = AsyncMock(
+        return_value=CompletionResponse(
+            content="The answer [1].",
+            model="ollama/llama3",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+    )
+
+    # Resolve real document names, otherwise "no title on the hidden element" is
+    # also what an empty name map looks like and the assertion proves nothing.
+    names = {
+        str(visible.document_id): "lecture-07.pdf",
+        str(hidden.document_id): "publisher-chapter.pdf",
+    }
+
+    pipeline = _make_pipeline(llm=llm, vector_store=vector_store)
+    with patch(
+        "vektra_core.advanced_pipeline._fetch_document_names",
+        AsyncMock(return_value=names),
+    ):
+        await pipeline.execute(QueryRequest(question="test", citations_enabled=True))
+
+    prompt = _user_message(llm)
+    hidden_element = next(
+        line for line in prompt.splitlines() if "publisher-only" in line
+    )
+    visible_element = next(
+        line for line in prompt.splitlines() if "public lecture notes" in line
+    )
+    assert 'citable="false"' in hidden_element
+    assert "publisher-chapter.pdf" not in hidden_element  # the filename must not leak
+    assert "title=" not in hidden_element
+    assert 'citable="false"' not in visible_element
+    assert 'title="lecture-07.pdf"' in visible_element  # control: titles do render
+
+
+async def test_stream_withholds_hidden_sources_too():
+    """The SSE path assembles sources separately; it must not be the leak."""
+    visible = _make_search_result(0.9, "public lecture notes")
+    hidden = _make_hidden_result(0.8, "publisher-only chapter text")
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[visible, hidden])
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+
+    async def _mock_stream(*args, **kwargs):
+        yield CompletionChunk(content="Hello", done=True)
+
+    llm.stream = AsyncMock(return_value=_mock_stream())
+
+    pipeline = _make_pipeline(llm=llm, vector_store=vector_store)
+    chunks = []
+    stream = await pipeline.execute_stream(QueryRequest(question="test"))
+    async for chunk in stream:
+        chunks.append(chunk)
+
+    sources_chunk = next(c for c in chunks if c.type == "sources")
+    returned = {s["chunk_id"] for s in sources_chunk.data}
+    assert visible.chunk_id in returned
+    assert hidden.chunk_id not in returned
+
+
+async def test_a_quoted_true_does_not_hide_a_source():
+    """Only a real boolean hides. A truthy string is a caller mistake, not intent."""
+    quoted = SearchResult(
+        chunk_id=str(uuid4()),
+        score=0.9,
+        text_snippet="ordinary material",
+        document_id=uuid4(),
+        document_version=1,
+        metadata={"hidden_from_students": "true"},
+    )
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[quoted])
+
+    pipeline = _make_pipeline(vector_store=vector_store)
+    response, _trace = await pipeline.execute(QueryRequest(question="test"))
+
+    assert [s.chunk_id for s in response.sources] == [quoted.chunk_id]
+
+
+async def test_citation_ids_line_up_with_the_returned_sources():
+    """[n] must address sources[n-1], with a withheld chunk in the middle.
+
+    The widget maps a marker to `sources[n-1]` on the assumption that the
+    prompt's ids follow the returned list. A withheld chunk used to consume an
+    id, so with one in the middle the model's [2] addressed a source the client
+    never received, and the ids of everything after it were off by one.
+    """
+    first = _make_search_result(0.9, "first public passage")
+    hidden = _make_hidden_result(0.85, "publisher-only passage")
+    second = _make_search_result(0.8, "second public passage")
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[first, hidden, second])
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    llm.complete = AsyncMock(
+        return_value=CompletionResponse(
+            content="Answer [1][2].",
+            model="ollama/llama3",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+    )
+
+    pipeline = _make_pipeline(llm=llm, vector_store=vector_store)
+    response, _trace = await pipeline.execute(
+        QueryRequest(question="test", citations_enabled=True)
+    )
+
+    prompt = _user_message(llm)
+    # Exactly as many ids as sources, numbered from 1 without gaps.
+    assert 'id="1"' in prompt and 'id="2"' in prompt
+    assert 'id="3"' not in prompt
+    assert len(response.sources) == 2
+
+    # And each id sits on the source at that position in the response.
+    for n, source in enumerate(response.sources, start=1):
+        element = next(line for line in prompt.splitlines() if f'id="{n}"' in line)
+        assert source.snippet in element
+
+    # The withheld passage is in the prompt, and carries no id to cite.
+    hidden_element = next(
+        line for line in prompt.splitlines() if "publisher-only passage" in line
+    )
+    assert 'citable="false"' in hidden_element
+    assert "id=" not in hidden_element

@@ -130,18 +130,24 @@ class PersistentConversationStore:
         key_id: UUID,
         title: str | None = None,
         conversation_id: UUID | None = None,
+        owner_subject: str | None = None,
     ) -> UUID:
         """Create a new conversation row. Returns the conversation UUID.
 
         If *conversation_id* is provided, uses it as the primary key instead
         of generating one server-side.  This supports flows where the caller
         has already allocated an ID (e.g. learn endpoint auto-generation).
+
+        *owner_subject* is the end user the conversation belongs to (a JWT
+        `sub`), and is what makes per-student history and its authorization
+        possible (FEAT-027). None for API-key callers, which have no subject.
         """
         async with self._session_factory() as session:
             values: dict[str, Any] = {
                 "namespace_id": namespace_id,
                 "key_id": key_id,
                 "title": title,
+                "owner_subject": owner_subject,
             }
             if conversation_id is not None:
                 values["id"] = conversation_id
@@ -163,11 +169,17 @@ class PersistentConversationStore:
         conversation_id: UUID,
         namespace_id: str,
         key_id: UUID,
+        owner_subject: str | None = None,
     ) -> None:
         """Create the conversation row if it does not already exist.
 
         Used when the caller provides a conversation_id (e.g. client-generated
         or learn endpoint auto-generated) and the row may or may not exist yet.
+
+        The insert does nothing on conflict, so *owner_subject* is written only
+        when this call creates the row. An existing conversation keeps the owner
+        it was created with: a second caller cannot claim someone else's
+        conversation by sending its id (FEAT-027).
         """
         async with self._session_factory() as session:
             from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -178,6 +190,7 @@ class PersistentConversationStore:
                     id=conversation_id,
                     namespace_id=namespace_id,
                     key_id=key_id,
+                    owner_subject=owner_subject,
                 )
                 .on_conflict_do_nothing(index_elements=["id"])
             )
@@ -309,6 +322,7 @@ class PersistentConversationStore:
             stmt = select(
                 ConversationOrm.id,
                 ConversationOrm.namespace_id,
+                ConversationOrm.owner_subject,
                 ConversationOrm.created_at,
                 ConversationOrm.updated_at,
                 ConversationOrm.turn_count,
@@ -322,6 +336,7 @@ class PersistentConversationStore:
             return {
                 "id": row.id,
                 "namespace_id": row.namespace_id,
+                "owner_subject": row.owner_subject,
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "turn_count": row.turn_count,
@@ -379,13 +394,60 @@ class PersistentConversationStore:
                 for row in result.all()
             ]
 
+    async def list_conversations(
+        self,
+        namespace_id: str,
+        owner_subject: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return one owner's active conversations, most recently used first.
+
+        Metadata only, never content: the caller lists what it can resume, and
+        reads a conversation's turns through the endpoint that authorizes each
+        one individually (FEAT-027). Soft-deleted rows are excluded, so a
+        student who deleted a conversation does not see it offered again.
+        """
+        async with self._session_factory() as session:
+            stmt = (
+                select(
+                    ConversationOrm.id,
+                    ConversationOrm.title,
+                    ConversationOrm.turn_count,
+                    ConversationOrm.created_at,
+                    ConversationOrm.updated_at,
+                )
+                .where(
+                    ConversationOrm.namespace_id == namespace_id,
+                    ConversationOrm.owner_subject == owner_subject,
+                    ConversationOrm.deleted_at.is_(None),
+                )
+                .order_by(ConversationOrm.updated_at.desc())
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            return [
+                {
+                    "id": row.id,
+                    "title": row.title,
+                    "turn_count": row.turn_count,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in result.all()
+            ]
+
     async def soft_delete(
-        self, conversation_id: UUID, namespace: str | None = None
+        self,
+        conversation_id: UUID,
+        namespace: str | None = None,
+        owner_subject: str | None = None,
     ) -> bool:
         """Soft-delete a conversation (set deleted_at). Returns True if found.
 
         If *namespace* is provided, only deletes if the conversation belongs
-        to that namespace (scoped key enforcement).
+        to that namespace (scoped key enforcement). If *owner_subject* is
+        provided, only deletes that owner's conversation, so a student can
+        erase their own history and nobody else's (FEAT-027).
         """
         async with self._session_factory() as session:
             where_clauses = [
@@ -394,6 +456,8 @@ class PersistentConversationStore:
             ]
             if namespace is not None:
                 where_clauses.append(ConversationOrm.namespace_id == namespace)
+            if owner_subject is not None:
+                where_clauses.append(ConversationOrm.owner_subject == owner_subject)
             stmt = (
                 update(ConversationOrm)
                 .where(*where_clauses)

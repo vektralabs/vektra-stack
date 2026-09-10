@@ -787,7 +787,7 @@ The `sources` SSE event payload carries the same `show_sources` flag alongside t
 
 Return the decrypted turns of a conversation belonging to the token's course. Used by the widget to restore history after a page reload (FEAT-004).
 
-**Auth**: JWT dashboard token (same as `/learn/query`). The endpoint enforces `conversation.namespace_id == jwt.namespace`; a mismatch returns 403 (so the widget can distinguish "wrong course" from "deleted conversation" and reset its local state).
+**Auth**: JWT dashboard token (same as `/learn/query`). Two checks, both required: the conversation must belong to the token's namespace (403 `ERR-LEARN-006`, so the widget can distinguish "wrong course" from "deleted conversation" and reset its local state), **and** it must belong to the token's `sub` (403 `ERR-LEARN-007`). Namespace alone is not authorization: every student of a course holds a token for the same namespace, so before FEAT-027 any of them could read any conversation of that course given its id. A conversation with no recorded owner — created before ownership existed, or by an API-key caller that has no subject — is refused rather than shared.
 
 ```bash
 curl -s \
@@ -818,7 +818,50 @@ The `turns[].sources` array is empty in v0.5.0 (admin-only metadata such as mode
 Errors:
 - `404 ERR-LEARN-005` if the conversation does not exist or has been deleted.
 - `403 ERR-LEARN-006` if the conversation belongs to a different course/namespace.
+- `403 ERR-LEARN-007` if the conversation belongs to another student, or has no recorded owner.
+- `401 ERR-LEARN-003` if the token carries no `sub` claim, which means it can own no conversation.
 - `503 ERR-LEARN-001` if the conversation store is not yet initialized or does not support decryption (e.g. in-memory store; production deployments must set `VEKTRA_CONVERSATION_KEY`).
+
+### GET /api/v1/learn/conversations
+
+List the caller's own conversations in the token's course, most recently used first. Metadata only, never content.
+
+**Auth**: JWT dashboard token. Scoped to `jwt.namespace` **and** `jwt.sub`, so the list is one student's own history and nobody else's.
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $LEARN_JWT" \
+  "http://localhost:8000/api/v1/learn/conversations?limit=5" | python3 -m json.tool
+```
+
+```json
+{
+    "namespace": "course-101",
+    "conversations": [
+        {
+            "conversation_id": "550e8400-...",
+            "title": null,
+            "turn_count": 6,
+            "created_at": "2026-09-01T09:12:00Z",
+            "updated_at": "2026-09-03T18:40:00Z"
+        }
+    ]
+}
+```
+
+Query parameters: `limit` (default 20, 1-100). Soft-deleted conversations are never listed.
+
+This is what lets the widget restore history on a device that has never seen the conversation id: ownership lives on the server, not in the browser. Requires a persistent conversation store — with the in-memory store (no `VEKTRA_CONVERSATION_KEY`) the endpoint returns `500 ERR-LEARN-001` rather than an empty list, because "no history" and "history is not being stored" are different answers.
+
+### DELETE /api/v1/learn/conversations/{conversation_id}
+
+Let a student erase one of their own conversations (REQ-057). Soft delete: the row keeps its retention trail, its turns stop being readable through the API, and it is no longer offered for resumption.
+
+**Auth**: JWT dashboard token, scoped to the caller's own `sub`.
+
+Returns `204` on success and `404 ERR-LEARN-005` when the conversation does not exist, is already deleted, **or belongs to someone else** — deliberately the same answer, so the endpoint cannot be used to discover which conversation ids exist in a course.
+
+**Audit (NFR-007)**: writes a `learn_conversation_deleted` row carrying `namespace`, `conversation_id`, `student_id` and `course_id`.
 
 **Audit (NFR-007)**: every successful read writes a `learn_conversation_turns_read` audit row carrying `namespace`, `conversation_id`, `turn_count`, `student_id`, and `course_id`. The audit row is generated even if the upstream middleware did not set a request id.
 

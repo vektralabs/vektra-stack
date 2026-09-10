@@ -18,6 +18,7 @@ const THEMES = {
     assistantBubble: "#f3f4f6",
     assistantText: "#1a1a1a",
     inputBg: "#ffffff",
+    danger: "#c0392b",
     shadow: "0 4px 24px rgba(0, 0, 0, 0.12)",
   },
   dark: {
@@ -33,6 +34,7 @@ const THEMES = {
     assistantBubble: "#2a2a3e",
     assistantText: "#e4e4e7",
     inputBg: "#2a2a3e",
+    danger: "#f87171",
     shadow: "0 4px 24px rgba(0, 0, 0, 0.4)",
   },
 };
@@ -114,6 +116,7 @@ export function buildStyles(theme) {
   gap: 4px;
 }
 .vektra-chat-new,
+.vektra-chat-delete,
 .vektra-chat-close {
   background: none;
   border: none;
@@ -123,12 +126,19 @@ export function buildStyles(theme) {
   padding: 4px;
   line-height: 1;
 }
-.vektra-chat-new {
+.vektra-chat-new,
+.vektra-chat-delete {
   font-size: 16px;
 }
 .vektra-chat-new:hover,
+.vektra-chat-delete:hover,
 .vektra-chat-close:hover {
   color: ${t.text};
+}
+/* Armed state of the two-step delete: the icon says what the next click does. */
+.vektra-chat-delete.armed {
+  color: ${t.danger};
+  transform: scale(1.15);
 }
 
 .vektra-chat-messages {

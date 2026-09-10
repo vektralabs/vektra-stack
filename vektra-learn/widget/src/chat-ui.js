@@ -21,6 +21,9 @@ const I18N = {
     sessionExpired: "Your session has expired. Please reload the page.",
     close: "Close",
     newChat: "New chat",
+    deleteHistory: "Delete this conversation",
+    confirmDelete: "Delete? Click again",
+    historyDeleted: "This conversation has been deleted.",
     poweredBy: "Powered by",
   },
   it: {
@@ -37,6 +40,9 @@ const I18N = {
     sessionExpired: "La sessione è scaduta. Ricarica la pagina.",
     close: "Chiudi",
     newChat: "Nuova chat",
+    deleteHistory: "Elimina questa conversazione",
+    confirmDelete: "Eliminare? Clicca ancora",
+    historyDeleted: "Questa conversazione è stata eliminata.",
     poweredBy: "Offerto da",
   },
 };
@@ -91,6 +97,9 @@ export class ChatUI {
    * @param {string|null} [opts.poweredByUrl] - custom footer link target
    * @param {function} opts.onSend - callback(question: string)
    * @param {function} [opts.onNewChat] - callback invoked when "New chat" is clicked
+   * @param {function} [opts.onDeleteHistory] - async callback invoked when the
+   *   student confirms deletion of their stored history; resolves to true on
+   *   success. Omit it and the button is not rendered at all.
    */
   constructor({
     theme = "light",
@@ -104,11 +113,14 @@ export class ChatUI {
     poweredByUrl = null,
     onSend,
     onNewChat = null,
+    onDeleteHistory = null,
   }) {
     this._theme = theme;
     this._lang = I18N[language] || I18N.en;
     this._onSend = onSend;
     this._onNewChat = onNewChat;
+    this._onDeleteHistory = onDeleteHistory;
+    this._deleteArmed = false;
     this._isOpen = false;
     this._sending = false;
     this._restoring = false; // true while a conversation history is being fetched
@@ -180,6 +192,11 @@ export class ChatUI {
         <span class="vektra-chat-header-title"></span>
         <div class="vektra-chat-header-actions">
           <button class="vektra-chat-new" aria-label="${this._lang.newChat}" title="${this._lang.newChat}">&#10227;</button>
+          ${
+            this._onDeleteHistory
+              ? `<button class="vektra-chat-delete" aria-label="${this._lang.deleteHistory}" aria-pressed="false" title="${this._lang.deleteHistory}">&#128465;</button>`
+              : ""
+          }
           <button class="vektra-chat-close" aria-label="${this._lang.close}">&times;</button>
         </div>
       </div>
@@ -228,6 +245,7 @@ export class ChatUI {
     this._sendBtn = this._panel.querySelector(".vektra-chat-send");
     this._closeBtn = this._panel.querySelector(".vektra-chat-close");
     this._newChatBtn = this._panel.querySelector(".vektra-chat-new");
+    this._deleteBtn = this._panel.querySelector(".vektra-chat-delete");
   }
 
   _bindEvents() {
@@ -242,6 +260,54 @@ export class ChatUI {
     });
     if (this._newChatBtn) {
       this._newChatBtn.addEventListener("click", () => this._handleNewChat());
+    }
+    if (this._deleteBtn) {
+      this._deleteBtn.addEventListener("click", () => this._handleDeleteHistory());
+    }
+  }
+
+  /**
+   * Two-step delete: the first click arms the button and relabels it, the
+   * second one within 5s performs the deletion. A native confirm() would
+   * block the host page's event loop, and an irreversible action behind a
+   * single click of a small icon is how a student loses their history by
+   * missing the close button.
+   */
+  async _handleDeleteHistory() {
+    if (this._sending || this._restoring || !this._onDeleteHistory) return;
+
+    if (!this._deleteArmed) {
+      this._deleteArmed = true;
+      this._deleteBtn.classList.add("armed");
+      // The accessible name stays put: a screen reader that re-announces the
+      // control should still say what it is. The armed state is state, so it
+      // travels on aria-pressed, with the pending action in the tooltip.
+      this._deleteBtn.setAttribute("aria-pressed", "true");
+      this._deleteBtn.title = this._lang.confirmDelete;
+      this._disarmTimer = setTimeout(() => this._disarmDelete(), 5000);
+      return;
+    }
+
+    this._disarmDelete();
+    const ok = await this._onDeleteHistory();
+    if (ok) {
+      this.reset();
+      this.addMessage("assistant", this._lang.historyDeleted);
+    } else {
+      this.showError(this._lang.error);
+    }
+  }
+
+  _disarmDelete() {
+    if (this._disarmTimer) {
+      clearTimeout(this._disarmTimer);
+      this._disarmTimer = null;
+    }
+    this._deleteArmed = false;
+    if (this._deleteBtn) {
+      this._deleteBtn.classList.remove("armed");
+      this._deleteBtn.setAttribute("aria-pressed", "false");
+      this._deleteBtn.title = this._lang.deleteHistory;
     }
   }
 

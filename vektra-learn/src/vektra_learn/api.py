@@ -18,7 +18,15 @@ from uuid import UUID, uuid4
 import httpx
 import jwt
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+)
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -47,6 +55,7 @@ from vektra_shared.errors import (
     ERR_LEARN_004,
     ERR_LEARN_005,
     ERR_LEARN_006,
+    ERR_LEARN_007,
     ErrorCategory,
     ErrorResponse,
     http_status_for,
@@ -543,25 +552,15 @@ def _resolve_namespace_from_token(
     return str(ns)
 
 
-@router.get(
-    "/conversations/{conversation_id}/turns",
-    response_model=ConversationTurnsResponse,
-)
-async def get_conversation_turns(
-    conversation_id: UUID,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
-) -> ConversationTurnsResponse:
-    """Return decrypted turns for a conversation belonging to the token's course.
+def _get_conversation_store(request: Request) -> Any:
+    """Return the registered conversation store, or raise the right envelope.
 
-    Authorization is namespace-scoped: the conversation must match the namespace
-    derived from the JWT (``namespace`` claim or ``course_id`` fallback). A
-    mismatch returns 403 so the widget can distinguish "wrong course" from
-    "deleted conversation" (404) and reset its local state accordingly.
+    The store is a runtime choice: without VEKTRA_CONVERSATION_KEY the app
+    registers an in-memory one, which holds no rows a student could own and
+    cannot decrypt anything. Endpoints that need durable, per-student history
+    say so explicitly instead of returning an empty list that reads like
+    "you have no conversations".
     """
-    namespace = _resolve_namespace_from_token(token_payload, request)
-
     registry = getattr(request.app.state, "registry", None)
     if registry is None:
         err = ErrorResponse(
@@ -583,10 +582,179 @@ async def get_conversation_turns(
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
+    if not hasattr(conv_store, "get_metadata"):
+        err = ErrorResponse(
+            category=ErrorCategory.CONFIGURATION,
+            code=ERR_LEARN_001,
+            message="Conversation store does not support stored conversations.",
+            remediation=(
+                "Configure a persistent conversation store "
+                "(VEKTRA_CONVERSATION_KEY must be set)."
+            ),
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    return conv_store
+
+
+def _require_subject(token_payload: dict[str, Any]) -> str:
+    """Return the token's `sub`, the identity a conversation belongs to.
+
+    A token without one cannot own history, and must not fall back to
+    "anything in this course" — that fallback is exactly the authorization
+    hole FEAT-027 closes.
+    """
+    subject = token_payload.get("sub")
+    if not subject:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_003,
+            message="Dashboard token is missing the 'sub' (student) claim.",
+            remediation="Request a new dashboard token with a student identifier.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+    return str(subject)
+
+
+class ConversationSummary(BaseModel):
+    """One resumable conversation, metadata only."""
+
+    conversation_id: UUID
+    title: str | None
+    turn_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationListResponse(BaseModel):
+    namespace: str
+    conversations: list[ConversationSummary]
+
+
+@router.get("/conversations", response_model=ConversationListResponse)
+async def list_my_conversations(
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+    token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
+) -> ConversationListResponse:
+    """List the caller's own conversations in this course, most recent first.
+
+    This is what makes history survive a closed tab or a different device: the
+    widget no longer depends on a conversation id it kept in sessionStorage,
+    because the server knows which conversations belong to the student the
+    token was issued for (FEAT-027).
+    """
+    namespace = _resolve_namespace_from_token(token_payload, request)
+    subject = _require_subject(token_payload)
+    conv_store = _get_conversation_store(request)
+
+    if not hasattr(conv_store, "list_conversations"):
+        err = ErrorResponse(
+            category=ErrorCategory.CONFIGURATION,
+            code=ERR_LEARN_001,
+            message="Conversation store does not support listing conversations.",
+            remediation=(
+                "Configure a persistent conversation store "
+                "(VEKTRA_CONVERSATION_KEY must be set)."
+            ),
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    rows = await conv_store.list_conversations(
+        namespace_id=namespace, owner_subject=subject, limit=limit
+    )
+    return ConversationListResponse(
+        namespace=namespace,
+        conversations=[
+            ConversationSummary(
+                conversation_id=row["id"],
+                title=row["title"],
+                turn_count=row["turn_count"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ],
+    )
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_my_conversation(
+    conversation_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
+) -> Response:
+    """Let a student erase one of their own conversations (REQ-057).
+
+    Soft delete: the row keeps its retention trail, the turns stop being
+    readable through the API, and the conversation is no longer offered for
+    resumption. Scoped to the caller's own subject, so the 404 covers both
+    "no such conversation" and "not yours" — a student must not be able to
+    probe which conversation ids exist in their course.
+    """
+    namespace = _resolve_namespace_from_token(token_payload, request)
+    subject = _require_subject(token_payload)
+    conv_store = _get_conversation_store(request)
+
+    deleted = await conv_store.soft_delete(
+        conversation_id, namespace=namespace, owner_subject=subject
+    )
+    if not deleted:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_005,
+            message=f"Conversation '{conversation_id}' not found.",
+            remediation="It may already be deleted. Start a new conversation.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    background_tasks.add_task(
+        _audit_log_event,
+        key_id=_LEARN_SENTINEL_KEY_ID,
+        endpoint=f"/api/v1/learn/conversations/{conversation_id}",
+        method="DELETE",
+        status_code=204,
+        request_id=_resolve_request_id(request),
+        action="learn_conversation_deleted",
+        log_metadata={
+            "namespace": namespace,
+            "conversation_id": str(conversation_id),
+            "student_id": subject,
+            "course_id": token_payload.get("course_id"),
+        },
+    )
+    return Response(status_code=204)
+
+
+@router.get(
+    "/conversations/{conversation_id}/turns",
+    response_model=ConversationTurnsResponse,
+)
+async def get_conversation_turns(
+    conversation_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    token_payload: dict[str, Any] = Depends(_validate_dashboard_token),
+) -> ConversationTurnsResponse:
+    """Return decrypted turns of the caller's own conversation.
+
+    Two checks, both required: the conversation must belong to the token's
+    namespace, and to the token's subject. Namespace alone is not
+    authorization — every student of a course holds a token for the same
+    namespace (FEAT-027).
+
+    Authorization is namespace-scoped: the conversation must match the namespace
+    derived from the JWT (``namespace`` claim or ``course_id`` fallback). A
+    mismatch returns 403 so the widget can distinguish "wrong course" from
+    "deleted conversation" (404) and reset its local state accordingly.
+    """
+    namespace = _resolve_namespace_from_token(token_payload, request)
+    subject = _require_subject(token_payload)
+    conv_store = _get_conversation_store(request)
+
     # In-memory store (test/dev) does not support decryption — treat as 501-ish.
-    if not hasattr(conv_store, "get_metadata") or not hasattr(
-        conv_store, "get_turns_detail"
-    ):
+    if not hasattr(conv_store, "get_turns_detail"):
         err = ErrorResponse(
             category=ErrorCategory.CONFIGURATION,
             code=ERR_LEARN_001,
@@ -614,6 +782,24 @@ async def get_conversation_turns(
             code=ERR_LEARN_006,
             message="Conversation belongs to a different course.",
             remediation="Open the course this conversation was created in.",
+        )
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
+    # Namespace alone is not authorization: every student of a course holds a
+    # token for the same namespace, so until FEAT-027 any of them could read
+    # any conversation of that course given its id. A conversation is readable
+    # by the subject it was created for, and by nobody else.
+    #
+    # A row without an owner is refused rather than waved through: those are
+    # conversations created before ownership existed (or by an API-key caller
+    # with no subject), and "unowned" must not resolve to "everyone's".
+    owner = meta.get("owner_subject")
+    if owner is None or owner != subject:
+        err = ErrorResponse(
+            category=ErrorCategory.PERMANENT,
+            code=ERR_LEARN_007,
+            message="Conversation belongs to another student.",
+            remediation="Open one of your own conversations, or start a new one.",
         )
         raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
 
@@ -737,9 +923,43 @@ async def course_query(
     # Ensure conversation row exists for persistent multi-turn (BUG-014).
     # The learn endpoint uses JWT auth (no API key), so key_id is a sentinel.
     registry = getattr(request.app.state, "registry", None)
+    conv_store = None
     if registry is not None:
         try:
             conv_store = registry.get("conversation_store", "default")
+        except ValueError:
+            conv_store = None  # conversation store not registered
+
+    # The conversation id comes from the client, and `ensure_conversation` does
+    # nothing when the row already exists — so without this check a student who
+    # sends someone else's id has that conversation's history loaded into their
+    # own prompt, and their turn appended to it. Reading the turns has been
+    # owner-scoped since FEAT-027; this is the same door on the query side.
+    #
+    # Raised outside the try/except below on purpose: a 403 must reach the
+    # client, not be swallowed as a failed conversation write.
+    if conv_store is not None and req.conversation_id is not None:
+        existing = None
+        if hasattr(conv_store, "get_metadata"):
+            try:
+                existing = await conv_store.get_metadata(req.conversation_id)
+            except Exception as exc:  # store unavailable: fall through
+                structlog.get_logger(__name__).warning(
+                    "conversation_owner_check_failed", error=str(exc)
+                )
+        if existing is not None and existing.get("owner_subject") != student_id:
+            err = ErrorResponse(
+                category=ErrorCategory.PERMANENT,
+                code=ERR_LEARN_007,
+                message="Conversation belongs to another student.",
+                remediation="Omit conversation_id to start your own conversation.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            )
+
+    if conv_store is not None:
+        try:
             if (
                 hasattr(conv_store, "ensure_conversation")
                 and req.conversation_id is not None
@@ -748,9 +968,11 @@ async def course_query(
                     conversation_id=req.conversation_id,
                     namespace_id=namespace,
                     key_id=_LEARN_SENTINEL_KEY_ID,
+                    # The learn endpoint has a subject and no API key, so this
+                    # is the only place a conversation's owner can be recorded
+                    # (FEAT-027). Written on creation only.
+                    owner_subject=student_id or None,
                 )
-        except ValueError:
-            pass  # conversation store not registered
         except Exception as exc:
             structlog.get_logger(__name__).warning(
                 "conversation_create_failed", error=str(exc)

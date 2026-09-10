@@ -43,6 +43,10 @@ services:
       context: .
       args:
         INSTALL_UNSTRUCTURED: ${INSTALL_UNSTRUCTURED:-false}
+        # Passed through so a deployment that runs a non-default embedding
+        # model gets that model baked in, without editing the Dockerfile on
+        # the host. Compose reads it from the same .env the server does.
+        VEKTRA_EMBEDDING_MODEL: ${VEKTRA_EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}
     image: vektra-stack
     environment:
       CMD_TARGET: server

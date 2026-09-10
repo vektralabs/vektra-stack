@@ -121,9 +121,19 @@ USER vektra
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
-# Pre-cache the default embedding model so container startup doesn't
-# download ~80MB from Hugging Face Hub on first run.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# Pre-cache the embedding model so container startup doesn't download it from
+# the Hugging Face Hub on first run. The default matches the code default
+# (VEKTRA_EMBEDDING_MODEL in vektra_shared/config.py); a deployment running a
+# different model passes it here so its image carries the weights it will
+# actually load:
+#
+#   docker compose build --build-arg VEKTRA_EMBEDDING_MODEL=<model>
+#
+# Getting this wrong is not fatal but it is not free either: the container
+# downloads the real model while serving its first request, which is exactly
+# when a cutover is least able to afford it.
+ARG VEKTRA_EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+RUN python -c "import sys; from sentence_transformers import SentenceTransformer; SentenceTransformer(sys.argv[1])" "$VEKTRA_EMBEDDING_MODEL"
 
 EXPOSE 8000
 

@@ -22,6 +22,28 @@
 
 ## Planned
 
+### INFRA-009: the VM cannot build the image it deploys
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-09-10
+**Origin**: the 2026-09-10 deployment. `/var` filled to 100% *during* `docker compose build` and the build had to be rescued mid-flight.
+
+**Context**: Docker's root lives on `/var`, which is 25 GB on that host and was already at 87% before the build started. The image is ~5.5 GB, and a build needs room for the layers plus the build cache at the same time. The operator recovered by pruning the build cache (~7.5 GB) and deleting the previous `vektra-stack:latest`, which brought it back to 79% — enough to finish, not enough to be safe next time. The same build will be attempted again on the next deployment, from roughly the same starting point.
+
+Building on the host is the current deployment method by choice (there is no published image carrying the numpy fix until a release is tagged, BUG-027), so this is not an occasional inconvenience: it is on the path of every update until releases resume.
+
+**Options, in rough order of effort**:
+- prune as a documented pre-flight step (`docker builder prune`, remove superseded tags). Cheapest, and it only buys headroom until the next growth.
+- move Docker's data root to a larger volume (`/etc/docker/daemon.json`, `data-root`). Needs a daemon restart and a copy of the existing data.
+- grow the `/var` volume. Depends on what the hypervisor allows.
+- build elsewhere and ship the image (`docker save` / `load`, or a registry). Removes the build from the host entirely, and is what a published release would do anyway.
+
+**Acceptance criteria**:
+- [ ] Decision recorded on where the image is built for this deployment
+- [ ] If it stays on the host: headroom check and prune documented as part of the deploy runbook, with the numbers this incident produced
+- [ ] A build that runs out of space fails before it has half-written layers, or the runbook says how to recover
+
+---
+
 ### FEAT-027: conversations belong to a student, not to a course
 
 **Status**: completed (2026-09-09) | **Priority**: high | **Created**: 2026-09-08

@@ -31,7 +31,12 @@ def _dockerfile_arg_default(name: str) -> str | None:
 
 
 def test_precache_default_matches_the_config_default() -> None:
-    config_default = EmbeddingConfig().embedding_model
+    # The declared default, not the resolved setting: `EmbeddingConfig()` is a
+    # BaseSettings and would read VEKTRA_EMBEDDING_MODEL from the environment,
+    # so on a machine that sets it this would compare an override against the
+    # Dockerfile default and fail for a reason that has nothing to do with the
+    # drift it exists to catch.
+    config_default = EmbeddingConfig.model_fields["embedding_model"].default
     arg_default = _dockerfile_arg_default("VEKTRA_EMBEDDING_MODEL")
 
     assert arg_default is not None, (

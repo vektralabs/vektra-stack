@@ -222,6 +222,10 @@ export function buildStyles(theme) {
   color: ${t.textSecondary};
   line-height: 0;
 }
+/* Back-to-start is hidden when the answer fits in the list (see chat-ui). */
+.vektra-chat-msg-action[hidden] {
+  display: none;
+}
 .vektra-chat-msg-action:hover {
   color: ${t.text};
   background: ${t.border};

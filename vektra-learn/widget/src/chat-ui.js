@@ -333,6 +333,38 @@ export class ChatUI {
     this._deleteBtn = this._panel.querySelector(".vektra-chat-delete");
     this._enlargeBtn = this._panel.querySelector(".vektra-chat-enlarge");
     this._setLarge(_readLargePref(), { persist: false });
+    this._watchListSize();
+  }
+
+  /**
+   * Re-measure every answer's back-to-start button whenever the visible
+   * height of the message list changes: window resize, enlarge toggle, and
+   * the panel opening (the list measures 0 while it is closed).
+   */
+  _watchListSize() {
+    const update = () => this._updateScrollTopButtons();
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(update).observe(this._messagesEl);
+    } else {
+      window.addEventListener("resize", update);
+    }
+  }
+
+  _updateScrollTopButtons() {
+    for (const msg of this._messagesEl.querySelectorAll(".vektra-chat-msg.assistant")) {
+      this._updateScrollTopButton(msg);
+    }
+  }
+
+  /**
+   * Back-to-start only does something when the answer does not fit in the
+   * list's visible area; otherwise it is a dead control, so it is hidden
+   * (and leaves the tab order). Copy is always shown.
+   */
+  _updateScrollTopButton(msg) {
+    const btn = msg.querySelector(":scope > .vektra-chat-msg-actions > .vektra-chat-scroll-top");
+    if (!btn) return;
+    btn.hidden = msg.scrollHeight <= this._messagesEl.clientHeight;
   }
 
   _bindEvents() {
@@ -535,6 +567,7 @@ export class ChatUI {
     if (role === "assistant") {
       const { el, body } = this._createAssistantMessage(() => text);
       body.innerHTML = renderMarkdown(text);
+      this._updateScrollTopButton(el);
       this._scrollToBottom();
       return el;
     }
@@ -593,6 +626,7 @@ export class ChatUI {
     topBtn.setAttribute("aria-label", this._lang.scrollTop);
     topBtn.title = this._lang.scrollTop;
     topBtn.innerHTML = ICONS.scrollTop;
+    topBtn.hidden = true; // shown once the answer is measured taller than the list
     actions.appendChild(topBtn);
 
     const status = document.createElement("span");
@@ -624,6 +658,7 @@ export class ChatUI {
   appendToken(stream, token) {
     stream.rawText += token;
     stream.body.innerHTML = renderMarkdown(stream.rawText);
+    this._updateScrollTopButton(stream.el);
     this._scrollToBottom();
   }
 
@@ -708,6 +743,7 @@ export class ChatUI {
     // Sources go between the answer and its action row.
     const actions = msgEl.querySelector(":scope > .vektra-chat-msg-actions");
     msgEl.insertBefore(container, actions);
+    this._updateScrollTopButton(msgEl);
     this._scrollToBottom();
   }
 
@@ -761,6 +797,7 @@ export class ChatUI {
    */
   doneSending() {
     this._setSending(false);
+    this._updateScrollTopButtons();
     this._inputEl.focus();
   }
 

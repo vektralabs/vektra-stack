@@ -67,7 +67,19 @@ jobs:
         timeout-minutes: 15
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-user-static
+          # Ubuntu 26.04 (QEMU 10) dropped qemu-user-static: qemu-user ships
+          # the static binary itself, without the -static suffix. Older images
+          # still have the separate package, whose qemu-user is dynamic.
+          if apt-cache policy qemu-user-static | grep -q 'Candidate: [0-9]'; then
+            sudo apt-get install -y -qq qemu-user-static
+            QEMU=/usr/bin/qemu-x86_64-static
+          else
+            sudo apt-get install -y -qq qemu-user
+            QEMU=/usr/bin/qemu-x86_64
+          fi
+          # The binary is mounted into the image, so it must not depend on the
+          # host's libc.
+          file -L "$QEMU" | grep -q 'static' || { echo "$QEMU is not statically linked"; exit 1; }
 
           # Control first. qemu-user masks CPUID but leaves /proc/cpuinfo showing
           # the host's flags, so an emulation that silently failed to mask would
@@ -75,7 +87,7 @@ jobs:
           # test that passes because the context is empty. Assert the emulated CPU
           # really lacks the features before trusting anything it says.
           docker run --rm \
-            -v /usr/bin/qemu-x86_64-static:/usr/bin/qemu-x86_64-static:ro \
+            -v "$QEMU:/usr/bin/qemu-x86_64-static:ro" \
             --entrypoint /usr/bin/qemu-x86_64-static \
             vektra-stack -cpu qemu64,+sse3 /app/.venv/bin/python -c '
           import numpy
@@ -93,7 +105,7 @@ jobs:
           # production stack refusing to boot, reproduced.
           docker run --rm \
             -e OMP_NUM_THREADS=1 \
-            -v /usr/bin/qemu-x86_64-static:/usr/bin/qemu-x86_64-static:ro \
+            -v "$QEMU:/usr/bin/qemu-x86_64-static:ro" \
             --entrypoint /usr/bin/qemu-x86_64-static \
             vektra-stack -cpu qemu64,+sse3 /app/.venv/bin/python -c '
           import importlib

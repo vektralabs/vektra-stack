@@ -13,7 +13,9 @@
  * @returns {string} - HTML string (safe to assign to innerHTML)
  */
 export function renderMarkdown(text) {
-  if (!text) return "";
+  // Whitespace-only input (a stream often opens with "\n") renders nothing,
+  // so the answer body stays :empty and its action row stays hidden.
+  if (!text || text.trim() === "") return "";
 
   // Escape HTML entities first (XSS prevention)
   let html = text

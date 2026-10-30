@@ -135,8 +135,20 @@ function _prefersReducedMotion() {
 }
 
 // Last-resort copy for contexts where the async Clipboard API is missing or
-// refused (plain http, older browsers, permissions policy).
+// refused (plain http, older browsers, permissions policy). Selecting the
+// temporary textarea moves focus and replaces any selection on the host
+// page, so both are put back afterwards: a keyboard user stays on the copy
+// button.
 function _legacyCopy(text) {
+  const previousFocus = document.activeElement;
+  const selection = document.getSelection();
+  const previousRanges = [];
+  if (selection) {
+    for (let i = 0; i < selection.rangeCount; i++) {
+      previousRanges.push(selection.getRangeAt(i));
+    }
+  }
+
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
@@ -152,6 +164,14 @@ function _legacyCopy(text) {
     ok = false;
   }
   area.remove();
+
+  if (selection) {
+    selection.removeAllRanges();
+    for (const range of previousRanges) selection.addRange(range);
+  }
+  if (previousFocus && typeof previousFocus.focus === "function") {
+    previousFocus.focus({ preventScroll: true });
+  }
   return ok;
 }
 

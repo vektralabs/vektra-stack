@@ -361,7 +361,7 @@ instantiates its own limiter instance for per-token limits.
 - [ ] 9.4 Integration job: build image, run `CMD_TARGET=assess-worker` with generated test keys
       and a pg16 service, wait 15 s idle, read `VmRSS` from `/proc/1/status`; fail above 300 MB;
       print the top import contributors (`python -X importtime`) as an artifact
-- [ ] 9.5 `.env.example` (VEKTRA_ASSESS_* with comments, no secrets), `docs/reference/configuration.md`
+- [x] 9.5 `.env.example` (VEKTRA_ASSESS_* with comments, no secrets), `docs/reference/configuration.md`
       (settings + key matrix + secret file format), `docs/reference/api.md` (`/health/assess`
       readiness semantics; new scopes), CHANGELOG `[Unreleased]` (scopes, learn token aud/iss,
       postgres logging flags, new profile)

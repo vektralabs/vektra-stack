@@ -164,6 +164,59 @@ Three things to know before turning it on:
 | `VEKTRA_LEARN_REQUIRE_ENROLLMENT` | bool | `true` | Require enrollment record for learn queries. Set to false when LMS manages enrollment externally. |
 | `VEKTRA_LEARN_SHOW_SOURCES` | bool | `true` | Default visibility of the source-citations section in the widget (FEAT-014). Per-namespace override via `PATCH /api/v1/admin/namespaces/{id}/config` > `show_sources`. Per-widget override via the `data-show-sources` script-tag attribute. The API always returns the full sources list; the flag only instructs the widget whether to render them. |
 
+## Assessment discussion (vektra-assess)
+
+Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
+`assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
+`make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
+These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
+process environment, never from an env file.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `VEKTRA_ASSESS_ENABLED` | bool | `false` | Master switch (see above). |
+| `VEKTRA_ASSESS_API_DATABASE_URL` | str | - | DSN of the `vektra_assess_api` role, **without a password** (read from the `assess_db_api_password` secret). A DSN with a password, or one that logs in as the `VEKTRA_DATABASE_URL` user, is refused at startup. |
+| `VEKTRA_ASSESS_WORKER_DATABASE_URL` | str | - | DSN of the `vektra_assess_worker` role, without a password (`assess_db_worker_password` secret). Worker only. |
+| `VEKTRA_ASSESS_SECRETS_DIR` | path | `/run/secrets` | Directory holding the assess secret files. |
+| `VEKTRA_ASSESS_API_POOL_SIZE` | int | `15` | Connection pool of the assess API engine. |
+| `VEKTRA_ASSESS_WORKER_POOL_SIZE` | int | `5` | Connection pool of the worker engine. |
+| `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. |
+| `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every 10 s (container healthcheck). |
+| `VEKTRA_ASSESS_PARSER_SOCKET` | path | `/run/vektra-assess-parser/parser.sock` | Unix socket of the parser sidecar (worker and parser only). |
+
+### Secret files and the key matrix
+
+Each secret is a Docker secret file. Keys are JSON keyrings, `{"active": "<kid>", "keys": {"<kid>":
+"<base64 of 32 bytes>"}}`: rotation adds a kid and flips `active`. `assess_ws_tokens` and `assess_smtp`
+are JSON objects (credentials); the two role passwords are one line of text (at least 24 characters).
+Every file must be a regular file (no symlink), owned by the process uid or root, mode at most `0440`.
+`make assess-keys` writes a complete generated set to `./secrets/assess/` (mode `0400`, never
+overwrites; `secrets/` is gitignored).
+
+Each process checks the matrix at start, in both directions, and refuses to start naming every key that
+is missing (required) or present (forbidden). A forbidden key counts as present when its file exists OR
+when an environment variable carries its name. The API applies the forbidden column even with assess
+disabled (ARCH-066).
+
+| Secret | API | Worker | Parser |
+|---|---|---|---|
+| `assess_token_signing` | required | forbidden | forbidden |
+| `assess_handoff_private` (X25519) | required | forbidden | forbidden |
+| `assess_handoff_public` | allowed | required | forbidden |
+| `assess_transcript_kek` | required | required | forbidden |
+| `assess_teacher_config_public` | required | allowed | forbidden |
+| `assess_teacher_config_private` | forbidden | required | forbidden |
+| `assess_kek` | forbidden | required | forbidden |
+| `assess_ws_tokens` | forbidden | required | forbidden |
+| `assess_smtp` | forbidden | required | forbidden |
+| `assess_db_api_password` | required | forbidden | forbidden |
+| `assess_db_worker_password` | forbidden | required | forbidden |
+
+The one-shot `vektra-assess-db-init` service holds only the two role passwords; it sets `LOGIN` and the
+passwords of `vektra_assess_api` and `vektra_assess_worker` (re-run it to rotate a password). The parser
+holds no secret, no DSN and has no network. Postgres runs with `log_statement=none` and no parameter
+logging (ARCH-078).
+
 ## Observability
 
 | Variable | Type | Default | Description |
@@ -193,7 +246,7 @@ Three things to know before turning it on:
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `CMD_TARGET` | str | `server` | Container entrypoint target: `server` (default) or `migrate` |
+| `CMD_TARGET` | str | `server` | Container entrypoint target: `server` (default), `migrate`, `assess-worker` or `assess-parser`. The assess targets never run migrations. |
 
 ## Variable count summary
 
@@ -203,6 +256,7 @@ Three things to know before turning it on:
 | VEKTRA_* variables read directly from env (`VEKTRA_CORS_ORIGINS`) | 1 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
-| **Total documented** | **71** |
+| VEKTRA_ASSESS_* variables in `VektraAssessSettings` (assess processes only) | 9 |
+| **Total documented** | **80** |
 
 The 66 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.

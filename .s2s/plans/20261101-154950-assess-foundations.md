@@ -282,7 +282,7 @@ instantiates its own limiter instance for per-token limits.
       refusal; wrong key length → refusal; generated set satisfies all three roles
 
 ### 6. Startup wiring (API) and worker entry
-- [ ] 6.1 `vektra_app/main.py`: add `_step_12_assess_check` to the `_run_startup` list. It always
+- [x] 6.1 `vektra_app/main.py`: add `_step_12_assess_check` to the `_run_startup` list. It always
       runs `enforce_key_matrix("api")` forbidden half. When enabled it also: runs the required
       half, builds the assess engine from `VEKTRA_ASSESS_API_DATABASE_URL`, asserts `SELECT
       current_user, rolsuper` returns `vektra_assess_api`/false, and asserts the DSN user differs
@@ -480,6 +480,13 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   Risk for 7.x: Compose file secrets are bind mounts that keep the host file's uid/mode, so a 0400 file
   owned by the host user may be unreadable by container uid 1000 or fail the owner check; resolve in the
   compose profile (db-init/entrypoint copy, or generate with the container uid), not by loosening `keys.py`.
+- **Section 6 notes (2026-11-01)**: step 12 lives in `vektra_app/assess_wiring.py` (main.py only lists it);
+  role assertion helpers in `vektra_assess/db/roles.py`. 6.1b route-table part done (`test_assess_startup.py`);
+  its worker/parser/health parts close with 6.2, 6.3 and 8.2. **FastAPI 0.139 drift**: `app.routes` holds an
+  included router as one `_IncludedRouter`, not its APIRoutes, so any test filtering `app.routes` on
+  `APIRoute` sees no included route at all. Both assess route tests walk `effective_route_contexts()` and the
+  4.5 vacuity test now routes through `include_router`. Other suites that inspect `app.routes` may be blind
+  the same way (not audited here).
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
 - BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).

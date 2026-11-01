@@ -30,6 +30,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from vektra_app import __version__
+from vektra_app.assess_wiring import include_assess_router, step_12_assess_check
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
 from vektra_shared.errors import ERR_CONFIG_001, ErrorCategory, ErrorResponse
@@ -492,7 +493,7 @@ async def _step_11_qdrant_check(
 
 
 async def _run_startup(app: FastAPI) -> None:
-    """Run the ARCH-057 11-step validation and assemble application state.
+    """Run the ARCH-057 12-step validation and assemble application state.
 
     Raises StartupValidationError if a hard step fails. The two callers decide
     how that failure is surfaced: main() (the container path) logs it and exits
@@ -538,6 +539,7 @@ async def _run_startup(app: FastAPI) -> None:
         ("analytics_check", lambda: _step_9_analytics_check(registry)),
         ("learn_check", lambda: _step_10_learn_check(settings, registry)),
         ("qdrant_check", lambda: _step_11_qdrant_check(settings, registry)),
+        ("assess_check", lambda: step_12_assess_check(app, settings.database_url)),
     ]
 
     step_1_ms = int((time.monotonic() - start_time) * 1000)
@@ -596,6 +598,9 @@ async def _run_shutdown(app: FastAPI) -> None:
                 await aclose()
             except Exception as exc:
                 log.warning("provider_close_failed", category=category, error=str(exc))
+    assess_engine = getattr(app.state, "assess_engine", None)
+    if assess_engine is not None:
+        await assess_engine.dispose()
     from vektra_shared.db import get_engine
 
     engine = get_engine()
@@ -717,6 +722,8 @@ def create_app() -> FastAPI:
     app.include_router(reindex_router)
     app.include_router(analytics_router)
     app.include_router(learn_router)
+    # Dormant by default: mounted only with VEKTRA_ASSESS_ENABLED=true (6.1b)
+    include_assess_router(app)
 
     # Chatbot widget static files (served at /static/learn/vektra-chat.js)
     from fastapi.staticfiles import StaticFiles

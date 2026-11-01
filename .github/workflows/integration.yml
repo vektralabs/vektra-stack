@@ -123,7 +123,7 @@ jobs:
               # weaker fallback (ADR-0031 amended), so its native code must load
               # on the production CPU. defusedxml/html5lib/aiosmtplib are pure
               # Python but listed so a future native rewrite is caught here.
-              "vektra_assess",
+              "vektra_assess", "vektra_app.assess_worker", "vektra_app.assess_parser",
               "cryptography.hazmat.primitives.ciphers.aead",
               "cryptography.hazmat.primitives.asymmetric.x25519",
               "cryptography.hazmat.primitives.kdf.hkdf",

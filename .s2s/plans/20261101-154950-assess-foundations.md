@@ -295,17 +295,17 @@ instantiates its own limiter instance for per-token limits.
       entrypoints exit non-zero with a clear message instead of running. Test: build the app with
       the flag off and assert the route table contains zero `/api/v1/assess` paths and that a
       request to one returns 404 (the route table is the evidence, not a status field)
-- [ ] 6.2 `vektra_app/assess_worker.py`: composition root stub — load settings,
+- [x] 6.2 `vektra_app/assess_worker.py`: composition root stub — load settings,
       `enforce_key_matrix("worker")`, connect with `VEKTRA_ASSESS_WORKER_DATABASE_URL` asserting
       role `vektra_assess_worker`, import `LitellmProvider` (to measure its cost now), assert
       none of `sentence_transformers`, `torch`, `qdrant_client`, `vektra_index`, `vektra_ingest`,
       `presidio_analyzer`, `spacy` are in `sys.modules`, write a heartbeat FILE every 10 s,
       handle SIGTERM within 30 s; runs `run_crypto_selftest()`; exits non-zero on any failed check;
       add `vektra_app.assess_worker` to the BUG-027 import list (task 2.1)
-- [ ] 6.3 `vektra_app/assess_parser.py` stub: `enforce_key_matrix("parser")` (no secrets, no
+- [x] 6.3 `vektra_app/assess_parser.py` stub: `enforce_key_matrix("parser")` (no secrets, no
       DSN), bind the unix socket at `VEKTRA_ASSESS_PARSER_SOCKET`, answer a framed `ping`, reply
       `not_implemented` to everything else (plan 20261101-154950-assess-parser replaces it)
-- [ ] 6.4 `docker/entrypoint.sh`: add `assess-worker` and `assess-parser` targets (no
+- [x] 6.4 `docker/entrypoint.sh`: add `assess-worker` and `assess-parser` targets (no
       `alembic upgrade`; `exec python -m vektra_app.assess_worker` / `assess_parser`), update the
       "Valid targets" message; never route assess through a generic `worker` target (ARCH-066)
 - [ ] 6.5 Tests `vektra-app/tests/test_assess_startup.py`: API with a WS keyring file present and

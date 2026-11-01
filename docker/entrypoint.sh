@@ -33,9 +33,22 @@ case "$CMD_TARGET" in
     exec alembic upgrade head
     ;;
 
+  # Assess processes (ARCH-066). Each has its own target and never runs
+  # migrations: only the API container (server) owns the schema. There is
+  # deliberately no generic "worker" target that could start them by accident.
+  assess-worker)
+    echo "Starting Vektra assess worker..."
+    exec python -m vektra_app.assess_worker
+    ;;
+
+  assess-parser)
+    echo "Starting Vektra assess parser sidecar..."
+    exec python -m vektra_app.assess_parser
+    ;;
+
   *)
     echo "Unknown CMD_TARGET: $CMD_TARGET" >&2
-    echo "Valid targets: server, migrate" >&2
+    echo "Valid targets: server, migrate, assess-worker, assess-parser" >&2
     exit 1
     ;;
 esac

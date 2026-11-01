@@ -54,6 +54,11 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S",
         description="A worker heartbeat older than this makes /health/assess non-healthy.",
     )
+    worker_heartbeat_file: Path = Field(
+        Path("/tmp/vektra-assess-worker.heartbeat"),
+        alias="VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE",
+        description="File whose mtime the worker refreshes every 10 s (container healthcheck).",
+    )
     parser_socket: Path = Field(
         Path("/run/vektra-assess-parser/parser.sock"),
         alias="VEKTRA_ASSESS_PARSER_SOCKET",

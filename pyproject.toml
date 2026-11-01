@@ -9,7 +9,7 @@
 constraint-dependencies = ["numpy<2"]
 
 [tool.uv.workspace]
-members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-app"]
+members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-assess", "vektra-app"]
 
 # PyTorch CPU-only index for CI and development (no NVIDIA CUDA packages).
 # Only used by packages with an explicit source override (explicit = true).
@@ -67,6 +67,7 @@ known-first-party = [
     "vektra_app",
     "vektra_analytics",
     "vektra_learn",
+    "vektra_assess",
 ]
 
 [tool.ruff.format]
@@ -127,6 +128,7 @@ root_packages = [
     "vektra_analytics",
     "vektra_app",
     "vektra_learn",
+    "vektra_assess",
 ]
 include_external_packages = true
 
@@ -200,6 +202,7 @@ source = [
     "vektra_app",
     "vektra_analytics",
     "vektra_learn",
+    "vektra_assess",
 ]
 omit = [
     "tests/*",

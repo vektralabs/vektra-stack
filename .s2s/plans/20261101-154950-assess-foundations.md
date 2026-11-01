@@ -1,8 +1,8 @@
 # Implementation Plan: Assess foundations — package, boundaries, keys, roles, topology skeleton
 
 **ID**: 20261101-154950-assess-foundations
-**Status**: active
-**Branch**: N/A
+**Status**: in_progress
+**Branch**: feat/assess-w1
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
 **Approved**: 2026-11-01 (coordinator)
@@ -196,18 +196,18 @@ instantiates its own limiter instance for per-token limits.
 ## Tasks
 
 ### 1. Package scaffold and the six touch points
-- [ ] 1.1 Create `vektra-assess/pyproject.toml` (hatchling, `packages=["src/vektra_assess"]`,
+- [x] 1.1 Create `vektra-assess/pyproject.toml` (hatchling, `packages=["src/vektra_assess"]`,
       version 0.7.1, deps: vektra-shared (workspace), sqlalchemy, asyncpg, httpx, pydantic-settings,
       cryptography, defusedxml, html5lib, aiosmtplib), `README.md`, `src/vektra_assess/__init__.py`,
       and the stub sub-packages listed in Design Notes, each with an owning-plan docstring
-- [ ] 1.2 Wire the touch points: root `[tool.uv.workspace] members`, `[tool.ruff.lint.isort]
+- [x] 1.2 Wire the touch points: root `[tool.uv.workspace] members`, `[tool.ruff.lint.isort]
       known-first-party`, `[tool.importlinter] root_packages`, `[tool.coverage.run] source`,
       `vektra-app/pyproject.toml` dependency + `[tool.uv.sources]`, `Dockerfile` (copy
       pyproject/README/src for vektra-assess in the builder stage); run `uv lock` and commit the lock
-- [ ] 1.3 Declare `cryptography`, `defusedxml`, `html5lib` explicitly (today transitive or
+- [x] 1.3 Declare `cryptography`, `defusedxml`, `html5lib` explicitly (today transitive or
       ocr-extra only) and add `aiosmtplib` (absent); verify with `uv tree --package vektra-assess`
       that they resolve in the DEFAULT image, not only with the ocr extra
-- [ ] 1.4 Create `vektra-assess/tests/conftest.py` importing `vektra_shared.testing.hermetic_env`
+- [x] 1.4 Create `vektra-assess/tests/conftest.py` importing `vektra_shared.testing.hermetic_env`
       (required by `vektra-shared/tests/test_env_isolation_coverage.py`) and a smoke test that
       imports every stub sub-package
 

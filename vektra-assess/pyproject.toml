@@ -1,0 +1,43 @@
+[project]
+name = "vektra-assess"
+version = "0.7.1"
+description = "Assessment discussion chatbot backend (ARCH-065..079, ADR-0027)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "vektra-shared",
+    "sqlalchemy>=2.0",
+    "asyncpg>=0.29",
+    "httpx>=0.27",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2.0",
+    "structlog>=24.0",
+    # Hard dependency, no weaker fallback (ARCH-079, ADR-0031 amended 2026-11-01).
+    "cryptography>=42",
+    "defusedxml>=0.7",
+    "html5lib>=1.1",
+    "aiosmtplib>=3.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vektra_assess"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
+markers = ["integration: integration tests requiring Docker (excluded from ci-unit)"]
+
+[tool.uv.sources]
+vektra-shared = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.0",
+    "httpx>=0.27",
+]

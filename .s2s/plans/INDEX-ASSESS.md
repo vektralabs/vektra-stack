@@ -29,7 +29,11 @@ report (`../vektra-moodle-discuss/spike/oq025/REPORT.md`).
 
 1. Check that every plan in its **Depends on** column is `completed`.
 2. Read the full plan file (scope, Design Notes, acceptance criteria) before writing any code.
-3. Create the plan's branch (`feat/assess-<slug>` here, `feat/discuss-<slug>` in the plugin repo).
+3. Create the plan's branch **from `develop`** (`feat/assess-<slug>` here, `feat/discuss-<slug>` in the
+   plugin repo). There is no long-lived integration branch: every plan merges into `develop` through
+   its own PR (CONTRIBUTING.md branch strategy). Merged-but-unfinished code must stay dormant: with
+   `VEKTRA_ASSESS_ENABLED=false` (the default) no `/api/v1/assess` route is mounted and no assess
+   service runs (plan 1 acceptance criterion).
 4. Set `**Status**` in the plan file to `in_progress`, and update the row in this file to match.
 
 ### Working through tasks
@@ -63,10 +67,12 @@ recorded in architecture.md / the ADRs first.
 
 ## Wave process
 
-A wave groups plans that do not depend on each other. Plans inside a wave can run in parallel. The
-next wave starts only after the wave gate passes.
+A wave is a **milestone that ends with something working end to end**, not a dependency layer.
+Plans inside a wave are done in dependency order (independent ones in parallel), each with its own
+PR. The next wave starts only after the wave gate passes. Four waves, W1-W4.
 
-1. **Develop**: one branch and one PR per plan. Large plans (lifecycle, llm-runner) are reviewed at their internal milestones, not only at the end.
+1. **Develop**: one branch and one PR per plan. Large plans (llm-runner, session-lifecycle) are
+   reviewed at their internal milestones, not only at the end, because wave gates are far apart.
 2. **Wave gate**, when every plan in the wave is `completed`:
    - Fill in `.s2s/waves/checklist-template.md` and save it as `.s2s/waves/assess-wave-N-review.md` (versioned).
    - Run the integration tests across the wave's plans (not only each plan's own suite).
@@ -78,140 +84,111 @@ next wave starts only after the wave gate passes.
 
 ## Execution order
 
-### Wave 0: Foundations and Moodle WS
+`→` inside a wave means "after" (dependency); plans without an arrow between them can run in parallel.
+
+### W1: Foundations
+
+foundations → (moodle-ws ∥ data-crypto ∥ parser); P1 after the moodle-ws dev envs.
+moodle-ws dev envs and fixture seeding can start on day one (they do not need the package).
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
 | 1 | [assess-foundations](20261101-154950-assess-foundations.md) | vektra_assess package, scopes, DB roles, secrets, worker entry, deps | 40 | none | pending |
-| 4 | [assess-moodle-ws](20261101-154950-assess-moodle-ws.md) | Moodle 4.3/5.2 envs, WS client, capability matrix, setup check | 43 | 1 (package scaffold only; envs and seeding can start immediately) | pending |
-
-**Gate**:
-- import-linter contracts green, including the worker import ban;
-- BUG-027 qemu baseline passes with `cryptography` (a FAIL is a blocker: there is no fallback);
-- typed readers pass against seeded fixtures on 4.3 and 5.2, including the five spike traps;
-- the setup check correctly rejects the negative accounts.
-
-### Wave 1: Data, parsing, plugin scaffold
-
-| # | Plan | Title | Tasks | Depends on | Status |
-|---|------|-------|-------|------------|--------|
+| 4 | [assess-moodle-ws](20261101-154950-assess-moodle-ws.md) | Moodle 4.3/5.2 envs, WS client, capability matrix, setup check | 43 | 1 (package scaffold only) | pending |
 | 2 | [assess-data-crypto](20261101-154950-assess-data-crypto.md) | assess_* schema, grants, SECURITY DEFINER, envelope crypto | 38 | 1 | pending |
 | 5 | [assess-parser](20261101-154950-assess-parser.md) | Network-less parser sidecar | 26 | 1 | pending |
 | P1 | [discuss-foundation](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-foundation.md) | local_vektradiscuss scaffold, client, settings, CI | 19 | 4 (dev envs) | pending |
 
-**Gate**:
-- grant matrix asserted against pg_catalog;
-- the hand-off row is deleted on every CLOSED path (row counts);
-- the malicious-file corpus is contained;
-- the plugin installs on 4.3/PHP 8.2 and 5.2/PHP 8.4 in CI;
-- the release zip contains no dev artefacts.
+**Working at the end**: package and contracts, DB roles and grants, envelope crypto, typed WS readers
+on Moodle 4.3 and 5.2, parser sidecar, installable plugin.
 
-### Wave 2: Job loop and context
+**Gate**:
+- import-linter contracts green (worker import ban included);
+- with `VEKTRA_ASSESS_ENABLED=false` no assess route is mounted (route-table assertion);
+- BUG-027 qemu baseline passes with `cryptography` (a FAIL is a blocker: no fallback);
+- grant matrix asserted against pg_catalog; the hand-off row is deleted on every CLOSED path (row counts);
+- readers pass on 4.3 and 5.2 fixtures, including the five OQ-025 spike traps; the setup check rejects the negative accounts;
+- the malicious-file corpus is contained by the sidecar;
+- the plugin installs on 4.3/PHP 8.2 and 5.2/PHP 8.4 in CI, and the release zip contains no dev artefacts.
+
+### W2: Engine
+
+(job-loop ∥ context) → llm-runner.
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
 | 3 | [assess-job-loop](20261101-154950-assess-job-loop.md) | Postgres-native leased job loop, ticks, heartbeat | 29 | 2 | pending |
 | 6 | [assess-context](20261101-154950-assess-context.md) | Snapshot capture, assemble_context, canary suite | 34 | 2, 4, 5 | pending |
-
-**Gate**:
-- chaos test (kill -9 mid-handler, Postgres restart) verified by row counts;
-- BR-011/NFR-017 canaries absent from the exact request bytes, logs, traces and audit;
-- worker idle RSS within its ceiling.
-
-### Wave 3: LLM runner
-
-| # | Plan | Title | Tasks | Depends on | Status |
-|---|------|-------|-------|------------|--------|
 | 7 | [assess-llm-runner](20261101-154950-assess-llm-runner.md) | DiscussionTurnRunner, post-check, prompts, eval gate | 44 | 6 | pending |
 
-**Gate**:
-- NFR-022 targets measured;
-- NFR-023 behaviour regression gate runs per model/provider;
-- no byte reaches the client before the post-check.
+**Working at the end**: the worker captures a snapshot from a seeded Moodle and the runner holds a
+discussion on that real context (no UI yet; driven by tests and the eval adapter).
 
-### Wave 4: Session lifecycle
+**Gate**:
+- job-loop chaos test (kill -9 mid-handler, Postgres restart) verified by row counts;
+- BR-011 / NFR-017 canaries absent from the exact LLM request bytes, logs, traces and audit;
+- NFR-022 targets measured, NFR-023 regression gate running per model/provider;
+- no byte reaches the client before the post-check; worker idle RSS within its ceiling.
+
+### W3: Session end to end
+
+session-lifecycle → (discussion-ui ∥ transcript-delivery) → P2.
+The 40-Start burst test runs EARLY, at session-lifecycle milestone M1, not at the gate.
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
 | 8 | [assess-session-lifecycle](20261101-154950-assess-session-lifecycle.md) | Tokens, gates, Start/commit/rollback, timing, outage, limits | 47 | 3, 7 | pending |
-
-**Gate**:
-- the 40-Start burst test was run EARLY, at milestone M1, and is repeated here;
-- all six close reasons plus rollback verified by row counts;
-- IDOR negative tests pass;
-- no route accepts a token in the query string.
-
-### Wave 5: UI and transcripts
-
-| # | Plan | Title | Tasks | Depends on | Status |
-|---|------|-------|-------|------------|--------|
 | 9 | [assess-discussion-ui](20261101-154950-assess-discussion-ui.md) | Cross-origin iframe UI, fetch streaming, CSP | 26 | 8 | pending |
 | 10 | [assess-transcript-delivery](20261101-154950-assess-transcript-delivery.md) | Transcript rendering, outbox SMTP, download tokens | 26 | 3, 8 | pending |
+| P2 | [discuss-student](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-student.md) | Button, pre-session screen, mint, iframe, own transcript | 24 | P1, 8, 9, 10 | pending |
+
+**Working at the end**: a student, from the Moodle results page, starts a discussion, talks to the
+bot, finishes, and the transcript is delivered to the graders and downloadable by the student.
 
 **Gate**:
-- NFR-016 accessibility (axe);
-- the post-render allowlist rejects every listed vector;
-- delivery to the mail sink yields exactly one SENT per recipient;
-- NFR-021 timing.
+- burst test repeated on the integrated stack;
+- all six close reasons plus rollback verified by row counts; IDOR negative tests; no token accepted in a query string;
+- login-as refused end to end;
+- NFR-016 accessibility (axe); the transcript post-render allowlist rejects every listed vector;
+- mail sink receives exactly one SENT per recipient; NFR-021 timing;
+- plugin Behat green on 4.3 and 5.2.
 
-### Wave 6: Teacher, privacy, student plugin
+### W4: Teacher, privacy, release
+
+(teacher-ops ∥ privacy-retention) → P3 → hardening-release.
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
 | 11 | [assess-teacher-ops](20261101-154950-assess-teacher-ops.md) | Teacher config (write-only), list, reset, terminate, extra time | 21 | 8, 10 | pending |
 | 12 | [assess-privacy-retention](20261101-154950-assess-privacy-retention.md) | Retention, crypto-shred purge, erasure, export, monitoring | 27 | 10 | pending |
-| P2 | [discuss-student](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-student.md) | Button, pre-session screen, mint, iframe, own transcript | 24 | P1, 8, 9, 10 | pending |
-
-**Gate**:
-- purge and erasure leave 0 rows for the subject while other subjects are unchanged (counts);
-- the API role cannot SELECT sealed teacher config;
-- login-as is refused end to end;
-- plugin Behat green on 4.3 and 5.2.
-
-### Wave 7: Teacher and privacy plugin
-
-| # | Plan | Title | Tasks | Depends on | Status |
-|---|------|-------|-------|------------|--------|
 | P3 | [discuss-teacher-privacy](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-teacher-privacy.md) | Settings section, teacher pages, download proxy, Privacy API | 22 | P1, 10, 11, 12 | pending |
-
-**Gate**:
-- Privacy API export and delete work end to end, and an unhandled delete never succeeds silently;
-- the download proxy streams with attachment + nosniff + CSP sandbox + no-store.
-
-### Wave 8: Hardening and release
-
-| # | Plan | Title | Tasks | Depends on | Status |
-|---|------|-------|-------|------------|--------|
 | 13 | [assess-hardening-release](20261101-154950-assess-hardening-release.md) | Chaos suite, NFR campaign, runbooks, pilot go/no-go | 24 | all | pending |
 
-**Gate**: the pilot go/no-go criteria in the plan.
+**Working at the end**: the complete feature, ready for the pilot.
+
+**Gate**:
+- purge and erasure leave 0 rows for the subject, other subjects unchanged (counts);
+- the API role cannot SELECT sealed teacher config;
+- Privacy API export and delete end to end; an unhandled delete never succeeds silently;
+- download proxy streams with attachment + nosniff + CSP sandbox + no-store;
+- the pilot go/no-go criteria in plan 13.
 
 ---
 
 ## Dependency graph (compact)
 
 ```
-W0  assess-foundations ──┬──────────────► assess-moodle-ws ──┐
-                         │                       │           │ (dev envs)
-W1                       ├──► assess-data-crypto │           └──► P1 discuss-foundation
-                         └──► assess-parser      │                       │
-                                │       │        │                       │
-W2          assess-job-loop ◄───┘       └──► assess-context ◄────────────┘ (4, 5, 2)
-                 │                               │
-W3               │                        assess-llm-runner
-                 │                               │
-W4               └──────► assess-session-lifecycle ◄┘
-                              │            │
-W5            assess-discussion-ui   assess-transcript-delivery
-                              │            │        │
-W6        P2 discuss-student ◄┴────────────┤   assess-teacher-ops, assess-privacy-retention
-                                           │        │
-W7                          P3 discuss-teacher-privacy
-W8                          assess-hardening-release (all)
+W1  foundations ─┬─► moodle-ws ──────────► P1 discuss-foundation
+                 ├─► data-crypto
+                 └─► parser
+W2  data-crypto ─► job-loop
+    data-crypto + moodle-ws + parser ─► context ─► llm-runner
+W3  job-loop + llm-runner ─► session-lifecycle ─┬─► discussion-ui ─┐
+                                                 └─► transcript-delivery ─┴─► P2 discuss-student (+P1)
+W4  session-lifecycle + transcript-delivery ─► teacher-ops ─┐
+    transcript-delivery ─► privacy-retention ───────────────┴─► P3 discuss-teacher-privacy (+P1)
+    everything ─► hardening-release
 ```
-
-(`assess-job-loop` depends on `assess-data-crypto`; `assess-context` depends on `data-crypto`,
-`moodle-ws` and `parser`.)
 
 ---
 
@@ -223,8 +200,8 @@ W8                          assess-hardening-release (all)
 | OQ-020 | DPO: legal basis, retention, LLM data egress | Fail closed until configured | DPO |
 | OQ-033 | Erasure vs exam-evidence retention | Erasure endpoint, explicit mode | DPO |
 | OQ-029 | SMTP exactly-once reading | At most one audited duplicate on crash | product / QA |
-| OQ-026, OQ-027 | Reference model; eval-suite owner | Measured in W3/W4 | product / ops |
-| OQ-025 (rest) | Math/image fidelity, other question types | 5 question types verified | W0 (assess-moodle-ws) |
+| OQ-026, OQ-027 | Reference model; eval-suite owner | Measured in W2/W3 | product / ops |
+| OQ-025 (rest) | Math/image fidelity, other question types | 5 question types verified | W1 (assess-moodle-ws) |
 
 ---
 

@@ -287,6 +287,13 @@ instantiates its own limiter instance for per-token limits.
       half, builds the assess engine from `VEKTRA_ASSESS_API_DATABASE_URL`, asserts `SELECT
       current_user, rolsuper` returns `vektra_assess_api`/false, and asserts the DSN user differs
       from `VEKTRA_DATABASE_URL`'s; registers the engine on `app.state.assess_engine`
+- [ ] 6.1b Dormant by default (added 2026-11-01, plans merge into `develop` one PR at a time):
+      `create_app()` includes the assess router ONLY when `VEKTRA_ASSESS_ENABLED=true`; with the
+      default `false`, no route under `/api/v1/assess` is mounted, `/api/v1/assess/ui` is not
+      served, `/health/assess` reports `disabled`, and the `assess-worker` / `assess-parser`
+      entrypoints exit non-zero with a clear message instead of running. Test: build the app with
+      the flag off and assert the route table contains zero `/api/v1/assess` paths and that a
+      request to one returns 404 (the route table is the evidence, not a status field)
 - [ ] 6.2 `vektra_app/assess_worker.py`: composition root stub — load settings,
       `enforce_key_matrix("worker")`, connect with `VEKTRA_ASSESS_WORKER_DATABASE_URL` asserting
       role `vektra_assess_worker`, import `LitellmProvider` (to measure its cost now), assert
@@ -374,6 +381,7 @@ instantiates its own limiter instance for per-token limits.
 ## Acceptance Criteria
 
 - [ ] `uv run lint-imports` passes; adding `import vektra_core` to any `vektra_assess` module, or `import vektra_assess.moodle` to `vektra_assess.api`, makes it fail (canary test 9.1) — ARCH-073
+- [ ] With `VEKTRA_ASSESS_ENABLED=false` (the default) the app's route table contains zero `/api/v1/assess` paths, a request to any of them returns 404, and the assess worker/parser entrypoints refuse to run (task 6.1b) — dormant-capability rule, `.claude/CLAUDE.md`
 - [ ] An API container with `assess_ws_tokens` mounted refuses to start with `VEKTRA_ASSESS_ENABLED=false`, exit code non-zero, `[STARTUP ERROR] assess_check` naming the key — ARCH-066, REQ-079
 - [ ] For each of the three roles, removing any required key or adding any forbidden key (file or env var) produces a refusal naming exactly that key (5.4, 6.5) — ARCH-071
 - [ ] An `admin`-only key receives 403 ERR-AUTH-003 from a `require_exact_scope("assess:mint")` route; inserting a key row with `{admin,assess:mint}` fails with the DB constraint name in the error — NFR-014

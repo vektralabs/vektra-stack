@@ -22,8 +22,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_learn.models import DashboardTokenOrm, EnrollmentOrm, NamespaceOrm
+from vektra_shared.tokens import Keyring, SigningKey, decode_jwt, encode_jwt
 
 log = structlog.get_logger(__name__)
+
+# Learn widget tokens are bound to their audience (NFR-014): a learn token is not an
+# assess token and vice versa. Tokens minted before 0.8 carried no aud/iss/kid and are
+# rejected once after the upgrade; the widget re-mints on 401 via data-token-refresh-url.
+WIDGET_AUDIENCE = "vektra-learn-widget"
+TOKEN_ISSUER = "vektra"
+WIDGET_KID = "learn-1"
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +93,9 @@ class LearnService:
 
     def __init__(self, jwt_secret: str) -> None:
         self._jwt_secret = jwt_secret
+        self._keyring = Keyring.single(
+            SigningKey(kid=WIDGET_KID, secret=jwt_secret.encode("utf-8"))
+        )
 
     # -- Enrollment CRUD ---------------------------------------------------
 
@@ -162,18 +173,18 @@ class LearnService:
         self, session: AsyncSession, req: TokenRequest
     ) -> TokenResponse:
         """Generate a short-lived JWT for the chatbot widget."""
-        now = datetime.now(UTC)
-        expires_at = now + timedelta(seconds=req.expires_in)
-
-        payload: dict[str, Any] = {
-            "sub": req.student_id,
-            "course_id": req.course_id,
-            "iat": int(now.timestamp()),
-            "exp": int(expires_at.timestamp()),
-        }
+        claims: dict[str, Any] = {"sub": req.student_id, "course_id": req.course_id}
         if req.namespace is not None:
-            payload["namespace"] = req.namespace
-        token = jwt.encode(payload, self._jwt_secret, algorithm="HS256")
+            claims["namespace"] = req.namespace
+        token = encode_jwt(
+            claims,
+            key=self._keyring.signing_key,
+            audience=WIDGET_AUDIENCE,
+            issuer=TOKEN_ISSUER,
+            ttl=timedelta(seconds=req.expires_in),
+        )
+        exp = jwt.decode(token, options={"verify_signature": False})["exp"]
+        expires_at = datetime.fromtimestamp(exp, UTC)
 
         # Store token hash for audit trail only; revocation checks the
         # JWT expiry claim (validate_token). The hash enables future
@@ -198,7 +209,13 @@ class LearnService:
     async def validate_token(self, token: str) -> dict[str, Any]:
         """Validate and decode a JWT. Raises jwt.InvalidTokenError on failure."""
         return await asyncio.to_thread(
-            jwt.decode, token, self._jwt_secret, algorithms=["HS256"]
+            lambda: decode_jwt(
+                token,
+                keyring=self._keyring,
+                audience=WIDGET_AUDIENCE,
+                issuer=TOKEN_ISSUER,
+                require=["sub", "course_id"],
+            )
         )
 
     # -- Content ingestion trigger -----------------------------------------

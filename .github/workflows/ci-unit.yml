@@ -25,6 +25,7 @@ jobs:
       admin:     ${{ steps.filter.outputs.admin }}
       analytics: ${{ steps.filter.outputs.analytics }}
       learn:     ${{ steps.filter.outputs.learn }}
+      assess:    ${{ steps.filter.outputs.assess }}
       app:       ${{ steps.filter.outputs.app }}
     steps:
       - uses: actions/checkout@v7
@@ -51,6 +52,9 @@ jobs:
               - 'vektra-shared/**'
             learn:
               - 'vektra-learn/**'
+              - 'vektra-shared/**'
+            assess:
+              - 'vektra-assess/**'
               - 'vektra-shared/**'
             app:
               - 'vektra-app/**'
@@ -175,6 +179,41 @@ jobs:
           uv run pytest vektra-learn/tests/ -v --tb=short -m "not integration"
           --cov=vektra_learn --cov-report=term-missing --cov-fail-under=80
 
+  # The learn widget's own tests (node --test, no dependencies): the token refresh on
+  # 401 that the 0.8 aud/iss binding relies on (plan assess-foundations task 3.4).
+  test-learn-widget:
+    name: Test vektra-learn widget
+    needs: detect-changes
+    if: needs.detect-changes.outputs.learn == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Run widget tests
+        working-directory: vektra-learn/widget
+        run: npm test
+
+  test-assess:
+    name: Test vektra-assess
+    needs: detect-changes
+    if: needs.detect-changes.outputs.assess == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --dev --frozen --package vektra-assess
+      - name: Run unit tests with coverage
+        run: >
+          uv run pytest vektra-assess/tests/ -v --tb=short -m "not integration"
+          --cov=vektra_assess --cov-report=term-missing --cov-fail-under=80
+
   # vektra-app wires every component together (provider registration, startup
   # validation). Its tests existed but nothing ran them, in CI or in `make test`,
   # which is how a registration/validation mismatch shipped on develop and stopped
@@ -231,7 +270,7 @@ jobs:
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-app, test-structure]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess, test-app, test-structure]
     runs-on: ubuntu-latest
     if: always()
     steps:

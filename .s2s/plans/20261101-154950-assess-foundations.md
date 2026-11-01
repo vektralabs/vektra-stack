@@ -225,20 +225,20 @@ instantiates its own limiter instance for per-token limits.
       round trip) to the assess API and worker; failure refuses startup (fail closed)
 
 ### 3. Shared JWT helpers and learn refactor
-- [ ] 3.1 Add `pyjwt` to `vektra-shared/pyproject.toml`; create `vektra_shared/tokens.py` with
+- [x] 3.1 Add `pyjwt` to `vektra-shared/pyproject.toml`; create `vektra_shared/tokens.py` with
       `SigningKey`, `Keyring`, `encode_jwt`, `decode_jwt` per Design Notes (kw-only, no defaults
       for audience/issuer/require; HS256 pinned; kid mandatory and looked up in keyring)
-- [ ] 3.2 Unit tests `vektra-shared/tests/test_tokens.py`: wrong aud, missing aud, wrong iss,
+- [x] 3.2 Unit tests `vektra-shared/tests/test_tokens.py`: wrong aud, missing aud, wrong iss,
       missing exp, expired, `alg: none`, `alg: HS512`, unknown kid, missing kid header, key from a
       different keyring, call without `audience=` (TypeError) — each asserted on the exception type
-- [ ] 3.3 Refactor `vektra_learn/service.py` `LearnService.generate_token`/`validate_token` onto
+- [x] 3.3 Refactor `vektra_learn/service.py` `LearnService.generate_token`/`validate_token` onto
       the helpers with `aud="vektra-learn-widget"`, `iss="vektra"`, `kid="learn-1"`; keep
       `VEKTRA_LEARN_JWT_SECRET` ≥ 32 chars (startup step 10) and existing claims
-- [ ] 3.4 Verify empirically (running stack + block_vektra dev env from plan
+- [x] 3.4 Verify empirically (running stack + block_vektra dev env from plan
       20261101-154950-assess-moodle-ws, or the widget's fetch path if the env is not up yet) what
       happens to a pre-upgrade learn token: if the widget re-mints on 401, document the one-off
       invalidation in CHANGELOG; otherwise add the learn-private legacy decoder for one release
-- [ ] 3.5 Regression test in `vektra-learn/tests/`: a token signed with the learn secret but
+- [x] 3.5 Regression test in `vektra-learn/tests/`: a token signed with the learn secret but
       carrying `aud="discussion"` is rejected by `validate_token`; a learn token is rejected by
       `decode_jwt(audience="discussion")`; the suite proves learn is not looser than before
       (missing exp now rejected, previously accepted)
@@ -353,7 +353,7 @@ instantiates its own limiter instance for per-token limits.
       all existing `forbidden_modules`; AST test (d) and the contract-coverage test in
       `vektra-assess/tests/test_boundaries.py`; a canary test that a temporary module importing
       `vektra_core` from `vektra_assess.api` makes `lint-imports` fail (run in a tmp copy)
-- [ ] 9.2 `.github/workflows/ci-unit.yml`: `assess` paths filter (`vektra-assess/**`,
+- [x] 9.2 `.github/workflows/ci-unit.yml`: `assess` paths filter (`vektra-assess/**`,
       `vektra-shared/**`), `test-assess` job, add to `ci-gate` needs; `Makefile` `test` target adds
       `vektra-assess/tests/`; confirm `test_suite_execution_coverage.py` passes with the new suite
 - [ ] 9.3 `.github/workflows/lint.yml`: add `vektra-assess/src` (and `vektra-app/src`, missing
@@ -452,7 +452,13 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   measures it in week 1. If it exceeds, options are a lazy import inside the Part-B handler or a
   thin httpx OpenAI-compatible provider in vektra_app (decision recorded in plan
   20261101-154950-assess-llm-runner).
-- **Risk: learn token tightening** may log out in-flight widget sessions once (task 3.4 decides).
+- **Learn token tightening (task 3.4, decided 2026-11-01)**: pre-upgrade tokens get one 401; the widget POSTs to
+  `data-token-refresh-url` (block_vektra sets it, `ajax.php` re-mints) and retries once. Proved on the real
+  `ApiClient` by `vektra-learn/widget/test/api-client.test.mjs` (stubbed fetch) plus the server-side rejection in
+  `vektra-learn/tests/test_token_binding.py`. No legacy decoder kept; CHANGELOG documents the one-off effect.
+- **Task 9.2 pulled forward** with section 3: `make test` and ci-unit run `vektra-assess/tests/` (job
+  `test-assess`, in `ci-gate`), because `test_suite_execution_coverage.py` fails as soon as the suite exists.
+  ci-unit also gains `test-learn-widget` (`npm test`, node 22, as the Dockerfile widget stage).
 - **Risk: role creation in a migration** requires CREATEROLE; managed Postgres deployments may
   forbid it — the migration's DO block must fail with a clear message, and the operator runbook
   offers pre-created roles.

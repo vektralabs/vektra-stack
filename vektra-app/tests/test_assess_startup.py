@@ -280,3 +280,49 @@ async def test_role_check_against_postgres(
         assert "assess_token_signing" in app.state.assess_keys
     finally:
         await app.state.assess_engine.dispose()
+
+
+async def test_step_12_registers_disabled_readiness(secrets_dir: Path) -> None:
+    from vektra_admin.health import check_component
+
+    registry = ProviderRegistry()
+    await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN, registry)  # type: ignore[arg-type]
+    component = await check_component(registry, "assess")
+    assert component.status == "disabled"
+
+
+def test_health_assess_route_reports_disabled(secrets_dir: Path) -> None:
+    """GET /health/assess answers 'disabled', not 'no check registered' (6.1b)."""
+    import asyncio
+
+    from vektra_app.main import create_app
+
+    app = create_app()
+    registry = ProviderRegistry()
+    asyncio.run(assess_wiring.step_12_assess_check(app, MAIN_DSN, registry))
+    from uuid import uuid4
+
+    from vektra_shared.auth import ApiKeyInfo
+
+    class _Store:
+        async def lookup_by_token(self, token: str) -> ApiKeyInfo | None:
+            return (
+                ApiKeyInfo(key_id=uuid4(), scopes=["admin"]) if token == "adm" else None
+            )
+
+    registry.register("key_store", "default", _Store())
+    app.state.registry = registry
+    app.state.version = "test"
+    resp = TestClient(app).get(
+        "/health/assess", headers={"Authorization": "Bearer adm"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "disabled"
+
+
+def test_create_app_does_not_arm_the_api_key_rate_limiter():
+    """The dormant per-key RPM stays dormant: create_app() sets no rate_limiter (8.3)."""
+    from vektra_app.main import create_app
+
+    app = create_app()
+    assert getattr(app.state, "rate_limiter", None) is None

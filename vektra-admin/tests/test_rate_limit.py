@@ -177,3 +177,22 @@ class TestRateLimiterCleanup:
         """cleanup() on empty limiter returns 0."""
         rl = RateLimiter()
         assert rl.cleanup() == 0
+
+
+# --- Hashable keys (plan assess-foundations 8.3) ---
+
+
+def test_hashable_keys_uuid_tuple_str_are_independent():
+    from uuid import uuid4
+
+    from vektra_admin.rate_limit import RateLimiter
+
+    rl = RateLimiter()
+    keys = [uuid4(), ("site-1", "jti-9"), "sid-abc"]
+    for k in keys:
+        assert rl.check(k, 2)[0] is True
+        assert rl.check(k, 2)[0] is True
+        assert rl.check(k, 2)[0] is False, k
+    # a tuple key is not confused with its parts
+    assert rl.check("site-1", 2)[0] is True
+    assert rl.cleanup() == 0

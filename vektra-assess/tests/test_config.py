@@ -46,3 +46,12 @@ def test_err_assess_001_is_503_and_names_the_item() -> None:
     assert err.code == ERR_ASSESS_001 == "ERR-ASSESS-001"
     assert http_status_for(err) == 503
     assert "worker_heartbeat" in err.remediation
+
+
+async def test_readiness_disabled_and_never_healthy_without_source() -> None:
+    from vektra_assess.health import make_readiness_check
+
+    off = await make_readiness_check(enabled=False)()
+    assert off.status == "disabled"
+    on = await make_readiness_check(enabled=True)()
+    assert on.status == "degraded" and on.message == "heartbeat_source_missing"

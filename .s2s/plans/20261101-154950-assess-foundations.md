@@ -288,7 +288,7 @@ instantiates its own limiter instance for per-token limits.
       current_user, rolsuper` returns `vektra_assess_api`/false, and asserts the DSN user differs
       from `VEKTRA_DATABASE_URL`'s; registers the engine on `app.state.assess_engine`; runs
       `run_crypto_selftest()` before serving (task 2.3, fail closed)
-- [ ] 6.1b Dormant by default (added 2026-11-01; second line of defence behind the wave-gated merges):
+- [x] 6.1b Dormant by default (added 2026-11-01; second line of defence behind the wave-gated merges):
       `create_app()` includes the assess router ONLY when `VEKTRA_ASSESS_ENABLED=true`; with the
       default `false`, no route under `/api/v1/assess` is mounted, `/api/v1/assess/ui` is not
       served, `/health/assess` reports `disabled`, and the `assess-worker` / `assess-parser`
@@ -308,7 +308,7 @@ instantiates its own limiter instance for per-token limits.
 - [x] 6.4 `docker/entrypoint.sh`: add `assess-worker` and `assess-parser` targets (no
       `alembic upgrade`; `exec python -m vektra_app.assess_worker` / `assess_parser`), update the
       "Valid targets" message; never route assess through a generic `worker` target (ARCH-066)
-- [ ] 6.5 Tests `vektra-app/tests/test_assess_startup.py`: API with a WS keyring file present and
+- [x] 6.5 Tests `vektra-app/tests/test_assess_startup.py`: API with a WS keyring file present and
       assess DISABLED still fails step 12 with `StartupValidationError(step="assess_check")`;
       API with an assess DSN that logs in as `vektra` fails; worker entry with `torch` pre-imported
       (monkeypatched `sys.modules`) fails the assertion
@@ -337,14 +337,14 @@ instantiates its own limiter instance for per-token limits.
       container the socket path does not exist
 
 ### 8. Health and rate limiter
-- [ ] 8.1 `vektra_admin/health.py`: `SHALLOW_EXCLUDED = {"llm", "assess"}`; unit test that a
+- [x] 8.1 `vektra_admin/health.py`: `SHALLOW_EXCLUDED = {"llm", "assess"}`; unit test that a
       registered failing `assess` check leaves shallow status `healthy` while `?detail=full` and
       `/health/assess` report it
-- [ ] 8.2 `vektra_assess/health.py` readiness function registered as `("health", "assess")` by
+- [x] 8.2 `vektra_assess/health.py` readiness function registered as `("health", "assess")` by
       create_app when enabled: returns `disabled` when off; when on, reads the heartbeat source
       (the table arrives with plan 20261101-154950-assess-data-crypto; until then reports
       `degraded` with reason `heartbeat_source_missing`, never `healthy`)
-- [ ] 8.3 `vektra_admin/rate_limit.py`: `check(key: Hashable, rpm_limit)`; tests with UUID,
+- [x] 8.3 `vektra_admin/rate_limit.py`: `check(key: Hashable, rpm_limit)`; tests with UUID,
       `tuple`, and `str` keys; test asserting `app.state.rate_limiter` is still unset after
       `create_app()` (the dormant per-key RPM stays dormant)
 
@@ -485,7 +485,9 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   its worker/parser/health parts close with 6.2, 6.3 and 8.2. **FastAPI 0.139 drift**: `app.routes` holds an
   included router as one `_IncludedRouter`, not its APIRoutes, so any test filtering `app.routes` on
   `APIRoute` sees no included route at all. Both assess route tests walk `effective_route_contexts()` and the
-  4.5 vacuity test now routes through `include_router`. Other suites that inspect `app.routes` may be blind
+  4.5 vacuity test now routes through `include_router`. 8.2 deviation: the readiness check is registered by
+  startup step 12 (the registry is built there, not in `create_app`), enabled or not, so `/health/assess`
+  answers `disabled` instead of "no health check registered"; `/health/{component}` requires an API key. Other suites that inspect `app.routes` may be blind
   the same way (not audited here).
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.

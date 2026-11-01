@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from pydantic import ValidationError
 
 from vektra_assess.config import VektraAssessSettings
+from vektra_shared.registry import ProviderRegistry
 from vektra_shared.startup import StartupValidationError
 
 log = structlog.get_logger(__name__)
@@ -53,12 +54,23 @@ def include_assess_router(app: FastAPI) -> bool:
     return True
 
 
-async def step_12_assess_check(app: FastAPI, main_database_url: str) -> None:
-    """ARCH-057 step 12: key matrix (always), then crypto, DSN and role (when enabled)."""
+async def step_12_assess_check(
+    app: FastAPI, main_database_url: str, registry: ProviderRegistry | None = None
+) -> None:
+    """ARCH-057 step 12: key matrix (always), then crypto, DSN and role (when enabled).
+
+    Registers the ``("health", "assess")`` readiness check in both cases, so
+    ``GET /health/assess`` reports ``disabled`` rather than "no check registered".
+    """
+    from vektra_assess.health import make_readiness_check
     from vektra_assess.keys import enforce_key_matrix
 
     settings = load_assess_settings()
     app.state.assess_enabled = settings.enabled
+    if registry is not None:
+        registry.register(
+            "health", "assess", make_readiness_check(enabled=settings.enabled)
+        )
     if not settings.enabled:
         enforce_key_matrix(
             "api", secrets_dir=settings.secrets_dir, forbidden_only=True, step=STEP

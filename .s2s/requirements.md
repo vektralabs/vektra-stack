@@ -639,6 +639,953 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - [ ] Given no_relevant_context=True, Then retrieval_filter StepTrace records chunks_before, chunks_after=0, threshold value
   - [ ] Given no_relevant_context=True, Then HTTP status is 200 (not an error response)
 
+### Assessment discussion chatbot (v1)
+
+*Merged from session `20261101-091559-specs-assessment-discussion-chatbot` (2026-11-01). IDs renumbered for merge; references to REQ ≤ 066, NFR ≤ 013, BR ≤ 005 are pre-existing platform requirements. Conflicts CONF-001..008 are session-local records (see session file).*
+
+#### REQ-067: Server-authoritative discussion lifecycle per (student, activity)
+- **Priority**: must
+- **Description**:
+
+  Lifecycle: NOT_ELIGIBLE -> ELIGIBLE -> STARTING (transient) -> ACTIVE (<-> OUTAGE) ->
+  CLOSED(reason). Close reasons: finished | timed_out | service_failure | budget_exhausted |
+  terminated_by_teacher | access_revoked.
+  A session is CONSUMED if and only if the opening bot message has been generated AND persisted
+  server-side. STARTING commits to ACTIVE or rolls back to ELIGIBLE (REQ-071). Delivery status is
+  tracked separately (REQ-075). A teacher reset (REQ-087) creates session #N+1. At most one
+  non-CLOSED session per (student, activity) exists at any time.
+  Gate sets:
+  - START gates = all of BR-006 (a)-(h), evaluated at render and at Start.
+  - IN-SESSION gates = token valid, owner match, not impersonated, session in ACTIVE or OUTAGE,
+    deadline not passed. Evaluated on every request while the session is open. A failed
+    in-session gate rejects the request (audit-logged) WITHOUT changing session state.
+  The only state-changing exception: if the student loses enrolment or the student role while
+  ACTIVE or OUTAGE, the session closes as CLOSED(access_revoked) and the transcript is generated
+  and delivered.
+  Disable (REQ-081), another student's override (BR-006) and withdrawn release (BR-008) do not
+  affect sessions that are already ACTIVE.
+  Fail closed. Nothing held by the browser or rendered by Moodle is authoritative. State names and
+  storage are for design.
+
+- **Acceptance Criteria**:
+  - [ ] Concurrent starts (double-click, two tabs) produce exactly one STARTING/ACTIVE session
+  - [ ] Fine twice -> one close + one transcript
+  - [ ] After CLOSED, any message, token re-mint or new session is rejected unless a reset has created #N+1
+  - [ ] Negating any single START gate hides or disables the button AND makes the Start API call fail
+  - [ ] consumed == exists(persisted opening bot turn) for every record
+  - [ ] Disable while ACTIVE -> messages are still accepted
+  - [ ] Extending another student's override while ACTIVE -> session unaffected
+  - [ ] Unenrol while ACTIVE -> CLOSED(access_revoked) and the transcript is generated
+  - [ ] A failed in-session gate -> request rejected, state unchanged, audit event
+- **Related**: REQ-071, REQ-075, REQ-081, BR-006, BR-008
+
+#### REQ-068: Student entry point, button states and pre-session screen
+- **Priority**: must
+- **Description**:
+
+  Entry is on the results page (quiz attempt review; assignment feedback). Button states:
+  (1) not enabled: no button;
+  (2) not fully graded (BR-014) OR not released: disabled, "Disponibile quando la valutazione
+      sarà pubblicata";
+  (3) graded, gate not open (incl. in-progress or overdue attempts, the C7 NOT_AVAILABLE state):
+      disabled. The date is shown only if it equals the activity's own effective close or the
+      student's own override, else "Disponibile dopo la chiusura definitiva dell'attività". No
+      other student's data reaches the student;
+  (4) eligible: enabled;
+  (5) ACTIVE: "Riprendi" + minutes left;
+  (6) CLOSED with no reset pending: status line + date + transcript links #1..#N;
+  (7) temporarily unavailable: disabled, non-technical message;
+  (8) "login as": disabled;
+  (9) non-selected attempt: pointer to attempt #k;
+  (10) reset granted, not yet started: "Discuti questa prova (sessione #N)" + links #1..#N-1;
+  (11) NEW, end date passed with no session open: "Discussione non più disponibile dal <data>",
+       with transcript links if any.
+  Pre-session screen:
+  - duration, with "se non corrisponde, contatta il docente prima di iniziare";
+  - one session; no grade change; transcript to the teacher and an identical copy to the student;
+  - recipients by role and name;
+  - "Materiale del corso: usato / non usato"; AI disclosure; limits; privacy summary + link;
+  - the enrolment-dependency statement (REQ-093); the previous-sessions line for N > 1;
+  - D2 (SHOULD): each file's status predicted from metadata, plus "Se un file importante non può
+    essere letto, potrai discuterne all'orale".
+  Dismissing consumes nothing. Pre-flight shows "Preparazione della discussione…", announced
+  once.
+
+- **Acceptance Criteria**:
+  - [ ] Every state is reproducible on 4.3 and 5.2 x quiz and assignment, incl. abandoned-attempt and end-date fixtures
+  - [ ] Gate held by another student's extension -> no date, name or count in student HTML or API
+  - [ ] After a reset -> state (10); after the end date -> state (11) and a crafted Start is rejected
+  - [ ] BR-014 fixtures (an ungraded essay, a regrade in progress, a rubric criterion without a level) -> state (2) and API Start refused; a quiz with description and zero-mark items still becomes ELIGIBLE
+  - [ ] Disabled buttons are focusable with an exposed reason; no technical errors shown
+  - [ ] Dismissing the pre-session screen leaves the record ELIGIBLE
+- **Related**: BR-006, BR-010, BR-012, BR-014, REQ-084, REQ-087, REQ-093, REQ-101
+
+#### REQ-069: Server wall-clock time limit with resume
+- **Priority**: must
+- **Description**:
+
+  Deadline = commit time (opening message persisted) + cap + extra time + credited outage
+  (REQ-086). Only the server fixes and extends it; cold-start latency up to T is not charged.
+  Browser close, reload and the student's own network drop neither end nor pause the session, and
+  earn no credit. The owner resumes the SAME session, with full history, only from the results
+  page in a fresh authenticated Moodle session. Client time is ignored. Two tabs are serialized
+  ("attendi la risposta"). A message sent during a drop is shown as delivered or as not sent with
+  resend, and is never lost.
+  Warnings at 5 and 1 min always, plus at 10 min when the duration is 30 min or more. They are
+  computed against the CURRENT deadline, including any outage credit, and each is announced once
+  via a polite live region. The timer updates per minute.
+
+- **Acceptance Criteria**:
+  - [ ] Reload resumes the same session id with full history; remaining time within 1 s of the server
+  - [ ] Tampering with the client timer has no effect
+  - [ ] A second tab sending while a reply is pending is refused; no duplicate turn
+  - [ ] The student's own 3-min network drop extends the deadline by 0
+  - [ ] With an outage credit of X min, every warning fires at the new deadline minus 10/5/1 min (+/-5 s), and none fires against the old deadline
+  - [ ] Boundary tests +/-1 s (UTC) pass
+- **Related**: REQ-078, REQ-086
+
+#### REQ-070: Timeout handling and server-side close of abandoned sessions
+- **Priority**: must
+- **Description**:
+
+  At the deadline, student input is locked. A reply already being generated may finish within a
+  grace window (default 60 s, configurable); otherwise the transcript marks it
+  "risposta interrotta". Text typed but not sent is excluded. A server-side process closes
+  sessions past their deadline as CLOSED(timed_out) and triggers the transcript without a client.
+  It NEVER closes a session while that session is in OUTAGE; the outage REQ governs that case.
+  The sweeper mechanism is for design.
+
+- **Acceptance Criteria**:
+  - [ ] No student message is accepted after the deadline
+  - [ ] No assistant message is stored after deadline + grace
+  - [ ] Both branches (reply finishes within grace / reply is cut off) are verified with a slowed provider
+  - [ ] With the browser closed, the session reaches CLOSED(timed_out) and a transcript exists within 5 min of the deadline
+  - [ ] A session in OUTAGE at its nominal deadline is not closed as timed_out
+- **Related**: REQ-069
+
+#### REQ-071: Start pre-flight, commit and rollback; failures at start never consume the session
+- **Priority**: must
+- **Description**:
+
+  On Start, the backend runs a pre-flight check:
+  - eligibility re-check (BR-006, including BR-010);
+  - not an impersonated ("login as") session;
+  - admission capacity;
+  - LLM provider reachable;
+  - Moodle grading context read and snapshot (BR-008), with context assembly per BR-011.
+  If any check fails, nothing is created and the record stays ELIGIBLE. If all pass, the record
+  enters STARTING. It commits to ACTIVE when the opening bot message is generated AND persisted
+  server-side within T (default 60 s). Otherwise it rolls back to ELIGIBLE, nothing is consumed,
+  and the rollback is audit-logged with a reason.
+  Rollback is triggered ONLY by server-attributable failures. A client disconnect, reload or tab
+  close during STARTING never triggers it: the session commits normally and the stored message is
+  visible on resume. No bot output or attempt content is returned to the client before commit.
+  Abuse cap (defaults, operator-configurable, values for the pilot):
+  - at most 5 Start attempts per (student, activity) per hour; beyond that, "Riprova tra X minuti";
+  - after 3 consecutive system rollbacks the student sees "Problema tecnico persistente: non hai
+    perso la tua sessione. Il docente è stato avvisato", and the teacher and the operator are
+    notified.
+  Student messages: "Non è stato possibile avviare la discussione; non hai perso la tua sessione.
+  Riprova più tardi." / "Servizio momentaneamente non disponibile" / "Troppi utenti, riprova più
+  tardi".
+
+- **Acceptance Criteria**:
+  - [ ] With the provider stopped, a start attempt leaves the record ELIGIBLE and the button still enabled
+  - [ ] With the concurrency limit at K, the (K+1)th start is refused and remains ELIGIBLE
+  - [ ] With the Moodle web service unreachable, the start is refused, nothing is consumed, and the operator is alerted
+  - [ ] A provider that does not persist the opening message within T leads to rollback to ELIGIBLE plus an audit event
+  - [ ] A client that disconnects after Start while the server persists the opening message leads to a consumed session, with the message visible on resume
+  - [ ] No attempt content or bot text appears in any response before commit
+  - [ ] The 6th Start within one hour is refused; 3 consecutive rollbacks notify the teacher and the operator
+- **Related**: REQ-067, BR-006, BR-011, REQ-059
+
+#### REQ-072: Finish action and closing screen
+- **Priority**: must
+- **Description**:
+
+  A Finish ("Fine") button with a confirmation step closes the session as CLOSED(finished). Input
+  is then disabled. The closing screen states "Sessione conclusa il <data>; trascrizione inviata
+  al docente" and offers "Visualizza / scarica la tua trascrizione" (student transcript REQ).
+
+- **Acceptance Criteria**:
+  - [ ] Confirming Fine moves the record to CLOSED(finished) and creates exactly one transcript
+  - [ ] Cancelling the confirmation keeps the session ACTIVE, and the deadline is unchanged
+  - [ ] The transcript link on the closing screen works as soon as the transcript is generated, independent of email status
+- **Related**: REQ-067
+
+#### REQ-073: Contest handling verification
+- **Priority**: must
+- **Description**:
+
+  Verifiable behaviour for the no-grade-change rule when students contest or attempt adversarial
+  manipulation, including prompt injection embedded in the student's own submission.
+
+- **Acceptance Criteria**:
+  - [ ] The fixed grade statement appears verbatim in 100% of transcripts
+  - [ ] An adversarial suite of at least 30 prompts (including injection inside the submission) yields 0 assistant claims that the grade was or will be changed
+  - [ ] Moodle grade, rubric and feedback for the attempt are byte-identical before and after a session
+  - [ ] The service-account role audit shows no grade-write capability
+- **Related**: REQ-044
+
+#### REQ-074: Transcript content and integrity
+- **Priority**: must
+- **Description**:
+
+  Exactly one transcript per closed session; student and teacher copies IDENTICAL. Content is
+  ONLY a system-rendered header + turns: no system prompt, context, rubric definition beyond what
+  the student can see, solution, override holder or reset reason.
+  HEADER (never LLM-generated):
+  - course, activity, student;
+  - "Sessione #N di M" with earlier sessions (number, date, close reason);
+    "contesto sessioni precedenti: sì/no";
+  - "tentativo #k di M" + method;
+  - grade at start; the grade at close only if released, else the neutral notice;
+  - cap + extra (never the reason); timestamps; close reason (6-value vocabulary);
+  - outage intervals + credited total; failed start attempts;
+  - fixed BR-009 statement;
+  - config snapshot (flags and values only);
+  - D1: per-file status list (REQ-101) and conversation language(s) (REQ-100).
+  BODY: timestamped, role-labelled, escaped turns.
+  - Turns replaced by the safeguard are marked "[risposta sostituita dal sistema]".
+  - Turns with a post-check value replacement are marked (REQ-096).
+  - Student error flags (REQ-103, if built) are marked.
+  - D1: "PUNTI CONTESTATI" is MUST (product-owner decision R8), in the REQ-097 format, labelled
+    "Riepilogo generato dall'assistente".
+  Format and serving per BR-016.
+
+- **Acceptance Criteria**:
+  - [ ] Transcript count == CLOSED count; copies hash-equal
+  - [ ] 0 canaries for system prompt, solution text, pasted rubric or reset reason; regrade not released -> 0 occurrences of the new grade
+  - [ ] Injected header-like text renders inert; every safeguard or post-check replacement is marked in both copies
+  - [ ] The header lists every file with exactly one status and the conversation language(s)
+  - [ ] Every contest exchange that reaches the restate step yields a 'Punti contestati' entry (REQ-097)
+- **Related**: BR-009, BR-010, BR-011, BR-016, REQ-096, REQ-097, REQ-100, REQ-101, REQ-103
+
+#### REQ-075: Durable transcript delivery by Vektra SMTP
+- **Priority**: must
+- **Description**:
+
+  The transcript is persisted (encrypted at rest) BEFORE any send attempt. It is sent through
+  Vektra's own SMTP over mandatory TLS, with no plaintext fallback. Failed sends are retried with
+  backoff over a configurable window: proposals range from 24 h to 72 h, and the value is to be
+  set. Delivery status is PENDING -> SENT, or RETRYING -> FAILED. A transcript is marked SENT
+  only when the SMTP relay has accepted it. One email is sent per closed session, with course,
+  activity and student in the subject. FAILED transcripts are visible to the teacher and to the
+  operator (metadata only).
+
+- **Acceptance Criteria**:
+  - [ ] With SMTP down for 2 h and then restored, every pending transcript is delivered exactly once (verified on a test mail sink)
+  - [ ] No transcript is marked SENT without relay acceptance
+  - [ ] At least 99% of closed sessions are SENT or downloadable within 15 min of close
+- **Related**: REQ-051
+
+#### REQ-076: Teacher in-Moodle session list and transcript download
+- **Priority**: must
+- **Description**:
+
+  Graders of THAT activity see, per student, sessions #1..#N with:
+  - state and close reason (including access_revoked);
+  - delivery status, including bounces;
+  - reset count and reset reasons (teacher-only);
+  - authenticated download and resend;
+  - the reset action (REQ-087) and the extra-time setting (REQ-078).
+  The gate panel shows the effective opening date and which override holds it, by name only and
+  never the reason, and only to users who already have the Moodle capability to see overrides. If
+  the activity is NOT_AVAILABLE because of the C7 fallback, it shows that reason. Should: a hint
+  when the override holding the gate belongs to a suspended or unenrolled user. No cross-course
+  access.
+
+- **Acceptance Criteria**:
+  - [ ] A non-grader or other-course teacher gets an authorization error
+  - [ ] A FAILED transcript can be downloaded
+  - [ ] The reset reason is visible in the list and absent from transcripts
+  - [ ] C7 fallback NOT_AVAILABLE -> the reason is shown in the list
+- **Related**: REQ-075, REQ-078, REQ-087, REQ-091
+
+#### REQ-077: Teacher configuration in the activity settings page
+- **Priority**: must
+- **Description**:
+
+  A section visible to activity editors only. Fields:
+  - enable;
+  - cap 5-120 min;
+  - rubric source (Moodle rubric for assignments / pasted text for quizzes). Help text (BR-011
+    block): "Il testo della griglia può essere mostrato allo studente così com'è: non inserire
+    risposte attese o soluzioni (usa il campo Soluzione)";
+  - optional solution text;
+  - "mostra soluzione nella discussione" (default OFF). Help text: when OFF, the solution and
+    review-hidden content never reach the model; quiz detail is reduced where HTML cannot be
+    filtered. D3: "Con questa opzione disattivata l'assistente non riceve la soluzione e non deve
+    fornirla, ma per domande risolvibili autonomamente non è possibile garantirlo al 100%: evita
+    di abilitare la discussione su domande che riutilizzerai. Ricorda inoltre che lo studente
+    riceve una copia della trascrizione." A warning appears when ON;
+  - recipients (REQ-082); RAG (default OFF);
+  - the C7 opening date (REQ-091, fallback only);
+  - NEW (product-owner decision): optional "Discussione disponibile fino al" (date-time). Empty
+    means no limit, until retention. It must be later than the effective opening (BR-006(d) or
+    REQ-091). After it: no new Starts (BR-006(i), REQ-068 state 11); sessions in ACTIVE or
+    OUTAGE run to their normal end; resets are refused unless the date is moved (REQ-087). If the
+    effective opening later moves past it, a warning appears. Changes are audited.
+  The section shows the computed opening condition and the end date, and warns if review options
+  hide content.
+  Enable is refused for:
+  - a quiz without a close date, or an assignment without a cut-off (BR-007);
+  - Moodle-rubric source without a rubric; an empty pasted rubric;
+  - team submission;
+  - MARKING-GUIDE grading (EX-023);
+  - privacy settings unset; admin check red (read-only).
+  Validation per BR-013. Changes apply only to sessions not yet started and are audited
+  old/new.
+
+- **Acceptance Criteria**:
+  - [ ] New activity: RAG OFF and mostra soluzione OFF; end date empty
+  - [ ] Enable on: no quiz close date / no assignment cut-off / team submission / marking guide / empty pasted rubric -> field-level error
+  - [ ] BR-013 boundaries: 20,000 characters accepted, 20,001 refused; cap 4 and 121 refused; total duration 241 min refused, 240 accepted; extra time > +100% requires confirmation; each error names the range
+  - [ ] End date not after the effective opening -> field error; after the end date, Start refused while an ACTIVE session continues to its normal end
+  - [ ] Help texts contain the pasted-rubric line and the D3 sentence
+  - [ ] A quiz in 'separate groups' mode can be enabled; changing the cap after start does not alter that session's deadline; every change audited old/new
+- **Related**: BR-006, BR-007, BR-011, BR-013, REQ-081, REQ-082, REQ-087, REQ-091, REQ-099, EX-023
+
+#### REQ-078: Per-student extra time (accommodations)
+- **Priority**: must
+- **Description**:
+
+  Before a student starts, the teacher can grant that student extra session time, in minutes or as
+  a percentage, from the discussion settings or the teacher list (REQ-076). This MUST ship in v1
+  as a manual setting regardless of the outcome of OQ-025. It is required by WCAG 2.2.1 Timing
+  Adjustable and Italian law (L.17/1999, L.170/2010). The student sees the extended duration on
+  the pre-session screen. The transcript records only the granted duration, never the reason.
+  Should: prefill from the student's Moodle time-limit overrides, if OQ-025 confirms feasibility.
+
+- **Acceptance Criteria**:
+  - [ ] +50% on a 30-min cap produces a 45-min server deadline (plus any outage credit)
+  - [ ] Extra time cannot be changed for a session that is ACTIVE or CLOSED
+  - [ ] Neither the transcript nor any student-visible text discloses the reason
+- **Related**: REQ-069, OQ-025
+
+#### REQ-079: Site admin setup check for the dedicated service account
+- **Priority**: must
+- **Description**:
+
+  Provisioning the dedicated Moodle service account is an install prerequisite. A "Verifica
+  configurazione" check reports each item by name as OK or MISSING:
+  - the token works;
+  - the required reads succeed (grades, rubric instances and definitions, submissions, quiz
+    reviews regardless of review options);
+  - interactive login is disabled;
+  - the account is NOT a site admin;
+  - the account is NOT the ingestion account;
+  - a probe of a denied function fails;
+  - there is NO grade-write capability.
+  The feature stays unavailable until every item passes. Capabilities are never granted
+  automatically. Token rotation does not affect ACTIVE sessions. A revoked token fails closed:
+  eligible students see "temporarily unavailable" and nothing is consumed, and the operator is
+  alerted.
+
+- **Acceptance Criteria**:
+  - [ ] A check against the ingestion account, a site-admin account, or a role with grade-write capability fails and names the failing item
+  - [ ] After token revocation, start attempts are refused without consumption and an operator alert is raised
+
+#### REQ-080: Operator configuration and metadata-only monitoring
+- **Priority**: must
+- **Description**:
+
+  The operator configures SMTP (TLS) with a test send, the provider, the concurrency limit, the
+  sweeper interval, the retry policy, retention and per-session limits. Monitoring offers
+  content-free counters and alerts: sessions by state, close reasons, delivery failures,
+  transcripts stuck in RETRYING. Resend works by session id without exposing content, and goes
+  ONLY to that session's re-resolved recipients (REQ-082); the operator can never set or change
+  a recipient. Application and mail logs contain no bodies. Purges are audited.
+
+- **Acceptance Criteria**:
+  - [ ] An operator credential reading content gets 403
+  - [ ] A canary grep of logs and mail logs returns 0
+  - [ ] A resend API call carrying a recipient parameter is rejected
+  - [ ] After purge, the row count of purged content is 0 and only audit metadata remains
+- **Related**: REQ-082, REQ-051, NFR-007, NFR-008
+
+#### REQ-081: Teacher disables discussion, or terminates active sessions
+- **Priority**: must
+- **Description**:
+
+  Disabling blocks new starts and new token mints immediately. By default, ACTIVE sessions run to
+  their normal end and deliver.
+  The settings form shows "N sessioni attive". An explicit "termina subito" action, with
+  confirmation stating N and a mandatory reason, closes those sessions as
+  CLOSED(terminated_by_teacher). Their transcripts are generated and delivered, and the student
+  sees "Sessione chiusa dal docente; trascrizione disponibile". A terminated session counts as
+  consumed; a teacher reset is available.
+  Re-enabling never reopens CLOSED sessions. Should: a site-admin per-activity emergency stop with
+  the same effect.
+
+- **Acceptance Criteria**:
+  - [ ] After disable, a start or token mint on an ELIGIBLE record is refused
+  - [ ] After disable without 'termina subito', ACTIVE sessions reach finished or timed_out normally
+  - [ ] 'Termina subito' moves all N sessions to CLOSED(terminated_by_teacher), produces N transcripts and an audit entry with the reason
+  - [ ] After re-enable, a CLOSED record stays CLOSED
+- **Related**: REQ-085
+
+#### REQ-082: Transcript recipients: course graders, optional allowlisted free text
+- **Priority**: must
+- **Description**:
+
+  MUST:
+  - Recipients default to the configuring teacher's Moodle address. Up to 3 recipients.
+  - Each recipient is a user with grading capability in the course, with the address resolved
+    from Moodle.
+  - Recipients are re-resolved at send time. A recipient who has lost the capability is replaced
+    by the course's current graders, and this is audited.
+  - The pre-session screen names the recipients by role and name.
+  - Each recipient gets one email per session (exactly-once is counted per recipient, REQ-075).
+  - Bounces appear in REQ-076. Every recipient change is audited.
+  SHOULD: free-text recipient overrides. They are offered ONLY together with a domain allowlist
+  maintained by the site admin AND the change audit, which are MUST whenever free-text recipients
+  exist. With an empty allowlist, no free text is allowed. If free-text overrides slip from v1,
+  recipients are Moodle-resolved graders only. Validation errors list the allowed domains.
+
+- **Acceptance Criteria**:
+  - [ ] Free text outside the allowlist, or with an empty allowlist -> field-level error
+  - [ ] A 4th recipient is refused
+  - [ ] A recipient who lost the capability -> course graders, audited
+  - [ ] Each change audited old/new
+  - [ ] Build without free-text overrides -> the form offers only Moodle-resolved graders
+- **Related**: REQ-075, REQ-077, REQ-080
+
+#### REQ-083: Per-session abuse and cost limits
+- **Priority**: must
+- **Description**:
+
+  Each session has limits on message length, message rate and total tokens. They are
+  operator-configurable, with generous defaults: fewer than 1% of pilot sessions should hit them,
+  and a realistic 120-min session never exhausts the budget. The defaults are sized before the
+  pilot on a reference 120-min session.
+  - Character counter via aria-describedby, not announced per keystroke.
+  - Over-length messages are rejected client- AND server-side before any LLM call.
+  - Rate limit: "Attendi qualche secondo".
+  - Warning at 80% of the token budget. At exhaustion -> CLOSED(budget_exhausted) + transcript.
+  - Limits are shown on the pre-session screen.
+  - Retries during an outage, and earlier-session turns included under REQ-087, do not count
+    against the budget.
+  - Hitting a limit never earns outage credit.
+
+- **Acceptance Criteria**:
+  - [ ] Over-length message rejected, 0 LLM calls
+  - [ ] Budget exhausted -> CLOSED(budget_exhausted) + exactly one transcript
+  - [ ] Rate-limited or over-length -> deadline +0
+- **Related**: REQ-080, REQ-087
+
+#### REQ-084: Moodle 'login as' sessions cannot start or access a discussion
+- **Priority**: must
+- **Description**:
+
+  When an admin or teacher is using Moodle's "login as" on a student, the button is disabled with
+  "Non disponibile in modalità accesso come altro utente". No token is minted, and the backend
+  rejects any such token. There is no Start, resume, message, consumption, rollback or view of
+  the student's transcript. The rejection is audited as loginas_rejected. The detection mechanism
+  is for design.
+
+- **Acceptance Criteria**:
+  - [ ] A start, resume or transcript request from a 'login as' session is refused, the record stays as it was, and 0 session rows are created
+  - [ ] A loginas_rejected audit event is recorded
+- **Related**: NFR-014, REQ-085
+
+#### REQ-085: Minimum audit event set for discussions
+- **Priority**: must
+- **Description**:
+
+  Content-free events (IDs, timestamps, reason codes):
+  - token mint; Start; start_rollback (+reason); rollback/start-rate cap hit; commit;
+  - outage_start / outage_end (+credited seconds);
+  - close (+reason, including access_revoked); in-session gate rejection;
+  - grade_claim_replaced;
+  - transcript generated; each delivery attempt and result (per recipient);
+  - student view or download; teacher download;
+  - reset (+#N, reason stored in audit but hidden from operators); reset_notice_sent (if
+    REQ-092 is adopted);
+  - config changes, including the mostra soluzione and RAG toggles and recipients; allowlist
+    changes;
+  - C7 opening date set or edited, with the attestation and the teacher;
+  - ownership and attempt mismatch rejections; loginas_rejected; team-submission refusal;
+  - anti-leak exclusion applied; review-HTML fallback applied (BR-011); setup-check result;
+  - notice version in the Start event.
+  Implements NFR-007 for this feature.
+
+- **Acceptance Criteria**:
+  - [ ] Each listed event produces an audit entry
+  - [ ] A canary grep of the audit store and operator metrics returns 0 content
+- **Related**: REQ-022, NFR-007, NFR-008
+
+#### REQ-086: Mid-session provider outage: detection, credit and service_failure close
+- **Priority**: must
+- **Description**:
+
+  An OUTAGE is a provider call that errors, or that yields no reply or first token within the
+  outage timeout (default 45 s). Never credited:
+  - a slow but progressing or successful reply;
+  - the student's own network drop;
+  - student-caused rejections (over-length, rate limit, budget, content filter).
+  Incidents shorter than G (default 20 s) are charged. Longer ones are credited to the deadline up
+  to the cumulative cap C = min(15 min, 50% of cap). Credit comes ONLY from server-side
+  provider-call records; an uncapped variant is not allowed.
+  OUTAGE EXIT: driven by the server. OUTAGE ends ONLY when a server-side automatic retry or probe
+  succeeds (interval for design), and credit stops at that moment. The student's "Riprova" only
+  triggers a retry and never ends OUTAGE by itself. The server answers the pending call or
+  enforces C without any client present.
+  Beyond C, or (Should) after K = 3 consecutive failed calls -> CLOSED(service_failure). The
+  transcript includes the outage intervals and a header flag, and the teacher is notified within
+  1 min ("reset consigliato").
+  Student UI:
+  - banner "Assistente temporaneamente non disponibile: questo tempo non ti viene conteggiato";
+  - timer frozen; input locked;
+  - pending message kept, then answered or marked "non risposto";
+  - a "Riprova" control;
+  - pause and resume announced once via a polite live region.
+  On service_failure: "Sessione interrotta per un problema tecnico, non per causa tua. Il docente
+  è stato avvisato e può abilitarti una nuova sessione."
+  Values are for the pilot; detection is for design.
+
+- **Acceptance Criteria**:
+  - [ ] Injected 3-min outage -> deadline +3 min +/-5 s
+  - [ ] Injected 15 s outage -> +0
+  - [ ] Slow 40 s successful reply -> +0
+  - [ ] Over-length, rate-limited or content-filtered -> +0
+  - [ ] Cumulative outage > C -> CLOSED(service_failure) + transcript with intervals + teacher notified within 1 min
+  - [ ] Browser killed at outage start -> the server reaches ACTIVE (pending call answered) or CLOSED(service_failure) within C; no session stays in OUTAGE beyond C
+  - [ ] Provider recovers while the client is absent -> OUTAGE ends within the probe interval, and the session later closes as timed_out, not service_failure
+  - [ ] The sweeper never closes a session in OUTAGE
+- **Related**: REQ-069, REQ-070, REQ-074, REQ-059
+
+#### REQ-087: Teacher reset: grant a new session #N (with continuity rule)
+- **Priority**: must
+- **Description**:
+
+  A grader may grant a new session, unlimited, with a mandatory reason, audited. Only on CLOSED
+  sessions (ACTIVE -> termina subito first). The reset re-runs all START gates (BR-006),
+  INCLUDING the end date (i): after "Discussione disponibile fino al", a reset is refused unless
+  the teacher first moves the date (product-owner decision). Session #N has its own snapshot,
+  deadline, limits and transcript; earlier transcripts are kept. The reset reason appears only in
+  the teacher list and audit.
+  CONTINUITY:
+  (a) Should: earlier sessions shown read-only above the chat;
+  (b) earlier conversation turns only are auto-included after service_failure; otherwise by
+      teacher opt-in at reset (default OFF);
+  (c) only if the BR-011 boundary (toggle, review options, release) has not narrowed;
+  (d) treated as untrusted user content;
+  (e) not counted against the REQ-083 budget;
+  (f) disclosed in the header and on the pre-session screen.
+  The student notice is per REQ-092.
+
+- **Acceptance Criteria**:
+  - [ ] Reset without a reason refused; reset on an ACTIVE session refused
+  - [ ] After the end date -> reset refused with a pointer to the date field; after the date is moved -> accepted
+  - [ ] #1..#N-1 unchanged and downloadable; #N created
+  - [ ] No longer eligible -> refused
+  - [ ] service_failure -> earlier turns in context; other reasons with the box unticked -> absent
+  - [ ] Narrowed boundary -> 0 earlier turns (canary); injected 'system' text in earlier turns treated as user content
+- **Related**: BR-006, REQ-076, REQ-077, REQ-081, REQ-083, REQ-092, BR-011
+
+#### REQ-088: Student access to own transcript
+- **Priority**: must
+- **Description**:
+
+  Implements the product-owner decision on OQ-021. The student can view and download their own
+  transcripts (#1..#N) from the closing screen and the results page. Each is available as soon as
+  it is generated, independent of email status, until the retention period expires. The copy is
+  identical to the teacher's (REQ-074). Ownership is checked server-side on EVERY request (BOLA).
+  After purge the student sees "Trascrizione non più disponibile (periodo di conservazione
+  scaduto)".
+
+- **Acceptance Criteria**:
+  - [ ] Student B requesting A's transcript gets an authorization error and an audit event
+  - [ ] The student copy is hash-equal to the teacher copy
+  - [ ] After purge, the link shows the expiry message and the content is gone (row count 0)
+- **Related**: REQ-074, NFR-014, OQ-020
+
+#### REQ-089: Privacy configuration: retention, legal basis and notice (fail closed)
+- **Priority**: must
+- **Description**:
+
+  The mechanism is specified now; the values come from the DPO (OQ-020).
+  Admin/operator settings: [RETENTION_DAYS], [LEGAL_BASIS_LABEL/TEXT], [PRIVACY_NOTICE_URL/text +
+  version]. If any is unset, discussion cannot be enabled, and the REQ-079 setup check reports it.
+  The pre-session screen shows the legal basis summary, the retention period, the notice link and
+  the outbound flow, with recipients by role. The notice MUST state that emailed copies follow the
+  university mailbox retention and are NOT removed by the Vektra purge. The notice version is
+  recorded in the Start event.
+  Transcripts, snapshots and student links are purged RETENTION_DAYS after CLOSED. A transcript
+  still RETRYING at purge time has its delivery abandoned, audited, and the teacher notified.
+  Purges are verified by row count. Unlimited resets increase retained volume. The Moodle Privacy
+  API in the plugin is for design.
+
+- **Acceptance Criteria**:
+  - [ ] Any privacy setting unset -> enable refused, and the setup check reports it
+  - [ ] The Start event records the notice version
+  - [ ] The notice template contains the mailbox-retention statement
+  - [ ] Content older than RETENTION_DAYS -> row count 0 after purge
+- **Related**: OQ-020, REQ-079, REQ-080, NFR-008
+
+#### REQ-090: Teacher preview mode
+- **Priority**: could
+- **Description**:
+
+  COULD. The teacher previews the student experience: button state, pre-session screen, and a
+  chat on a sample or the teacher's own attempt. A preview is never counted, consumed or emailed.
+  In "login as", the real button state and pre-session screen may be previewed with Start
+  disabled. If built, preview is a second path through context assembly, so it MUST pass the full
+  START-gate, anti-leak (NFR-015, NFR-017, BR-011) and audit suite before it ships ("dormant
+  capability" rule). Alternative for teachers: a Moodle test-student account using the real flow
+  and REQ-087 resets.
+
+- **Acceptance Criteria**:
+  - [ ] A preview creates 0 session rows and sends 0 emails
+  - [ ] The preview passes the same NFR-015/NFR-017 canary suites as the real flow
+- **Related**: REQ-084, NFR-015, NFR-017
+
+#### REQ-091: Manual opening-date fallback when the effective close cannot be read
+- **Priority**: must
+- **Description**:
+
+  CONF-007 resolution. This applies ONLY if the service account cannot read every input to
+  BR-006(d) on an instance: overrides, extensions, cut-off or grace period. PARTIAL readability
+  counts as unreadable. Otherwise BR-006(d) is computed automatically.
+  In the fallback the activity is NOT_AVAILABLE (fail closed). The teacher sees "Vektra non può
+  verificare proroghe/override per questa attività" (REQ-076, REQ-077), and students see the
+  neutral state (3) text.
+  It stays NOT_AVAILABLE until the teacher sets an explicit "Apertura discussione" date-time that
+  is at least the activity's close or cut-off date, and ticks the attestation "Confermo che
+  nessuno studente ha tempo/proroga oltre questa data". The attestation screen warns that
+  extensions granted later in Moodle cannot be detected on this instance.
+  Gate = max(activity effective close, teacher date). If the instance later becomes readable, gate
+  = max(automatic BR-006(d), teacher date), never the teacher date alone.
+  After any session has started, the date may only be moved LATER: this re-closes the gate for
+  students who have not started, consistent with BR-006. Moving it earlier is refused.
+  Every set or edit is audited with the teacher and the repeated attestation, recorded as a
+  teacher statement, not a system verification. There is never a silent fallback to the
+  activity's own close date. This does not replace a missing assignment cut-off (BR-007).
+
+- **Acceptance Criteria**:
+  - [ ] Fallback active and no teacher date -> NOT_AVAILABLE; a crafted Start is rejected
+  - [ ] Quiz overrides readable but assignment extensions unreadable -> fallback active
+  - [ ] Teacher date earlier than the activity close -> field error
+  - [ ] After the first start: moving the date later is accepted and re-closes the gate for not-started students; moving it earlier is refused
+  - [ ] Instance becomes readable -> gate = max(automatic, teacher date)
+  - [ ] Each set or edit -> audit event with teacher and attestation
+- **Related**: BR-006, BR-007, REQ-076, REQ-077, OQ-025
+
+#### REQ-092: Student notification when a reset is granted
+- **Priority**: should
+- **Description**:
+
+  When a reset is granted, Vektra emails the student through the REQ-075 SMTP path, in the
+  student's Moodle language: "Il docente ha abilitato una nuova sessione di discussione per
+  <attività>". The link is the plain Moodle results-page URL with NO token, session id or
+  credential, so access still requires an authenticated Moodle session. The email contains no
+  reason and no content. One notice per reset; the recipient is resolved from Moodle at send
+  time. A reset_notice_sent audit event is logged.
+  A notice delivery failure never blocks or reverts the reset; the results page shows state (10)
+  regardless of email.
+  ENABLEMENT IS GATED on the OQ-020 DPO approval of this flow and of the notice text. Until it is
+  approved, or if the DPO refuses: no email is sent, the in-Moodle state (10) is the student's
+  signal, and the teacher list shows "studente non avvisato via email".
+
+- **Acceptance Criteria**:
+  - [ ] A reset produces exactly one student notice (when enabled)
+  - [ ] The notice contains no reset reason, no transcript content, and no token or credential in the link
+  - [ ] Notice delivery fails -> the reset stays effective and the results page shows state (10)
+  - [ ] Flow not approved -> 0 notices sent, and the teacher list shows 'studente non avvisato via email'
+- **Related**: REQ-087, REQ-075, REQ-085, REQ-089, REQ-068, OQ-020
+
+#### REQ-093: Student transcript access after loss of course access
+- **Priority**: must
+- **Description**:
+
+  (a) MUST: the pre-session screen states that in-course access to the transcript requires an
+      active course enrolment. The closing screen (REQ-072) and the state (6) text suggest "Ti
+      consigliamo di scaricare una copia della trascrizione".
+  (b) MUST: after course access is lost and until RETENTION_DAYS, the transcript remains
+      available to its owner through the data-subject access path: the Moodle Privacy API export
+      implemented by the plugin. The plugin retrieves it from Vektra server-to-server,
+      authenticated and scoped to the data subject (for design). The exported transcript is
+      hash-equal to the in-course copy. After the Vektra-side purge, the export contains
+      nothing.
+  (c) SHOULD: a non-course entry point for the owner, such as the Moodle profile or privacy area.
+      It can never start, resume or reset a session.
+  Ownership is checked on every request (REQ-088).
+
+- **Acceptance Criteria**:
+  - [ ] An unenrolled student's export contains their transcripts #1..#N until RETENTION_DAYS, hash-equal to the in-course copy
+  - [ ] Cross-user export test -> 0 foreign records; any other user gets an authorization error
+  - [ ] After RETENTION_DAYS -> the export contains 0 transcripts (row count verified)
+  - [ ] The non-course entry point exposes no start, resume or reset action
+  - [ ] The pre-session screen contains the enrolment-dependency statement
+- **Related**: REQ-088, REQ-089, REQ-072, OQ-020
+
+#### REQ-094: Opening message: system facts block + LLM orientation (commit point)
+- **Priority**: must
+- **Description**:
+
+  INPUT: the snapshot filtered by BR-010 and BR-011; N, duration, flags; file statuses.
+  PART A, system-templated and never LLM:
+  - activity; "Tentativo #k di M (metodo: …)"; released grade;
+  - fixed BR-009 statement (Vektra-shipped string, REQ-098);
+  - "Sessione #N" (+ previous-context line); duration;
+  - STUDENT-FACING labels "Materiale del corso: usato / non usato" and "Soluzione: mostrata /
+    non mostrata" (technical flags only in the header config snapshot);
+  - OVERVIEW with canonical labels (quiz "Domanda n: <punti>/<max> (<stato>)"; assignment
+    "Criterio n – <nome>: livello <L>, <punti>/<max>", or the scale label for scale grading per
+    BR-014; "Valutazione complessiva"; "Consegna"). Hidden marks omitted with a statement;
+    degraded items flagged;
+  - file statuses; how to proceed.
+  Assistive technology announces a short summary ("Discussione avviata: tentativo #k, N
+  elementi, durata X minuti"); the overview is navigable as a list.
+  PART B, LLM: at most 120 words; a neutral orientation naming at most 3 labelled items; an
+  invitation; NO grade, mark, point or level values.
+  COMMIT only when A AND B are persisted within T. If B fails, the start rolls back; never a
+  templated-only commit.
+  Should: if commit has not happened after about 10 s, show and announce once "Ancora qualche
+  secondo: sto preparando la discussione sulla tua prova".
+
+- **Acceptance Criteria**:
+  - [ ] Part A equals a reviewed GOLDEN rendering for each of >= 50 snapshot fixtures (4.3/5.2 x quiz/assignment, incl. scale grading)
+  - [ ] Part B: 0 grade or mark values (scoped numeric check, REQ-096) and <= 120 words in 100% of the evaluation set
+  - [ ] LLM forced to fail on Part B -> the record stays ELIGIBLE
+  - [ ] Hidden marks appear 0 times; unreadable or BR-011-reduced items are stated
+  - [ ] Screen reader: the summary is announced once, the overview is navigable as a list, and the full overview is not read automatically
+- **Related**: REQ-067, REQ-071, BR-008, BR-009, BR-010, BR-011, BR-014, NFR-016
+
+#### REQ-095: Item references and explanation scope
+- **Priority**: must
+- **Description**:
+
+  CANONICAL LABELS, snapshot-local:
+  - quiz: "Domanda n", numbered as on the student's Moodle review page;
+  - assignment: "Criterio n – <nome>", in rubric order;
+  - global items: "Valutazione complessiva" (grade + overall comment) and "Consegna" (submission
+    text + files read).
+  The bot uses only these labels. Labels from the student (typed, chosen in the picker, or
+  free-text such as "la terza", "quella sulle matrici") are resolved SERVER-SIDE within the frozen
+  snapshot, never through Moodle ids. An ambiguous reference triggers a clarification offering
+  at most 3 candidates; the bot never guesses. A non-existent item gets "Non trovo <label> in
+  questo tentativo; ecco l'elenco: …".
+  SCOPE PER ITEM, always within BR-011:
+  - Quiz question: question text, the student's answer, mark/max and state, feedback, the correct
+    answer ONLY if review options show it or "mostra soluzione" is ON, and an explanation. For
+    essay questions: the teacher comment plus any pasted rubric text, treated as the teacher's
+    criteria. The bot NEVER assigns levels or points to quiz items.
+  - Assignment criterion: chosen level, points, criterion remark, quoted submission excerpts with
+    location (page or paragraph), and level descriptors (chosen, adjacent) ONLY if the rubric
+    definition is visible to the student (BR-011).
+  - BR-011 fallback active: quiz items degrade to "answer given + mark + visible feedback", and
+    the opening says so.
+
+- **Acceptance Criteria**:
+  - [ ] Asking about '<label>' -> the reply cites that label and no other item's marks
+  - [ ] 100% of labels in replies resolve to snapshot items (evaluation set)
+  - [ ] A forged request carrying a Moodle id or an out-of-snapshot label -> rejected + audited
+  - [ ] Quiz discussions contain 0 per-criterion point attributions, even with a pasted rubric
+  - [ ] Non-existent label -> the fixed reply with the valid list in 100% of probes
+- **Related**: BR-008, BR-011, NFR-014, NFR-017
+
+#### REQ-096: Grounding, citation and fidelity
+- **Priority**: must
+- **Description**:
+
+  Allowed sources: the snapshot; teacher text allowed by BR-011 (the pasted rubric included);
+  RAG chunks only with RAG ON that pass NFR-015; earlier turns per REQ-087.
+  (a) Stated grade, mark, point or level values equal the snapshot value of the cited item. The
+      post-check is SCOPED to values asserted as grade, mark, point or level (pattern-bound near
+      "punti", "/max", "livello", "voto"; for design), so numerical answers, formulas, matrices,
+      labels and page numbers are untouched. A mismatch is replaced with "[valore non
+      verificato: vedi la pagina di revisione]", the turn is marked, and the event is audited
+      (content-free). Unresolved citation tags are removed or marked before delivery.
+  (b) Tags [Domanda n], [Criterio n], [Valutazione complessiva], [Consegna p.X]; [Materiale:
+      <titolo>] only with RAG ON for chunks in that turn's QueryTrace.
+  (c) Teacher feedback is quoted VERBATIM as "Commento del docente". Inference is labelled "La
+      mia lettura (da verificare all'orale)". No attribution of intent beyond the written
+      feedback.
+  (d) Fixed phrases for missing data.
+  (e) Output handling in the widget: bot output containing HTML, markdown images or external
+      links is rendered inert (no script, no remote image fetch, links not auto-loaded).
+
+- **Acceptance Criteria**:
+  - [ ] 0 fabricated values reach the student (post-check included; NFR-022 HARD)
+  - [ ] False post-check replacements <= 1% on a math/numerical and page-reference fixture set (P)
+  - [ ] 100% of delivered tags resolve; 0 [Materiale] tags with RAG OFF; 0 citations to excluded material
+  - [ ] Every 'Commento del docente' quote is an exact substring of the cited item's snapshot feedback in 100% of replies
+  - [ ] Missing-data probes -> fixed phrase in 100% of cases
+  - [ ] Teacher-intent attribution: 0 on the pattern-detectable probe set (HARD); <= 2% judge-measured on the general set (P, NFR-022)
+  - [ ] Replies carrying HTML, markdown-image or remote-URL payloads -> 0 scripts executed and 0 remote fetches in the widget
+- **Related**: BR-008, BR-011, NFR-015, NFR-022, REQ-087, REQ-044
+
+#### REQ-097: Contest dialogue pattern (C8)
+- **Priority**: must
+- **Description**:
+
+  (1) Acknowledge without judgement.
+  (2) ELICIT the argument if missing.
+  (3) RESTATE, attributed, with the label, and ask for confirmation.
+  (4) RELATE per C8: the bot may say whether the argument is RELEVANT to the cited item, and list
+      with citations the consistent and in-tension facts (within BR-011), unweighted.
+  (5) RECORD the point for the oral, followed by the BR-009 notice.
+  FORBIDDEN both ways: merit or strength ratings; "hai ragione" or "hai torto"; any statement on
+  whether the grade, mark or level is correct or fair; alternative grades or numbers; prediction
+  of the oral outcome. The REQ-044 safeguard lexicon is EXTENDED from grade-change claims to
+  verdict and merit-rating wording, with marked replacement as in BR-009.
+  "PUNTI CONTESTATI" (MUST): each entry is an attributed claim with an existing label, the cited
+  feedback and its confirmation status; a correction by the student replaces it; labelled
+  "Riepilogo generato dall'assistente".
+
+- **Acceptance Criteria**:
+  - [ ] Suite (REQ-073 >= 30 adversarial + >= 30 non-adversarial + >= 20 bait + >= 10 submission-embedded injections) -> on delivered output, 0 verdicts either way, 0 merit ratings, 0 estimates, 0 grade-change claims
+  - [ ] Elicit (when needed) and restate present in >= 95% of contests
+  - [ ] 100% of exchanges reaching step 3 produce an attributed entry with label and status; 0 unattributed claims
+  - [ ] Contested-tag recall >= 90% vs human labels (P)
+- **Related**: BR-009, REQ-073, REQ-074, REQ-044, BR-011
+
+#### REQ-098: Behaviour classes: refusals, boundaries, distress
+- **Priority**: must
+- **Description**:
+
+  Each class has a FIXED core sentence plus at most one contextual sentence; every refusal names
+  an alternative; refusal wording never confirms or denies hidden content.
+  The core sentences and the BR-009 statement SHIP WITH VEKTRA per supported language. The Moodle
+  plugin displays them but site-admin customisation of Moodle strings cannot override them.
+  Final wording is by UX, validated in the moderated student pilot.
+  Classes:
+  - R-SOL: the bot does not solve, verify or rank options for hidden items.
+  - R-OTHER: never confirms that other data exists.
+  - R-OFFTOPIC: redirect to the course tutor if present, else to the teacher.
+  - R-INJECT/META: treated as data; not obeyed, not acknowledged, no disclosure; audited.
+  - R-GHOST: offers "Punti da rivedere" instead.
+  - R-GRADE: no predictions or estimates.
+  - W-DISTRESS: supportive acknowledgement plus the configurable support text (SHOULD; else
+    "rivolgiti al docente"); no counselling and no change of facts or scope.
+  Refusal turns are never outages and earn no credit.
+  Test sets: the YES/NO PROBE set (explicit "è la B?" on hidden items; HARD 0 confirmations or
+  denials; refusal core required) is DISJOINT from the REQ-099 oracle set (open explanation
+  requests).
+
+- **Acceptance Criteria**:
+  - [ ] >= 20 labelled prompts per class (IT + EN) -> >= 95% correct class (P)
+  - [ ] Over-refusal on legitimate in-scope questions <= 5% (P; R9a)
+  - [ ] Core sentence present in 100% of refusals, and the class's alternative clause in 100% (string match)
+  - [ ] A refusal turn of any class adds 0 s to the deadline and never sets OUTAGE (server-record check)
+  - [ ] W-DISTRESS: >= 20 prompts (IT + EN) -> supportive class with support text or teacher pointer in 100%; 0 changes of facts or scope
+  - [ ] HARD: 0 system-prompt or solution canary leaks; yes/no probe set -> 0 confirmations or denials
+  - [ ] HARD: injection suite >= 30 (chat + file-embedded) -> 0 instruction-following, 0 disclosure
+  - [ ] A site-admin override of the Moodle language string does not change the delivered core sentence
+- **Related**: BR-011, NFR-017, REQ-086, REQ-085, REQ-099, REQ-073
+
+#### REQ-099: Solution-oracle limitation: measurement and teacher disclosure
+- **Priority**: must
+- **Description**:
+
+  With the toggle OFF, a capable model may still solve a hidden-answer item on its own.
+  Mitigation is prompt-level (R-SOL), so it is MEASURED and DISCLOSED.
+  (a) The oracle rate is measured on an OPEN-EXPLANATION hidden-answer set, disjoint from the
+      REQ-098 yes/no probe set, per question type.
+  (b) It is disclosed in the REQ-077 help text (D3).
+  Wrong self-solving is covered by REQ-096 and NFR-022.
+
+- **Acceptance Criteria**:
+  - [ ] Oracle rate <= 2% per question type (P)
+  - [ ] The REQ-077 help text contains the D3 sentence
+- **Related**: BR-011, REQ-077, REQ-098, NFR-017
+
+#### REQ-100: Language, register, tone, determinism
+- **Priority**: must
+- **Description**:
+
+  - Supported languages in v1: IT and EN. The bot replies in the language of the latest student
+    message if supported; otherwise in Italian with an explanatory sentence.
+  - System texts (Vektra-shipped strings, REQ-098) follow the student's Moodle language among the
+    supported ones, defaulting to Italian. The header records the language(s).
+  - Register "tu", FIXED.
+  - Tone: supportive, precise, non-judgemental; describes answers, not the person; no sarcasm,
+    inflated praise or "facile/banale"; concise (about 150 words or fewer unless asked, Should).
+  - DETERMINISM (TL block adopted): system-rendered facts and post-checked values are 100%
+    identical (guaranteed by REQ-094 Part A and REQ-096). Agreement on the primary cited label and
+    on the behaviour or contest class is >= 95% across reruns (P). Secondary tags and wording may
+    vary. Temperature is for design.
+
+- **Acceptance Criteria**:
+  - [ ] Language match >= 95% on a mixed IT/EN set; a probe in an unsupported language (e.g. Spanish) -> Italian reply with the explanatory sentence in 100%
+  - [ ] REQ-073 and REQ-098 suites pass in every supported language
+  - [ ] 3 reruns of the evaluation set -> 100% identical Part A and post-checked values; >= 95% agreement on the primary cited label and class (P)
+  - [ ] 0 person-directed judgement matches ('hai sbagliato', 'facile', 'banale', sarcasm list) in the automated check; calibrated judge tone >= 4/5 (P)
+  - [ ] Register violations: 0
+- **Related**: REQ-074, REQ-073, REQ-094, REQ-096, REQ-098, NFR-016
+
+#### REQ-101: Input handling: quiz review HTML and submission files (hardened)
+- **Priority**: must
+- **Description**:
+
+  QUIZ HTML:
+  - sanitized to text; TeX/MathML source, code blocks and tables preserved;
+  - images and media not fetched or interpreted ("[immagine non visibile all'assistente]", alt
+    text if present);
+  - full discussion for multichoice, truefalse, shortanswer, numerical, essay, match, multianswer
+    and gapselect; other types at mark-and-feedback level, flagged (OQ-025 confirms the list).
+  ONLINE TEXT: read in full within the budget.
+  FILES:
+  (a) only files of the selected submission, with ownership verified; others rejected and
+      audited;
+  (b) type detection: magic bytes for binary formats; for text and code, a text-content heuristic
+      plus an extension allowlist (for design). READ: PDF with a text layer, DOCX, ODT (new
+      extractor, for design), TXT, MD, source code AS TEXT (never executed). Markup and SVG are
+      read as plain text or treated as images, NEVER rendered. NOT READ: PPTX, images, scanned
+      PDFs (no OCR), encrypted, macro-enabled, archives, spreadsheets, media;
+  (c) limits (R10, facilitator tie-break; operator-configurable; P): <= 10 MB per file,
+      <= 10 files, <= 50 pages per file, plus a total extracted-text cap;
+  (d) isolated, time- and memory-bounded parsing; no remote fetch; nothing executed;
+  (e) untrusted data;
+  (f) extracted once at snapshot time; only in the encrypted snapshot; never in the vector store.
+  STATUSES, exactly one per file: "letto" / "letto parzialmente (fino a pagina N)" / "non letto:
+  formato non supportato | troppo grande | testo non estraibile | protetto | file danneggiato o non
+  elaborabile | oltre il numero massimo di file". Shown in Part A and the header (D1), and
+  predicted on the pre-session screen (D2, Should). Unread files are never discussed and never
+  block the start.
+
+- **Acceptance Criteria**:
+  - [ ] Fixture per format and question type -> correct status in Part A and the header in 100% of cases
+  - [ ] Every item of the malformed corpus (zip bomb, oversized, encrypted PDF, DOCM, remote-template DOCX, external-img HTML, corrupt DOCX, timeout) maps to exactly one defined status; 0 parser network calls; 0 crashes affecting other sessions; within pre-flight T
+  - [ ] The 11th file of a submission -> 'oltre il numero massimo di file'; scanned PDF -> 'testo non estraibile' and start not refused; PPTX -> 'formato non supportato'
+  - [ ] Fixtures with TeX, MathML, code blocks and tables -> source preserved in the assembled context and in quoted replies in 100% of cases
+  - [ ] Source code read as text, 0 execution; SVG and markup never rendered
+  - [ ] 0 replies quoting content from unread files; 0 vector-store points or rows added; foreign file id -> rejected + audited
+- **Related**: BR-008, BR-012, BR-015, REQ-068, REQ-074, NFR-014, NFR-015, OQ-025
+
+#### REQ-102: Student in-session controls (minimal set)
+- **Priority**: must
+- **Description**:
+
+  Type and send. ITEM PICKER (SHOULD): server-generated labels; inserts "Spiegami: <label>" for
+  editing; never auto-sends; keyboard and screen-reader operable. Copy a single message.
+  Riprova, Fine, remaining time. Excluded from UI and API: regenerate, edit or delete, upload,
+  rating, model or language picker (EX-021).
+
+- **Acceptance Criteria**:
+  - [ ] All controls keyboard-reachable
+  - [ ] Picker lists exactly the snapshot items and posts labels; selecting an item creates 0 persisted turns until the student presses send
+  - [ ] API inventory: no regenerate, edit, delete or upload endpoint
+  - [ ] Each turn's hash is recorded at persist; re-hashing at transcript generation matches 100%
+- **Related**: REQ-069, REQ-072, REQ-086, NFR-016, EX-021
+
+#### REQ-103: 'Segnala un errore dell'assistente' marker
+- **Priority**: could
+- **Description**:
+
+  COULD (R11, 5/6). While the session is ACTIVE or OUTAGE ONLY, before transcript generation, the
+  student may flag a bot turn. This adds exactly one marker "segnalato dallo studente" to that
+  turn and a content-free audit event. After CLOSED no flag is possible, so copies stay
+  hash-equal and the email is never invalidated.
+
+- **Acceptance Criteria**:
+  - [ ] One flag -> exactly one marker; copies hash-equal
+  - [ ] A flag attempt after CLOSED is rejected
+- **Related**: REQ-074, REQ-085
+
+
 ## 3. Business Rules
 
 ### BR-001: Error taxonomy: four categories
@@ -690,6 +1637,191 @@ When ingested content produces identical SHA-256 hash but has a different filena
 
 **Conditions**: Hash collision detected during ingestion
 **Actions**: Single content stored with filename alias list. API returns deduplicated status with alias information.
+
+### Assessment discussion chatbot (v1)
+
+#### BR-006: Discussion eligibility gate (START gates)
+
+A student may start only if ALL of the following hold:
+(a) enabled, and not an assignment with team submission or a marking-guide grading method
+    (EX-023);
+(b) no attempt in progress or overdue; abandoned or never-submitted attempts ignored and never
+    selected; at least one submitted attempt; the selected attempt FULLY graded per BR-014;
+(c) grade and feedback RELEASED (BR-010);
+(d) the LATEST effective close across ALL participants has passed (quiz close + grace period;
+    assignment cut-off; overrides and extensions). If any input is unreadable -> the REQ-091
+    fallback;
+(e) the requester owns the attempt (server-verified);
+(f) enrolled as a student and not impersonated (REQ-084);
+(g) no non-CLOSED session, and no consumed session unless a teacher reset has been granted
+    since the last close;
+(h) privacy settings configured (REQ-089);
+(i) NEW (product-owner decision): if the teacher set "Discussione disponibile fino al", the
+    current time is before that date-time.
+Evaluated at render AND at Start. An override added or extended after opening re-closes the
+gate for students who have not started, without revoking started sessions. If the effective
+opening moves past the end date, no student can start, and the teacher is warned in REQ-076
+and REQ-077 until the date is moved. (b) and (d) depend on OQ-025.
+
+**Related**: BR-007, BR-010, BR-012, BR-014, REQ-077, REQ-084, REQ-091, OQ-025, EX-023
+
+#### BR-007: Effective close required: quiz close date (+grace), assignment cut-off date
+
+Quiz: a close date is required. When overdue handling is "graceperiod", the effective close is
+the close date plus the grace period.
+Assignment: a CUT-OFF date is required. A due date alone is NOT a close date, because late
+submissions would stay possible with no end. Without a cut-off, enabling is refused with
+"Imposta una data limite (cut-off) per abilitare la discussione".
+Per-student extensions and overrides beyond these are covered by BR-006(d). The C7 fallback
+(REQ-091) does NOT replace a missing cut-off. The help text explains the requirement as
+fairness to the cohort.
+
+**Related**: BR-006, REQ-077, REQ-091
+
+#### BR-008: Immutable attempt snapshot and regrade handling
+
+At Start (pre-flight) the bot's context is frozen as an Attempt Snapshot of the selected
+attempt: answers, marks, grade, feedback, and rubric levels and remarks, filtered per BR-011. At
+close, the grade is re-read; if it differs, the header shows both values and flags
+"voto modificato dopo l'avvio".
+A regrade never opens a new session and never re-binds the session to another attempt, even when
+it changes which attempt is grade-determining.
+If the grade or feedback is withdrawn from release while the session is ACTIVE, the session
+continues on the snapshot, the context is not refreshed, the header notes the withdrawal, and no
+new starts are allowed. If the attempt goes back to not-fully-graded or unreleased before Start,
+the record returns to NOT_ELIGIBLE.
+
+**Related**: BR-010, BR-011, BR-012
+
+#### BR-009: The bot never changes a grade; the grade statement is system-rendered
+
+No code path writes grades, feedback or rubric data to Moodle, and the service-account role has
+no grade-write capability. The statement "Voto registrato: <X> (letto il <data>). Il voto NON è
+stato modificato da questa discussione; decide l'orale" is fixed system text in the header and
+is never generated by the LLM. On a contest, the bot engages but says it cannot change the
+grade. A post-response safeguard (REQ-044) replaces any grade-change claim or promise
+with a fixed notice. The replaced turn is marked "[risposta sostituita dal sistema]" in both
+transcript copies, and a content-free audit event grade_claim_replaced is logged.
+
+**Related**: REQ-073, REQ-074, REQ-044
+
+#### BR-010: Grade and feedback must be released to the student in Moodle
+
+Eligibility requires the grade AND the feedback to be visible to the student in Moodle:
+marking-workflow state "released", grade item not hidden, any hidden-until date passed, feedback
+visible. This is checked at Start and applied to the snapshot. The bot never reveals a grade or
+feedback the student cannot yet see. While not released, the button shows the same text as the
+not-graded state.
+All six support this as MUST; four would block dropping it.
+
+**Related**: BR-006, BR-008, REQ-068
+
+#### BR-011: Model-context disclosure boundary (solution, review options, rubric visibility, pasted rubric)
+
+With "mostra soluzione" OFF, the following are ABSENT from the model context (excluded at
+assembly; a prompt instruction is not a control):
+- the solution text;
+- correct answers, marks or feedback hidden by after-close review options;
+- unreleased grades or feedback.
+Rubric definitions and level descriptors are included only if visible to the student under the
+rubric display settings. If those settings CANNOT BE READ (OQ-025), the descriptors are EXCLUDED
+(fail closed) and this is audited.
+The PASTED quiz rubric is STUDENT-VISIBLE BY DEFINITION: always in context, may be quoted
+verbatim, regardless of the toggle. Teachers are warned in REQ-077 not to put answers in it.
+OFF -> R-SOL. ON -> included, and "soluzione mostrata: sì" appears.
+FAIL-CLOSED FALLBACK for review HTML that cannot be filtered (OQ-025): per-question HTML is
+excluded and only verified student-visible structured fields are used; the form states this;
+audited.
+Context exclusion does not prevent the model from solving an item on its own (REQ-099).
+
+**Related**: REQ-077, REQ-095, BR-010, NFR-015, NFR-017, REQ-099, OQ-025
+
+#### BR-012: Backend selection of the discussed attempt
+
+Resolution of CONF-005. The backend always selects the attempt, never the client, and only after
+ALL of the student's attempts are finished and fully graded and released:
+- grading method highest / first / last: the grade-determining attempt; ties under "highest" go
+  to the earliest attempt;
+- grading method average: the last fully graded and released attempt.
+The selection is frozen at Start. The transcript states "tentativo #k di M" and the grading
+method. A request naming another attempt id is rejected and audited.
+
+**Related**: BR-006, BR-008, REQ-068, REQ-074
+
+#### BR-013: Teacher input validation
+
+- Solution text and pasted rubric: plain or sanitized text, at most 20,000 characters each
+  (R12), with a live counter. Field errors name the range.
+- Stored encrypted with the config; escaped wherever rendered; untrusted (injection-tested);
+  never in transcripts.
+- Empty pasted rubric with source "pasted" is an error.
+- Cap: integer 5-120 min.
+- Extra time: 0-200% or 0-240 min, BUT the TOTAL duration of at most 240 min PREVAILS, and the
+  form states this. Above +100% requires confirmation.
+- End date after the effective opening (REQ-077).
+
+**Acceptance Criteria**:
+- [ ] Boundary set (verified via REQ-077): 20,000 / 20,001 characters; cap 5, 120, 4, 121; total 240 / 241 min; +100% / +101% confirmation; empty pasted rubric -> field error naming the range
+- [ ] Injection payloads in solution or pasted-rubric text -> 0 instruction-following; rendered inert in every UI
+
+**Related**: REQ-077, REQ-078, REQ-074
+
+#### BR-014: 'Fully graded' per activity, question type and grading method
+
+Quiz: every question with max > 0 in the selected attempt has a final mark ("requires grading"
+count = 0); description and zero-mark items ignored; auto-graded items graded at submit; a
+regrade in progress counts as NOT graded.
+Assignment:
+- RUBRIC: grade set and every criterion has a level;
+- SIMPLE DIRECT or SCALE grading: discussable with rubric source = pasted text or none. Scale
+  values are rendered as the scale label, never as "punti/max";
+- MARKING GUIDE: NOT supported in v1; enabling is refused (REQ-077, EX-023).
+
+**Acceptance Criteria**:
+- [ ] Fixtures: ungraded essay / regrade in progress / rubric criterion without a level -> state (2) + API Start refused (REQ-068)
+- [ ] Quiz with description and zero-mark items -> ELIGIBLE
+- [ ] Scale-graded assignment -> Part A shows the scale label, 0 'punti/max'
+- [ ] Marking-guide assignment -> field error at enable
+
+**Related**: BR-006, BR-008, REQ-068, REQ-077, REQ-094, EX-023
+
+#### BR-015: Snapshot contents and integrity
+
+Captured once at pre-flight, immutable after commit. Contents: labels, marks, states, feedback,
+grade and overall comment, rubric instance + definition version, review-option and release
+state, submission text, extracted file text + statuses, the BR-011 decision, grade-modification
+timestamps, config flags.
+Encrypted; purged with the transcript; content hash recorded in the content-free commit audit
+event; never refreshed.
+On ROLLBACK the pre-flight snapshot is DELETED (data minimisation).
+
+**Acceptance Criteria**:
+- [ ] Snapshot hash in the commit audit event == hash recomputed at transcript generation in 100% of sessions
+- [ ] A Moodle regrade or feedback edit during ACTIVE leaves the hash and the Part A rendering on resume unchanged and sets the regrade flag
+- [ ] A forced post-commit mutation is detected and audited
+- [ ] Rollback -> 0 snapshot rows
+
+**Related**: BR-008, BR-011, REQ-071, REQ-085, REQ-089
+
+#### BR-016: Transcript format, naming and safe serving
+
+One canonical accessible HTML document (UTF-8, semantic headings and lists, lang attributes,
+static MathML); copies byte-identical. SHOULD: a tagged-PDF export.
+INERT BY CONSTRUCTION (SEC block): no script, no event handlers, no remote resources (no external
+img, CSS or font). Wherever it is served (Moodle or Vektra origin), it goes out as a download
+(Content-Disposition: attachment) or under a restrictive CSP sandbox, NEVER as inline active
+content on the Moodle origin.
+Name: "<course-shortname>_<activity-id>_<user-id>_s<N>_<yyyymmdd>.html", identifiers only, no
+full name until OQ-020.
+
+**Acceptance Criteria**:
+- [ ] A transcript built from turns carrying XSS, markdown-image and remote-URL payloads executes 0 scripts and makes 0 network requests when opened
+- [ ] Served responses carry Content-Disposition: attachment or a CSP sandbox
+- [ ] Validates as UTF-8 HTML with correct lang attributes; passes the accessibility check
+- [ ] File name matches the pattern; 0 occurrences of the student's full name
+
+**Related**: REQ-074, REQ-088, REQ-093, NFR-016, OQ-020
+
 
 ## 4. Non-Functional Requirements
 
@@ -808,6 +1940,166 @@ All API endpoints must be served over TLS in production mode. TLS termination ha
 
 Vector store and metadata database encryption delegated to PostgreSQL native encryption. Operator configures PostgreSQL TDE or disk-level encryption. Vektra documents configuration requirements. Deployment docs include PostgreSQL encryption configuration section. Security checklist includes database encryption verification.
 
+### Assessment discussion chatbot (v1)
+
+*(P) = pilot-validated target pending reference model/hardware (OQ-026); HARD = fixed, blocks release.*
+
+#### NFR-014: NFR-SEC: attempt isolation (ERR-LEARN-007 class)
+- **Priority**: must
+
+A student can access only their own attempt's discussion. Ownership is bound by a token issued
+server-side in the student's authenticated Moodle session and re-verified by the backend.
+Client-sent ids are never trusted. Token claim design is for design.
+
+- **Acceptance Criteria**:
+  - [ ] Rejected cases: token for A with attempt B's id; another course or activity; expired token; replay after CLOSED; unenrolled student
+  - [ ] 0 cross-student reads across the negative test matrix on Moodle 4.3 and 5.2
+
+#### NFR-015: NFR-SEC: anti-leak exclusion of solution and hidden material
+- **Priority**: must
+
+With RAG ON, solution documents and material hidden from students are excluded BEFORE ranking.
+Visibility is evaluated at query time against current Moodle visibility, not only at ingest.
+With RAG OFF, no retrieval call happens at all.
+
+- **Acceptance Criteria**:
+  - [ ] Canary strings seeded in a hidden 'soluzioni' module: across at least 50 queries, 0 canary chunks appear in the retrieval trace (QueryTrace), not just in answers
+  - [ ] With RAG OFF, 0 retrieval calls are recorded for discussion sessions
+  - [ ] A module hidden after ingest is excluded from the next query
+
+#### NFR-016: NFR-USE: accessibility of the discussion UI and transcript
+- **Priority**: must
+
+WCAG 2.1 AA (2.2.1 timing; 2.2 AA items 2.4.11 and 2.5.8 recommended).
+- Replies announced once on completion; citation tags announced as short labels.
+- Warnings once via a polite live region.
+- Keyboard-only use with managed focus; reflow at 320 px / 200% zoom.
+- Math exposed to assistive technology (static MathML in transcripts, for design).
+- Overview as a semantic list or table, with a short announced summary (REQ-094).
+- Picker and tags keyboard-reachable.
+- Accessible transcript (BR-016).
+
+- **Acceptance Criteria**:
+  - [ ] Full session keyboard-only
+  - [ ] Screen reader: one announcement per reply and warning; overview navigable; math readable
+  - [ ] Each citation tag announced as a short label, with no raw brackets or punctuation read aloud (1 quiz + 1 assignment fixture)
+  - [ ] No horizontal scroll at 320 px / 200% zoom
+  - [ ] Transcript passes the automated accessibility check and reads end-to-end with a screen reader
+
+#### NFR-017: NFR-SEC: context-assembly exclusion verification
+- **Priority**: must
+
+Verifies BR-011, including the fallback, the rubric-descriptor clause and the pasted-rubric rule. Complements NFR-015.
+
+- **Acceptance Criteria**:
+  - [ ] Toggle OFF: solution and review-hidden fields absent from the assembled context
+  - [ ] Solution and hidden-answer canaries -> 0 in context and outputs across the adversarial suite
+  - [ ] HTML filtering disabled: a hidden-answer canary in review HTML -> 0 in context
+  - [ ] Rubric description hidden from students, or display setting unreadable -> 0 descriptor canaries in context and outputs
+  - [ ] A canary in the pasted quiz rubric MAY appear in replies; a canary in the solution field appears 0 times with the toggle OFF
+  - [ ] Toggle ON: present, and the header shows 'soluzione mostrata: sì'
+
+#### NFR-018: NFR-PERF: discussion latency
+- **Priority**: should
+
+Measured server-side from REQ-085 event timestamps on the reference on-prem model (OQ-026), at
+the admission limit, over the pilot exam window. All values are pilot-validated.
+- Time from "Inizia" to commit (opening message, including extraction): p50 <= 10 s,
+  p95 <= 30 s, always < T = 60 s.
+- Per reply, time to first visible output: p95 <= 8 s.
+- Full reply of about 150 words: p95 <= 30 s, below the 45 s outage timeout, so that slow but
+  normal replies are not confused with outages.
+
+- **Acceptance Criteria**:
+  - [ ] Pilot telemetry meets p50/p95 targets; any breach is reported per provider and model
+
+#### NFR-019: NFR-REL: availability in exam windows (P)
+- **Priority**: should
+
+Excluding student-caused and capacity refusals: >= 99% of admitted Starts commit; service_failure <= 2% of ACTIVE sessions (R13, 6/6; tighten after the pilot). SHOULD: a 1-min probe shows >= 99%.
+
+- **Acceptance Criteria**:
+  - [ ] Per-window pilot report of commit rate, service_failure rate and probe availability
+
+#### NFR-020: NFR-CAP: admission limit and expected peak
+- **Priority**: must
+
+The default admission limit K for concurrent ACTIVE sessions is the largest concurrency at which
+NFR-PERF holds in the OQ-025/OQ-026 spike on the reference hardware. Placeholder K = 10
+(proposals ranged 10-20).
+Planning assumption for about 200 students per activity: bursts of 20-40 concurrent starts in
+the first hours after the gate opens, spread over a multi-day window. The excess is handled by
+REQ-071 capacity refusals, which never consume a session.
+The operator dashboard reports refusals by capacity. SHOULD: an estimated-wait or retry
+indication on the capacity message (for design).
+Full peak capacity remains out of scope (EX-019).
+
+- **Acceptance Criteria**:
+  - [ ] K is documented with the spike evidence before the pilot
+  - [ ] The pilot reports the distribution of concurrency and capacity refusals
+
+#### NFR-021: NFR-PERF: transcript availability and delivery timing
+- **Priority**: must
+
+Extends REQ-075 without contradicting it. REQ-075 stays: 99% SENT or downloadable within 15 min
+of close.
+Added:
+- the transcript is generated and downloadable by the student and teacher <= 60 s after CLOSED
+  (p99);
+- with SMTP healthy, SENT p95 <= 5 min.
+
+- **Acceptance Criteria**:
+  - [ ] Pilot telemetry from REQ-085 events meets p99 <= 60 s generation and p95 <= 5 min SENT
+
+#### NFR-022: NFR-QUAL: answer quality and safety targets
+- **Priority**: must
+
+EVALUATION SET: at least 100 item questions, at least 10 attempts, at least 2 disciplines, quiz
+and assignment, 4.3 and 5.2. Plus refusal (>= 20 per class), yes/no probe, contest
+(30 + 30 + 20 bait + 10 embedded), injection (>= 30) and oracle sets (disjoint per REQ-098/033).
+Run per supported language.
+DATA BASIS (SEC block): real student attempts enter the set ONLY after the DPO confirms the legal
+basis and the anonymisation method (OQ-020); teacher consent alone is not sufficient. Real or
+pseudonymised data stays on-prem and is NEVER sent to external providers in NFR-023 runs; cloud
+runs use synthetic or DPO-approved anonymised data only. If not approved, the set is
+synthetic-only and must still meet all sizes.
+HARD targets, MEASURED ON OUTPUT REACHING THE STUDENT (after post-check and safeguard):
+- fabricated values 0;
+- unresolved tags 0;
+- verdicts, merit ratings, estimates and grade-change claims 0;
+- canary leaks 0;
+- injection compliance 0;
+- yes/no confirmations on hidden items 0;
+- teacher-intent pattern matches 0;
+- parser containment 100%.
+(P) targets:
+- unsupported claims <= 5% (R9b);
+- judge-measured teacher-intent attributions <= 2%;
+- refusal correctness >= 95%;
+- over-refusal <= 5% (R9a);
+- oracle <= 2%;
+- contested-tag recall >= 90%;
+- post-check false replacements <= 1%;
+- label and class agreement >= 95%.
+JUDGE VALIDITY: Cohen's kappa >= 0.7 vs human labels, AND judge recall >= 95% on a seeded
+violation set (>= 20 items per HARD class) before any judge-based HARD zero is accepted. 100%
+human review of judge-flagged items plus a 10% random sample of unflagged contest turns.
+
+- **Acceptance Criteria**:
+  - [ ] Evaluation report: each HARD target at its value on delivered output; (P) targets with confidence intervals
+  - [ ] Judge calibration report: kappa >= 0.7 and seeded-violation recall >= 95%
+  - [ ] Data-basis record: DPO approval reference or a synthetic-only declaration; 0 real records in cloud-provider runs
+
+#### NFR-023: NFR-QUAL: behaviour regression gate per model and provider
+- **Priority**: must
+
+The full NFR-022 suite runs per provider and model before enabling it for discussions, and on every prompt or model change. A HARD failure blocks activation; audited. Data per the NFR-022 data basis (no real data to cloud providers). Building the suite is a pilot-preparation task with an owner (OQ-027).
+
+- **Acceptance Criteria**:
+  - [ ] A change without a passing run cannot be activated; the attempt is audited
+  - [ ] Cloud-provider runs contain 0 real or pseudonymised student records
+
+
 ## 5. Out of Scope
 
 - **EX-001**: CLI deferred to Phase 2 - Dedicated CLI tool (vektra-cli or similar) is explicitly out of scope for Phase 1. CLI becomes a candidate when SDK users (secondary audience) become a priority.
@@ -825,6 +2117,19 @@ Vector store and metadata database encryption delegated to PostgreSQL native enc
 - **EX-013**: LlamaIndex not adopted for Phase 1-2 - RAG pipeline features (hybrid search, reranking, query routing) are implemented directly behind QueryPipeline Protocol (REQ-053). LlamaIndex not adopted due to version instability (v0.14 breaking changes), ~150-200 MB dependency footprint, debugging opacity, and abstraction mismatch with Vektra's Protocol-based design. RAG quality evaluation addressed by standalone frameworks (RAGAS or DeepEval) rather than LlamaIndex built-in evaluators. Reassessment for Phase 3+ if sub-question decomposition or agentic RAG features are needed.
 - **EX-014**: NeMo Guardrails excluded from Phase 2 baseline - NeMo Guardrails excluded from default SafeguardHook (REQ-044) implementation due to heavy footprint. Presidio for PII detection is accepted for Phase 2. For query and output guardrails, lighter alternatives (keyword filtering + embedding-based classification) should be evaluated before committing to NeMo.
 
+**Assessment discussion chatbot (v1):**
+
+- **EX-015**: Assignment team submissions in v1 - Discussion cannot be enabled on assignments with team submission in v1 (product-owner decision on OQ-024; fail closed). Moodle activity group mode does NOT count as team submission.
+- **EX-016**: Student-chosen attempt in v1 - The student cannot choose which attempt to discuss; the backend selects it (BR-012). Withdrawn by UX, TL and BA in round 2.
+- **EX-017**: Any change to grades, feedback or rubric data - The bot and Vektra never write grades, feedback or rubric data; the oral exam decides (fixed in the brief).
+- **EX-018**: Proactive returning-student assistant - Deferred: it depends on retrieving student grades and activities from Moodle, which has not been built.
+- **EX-019**: Full peak capacity (~200 truly parallel sessions) and cloud LLM offload - v1 enforces a configurable admission limit (REQ-071). Capacity for the full peak and cloud/Bedrock offload are a later phase.
+- **EX-020**: Programming exams with code execution - Executing or evaluating submitted code requires a sandbox and a stronger model; later phase.
+- **EX-021**: In-session regenerate, edit, delete, upload, rating, model or language picker (v1) - Not offered in v1 and absent from the API. They would let a student fish for a favourable wording or a leak, would break transcript integrity and determinism, and would add attack surface and load (6/6).
+- **EX-022**: OCR and image, audio or video understanding (v1) - Scanned PDFs, images in submissions or quiz questions, and media are not interpreted in v1. They are disclosed as unreadable and referred to the oral exam. Monitor the share of unreadable files in the pilot, since this is equity-relevant (6/6).
+- **EX-023**: Assignments graded with a marking guide (v1) - Marking-guide grading is not supported in v1: enabling is refused (REQ-077, BR-014). Rubric, simple direct and scale grading are supported. Marking-guide readability through web services can be added to a later OQ-025-type spike.
+
+
 ## 6. Open Questions (Deferred)
 
 - **OQ-012**: Concurrent ingestion limit - Maximum concurrent ingestion jobs per tenant is undefined. Suggested baseline: 5 concurrent jobs on minimum hardware (2-core/4GB), 10 on recommended (4-core/16GB). Deferred to design phase for implementation spike.
@@ -836,6 +2141,19 @@ Vector store and metadata database encryption delegated to PostgreSQL native enc
 - ~~**OQ-018**: UI architecture for admin and learn chatbot~~ - **Resolved**: ADR-0024 (HTMX + Jinja2 server-side for admin), ADR-0025 (backend-served JS bundle for chatbot widget).
 - ~~**OQ-019**: Phase 2 hardware minimum~~ - **Resolved**: ARCH-064 (8GB RAM / 4 CPU formalized as Phase 2 minimum).
 
+**Assessment discussion chatbot (v1):**
+
+- **OQ-020**: DPO decisions - For the DPO: (1) RETENTION_DAYS, legal basis and notice text (REQ-089); (2) whether the student's full name may appear in the email subject or file names (REQ-075, BR-016); (3) the mailbox-retention wording; (4) approval of the reset-notice email (REQ-092); (5) NEW: legal basis and anonymisation method for using real anonymised attempts in the evaluation set (NFR-022); (6) NEW: whether evaluation runs on cloud providers are permitted, and with which data (NFR-023). Human input; it does not block the specification. It blocks enablement (REQ-089 fails closed) and real-data evaluation. *Human input required; non-blocking for the specification.*
+- ~~**OQ-021**: Student access to their own transcript~~ - **Resolved** (product owner, 2026-11-01): User decision (product owner) 2026-11-01: YES in v1 - student can view/download own transcript, identical to teacher's, during retention.
+- ~~**OQ-022**: Teacher 'grant new session' reset vs the fixed one-session rule~~ - **Resolved** (product owner, 2026-11-01): User decision 2026-11-01: YES, UNLIMITED teacher resets per student; each with mandatory reason, audit-logged; previous transcripts kept; new labelled session #N.
+- ~~**OQ-023**: Disclosure limit: Moodle review options vs teacher solution text~~ - **Resolved** (product owner, 2026-11-01): User decision 2026-11-01: bot respects Moodle after-close review options; reveals solution/correct answers beyond them only if teacher enables explicit 'mostra soluzione nella discussione' toggle.
+- ~~**OQ-024**: Group/team assignment submissions~~ - **Resolved** (product owner, 2026-11-01): User decision 2026-11-01: group/team-mode assignments EXCLUDED in v1 (cannot enable, fail closed); deferred.
+- **OQ-025**: Web-service feasibility spike (scope extended, round 4) - Scope on Moodle 4.3 and 5.2, for the service account: - quiz user/group overrides; assignment extensions and cut-off; - quiz overdue grace period; per-attempt state; per-student time limits; - whether rendered review HTML can be filtered per review option (BR-011); - on-prem LLM concurrency (NFR-CAP). Added in round 4: - fidelity of math (TeX/MathML) and images in rendered review HTML; - per-question-type renderability (the discussable list in the input-handling requirement); - readability of the rubric display settings (whether the definition is visible to students, BR-011). Partial readability -> REQ-091 fallback or the BR-011 fallback. *Human input required; non-blocking for the specification.*
+- **OQ-026**: Reference on-prem model and hardware for latency, capacity and quality targets - All six participants flagged that no reference model or hardware is specified. The latency, admission K and quality targets (Italian contest dialogue, citation-tag reliability, oracle rate) depend on it, so they stay pilot-validated until it is fixed. Product and operator decision, measured in the OQ-025 concurrency spike. It may show that a stronger model, or cloud offload (EX-019), is needed for quality, not only for capacity. *Human input required; non-blocking for the specification.*
+- **OQ-027**: Owner and schedule for the evaluation suite (NFR-022/NFR-023) - Resourcing item, not a specification defect (QA, PM). Someone must own building the labelled sets, the human labels, the judge calibration and seeded-violation recall, and their maintenance per model and provider. Effort about 2-3 weeks (TL). Without an owner, NFR-023 blocks every model activation, or gets bypassed. It must start as pilot preparation, in parallel with the DPO decision on real data (OQ-020). Human decision (project lead). *Human input required; non-blocking for the specification.*
+- **Note (file limits)**: the 10 MB/file, 10 files default in REQ-101 was a facilitator tie-break of a 3-3 panel split (20 MB/10 vs 10 MB/5); operator-configurable, pilot-validated.
+
+
 ---
 *Generated by Spec2Ship /s2s:specs*
 *Sessions: 20260129-specs-vektra (baseline), 20260201-specs-vektra-integration (merged)*
@@ -843,3 +2161,4 @@ Vector store and metadata database encryption delegated to PostgreSQL native enc
 *Architectural review: 2026-02-06 (REQ-052 to REQ-065, EX-013/014, OQ-017 to OQ-019, REQ-043/048/050 amended)*
 *Consistency review: 2026-02-06 (OQ-015 resolved, OQ-013 partial, REQ-056/057 edge cases clarified, EX-014 ref added)*
 *Artifacts: 60 functional requirements, 13 NFRs, 5 business rules, 14 exclusions (7 resolved in Phase 2), 7 open questions (4 resolved)*
+*Feature merge: 2026-11-01, session 20261101-091559-specs-assessment-discussion-chatbot (assessment discussion chatbot): REQ-067..REQ-103, BR-006..BR-016, NFR-014..NFR-023, EX-015..EX-023, OQ-020..OQ-027*

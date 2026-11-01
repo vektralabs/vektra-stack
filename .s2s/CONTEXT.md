@@ -109,6 +109,7 @@ See [requirements.md](requirements.md) for the complete Software Requirements Sp
 - 13 non-functional requirements (8 HARD, 5 TARGET)
 - 14 explicit exclusions (7 resolved in Phase 2, 7 remaining for Phase 3+)
 - 7 open questions (4 resolved)
+- **Feature addendum (2026-11-01) — assessment discussion chatbot** (vektra-learn + new vektra-moodle local plugin): REQ-067..REQ-103, BR-006..BR-016, NFR-014..NFR-023, EX-015..EX-023, OQ-020..OQ-027 (4 resolved by product owner; OQ-020 DPO, OQ-025 Moodle WS spike, OQ-026 reference model/hardware, OQ-027 eval-suite owner open). Session: `.s2s/sessions/20261101-091559-specs-assessment-discussion-chatbot.yaml`. Next: `/s2s:design`.
 
 **Primary user persona**: Platform Operator (DevOps/platform teams)
 **MVP exit criterion**: 30 minutes from git clone to successful query
@@ -174,4 +175,4 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 
 ---
 
-*Last updated: 2026-09-02*
+*Last updated: 2026-11-01*

@@ -287,7 +287,7 @@ instantiates its own limiter instance for per-token limits.
       half, builds the assess engine from `VEKTRA_ASSESS_API_DATABASE_URL`, asserts `SELECT
       current_user, rolsuper` returns `vektra_assess_api`/false, and asserts the DSN user differs
       from `VEKTRA_DATABASE_URL`'s; registers the engine on `app.state.assess_engine`
-- [ ] 6.1b Dormant by default (added 2026-11-01, plans merge into `develop` one PR at a time):
+- [ ] 6.1b Dormant by default (added 2026-11-01; second line of defence behind the wave-gated merges):
       `create_app()` includes the assess router ONLY when `VEKTRA_ASSESS_ENABLED=true`; with the
       default `false`, no route under `/api/v1/assess` is mounted, `/api/v1/assess/ui` is not
       served, `/health/assess` reports `disabled`, and the `assess-worker` / `assess-parser`

@@ -11,74 +11,61 @@ changes status, update its plan file in vektra-moodle-discuss AND its row here.
 
 ---
 
-## Session start prompt
+## How a wave is run
 
-Copy-paste this as the first message in every implementation session:
+Development is done by Claude Code in **loop mode**, one wave at a time:
 
-> Read `.s2s/plans/INDEX-ASSESS.md`. Find the `in_progress` plan, or the first `pending` plan in the lowest-numbered wave whose dependencies are `completed`. Read the full plan file (plugin plans live in `../vektra-moodle-discuss/.s2s/plans/`). If any tasks are already checked `[x]`, read the corresponding source files to understand what was actually implemented before continuing. Then proceed with the first unchecked `[ ]` task.
+1. **Branch per wave**, off `develop`: `feat/assess-wN` in vektra-stack and, when the wave contains
+   plugin plans, `feat/discuss-wN` in vektra-moodle-discuss. No per-plan branches.
+2. **Loop**: `/loop` with the wave prompt below. Each iteration does one task (or a small group of
+   tightly coupled tasks), tests it, commits it, and updates the plan file in the same commit.
+3. **End of each plan** (inside the loop): run `/code-review` on that plan's diff, fix the findings,
+   set the plan to `completed` here and in the plan file, then move on to the next plan.
+4. **End of wave**: run the wave gate, write the evidence to `.s2s/waves/assess-wN-review.md`
+   (based on `.s2s/waves/checklist-template.md`), open ONE PR per repo `feat/*-wN` → `develop`,
+   handle the review (`/github-workflow:github-pr-review`), and merge only on the user's decision
+   (`/github-workflow:github-pr-merge`). The branch is deleted on merge.
+5. **Between waves**: `/compact`, then start the next wave from `develop`.
 
-Design context: `.s2s/architecture.md` Appendix B (ARCH-065..079, COMP-001..008, INT-001..003),
-ADR-0027..0032, requirements REQ-067..103 / BR-006..016 / NFR-014..023, and the OQ-025 spike
-report (`../vektra-moodle-discuss/spike/oq025/REPORT.md`).
+`develop` therefore only ever receives complete, gate-verified waves. As a second line of defence,
+merged code stays dormant: with `VEKTRA_ASSESS_ENABLED=false` (the default) no `/api/v1/assess`
+route is mounted and no assess service runs (plan assess-foundations, task 6.1b).
 
----
+### Wave loop prompt
 
-## How to work with these plans
+Start a wave with `/loop` and this prompt, replacing `N`:
 
-### Starting a plan
+> Wave WN of `.s2s/plans/INDEX-ASSESS.md`. Work on branch `feat/assess-wN` (vektra-stack) and, for plugin plans, `feat/discuss-wN` (vektra-moodle-discuss); create them from `develop` if missing. Read INDEX-ASSESS, pick the `in_progress` plan of wave WN, or the first `pending` one whose dependencies are `completed`, and read the full plan file (plugin plans: `../vektra-moodle-discuss/.s2s/plans/`). If tasks are already `[x]`, check the code that implements them before continuing. Do the first unchecked task: implement, run its tests, check it off, commit (Conventional Commits, plan file in the same commit). When the plan's tasks and acceptance criteria are all done, run `/code-review` on the plan's diff, fix the findings, and mark the plan `completed` in the plan file and in INDEX-ASSESS. When every plan of the wave is `completed`, run the wave gate, write `.s2s/waves/assess-wN-review.md`, push, open the wave PR(s) to `develop`, and stop the loop. Obey the stop rules in INDEX-ASSESS.
 
-1. Check that every plan in its **Depends on** column is `completed`.
-2. Read the full plan file (scope, Design Notes, acceptance criteria) before writing any code.
-3. Create the plan's branch **from `develop`** (`feat/assess-<slug>` here, `feat/discuss-<slug>` in the
-   plugin repo). There is no long-lived integration branch: every plan merges into `develop` through
-   its own PR (CONTRIBUTING.md branch strategy). Merged-but-unfinished code must stay dormant: with
-   `VEKTRA_ASSESS_ENABLED=false` (the default) no `/api/v1/assess` route is mounted and no assess
-   service runs (plan 1 acceptance criterion).
-4. Set `**Status**` in the plan file to `in_progress`, and update the row in this file to match.
+### Stop rules
 
-### Working through tasks
+The loop **stops and reports to the user** (it does not work around the problem) when:
 
-- Check off tasks as you complete them: `- [ ]` -> `- [x]`.
-- Do not move on until the current task is testable and verified.
-- Project rule (`.claude/CLAUDE.md`): **verify empirically, do not trust the reports**. An acceptance criterion is met when rows, points or request bytes have been counted, not when a status field says `completed`.
-- A test that cannot run (missing Docker, Moodle env, LLM) is reported as SKIPPED/BLOCKED, never as passed (each plan's "False-pass guard").
+- **A test fails** and is not fixed after a few focused attempts. Never skip, disable, weaken or
+  `xfail` a test to make progress.
+- **A test cannot run** (Docker, Moodle env, Postgres, LLM endpoint unavailable). It is reported as
+  BLOCKED, never as passed or skipped-and-fine.
+- **A decision is needed**: an open question without a recorded default, a conflict between plan
+  and code that changes the design, or a change to an accepted ADR or requirement.
+- **Something destructive or outward-facing** is required beyond the repo: deleting data outside
+  the test containers, touching a real Moodle or SMTP server, publishing anything.
+- **The environment is at risk**: disk nearly full (the dev machine was at 94%), a container that
+  will not start, signed commits failing.
+- **The wave is complete**: the PR(s) are open, the gate evidence is written.
 
-### When context runs out mid-plan
+On every stop, the plan's `## Notes` gets the current state and the reason, and is committed, so
+the next run resumes from there.
 
-1. Add a note in the plan's `## Notes`: what was done, what is next, open issues.
-2. Commit the plan file with the checked tasks and the note.
+### Rules while working
 
-To resume: read this file, find the `in_progress` plan, go to its `## Notes`, and continue from the first unchecked task.
-
-### Completing a plan
-
-1. All tasks are `[x]` and all acceptance criteria are verified (not only the tasks).
-2. Tests are written and passing; CI is green.
-3. Open **one PR per plan**. Review it (CodeRabbit + `/code-review`), then merge.
-4. Set `**Status**` to `completed` in the plan file and in this table. Commit.
-
-### Extending plans
-
-Sub-tasks discovered during implementation are added to the existing plan as `[ ]` tasks. A new plan
-is created only for a distinct deliverable (more than ~5 new tasks). A change to the design is
-recorded in architecture.md / the ADRs first.
-
----
-
-## Wave process
-
-A wave is a **milestone that ends with something working end to end**, not a dependency layer.
-Plans inside a wave are done in dependency order (independent ones in parallel), each with its own
-PR. The next wave starts only after the wave gate passes. Four waves, W1-W4.
-
-1. **Develop**: one branch and one PR per plan. Large plans (llm-runner, session-lifecycle) are
-   reviewed at their internal milestones, not only at the end, because wave gates are far apart.
-2. **Wave gate**, when every plan in the wave is `completed`:
-   - Fill in `.s2s/waves/checklist-template.md` and save it as `.s2s/waves/assess-wave-N-review.md` (versioned).
-   - Run the integration tests across the wave's plans (not only each plan's own suite).
-   - Run the wave-specific gate in the tables below and record the evidence (counts, bytes, logs).
-   - Run the dormant-capability check (`.claude/CLAUDE.md`): for every path the wave made live, ask what it can now destroy.
-3. **Transition**: commit the review, update this file, run `/compact`, then start the next wave.
+- **Verify empirically** (`.claude/CLAUDE.md`): an acceptance criterion is met when rows, points or
+  request bytes have been counted, never because a status field or a job says `completed`.
+- **A dormant capability is not harmless**: whenever a task makes a path live, ask what it can now
+  destroy, and test that before moving on.
+- Sub-tasks discovered during work are added to the plan as `[ ]`. A design change goes to
+  architecture.md / the ADRs first, and that is a stop.
+- Commits are signed (branch protection); CHANGELOG `[Unreleased]` is updated for user-visible
+  changes.
 
 ---
 

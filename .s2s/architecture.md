@@ -2549,7 +2549,26 @@ The gate inputs and the HTML filterability depend on the unfinished WS spike. Th
   readable|partial|unreadable, evidence hash, checked_at).
 - Flags: quiz_overrides, assign_extensions, assign_cutoff, quiz_grace, attempt_state,
   per_student_timelimit, review_html_filterable, rubric_display_settings,
-  module_visibility_per_student.
+  module_visibility_per_student, assign_user_overrides (added 2026-11-01).
+- **Spike results (OQ-025, 2026-11-01; Moodle 4.3.11+ and 5.2.4+; report: vektra-moodle-discuss `spike/oq025/REPORT.md`)**:
+  * readable on both: assign_cutoff (`mod_assign_get_assignments` with
+    `includenotenrolledcourses=1`), assign_extensions (`mod_assign_get_user_flags`),
+    assign_user_overrides (`mod_assign_get_participant` returns the EFFECTIVE per-student dates),
+    attempt_state (`mod_quiz_get_user_attempts`); per-student review options
+    (`mod_quiz_get_combined_review_options`, readable after close).
+  * quiz_overrides, per_student_timelimit: readable on 5.2 (`mod_quiz_get_overrides`), UNREADABLE
+    on 4.3 (no WS function). On 4.3, REQ-091 is the normal path for quizzes with overrides.
+  * quiz_grace: readable ONLY while the quiz is open for the caller (access-manager gated);
+    the gate-input refresh must capture it before close, else unreadable (REQ-091).
+  * review_html_filterable: NO on both (service-account review HTML contains hidden feedback and
+    the right answer). The BR-011 structured-only path is the normal path.
+  * rubric_display_settings, module_visibility_per_student, login-as cross-check: UNREADABLE on
+    both (no WS surface). Rubric descriptors are therefore excluded (BR-011 fail closed, OQ-035).
+  * Reader rules: a `warnings[]` entry for a requested item, or a caller-relative `null`, maps to
+    Unreadable; release state comes from `gradereport_user_get_grade_items.gradeishidden` and
+    `mod_assign_get_submission_status.gradingstatus`, never from `mod_quiz_get_user_best_grade` or
+    `mod_assign_get_grades` (both return unreleased values); `site_info.userprivateaccesskey` and
+    tokenised file URLs are never logged or stored.
 - Never-probed, partial or unreadable on any close-time flag means NOT_AVAILABLE unless an
   attested teacher date exists, with gate = max(auto, attested) (REQ-091).
   review_html_filterable not readable selects the structured-only path (BR-011). Both
@@ -3188,7 +3207,7 @@ Amended:
 - ~~**OQ-028**: Background execution substrate: the deployed stack has no Redis and no separate arq worker~~ — resolved: Facilitator codebase check: docker-compose.yml deploys only postgres + vektra (plus the optional ollama, qdrant and tei). ADR-0006 chose arq IN-PROCESS mode, with the worker inside the vektra container and job state in a PostgreSQL jobs table. The compose comment says "Phase 2: add redis + vektra-worker". vektra_app/worker.py exposes a CMD_TARGET=worker factory that is not deployed. All four speakers assumed a second arq worker on a dedicated queue. That requires adding Redis, which is new infrastructure and contradicts "no new technology". The alternative is a Postgres-native job loop: a dedi
 - **OQ-029**: REQ-075 'exactly once' vs the SMTP crash window — A crash after the relay's 250 and before the SENT commit yields one duplicate. The proposed reading is 'exactly one SENT record per recipient; at most one known, audited duplicate on crash; deterministic Message-ID for dedupe'. This needs product-owner or QA confirmation that it satisfies the REQ-075 acceptance criterion ('delivered exactly once on a test mail sink'). *Needs human/ops/spike input; design default recorded.*
 - ~~**OQ-030**: Pre-extraction at the pre-session screen vs BR-015 rollback deletion and data minimisation~~ — resolved: TL proposes starting file extraction when the student opens the pre-session screen (cache keyed by Moodle contenthash, encrypted, short TTL, deleted on rollback or expiry), so that 20-40 concurrent Starts fit T = 60 s and NFR-018. Open: is the cache snapshot data under BR-015? Does processing before Start conflict with REQ-068 ('dismissing consumes nothing') or with the privacy notice (REQ-089)? This needs a spec and DPO-facing ruling.
-- **OQ-031**: OQ-025 scope extension: per-student module availability and independent login-as cross-check — Two items to add to the WS spike: (1) Can the service account obtain per-STUDENT module visibility, including availability conditions and group restrictions? Required for any RAG ON (NFR-015); unreadable means RAG stays off. (2) Can Vektra independently confirm that no login-as is active for the sub (e.g. via user_loggedinas log events), as defence in depth for REQ-084? If not, trust-the-plugin is documented as an accepted residual risk. *Needs human/ops/spike input; design default recorded.*
+- ~~**OQ-031**~~ — resolved 2026-11-01 by the spike: (1) per-student module visibility is UNREADABLE (no WS function takes a target user) → RAG stays OFF (ARCH-072, BACKLOG FEAT-028); (2) no log-reading WS function exists → login-as cross-check UNREADABLE → trust-the-plugin is the accepted residual risk (REQ-084). Original text: OQ-025 scope extension: per-student module availability and independent login-as cross-check — Two items to add to the WS spike: (1) Can the service account obtain per-STUDENT module visibility, including availability conditions and group restrictions? Required for any RAG ON (NFR-015); unreadable means RAG stays off. (2) Can Vektra independently confirm that no login-as is active for the sub (e.g. via user_loggedinas log events), as defence in depth for REQ-084? If not, trust-the-plugin is documented as an accepted residual risk. *Needs human/ops/spike input; design default recorded.*
 - ~~**OQ-032**: Hardware envelope~~ — resolved 2026-11-01 (coordinator): the assess bot uses the
   normal multi-provider LLM configuration (litellm via LLMProvider); the choice is which provider
   per deployment. The hardware constraint is real only for a local model that cannot sustain the
@@ -3197,6 +3216,7 @@ Amended:
   (OQ-020). Does not block design or implementation. Original text: Hardware envelope: co-located on-prem LLM overcommits the 8 GB / 4 CPU VM — - Memory limits: postgres 0.5-0.75G + API 3G + assess-worker about 0.5G + parser 0.5-0.77G + Ollama 4G = about 8.5-8.8 GB, plus the host OS. That is over 8 GB. - CPU: CPU-only inference on 4 cores at K = 10 is not credible against NFR-018 (all four participants flagged this). Options: an off-VM or dedicated-hardware LLM; a larger VM; trimming the API limit (the assess path loads no embedding model); a smaller K. This is an operator and product decision that feeds OQ-026 and NFR-020. It does not change the architecture. *Needs human/ops/spike input; design default recorded.*
 - **OQ-033**: Privacy erasure (Moodle delete_data_for_user) vs exam-evidence retention — The Moodle Privacy API expects deletion as well as export, and REQ-093 covers export only. Design default: build the site-bound erasure endpoint (scope assess:privacy-erase), which crypto-shreds and deletes the subject's sessions, snapshots, turns and transcripts, verified by row count. The DPO decides whether transcripts are retained as exam evidence under a legal-basis exemption (OQ-020). Whatever the outcome, an unhandled delete request must never pass silently. *Needs human/ops/spike input; design default recorded.*
 - **OQ-034**: Teacher config re-display: may the settings form show the stored solution text back? — Design default: write-only. The API seals the solution text and pasted rubric to the worker's public key, and the form shows "impostata / non impostata, sostituisci?". This leaves API compromises unable to read any course's solutions. If product requires re-display, the API must hold a symmetric teacher-config key: a documented exposure, about 1 day of change. *Needs human/ops/spike input; design default recorded.*
+- **OQ-035** (new, 2026-11-01, from the OQ-025 spike): Rubric descriptors in the model context — rubric display settings (whether students see criterion/level descriptions) are unreadable through WS on 4.3 and 5.2. Design default (BR-011 fail closed): descriptors are always excluded; the bot can use scores, levels by number and the teacher's remarks, not the descriptor texts. Alternative: a per-activity teacher attestation that descriptors are student-visible (more teacher work, an attested input like REQ-091). Related fact needed: which Moodle version the pilot sites run (on 4.3, quiz overrides are unreadable and REQ-091 becomes the normal path). *Needs product input; design default recorded.*
 
-Feature-level open items from specs remain: OQ-020 (DPO), OQ-025 (Moodle WS spike), OQ-026 (reference model/hardware), OQ-027 (eval-suite owner).
+Feature-level open items from specs remain: OQ-020 (DPO), OQ-025 (WS readability resolved 2026-11-01; math/qtype fidelity still open), OQ-026 (reference model/hardware), OQ-027 (eval-suite owner).
 

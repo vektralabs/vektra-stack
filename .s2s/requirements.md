@@ -972,7 +972,9 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - the token works;
   - the required reads succeed (grades, rubric instances and definitions, submissions, quiz
     reviews regardless of review options);
-  - interactive login is disabled;
+  - interactive login is disabled, via the `webservice` authentication method (auth_webservice
+    enabled on the site). `auth=nologin` is NOT usable: Moodle refuses web-service access to
+    nologin accounts (`wsaccessusernologin`, verified on 4.3 and 5.2 by the OQ-025 spike);
   - the account is NOT a site admin;
   - the account is NOT the ingestion account;
   - a probe of a denied function fails;
@@ -982,6 +984,12 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
     definitions) are permitted, because the WS layer can only call functions on the list.
     *(Amended 2026-11-01, coordinator decision: the literal "no grade-write capability" cannot
     hold, since reading rubrics requires managegradingforms.)*
+  Spike-verified minimal role (OQ-025, 2026-11-01; read-only, no grade-write capability needed):
+  webservice/rest:use, moodle/course:view, mod/quiz:viewreports, mod/quiz:viewoverrides (5.x),
+  mod/assign:viewgrades, moodle/grade:viewall, moodle/grade:managegradingforms (rubric fillings
+  only), moodle/role:review (grader listing), plus the view-level capabilities listed in the spike
+  report. mod/assign:grade is NOT required. The external service must allow file download
+  (`downloadfiles`).
   The feature stays unavailable until every item passes. Capabilities are never granted
   automatically. Token rotation does not affect ACTIVE sessions. A revoked token fails closed:
   eligible students see "temporarily unavailable" and nothing is consumed, and the operator is
@@ -2153,7 +2161,7 @@ The full NFR-022 suite runs per provider and model before enabling it for discus
 - ~~**OQ-022**: Teacher 'grant new session' reset vs the fixed one-session rule~~ - **Resolved** (product owner, 2026-11-01): User decision 2026-11-01: YES, UNLIMITED teacher resets per student; each with mandatory reason, audit-logged; previous transcripts kept; new labelled session #N.
 - ~~**OQ-023**: Disclosure limit: Moodle review options vs teacher solution text~~ - **Resolved** (product owner, 2026-11-01): User decision 2026-11-01: bot respects Moodle after-close review options; reveals solution/correct answers beyond them only if teacher enables explicit 'mostra soluzione nella discussione' toggle.
 - ~~**OQ-024**: Group/team assignment submissions~~ - **Resolved** (product owner, 2026-11-01): User decision 2026-11-01: group/team-mode assignments EXCLUDED in v1 (cannot enable, fail closed); deferred.
-- **OQ-025**: Web-service feasibility spike (scope extended, round 4) - Scope on Moodle 4.3 and 5.2, for the service account: - quiz user/group overrides; assignment extensions and cut-off; - quiz overdue grace period; per-attempt state; per-student time limits; - whether rendered review HTML can be filtered per review option (BR-011); - on-prem LLM concurrency (NFR-CAP). Added in round 4: - fidelity of math (TeX/MathML) and images in rendered review HTML; - per-question-type renderability (the discussable list in the input-handling requirement); - readability of the rubric display settings (whether the definition is visible to students, BR-011). Partial readability -> REQ-091 fallback or the BR-011 fallback. *Human input required; non-blocking for the specification.*
+- **OQ-025** *(WS readability part RESOLVED 2026-11-01 by the spike, see vektra-moodle-discuss `spike/oq025/REPORT.md`; still open: math/image fidelity in review HTML, renderability of question types beyond truefalse/multichoice/shortanswer/numerical/essay, and LLM concurrency, which moves to OQ-032 / the plan-8 burst test)*: Web-service feasibility spike (scope extended, round 4) - Scope on Moodle 4.3 and 5.2, for the service account: - quiz user/group overrides; assignment extensions and cut-off; - quiz overdue grace period; per-attempt state; per-student time limits; - whether rendered review HTML can be filtered per review option (BR-011); - on-prem LLM concurrency (NFR-CAP). Added in round 4: - fidelity of math (TeX/MathML) and images in rendered review HTML; - per-question-type renderability (the discussable list in the input-handling requirement); - readability of the rubric display settings (whether the definition is visible to students, BR-011). Partial readability -> REQ-091 fallback or the BR-011 fallback. *Human input required; non-blocking for the specification.*
 - **OQ-026**: Reference on-prem model and hardware for latency, capacity and quality targets - All six participants flagged that no reference model or hardware is specified. The latency, admission K and quality targets (Italian contest dialogue, citation-tag reliability, oracle rate) depend on it, so they stay pilot-validated until it is fixed. Product and operator decision, measured in the OQ-025 concurrency spike. It may show that a stronger model, or cloud offload (EX-019), is needed for quality, not only for capacity. *Human input required; non-blocking for the specification.*
 - **OQ-027**: Owner and schedule for the evaluation suite (NFR-022/NFR-023) - Resourcing item, not a specification defect (QA, PM). Someone must own building the labelled sets, the human labels, the judge calibration and seeded-violation recall, and their maintenance per model and provider. Effort about 2-3 weeks (TL). Without an owner, NFR-023 blocks every model activation, or gets bypassed. It must start as pilot preparation, in parallel with the DPO decision on real data (OQ-020). Human decision (project lead). *Human input required; non-blocking for the specification.*
 - **Note (file limits)**: the 10 MB/file, 10 files default in REQ-101 was a facilitator tie-break of a 3-3 panel split (20 MB/10 vs 10 MB/5); operator-configurable, pilot-validated.

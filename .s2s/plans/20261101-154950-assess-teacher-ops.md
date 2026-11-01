@@ -226,6 +226,8 @@ the recording LLM provider's captured request bytes, not on bot replies.
 
 ## Notes
 
+- **OQ-025 spike (2026-11-01)**: on Moodle 4.3, quiz overrides and per-student time limits are unreadable, so the REQ-091 attested-date UI is the EXPECTED path for any quiz with user/group overrides; the teacher page must explain why (not an error). On 5.2 they are readable. Grace is readable only while the quiz is open; enabling the discussion after close also lands on REQ-091. Rubric descriptor attestation is a possible addition pending OQ-035.
+
 - OQ-034: write-only default implemented; if product requires re-display, the API needs a
   symmetric teacher-config key (about 1 day, documented exposure).
 - OQ-020: REQ-092 notice ships disabled until DPO approval of the flow and text.

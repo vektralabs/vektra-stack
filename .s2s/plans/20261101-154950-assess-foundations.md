@@ -314,21 +314,21 @@ instantiates its own limiter instance for per-token limits.
       (monkeypatched `sys.modules`) fails the assertion
 
 ### 7. Compose 'assess' profile and Postgres
-- [ ] 7.1 `deploy/postgres/init.sql`: create `vektra_assess_api` / `vektra_assess_worker` NOLOGIN
+- [x] 7.1 `deploy/postgres/init.sql`: create `vektra_assess_api` / `vektra_assess_worker` NOLOGIN
       with the attributes in Design Notes; add `deploy/postgres/assess-roles.sql` run by the
       one-shot service (`ALTER ROLE ... LOGIN PASSWORD` from `/run/secrets/assess_db_*_password`)
-- [ ] 7.2 `docker-compose.yml` postgres command adds `-c log_statement=none -c
+- [x] 7.2 `docker-compose.yml` postgres command adds `-c log_statement=none -c
       log_min_duration_statement=-1 -c log_parameter_max_length=0 -c
       log_parameter_max_length_on_error=0` (ARCH-078); verify with `SHOW` in an integration test
-- [ ] 7.3 Profile `assess`: `vektra-assess-db-init` (one-shot, superuser DSN, db password
+- [x] 7.3 Profile `assess`: `vektra-assess-db-init` (one-shot, superuser DSN, db password
       secrets only), `vektra-assess-worker` (same image, `CMD_TARGET=assess-worker`, no ports,
       `mem_limit: 512m`, `stop_grace_period: 30s`, `restart: unless-stopped`, healthcheck = heartbeat
       file mtime < 30 s, secrets per the worker column, `depends_on` db-init completed),
       `vektra-assess-parser` (`network_mode: none`, `read_only: true`, `user: "1000:1000"`, tmpfs
       `/tmp` size cap, `mem_limit: 768m`, `pids_limit`, `cpus`, NO secrets, no env DSN)
-- [ ] 7.4 Named volume `assess_parser_sock` mounted ONLY into worker and parser; the `vektra` API
+- [x] 7.4 Named volume `assess_parser_sock` mounted ONLY into worker and parser; the `vektra` API
       service gets the API-column secrets and `VEKTRA_ASSESS_API_DATABASE_URL`, and no socket volume
-- [ ] 7.5 Compose policy test `tests/test_compose_assess_profile.py` parsing `docker compose
+- [x] 7.5 Compose policy test `tests/test_compose_assess_profile.py` parsing `docker compose
       --profile assess config` output: parser has `network_mode: none` and zero secrets; socket
       volume mounted in exactly {worker, parser}; every secret mounted into each service is allowed
       for that role by `KEY_MATRIX` (reuses the module, so the matrix and compose cannot diverge)
@@ -493,6 +493,14 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   "No component shall import the app entrypoint" contract gains `vektra_assess` as a source rather than a
   forbidden module. `vektra-app/src` was never type-checked: adding it surfaced two real annotation gaps in
   `main.py` (`event_emitter`, `pipeline` typed as the Protocols), fixed; mypy is clean on 102 files.
+- **Section 7 notes (2026-11-01)**: implemented as an overlay `docker-compose.assess.yml` whose three assess
+  services carry `profiles: [assess]`. Reason: the API service is always on and Compose has no optional
+  secrets, so assess secrets mounted into `vektra` from the base file would break every deployment without
+  `./secrets/assess`. Usage: `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile
+  assess up -d`. Compose v5 honours `uid/gid/mode` on file secrets (verified empirically), so the keyring
+  owner/mode check holds inside the containers (uid 1000, 0400). Role passwords are secret files
+  (`assess_db_api_password`, `assess_db_worker_password`) and the DSNs carry none. The policy test lives in
+  `vektra-app/tests/test_compose_assess_profile.py` (run by `test-app`), not in the root `tests/`.
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
 - BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).

@@ -118,6 +118,11 @@ COPY --from=widget-builder /static/vektra-chat.js /app/vektra-learn/static/vektr
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Mount point of the assess parser socket volume. A named volume copies the
+# ownership of the image directory on first use, so the parser (uid 1000) can
+# bind its socket there (plan assess-foundations 7.4).
+RUN mkdir -p /run/vektra-assess-parser && chown vektra:vektra /run/vektra-assess-parser
+
 RUN chown -R vektra:vektra /app
 USER vektra
 

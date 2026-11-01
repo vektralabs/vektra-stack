@@ -15,6 +15,19 @@ services:
   # --------------------------------------------------------------------------
   postgres:
     image: pgvector/pgvector:pg16
+    # No statement or parameter text in the server log (ARCH-078): the assess tables
+    # carry ciphertext, but a logged INSERT would carry its bind parameters, and
+    # ALTER ROLE ... PASSWORD would carry the password.
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
     environment:
       POSTGRES_DB: vektra
       POSTGRES_USER: vektra

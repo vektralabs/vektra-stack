@@ -20,10 +20,13 @@ Development is done by Claude Code in **loop mode**, one wave at a time:
 2. **Loop**: `/loop` with the wave prompt below. Each iteration does one task (or a small group of
    tightly coupled tasks), tests it, commits it, and updates the plan file in the same commit.
 3. **End of each plan** (inside the loop): run `/code-review` on that plan's diff, fix the findings,
-   set the plan to `completed` here and in the plan file, then move on to the next plan.
-4. **End of wave**: run the wave gate, write the evidence to `.s2s/waves/assess-wN-review.md`
-   (based on `.s2s/waves/checklist-template.md`), open ONE PR per repo `feat/*-wN` → `develop`,
-   handle the review (`/github-workflow:github-pr-review`), and merge only on the user's decision
+   **re-run the plan's full test suite** (a fix that breaks something goes back to step 2), then set
+   the plan to `completed` here and in the plan file and move on to the next plan.
+4. **End of wave**: run the wave gate; if it fails, fix, re-run the affected tests and **re-run the
+   whole gate** until it passes. Write the evidence to `.s2s/waves/assess-wN-review.md` (based on
+   `.s2s/waves/checklist-template.md`), then open ONE PR per repo `feat/*-wN` → `develop` **with the
+   `/github-workflow:github-pr-creation` skill** (it asks the user to confirm target and content,
+   so the loop waits there), handle the review (`/github-workflow:github-pr-review`), and merge only on the user's decision
    (`/github-workflow:github-pr-merge`). The branch is deleted on merge.
 5. **Between waves**: `/compact`, then start the next wave from `develop`.
 
@@ -35,7 +38,7 @@ route is mounted and no assess service runs (plan assess-foundations, task 6.1b)
 
 Start a wave with `/loop` and this prompt, replacing `N`:
 
-> Wave WN of `.s2s/plans/INDEX-ASSESS.md`. Work on branch `feat/assess-wN` (vektra-stack) and, for plugin plans, `feat/discuss-wN` (vektra-moodle-discuss); create them from `develop` if missing. Read INDEX-ASSESS, pick the `in_progress` plan of wave WN, or the first `pending` one whose dependencies are `completed`, and read the full plan file (plugin plans: `../vektra-moodle-discuss/.s2s/plans/`). If tasks are already `[x]`, check the code that implements them before continuing. Do the first unchecked task: implement, run its tests, check it off, commit (Conventional Commits, plan file in the same commit). When the plan's tasks and acceptance criteria are all done, run `/code-review` on the plan's diff, fix the findings, and mark the plan `completed` in the plan file and in INDEX-ASSESS. When every plan of the wave is `completed`, run the wave gate, write `.s2s/waves/assess-wN-review.md`, push, open the wave PR(s) to `develop`, and stop the loop. Obey the stop rules in INDEX-ASSESS.
+> Wave WN of `.s2s/plans/INDEX-ASSESS.md`. Work on branch `feat/assess-wN` (vektra-stack) and, for plugin plans, `feat/discuss-wN` (vektra-moodle-discuss); create them from `develop` if missing. Read INDEX-ASSESS, pick the `in_progress` plan of wave WN, or the first `pending` one whose dependencies are `completed`, and read the full plan file (plugin plans: `../vektra-moodle-discuss/.s2s/plans/`). If tasks are already `[x]`, check the code that implements them before continuing. Do the first unchecked task: implement, run its tests, check it off, commit (Conventional Commits, plan file in the same commit). If a test fails, fix and re-run until green. When the plan's tasks and acceptance criteria are all done, run `/code-review` on the plan's diff, fix the findings, re-run the plan's full test suite until green, and mark the plan `completed` in the plan file and in INDEX-ASSESS. When every plan of the wave is `completed`, run the wave gate; if it fails, fix, re-run the affected tests and the whole gate until it passes. Write `.s2s/waves/assess-wN-review.md`, push, create the wave PR(s) to `develop` with the `/github-workflow:github-pr-creation` skill, and stop the loop. Obey the stop rules in INDEX-ASSESS.
 
 ### Stop rules
 

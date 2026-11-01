@@ -122,6 +122,18 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    # The image HEALTHCHECK probes the API on :8000, which this container neither
+    # serves nor can reach: answer a framed ping over the socket instead.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,socket,struct,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/run/vektra-assess-parser/parser.sock'); b=json.dumps({'op':'ping'}).encode(); s.sendall(struct.pack('>I',len(b))+b); n=struct.unpack('>I',s.recv(4))[0]; sys.exit(0 if json.loads(s.recv(n)).get('op')=='pong' else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   assess_parser_sock:

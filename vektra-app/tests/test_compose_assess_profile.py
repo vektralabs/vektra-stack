@@ -101,6 +101,8 @@ def test_parser_is_isolated(rendered: dict) -> None:  # type: ignore[type-arg]
     env = p.get("environment", {})
     assert not [k for k in env if "DATABASE_URL" in k or "PASSWORD" in k]
     assert p.get("mem_limit") and p.get("pids_limit")
+    # its own healthcheck: the image one probes the API port it cannot reach
+    assert "parser.sock" in " ".join(p["healthcheck"]["test"])
 
 
 def test_socket_volume_only_in_worker_and_parser(rendered: dict) -> None:  # type: ignore[type-arg]

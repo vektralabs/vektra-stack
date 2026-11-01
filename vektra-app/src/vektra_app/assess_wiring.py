@@ -81,7 +81,11 @@ async def step_12_assess_check(
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from vektra_assess.crypto.selftest import run_crypto_selftest
-    from vektra_assess.db.roles import assert_distinct_dsn, assert_session_role
+    from vektra_assess.db.roles import (
+        assert_distinct_dsn,
+        assert_session_role,
+        dsn_with_password,
+    )
 
     loaded: dict[str, Any] = enforce_key_matrix(
         "api", secrets_dir=settings.secrets_dir, step=STEP
@@ -93,9 +97,11 @@ async def step_12_assess_check(
             detail="VEKTRA_ASSESS_ENABLED=true but VEKTRA_ASSESS_API_DATABASE_URL is unset",
             remediation="Set the DSN of the vektra_assess_api role.",
         )
-    assert_distinct_dsn(settings.api_database_url, main_database_url, step=STEP)
+    password = loaded["assess_db_api_password"].value
+    api_url = dsn_with_password(settings.api_database_url, password, step=STEP)
+    assert_distinct_dsn(api_url, main_database_url, step=STEP)
     engine = create_async_engine(
-        settings.api_database_url, pool_size=settings.api_pool_size, pool_pre_ping=True
+        api_url, pool_size=settings.api_pool_size, pool_pre_ping=True
     )
     try:
         await assert_session_role(engine, API_ROLE, step=STEP)

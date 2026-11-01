@@ -162,11 +162,24 @@ async def test_enabled_dsn_logging_in_as_vektra_refuses(
     _api_keys(secrets_dir)
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setenv(
-        "VEKTRA_ASSESS_API_DATABASE_URL", "postgresql+asyncpg://vektra:other@db/vektra"
+        "VEKTRA_ASSESS_API_DATABASE_URL", "postgresql+asyncpg://vektra@db/vektra"
     )
     with pytest.raises(
         StartupValidationError, match="same user as VEKTRA_DATABASE_URL"
     ):
+        await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
+
+
+async def test_enabled_dsn_with_password_refuses(
+    secrets_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _api_keys(secrets_dir)
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv(
+        "VEKTRA_ASSESS_API_DATABASE_URL",
+        "postgresql+asyncpg://vektra_assess_api:pw@db/vektra",
+    )
+    with pytest.raises(StartupValidationError, match="DSN contains a password"):
         await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
 
 
@@ -229,31 +242,33 @@ async def _exec(url: str, *stmts: str) -> None:
     await engine.dispose()
 
 
-def _with_user(url: str, user: str, pw: str) -> str:
-    from sqlalchemy.engine import make_url
+def _with_user(url: str, user: str) -> str:
+    """The DSN as deployed: user and host, no password (it comes from the secret file)."""
+    from sqlalchemy.engine import URL, make_url
 
-    return (
-        make_url(url)
-        .set(username=user, password=pw)
-        .render_as_string(hide_password=False)
-    )
+    u = make_url(url)
+    return URL.create(
+        u.drivername, user, None, u.host, u.port, u.database
+    ).render_as_string(hide_password=False)
 
 
 @pytest.mark.integration
 async def test_role_check_against_postgres(
     pg_admin_url: str, secrets_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _api_keys(secrets_dir)
+    pw = (secrets_dir / "assess_db_api_password").read_text().strip()
     await _exec(
         pg_admin_url,
-        "CREATE ROLE vektra_assess_api LOGIN PASSWORD 'apipw' NOSUPERUSER NOINHERIT",
-        "CREATE ROLE intruder LOGIN PASSWORD 'evil' SUPERUSER",
+        f"CREATE ROLE vektra_assess_api LOGIN PASSWORD '{pw}' NOSUPERUSER NOINHERIT",
+        # same password as the api file, so only the role check can refuse it
+        f"CREATE ROLE intruder LOGIN PASSWORD '{pw}' SUPERUSER",
     )
-    _api_keys(secrets_dir)
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
 
     # A superuser that is not the main DSN's user is still refused.
     monkeypatch.setenv(
-        "VEKTRA_ASSESS_API_DATABASE_URL", _with_user(pg_admin_url, "intruder", "evil")
+        "VEKTRA_ASSESS_API_DATABASE_URL", _with_user(pg_admin_url, "intruder")
     )
     with pytest.raises(StartupValidationError, match="'intruder' \\(superuser=True\\)"):
         await assess_wiring.step_12_assess_check(_state_app(), pg_admin_url)  # type: ignore[arg-type]
@@ -261,7 +276,7 @@ async def test_role_check_against_postgres(
     # The right role passes and the engine lands on app.state.
     monkeypatch.setenv(
         "VEKTRA_ASSESS_API_DATABASE_URL",
-        _with_user(pg_admin_url, "vektra_assess_api", "apipw"),
+        _with_user(pg_admin_url, "vektra_assess_api"),
     )
     app = _state_app()
     await assess_wiring.step_12_assess_check(app, pg_admin_url)  # type: ignore[arg-type]

@@ -74,7 +74,11 @@ async def run_checks() -> object:
     """Run checks 1-5. Returns the worker engine (an AsyncEngine)."""
     from vektra_assess.config import VektraAssessSettings
     from vektra_assess.crypto.selftest import run_crypto_selftest
-    from vektra_assess.db.roles import assert_distinct_dsn, assert_session_role
+    from vektra_assess.db.roles import (
+        assert_distinct_dsn,
+        assert_session_role,
+        dsn_with_password,
+    )
     from vektra_assess.keys import enforce_key_matrix
 
     settings = VektraAssessSettings()
@@ -83,7 +87,7 @@ async def run_checks() -> object:
             "VEKTRA_ASSESS_ENABLED is not true: the assess worker does not run on a "
             "deployment where assess is disabled."
         )
-    enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
+    loaded = enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
     run_crypto_selftest()
     if not settings.worker_database_url:
         raise StartupValidationError(
@@ -91,9 +95,14 @@ async def run_checks() -> object:
             detail="VEKTRA_ASSESS_WORKER_DATABASE_URL is unset",
             remediation="Set the DSN of the vektra_assess_worker role.",
         )
+    worker_url = dsn_with_password(
+        settings.worker_database_url,
+        loaded["assess_db_worker_password"].value,  # type: ignore[union-attr]
+        step=STEP,
+    )
     main_url = os.environ.get("VEKTRA_DATABASE_URL")
     if main_url:
-        assert_distinct_dsn(settings.worker_database_url, main_url, step=STEP)
+        assert_distinct_dsn(worker_url, main_url, step=STEP)
 
     # Imported for its cost: the worker's LLM provider is injected from here later.
     from vektra_core.providers.litellm_provider import LitellmProvider  # noqa: F401
@@ -103,7 +112,7 @@ async def run_checks() -> object:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(
-        settings.worker_database_url,
+        worker_url,
         pool_size=settings.worker_pool_size,
         pool_pre_ping=True,
     )

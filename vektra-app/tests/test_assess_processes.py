@@ -86,7 +86,7 @@ async def test_worker_run_checks_hits_ceiling_before_db(
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
     monkeypatch.setenv(
-        "VEKTRA_ASSESS_WORKER_DATABASE_URL", "postgresql+asyncpg://w:x@127.0.0.1:1/db"
+        "VEKTRA_ASSESS_WORKER_DATABASE_URL", "postgresql+asyncpg://w@127.0.0.1:1/db"
     )
     monkeypatch.setitem(sys.modules, "torch", object())
     with pytest.raises(StartupValidationError, match="torch"):
@@ -113,7 +113,7 @@ async def test_worker_refuses_main_dsn_user(
     monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
     monkeypatch.setenv("VEKTRA_DATABASE_URL", "postgresql+asyncpg://vektra:a@db/vektra")
     monkeypatch.setenv(
-        "VEKTRA_ASSESS_WORKER_DATABASE_URL", "postgresql+asyncpg://vektra:b@db/vektra"
+        "VEKTRA_ASSESS_WORKER_DATABASE_URL", "postgresql+asyncpg://vektra@db/vektra"
     )
     with pytest.raises(StartupValidationError, match="same user"):
         await assess_worker.run_checks()
@@ -207,7 +207,7 @@ async def test_worker_checks_against_postgres(
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"Docker not available: {exc}")
     from sqlalchemy import text
-    from sqlalchemy.engine import make_url
+    from sqlalchemy.engine import URL, make_url
     from sqlalchemy.ext.asyncio import create_async_engine
     from testcontainers.postgres import PostgresContainer
 
@@ -215,33 +215,55 @@ async def test_worker_checks_against_postgres(
         admin = c.get_connection_url().replace(
             "postgresql+psycopg2://", "postgresql+asyncpg://"
         )
+        d = _worker_keys(tmp_path / "w")
+        pw = (d / "assess_db_worker_password").read_text().strip()
         eng = create_async_engine(admin, isolation_level="AUTOCOMMIT")
         async with eng.connect() as conn:
             await conn.execute(
                 text(
-                    "CREATE ROLE vektra_assess_worker LOGIN PASSWORD 'wpw' NOSUPERUSER NOINHERIT"
+                    f"CREATE ROLE vektra_assess_worker LOGIN PASSWORD '{pw}' NOSUPERUSER NOINHERIT"
                 )
             )
         await eng.dispose()
-        d = _worker_keys(tmp_path / "w")
-        monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
-        monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
-        monkeypatch.setenv("VEKTRA_DATABASE_URL", admin)
-        worker_url = make_url(admin).set(
-            username="vektra_assess_worker", password="wpw"
+        u = make_url(admin)
+        worker_url = URL.create(
+            u.drivername, "vektra_assess_worker", None, u.host, u.port, u.database
         )
         monkeypatch.setenv(
             "VEKTRA_ASSESS_WORKER_DATABASE_URL",
             worker_url.render_as_string(hide_password=False),
         )
-        engine = await assess_worker.run_checks()
-        try:
-            async with engine.connect() as conn:  # type: ignore[attr-defined]
-                assert (
-                    await conn.execute(text("SELECT current_user"))
-                ).scalar() == "vektra_assess_worker"
-        finally:
-            await engine.dispose()  # type: ignore[attr-defined]
+        # In a fresh process: the import ceiling is process-wide, and this pytest
+        # session has long since imported vektra_index through other tests.
+        code = (
+            "import asyncio\n"
+            "from sqlalchemy import text\n"
+            "import vektra_app.assess_worker as w\n"
+            "async def m():\n"
+            "    e = await w.run_checks()\n"
+            "    async with e.connect() as c:\n"
+            "        print((await c.execute(text('SELECT current_user'))).scalar())\n"
+            "    await e.dispose()\n"
+            "asyncio.run(m())\n"
+        )
+        env = {
+            **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
+            "VEKTRA_ASSESS_ENABLED": "true",
+            "VEKTRA_ASSESS_SECRETS_DIR": str(d),
+            "VEKTRA_DATABASE_URL": admin,
+            "VEKTRA_ASSESS_WORKER_DATABASE_URL": worker_url.render_as_string(
+                hide_password=False
+            ),
+        }
+        res = subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert res.returncode == 0, res.stderr
+        assert res.stdout.strip() == "vektra_assess_worker"
 
 
 # --- docker/entrypoint.sh targets (6.4) ----------------------------------------

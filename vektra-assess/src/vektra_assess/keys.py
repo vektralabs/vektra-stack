@@ -52,6 +52,7 @@ class Kind(StrEnum):
     X25519_PRIVATE = "x25519_private"  # 32-byte raw private key
     X25519_PUBLIC = "x25519_public"  # 32-byte raw public key
     CREDENTIALS = "credentials"  # JSON object (WS tokens per site, SMTP account)
+    PASSWORD = "password"  # one line of text: a Postgres role password
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,17 @@ KEY_MATRIX: Mapping[str, KeySpec] = {
     "assess_kek": KeySpec(Kind.SYMMETRIC, api=F, worker=R, parser=F),
     "assess_ws_tokens": KeySpec(Kind.CREDENTIALS, api=F, worker=R, parser=F),
     "assess_smtp": KeySpec(Kind.CREDENTIALS, api=F, worker=R, parser=F),
+    # Role passwords: never in a DSN, never in .env. Each process holds only its own;
+    # the one-shot vektra-assess-db-init holds both (DB_INIT_SECRETS).
+    "assess_db_api_password": KeySpec(Kind.PASSWORD, api=R, worker=F, parser=F),
+    "assess_db_worker_password": KeySpec(Kind.PASSWORD, api=F, worker=R, parser=F),
 }
+
+# The only secrets the one-shot role-provisioning service may hold (compose policy test).
+DB_INIT_SECRETS: frozenset[str] = frozenset(
+    {"assess_db_api_password", "assess_db_worker_password"}
+)
+MIN_PASSWORD_CHARS = 24
 
 KEY_BYTES = 32
 MAX_MODE = 0o440  # owner and group read, nothing else
@@ -122,7 +133,18 @@ class Credentials:
         return f"Credentials(name={self.name!r}, fields={sorted(self.data)!r})"
 
 
-Loaded = AssessKeyring | Credentials
+@dataclass(frozen=True)
+class Password:
+    """A loaded role password. Never shown in repr."""
+
+    name: str
+    value: str = field(repr=False)
+
+    def __repr__(self) -> str:
+        return f"Password(name={self.name!r})"
+
+
+Loaded = AssessKeyring | Credentials | Password
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +177,17 @@ def load_keyring(name: str, secrets_dir: Path) -> Loaded:
     spec = KEY_MATRIX[name]
     path = secrets_dir / name
     _check_file(path)
+    if spec.kind is Kind.PASSWORD:
+        try:
+            value = path.read_text(encoding="utf-8").rstrip("\n")
+        except UnicodeDecodeError:
+            raise KeyringError(f"{name}: not valid UTF-8") from None
+        if len(value) < MIN_PASSWORD_CHARS or any(c.isspace() for c in value):
+            raise KeyringError(
+                f"{name}: must be one line of at least {MIN_PASSWORD_CHARS} "
+                "non-whitespace characters"
+            )
+        return Password(name=name, value=value)
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -308,7 +341,12 @@ def generate(out: Path, *, kid: str = "k1") -> list[Path]:
             docs[name] = _keyring_doc(kid, secrets.token_bytes(KEY_BYTES))
         elif spec.kind is Kind.CREDENTIALS:
             docs[name] = {}
-    missing = set(KEY_MATRIX) - set(docs)
+    passwords = {
+        n: secrets.token_urlsafe(32)
+        for n, sp in KEY_MATRIX.items()
+        if sp.kind is Kind.PASSWORD
+    }
+    missing = set(KEY_MATRIX) - set(docs) - set(passwords)
     assert not missing, missing
 
     written: list[Path] = []
@@ -318,7 +356,10 @@ def generate(out: Path, *, kid: str = "k1") -> list[Path]:
             raise FileExistsError(f"{path} exists; refusing to overwrite a secret")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(docs[name], fh)
+            if name in passwords:
+                fh.write(passwords[name] + "\n")
+            else:
+                json.dump(docs[name], fh)
         os.chmod(path, 0o400)
         written.append(path)
     return written

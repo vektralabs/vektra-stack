@@ -152,6 +152,10 @@ ERR_INDEX_002 = "ERR-INDEX-002"  # Invalid index version (< 1)
 ERR_INDEX_003 = "ERR-INDEX-003"  # Reindex target equals the active version
 ERR_INDEX_004 = "ERR-INDEX-004"  # Reindex job not found
 
+# Assess errors (vektra_assess). Namespace rule: each plan takes the next free
+# number, codes are never reused (docs/reference/error-codes.md).
+ERR_ASSESS_001 = "ERR-ASSESS-001"  # Assess unavailable: a readiness item failed
+
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
 ERR_ADMIN_008 = "ERR-ADMIN-008"  # Deep-health auth: registry/key store not yet ready
@@ -189,6 +193,7 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_INDEX_002: 400,
     ERR_INDEX_003: 400,  # Bad Request: target must differ from the active version
     ERR_INDEX_004: 404,
+    ERR_ASSESS_001: 503,
 }
 
 

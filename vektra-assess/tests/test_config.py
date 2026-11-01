@@ -1,0 +1,48 @@
+"""VektraAssessSettings: dormant default, explicit aliases, no env file."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from vektra_assess.config import VektraAssessSettings
+from vektra_assess.errors import ERR_ASSESS_001, assess_unavailable
+
+
+def test_defaults_are_dormant() -> None:
+    s = VektraAssessSettings()
+    assert s.enabled is False
+    assert s.api_database_url is None and s.worker_database_url is None
+    assert s.secrets_dir == Path("/run/secrets")
+    assert (s.api_pool_size, s.worker_pool_size, s.heartbeat_max_age_s) == (15, 5, 60)
+
+
+def test_reads_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_API_POOL_SIZE", "7")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", "/tmp/x")
+    s = VektraAssessSettings()
+    assert (
+        s.enabled is True and s.api_pool_size == 7 and s.secrets_dir == Path("/tmp/x")
+    )
+
+
+def test_field_names_are_not_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENABLED", "true")
+    assert VektraAssessSettings().enabled is False
+
+
+def test_ignores_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text("VEKTRA_ASSESS_ENABLED=true\n")
+    monkeypatch.chdir(tmp_path)
+    assert VektraAssessSettings().enabled is False
+
+
+def test_err_assess_001_is_503_and_names_the_item() -> None:
+    from vektra_shared.errors import http_status_for
+
+    err = assess_unavailable("worker_heartbeat")
+    assert err.code == ERR_ASSESS_001 == "ERR-ASSESS-001"
+    assert http_status_for(err) == 503
+    assert "worker_heartbeat" in err.remediation

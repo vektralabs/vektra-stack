@@ -33,7 +33,7 @@ endif
 # Targets
 # --------------------------------------------------------------------------
 
-.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest eval-retrieval eval-e2e
+.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest eval-retrieval eval-e2e assess-keys
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { \
@@ -79,6 +79,9 @@ test: ## Run unit tests with coverage
 		vektra-assess/tests/ \
 		vektra-app/tests/ \
 		-v --tb=short -m "not integration"
+
+assess-keys: ## Generate a complete set of assess keyrings in ./secrets/assess/ (mode 0400, never overwrites)
+	uv run python -m vektra_assess.keys generate --out ./secrets/assess
 
 lint: ## Run linters (ruff + mypy + import-linter)
 	uv run ruff check .

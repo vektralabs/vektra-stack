@@ -264,20 +264,20 @@ instantiates its own limiter instance for per-token limits.
       removes the skip by adding routes)
 
 ### 5. Settings, errors, keys
-- [ ] 5.1 `vektra_assess/config.py` `VektraAssessSettings` (pydantic-settings, explicit
+- [x] 5.1 `vektra_assess/config.py` `VektraAssessSettings` (pydantic-settings, explicit
       `alias="VEKTRA_ASSESS_*"`, no env_file): `ENABLED` (default false), `API_DATABASE_URL`,
       `WORKER_DATABASE_URL`, `SECRETS_DIR` (default `/run/secrets`), `API_POOL_SIZE` (15),
       `WORKER_POOL_SIZE` (5), `HEARTBEAT_MAX_AGE_S` (60), `PARSER_SOCKET` path; later plans add
       their fields to this class only
-- [ ] 5.2 Add `ERR_ASSESS_001` ("assess unavailable", 503, remediation names the failing
+- [x] 5.2 Add `ERR_ASSESS_001` ("assess unavailable", 503, remediation names the failing
       readiness item) to `vektra_shared/errors.py` with `_CODE_STATUS_OVERRIDE`; document the
       ERR-ASSESS-NNN namespace rule in `docs/reference/error-codes.md` (later plans take the next
       free number; codes are never reused)
-- [ ] 5.3 `vektra_assess/keys.py`: keyring loader, `KEY_MATRIX`, `enforce_key_matrix(role)`,
+- [x] 5.3 `vektra_assess/keys.py`: keyring loader, `KEY_MATRIX`, `enforce_key_matrix(role)`,
       redacted repr; `python -m vektra_assess.keys generate --out <dir>` writing all keyrings
       (X25519 pairs via cryptography, 32-byte random symmetric keys) with mode 0400; `make
       assess-keys` target writing to `./secrets/assess/` (gitignored)
-- [ ] 5.4 Unit tests: for each role, every required key missing → refusal naming it; every
+- [x] 5.4 Unit tests: for each role, every required key missing → refusal naming it; every
       forbidden key present (file AND env-var variants) → refusal naming it; mode 0644 file →
       refusal; wrong key length → refusal; generated set satisfies all three roles
 
@@ -475,6 +475,11 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   migration suite runs in no CI job. Candidate DEBT item; the new `vektra-assess/tests/test_migration_0009.py`
   is marked `integration` so it does run in `package-integration`. Also seen: `audit_log_write_failed`
   errors logged by the vektra-admin integration fixture (tests still pass), not investigated.
+- **Section 5 notes (2026-11-01)**: `assess_ws_tokens` and `assess_smtp` are credentials (a JSON object),
+  not 32-byte keyrings; `KEY_MATRIX` carries a `kind` per secret. Symlinked secret files are refused.
+  Risk for 7.x: Compose file secrets are bind mounts that keep the host file's uid/mode, so a 0400 file
+  owned by the host user may be unreadable by container uid 1000 or fail the owner check; resolve in the
+  compose profile (db-init/entrypoint copy, or generate with the container uid), not by loosening `keys.py`.
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
 - BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).

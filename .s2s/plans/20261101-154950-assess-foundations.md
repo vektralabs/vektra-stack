@@ -244,20 +244,20 @@ instantiates its own limiter instance for per-token limits.
       (missing exp now rejected, previously accepted)
 
 ### 4. Non-inheriting scopes
-- [ ] 4.1 Add `require_exact_scope(scope)` to `vektra_shared/auth.py` (same key-store lookup,
+- [x] 4.1 Add `require_exact_scope(scope)` to `vektra_shared/auth.py` (same key-store lookup,
       `request.state.key_id`, ERR-AUTH-001/003 envelopes; no admin superscope)
-- [ ] 4.2 Unit tests in `vektra-shared/tests/test_auth.py` with the existing `MockKeyStore`: an
+- [x] 4.2 Unit tests in `vektra-shared/tests/test_auth.py` with the existing `MockKeyStore`: an
       admin-only key is REJECTED by `require_exact_scope("assess:mint")` (403, ERR-AUTH-003); a key
       with `assess:mint` passes; `assess:teacher` does not satisfy `assess:mint`
-- [ ] 4.3 Migration `migrations/versions/0009_assess_scopes_roles.py` (revision "0009", down
+- [x] 4.3 Migration `migrations/versions/0009_assess_scopes_roles.py` (revision "0009", down
       revision "0008"): drop/re-add `ck_api_keys_scopes` with the seven scopes, add
       `ck_api_keys_assess_scope_exclusive`, create the two NOLOGIN roles idempotently; downgrade
       refuses if any key holds an `assess:*` scope (no silent data loss)
-- [ ] 4.4 Mirror the constraints in `vektra_admin/models.py` `__table_args__`; update
+- [x] 4.4 Mirror the constraints in `vektra_admin/models.py` `__table_args__`; update
       `valid_scopes` in `vektra_admin/api.py` (create-key handler) and add the four checkboxes in
       `vektra_admin/templates/keys.html`, grouped under an "assess (site-bound)" label; the API
       rejects mixed admin+assess requests with the same message as the DB constraint
-- [ ] 4.5 Route guard test `vektra-app/tests/test_assess_route_scopes.py`: introspects
+- [x] 4.5 Route guard test `vektra-app/tests/test_assess_route_scopes.py`: introspects
       `create_app()` routes under `/api/v1/assess`, asserts each depends on `require_exact_scope`
       or the assess token verifier and never on `require_scope`; SKIPPED with reason "no assess
       routes registered yet" while the count is 0 (plan 20261101-154950-assess-session-lifecycle
@@ -464,6 +464,17 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   offers pre-created roles.
 - **OQ-026 / OQ-032** (hardware, memory envelope): the profile limits here (512M worker, 768M
   parser) are design defaults; NFR-020's K is not fixed by this plan.
+- **Section 4 notes (2026-11-01)**: the scope vocabulary lives in `vektra_shared.auth` (`LEGACY_SCOPES`,
+  `ASSESS_SCOPES`, `ALL_SCOPES`, `scope_set_error`); a test pins the ORM and migration 0009 CHECK texts to it.
+  The admin UI create form had no scope validation at all (a bad set was an IntegrityError 500); it now
+  answers with an error flash (HTTP 200, because htmx does not swap 4xx) and creates nothing. Migration 0009
+  downgrade leaves the two roles in place (cluster objects shared with init.sql).
+- **Found, pre-existing (not fixed here)**: `vektra-shared/tests/test_migration.py` has no `integration`
+  marker and skips itself when the `docker` SDK is missing. `test-shared` syncs only `--package vektra-shared`
+  (no docker SDK), so it SKIPS there, and `package-integration` (`-m integration`) deselects it: the
+  migration suite runs in no CI job. Candidate DEBT item; the new `vektra-assess/tests/test_migration_0009.py`
+  is marked `integration` so it does run in `package-integration`. Also seen: `audit_log_write_failed`
+  errors logged by the vektra-admin integration fixture (tests still pass), not investigated.
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
 - BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).

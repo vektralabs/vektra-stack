@@ -433,6 +433,47 @@ async def _login_cookie(client, bootstrap_key: str) -> str:
     return admin_key
 
 
+async def test_assess_scopes_create_and_exclusivity(client, bootstrap_key, session):
+    """assess:* keys can be created alone; mixing with admin/ingest/query is refused
+    with ERR-ADMIN-001 before the insert, by the API and by the UI (plan
+    assess-foundations 4.4, ARCH-067)."""
+    from sqlalchemy import text
+
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    auth = {"Authorization": f"Bearer {admin_key}"}
+
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"label": "moodle-site", "scopes": ["assess:mint", "assess:teacher"]},
+        headers=auth,
+    )
+    assert resp.status_code == 201, resp.text
+    assert sorted(resp.json()["scopes"]) == ["assess:mint", "assess:teacher"]
+
+    before = (await session.execute(text("SELECT count(*) FROM api_keys"))).scalar()
+    for mixed in (["admin", "assess:mint"], ["query", "assess:privacy-erase"]):
+        resp = await client.post(
+            "/api/v1/api-keys", json={"label": "mixed", "scopes": mixed}, headers=auth
+        )
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert body["error"]["code"] == "ERR-ADMIN-001"
+        assert "ck_api_keys_assess_scope_exclusive" in body["error"]["message"]
+
+    resp = await client.post(
+        "/admin/login", data={"token": admin_key}, follow_redirects=False
+    )
+    client.cookies.set(_COOKIE, admin_key)
+    resp = await client.post(
+        "/admin/keys/create",
+        data={"label": "ui-mixed", "scopes": ["admin", "assess:mint"]},
+    )
+    assert resp.status_code == 200
+    assert "flash-error" in resp.text and "Key created" not in resp.text
+    after = (await session.execute(text("SELECT count(*) FROM api_keys"))).scalar()
+    assert after == before, "a refused request must not create a key"
+
+
 async def test_ui_health_page(client, bootstrap_key):
     """GET /admin/ renders health dashboard with auto-refresh markup."""
     admin_key = await _login_cookie(client, bootstrap_key)

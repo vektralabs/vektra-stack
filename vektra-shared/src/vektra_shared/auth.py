@@ -71,6 +71,42 @@ class KeyStoreProvider(Protocol):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Scope vocabulary (REQ-031, ARCH-067). Mirrored by the database constraints
+# ck_api_keys_scopes and ck_api_keys_assess_scope_exclusive (migration 0009).
+# ---------------------------------------------------------------------------
+
+LEGACY_SCOPES: frozenset[str] = frozenset({"admin", "ingest", "query"})
+# Site-bound scopes of the Moodle discussion plugin. Never satisfied by admin
+# (require_exact_scope) and never combined with a legacy scope on one key.
+ASSESS_SCOPES: frozenset[str] = frozenset(
+    {"assess:mint", "assess:teacher", "assess:privacy-export", "assess:privacy-erase"}
+)
+ALL_SCOPES: frozenset[str] = LEGACY_SCOPES | ASSESS_SCOPES
+
+ASSESS_SCOPE_EXCLUSIVE_MESSAGE = (
+    "An API key holding an assess:* scope cannot also hold admin, ingest or query "
+    "(ck_api_keys_assess_scope_exclusive)."
+)
+
+
+def scope_set_error(scopes: list[str] | set[str]) -> str | None:
+    """Return why ``scopes`` cannot be stored on one key, or None if they can.
+
+    Same rules as the database constraints, checked before the insert so callers
+    answer 422 with a clear message instead of a 500 from an IntegrityError.
+    """
+    requested = set(scopes)
+    if not requested:
+        return "At least one scope is required."
+    invalid = requested - ALL_SCOPES
+    if invalid:
+        return f"Invalid scopes: {sorted(invalid)}"
+    if requested & ASSESS_SCOPES and requested & LEGACY_SCOPES:
+        return ASSESS_SCOPE_EXCLUSIVE_MESSAGE
+    return None
+
+
 def require_scope(
     required_scope: str | None,
 ) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
@@ -84,13 +120,40 @@ def require_scope(
     Pass None to require authentication without enforcing a specific scope.
 
     Admin scope is treated as a superscope: keys with "admin" scope pass
-    any scope check (ARCH-059).
+    any scope check (ARCH-059). Use ``require_exact_scope`` for scopes that
+    admin must NOT satisfy (the site-bound ``assess:*`` scopes).
 
     The dependency reads the key store from request.app.state.registry.
     Raises HTTP 401 (ERR-AUTH-001) for missing/invalid tokens.
     Raises HTTP 403 (ERR-AUTH-003) for tokens with insufficient scope.
     """
+    dependency = _scope_dependency(required_scope, admin_superscope=True)
+    dependency.__name__ = f"require_scope_{required_scope or 'any'}"
+    return dependency
 
+
+def require_exact_scope(
+    scope: str,
+) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
+    """Like ``require_scope`` but without the ARCH-059 admin superscope.
+
+    The key must hold ``scope`` itself; ``admin`` does not satisfy it, and no
+    other scope does either (``assess:teacher`` is not ``assess:mint``). This is
+    what makes "a leaked plugin key is not Vektra admin" and its converse hold
+    (ARCH-067, NFR-014). Same envelopes: ERR-AUTH-001 (401), ERR-AUTH-003 (403).
+    """
+    if not scope:
+        raise ValueError("require_exact_scope needs a non-empty scope")
+    dependency = _scope_dependency(scope, admin_superscope=False)
+    dependency.__name__ = f"require_exact_scope_{scope}"
+    return dependency
+
+
+def _scope_dependency(
+    required_scope: str | None,
+    *,
+    admin_superscope: bool,
+) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
     async def _dependency(
         request: Request,
         credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
@@ -138,9 +201,10 @@ def require_scope(
         #    (set early so denied requests are still attributable)
         request.state.key_id = info.key_id
 
-        # 5. Check scope (admin is a superscope per ARCH-059)
+        # 5. Check scope (admin is a superscope per ARCH-059, unless exact)
         if required_scope is not None and not (
-            info.has_scope(required_scope) or info.has_scope("admin")
+            info.has_scope(required_scope)
+            or (admin_superscope and info.has_scope("admin"))
         ):
             err = auth_insufficient_scope(required_scope)
             raise HTTPException(
@@ -169,6 +233,4 @@ def require_scope(
 
         return info
 
-    # Give the dependency a descriptive name for FastAPI's OpenAPI schema
-    _dependency.__name__ = f"require_scope_{required_scope or 'any'}"
     return _dependency

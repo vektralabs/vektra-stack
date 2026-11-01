@@ -93,7 +93,9 @@ lint: ## Run linters (ruff + mypy + import-linter)
 		vektra-ingest/src/vektra_ingest \
 		vektra-index/src/vektra_index \
 		vektra-analytics/src/vektra_analytics \
-		vektra-learn/src/vektra_learn
+		vektra-learn/src/vektra_learn \
+		vektra-assess/src/vektra_assess \
+		vektra-app/src/vektra_app
 	uv run lint-imports
 
 reindex: ## Create reindex job (skeleton): make reindex VER=2 [NS=default]

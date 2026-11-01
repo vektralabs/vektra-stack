@@ -224,8 +224,10 @@ async def _step_5_register_providers(
     # --- Event emitter ---
     from vektra_shared.config import WebhookConfig
     from vektra_shared.events import NoOpEventEmitter, WebhookEventEmitter
+    from vektra_shared.protocols import EventEmitter, QueryPipeline
 
     webhook_config = WebhookConfig()
+    event_emitter: EventEmitter
     if webhook_config.url:
         event_emitter = WebhookEventEmitter(config=webhook_config)
         log.info(
@@ -289,6 +291,7 @@ async def _step_5_register_providers(
     )
     renderer = TemplateRenderer(templates_dir=templates_dir)
 
+    pipeline: QueryPipeline
     if settings.query_pipeline == "advanced":
         from vektra_core.advanced_pipeline import AdvancedQueryPipeline
 

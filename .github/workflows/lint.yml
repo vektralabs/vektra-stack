@@ -38,7 +38,9 @@ jobs:
             vektra-ingest/src/vektra_ingest \
             vektra-index/src/vektra_index \
             vektra-analytics/src/vektra_analytics \
-            vektra-learn/src/vektra_learn
+            vektra-learn/src/vektra_learn \
+            vektra-assess/src/vektra_assess \
+            vektra-app/src/vektra_app
 
       - name: import-linter (boundary check)
         run: uv run lint-imports

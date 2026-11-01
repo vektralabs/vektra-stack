@@ -349,14 +349,14 @@ instantiates its own limiter instance for per-token limits.
       `create_app()` (the dormant per-key RPM stays dormant)
 
 ### 9. CI and docs
-- [ ] 9.1 Root `pyproject.toml` import-linter: contracts (a)-(c), (e) and `vektra_assess` added to
+- [x] 9.1 Root `pyproject.toml` import-linter: contracts (a)-(c), (e) and `vektra_assess` added to
       all existing `forbidden_modules`; AST test (d) and the contract-coverage test in
       `vektra-assess/tests/test_boundaries.py`; a canary test that a temporary module importing
       `vektra_core` from `vektra_assess.api` makes `lint-imports` fail (run in a tmp copy)
 - [x] 9.2 `.github/workflows/ci-unit.yml`: `assess` paths filter (`vektra-assess/**`,
       `vektra-shared/**`), `test-assess` job, add to `ci-gate` needs; `Makefile` `test` target adds
       `vektra-assess/tests/`; confirm `test_suite_execution_coverage.py` passes with the new suite
-- [ ] 9.3 `.github/workflows/lint.yml`: add `vektra-assess/src` (and `vektra-app/src`, missing
+- [x] 9.3 `.github/workflows/lint.yml`: add `vektra-assess/src` (and `vektra-app/src`, missing
       today) to the mypy path list
 - [ ] 9.4 Integration job: build image, run `CMD_TARGET=assess-worker` with generated test keys
       and a pg16 service, wait 15 s idle, read `VmRSS` from `/proc/1/status`; fail above 300 MB;
@@ -489,6 +489,10 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   startup step 12 (the registry is built there, not in `create_app`), enabled or not, so `/health/assess`
   answers `disabled` instead of "no health check registered"; `/health/{component}` requires an API key. Other suites that inspect `app.routes` may be blind
   the same way (not audited here).
+- **Section 9 notes (2026-11-01)**: contract (c) also lists `vektra_assess.errors` (a module on disk); the
+  "No component shall import the app entrypoint" contract gains `vektra_assess` as a source rather than a
+  forbidden module. `vektra-app/src` was never type-checked: adding it surfaced two real annotation gaps in
+  `main.py` (`event_emitter`, `pipeline` typed as the Protocols), fixed; mypy is clean on 102 files.
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
 - BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).

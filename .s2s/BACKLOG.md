@@ -1,6 +1,6 @@
 # Vektra Backlog
 
-**Updated**: 2026-07-12
+**Updated**: 2026-11-01
 **Format**: Single markdown file for tracking work items
 
 ---
@@ -21,6 +21,32 @@
 ---
 
 ## Planned
+
+### FEAT-028: enable course-material RAG for assessment discussions (guarded)
+
+**Status**: draft | **Priority**: low | **Created**: 2026-11-01
+**Origin**: coordinator decision (2026-11-01) at the end of planning for the assessment discussion chatbot: RAG stays OFF in v1.
+
+**Context**: REQ-077 ships a per-activity RAG field for discussions, but ARCH-072 / CONF-005 lock it OFF: the operator flag is OFF by default, and plan `20261101-154950-assess-teacher-ops` rejects a save with RAG ON (DB CHECK, field error, startup refusal of the flag). The discussion runner (`20261101-154950-assess-llm-runner`) holds no VectorStoreProvider reference, so the `post_retrieval` branch is unreachable. This item is the work to make it reachable safely.
+
+**Dormant-capability warning**: turning this on arms a path that has never run. NFR-015 requires that hidden material is excluded before ranking. Moodle WS visibility is relative to the caller (the service account), not the student. FEAT-026 keeps hidden chunks retrievable, and solution tagging is a denylist, so untagged chunks pass. Each of these fails OPEN if RAG is enabled carelessly.
+
+**Preconditions (ARCH-072, all required before a teacher may save RAG ON)**:
+1. Operator feature flag ON.
+2. Per-student module visibility is READABLE in the ARCH-070 capability matrix (OQ-031(1); the plan-4 spike result decides whether this is even possible).
+3. The canary suite passes on that site's active provider (pgvector and Qdrant) AND active index_version, re-run on every index_version activation.
+4. The target namespace is dedicated, every chunk carries a cmid binding, and it contains no FEAT-026 and no unbound chunks.
+
+**Proposed approach**: a separate retrieval function with a mandatory per-student cmid allowlist, visibility read uncached on every RAG turn (TTL 0), FEAT-026 and `raw_filters` forbidden, unbound chunks excluded; automatic disable (audited) when any precondition becomes false. Never silently run ON as OFF.
+
+**Acceptance criteria**:
+- [ ] With any precondition false, saving RAG ON is rejected with the reason; existing ON activities are switched OFF for new turns and the change is audited
+- [ ] Canary chunks bound to a hidden cmid never appear in the exact LLM request bytes (recording LLMProvider) or in QueryTrace, on pgvector and Qdrant
+- [ ] An index_version activation re-runs the canaries before RAG turns are served on it
+
+**Traceability**: REQ-077, NFR-015, ARCH-072, CONF-005, OQ-031, ADR-0026; plans 20261101-154950-assess-teacher-ops, 20261101-154950-assess-llm-runner, 20261101-154950-assess-moodle-ws
+
+---
 
 ### INFRA-009: the VM cannot build the image it deploys
 

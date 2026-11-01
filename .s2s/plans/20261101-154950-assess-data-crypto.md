@@ -492,5 +492,5 @@ session with savepoints.
   would need a symmetric API-held key (a documented exposure).
 - Hash columns are stored in the clear by design (integrity anchoring). The equality-oracle
   trade-off is recorded in Design Notes.
-- BUG-027 baseline result (from plan 20261101-154950-assess-foundations task 2.3): _pending_.
+- BUG-027 baseline result (from plan 20261101-154950-assess-foundations task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. Crypto tasks may start.
   Section 7 is N/A on PASS.

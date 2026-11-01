@@ -119,6 +119,15 @@ jobs:
               # first touches a bad wheel.
               "vektra_shared", "vektra_core", "vektra_index", "vektra_ingest",
               "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app",
+              # Assess (ARCH-078): cryptography is a hard dependency with no
+              # weaker fallback (ADR-0031 amended), so its native code must load
+              # on the production CPU. defusedxml/html5lib/aiosmtplib are pure
+              # Python but listed so a future native rewrite is caught here.
+              "vektra_assess",
+              "cryptography.hazmat.primitives.ciphers.aead",
+              "cryptography.hazmat.primitives.asymmetric.x25519",
+              "cryptography.hazmat.primitives.kdf.hkdf",
+              "defusedxml.ElementTree", "html5lib", "aiosmtplib",
           ):
               importlib.import_module(name)
               print("imported", name, flush=True)
@@ -127,6 +136,24 @@ jobs:
           # without a database behind it.
           import vektra_app.main
           print("imported vektra_app.main", flush=True)
+
+          # Import alone does not run the OpenSSL code paths that would pick
+          # instructions this CPU lacks: execute one AES-256-GCM round trip and
+          # one X25519 exchange (plus HKDF), as the assess crypto module will.
+          import os
+          from cryptography.hazmat.primitives import hashes
+          from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+          from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+          key, nonce = AESGCM.generate_key(bit_length=256), os.urandom(12)
+          ct = AESGCM(key).encrypt(nonce, b"bug-027 probe", b"aad")
+          assert AESGCM(key).decrypt(nonce, ct, b"aad") == b"bug-027 probe"
+          a, b = X25519PrivateKey.generate(), X25519PrivateKey.generate()
+          shared = a.exchange(b.public_key())
+          assert shared == b.exchange(a.public_key()) and len(shared) == 32
+          okm = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"probe").derive(shared)
+          assert len(okm) == 32
+          print("crypto ok: AES-256-GCM round trip, X25519 exchange, HKDF", flush=True)
           '
 
       - name: Start stack and measure startup (NFR-004)

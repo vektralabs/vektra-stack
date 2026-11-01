@@ -212,14 +212,14 @@ instantiates its own limiter instance for per-token limits.
       imports every stub sub-package
 
 ### 2. Week-1 BUG-027 baseline (ARCH-078) — run before plan 2's crypto tasks
-- [ ] 2.1 Add `vektra_assess`, `vektra_app.assess_worker`, `cryptography.hazmat.primitives.ciphers.aead`,
+- [x] 2.1 Add `vektra_assess`, `vektra_app.assess_worker`, `cryptography.hazmat.primitives.ciphers.aead`,
       `cryptography.hazmat.primitives.asymmetric.x25519`, `cryptography.hazmat.primitives.kdf.hkdf`,
       `defusedxml.ElementTree`, `html5lib`, `aiosmtplib` to the hand-written import list of the
       "Image imports on a pre-x86-64-v2 CPU (BUG-027)" step in `.github/workflows/integration.yml`
-- [ ] 2.2 Extend that step to EXECUTE one AES-256-GCM encrypt/decrypt round trip and one X25519
+- [x] 2.2 Extend that step to EXECUTE one AES-256-GCM encrypt/decrypt round trip and one X25519
       exchange under `qemu64,+sse3` (import alone does not exercise the OpenSSL code path that
       would use missing instructions); keep the existing numpy control assertion first
-- [ ] 2.3 Record the result in Notes of this plan and of 20261101-154950-assess-data-crypto:
+- [x] 2.3 Record the result in Notes of this plan and of 20261101-154950-assess-data-crypto:
       PASS → proceed; FAIL → BLOCKER: fix the image so the wheel passes (no pgcrypto fallback
       exists, ADR-0031 amended 2026-11-01). Add a startup self-test (one AES-GCM + one X25519
       round trip) to the assess API and worker; failure refuses startup (fail closed)
@@ -286,7 +286,8 @@ instantiates its own limiter instance for per-token limits.
       runs `enforce_key_matrix("api")` forbidden half. When enabled it also: runs the required
       half, builds the assess engine from `VEKTRA_ASSESS_API_DATABASE_URL`, asserts `SELECT
       current_user, rolsuper` returns `vektra_assess_api`/false, and asserts the DSN user differs
-      from `VEKTRA_DATABASE_URL`'s; registers the engine on `app.state.assess_engine`
+      from `VEKTRA_DATABASE_URL`'s; registers the engine on `app.state.assess_engine`; runs
+      `run_crypto_selftest()` before serving (task 2.3, fail closed)
 - [ ] 6.1b Dormant by default (added 2026-11-01; second line of defence behind the wave-gated merges):
       `create_app()` includes the assess router ONLY when `VEKTRA_ASSESS_ENABLED=true`; with the
       default `false`, no route under `/api/v1/assess` is mounted, `/api/v1/assess/ui` is not
@@ -299,7 +300,8 @@ instantiates its own limiter instance for per-token limits.
       role `vektra_assess_worker`, import `LitellmProvider` (to measure its cost now), assert
       none of `sentence_transformers`, `torch`, `qdrant_client`, `vektra_index`, `vektra_ingest`,
       `presidio_analyzer`, `spacy` are in `sys.modules`, write a heartbeat FILE every 10 s,
-      handle SIGTERM within 30 s; exits non-zero on any failed check
+      handle SIGTERM within 30 s; runs `run_crypto_selftest()`; exits non-zero on any failed check;
+      add `vektra_app.assess_worker` to the BUG-027 import list (task 2.1)
 - [ ] 6.3 `vektra_app/assess_parser.py` stub: `enforce_key_matrix("parser")` (no secrets, no
       DSN), bind the unix socket at `VEKTRA_ASSESS_PARSER_SOCKET`, answer a framed `ping`, reply
       `not_implemented` to everything else (plan 20261101-154950-assess-parser replaces it)
@@ -458,4 +460,4 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   parser) are design defaults; NFR-020's K is not fixed by this plan.
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
-- BUG-027 result (task 2.3): _pending_.
+- BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).

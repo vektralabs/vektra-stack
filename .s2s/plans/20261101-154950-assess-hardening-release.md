@@ -44,7 +44,7 @@
 
 ### Dependencies
 - Backend: 20261101-154950-assess-foundations, 20261101-154950-assess-data-crypto, 20261101-154950-assess-job-loop, 20261101-154950-assess-moodle-ws, 20261101-154950-assess-parser, 20261101-154950-assess-context, 20261101-154950-assess-llm-runner, 20261101-154950-assess-session-lifecycle, 20261101-154950-assess-discussion-ui, 20261101-154950-assess-transcript-delivery, 20261101-154950-assess-teacher-ops, 20261101-154950-assess-privacy-retention
-- Plugin (vektra-moodle): 20261101-154950-discuss-foundation, 20261101-154950-discuss-student, 20261101-154950-discuss-teacher-privacy
+- Plugin (vektralabs/vektra-moodle-discuss): 20261101-154950-discuss-foundation, 20261101-154950-discuss-student, 20261101-154950-discuss-teacher-privacy
 
 ## Overview
 
@@ -195,6 +195,11 @@ every release, with a manual exploratory session on top.
   (OQ-027); RAG for discussions confirmed OFF.
 
 ## Notes
+
+- **OQ-032 resolved 2026-11-01 (coordinator):** the assess bot uses the normal multi-provider LLM
+  config; the choice is the provider per deployment. Sizing work below applies only when the
+  provider is a local model that cannot sustain ~200 parallel requests: cap K/admission or size
+  hardware. A remote provider carries the load, but data egress is gated by the DPO (OQ-020).
 
 - OQ-032 is the largest open risk: the co-located on-prem LLM overcommits 8 GB / 4 CPU; the
   campaign may conclude that the pilot needs an off-VM LLM or a larger VM.

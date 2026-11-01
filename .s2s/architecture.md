@@ -2311,8 +2311,12 @@ VEKTRA owns: the session state machine; START and IN-SESSION gates; attempt sele
 (BR-012); the WS client and setup check; the snapshot and context assembly; the LLM path with
 the post-check and safeguards; timer, outage and sweeper; transcript rendering and hash
 verification; outbox and SMTP delivery; audit; purge.
-The new local_ plugin (local_vektradiscuss, which depends on block_vektra's client) does only
-the following:
+The new local_ plugin (local_vektradiscuss) lives in its own public repository,
+vektralabs/vektra-moodle-discuss (GPL-3.0), not in vektra-moodle, and is installed and released
+independently of block_vektra. It has its own HTTP client (no code dependency on
+block_vektra's vektra_client, whose helpers are private and whose paths are hard-coded); it
+declares block_vektra as a Moodle dependency only to reuse its apiurl/publicurl settings.
+*(Amended 2026-11-01, coordinator decision.)* It does only the following:
 - injects the button and pre-session screen through page hooks, rendered from a Vektra state
   endpoint (advisory; gates are re-evaluated at Start);
 - requests tokens server-side (sesskey, require_login, login-as check);
@@ -2825,6 +2829,7 @@ Round-2 content stands. Amendments:
 - The HTML sanitizer in the sidecar is html5lib (pure Python) by preference; lxml only if it
   passes the baseline check.
 - httpx with follow_redirects=False pinned by policy.
+- `cryptography` is a hard dependency with no fallback (ARCH-079 amendment, 2026-11-01).
 - The dependency rule changes from "pure Python" to "MUST pass the BUG-027 qemu x86-64
   baseline CI check in week 1".
 - The postgres service runs with log_statement=none and no parameter logging (defence in
@@ -2869,9 +2874,11 @@ CONF-007. Turns need the decrypted snapshot. Option A (the API holds the snapsho
 - The worker uses the KEK copy for Part B, transcript generation and purge. Purge deletes
   kek_wrapped (crypto-shredding, which also covers ciphertext in backups and WAL), then the
   rows, verified by row count.
-- Fallback: if the cryptography wheels fail the BUG-027 baseline check, use pgcrypto with
-  log_statement=none and no parameter logging, verified by the setup check. Falling back to B
-  is not allowed.
+- ~~Fallback: if the cryptography wheels fail the BUG-027 baseline check, use pgcrypto~~
+  Amended 2026-11-01 (coordinator decision): `cryptography` is a HARD dependency. The image is
+  ours and built for the on-prem target, so the wheel ships in it. There is NO pgcrypto path
+  and no weaker crypto path of any kind. If AES-GCM or X25519 is unavailable at startup, the
+  assess API and worker refuse to start (fail closed). Falling back to B is not allowed.
 
 **Rationale**:
 
@@ -2923,9 +2930,13 @@ flowchart LR
 - Privacy API provider
 
 **Requires**:
-- Assess REST API (assess:mint, assess:teacher, assess:privacy-export scopes)
+- Assess REST API (assess:mint, assess:teacher, assess:privacy-export, assess:privacy-erase
+  scopes; one narrow, non-inheriting key per scope, never the block_vektra admin key)
 
-**Dependencies**: block_vektra vektra_client; Moodle 4.3 / 5.2 core APIs
+**Dependencies**: own HTTP client (no code dependency on block_vektra's client); block_vektra as a
+declared Moodle dependency for the apiurl/publicurl settings only; Moodle 4.3 / 5.2 core APIs
+
+**Repository**: vektralabs/vektra-moodle-discuss (amended 2026-11-01)
 
 **Technology**: PHP, Moodle plugin APIs (hooks 4.3+ or legacy callbacks), Mustache
 
@@ -3108,6 +3119,11 @@ Ratified endpoint set, amended:
   non-live session.
 - Teacher endpoints re-verify the capability through fresh worker-written gate_inputs, or fail
   closed.
+- Amended 2026-11-01 (coordinator decision): added GET activity config (settings-form
+  re-display; secrets returned only as set/unset, OQ-034), GET setup-check result, and the
+  per-activity Privacy API endpoints (subject listing and erasure) required by the plugin's
+  get_users_in_context / delete_data_for_all_users_in_context. Scope assess:privacy-erase is
+  held by the plugin (COMP-001).
 
 | Method | Path | Description |
 |---|---|---|
@@ -3121,6 +3137,7 @@ Ratified endpoint set, amended:
 | POST | `/api/v1/assess/sessions/{sid}/finish` | Fine -> CLOSED(finished) |
 | POST | `/api/v1/assess/sessions/{sid}/turns/{tid}/flag` | REQ-103 marker (ACTIVE/OUTAGE only) |
 | GET | `/api/v1/assess/transcripts/{tid}` | Download (owner or grader); attachment + CSP sandbox + nosniff |
+| GET | `/api/v1/assess/activities/{cmid}/config` | Teacher config for the settings form (assess:teacher); solution and pasted rubric returned only as set/unset (write-only, OQ-034) |
 | PUT | `/api/v1/assess/activities/{cmid}/config` | Teacher config (assess:teacher; BR-013; audited) |
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | Teacher list (graders of that activity) |
 | POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | Grant session #N+1 (mandatory reason) |
@@ -3128,7 +3145,11 @@ Ratified endpoint set, amended:
 | PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | REQ-078 extra time (before start) |
 | POST | `/api/v1/assess/transcripts/{tid}/resend` | Resend to re-resolved recipients (no recipient parameter) |
 | GET | `/api/v1/assess/privacy/subjects/{userid}/transcripts` | Privacy export for one subject (assess:privacy-export, site-bound, rate-limited) |
-| POST | `/api/v1/assess/sites/{site}/setup-check` | Operator or site admin: trigger the REQ-079 check (result only) |
+| POST | `/api/v1/assess/sites/{site}/setup-check` | Operator or site admin: trigger the REQ-079 check (enqueues; returns report_id) |
+| GET | `/api/v1/assess/sites/{site}/setup-check/{report_id}` | REQ-079 result: per-item OK/MISSING by name, checked_at, Moodle release (no secrets, no response bodies) |
+| GET | `/api/v1/assess/privacy/activities/{cmid}/subjects` | Privacy API: list userids with assess data for one activity (assess:privacy-export, site-bound) |
+| DELETE | `/api/v1/assess/privacy/subjects/{userid}` | Privacy API erasure for one subject (assess:privacy-erase, site-bound; OQ-033) |
+| DELETE | `/api/v1/assess/privacy/activities/{cmid}/subjects` | Privacy API per-activity erasure, optionally limited to a userid list (assess:privacy-erase, site-bound; OQ-033) |
 | GET | `/api/v1/assess/ui` | Iframe page (strict CSP, frame-ancestors per site) |
 | GET | `/health/assess` | Worker heartbeat age, queue ages (content-free) |
 
@@ -3168,7 +3189,12 @@ Amended:
 - **OQ-029**: REQ-075 'exactly once' vs the SMTP crash window — A crash after the relay's 250 and before the SENT commit yields one duplicate. The proposed reading is 'exactly one SENT record per recipient; at most one known, audited duplicate on crash; deterministic Message-ID for dedupe'. This needs product-owner or QA confirmation that it satisfies the REQ-075 acceptance criterion ('delivered exactly once on a test mail sink'). *Needs human/ops/spike input; design default recorded.*
 - ~~**OQ-030**: Pre-extraction at the pre-session screen vs BR-015 rollback deletion and data minimisation~~ — resolved: TL proposes starting file extraction when the student opens the pre-session screen (cache keyed by Moodle contenthash, encrypted, short TTL, deleted on rollback or expiry), so that 20-40 concurrent Starts fit T = 60 s and NFR-018. Open: is the cache snapshot data under BR-015? Does processing before Start conflict with REQ-068 ('dismissing consumes nothing') or with the privacy notice (REQ-089)? This needs a spec and DPO-facing ruling.
 - **OQ-031**: OQ-025 scope extension: per-student module availability and independent login-as cross-check — Two items to add to the WS spike: (1) Can the service account obtain per-STUDENT module visibility, including availability conditions and group restrictions? Required for any RAG ON (NFR-015); unreadable means RAG stays off. (2) Can Vektra independently confirm that no login-as is active for the sub (e.g. via user_loggedinas log events), as defence in depth for REQ-084? If not, trust-the-plugin is documented as an accepted residual risk. *Needs human/ops/spike input; design default recorded.*
-- **OQ-032**: Hardware envelope: co-located on-prem LLM overcommits the 8 GB / 4 CPU VM — - Memory limits: postgres 0.5-0.75G + API 3G + assess-worker about 0.5G + parser 0.5-0.77G + Ollama 4G = about 8.5-8.8 GB, plus the host OS. That is over 8 GB. - CPU: CPU-only inference on 4 cores at K = 10 is not credible against NFR-018 (all four participants flagged this). Options: an off-VM or dedicated-hardware LLM; a larger VM; trimming the API limit (the assess path loads no embedding model); a smaller K. This is an operator and product decision that feeds OQ-026 and NFR-020. It does not change the architecture. *Needs human/ops/spike input; design default recorded.*
+- ~~**OQ-032**: Hardware envelope~~ — resolved 2026-11-01 (coordinator): the assess bot uses the
+  normal multi-provider LLM configuration (litellm via LLMProvider); the choice is which provider
+  per deployment. The hardware constraint is real only for a local model that cannot sustain the
+  expected parallelism (~200 concurrent): then cap concurrency (K / admission limit, NFR-020) or
+  size the hardware. A remote provider carries the load, but data egress depends on the DPO
+  (OQ-020). Does not block design or implementation. Original text: Hardware envelope: co-located on-prem LLM overcommits the 8 GB / 4 CPU VM — - Memory limits: postgres 0.5-0.75G + API 3G + assess-worker about 0.5G + parser 0.5-0.77G + Ollama 4G = about 8.5-8.8 GB, plus the host OS. That is over 8 GB. - CPU: CPU-only inference on 4 cores at K = 10 is not credible against NFR-018 (all four participants flagged this). Options: an off-VM or dedicated-hardware LLM; a larger VM; trimming the API limit (the assess path loads no embedding model); a smaller K. This is an operator and product decision that feeds OQ-026 and NFR-020. It does not change the architecture. *Needs human/ops/spike input; design default recorded.*
 - **OQ-033**: Privacy erasure (Moodle delete_data_for_user) vs exam-evidence retention — The Moodle Privacy API expects deletion as well as export, and REQ-093 covers export only. Design default: build the site-bound erasure endpoint (scope assess:privacy-erase), which crypto-shreds and deletes the subject's sessions, snapshots, turns and transcripts, verified by row count. The DPO decides whether transcripts are retained as exam evidence under a legal-basis exemption (OQ-020). Whatever the outcome, an unhandled delete request must never pass silently. *Needs human/ops/spike input; design default recorded.*
 - **OQ-034**: Teacher config re-display: may the settings form show the stored solution text back? — Design default: write-only. The API seals the solution text and pasted rubric to the worker's public key, and the form shows "impostata / non impostata, sostituisci?". This leaves API compromises unable to read any course's solutions. If product requires re-display, the API must hold a symmetric teacher-config key: a documented exposure, about 1 day of change. *Needs human/ops/spike input; design default recorded.*
 

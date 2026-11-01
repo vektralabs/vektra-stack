@@ -78,9 +78,10 @@ is not taken as evidence.
 
 ## Design Notes
 
-**Crypto path.** The default is app-side AES-256-GCM from `cryptography`, as long as plan
-20261101-154950-assess-foundations task 2.3 recorded a BUG-027 PASS. The pgcrypto fallback (task 7.x)
-is implemented ONLY on a FAIL. Falling back to "turns in the worker" (option B) is not allowed.
+**Crypto path.** App-side AES-256-GCM and X25519 from `cryptography`, which is a HARD dependency
+*(Decision 2026-11-01, coordinator)*: no pgcrypto path and no weaker crypto path of any kind (ADR-0031 amended).
+If the primitives are unavailable, the assess processes refuse to start. Falling back to
+"turns in the worker" (option B) is not allowed.
 
 **Envelope format.** Every ciphertext column stores `version(1) | kid_len(1) | kid | nonce(12) |
 ct+tag`. The AAD is always `b"vektra-assess/v1/" + purpose + b"/" + row binding`:
@@ -356,14 +357,9 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
       forced mutation (trigger disabled) is detected by `hashing` re-verification (BR-015 "forced
       post-commit mutation is detected")
 
-### 7. Conditional: pgcrypto fallback (ONLY if the BUG-027 baseline FAILED)
-- [ ] 7.1 Implement `crypto/backend_pgcrypto.py` with the same public interface (DEK wrapping via
-      `pgp_sym_encrypt_bytea` with the key as a bind parameter, never interpolated); sealing still
-      requires an asymmetric primitive — record that the fallback cannot provide X25519 sealing and
-      escalate to an ADR amendment before any other work (the design's fallback covers symmetric
-      use only)
-- [ ] 7.2 Setup-check item asserting `log_statement=none` and `log_parameter_max_length=0`; skip
-      this whole section and mark it N/A in Notes if the baseline PASSED
+### 7. ~~Conditional: pgcrypto fallback~~ — REMOVED
+- Removed 2026-11-01 (coordinator decision, ADR-0031 amended): `cryptography` is a hard
+  dependency; no pgcrypto or weaker path. Numbering kept so cross-references stay valid.
 
 ### 8. Wiring, docs, CI
 - [ ] 8.1 `vektra_assess/health.py` (from plan 20261101-154950-assess-foundations): read
@@ -485,9 +481,8 @@ session with savepoints.
   `vektra_shared.audit.log_event` swallows write failures, the table is not append-only, and
   `key_id` is not meaningful for worker events. A dedicated append-only `assess_audit_events`,
   written in-transaction, is used instead (brief: no inherited fail-open defaults).
-- **Risk: pgcrypto fallback is incomplete**: ARCH-079's fallback covers symmetric encryption
-  only. X25519 sealing of hand-offs and teacher config has no pgcrypto equivalent. A BUG-027 FAIL
-  therefore needs an ADR amendment, not only section 7.
+- **Resolved 2026-11-01: pgcrypto fallback dropped.** The incompleteness flagged here (no X25519
+  equivalent) was resolved by making `cryptography` a hard dependency (ADR-0031 amended).
 - **Risk: lost KEK** means every snapshot is lost (ARCH-079). The restore drill in 8.3 must be
   performed before the pilot, not just documented.
 - **OQ-020 / OQ-033** (DPO, erasure vs evidence retention): the shredding helpers support both

@@ -1,6 +1,6 @@
 # ADR-0028: Assess trust domains and deployment topology: 'assess' Compose profile, worker as sole WS/SMTP holder with no listener, network-less parser sidecar, Postgres-only API to worker channel (addendum to ADR-0004)
 
-**Status**: accepted
+**Status**: accepted (amended 2026-11-01: Moodle-side deployment unit)
 **Date**: 2026-11-01
 **Context**: design session `20261101-143802-design-assessment-discussion-chatbot` (assessment discussion chatbot); covers ARCH-066, ARCH-075, INT-002
 
@@ -83,4 +83,24 @@ Resolved 4/4.
 - (−) about 1-1.3 GB of added limits; co-locating Ollama overcommits 8 GB (new OQ)
 
 See INT-002 in architecture.md Appendix B.
+
+## Amendment (2026-11-01): Moodle-side deployment unit
+
+Coordinator decision, recorded after the planning phase.
+
+- The Moodle side of the feature is the local plugin `local_vektradiscuss`, kept in its own public
+  repository **vektralabs/vektra-moodle-discuss** (GPL-3.0, branches `main` + `develop`). It is
+  NOT added to vektra-moodle, whose repository root is the `block_vektra` plugin and whose CI,
+  release zip and git-clone deployments assume a single plugin.
+- Deployment topology therefore has three independently versioned units: the Vektra image
+  (API + `assess` profile services, this ADR), `block_vektra` (widget, unchanged), and
+  `local_vektradiscuss`. The discuss plugin is installed under `local/vektradiscuss` and released
+  from its own repository. It has its own HTTP client and declares `block_vektra` as a Moodle
+  dependency only to reuse the `apiurl`/`publicurl` connection settings.
+- The plugin is thin and non-authoritative (ARCH-065). It holds only narrow, non-inheriting
+  assess keys (`assess:mint`, `assess:teacher`, `assess:privacy-export`, `assess:privacy-erase`),
+  never the block_vektra admin key, and talks only to the INT-001 endpoints.
+- Compatibility between the plugin and Vektra is enforced at mint time by the minimum
+  `plugin_version` check (ARCH-067), not by co-releasing.
+- Consistent with ADR-0002 (repo split criteria): PHP stack, Moodle lifecycle, independent release.
 

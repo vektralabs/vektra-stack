@@ -151,7 +151,7 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
 
 ### Config
 - [ ] `teacher/validation.py`: BR-013 + REQ-077 rules as pure functions over (request, gate_inputs facts, privacy status, setup-check status); one test per boundary (20,000/20,001; cap 4/5/120/121; total 240/241; +100/+101 confirm; empty pasted rubric; end date ≤ opening)
-- [ ] `PUT /api/v1/assess/activities/{cmid}/config`: editor check, validation, seal secret fields, versioned insert, audit old/new (flags/values; secret fields as `replaced|cleared` only); `GET` returns the computed opening condition, end date, review-options warning, `N sessioni attive`, `impostata/non impostata`
+- [ ] `PUT /api/v1/assess/activities/{cmid}/config`: editor check, validation, seal secret fields, versioned insert, audit old/new (flags/values; secret fields as `replaced|cleared` only); `GET` (ratified in INT-001 on 2026-11-01) returns the computed opening condition, end date, review-options warning, `N sessioni attive`, `impostata/non impostata`
 - [ ] Wire `rag_enabled` rejection and the free-text recipient rejection with their field codes
 - [ ] Worker side: snapshot capture (plan 6) opens the sealed blobs for the session's `config_version`; add a test that the API process cannot `SELECT` `_sealed` (permission denied asserted)
 

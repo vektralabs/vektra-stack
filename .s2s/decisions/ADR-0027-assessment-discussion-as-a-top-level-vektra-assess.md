@@ -19,8 +19,12 @@ VEKTRA owns: the session state machine; START and IN-SESSION gates; attempt sele
 (BR-012); the WS client and setup check; the snapshot and context assembly; the LLM path with
 the post-check and safeguards; timer, outage and sweeper; transcript rendering and hash
 verification; outbox and SMTP delivery; audit; purge.
-The new local_ plugin (local_vektradiscuss, which depends on block_vektra's client) does only
-the following:
+The new local_ plugin (local_vektradiscuss) lives in its own public repository,
+vektralabs/vektra-moodle-discuss (GPL-3.0), not in vektra-moodle, and is installed and released
+independently of block_vektra. It has its own HTTP client (no code dependency on
+block_vektra's vektra_client, whose helpers are private and whose paths are hard-coded); it
+declares block_vektra as a Moodle dependency only to reuse its apiurl/publicurl settings.
+*(Amended 2026-11-01, coordinator decision.)* It does only the following:
 - injects the button and pre-session screen through page hooks, rendered from a Vektra state
   endpoint (advisory; gates are re-evaluated at Start);
 - requests tokens server-side (sesskey, require_login, login-as check);

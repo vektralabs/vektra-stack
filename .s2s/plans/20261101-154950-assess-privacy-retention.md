@@ -24,7 +24,7 @@
 - ARCH-071: Dedicated encrypted assess stores; stable subject key; key backup @.s2s/architecture.md
 - ARCH-077: Assess data model and data flow (Flow 5 purge, erasure records) @.s2s/architecture.md
 - ARCH-079: Envelope encryption; purge = crypto-shredding then row deletion @.s2s/architecture.md
-- INT-001: DELETE /privacy/subjects/{userid}, GET /privacy/subjects/{userid}/transcripts, GET /health/assess @.s2s/architecture.md
+- INT-001: DELETE /privacy/subjects/{userid}, GET /privacy/subjects/{userid}/transcripts, GET /privacy/activities/{cmid}/subjects, DELETE /privacy/activities/{cmid}/subjects (added 2026-11-01), GET /health/assess @.s2s/architecture.md
 - COMP-002: /health/assess as readiness only @.s2s/architecture.md
 
 ### Decisions
@@ -138,6 +138,8 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [ ] Register the daily purge tick with plan 3's tick framework (advisory lock, separate pool, hard timeout); include done-job and expired-token cleanup
 - [ ] Add the 410 branch to `GET /transcripts/{tid}` and to the state payload's transcript links ("Trascrizione non più disponibile (periodo di conservazione scaduto)")
 - [ ] `vektra_assess/privacy/erasure.py` + `DELETE /privacy/subjects/{userid}`: live-session close, scoped purge, recipient/extra-time cleanup, mode switch, idempotence, audit
+- [ ] `GET /privacy/activities/{cmid}/subjects` (assess:privacy-export, site-bound, cmid re-resolved against the site binding): userids with any assess row for that activity; backs the plugin's `get_users_in_context` (added 2026-11-01, coordinator decision 3)
+- [ ] `DELETE /privacy/activities/{cmid}/subjects` (assess:privacy-erase, optional `userids` body): per-activity erasure reusing `erasure.py` scoped to (site, cmid[, userids]); backs `delete_data_for_all_users_in_context` / `delete_data_for_users`; same idempotence, mode switch and row-count verification; cross-activity and cross-site rows untouched (added 2026-11-01)
 - [ ] Startup: `VEKTRA_ASSESS_ERASURE_MODE` must be set explicitly outside development (fail closed: no implicit choice of the DPO's decision); warn when `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` is unset
 
 ### Export
@@ -183,6 +185,7 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [ ] Content older than RETENTION_DAYS → content row count 0 after purge, only tombstones and audit metadata remain; RETRYING deliveries ABANDONED, audited, graders notified (REQ-089, REQ-080)
 - [ ] After purge the student link returns 410 with the expiry message and the content is gone (row count 0) (REQ-088)
 - [ ] Erasure removes all the subject's content (row count 0 per table), leaves other subjects untouched, is idempotent, and never returns success without having erased or recorded a `retained` outcome (OQ-033)
+- [ ] Per-activity listing returns exactly the subjects with rows for that cmid; per-activity erasure leaves row counts of other activities and other sites unchanged (count-verified)
 - [ ] Export for an unenrolled subject returns #1..#N hash-equal to the in-course copy; cross-user returns 0 foreign records; after purge 0 transcripts (REQ-093)
 - [ ] An operator (admin) credential reading content gets 403; a canary grep of logs, mail logs and metrics returns 0; resend/test-send accept no recipient (REQ-080)
 - [ ] `/health/assess` reports readiness from worker-written rows and returns 503 with the worker stopped while `/health` stays 200 (COMP-002)

@@ -56,9 +56,10 @@ mechanical from the first commit, not intentions written in an ADR:
 - shallow `/health` is not tied to the worker.
 
 It also runs the BUG-027 qemu baseline against the new native dependencies (`cryptography`)
-in week 1, because ARCH-079's choice between app-side AES-GCM and the pgcrypto fallback depends
-on that result, and plan 20261101-154950-assess-data-crypto cannot start its crypto module
-without it.
+in week 1. *(Decision 2026-11-01, coordinator)* `cryptography` is a HARD dependency with no pgcrypto or weaker
+fallback (ARCH-079 / ADR-0031 amended): a FAIL is a blocker to fix in the image (wheel/build),
+not a branch to another crypto path. Plan 20261101-154950-assess-data-crypto cannot start its
+crypto module without a PASS.
 
 Several items here are guards around capabilities that are dormant today. Examples are an API
 container that happens to hold a WS key, an `admin` key passing an `assess:mint` check, or a
@@ -218,7 +219,9 @@ instantiates its own limiter instance for per-token limits.
       exchange under `qemu64,+sse3` (import alone does not exercise the OpenSSL code path that
       would use missing instructions); keep the existing numpy control assertion first
 - [ ] 2.3 Record the result in Notes of this plan and of 20261101-154950-assess-data-crypto:
-      PASS → app-side AES-GCM; FAIL → plan 2 activates its pgcrypto fallback task
+      PASS → proceed; FAIL → BLOCKER: fix the image so the wheel passes (no pgcrypto fallback
+      exists, ADR-0031 amended 2026-11-01). Add a startup self-test (one AES-GCM + one X25519
+      round trip) to the assess API and worker; failure refuses startup (fail closed)
 
 ### 3. Shared JWT helpers and learn refactor
 - [ ] 3.1 Add `pyjwt` to `vektra-shared/pyproject.toml`; create `vektra_shared/tokens.py` with

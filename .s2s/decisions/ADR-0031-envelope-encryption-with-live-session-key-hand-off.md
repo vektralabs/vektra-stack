@@ -1,6 +1,6 @@
 # ADR-0031: Envelope encryption with live-session key hand-off and crypto-shredding for assess data
 
-**Status**: accepted
+**Status**: accepted (amended 2026-11-01: cryptography hard dependency, no pgcrypto fallback)
 **Date**: 2026-11-01
 **Context**: design session `20261101-143802-design-assessment-discussion-chatbot` (assessment discussion chatbot); covers ARCH-079, ARCH-071
 
@@ -36,9 +36,11 @@ CONF-007. Turns need the decrypted snapshot. Option A (the API holds the snapsho
 - The worker uses the KEK copy for Part B, transcript generation and purge. Purge deletes
   kek_wrapped (crypto-shredding, which also covers ciphertext in backups and WAL), then the
   rows, verified by row count.
-- Fallback: if the cryptography wheels fail the BUG-027 baseline check, use pgcrypto with
-  log_statement=none and no parameter logging, verified by the setup check. Falling back to B
-  is not allowed.
+- ~~Fallback: if the cryptography wheels fail the BUG-027 baseline check, use pgcrypto~~
+  Amended 2026-11-01 (coordinator decision): `cryptography` is a HARD dependency. The image is
+  ours and built for the on-prem target, so the wheel ships in it. There is NO pgcrypto path
+  and no weaker crypto path of any kind. If AES-GCM or X25519 is unavailable at startup, the
+  assess API and worker refuse to start (fail closed). Falling back to B is not allowed.
 
 ### Rationale
 

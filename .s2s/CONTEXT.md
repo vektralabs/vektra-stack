@@ -39,6 +39,7 @@ AI / ML platform - Modular RAG infrastructure with a first vertical deployment i
 - **Monorepo (vektra-stack)**: all Python components sharing types, config, and deployment target
 - **Separate repos**: only for components with incompatible stack or lifecycle
   - vektra-moodle: PHP plugin deployed into Moodle, tied to Moodle versions
+  - vektra-moodle-discuss: Moodle local plugin `local_vektradiscuss` for the assessment discussion chatbot (separate from vektra-moodle: independent release; ADR-0028 amendment)
   - vektra-sdk-py / vektra-sdk-js: published to PyPI/npm, independent versioning (Phase 3)
 
 Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
@@ -72,6 +73,7 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 | Component | Role | Reason | Phase |
 |-----------|------|--------|-------|
 | vektra-moodle | Moodle LMS adapter (PHP plugin) | PHP, Moodle Plugin Directory, different lifecycle | 2 (not started) |
+| vektra-moodle-discuss | Moodle local plugin for the assessment discussion chatbot (thin, non-authoritative) | PHP, independent release cadence from block_vektra | feature addendum (planned) |
 | vektra-sdk-py | Python SDK | Published to PyPI, independent versioning | 3 |
 | vektra-sdk-js | JavaScript/TypeScript SDK | Published to npm, independent versioning | 3 |
 
@@ -109,7 +111,7 @@ See [requirements.md](requirements.md) for the complete Software Requirements Sp
 - 13 non-functional requirements (8 HARD, 5 TARGET)
 - 14 explicit exclusions (7 resolved in Phase 2, 7 remaining for Phase 3+)
 - 7 open questions (4 resolved)
-- **Feature addendum (2026-11-01) — assessment discussion chatbot** (vektra-learn + new vektra-moodle local plugin): REQ-067..REQ-103, BR-006..BR-016, NFR-014..NFR-023, EX-015..EX-023, OQ-020..OQ-027 (4 resolved by product owner; OQ-020 DPO, OQ-025 Moodle WS spike, OQ-026 reference model/hardware, OQ-027 eval-suite owner open). Session: `.s2s/sessions/20261101-091559-specs-assessment-discussion-chatbot.yaml`. Design (2026-11-01): architecture.md Appendix B (ARCH-065..079, COMP-001..008, INT-001..003, OQ-028..034) + ADR-0027..0032; session `20261101-143802-design-assessment-discussion-chatbot`. Plan (2026-11-01): 13 backend plans `.s2s/plans/20261101-154950-assess-*.md` + 3 plugin plans in `vektra-moodle/.s2s/plans/20261101-154950-discuss-*.md`. Start with `assess-moodle-ws` (OQ-025 spike, priority 1) in parallel with `assess-foundations`.
+- **Feature addendum (2026-11-01) — assessment discussion chatbot** (new vektra_assess package + Moodle local plugin in vektra-moodle-discuss): REQ-067..REQ-103, BR-006..BR-016, NFR-014..NFR-023, EX-015..EX-023, OQ-020..OQ-027 (4 resolved by product owner; OQ-020 DPO, OQ-025 Moodle WS spike, OQ-026 reference model/hardware, OQ-027 eval-suite owner open). Session: `.s2s/sessions/20261101-091559-specs-assessment-discussion-chatbot.yaml`. Design (2026-11-01): architecture.md Appendix B (ARCH-065..079, COMP-001..008, INT-001..003, OQ-028..034) + ADR-0027..0032; session `20261101-143802-design-assessment-discussion-chatbot`. Plan (2026-11-01): 13 backend plans `.s2s/plans/20261101-154950-assess-*.md` + 3 plugin plans in `vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-*.md`. Plans NOT yet approved: no code. Coordinator decisions 2026-11-01: plugin repo vektra-moodle-discuss; REQ-079 = no grade-write function in the WS function list; INT-001 extended (GET config, setup-check result, per-activity privacy); `cryptography` hard dependency, no pgcrypto fallback (ADR-0031 amended); OQ-032 resolved (provider per deployment). Next: OQ-025 live spike on Moodle 4.3 + 5.2, then `assess-moodle-ws` + `assess-foundations` in parallel, then `assess-data-crypto` + `assess-parser`.
 
 **Primary user persona**: Platform Operator (DevOps/platform teams)
 **MVP exit criterion**: 30 minutes from git clone to successful query

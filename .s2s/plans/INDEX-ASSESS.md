@@ -202,3 +202,9 @@ Phase 1: [INDEX-PHASE1.md](INDEX-PHASE1.md). Phase 2: [INDEX-PHASE2.md](INDEX-PH
 ### Decisions 2026-11-02 (user)
 - Plan 2 (assess-data-crypto) runs before plan 4 (assess-moodle-ws): `assess_sites` is created by plan 2 task 1.1, not by foundations.
 - Moodle dev environments (plan 4 group A) live in the `vektra-moodle` repo on `feat/assess-w1` (created from `develop`), one extra PR for the wave; layout verified before creating files. Dev environment runs on the user's machine.
+
+### Follow-ups (not in any wave PR)
+- Update `.s2s/requirements.md`: OQ-025/OQ-031 status text and the REQ-101 question-type list, after the private findings document (`vektra-internal/stack/20261101-oq025-oq031-moodle-ws-spike-findings.md`, written, not yet committed) has been reviewed.
+- REQ-082 recipients: the service account gets no grader email from Moodle; decide the source (plan 10 / teacher `recipients_extra`).
+- vektra-moodle: the Moodle 5.1 `MOODLE_TGZ_SHA256` in `docker/Dockerfile` pins a moving `moodle-latest-501.tgz` and fails today; and `docker-moodle43/` is an orphan local directory.
+- `.s2s/BACKLOG.md` contains the university project name; clean it (public repo rule).

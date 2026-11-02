@@ -29,7 +29,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-_UUID_PK = {"server_default": text("gen_random_uuid()")}
+_GEN_UUID = text("gen_random_uuid()")
 _NOW = text("now()")
 
 
@@ -41,7 +41,7 @@ class SiteOrm(Base):
     __tablename__ = "assess_sites"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, **_UUID_PK
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
     moodle_site_uuid: Mapped[str] = mapped_column(TEXT, unique=True)
     base_url: Mapped[str] = mapped_column(TEXT)
@@ -57,7 +57,7 @@ class SiteKeyOrm(Base):
     __tablename__ = "assess_site_keys"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, **_UUID_PK
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
     site_id: Mapped[UUID] = mapped_column(
         ForeignKey("assess_sites.id", ondelete="CASCADE")
@@ -102,7 +102,7 @@ class ActivityConfigOrm(Base):
     __tablename__ = "assess_activity_config"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, **_UUID_PK
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
     site_id: Mapped[UUID] = mapped_column(
         ForeignKey("assess_sites.id", ondelete="CASCADE")
@@ -151,7 +151,7 @@ class ResetGrantOrm(Base):
     __tablename__ = "assess_reset_grants"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, **_UUID_PK
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
     site_id: Mapped[UUID] = mapped_column(
         ForeignKey("assess_sites.id", ondelete="CASCADE")
@@ -177,7 +177,7 @@ class SessionOrm(Base):
     __tablename__ = "assess_sessions"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, **_UUID_PK
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
     site_id: Mapped[UUID] = mapped_column(ForeignKey("assess_sites.id"))
     cmid: Mapped[int] = mapped_column(BIGINT)
@@ -289,7 +289,7 @@ class TranscriptOrm(Base):
     __tablename__ = "assess_transcripts"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, **_UUID_PK
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
     session_id: Mapped[UUID] = mapped_column(
         ForeignKey("assess_sessions.id"), unique=True
@@ -306,7 +306,7 @@ class DeliveryOrm(Base):
     __tablename__ = "assess_deliveries"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, **_UUID_PK
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
     transcript_id: Mapped[UUID] = mapped_column(ForeignKey("assess_transcripts.id"))
     recipient_hash: Mapped[str] = mapped_column(TEXT)

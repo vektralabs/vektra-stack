@@ -41,8 +41,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          # No cache: this job checks out an operator-chosen ref of another repository
+          # (moodle_ref) next to this one, and a cache written from a run that also checked
+          # out untrusted code could poison the default branch's cache (CodeQL
+          # actions/cache-poisoning).
+          enable-cache: false
 
       - name: Install dev dependencies
         run: uv sync --dev --frozen

@@ -24,6 +24,11 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from vektra_assess.crypto import envelope, hashing
+from vektra_assess.crypto.kek import wrap_dek
+from vektra_assess.crypto.seal import public_from_private, seal
+from vektra_assess.keys import AssessKeyring
+
 ROOT = Path(__file__).resolve().parents[3]
 ROLE_PASSWORD = "test-role-password-0123456789"
 ROLES = {"api": "vektra_assess_api", "worker": "vektra_assess_worker"}
@@ -183,3 +188,92 @@ def dump_data(pg: Pg) -> str:
         check=True,
     )
     return out.stdout
+
+
+CANARY = "CANARY-snapshot-9c1e"
+
+
+def sym(*kids: str) -> AssessKeyring:
+    return AssessKeyring("assess_kek", kids[-1], {k: os.urandom(32) for k in kids})
+
+
+def x_ring(kid: str) -> tuple[AssessKeyring, AssessKeyring]:
+    raw = os.urandom(32)
+    return (
+        AssessKeyring("pub", kid, {kid: public_from_private(raw)}),
+        AssessKeyring("priv", kid, {kid: raw}),
+    )
+
+
+async def make_real_session(pg, kek, api_pub, *, close: bool = False) -> uuid.UUID:
+    """Everything written by the WORKER role with real ciphertext, like a start would."""
+    site, sid = uuid.uuid4(), uuid.uuid4()
+    await pg.run(
+        "super",
+        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) "
+        "VALUES (:i, :u, 'https://m')",
+        {"i": site, "u": str(site)},
+    )
+    dek = envelope.new_dek()
+    blob, kid, ver = wrap_dek(kek, dek, sid)
+    genesis = hashing.snapshot_hash({"canary": CANARY})
+    opening_hash = hashing.turn_hash(genesis, 1, "bot", "opening", CANARY.encode())
+    async with pg.conn("worker") as c:
+        await c.execute(
+            text(
+                "INSERT INTO assess_sessions (id, site_id, cmid, student_userid, state) "
+                "VALUES (:s, :site, 5, 9, 'ACTIVE')"
+            ),
+            {"s": sid, "site": site},
+        )
+        await c.execute(
+            text("INSERT INTO assess_snapshots VALUES (:s, :c, :g, now())"),
+            {
+                "s": sid,
+                "g": genesis,
+                "c": envelope.encrypt_snapshot(dek, sid, CANARY.encode()),
+            },
+        )
+        await c.execute(
+            text(
+                "INSERT INTO assess_session_keys (session_id, kek_wrapped, kek_kid, key_version) "
+                "VALUES (:s, :b, :k, :v)"
+            ),
+            {"s": sid, "b": blob, "k": kid, "v": ver},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO assess_turns (session_id, turn_no, role, kind, ciphertext, "
+                "turn_hash, prev_hash) VALUES (:s, 1, 'bot', 'opening', :c, :h, :g)"
+            ),
+            {
+                "s": sid,
+                "c": envelope.encrypt_turn(dek, sid, 1, CANARY.encode()),
+                "h": opening_hash,
+                "g": genesis,
+            },
+        )
+        sealed = seal(
+            api_pub.active_key,
+            api_pub.active,
+            dek,
+            purpose="handoff",
+            binding=[sid, api_pub.active],
+        )
+        await c.execute(
+            text(
+                "INSERT INTO assess_session_handoff (session_id, session_state, epoch, "
+                "sealed_dek, handoff_kid) VALUES (:s, 'ACTIVE', 1, :d, :k)"
+            ),
+            {"s": sid, "d": sealed, "k": api_pub.active},
+        )
+        if close:
+            await c.execute(
+                text(
+                    "UPDATE assess_sessions SET state='CLOSED', close_reason='finished' "
+                    "WHERE id=:s"
+                ),
+                {"s": sid},
+            )
+        await c.commit()
+    return sid

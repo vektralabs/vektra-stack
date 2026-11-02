@@ -9,90 +9,13 @@ import pytest
 from sqlalchemy import text
 
 from vektra_assess.crypto import envelope, rotation, shred, teacher_config, transcript
-from vektra_assess.crypto.kek import KeyNotAvailable, unwrap_dek, wrap_dek
-from vektra_assess.crypto.seal import open_sealed, public_from_private, seal
+from vektra_assess.crypto.kek import KeyNotAvailable, unwrap_dek
+from vektra_assess.crypto.seal import open_sealed
 from vektra_assess.keys import AssessKeyring
 
-from .conftest import dump_data
+from .conftest import CANARY, dump_data, make_real_session, sym, x_ring
 
 pytestmark = pytest.mark.integration
-
-CANARY = "CANARY-snapshot-9c1e"
-
-
-def sym(*kids: str) -> AssessKeyring:
-    return AssessKeyring("assess_kek", kids[-1], {k: os.urandom(32) for k in kids})
-
-
-def x_ring(kid: str) -> tuple[AssessKeyring, AssessKeyring]:
-    raw = os.urandom(32)
-    return (
-        AssessKeyring("pub", kid, {kid: public_from_private(raw)}),
-        AssessKeyring("priv", kid, {kid: raw}),
-    )
-
-
-async def make_real_session(pg, kek, api_pub, *, close: bool = False) -> uuid.UUID:
-    """Everything written by the WORKER role with real ciphertext, like a start would."""
-    site, sid = uuid.uuid4(), uuid.uuid4()
-    await pg.run(
-        "super",
-        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) "
-        "VALUES (:i, :u, 'https://m')",
-        {"i": site, "u": str(site)},
-    )
-    dek = envelope.new_dek()
-    blob, kid, ver = wrap_dek(kek, dek, sid)
-    async with pg.conn("worker") as c:
-        await c.execute(
-            text(
-                "INSERT INTO assess_sessions (id, site_id, cmid, student_userid, state) "
-                "VALUES (:s, :site, 5, 9, 'ACTIVE')"
-            ),
-            {"s": sid, "site": site},
-        )
-        await c.execute(
-            text("INSERT INTO assess_snapshots VALUES (:s, :c, 'gh', now())"),
-            {"s": sid, "c": envelope.encrypt_snapshot(dek, sid, CANARY.encode())},
-        )
-        await c.execute(
-            text(
-                "INSERT INTO assess_session_keys (session_id, kek_wrapped, kek_kid, key_version) "
-                "VALUES (:s, :b, :k, :v)"
-            ),
-            {"s": sid, "b": blob, "k": kid, "v": ver},
-        )
-        await c.execute(
-            text(
-                "INSERT INTO assess_turns (session_id, turn_no, role, kind, ciphertext, "
-                "turn_hash, prev_hash) VALUES (:s, 1, 'bot', 'opening', :c, 'h1', 'gh')"
-            ),
-            {"s": sid, "c": envelope.encrypt_turn(dek, sid, 1, CANARY.encode())},
-        )
-        sealed = seal(
-            api_pub.active_key,
-            api_pub.active,
-            dek,
-            purpose="handoff",
-            binding=[sid, api_pub.active],
-        )
-        await c.execute(
-            text(
-                "INSERT INTO assess_session_handoff (session_id, session_state, epoch, "
-                "sealed_dek, handoff_kid) VALUES (:s, 'ACTIVE', 1, :d, :k)"
-            ),
-            {"s": sid, "d": sealed, "k": api_pub.active},
-        )
-        if close:
-            await c.execute(
-                text(
-                    "UPDATE assess_sessions SET state='CLOSED', close_reason='finished' "
-                    "WHERE id=:s"
-                ),
-                {"s": sid},
-            )
-        await c.commit()
-    return sid
 
 
 async def wipe(pg) -> None:

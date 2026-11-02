@@ -1,0 +1,353 @@
+"""End-to-end data tests on real roles (plan assess-data-crypto 6.2 - 6.6)."""
+
+from __future__ import annotations
+
+import asyncio
+import subprocess
+import uuid
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, IntegrityError
+
+from vektra_assess.crypto import envelope, hashing, teacher_config
+from vektra_assess.crypto.seal import open_sealed
+
+from .conftest import CANARY, dump_data, make_real_session, sym, x_ring
+
+pytestmark = pytest.mark.integration
+
+TEACHER_CANARY = "CANARY-teacher-solution-55aa"
+
+
+async def one(pg, sql, **p):
+    return (await pg.run("super", sql, p))[0][0]
+
+
+async def make_site(pg) -> uuid.UUID:
+    site = uuid.uuid4()
+    await pg.run(
+        "super",
+        "INSERT INTO assess_sites (id, moodle_site_uuid, base_url) "
+        "VALUES (:i, :u, 'https://m')",
+        {"i": site, "u": str(site)},
+    )
+    return site
+
+
+# --- 6.2 race --------------------------------------------------------------------------
+
+
+async def test_twenty_concurrent_starts_leave_exactly_one_open_session(pg):
+    site = await make_site(pg)
+    insert = (
+        "INSERT INTO assess_sessions (site_id, cmid, student_userid, state) "
+        "VALUES (:s, 77, 88, 'STARTING')"
+    )
+
+    async def attempt():
+        try:
+            await pg.run("api", insert, {"s": site})
+            return "ok"
+        except DBAPIError as exc:
+            return getattr(exc.orig, "sqlstate", "?")
+
+    results = await asyncio.gather(*[attempt() for _ in range(20)])
+    assert results.count("ok") == 1 and results.count("23505") == 19, results
+    assert (
+        await one(pg, "SELECT count(*) FROM assess_sessions WHERE site_id=:s", s=site)
+        == 1
+    )
+
+
+# --- 6.3 lifecycle with real ciphertext ----------------------------------------------------
+
+
+async def test_lifecycle_walk_open_converse_close(pg):
+    kek, (api_pub, api_priv) = sym("k1"), x_ring("a1")
+    sid = await make_real_session(pg, kek, api_pub)
+
+    # the API opens the session material with its private key and nothing else
+    row = (
+        await pg.run("api", "SELECT * FROM get_session_material(:s, 1)", {"s": sid})
+    )[0]
+    dek = open_sealed(
+        api_priv,
+        bytes(row.sealed_dek),
+        purpose="handoff",
+        binding=[sid, row.handoff_kid],
+    )
+    assert (
+        envelope.decrypt_snapshot(dek, sid, bytes(row.snapshot_ciphertext))
+        == CANARY.encode()
+    )
+    assert (
+        envelope.decrypt_turn(dek, sid, 1, bytes(row.turn_ciphertexts[0]))
+        == CANARY.encode()
+    )
+
+    prev = row.turn_hashes[-1]
+    for n, (role, msg) in enumerate(
+        [("student", b"q1"), ("bot", b"a1"), ("student", b"q2")], 2
+    ):
+        h = hashing.turn_hash(prev, n, role, "normal", msg)
+        seq = n - 2
+        got = (
+            await pg.run(
+                "api",
+                "SELECT assess_append_turn(:s, 1, :q, :r, 'normal', :c, :h, :p)",
+                {
+                    "s": sid,
+                    "q": seq,
+                    "r": role,
+                    "c": envelope.encrypt_turn(dek, sid, n, msg),
+                    "h": h,
+                    "p": prev,
+                },
+            )
+        )[0][0]
+        assert got == n
+        prev = h
+
+    final = (
+        await pg.run("api", "SELECT * FROM get_session_material(:s, 1)", {"s": sid})
+    )[0]
+    chain = [
+        hashing.ChainTurn(
+            no, role, kind, envelope.decrypt_turn(dek, sid, no, bytes(ct)), pv, th
+        )
+        for no, role, kind, ct, pv, th in zip(
+            final.turn_nos,
+            final.turn_roles,
+            final.turn_kinds,
+            final.turn_ciphertexts,
+            [final.snapshot_hash, *final.turn_hashes[:-1]],
+            final.turn_hashes,
+            strict=True,
+        )
+    ]
+    assert hashing.verify_chain(final.snapshot_hash, chain) == 4
+
+    assert (
+        await pg.run(
+            "api", "SELECT assess_close_session(:s, 1, 'finished')", {"s": sid}
+        )
+    )[0][0] is True
+    assert (
+        await one(
+            pg, "SELECT count(*) FROM assess_session_handoff WHERE session_id=:s", s=sid
+        )
+        == 0
+    )
+    assert (
+        await one(
+            pg,
+            "SELECT count(*) FROM assess_jobs WHERE dedupe_key=:k",
+            k=f"transcript_generate:{sid}",
+        )
+        == 1
+    )
+    assert (
+        await one(
+            pg, "SELECT count(*) FROM assess_audit_events WHERE session_id=:s", s=sid
+        )
+        == 1
+    )
+    assert (
+        await pg.run("api", "SELECT * FROM get_session_material(:s, 1)", {"s": sid})
+        == []
+    )
+
+
+# --- 6.4 rollback walk and the deferred opening-turn constraint ---------------------------------
+
+
+async def test_rollback_walk_leaves_one_start_attempt_and_no_session_data(pg):
+    site = await make_site(pg)
+    sid = uuid.uuid4()
+    async with pg.conn("worker") as c:
+        await c.execute(
+            text(
+                "INSERT INTO assess_sessions (id, site_id, cmid, student_userid, state) "
+                "VALUES (:s, :site, 1, 2, 'STARTING')"
+            ),
+            {"s": sid, "site": site},
+        )
+        await c.execute(
+            text("INSERT INTO assess_snapshots VALUES (:s, '\\x01', 'h', now())"),
+            {"s": sid},
+        )
+        await c.execute(
+            text(
+                "INSERT INTO assess_session_keys (session_id, kek_wrapped, kek_kid) "
+                "VALUES (:s, '\\x02', 'k1')"
+            ),
+            {"s": sid},
+        )
+        await c.commit()
+    async with pg.conn(
+        "worker"
+    ) as c:  # the opening message failed: roll the start back
+        await c.execute(text("DELETE FROM assess_sessions WHERE id=:s"), {"s": sid})
+        await c.execute(
+            text(
+                "INSERT INTO assess_start_attempts (site_id, cmid, student_userid, outcome, "
+                "reason_code) VALUES (:site, 1, 2, 'rolled_back', 'llm_unavailable')"
+            ),
+            {"site": site},
+        )
+        await c.commit()
+    for table, col in (
+        ("assess_sessions", "id"),
+        ("assess_snapshots", "session_id"),
+        ("assess_session_keys", "session_id"),
+    ):
+        assert (
+            await one(pg, f"SELECT count(*) FROM {table} WHERE {col}=:s", s=sid) == 0
+        ), table
+    assert (
+        await one(
+            pg, "SELECT count(*) FROM assess_start_attempts WHERE site_id=:s", s=site
+        )
+        == 1
+    )
+
+
+async def test_committing_active_without_an_opening_turn_fails_at_commit(pg):
+    site = await make_site(pg)
+    async with pg.conn("worker") as c:
+        await c.execute(
+            text(
+                "INSERT INTO assess_sessions (site_id, cmid, student_userid, state) "
+                "VALUES (:site, 3, 4, 'ACTIVE')"
+            ),
+            {"site": site},
+        )
+        with pytest.raises(IntegrityError, match="without an opening turn"):
+            await c.commit()
+    sid = uuid.uuid4()
+    async with pg.conn("worker") as c:  # STARTING -> ACTIVE needs the opening turn too
+        await c.execute(
+            text(
+                "INSERT INTO assess_sessions (id, site_id, cmid, student_userid, state) "
+                "VALUES (:s, :site, 5, 6, 'STARTING')"
+            ),
+            {"s": sid, "site": site},
+        )
+        await c.commit()
+    async with pg.conn("worker") as c:
+        await c.execute(
+            text("UPDATE assess_sessions SET state='ACTIVE' WHERE id=:s"), {"s": sid}
+        )
+        with pytest.raises(IntegrityError, match="without an opening turn"):
+            await c.commit()
+    assert (
+        await one(pg, "SELECT state FROM assess_sessions WHERE id=:s", s=sid)
+        == "STARTING"
+    )
+
+
+# --- 6.5 plaintext canary scan -------------------------------------------------------------------
+
+
+async def test_no_plaintext_canary_in_any_table_dump_or_log(pg):
+    kek, (api_pub, _) = sym("k1"), x_ring("a1")
+    site = await make_site(pg)
+    worker_pub, _ = x_ring("w1")
+    blob, kid = teacher_config.seal_teacher_config(
+        worker_pub, site, 9, "config", TEACHER_CANARY
+    )
+    await pg.run(
+        "api",
+        "INSERT INTO assess_activity_config (site_id, cmid, activity_type, "
+        "teacher_config_sealed, teacher_config_kid) VALUES (:s, 9, 'quiz', :b, :k)",
+        {"s": site, "b": blob, "k": kid},
+    )
+    await make_real_session(pg, kek, api_pub)
+
+    tables = [
+        r[0]
+        for r in await pg.run(
+            "super", "SELECT tablename FROM pg_tables WHERE tablename LIKE 'assess\\_%'"
+        )
+    ]
+    assert tables
+    for table in tables:
+        rows = await pg.run("super", f"SELECT t::text FROM {table} t")
+        for (row,) in rows:
+            assert CANARY not in row and TEACHER_CANARY not in row, table
+    dump = dump_data(pg)
+    assert "assess_turns" in dump and CANARY not in dump and TEACHER_CANARY not in dump
+    logs = subprocess.run(
+        ["docker", "logs", pg.container_id], capture_output=True, text=True
+    )
+    assert CANARY not in logs.stdout + logs.stderr
+    assert TEACHER_CANARY not in logs.stdout + logs.stderr
+
+
+# --- 6.6 snapshot immutability --------------------------------------------------------------------
+
+
+async def test_snapshot_is_immutable_and_forced_mutation_is_detected(pg):
+    kek, (api_pub, api_priv) = sym("k1"), x_ring("a1")
+    sid = await make_real_session(pg, kek, api_pub)
+    with pytest.raises(DBAPIError) as exc:  # the worker role has no UPDATE grant at all
+        await pg.run(
+            "worker",
+            "UPDATE assess_snapshots SET content_hash='x' WHERE session_id=:s",
+            {"s": sid},
+        )
+    assert exc.value.orig.sqlstate == "42501"
+    with pytest.raises(
+        DBAPIError, match="immutable"
+    ):  # even a superuser hits the trigger
+        await pg.run(
+            "super",
+            "UPDATE assess_snapshots SET content_hash='x' WHERE session_id=:s",
+            {"s": sid},
+        )
+
+    row = (
+        await pg.run("api", "SELECT * FROM get_session_material(:s, 1)", {"s": sid})
+    )[0]
+    dek = open_sealed(
+        api_priv,
+        bytes(row.sealed_dek),
+        purpose="handoff",
+        binding=[sid, row.handoff_kid],
+    )
+
+    def verify(snapshot_ct: bytes, stored_hash: str) -> bool:
+        doc = envelope.decrypt_snapshot(dek, sid, snapshot_ct)
+        return hashing.snapshot_hash({"canary": doc.decode()}) == stored_hash
+
+    assert verify(bytes(row.snapshot_ciphertext), row.snapshot_hash)
+
+    forged = envelope.encrypt_snapshot(
+        dek, sid, b"a rewritten snapshot"
+    )  # needs the DEK
+    await pg.run(
+        "super",
+        "ALTER TABLE assess_snapshots DISABLE TRIGGER trg_assess_snapshots_immutable",
+    )
+    try:
+        await pg.run(
+            "super",
+            "UPDATE assess_snapshots SET ciphertext=:c WHERE session_id=:s",
+            {"c": forged, "s": sid},
+        )
+    finally:
+        await pg.run(
+            "super",
+            "ALTER TABLE assess_snapshots ENABLE TRIGGER trg_assess_snapshots_immutable",
+        )
+    mutated = (
+        await pg.run(
+            "super",
+            "SELECT ciphertext, content_hash FROM assess_snapshots WHERE session_id=:s",
+            {"s": sid},
+        )
+    )[0]
+    assert not verify(
+        bytes(mutated.ciphertext), mutated.content_hash
+    )  # detected by re-hashing

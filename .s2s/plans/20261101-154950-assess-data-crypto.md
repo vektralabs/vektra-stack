@@ -341,20 +341,20 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
       `pgvector/pgvector:pg16`, `alembic upgrade head` as superuser, set LOGIN passwords for the
       assess roles, yield three engines (superuser for setup, API role, worker role); generated
       keyrings from `vektra_assess.keys generate`
-- [ ] 6.2 Race test: 20 concurrent API-role transactions inserting STARTING for the same (site,
+- [x] 6.2 Race test: 20 concurrent API-role transactions inserting STARTING for the same (site,
       student, cmid) → exactly 1 row (`SELECT count(*)`), 19 `UniqueViolation` (REQ-067)
-- [ ] 6.3 Lifecycle walk with real ciphertext: worker inserts snapshot+keys+opening turn and
+- [x] 6.3 Lifecycle walk with real ciphertext: worker inserts snapshot+keys+opening turn and
       commits ACTIVE with hand-off; API role decrypts via `get_session_material` + `open_sealed`;
       API appends 3 turns; `assess_close_session` → hand-off count 0, outbox job count 1, audit row
       count 1; `get_session_material` → 0 rows
-- [ ] 6.4 Rollback walk: STARTING with snapshot deleted by the worker → 0 session, 0 snapshot,
+- [x] 6.4 Rollback walk: STARTING with snapshot deleted by the worker → 0 session, 0 snapshot,
       0 key rows, 1 `assess_start_attempts` row (BR-015, REQ-071); committing ACTIVE without an
       opening turn fails at COMMIT (deferred constraint)
-- [ ] 6.5 Plaintext canary scan: after 6.3, `pg_dump --data-only` and a full-table `bytea` scan of
+- [x] 6.5 Plaintext canary scan: after 6.3, `pg_dump --data-only` and a full-table `bytea` scan of
       every `assess_%` table contain 0 occurrences of the snapshot/turn/teacher-config canaries;
       postgres container logs contain 0 occurrences (with `log_statement=none` from plan
       20261101-154950-assess-foundations)
-- [ ] 6.6 Snapshot immutability: worker-role UPDATE of `assess_snapshots` raises; a superuser
+- [x] 6.6 Snapshot immutability: worker-role UPDATE of `assess_snapshots` raises; a superuser
       forced mutation (trigger disabled) is detected by `hashing` re-verification (BR-015 "forced
       post-commit mutation is detected")
 

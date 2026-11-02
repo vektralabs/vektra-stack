@@ -30,7 +30,11 @@ packages = ["src/vektra_assess"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
-markers = ["integration: integration tests requiring Docker (excluded from ci-unit)"]
+pythonpath = ["tests"]
+markers = [
+    "integration: integration tests requiring Docker (excluded from ci-unit)",
+    "moodle: live contract tests against the seeded Moodle 4.3 / 5.2 dev envs (assess WS readers)",
+]
 
 [tool.uv.sources]
 vektra-shared = { workspace = true }

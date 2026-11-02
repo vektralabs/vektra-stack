@@ -14,7 +14,7 @@
   "grantedextension": false,
   "id": 15,
   "requiregrading": false,
-  "submissionstatus": "",
+  "submissionstatus": "new",
   "submitted": false
  },
  "wsfunction": "mod_assign_get_participant"

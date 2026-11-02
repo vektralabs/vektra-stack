@@ -118,10 +118,13 @@ async def request_setup_check(
         await conn.execute(
             text(
                 "INSERT INTO assess_jobs (kind, args, dedupe_key) VALUES ('setup_check', "
-                "jsonb_build_object('site_id', CAST(:s AS text), 'report_id', CAST(:r AS text)), :d) "
-                "ON CONFLICT DO NOTHING"
+                "jsonb_build_object('site_id', CAST(:s AS text), 'report_id', CAST(:r AS text)), :d)"
             ),
-            {"s": str(site_id), "r": str(report_id), "d": f"setup_check:{site_id}"},
+            {
+                "s": str(site_id),
+                "r": str(report_id),
+                "d": f"setup_check:{site_id}:{report_id}",
+            },
         )
         await conn.execute(text("SELECT pg_notify('assess_jobs', '')"))
     return JSONResponse(status_code=202, content={"report_id": str(report_id)})

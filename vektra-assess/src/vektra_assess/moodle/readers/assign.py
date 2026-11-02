@@ -245,7 +245,11 @@ async def read_submission_status(
                         )
                     )
     feedback: FeedbackView | None = None
-    if doc.feedback is not None:
+    # BR-010: the feedback block is only trusted once Moodle says the grade is released:
+    # 'graded' (no marking workflow) or 'released' (workflow). Any other status, including
+    # every in-workflow state, hides it. A hidden grade ITEM is still decided by
+    # read_grade_release / read_assign_release: consumers gate on those too.
+    if doc.feedback is not None and last.gradingstatus in _FEEDBACK_RELEASED:
         comments = tuple(
             ef.text
             for p in doc.feedback.plugins
@@ -275,6 +279,9 @@ async def read_submission_status(
         ),
         res.evidence,
     )
+
+
+_FEEDBACK_RELEASED = frozenset({"graded", "released"})
 
 
 @reader

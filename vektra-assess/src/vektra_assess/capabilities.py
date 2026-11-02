@@ -99,6 +99,18 @@ class NotReady:
 type Readiness = Ready | NotReady
 
 
+#: an unreadable row is a legitimate probed answer only for these reasons: the function does
+#: not exist on that Moodle version (the normal case of quiz overrides on 4.3). Anything else
+#: (a probe that mismatched, an access error, a timeout...) means the probe could not do its
+#: job, and the site is not ready. ``partial`` (the quiz grace period of a closed quiz) is an
+#: expected, documented answer and is handled per gate by REQ-091.
+_BY_DESIGN_UNREADABLE = frozenset({"function_not_in_service"})
+
+
+def _probe_failed(row: CapabilityRow) -> bool:
+    return row.state == "unreadable" and row.reason_code not in _BY_DESIGN_UNREADABLE
+
+
 def evaluate_readiness(
     *,
     site_found: bool,
@@ -127,6 +139,7 @@ def evaluate_readiness(
             row is None
             or now - row.checked_at > STALE_AFTER
             or row.release != last_seen_release
+            or _probe_failed(row)
         ):
             missing.append(f"capability:{flag}")
     return NotReady(tuple(missing)) if missing else Ready()

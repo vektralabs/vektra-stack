@@ -685,3 +685,32 @@ async def test_readers_log_no_body_param_or_url(branch: str) -> None:
         "userid",
     ):
         assert needle not in text, needle
+
+
+async def test_feedback_of_an_unreleased_grade_never_reaches_the_domain_value(
+    branch: str,
+) -> None:
+    """BR-010: Moodle may send the feedback block for an in-marking submission to a
+    teacher-visibility caller; the reader drops it unless the status says graded/released."""
+    replay, client, site, m = env(branch)
+    target = None
+    for _name, a in seeded(m, "assigns"):
+        for g in a["grades"]:
+            if "feedback" in g and g["gradingstatus"] not in ("inmarking",):
+                target = (a, g)
+                break
+        if target:
+            break
+    assert target is not None
+    a, g = target
+
+    def to_inmarking(fn: str, doc: Any) -> Any:
+        if fn == "mod_assign_get_submission_status":
+            doc["lastattempt"]["gradingstatus"] = "inmarking"
+        return doc
+
+    replay.mutate = to_inmarking
+    got = ok(
+        await read_submission_status(client, site, a["id"], uid(branch, g["user"]))
+    )
+    assert got.grading_status == "inmarking" and got.feedback is None

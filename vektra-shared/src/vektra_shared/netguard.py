@@ -40,6 +40,10 @@ class EgressDenied(ValueError):
     """The URL is not allowed. The message never echoes a query string or credentials."""
 
 
+class ResolutionFailed(EgressDenied):
+    """The name did not resolve: an infrastructure failure, not a policy decision."""
+
+
 @dataclass(frozen=True)
 class PinnedTarget:
     scheme: str
@@ -108,9 +112,11 @@ def resolve_pinned(
     try:
         infos = resolver(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except OSError as exc:
-        raise EgressDenied(f"cannot resolve {host!r}: {type(exc).__name__}") from None
+        raise ResolutionFailed(
+            f"cannot resolve {host!r}: {type(exc).__name__}"
+        ) from None
     if not infos:
-        raise EgressDenied(f"cannot resolve {host!r}")
+        raise ResolutionFailed(f"cannot resolve {host!r}")
 
     addresses: list[IPAddress] = []
     for _family, _type, _proto, _canon, sockaddr in infos:

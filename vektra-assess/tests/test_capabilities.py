@@ -135,17 +135,6 @@ def test_not_ready_names_what_is_missing(kw, expected):
     assert ready(**kw) == NotReady(expected)
 
 
-def test_an_unreadable_but_fresh_close_time_flag_does_not_block_the_site():
-    """Unreadable is a legitimate probed answer (REQ-091 handles it per gate); only a flag that
-    was never probed, is stale or belongs to another release blocks the whole site."""
-    unreadable = rows(
-        quiz_overrides=row(
-            "quiz_overrides", state="unreadable", reason="function_not_in_service"
-        )
-    )
-    assert ready(rows=unreadable) == Ready()
-
-
 SRC = Path(__file__).resolve().parents[1] / "src" / "vektra_assess"
 
 
@@ -174,3 +163,23 @@ def test_db_only_modules_do_not_import_httpx_or_the_moodle_package():
             if m.split(".")[0] == "httpx" or m.startswith("vektra_assess.moodle")
         }
         assert not bad, f"{f.name} imports {sorted(bad)}"
+
+
+def test_a_failed_probe_on_a_close_time_flag_blocks_the_site_but_by_design_states_do_not():
+    bad = rows(
+        attempt_state=row("attempt_state", state="unreadable", reason="unknown_shape")
+    )
+    assert ready(rows=bad) == NotReady(("capability:attempt_state",))
+    denied = rows(
+        attempt_state=row(
+            "attempt_state", state="unreadable", reason="access_exception"
+        )
+    )
+    assert ready(rows=denied) == NotReady(("capability:attempt_state",))
+    by_design = rows(
+        quiz_overrides=row(
+            "quiz_overrides", state="unreadable", reason="function_not_in_service"
+        ),
+        quiz_grace=row("quiz_grace", state="partial"),
+    )
+    assert ready(rows=by_design) == Ready()

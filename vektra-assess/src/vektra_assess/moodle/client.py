@@ -17,7 +17,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import socket
 import ssl
 import time
@@ -39,7 +41,12 @@ from vektra_assess.moodle.errors import (
 from vektra_assess.moodle.ratelimit import AsyncTokenBucket
 from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
 from vektra_assess.moodle.shape import evidence_for
-from vektra_shared.netguard import EgressDenied, Resolver, resolve_pinned
+from vektra_shared.netguard import (
+    EgressDenied,
+    ResolutionFailed,
+    Resolver,
+    resolve_pinned,
+)
 
 log = structlog.get_logger()
 
@@ -108,7 +115,12 @@ class MoodleWsClient:
         verify: ssl.SSLContext | bool = True
         if settings.moodle_ca_file is not None:
             verify = ssl.create_default_context(cafile=str(settings.moodle_ca_file))
+        # httpx logs every request URL at INFO and file downloads carry the token in the
+        # query: keep those loggers quiet, whatever the application's logging level
+        for noisy in ("httpx", "httpcore"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
         self._http = httpx.AsyncClient(
+            trust_env=False,  # no HTTP(S)_PROXY / SSL_CERT_FILE behind the pinned design
             transport=transport,
             verify=verify,
             follow_redirects=False,
@@ -239,24 +251,57 @@ class MoodleWsClient:
         form: Mapping[str, str] | None = None,
         query: Mapping[str, str] | None = None,
     ) -> tuple[Reading[bytes], int | None, int]:
+        """``_send_inner`` that can neither raise nor leave the breaker's probe slot taken."""
+        breaker = self._breakers.for_site(site.site_id)
+        try:
+            return await self._send_inner(
+                site, method, path, token=token, cap=cap, form=form, query=query
+            )
+        except asyncio.CancelledError:
+            breaker.release_probe()
+            raise
+        except Exception:
+            breaker.record_failure()
+            return Unreadable(UnreadableReason.UNKNOWN_SHAPE, "client_error"), None, 0
+
+    async def _send_inner(
+        self,
+        site: SiteRef,
+        method: str,
+        path: str,
+        *,
+        token: str | None,
+        cap: int,
+        form: Mapping[str, str] | None = None,
+        query: Mapping[str, str] | None = None,
+    ) -> tuple[Reading[bytes], int | None, int]:
         """One pinned, no-redirect, size-capped exchange. Returns (body | Unreadable, status, size)."""
         breaker = self._breakers.for_site(site.site_id)
         if not token:
-            breaker.record_success()  # nothing was sent: do not hold the probe slot
+            breaker.release_probe()  # nothing was sent: a local failure, not a Moodle outcome
             return Unreadable(UnreadableReason.ACCESS_EXCEPTION, "no_token"), None, 0
         parts = urlsplit(site.base_url)
         if parts.scheme == "http" and not self._allow_http():
-            breaker.record_success()
+            breaker.release_probe()
             return Unreadable(UnreadableReason.TLS, "plain_http_refused"), None, 0
         try:
-            target = resolve_pinned(
+            # getaddrinfo blocks: keep it off the event loop (heartbeats, other coroutines)
+            target = await asyncio.to_thread(
+                resolve_pinned,
                 site.base_url.rstrip("/") + path,
                 allowed_hosts=[parts.hostname or ""],
                 allowed_cidrs=self._cidrs(),
                 resolver=self._resolver,
             )
+        except ResolutionFailed:
+            breaker.record_failure()  # DNS down is an outage like any other
+            return (
+                Unreadable(UnreadableReason.UNKNOWN_SHAPE, "dns_failure"),
+                None,
+                0,
+            )
         except EgressDenied:
-            breaker.record_success()
+            breaker.release_probe()  # a policy refusal says nothing about Moodle
             return (
                 Unreadable(UnreadableReason.ACCESS_EXCEPTION, "egress_denied"),
                 None,
@@ -265,14 +310,17 @@ class MoodleWsClient:
 
         await self._limiter.acquire()
         try:
-            async with self._http.stream(
-                method,
-                target.pinned_url,
-                data=form,
-                params=query,
-                headers={"Host": target.host_header},
-                extensions={"sni_hostname": target.sni_hostname},
-            ) as resp:
+            async with (
+                asyncio.timeout(self._s.ws_total_timeout_s),
+                self._http.stream(
+                    method,
+                    target.pinned_url,
+                    data=form,
+                    params=query,
+                    headers={"Host": target.host_header},
+                    extensions={"sni_hostname": target.sni_hostname},
+                ) as resp,
+            ):
                 status = resp.status_code
                 if 300 <= status < 400:
                     breaker.record_success()
@@ -289,7 +337,7 @@ class MoodleWsClient:
                         breaker.record_success()
                         return Unreadable(UnreadableReason.SIZE_CAP), status, size
                     chunks.append(chunk)
-        except httpx.TimeoutException:
+        except (httpx.TimeoutException, TimeoutError):
             breaker.record_failure()
             return Unreadable(UnreadableReason.TIMEOUT), None, 0
         except httpx.TransportError as exc:

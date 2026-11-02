@@ -82,6 +82,13 @@ class VektraAssessSettings(BaseSettings):
     ws_timeout_read_s: float = Field(
         10.0, gt=0, le=120, alias="VEKTRA_ASSESS_WS_TIMEOUT_READ_S"
     )
+    ws_total_timeout_s: float = Field(
+        30.0,
+        gt=0,
+        le=600,
+        alias="VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S",
+        description="Overall deadline of one Moodle call, body included: a server that drips bytes cannot hold it open.",
+    )
     ws_max_response_bytes: int = Field(
         8 * 1024 * 1024,
         ge=1024,

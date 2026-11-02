@@ -122,7 +122,7 @@ async def _test_admin_and_the_sites_own_teacher_key_can_queue_a_check(world, pg)
         "super",
         "SELECT kind, args->>'report_id', args->>'site_id' FROM assess_jobs "
         "WHERE dedupe_key=:k",
-        {"k": f"setup_check:{a}"},
+        {"k": f"setup_check:{a}:{rid}"},
     )
     assert [tuple(j) for j in job] == [("setup_check", rid, str(a))]
     # admin on the other site is fine, and is not blocked by site a's rate limit

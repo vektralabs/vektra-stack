@@ -122,25 +122,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+from vektra_assess.moodle.client import flatten_params  # noqa: E402
+
 _OPENER = urllib.request.build_opener(_NoRedirect)
-
-
-def flatten(prefix: str, value: Any, out: list[tuple[str, str]]) -> None:
-    if isinstance(value, dict):
-        for k, v in value.items():
-            flatten(f"{prefix}[{k}]" if prefix else str(k), v, out)
-    elif isinstance(value, (list, tuple)):
-        for i, v in enumerate(value):
-            flatten(f"{prefix}[{i}]", v, out)
-    elif isinstance(value, bool):
-        out.append((prefix, "1" if value else "0"))
-    else:
-        out.append((prefix, str(value)))
 
 
 def ws_call(base: str, token: str, fn: str, params: dict[str, Any]) -> Any:
     pairs = [("wstoken", token), ("wsfunction", fn), ("moodlewsrestformat", "json")]
-    flatten("", params, pairs)
+    pairs.extend(flatten_params(params).items())
     req = urllib.request.Request(
         base + "/webservice/rest/server.php",
         data=urllib.parse.urlencode(pairs).encode(),

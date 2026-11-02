@@ -50,6 +50,11 @@ class CircuitBreaker:
             return True
         return False
 
+    def release_probe(self) -> None:
+        """Give the half-open probe slot back without counting an outcome: the exchange ended
+        for a LOCAL reason (no token, policy refusal, cancellation) that says nothing about Moodle."""
+        self._probe_in_flight = False
+
     def record_success(self) -> None:
         self._failures = 0
         self._opened_at = None

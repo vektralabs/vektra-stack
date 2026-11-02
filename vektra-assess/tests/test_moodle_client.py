@@ -359,3 +359,113 @@ async def test_bucket_is_shared_by_concurrent_callers():
 def test_bucket_rejects_a_non_positive_rate():
     with pytest.raises(ValueError):
         AsyncTokenBucket(rate=0)
+
+
+# --- review fixes: probe slot, proxies, logging, deadline, DNS ----------------------------------
+
+
+async def test_an_unexpected_exception_never_escapes_and_releases_the_probe_slot():
+    clock = Clock()
+    reg = BreakerRegistry(threshold=1, cooldown_s=10, clock=clock)
+
+    def boom(request):
+        raise httpx.DecodingError("bad gzip", request=request)
+
+    client = make(boom, breakers=reg)
+    res = await client.call(SITE, "f")  # never raises
+    assert res.detail_code in ("transport_error", "client_error")  # type: ignore[union-attr]
+    clock.t = 11.0  # half-open
+    await client.call(
+        SITE, "f"
+    )  # the probe ran (and failed) instead of leaking the slot
+    clock.t = 22.0
+    assert reg.for_site(
+        SITE.site_id
+    ).allow()  # a later probe is possible: not stuck open
+
+
+async def test_a_malformed_cidr_setting_is_unreadable_not_an_exception():
+    bad = settings(VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="not-a-cidr")
+    res = await make(ok({}), s=bad).call(SITE, "f")
+    assert isinstance(res, Unreadable) and res.detail_code == "client_error"
+
+
+async def test_cancellation_releases_the_probe_slot():
+    clock = Clock()
+    reg = BreakerRegistry(threshold=1, cooldown_s=10, clock=clock)
+    b = reg.for_site(SITE.site_id)
+    b.record_failure()
+    clock.t = 11.0
+
+    async def hang(request):
+        await asyncio.sleep(3600)
+
+    client = make(hang, breakers=reg)
+    task = asyncio.create_task(client.call(SITE, "f"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert b.allow()  # the slot is free again
+
+
+def test_the_client_ignores_proxy_environment_and_silences_the_http_loggers(
+    monkeypatch,
+):
+    import logging
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    client = make(ok({}))
+    assert client._http._trust_env is False
+    for name in ("httpx", "httpcore"):
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING
+
+
+async def test_a_slow_drip_body_hits_the_total_deadline():
+    async def drip():
+        while True:
+            await asyncio.sleep(0.05)
+            yield b"x"
+
+    def handler(request):
+        return httpx.Response(200, content=drip())
+
+    s = settings(
+        VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S="0.3",
+        VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES="8388608",
+    )
+    res = await make(handler, s=s).call(SITE, "f")
+    assert res.reason is UnreadableReason.TIMEOUT  # type: ignore[union-attr]
+
+
+async def test_dns_failure_trips_the_breaker_and_local_refusals_do_not():
+    reg = BreakerRegistry(threshold=2, cooldown_s=30, clock=Clock())
+
+    def no_dns(*_a, **_k):
+        raise socket.gaierror("nope")
+
+    client = MoodleWsClient(
+        settings(),
+        token_provider=lambda _s: TOKEN,
+        transport=httpx.MockTransport(ok({})),
+        resolver=no_dns,
+        breakers=reg,
+    )
+    for _ in range(2):
+        assert (await client.call(SITE, "f")).detail_code == "dns_failure"  # type: ignore[union-attr]
+    assert (await client.call(SITE, "f")).reason is UnreadableReason.BREAKER_OPEN  # type: ignore[union-attr]
+    # local refusals (no token) do not count as failures and cannot close an open breaker
+    reg2 = BreakerRegistry(threshold=1, cooldown_s=30, clock=Clock())
+    reg2.for_site(SITE.site_id).record_failure()
+    c2 = make(ok({}), token=None, breakers=reg2)  # type: ignore[arg-type]
+    assert (await c2.call(SITE, "f")).reason is UnreadableReason.BREAKER_OPEN  # type: ignore[union-attr]
+
+
+async def test_the_file_download_token_never_reaches_the_logs(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    client = make(lambda r: httpx.Response(200, content=b"data"))
+    res = await client.fetch_file(SITE, "/1/mod_assign/submission_files/9/f.txt")
+    assert isinstance(res, Readable)
+    assert TOKEN not in caplog.text

@@ -260,3 +260,23 @@ logging (ARCH-078).
 | **Total documented** | **80** |
 
 The 66 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
+
+### Assess key purposes and rotation
+
+Every secret is a JSON keyring `{"active": "<kid>", "keys": {"<kid>": "<base64>"}}` (the role passwords are one-line files). Each ciphertext stores the kid it was written under, so rotation adds a kid and flips `active`; older kids keep opening older data until nothing references them.
+
+| Secret | Held by | Protects |
+|---|---|---|
+| `assess_kek` | worker only | per-session DEKs (`assess_session_keys.kek_wrapped`) |
+| `assess_handoff_public` / `assess_handoff_private` | worker seals with the public key, API opens with the private key | the DEK of a LIVE session (`assess_session_handoff.sealed_dek`) |
+| `assess_transcript_kek` | API and worker | per-transcript DEKs |
+| `assess_teacher_config_public` / `_private` | API seals with the public key, only the worker holds the private key | the solution or pasted rubric: the API can write it, never read it |
+
+Rotation order (each step is idempotent and resumable; the helper returns what is left):
+
+1. add the new kid to the keyring and make it `active`; deploy;
+2. `rewrap_session_keys`, `rewrap_transcript_deks`, `reseal_handoffs` (worker) until each returns 0;
+3. remove the old kid from the keyring only after every helper returned 0.
+
+The envelope AAD binds each ciphertext to its row (`snapshot` to the session, `turn` to session and turn number, and so on), so a ciphertext copied to another row fails authentication.
+

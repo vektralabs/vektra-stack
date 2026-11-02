@@ -351,3 +351,136 @@ async def test_snapshot_is_immutable_and_forced_mutation_is_detected(pg):
     assert not verify(
         bytes(mutated.ciphertext), mutated.content_hash
     )  # detected by re-hashing
+
+
+# --- audit is fail-closed ---------------------------------------------------------------------
+
+
+async def test_an_audit_insert_failure_aborts_the_business_transaction(pg):
+    kek, (api_pub, _) = sym("k1"), x_ring("a1")
+    sid = await make_real_session(pg, kek, api_pub)
+    async with pg.conn("super") as c:
+        await c.execute(
+            text("REVOKE INSERT ON assess_audit_events FROM vektra_assess_definer")
+        )
+        await c.execute(text("SAVEPOINT before_close"))
+        await c.execute(text("SET LOCAL ROLE vektra_assess_api"))
+        with pytest.raises(DBAPIError) as exc:
+            await c.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"), {"s": sid}
+            )
+        assert exc.value.orig.sqlstate == "42501"
+        await c.execute(text("ROLLBACK TO SAVEPOINT before_close"))
+        await c.execute(text("RESET ROLE"))
+        state = (
+            await c.execute(
+                text("SELECT state FROM assess_sessions WHERE id=:s"), {"s": sid}
+            )
+        ).scalar()
+        jobs = (
+            await c.execute(
+                text("SELECT count(*) FROM assess_jobs WHERE dedupe_key=:k"),
+                {"k": f"transcript_generate:{sid}"},
+            )
+        ).scalar()
+        hand = (
+            await c.execute(
+                text("SELECT count(*) FROM assess_session_handoff WHERE session_id=:s"),
+                {"s": sid},
+            )
+        ).scalar()
+        assert (state, jobs, hand) == ("ACTIVE", 0, 1)  # the close left no trace
+        await c.rollback()  # also undoes the REVOKE
+
+
+# --- NFR-018: the read path stays far inside its budget ---------------------------------------------
+
+
+async def test_session_material_read_and_decrypt_p95_under_50ms(pg):
+    import os
+    import time
+
+    kek, (api_pub, api_priv) = sym("k1"), x_ring("a1")
+    sid = await make_real_session(pg, kek, api_pub)
+    # grow the session to the NFR-018 shape: ~200 KB snapshot, 40 turns of ~1 KB
+    row = (
+        await pg.run("api", "SELECT * FROM get_session_material(:s, 1)", {"s": sid})
+    )[0]
+    dek = open_sealed(
+        api_priv,
+        bytes(row.sealed_dek),
+        purpose="handoff",
+        binding=[sid, row.handoff_kid],
+    )
+    await pg.run(
+        "super",
+        "ALTER TABLE assess_snapshots DISABLE TRIGGER trg_assess_snapshots_immutable",
+    )
+    await pg.run(
+        "super",
+        "UPDATE assess_snapshots SET ciphertext=:c WHERE session_id=:s",
+        {
+            "c": envelope.encrypt_snapshot(
+                dek, sid, os.urandom(100_000).hex().encode()
+            ),
+            "s": sid,
+        },
+    )
+    await pg.run(
+        "super",
+        "ALTER TABLE assess_snapshots ENABLE TRIGGER trg_assess_snapshots_immutable",
+    )
+    prev = row.turn_hashes[-1]
+    for n in range(2, 42):
+        msg = os.urandom(512).hex().encode()
+        h = hashing.turn_hash(prev, n, "student", "normal", msg)
+        got = (
+            await pg.run(
+                "api",
+                "SELECT assess_append_turn(:s, 1, :q, 'student', 'normal', :c, :h, :p)",
+                {
+                    "s": sid,
+                    "q": n - 2,
+                    "c": envelope.encrypt_turn(dek, sid, n, msg),
+                    "h": h,
+                    "p": prev,
+                },
+            )
+        )[0][0]
+        assert got == n
+        prev = h
+
+    samples = []
+    async with pg.conn("api") as c:
+        for _ in range(500):
+            t0 = time.perf_counter()
+            r = (
+                await c.execute(
+                    text("SELECT * FROM get_session_material(:s, 1)"), {"s": sid}
+                )
+            ).one()
+            d = open_sealed(
+                api_priv,
+                bytes(r.sealed_dek),
+                purpose="handoff",
+                binding=[sid, r.handoff_kid],
+            )
+            envelope.decrypt_snapshot(d, sid, bytes(r.snapshot_ciphertext))
+            for no, ct in zip(r.turn_nos, r.turn_ciphertexts, strict=True):
+                envelope.decrypt_turn(d, sid, no, bytes(ct))
+            samples.append((time.perf_counter() - t0) * 1000)
+    samples.sort()
+    p95 = samples[int(len(samples) * 0.95)]
+    print(f"get_session_material + open + decrypt p95={p95:.1f} ms (n=500)")
+    assert p95 <= 50, f"p95 {p95:.1f} ms > 50 ms"
+
+
+async def test_every_session_row_is_consumed_iff_it_has_an_opening_turn(pg):
+    """REQ-067 consumed rule over the whole test corpus: STARTING <=> no opening turn."""
+    rows = await pg.run(
+        "super",
+        "SELECT s.state, EXISTS (SELECT 1 FROM assess_turns t WHERE t.session_id = s.id "
+        "AND t.kind = 'opening') FROM assess_sessions s",
+    )
+    assert rows, "empty corpus: the rule would hold vacuously"
+    assert all((state != "STARTING") == has_opening for state, has_opening in rows)

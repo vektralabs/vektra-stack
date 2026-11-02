@@ -363,17 +363,17 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
   dependency; no pgcrypto or weaker path. Numbering kept so cross-references stay valid.
 
 ### 8. Wiring, docs, CI
-- [ ] 8.1 `vektra_assess/health.py` (from plan 20261101-154950-assess-foundations): read
+- [x] 8.1 `vektra_assess/health.py` (from plan 20261101-154950-assess-foundations): read
       `assess_heartbeat` via the API role; report `degraded` when no row or age >
       `HEARTBEAT_MAX_AGE_S`; unit test with a stale row
-- [ ] 8.2 Add `vektra_assess.crypto` and `vektra_assess.db` to the mypy path (already covered by
+- [x] 8.2 Add `vektra_assess.crypto` and `vektra_assess.db` to the mypy path (already covered by
       `vektra-assess/src`) and confirm `test-assess` runs the new unit tests; integration tests run
       under the package-integration glob
-- [ ] 8.3 Docs: `docs/reference/configuration.md` (keyring purposes, kid rotation); operator runbook
+- [x] 8.3 Docs: `docs/reference/configuration.md` (keyring purposes, kid rotation); operator runbook
       section "assess keys: backup, restore drill, KEK re-wrap, hand-off re-seal" in
       `docs/guides/` (offline backup separate from DB dumps; a lost KEK = all snapshots lost);
       `.s2s/architecture.md` is NOT edited here — drift is listed in Notes for the design owner
-- [ ] 8.4 CHANGELOG `[Unreleased]`: assess schema, roles' grants, crypto module
+- [x] 8.4 CHANGELOG `[Unreleased]`: assess schema, roles' grants, crypto module
 
 ## State & Data Lifecycle
 
@@ -398,18 +398,18 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
 
 ## Acceptance Criteria
 
-- [ ] 20 concurrent Start inserts for the same (site, student, cmid) → `SELECT count(*)` = 1 non-CLOSED session (REQ-067)
-- [ ] Committing ACTIVE without an opening turn fails at COMMIT; for every session row in the test corpus, `state <> 'STARTING'` ⇔ an `opening` turn exists (REQ-067 consumed rule)
-- [ ] Rollback → 0 snapshot rows, 0 key rows, 0 session rows, 1 start-attempt row, counted (BR-015, REQ-071)
-- [ ] As `vektra_assess_api`: SELECT on turns, snapshots, session_keys, session_handoff and `teacher_config_sealed` each raise SQLSTATE 42501 (INT-002, ARCH-079)
-- [ ] The grant-matrix test passes in both directions, and the canary extra grant makes it fail (INT-002)
-- [ ] `get_session_material` returns 0 rows for a wrong epoch, a CLOSED session and a STARTING session; `assess_append_turn` with a stale seq adds 0 rows under concurrency (NFR-014)
-- [ ] After any close path, the hand-off row count for that session = 0, including a raw `UPDATE ... SET state='CLOSED'` with no explicit delete (ARCH-079)
-- [ ] `pg_dump --data-only` plus the postgres container logs contain 0 plaintext canaries after a full lifecycle walk (BR-015, REQ-085)
-- [ ] After `shred_session` / `shred_transcript`: per-table counts = 0 by query, and `pg_dump` contains no row for that session or transcript (REQ-089)
-- [ ] Teacher config sealed by the API key set cannot be opened by any key the API holds per `KEY_MATRIX`; it is opened by the worker key (ARCH-071, BR-013)
-- [ ] An `assess_audit_events` insert failure inside a business transaction aborts that transaction (fail closed; REQ-085)
-- [ ] `rewrap_session_keys` leaves 0 rows on the old kid, and every DEK unwraps under the new kid (ARCH-071)
+- [x] 20 concurrent Start inserts for the same (site, student, cmid) → `SELECT count(*)` = 1 non-CLOSED session (REQ-067)
+- [x] Committing ACTIVE without an opening turn fails at COMMIT; for every session row in the test corpus, `state <> 'STARTING'` ⇔ an `opening` turn exists (REQ-067 consumed rule)
+- [x] Rollback → 0 snapshot rows, 0 key rows, 0 session rows, 1 start-attempt row, counted (BR-015, REQ-071)
+- [x] As `vektra_assess_api`: SELECT on turns, snapshots, session_keys, session_handoff and `teacher_config_sealed` each raise SQLSTATE 42501 (INT-002, ARCH-079)
+- [x] The grant-matrix test passes in both directions, and the canary extra grant makes it fail (INT-002)
+- [x] `get_session_material` returns 0 rows for a wrong epoch, a CLOSED session and a STARTING session; `assess_append_turn` with a stale seq adds 0 rows under concurrency (NFR-014)
+- [x] After any close path, the hand-off row count for that session = 0, including a raw `UPDATE ... SET state='CLOSED'` with no explicit delete (ARCH-079)
+- [x] `pg_dump --data-only` plus the postgres container logs contain 0 plaintext canaries after a full lifecycle walk (BR-015, REQ-085)
+- [x] After `shred_session` / `shred_transcript`: per-table counts = 0 by query, and `pg_dump` contains no row for that session or transcript (REQ-089)
+- [x] Teacher config sealed by the API key set cannot be opened by any key the API holds per `KEY_MATRIX`; it is opened by the worker key (ARCH-071, BR-013)
+- [x] An `assess_audit_events` insert failure inside a business transaction aborts that transaction (fail closed; REQ-085)
+- [x] `rewrap_session_keys` leaves 0 rows on the old kid, and every DEK unwraps under the new kid (ARCH-071)
 
 ## Testing Approach
 

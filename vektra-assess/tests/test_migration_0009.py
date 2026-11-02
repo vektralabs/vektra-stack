@@ -120,11 +120,13 @@ async def test_upgrade_is_idempotent_over_existing_roles(pg):
 
 async def test_downgrade_refused_while_assess_keys_exist(pg):
     await _insert_key(pg, ["assess:teacher"], "blocker")
+    before = (await _fetch(pg, "SELECT version_num FROM alembic_version"))[0][0]
     res = _alembic(pg, "downgrade", "0008")
     assert res.returncode != 0
     assert "downgrade refused" in res.stderr and "1 API key" in res.stderr
+    # the refusal rolls the whole (transactional) downgrade back, later revisions included
     rows = await _fetch(pg, "SELECT version_num FROM alembic_version")
-    assert rows[0][0] == "0009"
+    assert rows[0][0] == before
     rows = await _fetch(
         pg, "SELECT count(*) FROM api_keys WHERE key_hash = 'hash-blocker'"
     )

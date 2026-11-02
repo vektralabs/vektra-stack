@@ -328,3 +328,57 @@ def test_parser_refuses_truncated_and_deep_frames():
     deep = b"[" * 200000
     with pytest.raises(ValueError):
         asyncio.run(run(struct.pack(">I", len(deep)) + deep))
+
+
+async def test_heartbeat_loop_touches_file_and_beats_the_database(tmp_path):
+    import asyncio
+
+    from vektra_app.assess_worker import heartbeat_loop
+
+    calls = []
+
+    class Conn:
+        async def execute(self, sql):
+            calls.append(str(sql))
+
+    class Begin:
+        async def __aenter__(self):
+            return Conn()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Engine:
+        def begin(self):
+            return Begin()
+
+    stop = asyncio.Event()
+    path = tmp_path / "hb"
+    task = asyncio.create_task(
+        heartbeat_loop(path, stop, interval_s=0.01, engine=Engine())
+    )
+    await asyncio.sleep(0.05)
+    stop.set()
+    await task
+    assert path.exists()
+    assert calls and "assess_heartbeat" in calls[0]
+
+
+async def test_a_failing_heartbeat_write_never_stops_the_file_heartbeat(tmp_path):
+    import asyncio
+
+    from vektra_app.assess_worker import heartbeat_loop
+
+    class Engine:
+        def begin(self):
+            raise ConnectionError("db down")
+
+    stop = asyncio.Event()
+    path = tmp_path / "hb"
+    task = asyncio.create_task(
+        heartbeat_loop(path, stop, interval_s=0.01, engine=Engine())
+    )
+    await asyncio.sleep(0.05)
+    stop.set()
+    await task
+    assert path.exists()

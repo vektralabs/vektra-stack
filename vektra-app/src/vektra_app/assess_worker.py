@@ -29,6 +29,7 @@ import signal
 import sys
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -125,12 +126,36 @@ async def run_checks() -> object:
     return engine
 
 
+_BEAT_SQL = (
+    "INSERT INTO assess_heartbeat (component, beat_at) VALUES ('worker', now()) "
+    "ON CONFLICT (component) DO UPDATE SET beat_at = now()"
+)
+
+
+async def _beat_db(engine: Any) -> None:
+    """Record the beat the API's /health/assess reads. A failure is logged, never fatal:
+    the file heartbeat (the container healthcheck) keeps working without the database."""
+    from sqlalchemy import text
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(_BEAT_SQL))
+    except Exception as exc:
+        log.warning("assess_worker_heartbeat_db_failed", error=type(exc).__name__)
+
+
 async def heartbeat_loop(
-    path: Path, stop: asyncio.Event, interval_s: float = HEARTBEAT_INTERVAL_S
+    path: Path,
+    stop: asyncio.Event,
+    interval_s: float = HEARTBEAT_INTERVAL_S,
+    engine: Any | None = None,
 ) -> None:
-    """Touch ``path`` every ``interval_s`` until ``stop`` is set."""
+    """Touch ``path`` (and the heartbeat row, when ``engine`` is given) every
+    ``interval_s`` until ``stop`` is set."""
     while not stop.is_set():
         path.touch()
+        if engine is not None:
+            await _beat_db(engine)
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
         except TimeoutError:
@@ -158,7 +183,9 @@ async def _amain() -> int:
         loop.add_signal_handler(sig, stop.set)
     log.info("assess_worker_started", role=WORKER_ROLE)
     try:
-        await heartbeat_loop(VektraAssessSettings().worker_heartbeat_file, stop)
+        await heartbeat_loop(
+            VektraAssessSettings().worker_heartbeat_file, stop, engine=engine
+        )
     finally:
         await engine.dispose()  # type: ignore[attr-defined]
         log.info("assess_worker_stopped")

@@ -249,6 +249,12 @@ omit = [
     "*/vektra_admin/keystore.py",
     "*/vektra_admin/middleware.py",
     "*/vektra_learn/api.py",
+    # vektra_assess data layer: exercised only against a real Postgres (testcontainers,
+    # vektra-assess/tests/integration), where the privileges, triggers and row counts
+    # they depend on actually exist.
+    "*/vektra_assess/db/models.py",
+    "*/vektra_assess/crypto/shred.py",
+    "*/vektra_assess/crypto/rotation.py",
 ]
 
 [tool.coverage.report]

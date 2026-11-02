@@ -262,6 +262,26 @@ jobs:
           uv run pytest vektra-*/tests -m integration \
             -v --tb=short --junitxml=test-results/package-integration.xml
 
+      # Without Docker the assess data tests SKIP (never pass). Here that is a failure:
+      # the grant matrix and the access boundary must have actually run (plan
+      # assess-data-crypto, Test Infrastructure false-pass guard).
+      - name: Assess integration tests must have run, not skipped
+        run: |
+          uv run python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("test-results/package-integration.xml").getroot()
+          cases = [
+              c for c in root.iter("testcase")
+              if "vektra-assess.tests" in (c.get("classname") or "")
+          ]
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          print(f"assess integration: {len(cases)} collected, {len(skipped)} skipped")
+          if len(cases) < 30 or skipped:
+              sys.exit(f"assess integration suite did not fully run: skipped={skipped}")
+          PY
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7

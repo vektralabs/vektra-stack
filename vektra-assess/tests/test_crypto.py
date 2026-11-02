@@ -321,3 +321,32 @@ def test_reprs_and_logs_carry_no_key_bytes():
     assert str(kek.active_key) not in repr(kek)
     for err in (KeyNotAvailable("x"), InvalidTag()):
         assert CANARY.decode() not in repr(err)
+
+
+def test_no_key_the_api_holds_opens_teacher_config(tmp_path):
+    """Acceptance: sealed by the API key set, opened only by the worker's private key."""
+    from vektra_assess.keys import KEY_MATRIX, Kind, Need, generate, load_keyring
+
+    generate(tmp_path)
+    worker_pub = load_keyring("assess_teacher_config_public", tmp_path)
+    blob, _ = teacher_config.seal_teacher_config(
+        worker_pub, "site-1", 7, "config", "secret solution"
+    )
+    opened = 0
+    for name, spec in KEY_MATRIX.items():
+        if spec.need("api") is Need.FORBIDDEN or spec.kind not in (
+            Kind.SYMMETRIC,
+            Kind.X25519_PRIVATE,
+            Kind.X25519_PUBLIC,
+        ):
+            continue
+        ring = load_keyring(name, tmp_path)
+        with pytest.raises((InvalidTag, KeyNotAvailable)):
+            teacher_config.open_teacher_config(ring, blob, "site-1", 7, "config")
+        opened += 1
+    assert opened >= 4  # the check really iterated the API's keys
+    worker_priv = load_keyring("assess_teacher_config_private", tmp_path)
+    assert (
+        teacher_config.open_teacher_config(worker_priv, blob, "site-1", 7, "config")
+        == "secret solution"
+    )

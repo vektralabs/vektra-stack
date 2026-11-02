@@ -69,7 +69,13 @@ async def step_12_assess_check(
     app.state.assess_enabled = settings.enabled
     if registry is not None:
         registry.register(
-            "health", "assess", make_readiness_check(enabled=settings.enabled)
+            "health",
+            "assess",
+            make_readiness_check(
+                enabled=settings.enabled,
+                get_engine=lambda: getattr(app.state, "assess_engine", None),
+                max_age_s=settings.heartbeat_max_age_s,
+            ),
         )
     if not settings.enabled:
         enforce_key_matrix(

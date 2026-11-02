@@ -243,20 +243,20 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
 - [x] 1.1 Revision "sites and config": `assess_sites`, `assess_site_keys`, `assess_site_capabilities`,
       `assess_setup_checks`, `assess_activity_config`, `assess_extra_time`, `assess_reset_grants`;
       ORM mirrors in `vektra_assess/db/models.py` (internal to the package, ADR-0022 style)
-- [ ] 1.2 Revision "sessions": `assess_sessions` with the partial unique index, CHECKs, `UNIQUE (id,
+- [x] 1.2 Revision "sessions": `assess_sessions` with the partial unique index, CHECKs, `UNIQUE (id,
       state)`, `assess_start_attempts`, `assess_outage_incidents`, `assess_enrolment_checks`,
       `assess_snapshots` (+ immutability trigger), `assess_turns`, the deferred opening-turn
       constraint trigger
-- [ ] 1.3 Revision "keys": `assess_session_keys`, `assess_session_handoff` with the composite FK
+- [x] 1.3 Revision "keys": `assess_session_keys`, `assess_session_handoff` with the composite FK
       `ON UPDATE CASCADE` and the live-state CHECK; role `vektra_assess_definer` (NOLOGIN,
       idempotent DO block like 0009)
-- [ ] 1.4 Revision "transcripts and plumbing": `assess_transcripts`, `assess_deliveries`,
+- [x] 1.4 Revision "transcripts and plumbing": `assess_transcripts`, `assess_deliveries`,
       `assess_jobs` (+ autovacuum settings), `assess_render_checks`, `assess_render_state`,
       `assess_gate_inputs`, `assess_consumed_jtis`, `assess_transcript_download_tokens`,
       `assess_audit_events` (+ append-only trigger), `assess_erasure_records`, `assess_heartbeat`
-- [ ] 1.5 Downgrades drop in reverse order and refuse (RAISE) if any `assess_sessions` row exists,
+- [x] 1.5 Downgrades drop in reverse order and refuse (RAISE) if any `assess_sessions` row exists,
       so a downgrade can never silently discard exam evidence
-- [ ] 1.6 Migration test (testcontainers pg16): upgrade head → downgrade to 0009 on an empty
+- [x] 1.6 Migration test (testcontainers pg16): upgrade head → downgrade to 0009 on an empty
       schema → upgrade head; `check_database_schema()` passes; `\d`-equivalent catalog query lists
       exactly the expected `assess_%` tables
 

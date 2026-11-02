@@ -88,7 +88,7 @@ def upgrade() -> None:
             recipients_extra        TEXT[] NOT NULL DEFAULT '{}',
             teacher_config_sealed   BYTEA NULL,
             teacher_config_kid      TEXT NULL,
-            teacher_config_set      BOOLEAN GENERATED ALWAYS AS
+            teacher_config_set      BOOLEAN NOT NULL GENERATED ALWAYS AS
                                         (teacher_config_sealed IS NOT NULL) STORED,
             updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (site_id, cmid),

@@ -45,7 +45,7 @@ async def rewrap_session_keys(
             ),
             {"b": blob, "k": kid, "v": new_version, "s": sid},
         )
-    return int(
+    result = (
         await conn.execute(
             text(
                 "SELECT count(*) FROM assess_session_keys "
@@ -54,6 +54,7 @@ async def rewrap_session_keys(
             {"k": from_kid},
         )
     ).scalar_one()
+    return int(result)
 
 
 async def reseal_handoffs(
@@ -167,7 +168,7 @@ async def rewrap_transcript_deks(
             ),
             {"b": fresh, "k": keyring.active, "i": tid},
         )
-    return int(
+    result = (
         await conn.execute(
             text(
                 "SELECT count(*) FROM assess_transcripts "
@@ -176,3 +177,4 @@ async def rewrap_transcript_deks(
             {"k": from_kid},
         )
     ).scalar_one()
+    return int(result)

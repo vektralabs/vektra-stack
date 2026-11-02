@@ -23,6 +23,7 @@ This module must not import ``vektra_app.main``: that builds the whole API.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import sys
@@ -139,6 +140,9 @@ async def heartbeat_loop(
 async def _amain() -> int:
     from vektra_assess.config import VektraAssessSettings
 
+    # A heartbeat left by a previous run must not vouch for this one.
+    with contextlib.suppress(FileNotFoundError):
+        VektraAssessSettings().worker_heartbeat_file.unlink()
     try:
         engine = await run_checks()
     except DisabledError as exc:

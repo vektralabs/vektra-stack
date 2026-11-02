@@ -26,6 +26,7 @@ from vektra_shared.startup import StartupValidationError
 
 STEP = "assess_parser_check"
 MAX_FRAME = 1 << 20
+BODY_TIMEOUT_S = 10.0  # a peer that sends a header and stalls must not hold the task
 _HEADER = struct.Struct(">I")
 
 
@@ -37,7 +38,14 @@ async def read_frame(reader: asyncio.StreamReader) -> dict[str, Any] | None:
     (length,) = _HEADER.unpack(header)
     if length > MAX_FRAME:
         raise ValueError(f"frame of {length} bytes exceeds {MAX_FRAME}")
-    doc = json.loads(await reader.readexactly(length))
+    try:
+        body = await asyncio.wait_for(reader.readexactly(length), BODY_TIMEOUT_S)
+    except (asyncio.IncompleteReadError, TimeoutError):
+        raise ValueError("truncated or stalled frame body") from None
+    try:
+        doc = json.loads(body)
+    except RecursionError:
+        raise ValueError("frame nesting too deep") from None
     if not isinstance(doc, dict):
         raise ValueError("frame is not a JSON object")
     return doc

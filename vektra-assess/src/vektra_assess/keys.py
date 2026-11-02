@@ -226,8 +226,10 @@ def load_keyring(name: str, secrets_dir: Path) -> Loaded:
 
 
 def _env_names_carrying(name: str, environ: Mapping[str, str]) -> list[str]:
-    needle = name.upper()
-    return sorted(k for k in environ if needle in k.upper())
+    """Env vars that carry the secret ``name``: exact names only, never substrings."""
+    base = name.upper()
+    exact = {base, f"VEKTRA_{base}", f"{base}_FILE", f"VEKTRA_{base}_FILE"}
+    return sorted(k for k in environ if k.upper() in exact)
 
 
 def enforce_key_matrix(
@@ -290,6 +292,9 @@ def enforce_key_matrix(
     return loaded
 
 
+_PARSER_ENV_ALLOWED = frozenset({"VEKTRA_ASSESS_SECRETS_DIR"})  # a path, not a secret
+
+
 def _parser_environment_problems(
     secrets_dir: Path, env: Mapping[str, str]
 ) -> list[str]:
@@ -298,8 +303,10 @@ def _parser_environment_problems(
         problems.append(f"parser: secrets dir {secrets_dir} must be absent or empty")
     for k in sorted(env):
         up = k.upper()
-        if up.startswith("VEKTRA_") and any(
-            f in up for f in _PARSER_FORBIDDEN_ENV_FRAGMENTS
+        if (
+            up.startswith("VEKTRA_")
+            and up not in _PARSER_ENV_ALLOWED
+            and any(f in up for f in _PARSER_FORBIDDEN_ENV_FRAGMENTS)
         ):
             problems.append(f"parser: env var {k} must not be set (no DSN or secret)")
     return problems
@@ -349,11 +356,14 @@ def generate(out: Path, *, kid: str = "k1") -> list[Path]:
     missing = set(KEY_MATRIX) - set(docs) - set(passwords)
     assert not missing, missing
 
+    existing = [str(out / n) for n in KEY_MATRIX if (out / n).exists()]
+    if existing:  # all-or-nothing: never leave a half-regenerated, mismatched set
+        raise FileExistsError(
+            f"refusing to overwrite secrets, nothing written: {', '.join(existing)}"
+        )
     written: list[Path] = []
     for name in KEY_MATRIX:
         path = out / name
-        if path.exists():
-            raise FileExistsError(f"{path} exists; refusing to overwrite a secret")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             if name in passwords:

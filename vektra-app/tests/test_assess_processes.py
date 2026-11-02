@@ -307,3 +307,24 @@ def test_no_generic_worker_target(tmp_path: Path) -> None:
     code, out = _entry(tmp_path, "worker")
     assert code == 1
     assert "assess-worker, assess-parser" in out
+
+
+def test_parser_refuses_truncated_and_deep_frames():
+    import asyncio
+    import struct
+
+    import pytest
+
+    from vektra_app.assess_parser import read_frame
+
+    async def run(data: bytes):
+        r = asyncio.StreamReader()
+        r.feed_data(data)
+        r.feed_eof()
+        return await read_frame(r)
+
+    with pytest.raises(ValueError):
+        asyncio.run(run(struct.pack(">I", 50) + b"{}"))  # body shorter than header says
+    deep = b"[" * 200000
+    with pytest.raises(ValueError):
+        asyncio.run(run(struct.pack(">I", len(deep)) + deep))

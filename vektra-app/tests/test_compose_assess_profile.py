@@ -145,5 +145,6 @@ def test_postgres_logs_no_statements(rendered: dict) -> None:  # type: ignore[ty
         "log_min_duration_statement=-1",
         "log_parameter_max_length=0",
         "log_parameter_max_length_on_error=0",
+        "log_min_error_statement=panic",
     ):
         assert flag in cmd

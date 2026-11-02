@@ -81,7 +81,7 @@ class RateLimiter:
         if current_count >= rpm_limit:
             log.info(
                 "rate_limit_exceeded",
-                key=str(key),
+                key_id=str(key),
                 rpm_limit=rpm_limit,
                 current=current_count,
             )

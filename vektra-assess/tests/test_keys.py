@@ -251,3 +251,29 @@ def test_cli_prints_names_only(
     assert keys.main(["generate", "--out", str(tmp_path / "cli")]) == 0
     out = capsys.readouterr().out
     assert "assess_kek" in out and "keys" not in out.replace("assess_", "")
+
+
+def test_generate_is_all_or_nothing(tmp_path):
+    from vektra_assess.keys import KEY_MATRIX, generate
+
+    (tmp_path / "assess_handoff_public").write_text("{}")
+    import pytest
+
+    with pytest.raises(FileExistsError):
+        generate(tmp_path)
+    assert [p.name for p in tmp_path.iterdir()] == ["assess_handoff_public"]
+    assert "assess_handoff_public" in KEY_MATRIX
+
+
+def test_env_check_matches_exact_names_not_substrings():
+    from vektra_assess.keys import _env_names_carrying
+
+    env = {
+        "VEKTRA_ASSESS_SMTP": "x",
+        "VEKTRA_ASSESS_SMTP_HOST": "mail",
+        "assess_smtp_file": "y",
+    }
+    assert _env_names_carrying("assess_smtp", env) == [
+        "VEKTRA_ASSESS_SMTP",
+        "assess_smtp_file",
+    ]

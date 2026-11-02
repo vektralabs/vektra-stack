@@ -331,7 +331,12 @@ async def _step_5_register_providers(
     registry.register("analytics", "default", analytics_service)
 
     # --- Learn service (conditional) ---
-    if settings.learn_jwt_secret:
+    # A secret shorter than 32 bytes is left unregistered here so that step 10
+    # (learn_check) reports it as a structured [STARTUP ERROR], not a traceback.
+    if (
+        settings.learn_jwt_secret
+        and len(settings.learn_jwt_secret.encode("utf-8")) >= 32
+    ):
         from vektra_learn.service import LearnService
 
         learn_service = LearnService(jwt_secret=settings.learn_jwt_secret)
@@ -440,17 +445,18 @@ async def _step_10_learn_check(
         log.info("startup_step", step="learn_check", status="skipped")
         return
 
+    secret_bytes = len(settings.learn_jwt_secret.encode("utf-8"))
+    if secret_bytes < 32:
+        raise StartupValidationError(
+            step="learn_check",
+            detail="VEKTRA_LEARN_JWT_SECRET must be at least 32 bytes.",
+            remediation="Set a longer JWT secret for production security.",
+        )
     if not registry.has("learn", "default"):
         raise StartupValidationError(
             step="learn_check",
             detail="VEKTRA_LEARN_JWT_SECRET is set but LearnService failed to register.",
             remediation="Check logs for LearnService initialization errors.",
-        )
-    if len(settings.learn_jwt_secret) < 32:
-        raise StartupValidationError(
-            step="learn_check",
-            detail="VEKTRA_LEARN_JWT_SECRET must be at least 32 characters.",
-            remediation="Set a longer JWT secret for production security.",
         )
     log.info("startup_step", step="learn_check", status="ok")
 

@@ -83,7 +83,7 @@ moodle-ws dev envs and fixture seeding can start on day one (they do not need th
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
-| 1 | [assess-foundations](20261101-154950-assess-foundations.md) | vektra_assess package, scopes, DB roles, secrets, worker entry, deps | 40 | none | in_progress |
+| 1 | [assess-foundations](20261101-154950-assess-foundations.md) | vektra_assess package, scopes, DB roles, secrets, worker entry, deps | 40 | none | completed |
 | 4 | [assess-moodle-ws](20261101-154950-assess-moodle-ws.md) | Moodle 4.3/5.2 envs, WS client, capability matrix, setup check | 43 | 1 (package scaffold only) | pending |
 | 2 | [assess-data-crypto](20261101-154950-assess-data-crypto.md) | assess_* schema, grants, SECURITY DEFINER, envelope crypto | 38 | 1 | pending |
 | 5 | [assess-parser](20261101-154950-assess-parser.md) | Network-less parser sidecar | 26 | 1 | pending |

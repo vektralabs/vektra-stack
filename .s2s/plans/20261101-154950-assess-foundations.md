@@ -1,7 +1,7 @@
 # Implementation Plan: Assess foundations — package, boundaries, keys, roles, topology skeleton
 
 **ID**: 20261101-154950-assess-foundations
-**Status**: in_progress
+**Status**: completed
 **Branch**: feat/assess-w1
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
@@ -506,3 +506,5 @@ config`, not the YAML source, so env interpolation and profile merging are what 
 - BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).
 
 > Acceptance evidence (2026-11-02): refusal check run on the local isolated stack image: `assess_ws_tokens` mounted, `VEKTRA_ASSESS_ENABLED=false` -> exit 1, `[STARTUP ERROR] Step: assess_check ... assess_ws_tokens: forbidden for api but mounted`. Stack tests 10/10, worker idle RSS 240.8 MB. CI `assess-stack` job re-runs them on the PR.
+
+> Code review (2026-11-02, high): 10 findings. Fixed: learn secret short -> structured step-10 error (bytes, not chars); pyjwt>=2.10 (strict_aud); `generate()` all-or-nothing; exact-name env matching; parser truncated/deep/stalled frames; worker heartbeat cleared at start and healthcheck path from env; `log_min_error_statement=panic`; rate-limit log field `key_id` kept. Not changed: `/health/assess` always `degraded` while enabled is the plan 8.2 decision (no evidence source until assess-data-crypto adds the heartbeat table, owner of that fix); `generate_token` second decode left as is (cosmetic).

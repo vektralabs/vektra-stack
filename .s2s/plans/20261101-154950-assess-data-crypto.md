@@ -294,23 +294,23 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
       vektra_assess_api` in a throwaway DB makes 3.2 fail
 
 ### 4. Crypto module `vektra_assess.crypto`
-- [ ] 4.1 `crypto/envelope.py`: versioned envelope encode/decode, `aead_encrypt(key, plaintext,
+- [x] 4.1 `crypto/envelope.py`: versioned envelope encode/decode, `aead_encrypt(key, plaintext,
       purpose, binding)` / `aead_decrypt(...)`, AAD construction per Design Notes; `new_dek()`
-- [ ] 4.2 `crypto/kek.py`: `wrap_dek(keyring, dek, session_id) -> (blob, kid, key_version)`,
+- [x] 4.2 `crypto/kek.py`: `wrap_dek(keyring, dek, session_id) -> (blob, kid, key_version)`,
       `unwrap_dek(keyring, blob, session_id)`; unknown kid → `KeyNotAvailable` (never a fallback
       to another kid)
-- [ ] 4.3 `crypto/seal.py`: `seal(recipient_pub, kid, plaintext, purpose, binding)` /
+- [x] 4.3 `crypto/seal.py`: `seal(recipient_pub, kid, plaintext, purpose, binding)` /
       `open_sealed(recipient_priv_keyring, blob, purpose, binding)`; HPKE API if present in the
       locked version, primitive construction otherwise, identical wire format; known-answer tests
       for the primitive path
-- [ ] 4.4 `crypto/teacher_config.py`: `seal_teacher_config(worker_pub, site_id, cmid, field, text)`
+- [x] 4.4 `crypto/teacher_config.py`: `seal_teacher_config(worker_pub, site_id, cmid, field, text)`
       (API side) and `open_teacher_config(worker_priv, ...)` (worker side); a test that the API key
       set (per `KEY_MATRIX`) cannot open it
-- [ ] 4.5 `crypto/transcript.py`: per-transcript DEK, wrapped by the `assess_transcript_kek` keyring;
+- [x] 4.5 `crypto/transcript.py`: per-transcript DEK, wrapped by the `assess_transcript_kek` keyring;
       `encrypt_transcript` / `decrypt_transcript`
-- [ ] 4.6 `crypto/hashing.py`: canonical snapshot hash, turn hash chain, transcript hash;
+- [x] 4.6 `crypto/hashing.py`: canonical snapshot hash, turn hash chain, transcript hash;
       `verify_chain(turns)`
-- [ ] 4.7 Unit tests: round trips; tamper one byte of ct, nonce, kid or AAD binding → `InvalidTag`;
+- [x] 4.7 Unit tests: round trips; tamper one byte of ct, nonce, kid or AAD binding → `InvalidTag`;
       ciphertext moved to another session_id/turn_no → `InvalidTag`; nonce uniqueness over 10⁵
       encryptions; repr/str of key objects contain no key bytes; structlog capture of a full
       round trip contains no key or plaintext canary
@@ -496,3 +496,5 @@ session with savepoints.
   Section 7 is N/A on PASS.
 
 > Note (2026-11-02, task 3): the design text says "snapshots (INSERT and DELETE only), turns (INSERT and purge DELETE)" for the worker. The worker also needs SELECT on both to build the opening turn and the transcript, so the matrix grants SELECT, INSERT, DELETE and never UPDATE (BR-015). `vektra_assess_definer` owns the functions and so always holds EXECUTE; the catalog test accounts for that. Task 3.4's canary runs the comparison inside a rolled-back transaction instead of a separate revision.
+
+> Note (2026-11-02, task 4): the locked `cryptography` 49.0.0 ships `hazmat.primitives.hpke`, but sealing uses the primitive construction (ephemeral X25519, HKDF-SHA256 with salt `eph_pub|recipient_pub`, AES-256-GCM) always. The plan's "HPKE if present, same wire format otherwise" cannot give one wire format across two code paths; one documented format keeps a library bump from ever being a data migration. A pinned known-answer vector and an independent re-derivation guard it. The envelope AAD is exactly the Design Notes format (the kid is not in the AAD: a kid swap selects another key and fails authentication, an unknown kid raises `KeyNotAvailable`).

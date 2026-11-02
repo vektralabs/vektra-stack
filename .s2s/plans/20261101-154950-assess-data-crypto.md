@@ -261,18 +261,18 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
       exactly the expected `assess_%` tables
 
 ### 2. SECURITY DEFINER functions and triggers
-- [ ] 2.1 `get_session_material`, `assess_append_turn`, `assess_close_session` per Design Notes,
+- [x] 2.1 `get_session_material`, `assess_append_turn`, `assess_close_session` per Design Notes,
       owned by `vektra_assess_definer`, `SET search_path = pg_catalog, pg_temp`, `REVOKE EXECUTE
       FROM PUBLIC`, `GRANT EXECUTE TO vektra_assess_api` (and worker for close)
-- [ ] 2.2 BEFORE UPDATE OF state trigger on `assess_sessions` deleting the hand-off row on CLOSED;
+- [x] 2.2 BEFORE UPDATE OF state trigger on `assess_sessions` deleting the hand-off row on CLOSED;
       trigger forbidding transitions out of CLOSED (`OLD.state='CLOSED' AND NEW.state<>'CLOSED'`
       raises), so no job can revive a closed session or re-wrap its DEK
-- [ ] 2.3 Function tests as the real API role: wrong epoch → 0 rows; state CLOSED/STARTING → 0 rows;
+- [x] 2.3 Function tests as the real API role: wrong epoch → 0 rows; state CLOSED/STARTING → 0 rows;
       stale `p_expected_seq` → NULL and 0 turn rows added; wrong `p_prev_hash` → NULL; two
       concurrent `assess_append_turn` with the same seq → exactly one turn row (count verified)
-- [ ] 2.4 Search-path hijack test: as the API role, create a temp function/table shadowing a name
+- [x] 2.4 Search-path hijack test: as the API role, create a temp function/table shadowing a name
       used inside the functions (`pg_temp.assess_sessions`); the function still reads the real table
-- [ ] 2.5 Hand-off invariants test: INSERT hand-off for a STARTING or CLOSED session → error;
+- [x] 2.5 Hand-off invariants test: INSERT hand-off for a STARTING or CLOSED session → error;
       UPDATE session to CLOSED (worker role, raw SQL, no explicit delete) → hand-off row count 0;
       transition CLOSED → ACTIVE → error
 

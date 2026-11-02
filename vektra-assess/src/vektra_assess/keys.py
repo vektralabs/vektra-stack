@@ -276,6 +276,17 @@ def enforce_key_matrix(
         except KeyringError as exc:
             problems.append(str(exc))
 
+    if role != "worker":
+        # per-site WS token files (assess_ws_token_<site_id>) are the worker's alone: the
+        # exact-name matrix cannot list them, so refuse the whole family by glob
+        if secrets_dir.is_dir():
+            problems.extend(
+                f"{p.name}: forbidden for {role} (WS tokens belong to the worker) "
+                f"but mounted at {p}"
+                for p in sorted(secrets_dir.glob("assess_ws_token*"))
+                if p.name != "assess_ws_tokens"  # already reported by the matrix above
+            )
+
     if role == "parser":
         problems.extend(_parser_environment_problems(secrets_dir, env))
 

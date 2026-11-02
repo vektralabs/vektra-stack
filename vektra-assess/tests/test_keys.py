@@ -277,3 +277,18 @@ def test_env_check_matches_exact_names_not_substrings():
         "VEKTRA_ASSESS_SMTP",
         "assess_smtp_file",
     ]
+
+
+@pytest.mark.parametrize("role", ["api", "parser"])
+def test_per_site_ws_token_files_are_refused_for_non_workers(
+    full_set: Path, tmp_path: Path, role: str
+) -> None:
+    """ARCH-066: any assess_ws_token_<site> file is the worker's alone (glob, not a name)."""
+    d = (
+        _subset(full_set, tmp_path / "p", set())
+        if role == "parser"
+        else _role_set(full_set, tmp_path, role, set())
+    )
+    (d / "assess_ws_token_3f2a").write_text("{}")
+    detail = _refusal(role, d)
+    assert "assess_ws_token_3f2a: forbidden for" in detail

@@ -64,3 +64,59 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PARSER_SOCKET",
         description="Unix socket of the parser sidecar (worker and parser only).",
     )
+
+    # --- Moodle web-service client (plan assess-moodle-ws, group B) -------------------------
+    env: str = Field(
+        "development",
+        alias="VEKTRA_ENV",
+        description="Environment mode (shared with the main settings). Plain http to Moodle needs development.",
+    )
+    moodle_ca_file: Path | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_MOODLE_CA_FILE",
+        description="CA bundle used to verify Moodle TLS certificates; the system store when unset.",
+    )
+    ws_timeout_connect_s: float = Field(
+        3.0, gt=0, le=60, alias="VEKTRA_ASSESS_WS_TIMEOUT_CONNECT_S"
+    )
+    ws_timeout_read_s: float = Field(
+        10.0, gt=0, le=120, alias="VEKTRA_ASSESS_WS_TIMEOUT_READ_S"
+    )
+    ws_max_response_bytes: int = Field(
+        8 * 1024 * 1024,
+        ge=1024,
+        alias="VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES",
+        description="Byte cap of a JSON web-service response; the stream is aborted on overflow.",
+    )
+    ws_max_file_bytes: int = Field(
+        10 * 1024 * 1024,
+        ge=1024,
+        alias="VEKTRA_ASSESS_WS_MAX_FILE_BYTES",
+        description="Byte cap of one downloaded submission file (REQ-101).",
+    )
+    ws_rps: float = Field(
+        10.0,
+        gt=0,
+        le=1000,
+        alias="VEKTRA_ASSESS_WS_RPS",
+        description="Global cap on Moodle calls per second, shared by every caller in the worker.",
+    )
+    breaker_threshold: int = Field(5, ge=1, alias="VEKTRA_ASSESS_BREAKER_THRESHOLD")
+    breaker_cooldown_s: float = Field(
+        30.0, gt=0, alias="VEKTRA_ASSESS_BREAKER_COOLDOWN_S"
+    )
+    moodle_allow_http: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_MOODLE_ALLOW_HTTP",
+        description="Plain http to Moodle. Honoured only with VEKTRA_ENV=development; the worker refuses to start otherwise.",
+    )
+    moodle_allowed_cidrs: str = Field(
+        "",
+        alias="VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS",
+        description="Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network). Empty: private addresses are refused.",
+    )
+    ingest_account_username: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME",
+        description="Username of the ingestion web-service account; the setup check refuses the assess token if it belongs to it. Unset: that item is UNVERIFIABLE.",
+    )

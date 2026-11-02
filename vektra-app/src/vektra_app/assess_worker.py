@@ -90,6 +90,15 @@ async def run_checks() -> object:
             "deployment where assess is disabled."
         )
     loaded = enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
+    if settings.moodle_allow_http and settings.env != "development":
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP=true is only honoured with "
+                f"VEKTRA_ENV=development (this process runs with VEKTRA_ENV={settings.env})"
+            ),
+            remediation="Unset VEKTRA_ASSESS_MOODLE_ALLOW_HTTP; use https to Moodle.",
+        )
     run_crypto_selftest()
     if not settings.worker_database_url:
         raise StartupValidationError(

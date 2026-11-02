@@ -382,3 +382,15 @@ async def test_a_failing_heartbeat_write_never_stops_the_file_heartbeat(tmp_path
     stop.set()
     await task
     assert path.exists()
+
+
+async def test_worker_refuses_plain_http_outside_development(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.setenv("VEKTRA_ASSESS_MOODLE_ALLOW_HTTP", "true")
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    with pytest.raises(StartupValidationError, match="only honoured with"):
+        await assess_worker.run_checks()

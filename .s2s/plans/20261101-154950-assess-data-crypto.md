@@ -277,19 +277,19 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
       transition CLOSED → ACTIVE → error
 
 ### 3. Grant matrix (INT-002)
-- [ ] 3.1 `vektra_assess/db/grants.py`: the matrix as data (role → table → privileges, with column
+- [x] 3.1 `vektra_assess/db/grants.py`: the matrix as data (role → table → privileges, with column
       lists where column-level); revision "grants" generated FROM this module's rendered SQL, with
       the rendered SQL committed in the revision (no import of app code from the migration at run time)
-- [ ] 3.2 `vektra-assess/tests/integration/test_grant_matrix.py`: query
+- [x] 3.2 `vektra-assess/tests/integration/test_grant_matrix.py`: query
       `information_schema.role_table_grants`, `column_privileges`, `pg_proc.proacl/prosecdef/proconfig`,
       `pg_roles` and compare to the matrix BOTH WAYS; fail on any `assess_%` table absent from the
       matrix; assert PUBLIC has no EXECUTE on the three functions; assert roles are not super,
       no BYPASSRLS, no CREATEROLE
-- [ ] 3.3 Behavioural cross-check, connecting AS `vektra_assess_api`: `SELECT` on `assess_turns`,
+- [x] 3.3 Behavioural cross-check, connecting AS `vektra_assess_api`: `SELECT` on `assess_turns`,
       `assess_snapshots`, `assess_session_keys`, `assess_session_handoff`, and on
       `assess_activity_config.teacher_config_sealed` each raise `InsufficientPrivilege` (asserted on
       SQLSTATE 42501, not on "an exception")
-- [ ] 3.4 Wire 3.2/3.3 into CI via the package-integration glob (`-m integration`); add a
+- [x] 3.4 Wire 3.2/3.3 into CI via the package-integration glob (`-m integration`); add a
       negative canary: a test-only revision adding `GRANT SELECT ON assess_turns TO
       vektra_assess_api` in a throwaway DB makes 3.2 fail
 
@@ -494,3 +494,5 @@ session with savepoints.
   trade-off is recorded in Design Notes.
 - BUG-027 baseline result (from plan 20261101-154950-assess-foundations task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. Crypto tasks may start.
   Section 7 is N/A on PASS.
+
+> Note (2026-11-02, task 3): the design text says "snapshots (INSERT and DELETE only), turns (INSERT and purge DELETE)" for the worker. The worker also needs SELECT on both to build the opening turn and the transcript, so the matrix grants SELECT, INSERT, DELETE and never UPDATE (BR-015). `vektra_assess_definer` owns the functions and so always holds EXECUTE; the catalog test accounts for that. Task 3.4's canary runs the comparison inside a rolled-back transaction instead of a separate revision.

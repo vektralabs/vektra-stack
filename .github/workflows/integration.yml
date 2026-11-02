@@ -283,13 +283,17 @@ jobs:
           import xml.etree.ElementTree as ET
 
           root = ET.parse("test-results/package-integration.xml").getroot()
+          # the live-Moodle tests (-m moodle) need two Moodle sites and are run by
+          # assess-moodle-contract.yml: here they SKIP by design and do not count
+          LIVE = ("test_moodle_live", "test_moodle_setup_live")
           cases = [
               c for c in root.iter("testcase")
               if "vektra-assess.tests" in (c.get("classname") or "")
+              and not any(name in (c.get("classname") or "") for name in LIVE)
           ]
           skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
           print(f"assess integration: {len(cases)} collected, {len(skipped)} skipped")
-          if len(cases) < 30 or skipped:
+          if len(cases) < 50 or skipped:
               sys.exit(f"assess integration suite did not fully run: skipped={skipped}")
           PY
 

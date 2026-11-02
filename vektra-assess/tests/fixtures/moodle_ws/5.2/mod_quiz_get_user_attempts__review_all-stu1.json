@@ -1,0 +1,52 @@
+{
+ "fixture": "review_all-stu1",
+ "params": {
+  "quizid": 14,
+  "status": "all",
+  "userid": 15
+ },
+ "response": {
+  "attempts": [
+   {
+    "attempt": 1,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619221,
+    "gradeitemmarks": [],
+    "id": 32,
+    "layout": "1,2,3,4,0",
+    "preview": 0,
+    "quiz": 14,
+    "state": "finished",
+    "sumgrades": 4,
+    "timecheckstate": null,
+    "timefinish": 1793446421,
+    "timemodified": 1793446421,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446421,
+    "uniqueid": 32,
+    "userid": 15
+   },
+   {
+    "attempt": 2,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619221,
+    "gradeitemmarks": [],
+    "id": 33,
+    "layout": "1,2,3,4,0",
+    "preview": 0,
+    "quiz": 14,
+    "state": "finished",
+    "sumgrades": 0,
+    "timecheckstate": null,
+    "timefinish": 1793446421,
+    "timemodified": 1793446421,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446421,
+    "uniqueid": 33,
+    "userid": 15
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_user_attempts"
+}

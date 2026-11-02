@@ -1,0 +1,20 @@
+{
+ "fixture": "cutoff",
+ "params": {
+  "assignmentids": [
+   92
+  ]
+ },
+ "response": {
+  "assignments": [],
+  "warnings": [
+   {
+    "item": "assignment",
+    "itemid": 92,
+    "message": "No access rights in module context",
+    "warningcode": "1"
+   }
+  ]
+ },
+ "wsfunction": "mod_assign_get_user_flags"
+}

@@ -1,0 +1,64 @@
+{
+ "fixture": "guide",
+ "params": {
+  "activeonly": 1,
+  "areaname": "submissions",
+  "cmids": [
+   192
+  ]
+ },
+ "response": {
+  "areas": [
+   {
+    "activemethod": "guide",
+    "areaname": "submissions",
+    "cmid": 192,
+    "component": "mod_assign",
+    "contextid": 287,
+    "definitions": [
+     {
+      "copiedfromid": null,
+      "description": "Guide description",
+      "descriptionformat": 1,
+      "guide": {
+       "guide_comments": [],
+       "guide_criteria": [
+        {
+         "description": "Structure of the report",
+         "descriptionformat": 1,
+         "descriptionmarkers": "CANARY-GUIDEMARKERS-guide-CRIT-Structure-m43",
+         "descriptionmarkersformat": 1,
+         "id": 15,
+         "maxscore": 50,
+         "shortname": "CRIT-Structure",
+         "sortorder": 1
+        },
+        {
+         "description": "Content of the report",
+         "descriptionformat": 1,
+         "descriptionmarkers": "CANARY-GUIDEMARKERS-guide-CRIT-Content-m43",
+         "descriptionmarkersformat": 1,
+         "id": 16,
+         "maxscore": 50,
+         "shortname": "CRIT-Content",
+         "sortorder": 2
+        }
+       ]
+      },
+      "id": 22,
+      "method": "guide",
+      "name": "Guide G",
+      "status": 20,
+      "timecopied": 0,
+      "timecreated": 1793619218,
+      "timemodified": 1793619218,
+      "usercreated": 2,
+      "usermodified": 2
+     }
+    ]
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "core_grading_get_definitions"
+}

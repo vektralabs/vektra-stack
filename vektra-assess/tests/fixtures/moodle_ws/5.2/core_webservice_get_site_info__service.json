@@ -1,0 +1,191 @@
+{
+ "fixture": "service",
+ "params": {},
+ "response": {
+  "advancedfeatures": [
+   {
+    "name": "usecomments",
+    "value": 1
+   },
+   {
+    "name": "usetags",
+    "value": 1
+   },
+   {
+    "name": "enablenotes",
+    "value": 1
+   },
+   {
+    "name": "messaging",
+    "value": 1
+   },
+   {
+    "name": "enableblogs",
+    "value": 1
+   },
+   {
+    "name": "enablecompletion",
+    "value": 1
+   },
+   {
+    "name": "enablebadges",
+    "value": 1
+   },
+   {
+    "name": "messagingallusers",
+    "value": 0
+   },
+   {
+    "name": "enablecustomreports",
+    "value": 1
+   },
+   {
+    "name": "enableglobalsearch",
+    "value": 0
+   },
+   {
+    "name": "mnet_dispatcher_mode",
+    "value": 0
+   },
+   {
+    "name": "enablecompetencies",
+    "value": 1
+   }
+  ],
+  "downloadfiles": 1,
+  "firstname": "Vektra",
+  "fullname": "Vektra Assess service",
+  "functions": [
+   {
+    "name": "core_webservice_get_site_info",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_course_get_courses_by_field",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_course_get_contents",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_course_get_course_module",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_enrol_get_enrolled_users",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_enrol_get_enrolled_users_with_capability",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_enrol_get_users_courses",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_group_get_course_user_groups",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_user_get_users_by_field",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "mod_quiz_get_quizzes_by_courses",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_quiz_get_user_attempts",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_quiz_get_attempt_review",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_quiz_get_combined_review_options",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_quiz_get_user_best_grade",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_quiz_get_overrides",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_quiz_get_user_quiz_attempts",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_quiz_get_quiz_feedback_for_grade",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_assign_get_assignments",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_assign_get_submissions",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_assign_get_submission_status",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_assign_get_grades",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_assign_get_user_flags",
+    "version": "2026042000"
+   },
+   {
+    "name": "mod_assign_get_participant",
+    "version": "2026042000"
+   },
+   {
+    "name": "core_grading_get_definitions",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "core_grading_get_gradingform_instances",
+    "version": "2026042004.04"
+   },
+   {
+    "name": "gradereport_user_get_grade_items",
+    "version": "2026042000"
+   }
+  ],
+  "lang": "en",
+  "lastname": "Assess service",
+  "limitconcurrentlogins": 0,
+  "mobilecssurl": "",
+  "policyagreed": 0,
+  "release": "5.2.4+ (Build: 20261030)",
+  "sitecalendartype": "gregorian",
+  "siteid": 1,
+  "sitename": "Moodle Site",
+  "siteurl": "https://moodle.example.org",
+  "theme": "boost",
+  "uploadfiles": 0,
+  "usercalendartype": "gregorian",
+  "usercanchangeconfig": false,
+  "usercanmanageownfiles": true,
+  "usercanviewconfig": false,
+  "userhomepage": 1,
+  "userid": 3,
+  "userissiteadmin": false,
+  "usermaxuploadfilesize": 104857600,
+  "username": "vektra_assess_svc",
+  "userpictureurl": "https://moodle.example.org/theme/image.php/boost/core/1793618426/u/f1",
+  "userprivateaccesskey": "REDACTED",
+  "userquota": 104857600,
+  "version": "2026042004.04"
+ },
+ "wsfunction": "core_webservice_get_site_info"
+}

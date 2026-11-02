@@ -1,0 +1,86 @@
+{
+ "fixture": "wf-stu2",
+ "params": {
+  "assignid": 100,
+  "userid": 72
+ },
+ "response": {
+  "assignmentdata": {
+   "attachments": {
+    "intro": []
+   }
+  },
+  "gradingsummary": {
+   "participantcount": 5,
+   "submissiondraftscount": 0,
+   "submissionsenabled": true,
+   "submissionsneedgradingcount": 2,
+   "submissionssubmittedcount": 2,
+   "warnofungroupedusers": ""
+  },
+  "lastattempt": {
+   "blindmarking": false,
+   "canedit": false,
+   "caneditowner": false,
+   "cansubmit": false,
+   "extensionduedate": 0,
+   "graded": true,
+   "gradingstatus": "inmarking",
+   "locked": false,
+   "submission": {
+    "assignment": 100,
+    "attemptnumber": 0,
+    "groupid": 0,
+    "id": 132,
+    "latest": 1,
+    "plugins": [
+     {
+      "editorfields": [
+       {
+        "description": "Online text submissions",
+        "format": 1,
+        "name": "onlinetext",
+        "text": "VISIBLE-ONLINETEXT-wf-stu2-m43"
+       }
+      ],
+      "fileareas": [
+       {
+        "area": "submissions_onlinetext",
+        "files": []
+       }
+      ],
+      "name": "Online text",
+      "type": "onlinetext"
+     },
+     {
+      "fileareas": [
+       {
+        "area": "submission_files",
+        "files": []
+       }
+      ],
+      "name": "File submissions",
+      "type": "file"
+     },
+     {
+      "name": "Submission comments",
+      "type": "comments"
+     }
+    ],
+    "status": "submitted",
+    "timecreated": 1793619218,
+    "timemodified": 1793619218,
+    "timestarted": null,
+    "userid": 72
+   },
+   "submissiongroupmemberswhoneedtosubmit": [],
+   "submissionsenabled": true,
+   "timelimit": 0,
+   "usergroups": [
+    17
+   ]
+  },
+  "warnings": []
+ },
+ "wsfunction": "mod_assign_get_submission_status"
+}

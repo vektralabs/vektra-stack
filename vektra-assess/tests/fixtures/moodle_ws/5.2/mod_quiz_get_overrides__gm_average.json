@@ -1,0 +1,10 @@
+{
+ "fixture": "gm_average",
+ "params": {
+  "quizid": 20
+ },
+ "response": {
+  "overrides": []
+ },
+ "wsfunction": "mod_quiz_get_overrides"
+}

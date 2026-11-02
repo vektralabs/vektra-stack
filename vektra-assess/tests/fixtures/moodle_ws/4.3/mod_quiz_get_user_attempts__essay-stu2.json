@@ -1,0 +1,32 @@
+{
+ "fixture": "essay-stu2",
+ "params": {
+  "quizid": 97,
+  "status": "all",
+  "userid": 72
+ },
+ "response": {
+  "attempts": [
+   {
+    "attempt": 1,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619218,
+    "id": 240,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 97,
+    "state": "finished",
+    "sumgrades": null,
+    "timecheckstate": null,
+    "timefinish": 1793446418,
+    "timemodified": 1793446418,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446417,
+    "uniqueid": 240,
+    "userid": 72
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_user_attempts"
+}

@@ -1,0 +1,16 @@
+{
+ "fixture": "hiddenuntil",
+ "params": {
+  "activeonly": 1,
+  "areaname": "submissions",
+  "cmids": [
+   199
+  ]
+ },
+ "response": {
+  "errorcode": "invalid_method_name",
+  "exception": "moodle_exception",
+  "message": "core_grading/invalid_method_name"
+ },
+ "wsfunction": "core_grading_get_definitions"
+}

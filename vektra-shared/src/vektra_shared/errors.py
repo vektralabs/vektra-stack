@@ -155,6 +155,12 @@ ERR_INDEX_004 = "ERR-INDEX-004"  # Reindex job not found
 # Assess errors (vektra_assess). Namespace rule: each plan takes the next free
 # number, codes are never reused (docs/reference/error-codes.md).
 ERR_ASSESS_001 = "ERR-ASSESS-001"  # Assess unavailable: a readiness item failed
+ERR_ASSESS_002 = (
+    "ERR-ASSESS-002"  # Setup check requested too soon (1 per 5 min per site)
+)
+ERR_ASSESS_003 = (
+    "ERR-ASSESS-003"  # Site or setup-check report not found (also cross-site)
+)
 
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
@@ -194,6 +200,8 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_INDEX_003: 400,  # Bad Request: target must differ from the active version
     ERR_INDEX_004: 404,
     ERR_ASSESS_001: 503,
+    ERR_ASSESS_002: 429,
+    ERR_ASSESS_003: 404,
 }
 
 

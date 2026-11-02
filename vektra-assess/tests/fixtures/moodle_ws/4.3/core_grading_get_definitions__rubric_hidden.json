@@ -1,0 +1,95 @@
+{
+ "fixture": "rubric_hidden",
+ "params": {
+  "activeonly": 1,
+  "areaname": "submissions",
+  "cmids": [
+   194
+  ]
+ },
+ "response": {
+  "areas": [
+   {
+    "activemethod": "rubric",
+    "areaname": "submissions",
+    "cmid": 194,
+    "component": "mod_assign",
+    "contextid": 289,
+    "definitions": [
+     {
+      "copiedfromid": null,
+      "description": "CANARY-RUBRICDESC-rubric_hidden-m43",
+      "descriptionformat": 1,
+      "id": 24,
+      "method": "rubric",
+      "name": "Rubric H",
+      "rubric": {
+       "rubric_criteria": [
+        {
+         "description": "CANARY-RUBRICCRIT-rubric_hidden-Clarity-m43",
+         "descriptionformat": 1,
+         "id": 31,
+         "levels": [
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_hidden-Clarity-poor-m43",
+           "definitionformat": 1,
+           "id": 91,
+           "score": 0
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_hidden-Clarity-ok-m43",
+           "definitionformat": 1,
+           "id": 92,
+           "score": 5
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_hidden-Clarity-good-m43",
+           "definitionformat": 1,
+           "id": 93,
+           "score": 10
+          }
+         ],
+         "sortorder": 1
+        },
+        {
+         "description": "CANARY-RUBRICCRIT-rubric_hidden-Method-m43",
+         "descriptionformat": 1,
+         "id": 32,
+         "levels": [
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_hidden-Method-none-m43",
+           "definitionformat": 1,
+           "id": 94,
+           "score": 0
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_hidden-Method-some-m43",
+           "definitionformat": 1,
+           "id": 95,
+           "score": 5
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_hidden-Method-full-m43",
+           "definitionformat": 1,
+           "id": 96,
+           "score": 10
+          }
+         ],
+         "sortorder": 2
+        }
+       ]
+      },
+      "status": 20,
+      "timecopied": 0,
+      "timecreated": 1793619218,
+      "timemodified": 1793619218,
+      "usercreated": 2,
+      "usermodified": 2
+     }
+    ]
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "core_grading_get_definitions"
+}

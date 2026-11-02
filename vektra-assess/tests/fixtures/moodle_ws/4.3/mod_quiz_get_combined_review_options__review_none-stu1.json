@@ -1,0 +1,55 @@
+{
+ "fixture": "review_none-stu1",
+ "params": {
+  "quizid": 88,
+  "userid": 71
+ },
+ "response": {
+  "alloptions": [
+   {
+    "name": "feedback",
+    "value": 0
+   },
+   {
+    "name": "generalfeedback",
+    "value": 0
+   },
+   {
+    "name": "rightanswer",
+    "value": 0
+   },
+   {
+    "name": "overallfeedback",
+    "value": 0
+   },
+   {
+    "name": "marks",
+    "value": 2
+   }
+  ],
+  "someoptions": [
+   {
+    "name": "feedback",
+    "value": 0
+   },
+   {
+    "name": "generalfeedback",
+    "value": 0
+   },
+   {
+    "name": "rightanswer",
+    "value": 0
+   },
+   {
+    "name": "overallfeedback",
+    "value": 0
+   },
+   {
+    "name": "marks",
+    "value": 2
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_combined_review_options"
+}

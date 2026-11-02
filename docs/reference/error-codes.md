@@ -110,6 +110,8 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ANALYTICS-001 | vektra-analytics | 503 | Analytics service or database session not available (starting up, or none configured) |
 | ERR-ANALYTICS-002 | vektra-analytics | 404 | Trace not found for the given `response_id` |
 | ERR-ASSESS-001 | vektra-assess | 503 | Assessment discussion service unavailable; the remediation names the failing readiness item (see `GET /health/assess`) |
+| ERR-ASSESS-002 | vektra-assess | 429 | Setup check requested too soon (one per site per 5 minutes); `Retry-After` gives the wait |
+| ERR-ASSESS-003 | vektra-assess | 404 | Site or setup-check report not found (also returned for a key bound to another site) |
 
 ### Deliberately not listed
 

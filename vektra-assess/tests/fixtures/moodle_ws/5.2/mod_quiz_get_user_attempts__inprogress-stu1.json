@@ -1,0 +1,33 @@
+{
+ "fixture": "inprogress-stu1",
+ "params": {
+  "quizid": 21,
+  "status": "all",
+  "userid": 15
+ },
+ "response": {
+  "attempts": [
+   {
+    "attempt": 1,
+    "currentpage": 0,
+    "gradednotificationsenttime": null,
+    "gradeitemmarks": [],
+    "id": 55,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 21,
+    "state": "inprogress",
+    "sumgrades": null,
+    "timecheckstate": 1793622821,
+    "timefinish": 0,
+    "timemodified": 1793619221,
+    "timemodifiedoffline": 0,
+    "timestart": 1793619221,
+    "uniqueid": 55,
+    "userid": 15
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_user_attempts"
+}

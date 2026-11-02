@@ -149,10 +149,31 @@ def require_exact_scope(
     return dependency
 
 
+def require_any_exact_scope(
+    *scopes: str,
+) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
+    """Exact scope check that accepts any ONE of ``scopes`` (still no admin superscope).
+
+    For the few assess routes that a site's own ``assess:teacher`` key OR an operator
+    ``admin`` key may call (e.g. the setup check). ``admin`` is accepted only because it is
+    named in ``scopes``; the route stays under the structural "exact scope" guard
+    (``vektra-app/tests/test_assess_route_scopes.py``). The caller still has to apply the
+    per-site binding of a narrow key.
+    """
+    if len(scopes) < 2 or not all(scopes):
+        raise ValueError("require_any_exact_scope needs at least two non-empty scopes")
+    dependency = _scope_dependency(
+        None, admin_superscope=False, any_of=frozenset(scopes)
+    )
+    dependency.__name__ = "require_exact_scope_any_" + "_or_".join(sorted(scopes))
+    return dependency
+
+
 def _scope_dependency(
     required_scope: str | None,
     *,
     admin_superscope: bool,
+    any_of: frozenset[str] | None = None,
 ) -> Callable[..., Coroutine[Any, Any, ApiKeyInfo]]:
     async def _dependency(
         request: Request,
@@ -202,6 +223,12 @@ def _scope_dependency(
         request.state.key_id = info.key_id
 
         # 5. Check scope (admin is a superscope per ARCH-059, unless exact)
+        if any_of is not None and not any(info.has_scope(x) for x in any_of):
+            err = auth_insufficient_scope(" or ".join(sorted(any_of)))
+            raise HTTPException(
+                status_code=http_status_for(err),
+                detail=err.to_envelope(),
+            )
         if required_scope is not None and not (
             info.has_scope(required_scope)
             or (admin_superscope and info.has_scope("admin"))

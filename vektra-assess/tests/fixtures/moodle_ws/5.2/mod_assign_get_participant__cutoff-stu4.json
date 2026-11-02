@@ -1,0 +1,21 @@
+{
+ "fixture": "cutoff-stu4",
+ "params": {
+  "assignid": 14,
+  "userid": 18
+ },
+ "response": {
+  "allowsubmissionsfromdate": 1792755221,
+  "blindmarking": false,
+  "cutoffdate": 1794137621,
+  "duedate": 1794051221,
+  "duedatestr": "7 November 2026, 11:33 AM",
+  "fullname": "Dario Delta",
+  "grantedextension": false,
+  "id": 18,
+  "requiregrading": false,
+  "submissionstatus": "",
+  "submitted": false
+ },
+ "wsfunction": "mod_assign_get_participant"
+}

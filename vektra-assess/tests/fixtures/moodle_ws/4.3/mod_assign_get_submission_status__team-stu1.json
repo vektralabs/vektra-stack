@@ -1,0 +1,133 @@
+{
+ "fixture": "team-stu1",
+ "params": {
+  "assignid": 94,
+  "userid": 71
+ },
+ "response": {
+  "assignmentdata": {
+   "attachments": {
+    "intro": []
+   }
+  },
+  "gradingsummary": {
+   "participantcount": 3,
+   "submissiondraftscount": 0,
+   "submissionsenabled": true,
+   "submissionsneedgradingcount": 0,
+   "submissionssubmittedcount": 1,
+   "warnofungroupedusers": "warnoptional"
+  },
+  "lastattempt": {
+   "blindmarking": false,
+   "canedit": false,
+   "caneditowner": false,
+   "cansubmit": false,
+   "extensionduedate": null,
+   "graded": false,
+   "gradingstatus": "notgraded",
+   "locked": false,
+   "submission": {
+    "assignment": 94,
+    "attemptnumber": 0,
+    "groupid": 0,
+    "id": 124,
+    "latest": 1,
+    "plugins": [
+     {
+      "editorfields": [
+       {
+        "description": "Online text submissions",
+        "format": 0,
+        "name": "onlinetext",
+        "text": ""
+       }
+      ],
+      "fileareas": [
+       {
+        "area": "submissions_onlinetext",
+        "files": []
+       }
+      ],
+      "name": "Online text",
+      "type": "onlinetext"
+     },
+     {
+      "fileareas": [
+       {
+        "area": "submission_files",
+        "files": []
+       }
+      ],
+      "name": "File submissions",
+      "type": "file"
+     },
+     {
+      "name": "Submission comments",
+      "type": "comments"
+     }
+    ],
+    "status": "submitted",
+    "timecreated": 1793619218,
+    "timemodified": 1793619218,
+    "timestarted": null,
+    "userid": 71
+   },
+   "submissiongroup": 17,
+   "submissiongroupmemberswhoneedtosubmit": [],
+   "submissionsenabled": true,
+   "teamsubmission": {
+    "assignment": 94,
+    "attemptnumber": 0,
+    "groupid": 17,
+    "id": 123,
+    "latest": 1,
+    "plugins": [
+     {
+      "editorfields": [
+       {
+        "description": "Online text submissions",
+        "format": 1,
+        "name": "onlinetext",
+        "text": "VISIBLE-ONLINETEXT-team-stu1-m43"
+       }
+      ],
+      "fileareas": [
+       {
+        "area": "submissions_onlinetext",
+        "files": []
+       }
+      ],
+      "name": "Online text",
+      "type": "onlinetext"
+     },
+     {
+      "fileareas": [
+       {
+        "area": "submission_files",
+        "files": []
+       }
+      ],
+      "name": "File submissions",
+      "type": "file"
+     },
+     {
+      "name": "Submission comments",
+      "type": "comments"
+     }
+    ],
+    "status": "submitted",
+    "timecreated": 1793619218,
+    "timemodified": 1793619218,
+    "timestarted": null,
+    "userid": 0
+   },
+   "timelimit": 0,
+   "usergroups": [
+    17
+   ]
+  },
+  "warnings": []
+ },
+ "wsfunction": "mod_assign_get_submission_status"
+}

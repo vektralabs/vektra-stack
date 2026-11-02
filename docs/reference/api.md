@@ -84,6 +84,17 @@ heartbeat is wired, it reports `degraded` with message `heartbeat_source_missing
 out of the shallow `GET /health`, so a stopped assess worker (a separate container) does not make the API
 container look unhealthy; it is included in `?detail=full`.
 
+### Assess setup check (assess)
+
+Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Callable by an `admin` key or by the site's own `assess:teacher` key (a narrow key bound to another site gets the same `404` as an unknown site; no cross-site probing).
+
+| Method | Path | Success | Errors |
+|--------|------|---------|--------|
+| POST | `/api/v1/assess/sites/{site_id}/setup-check` | `202 {"report_id": "<uuid>"}` | `401 ERR-AUTH-001`, `403 ERR-AUTH-003`, `404 ERR-ASSESS-003`, `429 ERR-ASSESS-002` (one check per site per 5 minutes, `Retry-After` set), `503 ERR-ASSESS-001` (no fresh worker heartbeat: the check would otherwise stay queued forever) |
+| GET | `/api/v1/assess/sites/{site_id}/setup-check/{report_id}` | `200` content-free report | `401`, `403`, `404 ERR-ASSESS-003` |
+
+The report is `{"report_id", "site_id", "status": "queued|running|done|failed", "moodle_release", "items": [{"name", "result": "OK|MISSING|UNVERIFIABLE", "reason_code"}], "created_at", "finished_at"}`. It carries no Moodle text, no emails and no ids beyond `site_id`. The feature is available for a site only if its latest finished report for the current Moodle release has every item `OK`.
+
 ### GET /api/v1/health
 
 Vector store health as seen by `vektra-index` (unauthenticated). Distinct from `GET /health`: this one checks only the **active** vector store, so it turns unhealthy when the store actually backing the index is unreachable.

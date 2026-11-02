@@ -120,3 +120,13 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME",
         description="Username of the ingestion web-service account; the setup check refuses the assess token if it belongs to it. Unset: that item is UNVERIFIABLE.",
     )
+    ui_origin: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_UI_ORIGIN",
+        description="Origin the chat UI is served from; the setup check refuses it if it is the same site as the Moodle base_url or the API public origin (CONF-004). Unset: UNVERIFIABLE.",
+    )
+    api_public_origin: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_API_PUBLIC_ORIGIN",
+        description="Public origin of the assess API, compared with the UI origin by the setup check.",
+    )

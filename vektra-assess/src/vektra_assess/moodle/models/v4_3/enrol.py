@@ -107,10 +107,36 @@ class UsersCoursesItem(_Strict):
     visible: int
 
 
+class UsersByFieldItemPreferencesItem(_Strict):
+    name: str
+    value: int | str
+
+
+class UsersByFieldItem(_Strict):
+    auth: str
+    confirmed: bool
+    department: str
+    email: str
+    firstaccess: int
+    fullname: str
+    id: int
+    lang: str
+    lastaccess: int
+    mailformat: int
+    preferences: list[UsersByFieldItemPreferencesItem]
+    profileimageurl: str
+    profileimageurlsmall: str
+    suspended: bool
+    theme: str
+    timezone: str
+    username: str
+
+
 ADAPTERS: dict[str, TypeAdapter[Any]] = {
     "core_enrol_get_enrolled_users": TypeAdapter(list[EnrolledUsersItem]),
     "core_enrol_get_enrolled_users_with_capability": TypeAdapter(
         list[UsersWithCapabilityItem]
     ),
     "core_enrol_get_users_courses": TypeAdapter(list[UsersCoursesItem]),
+    "core_user_get_users_by_field": TypeAdapter(list[UsersByFieldItem]),
 }

@@ -192,6 +192,8 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_MOODLE_ALLOW_HTTP` | bool | `false` | Plain http to Moodle. Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set in any other environment. |
 | `VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS` | str | - | Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network, e.g. `10.20.0.0/16`). Empty: private addresses are refused. Metadata, link-local and multicast addresses are always refused. |
 | `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | str | - | Username of the ingestion web-service account. The setup check refuses an assess token that belongs to it; when unset that item is `UNVERIFIABLE` (not OK). |
+| `VEKTRA_ASSESS_UI_ORIGIN` | str | - | Origin (`https://host[:port]`) the chat UI is served from. The setup check item `ui_not_same_origin` refuses a UI origin that is the same host or the same site as the Moodle `base_url` or as the API public origin (CONF-004). Same-site is judged without the public-suffix list: the last two host labels are compared, which can refuse a legitimate pair under a multi-label suffix (e.g. two `*.co.uk` hosts) but never accepts a same-site pair. Unset: that item is `UNVERIFIABLE` (not OK). |
+| `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` | str | - | Public origin of the assess API, compared with the UI origin by `ui_not_same_origin`. Unset while the UI origin is set: the item is `UNVERIFIABLE`. |
 | `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every 10 s (container healthcheck). |
 | `VEKTRA_ASSESS_PARSER_SOCKET` | path | `/run/vektra-assess-parser/parser.sock` | Unix socket of the parser sidecar (worker and parser only). |
 

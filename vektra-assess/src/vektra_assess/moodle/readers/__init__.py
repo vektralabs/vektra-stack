@@ -29,7 +29,11 @@ from vektra_assess.moodle.readers.quiz import (
     read_user_attempts,
     read_user_review_options,
 )
-from vektra_assess.moodle.readers.site import read_site_info, with_release
+from vektra_assess.moodle.readers.site import (
+    read_own_auth,
+    read_site_info,
+    with_release,
+)
 from vektra_assess.moodle.readers.unreadable import (
     read_loginas_events,
     read_module_visibility_for_user,
@@ -48,6 +52,7 @@ __all__ = [
     "read_grading_view",
     "read_loginas_events",
     "read_module_visibility_for_user",
+    "read_own_auth",
     "read_quiz_close_inputs",
     "read_quiz_overrides",
     "read_rubric_display_options",

@@ -290,7 +290,14 @@ def record(
         )
 
     staged: dict[str, bytes] = {}
-    for fn, fixture, params in plan(manifest, branch):
+    # the service account's own user record (REQ-079 ``interactive_login_disabled`` reads its
+    # ``auth``); the id comes from site_info, so it is not part of the static plan
+    own = (
+        "core_user_get_users_by_field",
+        "self",
+        {"field": "id", "values": [info["userid"]]},
+    )
+    for fn, fixture, params in [*plan(manifest, branch), own]:
         response = (
             info
             if fn == "core_webservice_get_site_info"

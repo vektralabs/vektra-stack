@@ -228,7 +228,7 @@ async def test_api_role_can_use_what_it_is_granted(pg):
     await pg.run("api", "SELECT count(*) FROM assess_sessions")
     sid = await make_session(pg)
     await pg.run(
-        "api", "UPDATE assess_sessions SET seq = seq WHERE id = :s", {"s": sid}
+        "api", "UPDATE assess_sessions SET epoch = epoch WHERE id = :s", {"s": sid}
     )
     with pytest.raises(DBAPIError) as exc:  # state is not in the API's column list
         await pg.run(

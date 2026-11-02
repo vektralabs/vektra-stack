@@ -88,6 +88,10 @@ _CONFIG_WRITE = (
     *(c for c in _CONFIG_READ if c != "teacher_config_set"),
     "teacher_config_sealed",
 )
+#: columns the API may UPDATE on an existing config row (never its identity columns)
+_CONFIG_UPDATE = tuple(
+    c for c in _CONFIG_WRITE if c not in ("id", "site_id", "cmid", "activity_type")
+)
 _ALL: None = None
 
 MATRIX: Mapping[str, Mapping[str, Privs]] = {
@@ -104,7 +108,9 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_sessions": {
             "SELECT": _ALL,
             "INSERT": _ALL,
-            "UPDATE": ("seq", "epoch", "last_activity_at"),
+            "UPDATE": (
+                "epoch",
+            ),  # seq and last_activity_at move only via the functions
         },
         "assess_start_attempts": {"INSERT": _ALL},
         "assess_audit_events": {"INSERT": _ALL},
@@ -112,7 +118,7 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_activity_config": {
             "SELECT": _CONFIG_READ,
             "INSERT": _CONFIG_WRITE,
-            "UPDATE": _CONFIG_WRITE,
+            "UPDATE": _CONFIG_UPDATE,
         },
         "assess_extra_time": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},
         "assess_reset_grants": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},

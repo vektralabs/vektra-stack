@@ -484,3 +484,58 @@ async def test_every_session_row_is_consumed_iff_it_has_an_opening_turn(pg):
     )
     assert rows, "empty corpus: the rule would hold vacuously"
     assert all((state != "STARTING") == has_opening for state, has_opening in rows)
+
+
+async def test_reset_session_is_numbered_by_the_database(pg):
+    site = await make_site(pg)
+    ins = (
+        "INSERT INTO assess_sessions (id, site_id, cmid, student_userid, state, close_reason) "
+        "VALUES (:i, :s, 31, 41, 'CLOSED', 'finished')"
+    )
+    # CLOSED rows need an opening turn at commit: seed one in the same transaction
+    for n in (1, 2):
+        sid = uuid.uuid4()
+        async with pg.conn("super") as c:
+            await c.execute(text(ins), {"i": sid, "s": site})
+            await c.execute(
+                text(
+                    "INSERT INTO assess_turns (session_id, turn_no, role, kind, ciphertext, "
+                    "turn_hash, prev_hash) VALUES (:i, 1, 'bot', 'opening', '\\x01', 'h', 'g')"
+                ),
+                {"i": sid},
+            )
+            await c.commit()
+        assert (
+            await one(pg, "SELECT session_no FROM assess_sessions WHERE id=:i", i=sid)
+            == n
+        )
+    await pg.run(
+        "api",
+        "INSERT INTO assess_sessions (site_id, cmid, student_userid, state) "
+        "VALUES (:s, 31, 41, 'STARTING')",
+        {"s": site},
+    )
+    assert (
+        await one(
+            pg,
+            "SELECT max(session_no) FROM assess_sessions WHERE site_id=:s AND cmid=31",
+            s=site,
+        )
+        == 3
+    )
+
+
+async def test_worker_close_is_audited_as_the_worker(pg):
+    kek, (api_pub, _) = sym("k1"), x_ring("a1")
+    sid = await make_real_session(pg, kek, api_pub)
+    assert (
+        await pg.run(
+            "worker", "SELECT assess_close_session(:s, 1, 'timed_out')", {"s": sid}
+        )
+    )[0][0] is True
+    assert (
+        await one(
+            pg, "SELECT actor_kind FROM assess_audit_events WHERE session_id=:s", s=sid
+        )
+        == "worker"
+    )

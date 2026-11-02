@@ -32,8 +32,8 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from vektra_assess.crypto.envelope import (
     NONCE_BYTES,
     VERSION,
-    EnvelopeError,
     aad,
+    read_header,
 )
 from vektra_assess.crypto.kek import key_for
 from vektra_assess.keys import AssessKeyring
@@ -62,13 +62,13 @@ def _seal(
     purpose: str,
     binding: Sequence[object],
 ) -> bytes:
+    kid_b = kid.encode("utf-8")
+    if not kid_b or len(kid_b) > 255:  # validate before any DH or encryption work
+        raise ValueError("kid must be 1..255 bytes")
     eph_pub = eph_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     shared = eph_priv.exchange(X25519PublicKey.from_public_bytes(recipient_pub))
     key = _derive(shared, eph_pub, recipient_pub, purpose, kid)
     ct = AESGCM(key).encrypt(nonce, plaintext, aad(purpose, binding))
-    kid_b = kid.encode("utf-8")
-    if not kid_b or len(kid_b) > 255:
-        raise ValueError("kid must be 1..255 bytes")
     return bytes([VERSION, len(kid_b)]) + kid_b + eph_pub + nonce + ct
 
 
@@ -108,12 +108,7 @@ def open_sealed(
     binding: Sequence[object],
 ) -> bytes:
     """Open a sealed blob with the private key its kid names. ``InvalidTag`` on tampering."""
-    if len(blob) < 2 or blob[0] != VERSION or blob[1] == 0:
-        raise EnvelopeError("unsupported or malformed sealed blob")
-    start = 2 + blob[1]
-    if len(blob) < start + _PUB + NONCE_BYTES + 16:
-        raise EnvelopeError("truncated sealed blob")
-    kid = blob[2:start].decode("utf-8", errors="strict")
+    kid, start = read_header(blob, _PUB + NONCE_BYTES + 16)
     eph_pub = blob[start : start + _PUB]
     nonce = blob[start + _PUB : start + _PUB + NONCE_BYTES]
     ct = blob[start + _PUB + NONCE_BYTES :]

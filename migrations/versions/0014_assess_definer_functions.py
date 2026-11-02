@@ -20,6 +20,9 @@ The definer's own table privileges are granted here, next to the functions that 
 The deferred opening-turn trigger and the hand-off cleanup trigger become SECURITY DEFINER
 too, because they read or delete rows the calling role cannot touch.
 
+The migration user must be a superuser, or a member of ``vektra_assess_definer`` with CREATE
+on schema public (the compose stack migrates as the Postgres superuser).
+
 Revision ID: 0014
 Revises: 0013
 """
@@ -160,12 +163,18 @@ def upgrade() -> None:
                     'transcript_generate:' || p_sid::text);
             INSERT INTO public.assess_audit_events
                 (site_id, session_id, event, reason_code, actor_kind)
-            VALUES (v_site, p_sid, 'session_closed', p_reason, 'api');
+            VALUES (v_site, p_sid, 'session_closed', p_reason,
+                    CASE WHEN session_user = 'vektra_assess_worker'
+                         THEN 'worker' ELSE 'api' END);
             RETURN true;
         END
         $$
     """)
 
+    # ALTER FUNCTION ... OWNER TO needs CREATE on the schema for the new owner (unless the
+    # migration user is a superuser). Lend it for the duration of this revision only; 0015
+    # revokes CREATE on public from every assess role anyway.
+    op.execute(f"GRANT CREATE ON SCHEMA public TO {DEFINER}")
     for sig in (SIG_MATERIAL, SIG_APPEND, SIG_CLOSE):
         op.execute(f"ALTER FUNCTION {sig} OWNER TO {DEFINER}")
         op.execute(f"REVOKE EXECUTE ON FUNCTION {sig} FROM PUBLIC")
@@ -183,6 +192,7 @@ def upgrade() -> None:
         op.execute(f"ALTER FUNCTION public.{fn} SET search_path = pg_catalog, pg_temp")
         op.execute(f"ALTER FUNCTION public.{fn} OWNER TO {DEFINER}")
         op.execute(f"REVOKE EXECUTE ON FUNCTION public.{fn} FROM PUBLIC")
+    op.execute(f"REVOKE CREATE ON SCHEMA public FROM {DEFINER}")
 
     op.execute("""
         CREATE FUNCTION public.assess_sessions_no_revival() RETURNS trigger

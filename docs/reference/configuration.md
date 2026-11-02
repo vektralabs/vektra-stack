@@ -180,7 +180,7 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_SECRETS_DIR` | path | `/run/secrets` | Directory holding the assess secret files. |
 | `VEKTRA_ASSESS_API_POOL_SIZE` | int | `15` | Connection pool of the assess API engine. |
 | `VEKTRA_ASSESS_WORKER_POOL_SIZE` | int | `5` | Connection pool of the worker engine. |
-| `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. |
+| `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. Minimum `30` (three beat intervals). |
 | `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every 10 s (container healthcheck). |
 | `VEKTRA_ASSESS_PARSER_SOCKET` | path | `/run/vektra-assess-parser/parser.sock` | Unix socket of the parser sidecar (worker and parser only). |
 
@@ -275,7 +275,7 @@ Every secret is a JSON keyring `{"active": "<kid>", "keys": {"<kid>": "<base64>"
 Rotation order (each step is idempotent and resumable; the helper returns what is left):
 
 1. add the new kid to the keyring and make it `active`; deploy;
-2. `rewrap_session_keys`, `rewrap_transcript_deks`, `reseal_handoffs` (worker) until each returns 0;
+2. `rewrap_session_keys`, `rewrap_transcript_deks`, `reseal_handoffs` and `reseal_teacher_configs` (worker): each returns how many rows still carry the old key, so loop until it returns 0;
 3. remove the old kid from the keyring only after every helper returned 0.
 
 The envelope AAD binds each ciphertext to its row (`snapshot` to the session, `turn` to session and turn number, and so on), so a ciphertext copied to another row fails authentication.

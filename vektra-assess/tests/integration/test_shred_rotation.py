@@ -98,17 +98,14 @@ async def test_shred_refuses_a_live_session_and_a_session_with_a_transcript(pg):
     assert report.deleted["assess_transcripts"] == 1
     assert report.deleted["assess_deliveries"] == 1
     assert report.deleted["assess_transcript_download_tokens"] == 1
-    for table, col in (
-        *SESSION_TABLES,
-        ("assess_transcripts", "id"),
-        ("assess_deliveries", "transcript_id"),
-    ):
-        assert await count(
-            pg,
-            table,
-            col,
-            done,
-        ) in (0,)
+    for table, col in SESSION_TABLES:
+        assert await count(pg, table, col, done) == 0, table
+    assert await count(pg, "assess_transcripts", "session_id", done) == 0
+    assert await count(pg, "assess_transcripts", "id", tid) == 0
+    assert await count(pg, "assess_deliveries", "transcript_id", tid) == 0
+    assert (
+        await count(pg, "assess_transcript_download_tokens", "transcript_id", tid) == 0
+    )
     assert CANARY not in dump_data(pg)
 
 
@@ -173,7 +170,7 @@ async def test_reseal_handoffs_skips_closed_sessions_and_new_key_opens(pg):
     async with pg.conn("worker") as c:
         n = await rotation.reseal_handoffs(c, kek, new_pub.active_key, "a2", limit=50)
         await c.commit()
-    assert n >= 1
+    assert n == 0  # nothing live is left on the old kid
     row = (
         await pg.run(
             "super",
@@ -221,7 +218,7 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
     )
     new_pub, new_priv = x_ring("w2")
     async with pg.conn("worker") as c:
-        assert await rotation.reseal_teacher_configs(c, old_priv, new_pub) == 1
+        assert await rotation.reseal_teacher_configs(c, old_priv, new_pub) == 0
         await c.commit()
         assert (
             await rotation.reseal_teacher_configs(c, old_priv, new_pub) == 0

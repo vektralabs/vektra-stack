@@ -126,6 +126,8 @@ async def run_checks() -> object:
     return engine
 
 
+# a hung database must not delay the file heartbeat that the container healthcheck reads
+DB_BEAT_TIMEOUT_S = 5.0
 _BEAT_SQL = (
     "INSERT INTO assess_heartbeat (component, beat_at) VALUES ('worker', now()) "
     "ON CONFLICT (component) DO UPDATE SET beat_at = now()"
@@ -138,7 +140,7 @@ async def _beat_db(engine: Any) -> None:
     from sqlalchemy import text
 
     try:
-        async with engine.begin() as conn:
+        async with asyncio.timeout(DB_BEAT_TIMEOUT_S), engine.begin() as conn:
             await conn.execute(text(_BEAT_SQL))
     except Exception as exc:
         log.warning("assess_worker_heartbeat_db_failed", error=type(exc).__name__)

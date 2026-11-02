@@ -350,3 +350,22 @@ def test_no_key_the_api_holds_opens_teacher_config(tmp_path):
         teacher_config.open_teacher_config(worker_priv, blob, "site-1", 7, "config")
         == "secret solution"
     )
+
+
+def test_open_sealed_reports_a_non_utf8_kid_as_an_envelope_error():
+    _, priv = x_ring_for_test()
+    bad = b"\x01\x02\xff\xfe" + b"0" * 80
+    with pytest.raises(envelope.EnvelopeError):
+        seal.open_sealed(priv, bad, purpose="handoff", binding=["s", "k1"])
+
+
+def test_seal_validates_the_kid_before_doing_any_crypto():
+    pub, _ = x_ring_for_test()
+    with pytest.raises(ValueError):
+        seal.seal(
+            pub.active_key, "k" * 300, b"x", purpose="handoff", binding=["s", "k"]
+        )
+
+
+def x_ring_for_test():
+    return x25519_rings()

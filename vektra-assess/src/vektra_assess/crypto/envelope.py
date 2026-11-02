@@ -103,17 +103,23 @@ def pack(kid: str, nonce: bytes, ciphertext: bytes) -> bytes:
     return bytes([VERSION, len(kid_b)]) + kid_b + nonce + ciphertext
 
 
-def unpack(blob: bytes) -> tuple[str, bytes, bytes]:
+def read_header(blob: bytes, min_payload: int) -> tuple[str, int]:
+    """Parse ``version | kid_len | kid``. Returns ``(kid, offset of the payload)``; the
+    payload must hold at least ``min_payload`` bytes. Raises ``EnvelopeError`` otherwise."""
     if len(blob) < 2 or blob[0] != VERSION:
         raise EnvelopeError("unsupported envelope version")
     kid_len = blob[1]
     start = 2 + kid_len
-    if kid_len == 0 or len(blob) < start + NONCE_BYTES + 16:
+    if kid_len == 0 or len(blob) < start + min_payload:
         raise EnvelopeError("truncated envelope")
     try:
-        kid = blob[2:start].decode("utf-8")
+        return blob[2:start].decode("utf-8"), start
     except UnicodeDecodeError:
         raise EnvelopeError("kid is not UTF-8") from None
+
+
+def unpack(blob: bytes) -> tuple[str, bytes, bytes]:
+    kid, start = read_header(blob, NONCE_BYTES + 16)
     return kid, blob[start : start + NONCE_BYTES], blob[start + NONCE_BYTES :]
 
 

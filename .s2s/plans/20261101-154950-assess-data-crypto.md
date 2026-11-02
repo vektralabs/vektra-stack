@@ -1,7 +1,7 @@
 # Implementation Plan: Assess data model, DB-enforced invariants and envelope encryption
 
 **ID**: 20261101-154950-assess-data-crypto
-**Status**: in_progress
+**Status**: completed
 **Branch**: N/A
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
@@ -500,3 +500,5 @@ session with savepoints.
 > Note (2026-11-02, task 4): the locked `cryptography` 49.0.0 ships `hazmat.primitives.hpke`, but sealing uses the primitive construction (ephemeral X25519, HKDF-SHA256 with salt `eph_pub|recipient_pub`, AES-256-GCM) always. The plan's "HPKE if present, same wire format otherwise" cannot give one wire format across two code paths; one documented format keeps a library bump from ever being a data migration. A pinned known-answer vector and an independent re-derivation guard it. The envelope AAD is exactly the Design Notes format (the kid is not in the AAD: a kid swap selects another key and fails authentication, an unknown kid raises `KeyNotAvailable`).
 
 > Note (2026-11-02, task 5): `shred_session` refuses while a transcript still references the session (the FK has no cascade, retention of transcript and session can differ) unless `with_transcript=True`, which shreds the transcript in the same transaction. The worker gets column UPDATE on `assess_activity_config(teacher_config_sealed, teacher_config_kid)` for `reseal_teacher_configs`; the matrix and revision 0015 were regenerated. The single `teacher_config_sealed` column is sealed with the fixed field name `"config"` (`rotation.TEACHER_CONFIG_FIELD`).
+
+> Code review (2026-11-02, high, `bd31db9...`): 10 findings. Fixed: reseal helpers return the rows still on the old kid (and `reseal_teacher_configs` is batched and in the runbook); `GRANT CREATE` lent to the definer around `ALTER FUNCTION ... OWNER` in 0014; close audit records `worker` vs `api` from `session_user`; `session_no` numbered by a BEFORE INSERT trigger under an advisory lock; the shred test counted transcripts by the wrong key (now by session and id); the DB heartbeat has a 5 s timeout and `HEARTBEAT_MAX_AGE_S` has a floor of 30; the API lost UPDATE on `seq`/`last_activity_at` (functions only) and on config identity columns; `open_sealed` shares `envelope.read_header` and validates the kid first. Not changed: coverage still omits `shred.py`, `rotation.py` and `models.py` from the unit gate (real-Postgres only); the new CI step fails the integration job if the assess suite is skipped.

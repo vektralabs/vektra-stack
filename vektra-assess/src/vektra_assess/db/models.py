@@ -182,7 +182,9 @@ class SessionOrm(Base):
     site_id: Mapped[UUID] = mapped_column(ForeignKey("assess_sites.id"))
     cmid: Mapped[int] = mapped_column(BIGINT)
     student_userid: Mapped[int] = mapped_column(BIGINT)
-    session_no: Mapped[int] = mapped_column(INTEGER, server_default=text("1"))
+    session_no: Mapped[int] = mapped_column(
+        INTEGER
+    )  # numbered by a BEFORE INSERT trigger
     attempt_ref: Mapped[str | None] = mapped_column(TEXT)
     state: Mapped[str] = mapped_column(TEXT)
     close_reason: Mapped[str | None] = mapped_column(TEXT)

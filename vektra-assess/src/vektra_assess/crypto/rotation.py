@@ -64,9 +64,11 @@ async def reseal_handoffs(
     new_kid: str,
     limit: int = 100,
 ) -> int:
-    """Re-seal up to ``limit`` LIVE hand-off DEKs to the new API public key. Returns the
-    number resealed. A session that closed meanwhile has no hand-off row any more (the
-    composite FK and the close trigger delete it), so its UPDATE touches 0 rows: skipped."""
+    """Re-seal up to ``limit`` LIVE hand-off DEKs to the new API public key. Returns how
+    many live rows STILL carry another kid (0 means done; a locked or skipped row keeps the
+    count above 0, so a pass can never look finished while rows remain). A session that
+    closed meanwhile has no hand-off row any more (the composite FK and the close trigger
+    delete it), so it drops out of the count."""
     rows = (
         await conn.execute(
             text(
@@ -78,7 +80,6 @@ async def reseal_handoffs(
             {"n": new_kid, "l": limit},
         )
     ).all()
-    done = 0
     for sid, wrapped, version in rows:
         dek = unwrap_dek(kek, bytes(wrapped), sid, version)
         sealed = seal(
@@ -95,23 +96,33 @@ async def reseal_handoffs(
             ),
             {"b": sealed, "k": new_kid, "s": sid},
         )
-        done += result.rowcount
-    return done
+        _ = result.rowcount  # 0 when the session closed meanwhile: nothing to reseal
+    remaining = (
+        await conn.execute(
+            text("SELECT count(*) FROM assess_session_handoff WHERE handoff_kid <> :n"),
+            {"n": new_kid},
+        )
+    ).scalar_one()
+    return int(remaining)
 
 
 async def reseal_teacher_configs(
-    conn: AsyncConnection, old_worker_priv: AssessKeyring, new_worker_pub: AssessKeyring
+    conn: AsyncConnection,
+    old_worker_priv: AssessKeyring,
+    new_worker_pub: AssessKeyring,
+    batch: int = 100,
 ) -> int:
-    """Re-seal every sealed teacher config to the new worker public key. Returns the count."""
+    """Re-seal up to ``batch`` teacher configs to the new worker public key. Returns how
+    many still carry another kid (0 means done)."""
     new_kid = new_worker_pub.active
     rows = (
         await conn.execute(
             text(
                 "SELECT id, site_id, cmid, teacher_config_sealed FROM assess_activity_config "
                 "WHERE teacher_config_sealed IS NOT NULL AND teacher_config_kid <> :k "
-                "FOR UPDATE SKIP LOCKED"
+                "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
             ),
-            {"k": new_kid},
+            {"k": new_kid, "n": batch},
         )
     ).all()
     for row_id, site_id, cmid, sealed in rows:
@@ -136,7 +147,16 @@ async def reseal_teacher_configs(
             ),
             {"b": fresh, "k": new_kid, "i": row_id},
         )
-    return len(rows)
+    remaining = (
+        await conn.execute(
+            text(
+                "SELECT count(*) FROM assess_activity_config "
+                "WHERE teacher_config_sealed IS NOT NULL AND teacher_config_kid <> :k"
+            ),
+            {"k": new_kid},
+        )
+    ).scalar_one()
+    return int(remaining)
 
 
 async def rewrap_transcript_deks(

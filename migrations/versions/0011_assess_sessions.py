@@ -30,7 +30,7 @@ def upgrade() -> None:
             site_id             UUID NOT NULL REFERENCES assess_sites(id),
             cmid                BIGINT NOT NULL,
             student_userid      BIGINT NOT NULL,
-            session_no          INTEGER NOT NULL DEFAULT 1,
+            session_no          INTEGER NOT NULL,
             attempt_ref         TEXT NULL,
             state               TEXT NOT NULL,
             close_reason        TEXT NULL,
@@ -58,6 +58,29 @@ def upgrade() -> None:
                 UNIQUE (site_id, student_userid, cmid, session_no),
             CONSTRAINT uq_assess_sessions_id_state UNIQUE (id, state)
         )
+    """)
+    op.execute("""
+        CREATE FUNCTION assess_sessions_number() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+        BEGIN
+            -- session #N+1 after a reset (REQ-087): number it under a lock on the triple,
+            -- so no caller has to compute max()+1 itself
+            IF NEW.session_no IS NULL THEN
+                PERFORM pg_advisory_xact_lock(
+                    pg_catalog.hashtextextended(
+                        NEW.site_id::text || ':' || NEW.student_userid || ':' || NEW.cmid, 0));
+                SELECT coalesce(max(s.session_no), 0) + 1 INTO NEW.session_no
+                FROM public.assess_sessions s
+                WHERE s.site_id = NEW.site_id AND s.student_userid = NEW.student_userid
+                  AND s.cmid = NEW.cmid;
+            END IF;
+            RETURN NEW;
+        END
+        $$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_assess_sessions_number BEFORE INSERT ON assess_sessions
+            FOR EACH ROW EXECUTE FUNCTION assess_sessions_number()
     """)
     op.execute("""
         CREATE UNIQUE INDEX uq_assess_sessions_one_open
@@ -179,3 +202,4 @@ def downgrade() -> None:
     op.execute("DROP TABLE assess_start_attempts")
     op.execute("DROP TABLE assess_sessions")
     op.execute("DROP FUNCTION assess_sessions_require_opening_turn()")
+    op.execute("DROP FUNCTION assess_sessions_number()")

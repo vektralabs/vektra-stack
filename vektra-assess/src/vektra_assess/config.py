@@ -50,7 +50,7 @@ class VektraAssessSettings(BaseSettings):
     )
     heartbeat_max_age_s: int = Field(
         60,
-        ge=5,
+        ge=30,  # at least three beat intervals (10 s), or /health/assess would flap
         alias="VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S",
         description="A worker heartbeat older than this makes /health/assess non-healthy.",
     )

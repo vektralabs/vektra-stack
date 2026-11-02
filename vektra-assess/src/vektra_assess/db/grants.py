@@ -43,6 +43,7 @@ TABLES: tuple[str, ...] = (
     "assess_session_handoff",
     "assess_session_keys",
     "assess_sessions",
+    "assess_setup_check_reports",
     "assess_setup_checks",
     "assess_site_capabilities",
     "assess_site_keys",
@@ -92,6 +93,10 @@ _CONFIG_WRITE = (
 _CONFIG_UPDATE = tuple(
     c for c in _CONFIG_WRITE if c not in ("id", "site_id", "cmid", "activity_type")
 )
+_SITES_API_READ = (
+    "id", "moodle_site_uuid", "base_url", "release", "min_plugin_version", "created_at",
+    "disabled_at", "last_seen_release",
+)  # fmt: skip
 _ALL: None = None
 
 MATRIX: Mapping[str, Mapping[str, Privs]] = {
@@ -102,9 +107,12 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_gate_inputs": {"SELECT": _ALL},
         "assess_enrolment_checks": {"SELECT": _ALL},
         "assess_heartbeat": {"SELECT": _ALL},
-        "assess_sites": {"SELECT": _ALL},
+        # not probe_manifest: the fixture expectations are the worker's
+        "assess_sites": {"SELECT": _SITES_API_READ},
         "assess_site_keys": {"SELECT": _ALL},
         "assess_site_capabilities": {"SELECT": _ALL},
+        # the API queues a setup check (INSERT) and reads its content-free report
+        "assess_setup_check_reports": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_sessions": {
             "SELECT": _ALL,
             "INSERT": _ALL,
@@ -175,7 +183,21 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_consumed_jtis": {"SELECT": _ALL, "DELETE": _ALL},
         "assess_transcript_download_tokens": {"SELECT": _ALL, "DELETE": _ALL},
         # registry and configuration (the worker reads the sealed teacher config)
-        "assess_sites": {"SELECT": _ALL, "UPDATE": ("release", "min_plugin_version")},
+        "assess_sites": {
+            "SELECT": _ALL,
+            "UPDATE": (
+                "release",
+                "min_plugin_version",
+                "last_seen_release",
+                "probe_manifest",
+            ),
+        },
+        "assess_setup_check_reports": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": _ALL,
+            "DELETE": _ALL,
+        },
         "assess_site_keys": {"SELECT": _ALL},
         "assess_site_capabilities": {
             "SELECT": _ALL,

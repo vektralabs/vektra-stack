@@ -191,12 +191,26 @@ async def test_canary_an_extra_grant_is_detected(pg):
     assert any("PUBLIC" in d for d in drift), drift
 
 
-def test_migration_0015_is_the_rendered_matrix():
-    path = ROOT / "migrations" / "versions" / "0015_assess_grants.py"
-    spec = importlib.util.spec_from_file_location("rev0015", Path(path))
+def _load(path: Path):
+    spec = importlib.util.spec_from_file_location(f"rev_{path.stem}", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert list(mod.GRANT_STATEMENTS) == g.render_statements()
+    return mod
+
+
+def test_the_latest_grants_revision_is_the_rendered_matrix():
+    """Every later revision that changes grants must carry the matrix again; the newest one
+    (highest revision number that holds GRANT_STATEMENTS) must equal the module's rendering."""
+    versions = sorted((ROOT / "migrations" / "versions").glob("*.py"))
+    holders = [p for p in versions if "GRANT_STATEMENTS = (" in p.read_text()]
+    assert holders, "no revision carries the grant matrix"
+    latest = holders[-1]
+    mod = _load(latest)
+    assert list(mod.GRANT_STATEMENTS) == g.render_statements(), latest.name
+    # and no revision AFTER it touches privileges of the assess roles behind its back
+    for later in versions[versions.index(latest) + 1 :]:
+        text_ = later.read_text()
+        assert "GRANT " not in text_.replace("GRANT_STATEMENTS", ""), later.name
 
 
 # --- 3.3 behavioural cross-check ---------------------------------------------------------

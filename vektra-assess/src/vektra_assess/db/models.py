@@ -51,6 +51,8 @@ class SiteOrm(Base):
         TIMESTAMP(timezone=True), server_default=_NOW
     )
     disabled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    probe_manifest: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    last_seen_release: Mapped[str | None] = mapped_column(TEXT)
 
 
 class SiteKeyOrm(Base):
@@ -79,6 +81,7 @@ class SiteCapabilityOrm(Base):
     release: Mapped[str | None] = mapped_column(TEXT)
     state: Mapped[str] = mapped_column(TEXT)
     evidence_hash: Mapped[str | None] = mapped_column(TEXT)
+    reason_code: Mapped[str | None] = mapped_column(TEXT)
     checked_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=_NOW
     )
@@ -432,3 +435,20 @@ class HeartbeatOrm(Base):
     details: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb")
     )
+
+
+class SetupCheckReportOrm(Base):
+    __tablename__ = "assess_setup_check_reports"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
+    )
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE")
+    )
+    requested_by_key_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(TEXT, server_default=text("'queued'"))
+    moodle_release: Mapped[str | None] = mapped_column(TEXT)
+    items: Mapped[list[Any]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    created_at: Mapped[datetime] = _ts(default=True)
+    finished_at: Mapped[datetime | None] = _ts(nullable=True)

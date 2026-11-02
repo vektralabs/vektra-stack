@@ -202,7 +202,7 @@ forbidden_modules = ["vektra_core", "vektra_analytics", "vektra_learn", "vektra_
 [[tool.importlinter.contracts]]
 name = "only vektra_assess.worker imports vektra_assess.moodle and parser_client"
 type = "forbidden"
-source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors"]
+source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities"]
 forbidden_modules = ["vektra_assess.moodle", "vektra_assess.parser_client"]
 
 # (e) the worker's import ceiling: no ML stack, vector store client or document parser

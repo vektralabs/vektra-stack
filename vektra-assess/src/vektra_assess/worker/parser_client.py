@@ -24,6 +24,7 @@ from typing import Any
 
 import structlog
 
+from vektra_assess.config import VektraAssessSettings
 from vektra_assess.moodle.setup_check import (
     DEFAULT_REGISTRY,
     CheckContext,
@@ -108,6 +109,16 @@ class ParserClient:
         self.connect_timeout_s = connect_timeout_s
         self.busy_retries = busy_retries
         self.busy_backoff_s = busy_backoff_s
+
+    @classmethod
+    def from_settings(cls, settings: VektraAssessSettings) -> ParserClient:
+        return cls(
+            settings.parser_socket,
+            limits=Limits(
+                max_chars=settings.parser_max_chars,
+                timeout_ms=int(settings.parser_timeout_s * 1000),
+            ),
+        )
 
     # --- public API -------------------------------------------------------------
 

@@ -64,6 +64,34 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PARSER_SOCKET",
         description="Unix socket of the parser sidecar (worker and parser only).",
     )
+    parser_pool: int = Field(
+        3,
+        ge=1,
+        le=16,
+        alias="VEKTRA_ASSESS_PARSER_POOL",
+        description="Concurrent child processes of the parser sidecar (memory budget: 768M container).",
+    )
+    parser_timeout_s: float = Field(
+        10.0,
+        ge=0.5,
+        le=120,
+        alias="VEKTRA_ASSESS_PARSER_TIMEOUT_S",
+        description="Wall-clock budget per file in the sidecar; the child is SIGKILLed after it. The worker client allows this plus a queue allowance.",
+    )
+    parser_max_chars: int = Field(
+        200_000,
+        ge=1000,
+        le=1_000_000,
+        alias="VEKTRA_ASSESS_PARSER_MAX_CHARS",
+        description="Character cap of the text returned per file (READ_PARTIAL beyond it).",
+    )
+    parser_rlimit_as_mb: int = Field(
+        256,
+        ge=64,
+        le=2048,
+        alias="VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB",
+        description="RLIMIT_AS of each parsing child, in MiB.",
+    )
 
     # --- Moodle web-service client (plan assess-moodle-ws, group B) -------------------------
     env: str = Field(

@@ -213,6 +213,23 @@ jobs:
         run: >
           uv run pytest vektra-assess/tests/ -v --tb=short -m "not integration"
           --cov=vektra_assess --cov-report=term-missing --cov-fail-under=80
+          --junitxml=assess-unit.xml
+      # The parser corpus runs real forkserver children under real rlimits, on Linux only: off
+      # Linux it skips with a reason. This runner is Linux, so a skip here is a silent loss of
+      # the hostile-input proof and fails the job (plan assess-parser, false-pass guard).
+      - name: Parser corpus must have run, not skipped
+        run: |
+          uv run python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("assess-unit.xml").getroot()
+          cases = [c for c in root.iter("testcase") if "test_parser_corpus" in (c.get("classname") or "")]
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          print(f"parser corpus: {len(cases)} collected, {len(skipped)} skipped")
+          if len(cases) < 55 or skipped:
+              sys.exit(f"parser corpus did not fully run: skipped={skipped}")
+          PY
 
   # vektra-app wires every component together (provider registration, startup
   # validation). Its tests existed but nothing ran them, in CI or in `make test`,

@@ -124,6 +124,9 @@ jobs:
               # on the production CPU. defusedxml/html5lib/aiosmtplib are pure
               # Python but listed so a future native rewrite is caught here.
               "vektra_assess", "vektra_app.assess_worker", "vektra_app.assess_parser",
+              # The parser sidecar (plan assess-parser): its parsing stack, native or not,
+              # must import on the production CPU. pdfminer.six pulls cryptography.
+              "vektra_assess.parser_sidecar.server", "pdfminer.high_level",
               "cryptography.hazmat.primitives.ciphers.aead",
               "cryptography.hazmat.primitives.asymmetric.x25519",
               "cryptography.hazmat.primitives.kdf.hkdf",
@@ -154,6 +157,14 @@ jobs:
           okm = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"probe").derive(shared)
           assert len(okm) == 32
           print("crypto ok: AES-256-GCM round trip, X25519 exchange, HKDF", flush=True)
+
+          # Importing is not running: parse one PDF with the sidecar's extractor so
+          # pdfminer, the sniffer and the text path execute on this CPU too.
+          from vektra_assess.parser_sidecar.child import run
+          from vektra_assess.parser_sidecar.ping import ping_pdf
+          res = run("parse", ping_pdf(), "pdf", max_pages=5, max_chars=10000)
+          assert res.status.value == "READ" and "self-check" in res.text, res
+          print("parser ok: pdfminer parsed the embedded page", flush=True)
           '
 
       - name: Start stack and measure startup (NFR-004)
@@ -345,6 +356,22 @@ jobs:
           VEKTRA_ASSESS_STACK: "1"
           VEKTRA_API_URL: http://localhost:8000
           VEKTRA_BOOTSTRAP_KEY: ci-bootstrap-key
+
+      # The container test of the parser sidecar: with VEKTRA_ASSESS_STACK=1 a missing stack
+      # fails it, but a skipped case would still be a hole, so count them.
+      - name: Parser container tests must have run, not skipped
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("test-results/assess-stack.xml").getroot()
+          cases = [c for c in root.iter("testcase") if "test_parser_container" in (c.get("classname") or "")]
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          print(f"parser container: {len(cases)} collected, {len(skipped)} skipped")
+          if len(cases) < 8 or skipped:
+              sys.exit(f"parser container tests did not fully run: skipped={skipped}")
+          PY
 
       - name: Dump container logs on failure
         if: failure()

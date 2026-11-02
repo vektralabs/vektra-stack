@@ -120,16 +120,19 @@ def test_api_container_cannot_see_the_parser_socket() -> None:
 
 def test_worker_reaches_the_parser_over_the_socket() -> None:
     code = (
-        "import asyncio, json, struct\n"
+        "import asyncio\n"
+        "from vektra_assess.config import VektraAssessSettings\n"
+        "from vektra_assess.worker.parser_client import ParserClient\n"
         "async def m():\n"
-        "    r, w = await asyncio.open_unix_connection('/run/vektra-assess-parser/parser.sock')\n"
-        "    b = json.dumps({'op': 'ping'}).encode(); w.write(struct.pack('>I', len(b)) + b); await w.drain()\n"
-        "    n = struct.unpack('>I', await r.readexactly(4))[0]; print((await r.readexactly(n)).decode())\n"
+        "    c = ParserClient.from_settings(VektraAssessSettings())\n"
+        "    r = await c.parse_file(b'hello from the worker', 'txt')\n"
+        "    print(r.status.value, r.text, round(await c.ping(deep=True), 3) >= 0)\n"
         "asyncio.run(m())\n"
     )
     res = _exec("vektra-assess-worker", "python", "-c", code)
     assert res.returncode == 0, res.stderr
-    assert json.loads(res.stdout) == {"ok": True, "op": "pong"}
+    assert res.stdout.split(None, 1)[0] == "READ", res.stdout
+    assert "hello from the worker" in res.stdout and res.stdout.strip().endswith("True")
 
 
 # --- roles (INT-002) -----------------------------------------------------------

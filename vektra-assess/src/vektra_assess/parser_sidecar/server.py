@@ -104,6 +104,16 @@ class ChildOutcome:
     exit_code: int | None
     stderr_bytes: int
     timed_out: bool
+    vm_peak_kb: int | None = None
+    rss_peak_kb: int | None = None
+
+
+def _peak(raw: bytes, key: str) -> int | None:
+    try:
+        v = json.loads(raw.partition(b"\n")[0]).get(key)
+    except ValueError:
+        return None
+    return v if type(v) is int and v >= 0 else None
 
 
 def _parse_child_output(raw: bytes, max_chars: int) -> Extracted | None:
@@ -290,6 +300,8 @@ class ParserServer:
                 exit_code=out.exit_code,
                 stderr_bytes=out.stderr_bytes,
                 timed_out=out.timed_out,
+                vm_peak_kb=out.vm_peak_kb,
+                rss_peak_kb=out.rss_peak_kb,
             )
             await self._reply(
                 writer,
@@ -409,6 +421,7 @@ class ParserServer:
         timer = threading.Timer(timeout_s, kill)
         timer.start()
         result: Extracted | None = None
+        raw = b""
         try:
             try:
                 in_w.send_bytes(data)
@@ -437,7 +450,15 @@ class ParserServer:
         if result is None:
             code = "timeout" if timed_out.is_set() else "child_died"
             result = Extracted(FileStatus.CORRUPT, code=code)
-        return ChildOutcome(result, pid, exit_code, counted[0], timed_out.is_set())
+        return ChildOutcome(
+            result,
+            pid,
+            exit_code,
+            counted[0],
+            timed_out.is_set(),
+            _peak(raw, "vm_peak_kb"),
+            _peak(raw, "rss_peak_kb"),
+        )
 
 
 def _wire(r: Extracted) -> dict[str, Any]:

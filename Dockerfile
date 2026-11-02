@@ -119,15 +119,20 @@ COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # Mount point of the assess parser socket volume. A named volume copies the
-# ownership of the image directory on first use, so the parser (uid 1000) can
-# bind its socket there (plan assess-foundations 7.4).
-RUN mkdir -p /run/vektra-assess-parser && chown vektra:vektra /run/vektra-assess-parser
+# ownership and mode of the image directory on first use, so the parser (uid 1000)
+# can bind its socket there and the sidecar's own check (owner uid, mode 0700) holds
+# (plan assess-foundations 7.4, plan assess-parser E).
+RUN mkdir -p /run/vektra-assess-parser \
+    && chown vektra:vektra /run/vektra-assess-parser \
+    && chmod 0700 /run/vektra-assess-parser
 
 RUN chown -R vektra:vektra /app
 USER vektra
 
+# PYTHONDONTWRITEBYTECODE: the assess parser runs with a read-only root filesystem.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Pre-cache the embedding model so container startup doesn't download it from
 # the Hugging Face Hub on first run. The default matches the code default

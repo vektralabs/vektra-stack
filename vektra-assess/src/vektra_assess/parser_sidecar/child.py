@@ -54,9 +54,25 @@ def run(
         return Extracted(FileStatus.CORRUPT, code="parse_error")
 
 
+def _peaks() -> dict[str, int | None]:
+    """Peak virtual and resident size of this child (Linux /proc), for the sizing data."""
+    out: dict[str, int | None] = {"vm_peak_kb": None, "rss_peak_kb": None}
+    try:
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("VmPeak:"):
+                    out["vm_peak_kb"] = int(line.split()[1])
+                elif line.startswith("VmHWM:"):
+                    out["rss_peak_kb"] = int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return out
+
+
 def serialise(res: Extracted, max_chars: int) -> bytes:
     text = res.text[:max_chars]
     head = {
+        **_peaks(),
         "status": res.status.value,
         "upto_page": res.upto_page,
         "pages_total": res.pages_total,

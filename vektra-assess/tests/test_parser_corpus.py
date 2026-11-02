@@ -225,6 +225,8 @@ async def test_canaries_never_reach_logs_stdout_or_stderr(
             "exit_code",
             "stderr_bytes",
             "timed_out",
+            "vm_peak_kb",
+            "rss_peak_kb",
         }
         for e in events
     )

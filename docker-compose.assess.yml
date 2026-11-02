@@ -100,8 +100,9 @@ services:
       vektra-assess-parser:
         condition: service_started
 
-  # Parser sidecar: parses untrusted files. No network, no secrets, no DSN,
+  # Parser sidecar: parses untrusted files. No network, no secrets, no DSN, no env_file,
   # read-only root, unprivileged, bounded memory/pids/cpu. Talks only over the socket.
+  # Each item is parsed in a fresh child process under rlimits (plan assess-parser).
   vektra-assess-parser:
     image: vektra-stack
     profiles: [assess]
@@ -112,29 +113,34 @@ services:
       CMD_TARGET: assess-parser
       VEKTRA_ASSESS_ENABLED: "true"
       VEKTRA_ASSESS_PARSER_SOCKET: /run/vektra-assess-parser/parser.sock
+      # Non-secret limits only (the parser refuses to start with a DSN or a key in env).
+      VEKTRA_ASSESS_PARSER_POOL: ${VEKTRA_ASSESS_PARSER_POOL:-3}
+      VEKTRA_ASSESS_PARSER_TIMEOUT_S: ${VEKTRA_ASSESS_PARSER_TIMEOUT_S:-10}
+      VEKTRA_ASSESS_PARSER_MAX_CHARS: ${VEKTRA_ASSESS_PARSER_MAX_CHARS:-200000}
+      VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB: ${VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB:-256}
     tmpfs:
       - /tmp:size=64m,mode=1777
     volumes:
       - assess_parser_sock:/run/vektra-assess-parser
     mem_limit: 768m
-    pids_limit: 128
-    cpus: 1.0
+    memswap_limit: 768m
+    pids_limit: 64
+    cpus: 1.5
+    ulimits:
+      core: 0
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
-    # The image HEALTHCHECK probes the API on :8000, which this container neither
-    # serves nor can reach: answer a framed ping over the socket instead.
+    # The image HEALTHCHECK probes the API on :8000 with curl, which this container
+    # neither serves nor can reach: answer a deep ping over the socket instead (one child
+    # forked under rlimits on an embedded page, so the pool is proven, not only the socket).
     healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import json,socket,struct,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/run/vektra-assess-parser/parser.sock'); b=json.dumps({'op':'ping'}).encode(); s.sendall(struct.pack('>I',len(b))+b); n=struct.unpack('>I',s.recv(4))[0]; sys.exit(0 if json.loads(s.recv(n)).get('op')=='pong' else 1)"
+      test: [CMD, python, -m, vektra_assess.parser_sidecar.ping, --deep]
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
 volumes:
   assess_parser_sock:

@@ -102,7 +102,8 @@ def test_parser_is_isolated(rendered: dict) -> None:  # type: ignore[type-arg]
     assert not [k for k in env if "DATABASE_URL" in k or "PASSWORD" in k]
     assert p.get("mem_limit") and p.get("pids_limit")
     # its own healthcheck: the image one probes the API port it cannot reach
-    assert "parser.sock" in " ".join(p["healthcheck"]["test"])
+    assert "vektra_assess.parser_sidecar.ping" in " ".join(p["healthcheck"]["test"])
+    assert "--deep" in p["healthcheck"]["test"]
 
 
 def test_socket_volume_only_in_worker_and_parser(rendered: dict) -> None:  # type: ignore[type-arg]
@@ -148,3 +149,50 @@ def test_postgres_logs_no_statements(rendered: dict) -> None:  # type: ignore[ty
         "log_min_error_statement=panic",
     ):
         assert flag in cmd
+
+
+def test_parser_service_hardening_is_complete(rendered: dict) -> None:  # type: ignore[type-arg]
+    p = rendered["services"]["vektra-assess-parser"]
+    assert p["network_mode"] == "none" and p["read_only"] is True
+    assert p["cap_drop"] == ["ALL"]
+    assert "no-new-privileges:true" in p["security_opt"]
+    assert p["environment"]["CMD_TARGET"] == "assess-parser"
+    assert "env_file" not in p, "the parser must not read a shared .env"
+    assert "secrets" not in p and "ports" not in p
+    assert int(p["pids_limit"]) == 64
+    assert int(p["mem_limit"]) == int(p["memswap_limit"]) == 768 * 1024 * 1024
+    assert float(p["cpus"]) == 1.5
+    # `config --format json` renders zero soft/hard limits as {}; the container test reads the
+    # effective value from `docker inspect`
+    assert "core" in p["ulimits"]
+    assert p["tmpfs"] == ["/tmp:size=64m,mode=1777"]
+    assert p["restart"] == "unless-stopped"
+    sock = [v for v in p["volumes"] if v.get("source") == SOCKET_VOLUME]
+    assert [v["target"] for v in sock] == ["/run/vektra-assess-parser"]
+    env = p["environment"]
+    assert not [
+        k
+        for k in env
+        if any(
+            f in k
+            for f in ("DATABASE_URL", "DSN", "PASSWORD", "SECRET", "TOKEN", "KEY")
+        )
+    ]
+
+
+def test_socket_volume_consumers_are_exactly_parser_and_worker(rendered: dict) -> None:  # type: ignore[type-arg]
+    consumers = {
+        n
+        for n, s in rendered["services"].items()
+        if any(v.get("source") == SOCKET_VOLUME for v in s.get("volumes", []))
+    }
+    assert consumers == {"vektra-assess-parser", "vektra-assess-worker"}
+    # and no service reaches it through volumes_from or a bind of the same path
+    for n, s in rendered["services"].items():
+        assert "volumes_from" not in s, n
+        if n not in consumers:
+            assert not [
+                v
+                for v in s.get("volumes", [])
+                if "vektra-assess-parser" in str(v.get("target"))
+            ], n

@@ -44,6 +44,7 @@ from vektra_shared.netguard import EgressDenied, Resolver, resolve_pinned
 log = structlog.get_logger()
 
 REST_PATH = "/webservice/rest/server.php"
+FILE_PATH = "/webservice/pluginfile.php"
 _UNSET = object()
 
 
@@ -158,106 +159,25 @@ class MoodleWsClient:
     async def _exchange(
         self, site: SiteRef, wsfunction: str, params: Mapping[str, Any]
     ) -> tuple[Reading[Any], int | None, int, str]:
-        breaker = self._breakers.for_site(site.site_id)
         token = self._token_for(site.site_id)
-        if not token:
-            breaker.record_success()  # nothing was sent: do not hold the probe slot
-            return (
-                Unreadable(UnreadableReason.ACCESS_EXCEPTION, "no_token"),
-                None,
-                0,
-                "",
-            )
-        parts = urlsplit(site.base_url)
-        if parts.scheme == "http" and not self._allow_http():
-            breaker.record_success()
-            return Unreadable(UnreadableReason.TLS, "plain_http_refused"), None, 0, ""
-        try:
-            target = resolve_pinned(
-                site.base_url.rstrip("/") + REST_PATH,
-                allowed_hosts=[parts.hostname or ""],
-                allowed_cidrs=self._cidrs(),
-                resolver=self._resolver,
-            )
-        except EgressDenied:
-            breaker.record_success()
-            return (
-                Unreadable(UnreadableReason.ACCESS_EXCEPTION, "egress_denied"),
-                None,
-                0,
-                "",
-            )
-
         form = {
-            "wstoken": token,
+            "wstoken": token or "",
             "wsfunction": wsfunction,
             "moodlewsrestformat": "json",
             **flatten_params(params),
         }
-        await self._limiter.acquire()
+        raw, status, size = await self._send(
+            site,
+            "POST",
+            REST_PATH,
+            token=token,
+            form=form,
+            cap=self._s.ws_max_response_bytes,
+        )
+        if isinstance(raw, Unreadable):
+            return raw, status, size, ""
         try:
-            async with self._http.stream(
-                "POST",
-                target.pinned_url,
-                data=form,
-                headers={"Host": target.host_header},
-                extensions={"sni_hostname": target.sni_hostname},
-            ) as resp:
-                status = resp.status_code
-                if 300 <= status < 400:
-                    breaker.record_success()
-                    return (
-                        Unreadable(UnreadableReason.REDIRECT, f"http_{status}"),
-                        status,
-                        0,
-                        "",
-                    )
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in resp.aiter_bytes():
-                    size += len(chunk)
-                    if size > self._s.ws_max_response_bytes:
-                        breaker.record_success()
-                        return Unreadable(UnreadableReason.SIZE_CAP), status, size, ""
-                    chunks.append(chunk)
-        except httpx.TimeoutException:
-            breaker.record_failure()
-            return Unreadable(UnreadableReason.TIMEOUT), None, 0, ""
-        except httpx.TransportError as exc:
-            if _is_tls_error(exc):
-                breaker.record_success()  # the host answered; this is a trust problem
-                return (
-                    Unreadable(UnreadableReason.TLS, "tls_verify_failed"),
-                    None,
-                    0,
-                    "",
-                )
-            breaker.record_failure()
-            return (
-                Unreadable(UnreadableReason.UNKNOWN_SHAPE, "transport_error"),
-                None,
-                0,
-                "",
-            )
-
-        if status >= 500:
-            breaker.record_failure()
-            return (
-                Unreadable(UnreadableReason.UNKNOWN_SHAPE, "http_5xx"),
-                status,
-                size,
-                "",
-            )
-        breaker.record_success()
-        if status != 200:
-            return (
-                Unreadable(UnreadableReason.UNKNOWN_SHAPE, f"http_{status}"),
-                status,
-                size,
-                "",
-            )
-        try:
-            doc = json.loads(b"".join(chunks))
+            doc = json.loads(raw.value)
         except (ValueError, RecursionError):
             return (
                 Unreadable(UnreadableReason.UNKNOWN_SHAPE, "not_json"),
@@ -273,3 +193,124 @@ class MoodleWsClient:
             size,
             "",
         )
+
+    async def fetch_file(self, site: SiteRef, path: str) -> Reading[bytes]:
+        """Download one file through ``/webservice/pluginfile.php`` (plan group C).
+
+        Moodle wants the token as a QUERY parameter on file URLs, so this URL is a secret: it
+        is built here, goes through the same pinned, no-redirect, size-capped path as every WS
+        call, and is never logged (only the byte count and the status). ``path`` is the part
+        after ``/webservice/pluginfile.php``; the host of any URL Moodle returned is never used.
+        """
+        started = time.perf_counter()
+        breaker = self._breakers.for_site(site.site_id)
+        token = self._token_for(site.site_id)
+        status: int | None = None
+        size = 0
+        if not breaker.allow():
+            result: Reading[bytes] = Unreadable(UnreadableReason.BREAKER_OPEN)
+        else:
+            result, status, size = await self._send(
+                site,
+                "GET",
+                FILE_PATH + path,
+                token=token,
+                query={"token": token or ""},
+                cap=self._s.ws_max_file_bytes,
+            )
+        log.info(
+            "moodle_file_fetch",
+            site_id=site.site_id,
+            status=status,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            bytes=size,
+            outcome="ok" if isinstance(result, Readable) else result.reason.value,
+        )
+        return result
+
+    async def _send(
+        self,
+        site: SiteRef,
+        method: str,
+        path: str,
+        *,
+        token: str | None,
+        cap: int,
+        form: Mapping[str, str] | None = None,
+        query: Mapping[str, str] | None = None,
+    ) -> tuple[Reading[bytes], int | None, int]:
+        """One pinned, no-redirect, size-capped exchange. Returns (body | Unreadable, status, size)."""
+        breaker = self._breakers.for_site(site.site_id)
+        if not token:
+            breaker.record_success()  # nothing was sent: do not hold the probe slot
+            return Unreadable(UnreadableReason.ACCESS_EXCEPTION, "no_token"), None, 0
+        parts = urlsplit(site.base_url)
+        if parts.scheme == "http" and not self._allow_http():
+            breaker.record_success()
+            return Unreadable(UnreadableReason.TLS, "plain_http_refused"), None, 0
+        try:
+            target = resolve_pinned(
+                site.base_url.rstrip("/") + path,
+                allowed_hosts=[parts.hostname or ""],
+                allowed_cidrs=self._cidrs(),
+                resolver=self._resolver,
+            )
+        except EgressDenied:
+            breaker.record_success()
+            return (
+                Unreadable(UnreadableReason.ACCESS_EXCEPTION, "egress_denied"),
+                None,
+                0,
+            )
+
+        await self._limiter.acquire()
+        try:
+            async with self._http.stream(
+                method,
+                target.pinned_url,
+                data=form,
+                params=query,
+                headers={"Host": target.host_header},
+                extensions={"sni_hostname": target.sni_hostname},
+            ) as resp:
+                status = resp.status_code
+                if 300 <= status < 400:
+                    breaker.record_success()
+                    return (
+                        Unreadable(UnreadableReason.REDIRECT, f"http_{status}"),
+                        status,
+                        0,
+                    )
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in resp.aiter_bytes():
+                    size += len(chunk)
+                    if size > cap:
+                        breaker.record_success()
+                        return Unreadable(UnreadableReason.SIZE_CAP), status, size
+                    chunks.append(chunk)
+        except httpx.TimeoutException:
+            breaker.record_failure()
+            return Unreadable(UnreadableReason.TIMEOUT), None, 0
+        except httpx.TransportError as exc:
+            if _is_tls_error(exc):
+                breaker.record_success()  # the host answered; this is a trust problem
+                return Unreadable(UnreadableReason.TLS, "tls_verify_failed"), None, 0
+            breaker.record_failure()
+            return (
+                Unreadable(UnreadableReason.UNKNOWN_SHAPE, "transport_error"),
+                None,
+                0,
+            )
+
+        if status >= 500:
+            breaker.record_failure()
+            return Unreadable(UnreadableReason.UNKNOWN_SHAPE, "http_5xx"), status, size
+        breaker.record_success()
+        if status != 200:
+            return (
+                Unreadable(UnreadableReason.UNKNOWN_SHAPE, f"http_{status}"),
+                status,
+                size,
+            )
+        return Readable(b"".join(chunks)), status, size

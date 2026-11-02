@@ -14,6 +14,8 @@ dependencies = [
     "structlog>=24.0",
     # Hard dependency, no weaker fallback (ARCH-079, ADR-0031 amended 2026-11-01).
     "cryptography>=42",
+    # Parsing of untrusted files, in the parser sidecar only (plan assess-parser; ARCH-066, ARCH-078).
+    "pdfminer.six>=20231228",
     "defusedxml>=0.7",
     "html5lib>=1.1",
     "aiosmtplib>=3.0",

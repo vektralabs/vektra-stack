@@ -1,15 +1,12 @@
 # Contract test of the assess Moodle web-service readers against real Moodle 4.3 and 5.2
 # (plan assess-moodle-ws, group G). Manual and weekly: it builds two Moodle sites, so it is
 # not part of the PR gate. The dev environments live in the vektra-moodle repository
-# (docker/compose.moodle.yml, make moodle43-up / moodle52-up); this job checks it out.
+# (docker/compose.moodle.yml, make moodle43-up / moodle52-up); this job checks out its
+# `develop` branch (so it works once the environments are merged there).
 name: assess-moodle-contract
 
 on:
   workflow_dispatch:
-    inputs:
-      moodle_ref:
-        description: "vektra-moodle ref that holds the docker/ dev environments"
-        default: develop
   schedule:
     - cron: "17 3 * * 1"
 
@@ -35,15 +32,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: vektralabs/vektra-moodle
-          ref: ${{ inputs.moodle_ref || 'develop' }}
+          # a fixed ref, never an input: the job must not execute code chosen by whoever dispatches it
+          ref: develop
           path: vektra-moodle
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@v7
         with:
-          # No cache: this job checks out an operator-chosen ref of another repository
-          # (moodle_ref) next to this one, and a cache written from a run that also checked
-          # out untrusted code could poison the default branch's cache (CodeQL
+          # No cache: this job checks out another repository next to this one and runs its
+          # Makefile; a cache written by such a run must never be reused (CodeQL
           # actions/cache-poisoning).
           enable-cache: false
 

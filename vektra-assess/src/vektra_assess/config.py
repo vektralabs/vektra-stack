@@ -85,6 +85,20 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PARSER_MAX_CHARS",
         description="Character cap of the text returned per file (READ_PARTIAL beyond it).",
     )
+    parser_max_file_bytes: int = Field(
+        10 * 1024 * 1024,
+        ge=1024,
+        le=64 * 1024 * 1024,
+        alias="VEKTRA_ASSESS_PARSER_MAX_FILE_BYTES",
+        description="Largest file the sidecar accepts (REQ-101: 10 MB); bigger is TOO_LARGE, no child forked. The sidecar also holds at most four such payloads in memory at once.",
+    )
+    parser_max_pages: int = Field(
+        50,
+        ge=1,
+        le=500,
+        alias="VEKTRA_ASSESS_PARSER_MAX_PAGES",
+        description="PDF page cap (REQ-101: 50); a client cannot ask for more.",
+    )
     parser_rlimit_as_mb: int = Field(
         256,
         ge=64,

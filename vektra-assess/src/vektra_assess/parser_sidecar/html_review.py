@@ -30,7 +30,9 @@ _BLOCK = frozenset(
     "figcaption figure footer form h1 h2 h3 h4 h5 h6 header hr html li main nav "
     "ol p section summary ul legend caption table tbody thead tfoot".split()
 )
-_TEX = re.compile(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", re.DOTALL)
+_TEX_OPEN = re.compile(r"\\\(|\\\[|\$\$")
+_TEX_CLOSE = {"\\(": "\\)", "\\[": "\\]", "$$": "$$"}
+MAX_TEX_SPAN = 2000  # a longer "span" is prose with a stray opener, not a formula
 _WS = re.compile(r"[ \t\r\n\f]+")
 _NO_VALUE_INPUTS = frozenset("hidden password submit button image reset file".split())
 
@@ -40,13 +42,28 @@ def _local(tag: Any) -> str:
 
 
 def _collapse(text: str) -> str:
-    """HTML whitespace semantics, except TeX spans which are kept verbatim."""
+    """HTML whitespace semantics, except TeX spans which are kept verbatim.
+
+    Linear: the next closer of each kind is searched once and reused, so a node made of
+    millions of unmatched openers costs one pass, not one pass per opener.
+    """
     out: list[str] = []
     pos = 0
-    for m in _TEX.finditer(text):
+    next_close: dict[str, int] = {}
+    for m in _TEX_OPEN.finditer(text):
+        if m.start() < pos:
+            continue
+        closer = _TEX_CLOSE[m.group(0)]
+        at = next_close.get(closer, -2)
+        if at != -1 and at < m.end():
+            at = text.find(closer, m.end())
+            next_close[closer] = at
+        if at == -1 or at - m.end() > MAX_TEX_SPAN:
+            continue
+        end = at + len(closer)
         out.append(_WS.sub(" ", text[pos : m.start()]))
-        out.append(m.group(0))
-        pos = m.end()
+        out.append(text[m.start() : end])
+        pos = end
     out.append(_WS.sub(" ", text[pos:]))
     return "".join(out)
 

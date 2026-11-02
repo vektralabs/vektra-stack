@@ -472,3 +472,70 @@ def test_stopped_sidecar_is_unavailable_and_the_check_fails() -> None:
             time.sleep(2)
         else:
             pytest.fail("parser did not come back healthy")
+
+
+# --- many large, slow senders cannot take the supervisor over its memory limit ---------------
+
+FLOOD = r"""
+import asyncio, json, struct, sys
+from vektra_assess.config import VektraAssessSettings
+from vektra_assess.worker.parser_client import ParserClient
+
+N, CLAIM, SENT = 80, 10 * 1024 * 1024, 1024 * 1024
+
+async def sender(path, i):
+    r, w = await asyncio.open_unix_connection(path)
+    head = json.dumps({"v": 1, "op": "parse", "req_id": f"flood{i}", "ext_hint": "txt",
+                       "limits": {}, "payload_len": CLAIM}).encode()
+
+    async def reply():
+        n = struct.unpack(">I", await asyncio.wait_for(r.readexactly(4), 5))[0]
+        h = json.loads(await r.readexactly(n))
+        return h.get("code") or h.get("status")
+
+    waiting = asyncio.ensure_future(reply())     # listening before we send, as a client does
+    try:
+        w.write(struct.pack(">I", len(head)) + head + b"x" * SENT)   # 1 MiB of a promised 10 MiB, then silence
+        await w.drain()
+    except ConnectionError:
+        pass   # refused early (BUSY) and closed while we were still sending: expected
+    try:
+        return await waiting
+    except Exception:
+        return "silent"
+
+async def main():
+    s = VektraAssessSettings()
+    path = str(s.parser_socket)
+    res = await asyncio.gather(*[sender(path, i) for i in range(N)])
+    out = {k: res.count(k) for k in set(res)}
+    c = ParserClient.from_settings(s)
+    out["ping_during"] = "ok" if await c.ping() >= 0 else "no"
+    print(json.dumps(out))
+
+asyncio.run(main())
+"""
+
+
+def test_slow_large_senders_are_bounded_and_the_container_stays_within_its_limit() -> (
+    None
+):
+    cid = _cid("vektra-assess-parser")
+    res = _compose(
+        "exec", "-T", "vektra-assess-worker", "python", "-c", FLOOD, timeout=120
+    )
+    assert res.returncode == 0, res.stderr.decode()[-1500:]
+    out = json.loads(_text(res).splitlines()[-1])
+    print("flood of 80 stalled 10 MiB senders:", out)
+    assert out.get("BUSY", 0) >= 70, (
+        out
+    )  # only the byte budget (4 x 10 MiB) is admitted
+    assert out["ping_during"] == "ok"
+    mem = _mem_files(cid)
+    assert int(mem["memory.peak"]) <= PEAK_BUDGET, mem
+    assert _inspect("vektra-assess-parser")["State"]["OOMKilled"] is False
+    # the stalled senders are released by the overall read deadline: nothing stays reserved
+    time.sleep(1)
+    again = _compose("exec", "-T", "vektra-assess-parser", "python", "-m",
+                     "vektra_assess.parser_sidecar.ping", "--deep")  # fmt: skip
+    assert again.returncode == 0

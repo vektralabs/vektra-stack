@@ -17,6 +17,7 @@ from defusedxml.ElementTree import ParseError, fromstring
 from vektra_assess.parser_protocol import Extracted, FileStatus
 from vektra_assess.parser_sidecar.text import serialize_xml
 from vektra_assess.parser_sidecar.xmlsax import (
+    CappedHandler,
     TextSink,
     guarded,
     run_sax,
@@ -63,10 +64,10 @@ def _formula(gz: GuardedZip, href: str) -> str | None:
     return serialize_xml(root)[:MAX_FORMULA_CHARS]
 
 
-class _Handler(xml.sax.handler.ContentHandler):
+class _Handler(CappedHandler):
     def __init__(self, sink: TextSink, gz: GuardedZip) -> None:
-        super().__init__()
-        self.sink, self.gz = sink, gz
+        super().__init__(sink)
+        self.gz = gz
         self.paras: list[list[str]] = []
         self.heading = 0
         self.list_depth = 0
@@ -75,6 +76,12 @@ class _Handler(xml.sax.handler.ContentHandler):
         self.frames: list[dict[str, Any]] = []
         self.in_alt = False
         self.alt: list[str] = []
+
+    def flush_open(self) -> None:
+        for t in reversed(self.tables):
+            self.sink.force(" ".join(t["cell"]))
+        for para in reversed(self.paras):
+            self.sink.force("".join(para))
 
     def _emit(self, text: str) -> None:
         if self.tables:
@@ -132,8 +139,10 @@ class _Handler(xml.sax.handler.ContentHandler):
     def characters(self, content: str) -> None:
         if self.in_alt:
             self.alt.append(content)
+            self.count(content)
         elif self.paras:
             self.paras[-1].append(content)
+            self.count(content)
 
     def endElementNS(self, name: Any, qname: Any) -> None:
         ns, local = name

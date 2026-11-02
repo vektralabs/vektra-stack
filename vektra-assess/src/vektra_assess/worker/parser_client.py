@@ -100,7 +100,7 @@ class ParserClient:
         limits: Limits | None = None,
         queue_allowance_s: float = _QUEUE_ALLOWANCE_S,
         connect_timeout_s: float = 3.0,
-        busy_retries: int = 3,
+        busy_retries: int = 8,
         busy_backoff_s: float = 0.25,
     ) -> None:
         self.socket_path = str(socket_path)

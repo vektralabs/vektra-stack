@@ -71,4 +71,19 @@ def attempt_forbidden() -> None:
         pass
 
 
+def hostile_child_main(in_conn, out_conn, err_w, spec):  # type: ignore[no-untyped-def]
+    """A compromised child: answers the supervisor with hostile bytes (see spec ext_hint)."""
+    in_conn.recv_bytes(1 << 20)
+    flavour = spec["ext_hint"]
+    if flavour == "list":
+        out_conn.send_bytes(b"[1]\n")
+    elif flavour == "deep":
+        out_conn.send_bytes(b"[" * 200_000 + b"\n")
+    elif flavour == "nostatus":
+        out_conn.send_bytes(b'{"chars":0}\n')
+    else:
+        out_conn.send_bytes(b"\xff\xfe garbage")
+    os._exit(0)
+
+
 _install()

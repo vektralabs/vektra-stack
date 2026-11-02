@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterable
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
+from vektra_assess.config import VektraAssessSettings
 from vektra_shared.startup import StartupValidationError
+
+if TYPE_CHECKING:
+    from vektra_assess.parser_sidecar.server import ServerConfig
 
 STEP = "assess_parser_check"
 
@@ -73,9 +79,8 @@ def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:
         )
 
 
-def check_environment() -> Path:
-    """Refuse to run unless enabled and holding nothing. Returns the socket path."""
-    from vektra_assess.config import VektraAssessSettings
+def check_environment() -> VektraAssessSettings:
+    """Refuse to run unless enabled and holding nothing. Returns the loaded settings."""
     from vektra_assess.keys import enforce_key_matrix
 
     settings = VektraAssessSettings()
@@ -85,16 +90,42 @@ def check_environment() -> Path:
             "deployment where assess is disabled."
         )
     enforce_key_matrix("parser", secrets_dir=settings.secrets_dir, step=STEP)
-    return settings.parser_socket
+    return settings
+
+
+def build_server_config(settings: VektraAssessSettings) -> ServerConfig:
+    """The single definition of the parser limits is ``VektraAssessSettings``."""
+    from vektra_assess.parser_sidecar.server import ServerConfig
+
+    return ServerConfig(
+        socket_path=settings.parser_socket,
+        pool=settings.parser_pool,
+        timeout_s=settings.parser_timeout_s,
+        max_chars=settings.parser_max_chars,
+        max_file_bytes=settings.parser_max_file_bytes,
+        max_pages=settings.parser_max_pages,
+        rlimit_as=settings.parser_rlimit_as_mb * 1024 * 1024,
+    )
 
 
 def main() -> None:
     try:
-        socket_path = check_environment()
+        settings = check_environment()
         from vektra_assess.parser_sidecar import server
 
+        cfg = build_server_config(settings)
         assert_import_ceiling()
-        code = server.main(socket_path)
+        code = server.main(cfg)
+    except ValidationError as exc:
+        print(
+            "[ASSESS PARSER] invalid VEKTRA_ASSESS_* setting: "
+            + "; ".join(
+                f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}"
+                for e in exc.errors()
+            ),
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
     except RuntimeError as exc:
         print(f"[ASSESS PARSER] {exc}", file=sys.stderr)
         raise SystemExit(2) from None

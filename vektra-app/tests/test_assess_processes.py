@@ -191,6 +191,43 @@ def test_parser_ceiling_refuses_forbidden_and_stray_modules() -> None:
     )
 
 
+def test_server_config_has_one_source_the_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_POOL", "5")
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_TIMEOUT_S", "7.5")
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_MAX_CHARS", "5000")
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_MAX_PAGES", "10")
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_MAX_FILE_BYTES", "2048")
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB", "300")
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_SOCKET", str(tmp_path / "s.sock"))
+    cfg = assess_parser.build_server_config(VektraAssessSettings())
+    assert (cfg.pool, cfg.timeout_s, cfg.max_chars, cfg.max_pages) == (5, 7.5, 5000, 10)
+    assert (cfg.max_file_bytes, cfg.rlimit_as) == (2048, 300 * 1024 * 1024)
+    assert cfg.socket_path == tmp_path / "s.sock"
+
+
+@pytest.mark.parametrize(
+    ("var", "value"),
+    [
+        ("VEKTRA_ASSESS_PARSER_POOL", "abc"),
+        ("VEKTRA_ASSESS_PARSER_POOL", "99"),
+        ("VEKTRA_ASSESS_PARSER_TIMEOUT_S", "fast"),
+        ("VEKTRA_ASSESS_PARSER_MAX_PAGES", "0"),
+    ],
+)
+def test_malformed_parser_settings_exit_cleanly_not_with_a_traceback(
+    var: str, value: str
+) -> None:
+    res = _run_module(
+        "vektra_app.assess_parser", {"VEKTRA_ASSESS_ENABLED": "true", var: value}
+    )
+    assert res.returncode == 2, res.stderr
+    assert var in res.stderr and "Traceback" not in res.stderr
+
+
 def test_api_entry_does_not_import_the_parser_entry() -> None:
     code = (
         "import sys, vektra_app.main; "

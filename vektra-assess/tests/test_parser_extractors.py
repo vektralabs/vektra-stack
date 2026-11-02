@@ -101,8 +101,12 @@ def test_text_decoding_fallbacks() -> None:
     assert decode("è".encode()) == "è"  # utf-8
     assert decode(b"\xef\xbb\xbfabc") == "abc"  # BOM tolerated
     assert decode("è".encode("cp1252")) == "è"  # cp1252 fallback
-    assert decode(b"\x81\x8d\x8f") is None  # undefined in cp1252 and not UTF-8
-    assert extract_text(b"\x81\x8d\x8f abc", 100).status is FileStatus.NO_TEXT
+    # 0x81 0x8D 0x8F 0x90 0x9D are undefined in cp1252: legacy text holding one is still text
+    assert decode(b"caff\xe8 \x81\x8d\x8f\x90\x9d") == "caff\xe8 \x81\x8d\x8f\x90\x9d"
+    legacy = extract_text(b"perch\xe9 \x81 ok", 100)
+    assert legacy.status is FileStatus.READ and legacy.text.startswith("perch\xe9")
+    assert decode(b"\xff\xfe\x61") is None  # only a broken UTF-16 text is undecodable
+    assert extract_text(b"\xff\xfe\x61", 100).status is FileStatus.NO_TEXT
     assert extract_text(b"  \n\t ", 100).status is FileStatus.NO_TEXT
     assert extract_text(b"a" * 50, 10).status is FileStatus.READ_PARTIAL
     assert clean("a\x00b\x07c\r\nd\te") == "abc\nd\te"
@@ -299,3 +303,141 @@ def test_serialise_roundtrip_shape() -> None:
     res = run("parse", b"hello", "txt", max_pages=50, max_chars=100)
     head, _, body = serialise(res, 100).partition(b"\n")
     assert b'"status": "READ"' in head and body == b"hello"
+
+
+# --- review fixes -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        b"ID3 tags are metadata",
+        b"BZh is how a bzip2 stream starts",
+        b"RIFF files are containers",
+        b"OggS pages",
+        b"fLaC frames",
+        b"GIF89a is a format",
+    ],
+)
+def test_prose_starting_like_a_weak_magic_is_text(head: bytes) -> None:
+    for ext in ("txt", "md", ""):
+        assert sniff(head + b"\nand some more text\n", ext).kind is Kind.TEXT, (
+            head,
+            ext,
+        )
+        res = run("parse", head + b"\nmore\n", ext, max_pages=50, max_chars=1000)
+        assert res.status is FileStatus.READ
+
+
+def test_weak_magic_still_refuses_real_binaries_and_non_text_extensions() -> None:
+    assert (
+        sniff(b"ID3\x03\x00\x00\x00\x00\x00\x21" + bytes(100), "mp3").kind
+        is Kind.REFUSED
+    )
+    assert (
+        sniff(b"BZh91AY&SY\xd4\x1f" + bytes(50) + b"\x00", "txt").kind is Kind.REFUSED
+    )  # NULs
+    assert (
+        sniff(b"RIFF\x24\x08\x00\x00WAVEfmt " + bytes(40), "txt").kind is Kind.REFUSED
+    )
+    assert (
+        sniff(b"ID3 looks like text", "mp3").kind is Kind.REFUSED
+    )  # extension says audio
+    assert sniff(b"BZh text", "bz2").kind is Kind.REFUSED
+    assert (
+        sniff(b"\x89PNG\r\n\x1a\nreadable?", "txt").kind is Kind.REFUSED
+    )  # strong: always
+    assert sniff(b"\x00\x00\x00\x18ftypmp42" + bytes(20), "mp4").kind is Kind.REFUSED
+
+
+def test_docx_text_box_does_not_lose_the_outer_paragraph() -> None:
+    from parser_corpus_support import module
+
+    m = module()
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">before </w:t></w:r>'
+        "<w:r><w:pict><w:txbxContent><w:p><w:r><w:t>inside the box</w:t></w:r></w:p></w:txbxContent></w:pict></w:r>"
+        '<w:r><w:t xml:space="preserve">after</w:t></w:r></w:p>'
+    )
+    res = run("parse", m.make_docx(body), "docx", max_pages=50, max_chars=10**6)
+    assert res.status is FileStatus.READ
+    assert "before after" in res.text and "inside the box" in res.text
+
+
+def _hex_text(n_chars: int) -> str:
+    out, i = [], 0
+    while sum(map(len, out)) < n_chars:
+        out.append(hashlib.sha256(str(i).encode()).hexdigest())
+        i += 1
+    return "".join(out)[:n_chars]
+
+
+def _peak_bytes(fn):  # type: ignore[no-untyped-def]
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        res = fn()
+        return res, tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def test_one_giant_paragraph_ends_partial_at_the_cap_not_in_memory() -> None:
+    from parser_corpus_support import module
+
+    m = module()
+    giant = _hex_text(2_500_000)  # one 2.5 MB paragraph
+    docx = m.make_docx(m._p(giant))
+    odt = m.make_odt(f"<text:p>{giant}</text:p>")
+    for data, ext in ((docx, "docx"), (odt, "odt")):
+        res, peak = _peak_bytes(
+            lambda d=data, e=ext: run("parse", d, e, max_pages=50, max_chars=5000)
+        )
+        assert res.status is FileStatus.READ_PARTIAL, (ext, res.status, res.code)
+        assert len(res.text) == 5000 and res.text == giant[:5000]
+        # the paragraph was never buffered whole (it would cost 2.5 MB here, twice with the join)
+        assert peak < 1_200_000, (ext, peak)
+
+
+def test_giant_table_cell_and_math_are_capped_too() -> None:
+    from parser_corpus_support import module
+
+    m = module()
+    giant = _hex_text(1_500_000)
+    cell = m.make_docx(m._tbl([[giant, "x"]]))
+    math = m.make_docx(f"<w:p><m:oMath><m:r><m:t>{giant}</m:t></m:r></m:oMath></w:p>")
+    for data in (cell, math):
+        res, peak = _peak_bytes(
+            lambda d=data: run("parse", d, "docx", max_pages=50, max_chars=2000)
+        )
+        assert res.status is FileStatus.READ_PARTIAL and len(res.text) == 2000
+        assert peak < 900_000
+
+
+def test_tex_scan_is_linear_on_a_wall_of_unmatched_openers() -> None:
+    import time
+
+    from vektra_assess.parser_sidecar.html_review import _collapse
+
+    wall = "\\(" * 1_000_000  # 2 MB, a million unmatched openers
+    t0 = time.monotonic()
+    out = _collapse(wall + " x  y")
+    took = time.monotonic() - t0
+    assert took < 5, f"{took:.1f}s"
+    assert out.endswith("x y")
+    # the whole path, as a review page node
+    html = b"<p>$$ a$$</p><p>" + (b"\\[ " * 600_000) + b"</p>"
+    t0 = time.monotonic()
+    res = sanitize_review_html(html, 10**6)
+    assert time.monotonic() - t0 < 20 and "$$ a$$" in res.text
+
+
+def test_tex_spans_keep_verbatim_and_a_too_long_span_is_prose() -> None:
+    from vektra_assess.parser_sidecar.html_review import MAX_TEX_SPAN, _collapse
+
+    assert _collapse(r"a  \(  x   y  \)  b") == r"a \(  x   y  \) b"
+    assert _collapse("$$ a  b $$ and  \\[ c \\]") == "$$ a  b $$ and \\[ c \\]"
+    long_span = "\\(" + "x  " * MAX_TEX_SPAN + "\\)"
+    assert "x x" in _collapse(long_span)  # not verbatim: collapsed like prose
+    assert _collapse("\\( never closed   here") == "\\( never closed here"

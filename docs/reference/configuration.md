@@ -200,6 +200,8 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_PARSER_POOL` | int | `3` | Concurrent child processes of the parser sidecar (one item per fresh process). Sized with the container `mem_limit` (768M): pool 3 within the measured per-child peak. |
 | `VEKTRA_ASSESS_PARSER_TIMEOUT_S` | float | `10` | Wall-clock budget per file in the sidecar; the child is SIGKILLed at the deadline and the file becomes `non letto: file danneggiato o non elaborabile`. The worker client waits this plus a 15 s queue allowance before treating the sidecar as unavailable. |
 | `VEKTRA_ASSESS_PARSER_MAX_CHARS` | int | `200000` | Character cap of the text returned per file; beyond it the file is `letto parzialmente`. |
+| `VEKTRA_ASSESS_PARSER_MAX_FILE_BYTES` | int | `10485760` | Largest file the sidecar accepts (REQ-101: 10 MB); larger is `non letto: troppo grande` with no child forked. The sidecar also holds at most four such payloads in memory at once and answers `BUSY` beyond that (the client retries). |
+| `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
 | `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
 
 ### Secret files and the key matrix

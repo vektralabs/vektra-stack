@@ -8,11 +8,11 @@ Macro-enabled files are refused by ``sniff`` before this runs.
 from __future__ import annotations
 
 import re
-import xml.sax.handler
 from typing import Any
 
 from vektra_assess.parser_protocol import Extracted, FileStatus
 from vektra_assess.parser_sidecar.xmlsax import (
+    CappedHandler,
     TextSink,
     guarded,
     run_sax,
@@ -27,12 +27,12 @@ MAX_PART_BYTES = 32 * 1024 * 1024
 _HEADING = re.compile(r"^(?:heading|titolo|intestazione)\s*(\d)$", re.IGNORECASE)
 
 
-class _Handler(xml.sax.handler.ContentHandler):
+class _Handler(CappedHandler):
     def __init__(self, sink: TextSink) -> None:
-        super().__init__()
-        self.sink = sink
-        self.para: list[str] | None = None
-        self.heading = 0
+        super().__init__(sink)
+        # a stack: a text box (w:txbxContent) holds paragraphs inside a paragraph
+        self.paras: list[list[str]] = []
+        self.headings: list[int] = []
         self.in_t = False
         self.math_depth = 0
         self.math: list[str] = []
@@ -45,21 +45,30 @@ class _Handler(xml.sax.handler.ContentHandler):
         else:
             self.sink.add(text)
 
+    def flush_open(self) -> None:
+        for t in reversed(self.tables):
+            self.sink.force(" ".join(t["cell"]))
+        for para in reversed(self.paras):
+            self.sink.force("".join(para))
+        if self.math_depth:
+            self.sink.force("".join(self.math))
+
     def startElementNS(self, name: Any, qname: Any, attrs: Any) -> None:
         ns, local = name
         if ns == W:
             if local == "p":
-                self.para, self.heading = [], 0
-            elif local == "pStyle":
+                self.paras.append([])
+                self.headings.append(0)
+            elif local == "pStyle" and self.headings:
                 m = _HEADING.match(attrs.get((W, "val"), ""))
                 if m:
-                    self.heading = max(1, min(6, int(m.group(1))))
+                    self.headings[-1] = max(1, min(6, int(m.group(1))))
             elif local == "t":
                 self.in_t = True
-            elif local == "tab" and self.para is not None:
-                self.para.append("\t")
-            elif local in ("br", "cr") and self.para is not None:
-                self.para.append("\n")
+            elif local == "tab" and self.paras:
+                self.paras[-1].append("\t")
+            elif local in ("br", "cr") and self.paras:
+                self.paras[-1].append("\n")
             elif local == "tbl":
                 self.tables.append({"row": [], "cell": [], "rows": []})
             elif local == "tr" and self.tables:
@@ -73,28 +82,30 @@ class _Handler(xml.sax.handler.ContentHandler):
                     self.math = []
             elif local == "t":
                 self.in_mt = True
-        elif ns == WP and local == "docPr" and self.para is not None:
+        elif ns == WP and local == "docPr" and self.paras:
             alt = (
                 attrs.get((None, "descr")) or attrs.get((None, "title")) or ""
             ).strip()
-            self.para.append(f"[immagine: {alt}]" if alt else IMAGE_PLACEHOLDER)
+            self.paras[-1].append(f"[immagine: {alt}]" if alt else IMAGE_PLACEHOLDER)
 
     def characters(self, content: str) -> None:
-        if self.in_t and self.para is not None:
-            self.para.append(content)
+        if self.in_t and self.paras:
+            self.paras[-1].append(content)
+            self.count(content)
         elif self.in_mt:
             self.math.append(content)
+            self.count(content)
 
     def endElementNS(self, name: Any, qname: Any) -> None:
         ns, local = name
         if ns == W:
             if local == "t":
                 self.in_t = False
-            elif local == "p" and self.para is not None:
-                text = "".join(self.para)
-                self.para = None
+            elif local == "p" and self.paras:
+                text = "".join(self.paras.pop())
+                heading = self.headings.pop()
                 if text.strip():
-                    prefix = "#" * self.heading + " " if self.heading else ""
+                    prefix = "#" * heading + " " if heading else ""
                     self._emit(prefix + text)
             elif local == "tc" and self.tables:
                 t = self.tables[-1]
@@ -115,8 +126,8 @@ class _Handler(xml.sax.handler.ContentHandler):
                 self.in_mt = False
             elif local == "oMath" and self.math_depth:
                 self.math_depth -= 1
-                if self.math_depth == 0 and self.para is not None:
-                    self.para.append("".join(self.math))
+                if self.math_depth == 0 and self.paras:
+                    self.paras[-1].append("".join(self.math))
 
 
 def extract_docx(data: bytes, max_chars: int) -> Extracted:

@@ -20,7 +20,6 @@ import stat
 import sys
 import threading
 import time
-from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from multiprocessing.context import ForkServerContext
@@ -63,23 +62,19 @@ class ServerConfig:
     rlimit_as: int = 256 * MiB
     queue_max: int = 32
 
-    @classmethod
-    def from_env(cls, socket_path: Path, env: Mapping[str, str]) -> ServerConfig:
-        def num(key: str, default: float) -> float:
-            raw = env.get(f"VEKTRA_ASSESS_PARSER_{key}")
-            return float(raw) if raw not in (None, "") else default
+    read_deadline_s: float = (
+        30.0  # whole-connection budget to receive header and payload
+    )
 
-        return cls(
-            socket_path=socket_path,
-            pool=max(1, int(num("POOL", 3))),
-            timeout_s=max(0.5, num("TIMEOUT_S", 10.0)),
-            max_chars=max(1000, int(num("MAX_CHARS", DEFAULT_MAX_CHARS))),
-            max_file_bytes=max(
-                1024, int(num("MAX_FILE_BYTES", DEFAULT_MAX_FILE_BYTES))
-            ),
-            max_pages=max(1, int(num("MAX_PAGES", DEFAULT_MAX_PAGES))),
-            rlimit_as=int(num("RLIMIT_AS_MB", 256)) * MiB,
-        )
+    @property
+    def max_open(self) -> int:
+        """Open connections allowed: admitted requests plus a few still being read."""
+        return self.pool + self.queue_max + 8
+
+    @property
+    def payload_budget(self) -> int:
+        """Bytes of payload held at once (running + queued): bounds the supervisor's RSS."""
+        return 4 * self.max_file_bytes
 
 
 def check_socket_dir(path: Path) -> None:
@@ -108,30 +103,33 @@ class ChildOutcome:
     rss_peak_kb: int | None = None
 
 
-def _peak(raw: bytes, key: str) -> int | None:
+def _load_head(raw: bytes) -> dict[str, Any] | None:
+    """The first line of the child's output as a dict, or None (the child is hostile too)."""
     try:
-        v = json.loads(raw.partition(b"\n")[0]).get(key)
-    except ValueError:
+        head = json.loads(raw.partition(b"\n")[0])
+    except (ValueError, RecursionError):
         return None
+    return head if isinstance(head, dict) else None
+
+
+def _peak(raw: bytes, key: str) -> int | None:
+    head = _load_head(raw)
+    v = head.get(key) if head else None
     return v if type(v) is int and v >= 0 else None
 
 
 def _parse_child_output(raw: bytes, max_chars: int) -> Extracted | None:
-    """The child is not trusted either: schema-check what it sent."""
-    head_raw, sep, body = raw.partition(b"\n")
-    if not sep:
+    """The child is not trusted either: schema-check what it sent. None means CORRUPT."""
+    head = _load_head(raw)
+    _, sep, body = raw.partition(b"\n")
+    if head is None or not sep:
         return None
     try:
-        head = json.loads(head_raw)
         status = FileStatus(head["status"])
         text = body.decode("utf-8")
-        up, pt, code = (
-            head.get("upto_page"),
-            head.get("pages_total"),
-            head.get("code", ""),
-        )
     except (ValueError, KeyError, TypeError, UnicodeDecodeError):
         return None
+    up, pt, code = head.get("upto_page"), head.get("pages_total"), head.get("code", "")
     if status is FileStatus.OVER_MAX_FILES or not isinstance(code, str):
         return None
     if len(text) > max_chars or head.get("chars") != len(text):
@@ -148,7 +146,9 @@ class ParserServer:
         self.ctx = ctx or multiprocessing.get_context("forkserver")
         self._executor = ThreadPoolExecutor(max_workers=cfg.pool + 1)
         self._sem = asyncio.Semaphore(cfg.pool)
-        self._waiting = 0
+        self._admitted = 0  # requests past admission: running, queued or being read
+        self._open = 0
+        self._reserved = 0  # payload bytes reserved by admitted requests
         self._deep_lock = asyncio.Lock()
         self.children_spawned = (
             0  # the counter the "0 children for TOO_LARGE" test reads
@@ -187,6 +187,13 @@ class ParserServer:
         writer.write(encode_frame({"v": PROTOCOL_VERSION, **header}, payload))
         await writer.drain()
 
+    async def _busy(
+        self, writer: asyncio.StreamWriter, req_id: str | None = None
+    ) -> None:
+        await self._reply(
+            writer, {"req_id": req_id, "status": None, "code": TRANSPORT_BUSY}
+        )
+
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -194,63 +201,81 @@ class ParserServer:
         req_id: Any = None
         op = "?"
         status = "-"
+        reserved = 0
+        admitted = False
+        counted = False
         try:
+            if self._open >= self.cfg.max_open:
+                # Too many open connections (slow or stalled senders): refuse before
+                # reading a byte, so the supervisor's memory stays bounded.
+                await self._busy(writer)
+                status = TRANSPORT_BUSY
+                return
+            self._open += 1
+            counted = True
             try:
-                n = parse_header_length(
-                    await asyncio.wait_for(reader.readexactly(4), IO_TIMEOUT_S)
-                )
-                header = parse_header(
-                    await asyncio.wait_for(reader.readexactly(n), IO_TIMEOUT_S)
-                )
+                async with asyncio.timeout(self.cfg.read_deadline_s):
+                    # one deadline for the whole receive phase: a sender that drips
+                    # bytes, each read inside a per-read timeout, still runs out of it
+                    n = parse_header_length(await reader.readexactly(4))
+                    header = parse_header(await reader.readexactly(n))
+                    req_id = header.get("req_id")
+                    op = str(header.get("op"))
+                    if (
+                        header.get("v") != PROTOCOL_VERSION
+                        or op not in OPS
+                        or not isinstance(req_id, str)
+                        or not 0 < len(req_id) <= 64
+                    ):
+                        raise FrameError("bad request")
+                    plen = header["payload_len"]
+                    if op == "ping":
+                        status = await self._ping(
+                            writer, req_id, bool(header.get("deep"))
+                        )
+                        return
+                    if plen > self.cfg.max_file_bytes:
+                        # Over the cap: answered without forking. Drain a bounded
+                        # amount so a well-behaved client finishes its send.
+                        await self._discard(reader, plen)
+                        await self._reply(
+                            writer,
+                            {
+                                "req_id": req_id,
+                                **_wire(
+                                    Extracted(FileStatus.TOO_LARGE, code="too_large")
+                                ),
+                            },
+                        )
+                        status = "TOO_LARGE"
+                        return
+                    # Admission is decided from the header, before the payload is read
+                    if (
+                        self._admitted >= self.cfg.pool + self.cfg.queue_max
+                        or self._reserved + plen > self.cfg.payload_budget
+                    ):
+                        await self._busy(writer, req_id)
+                        status = TRANSPORT_BUSY
+                        return
+                    self._admitted += 1
+                    admitted = True
+                    self._reserved += plen
+                    reserved = plen
+                    payload = await reader.readexactly(plen)
             except (FrameError, asyncio.IncompleteReadError, TimeoutError):
-                await self._reply(
-                    writer, {"req_id": None, "status": None, "code": "BAD_REQUEST"}
-                )
-                status = "BAD_REQUEST"
-                return
-            req_id = header.get("req_id")
-            op = str(header.get("op"))
-            if (
-                header.get("v") != PROTOCOL_VERSION
-                or op not in OPS
-                or not isinstance(req_id, str)
-                or not 0 < len(req_id) <= 64
-            ):
-                await self._reply(
-                    writer, {"req_id": None, "status": None, "code": "BAD_REQUEST"}
-                )
-                status = "BAD_REQUEST"
-                return
-            plen = header["payload_len"]
-            if op == "ping":
-                status = await self._ping(writer, req_id, bool(header.get("deep")))
-                return
-            if plen > self.cfg.max_file_bytes:
-                # Over the cap: answered without forking. Drain a bounded amount so
-                # a well-behaved client finishes its send and reads the answer.
-                with contextlib.suppress(Exception):
-                    await asyncio.wait_for(
-                        self._discard(reader, plen), IO_TIMEOUT_S * 3
-                    )
-                await self._reply(
-                    writer,
-                    {
-                        "req_id": req_id,
-                        **_wire(Extracted(FileStatus.TOO_LARGE, code="too_large")),
-                    },
-                )
-                status = "TOO_LARGE"
-                return
-            try:
-                payload = await asyncio.wait_for(
-                    reader.readexactly(plen), IO_TIMEOUT_S * 3
-                )
-            except (asyncio.IncompleteReadError, TimeoutError):
-                status = "BAD_REQUEST"
+                if status == "-":
+                    status = "BAD_REQUEST"
+                    with contextlib.suppress(Exception):
+                        await self._reply(
+                            writer,
+                            {"req_id": None, "status": None, "code": "BAD_REQUEST"},
+                        )
                 return
             raw_lim = header.get("limits")
             lim: dict[str, Any] = raw_lim if isinstance(raw_lim, dict) else {}
-            max_pages = _clamp(lim.get("max_pages"), 1, 500, self.cfg.max_pages)
+            max_pages = _clamp(
+                lim.get("max_pages"), 1, self.cfg.max_pages, self.cfg.max_pages
+            )
             max_chars = _clamp(
                 lim.get("max_chars"), 1000, self.cfg.max_chars, self.cfg.max_chars
             )
@@ -264,18 +289,7 @@ class ParserServer:
                 / 1000
             )
             ext = _ext(header.get("ext_hint"))
-            if self._sem.locked() and self._waiting >= self.cfg.queue_max:
-                await self._reply(
-                    writer, {"req_id": req_id, "status": None, "code": TRANSPORT_BUSY}
-                )
-                status = TRANSPORT_BUSY
-                return
-            self._waiting += 1
-            try:
-                await self._sem.acquire()
-            finally:
-                self._waiting -= 1
-            try:
+            async with self._sem:
                 out = await asyncio.get_running_loop().run_in_executor(
                     self._executor,
                     self._supervise,
@@ -286,8 +300,6 @@ class ParserServer:
                     max_chars,
                     timeout_s,
                 )
-            finally:
-                self._sem.release()
             status = out.result.status.value
             _event(
                 "parse",
@@ -317,6 +329,12 @@ class ParserServer:
                 error=type(exc).__name__,
             )
         finally:
+            if reserved:
+                self._reserved -= reserved
+            if admitted:
+                self._admitted -= 1
+            if counted:
+                self._open -= 1
             if status in (TRANSPORT_BUSY, "BAD_REQUEST", "-", "TOO_LARGE", "pong"):
                 _event(
                     "request",
@@ -430,7 +448,7 @@ class ParserServer:
             try:
                 raw = out_r.recv_bytes(max_chars * 4 + 4096)
                 result = _parse_child_output(raw, max_chars)
-            except (EOFError, OSError):
+            except (EOFError, OSError, ValueError, RecursionError):
                 result = None
         finally:
             timer.cancel()
@@ -509,7 +527,7 @@ async def serve(cfg: ServerConfig) -> int:
     return 0
 
 
-def main(socket_path: Path, env: Mapping[str, str] | None = None) -> int:
+def main(cfg: ServerConfig) -> int:
+    """Serve until SIGTERM. The config is built by the composition root (vektra_app)."""
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(message)s")
-    cfg = ServerConfig.from_env(socket_path, env if env is not None else os.environ)
     return asyncio.run(serve(cfg))

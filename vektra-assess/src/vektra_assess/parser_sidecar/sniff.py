@@ -40,26 +40,31 @@ TEXT_EXTENSIONS = frozenset(
     "asm s properties dockerfile makefile cmake proto graphql tf".split()
 )
 
-_REFUSED_SIGNATURES: tuple[tuple[bytes, int], ...] = (
+# Binary signatures: no text file starts with these.
+_STRONG_SIGNATURES: tuple[tuple[bytes, int], ...] = (
     (b"\x89PNG\r\n\x1a\n", 0),
     (b"\xff\xd8\xff", 0),
-    (b"GIF87a", 0),
-    (b"GIF89a", 0),
-    (b"RIFF", 0),
     (b"\x1f\x8b", 0),
     (b"7z\xbc\xaf\x27\x1c", 0),
     (b"Rar!\x1a\x07", 0),
-    (b"BZh", 0),
     (b"\xfd7zXZ\x00", 0),
-    (b"ID3", 0),
-    (b"OggS", 0),
-    (b"fLaC", 0),
     (b"\x7fELF", 0),
-    (b"ftyp", 4),
     (b"II*\x00", 0),
     (b"MM\x00*", 0),
     (b"\x00\x00\x01\x00", 0),
     (b"\x1a\x45\xdf\xa3", 0),  # matroska / webm
+)
+# Short ASCII magics that a text file can legitimately start with ("ID3 tags are...",
+# "BZh..."): they only count when the content is not plain text of a text extension.
+_WEAK_SIGNATURES: tuple[tuple[bytes, int], ...] = (
+    (b"GIF87a", 0),
+    (b"GIF89a", 0),
+    (b"RIFF", 0),
+    (b"BZh", 0),
+    (b"ID3", 0),
+    (b"OggS", 0),
+    (b"fLaC", 0),
+    (b"ftyp", 4),
 )
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _OLE_ENCRYPTED = "EncryptionInfo".encode("utf-16-le")
@@ -126,10 +131,15 @@ def sniff(data: bytes, ext_hint: str) -> Sniffed:
         if _OLE_ENCRYPTED in data:
             return _refuse("ole_encrypted", FileStatus.PROTECTED)
         return _refuse("ole_legacy")
-    for sig, off in _REFUSED_SIGNATURES:
+    for sig, off in _STRONG_SIGNATURES:
         if data[off : off + len(sig)] == sig:
             return _refuse("binary_signature")
     ext = ext_hint.lower().lstrip(".")
+    plain_text = _looks_like_text(data) and (not ext or ext in TEXT_EXTENSIONS)
+    if not plain_text:
+        for sig, off in _WEAK_SIGNATURES:
+            if data[off : off + len(sig)] == sig:
+                return _refuse("binary_signature")
     if data.startswith((b"\xff\xfe", b"\xfe\xff")) and ext in TEXT_EXTENSIONS:
         return Sniffed(Kind.TEXT)  # UTF-16 with BOM
     if not _looks_like_text(data):

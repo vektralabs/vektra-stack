@@ -18,6 +18,7 @@ def clean(text: str) -> str:
 
 
 def decode(data: bytes) -> str | None:
+    """UTF-8 (BOM tolerated), else cp1252, else latin-1; None only for broken UTF-16."""
     if data.startswith((b"\xff\xfe", b"\xfe\xff")):
         try:
             return data.decode("utf-16")
@@ -30,7 +31,10 @@ def decode(data: bytes) -> str | None:
     try:
         return data.decode("cp1252")
     except UnicodeDecodeError:
-        return None
+        pass
+    # cp1252 leaves 0x81, 0x8D, 0x8F, 0x90 and 0x9D undefined; legacy text that holds one
+    # is still text. latin-1 maps every byte, so this never fails.
+    return data.decode("latin-1")
 
 
 def extract_text(data: bytes, max_chars: int) -> Extracted:

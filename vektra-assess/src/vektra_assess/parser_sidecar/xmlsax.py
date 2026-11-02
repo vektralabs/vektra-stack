@@ -45,6 +45,29 @@ def run_sax(stream: io.BufferedIOBase, handler: xml.sax.handler.ContentHandler) 
     return False
 
 
+class CappedHandler(xml.sax.handler.ContentHandler):
+    """SAX handler that counts every text character it buffers.
+
+    The sink's cap is only reached when a paragraph or row ends; one giant paragraph would
+    otherwise be buffered whole (and die of memory instead of ending as READ_PARTIAL).
+    Counting in ``characters`` stops the walk at the cap, after flushing what is open.
+    """
+
+    def __init__(self, sink: TextSink) -> None:
+        super().__init__()
+        self.sink = sink
+        self.seen = 0
+
+    def count(self, content: str) -> None:
+        self.seen += len(content)
+        if self.seen > self.sink.max_chars:
+            self.flush_open()
+            raise Stop
+
+    def flush_open(self) -> None:  # pragma: no cover - overridden
+        pass
+
+
 class TextSink:
     """Accumulates blocks and enforces the character cap."""
 
@@ -60,6 +83,12 @@ class TextSink:
         self.size += len(block) + 1
         if self.size > self.max_chars:
             raise Stop
+
+    def force(self, block: str) -> None:
+        """Add without raising Stop: used to flush the open buffers when the cap is hit."""
+        if block:
+            self.blocks.append(block)
+            self.size += len(block) + 1
 
     def result(self, stopped: bool) -> Extracted:
         text = clean("\n".join(self.blocks))

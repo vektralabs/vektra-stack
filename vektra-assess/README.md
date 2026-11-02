@@ -14,7 +14,9 @@ the `assess-worker` / `assess-parser` entrypoints refuse to run.
 | `api/` | HTTP routes (session, teacher, privacy), mounted by `vektra_app` |
 | `worker/` | Job loop; the only holder of the KEK, WS tokens and SMTP credentials |
 | `moodle/` | Typed Moodle web service readers (worker only) |
-| `parser_client/` | Client for the network-less parser sidecar (worker only) |
+| `worker/parser_client.py` | Client for the network-less parser sidecar (worker only) |
+| `parser_sidecar/` | The sidecar itself: server, supervised child, extractors (imports only `parser_protocol`) |
+| `parser_protocol.py` | Wire framing, `FileStatus` vocabulary and labels, limits (stdlib only, both sides) |
 | `context/` | Snapshot capture and `ContextBundle` assembly |
 | `llm/` | Discussion turn runner and post-check |
 | `transcript/` | Transcript rendering |

@@ -85,7 +85,7 @@ moodle-ws dev envs and fixture seeding can start on day one (they do not need th
 |---|------|-------|-------|------------|--------|
 | 1 | [assess-foundations](20261101-154950-assess-foundations.md) | vektra_assess package, scopes, DB roles, secrets, worker entry, deps | 40 | none | completed |
 | 4 | [assess-moodle-ws](20261101-154950-assess-moodle-ws.md) | Moodle 4.3/5.2 envs, WS client, capability matrix, setup check | 43 | 1 (package scaffold only) | pending |
-| 2 | [assess-data-crypto](20261101-154950-assess-data-crypto.md) | assess_* schema, grants, SECURITY DEFINER, envelope crypto | 38 | 1 | pending |
+| 2 | [assess-data-crypto](20261101-154950-assess-data-crypto.md) | assess_* schema, grants, SECURITY DEFINER, envelope crypto | 38 | 1 | in_progress |
 | 5 | [assess-parser](20261101-154950-assess-parser.md) | Network-less parser sidecar | 26 | 1 | pending |
 | P1 | [discuss-foundation](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-foundation.md) | local_vektradiscuss scaffold, client, settings, CI | 19 | 4 (dev envs) | pending |
 
@@ -198,3 +198,7 @@ W4  session-lifecycle + transcript-delivery ─► teacher-ops ─┐
 ## Phase references
 
 Phase 1: [INDEX-PHASE1.md](INDEX-PHASE1.md). Phase 2: [INDEX-PHASE2.md](INDEX-PHASE2.md).
+
+### Decisions 2026-11-02 (user)
+- Plan 2 (assess-data-crypto) runs before plan 4 (assess-moodle-ws): `assess_sites` is created by plan 2 task 1.1, not by foundations.
+- Moodle dev environments (plan 4 group A) live in the `vektra-moodle` repo on `feat/assess-w1` (created from `develop`), one extra PR for the wave; layout verified before creating files. Dev environment runs on the user's machine.

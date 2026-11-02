@@ -1,7 +1,7 @@
 # Implementation Plan: Assess data model, DB-enforced invariants and envelope encryption
 
 **ID**: 20261101-154950-assess-data-crypto
-**Status**: active
+**Status**: in_progress
 **Branch**: N/A
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
@@ -240,7 +240,7 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
 ## Tasks
 
 ### 1. Schema revisions (next revisions in the chain after 0009)
-- [ ] 1.1 Revision "sites and config": `assess_sites`, `assess_site_keys`, `assess_site_capabilities`,
+- [x] 1.1 Revision "sites and config": `assess_sites`, `assess_site_keys`, `assess_site_capabilities`,
       `assess_setup_checks`, `assess_activity_config`, `assess_extra_time`, `assess_reset_grants`;
       ORM mirrors in `vektra_assess/db/models.py` (internal to the package, ADR-0022 style)
 - [ ] 1.2 Revision "sessions": `assess_sessions` with the partial unique index, CHECKs, `UNIQUE (id,

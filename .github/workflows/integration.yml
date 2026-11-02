@@ -158,7 +158,7 @@ jobs:
           assert len(okm) == 32
           print("crypto ok: AES-256-GCM round trip, X25519 exchange, HKDF", flush=True)
 
-          # Importing is not running: parse one PDF with the sidecar's extractor so
+          # Importing is not running: parse one PDF with the sidecar extractor so
           # pdfminer, the sniffer and the text path execute on this CPU too.
           from vektra_assess.parser_sidecar.child import run
           from vektra_assess.parser_sidecar.ping import ping_pdf
@@ -331,6 +331,10 @@ jobs:
             echo 'VEKTRA_ADMIN_BOOTSTRAP_KEY=ci-bootstrap-key'
           } > .env
           make assess-keys
+          # The containers run as uid 1000 and the key check refuses a file owned by anyone
+          # else. Compose does not remap the owner of a file secret on a Linux engine, so the
+          # runner-owned files (uid 1001) must be handed to the container user.
+          sudo chown -R 1000:1000 secrets/assess
 
       - name: Build and start the assess stack
         run: |

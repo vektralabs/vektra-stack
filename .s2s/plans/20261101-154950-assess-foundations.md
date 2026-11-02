@@ -332,7 +332,7 @@ instantiates its own limiter instance for per-token limits.
       --profile assess config` output: parser has `network_mode: none` and zero secrets; socket
       volume mounted in exactly {worker, parser}; every secret mounted into each service is allowed
       for that role by `KEY_MATRIX` (reuses the module, so the matrix and compose cannot diverge)
-- [ ] 7.6 Integration test (compose, `-m integration`): from inside the parser container, a TCP
+- [x] 7.6 Integration test (compose, `-m integration`): from inside the parser container, a TCP
       connect to `postgres:5432` and a DNS lookup both fail; `/run/secrets` is absent; from the API
       container the socket path does not exist
 
@@ -358,7 +358,7 @@ instantiates its own limiter instance for per-token limits.
       `vektra-assess/tests/`; confirm `test_suite_execution_coverage.py` passes with the new suite
 - [x] 9.3 `.github/workflows/lint.yml`: add `vektra-assess/src` (and `vektra-app/src`, missing
       today) to the mypy path list
-- [ ] 9.4 Integration job: build image, run `CMD_TARGET=assess-worker` with generated test keys
+- [x] 9.4 Integration job: build image, run `CMD_TARGET=assess-worker` with generated test keys
       and a pg16 service, wait 15 s idle, read `VmRSS` from `/proc/1/status`; fail above 300 MB;
       print the top import contributors (`python -X importtime`) as an artifact
 - [x] 9.5 `.env.example` (VEKTRA_ASSESS_* with comments, no secrets), `docs/reference/configuration.md`
@@ -382,19 +382,19 @@ instantiates its own limiter instance for per-token limits.
 
 ## Acceptance Criteria
 
-- [ ] `uv run lint-imports` passes; adding `import vektra_core` to any `vektra_assess` module, or `import vektra_assess.moodle` to `vektra_assess.api`, makes it fail (canary test 9.1) — ARCH-073
-- [ ] With `VEKTRA_ASSESS_ENABLED=false` (the default) the app's route table contains zero `/api/v1/assess` paths, a request to any of them returns 404, and the assess worker/parser entrypoints refuse to run (task 6.1b) — dormant-capability rule, `.claude/CLAUDE.md`
-- [ ] An API container with `assess_ws_tokens` mounted refuses to start with `VEKTRA_ASSESS_ENABLED=false`, exit code non-zero, `[STARTUP ERROR] assess_check` naming the key — ARCH-066, REQ-079
-- [ ] For each of the three roles, removing any required key or adding any forbidden key (file or env var) produces a refusal naming exactly that key (5.4, 6.5) — ARCH-071
-- [ ] An `admin`-only key receives 403 ERR-AUTH-003 from a `require_exact_scope("assess:mint")` route; inserting a key row with `{admin,assess:mint}` fails with the DB constraint name in the error — NFR-014
-- [ ] `decode_jwt` rejects the full negative matrix of 3.2 (11 cases), and a learn token and an assess-audience token are mutually rejected (3.5) — NFR-014
-- [ ] `SELECT current_user, rolsuper` over the assess API DSN returns `vektra_assess_api, false`; over the worker DSN returns `vektra_assess_worker, false` (integration) — INT-002
-- [ ] From inside the parser container: 0 successful TCP connects, 0 DNS resolutions, `/run/secrets` absent (7.6) — REQ-101, ARCH-066
-- [ ] Stopping the worker container leaves `GET /health` 200 `healthy` while `GET /health/assess` reports a non-healthy status (8.1 + integration) — COMP-002
-- [ ] Worker idle RSS measured from `/proc/1/status` ≤ 300 MB, and `sys.modules` contains none of the forbidden ML modules (9.4) — ARCH-073, NFR-020
-- [ ] BUG-027 qemu step executes an AES-GCM round trip and an X25519 exchange on `qemu64,+sse3` and the result is recorded (task 2.3) — ARCH-078
-- [ ] `SHOW log_statement` returns `none` and `SHOW log_parameter_max_length` returns `0` on the compose postgres — ARCH-078
-- [ ] No `app.state.rate_limiter` after `create_app()` (dormant per-key RPM not armed as a side effect)
+- [x] `uv run lint-imports` passes; adding `import vektra_core` to any `vektra_assess` module, or `import vektra_assess.moodle` to `vektra_assess.api`, makes it fail (canary test 9.1) — ARCH-073
+- [x] With `VEKTRA_ASSESS_ENABLED=false` (the default) the app's route table contains zero `/api/v1/assess` paths, a request to any of them returns 404, and the assess worker/parser entrypoints refuse to run (task 6.1b) — dormant-capability rule, `.claude/CLAUDE.md`
+- [x] An API container with `assess_ws_tokens` mounted refuses to start with `VEKTRA_ASSESS_ENABLED=false`, exit code non-zero, `[STARTUP ERROR] assess_check` naming the key — ARCH-066, REQ-079
+- [x] For each of the three roles, removing any required key or adding any forbidden key (file or env var) produces a refusal naming exactly that key (5.4, 6.5) — ARCH-071
+- [x] An `admin`-only key receives 403 ERR-AUTH-003 from a `require_exact_scope("assess:mint")` route; inserting a key row with `{admin,assess:mint}` fails with the DB constraint name in the error — NFR-014
+- [x] `decode_jwt` rejects the full negative matrix of 3.2 (11 cases), and a learn token and an assess-audience token are mutually rejected (3.5) — NFR-014
+- [x] `SELECT current_user, rolsuper` over the assess API DSN returns `vektra_assess_api, false`; over the worker DSN returns `vektra_assess_worker, false` (integration) — INT-002
+- [x] From inside the parser container: 0 successful TCP connects, 0 DNS resolutions, `/run/secrets` absent (7.6) — REQ-101, ARCH-066
+- [x] Stopping the worker container leaves `GET /health` 200 `healthy` while `GET /health/assess` reports a non-healthy status (8.1 + integration) — COMP-002
+- [x] Worker idle RSS measured from `/proc/1/status` ≤ 300 MB, and `sys.modules` contains none of the forbidden ML modules (9.4) — ARCH-073, NFR-020
+- [x] BUG-027 qemu step executes an AES-GCM round trip and an X25519 exchange on `qemu64,+sse3` and the result is recorded (task 2.3) — ARCH-078
+- [x] `SHOW log_statement` returns `none` and `SHOW log_parameter_max_length` returns `0` on the compose postgres — ARCH-078
+- [x] No `app.state.rate_limiter` after `create_app()` (dormant per-key RPM not armed as a side effect)
 
 ## Testing Approach
 
@@ -504,3 +504,5 @@ config`, not the YAML source, so env interpolation and profile merging are what 
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
 - BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).
+
+> Acceptance evidence (2026-11-02): refusal check run on the local isolated stack image: `assess_ws_tokens` mounted, `VEKTRA_ASSESS_ENABLED=false` -> exit 1, `[STARTUP ERROR] Step: assess_check ... assess_ws_tokens: forbidden for api but mounted`. Stack tests 10/10, worker idle RSS 240.8 MB. CI `assess-stack` job re-runs them on the PR.

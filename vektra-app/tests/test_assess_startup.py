@@ -341,3 +341,45 @@ def test_create_app_does_not_arm_the_api_key_rate_limiter():
 
     app = create_app()
     assert getattr(app.state, "rate_limiter", None) is None
+
+
+# --- the API never sees the parser socket (plan assess-parser, dormant-capability guard) ---
+
+
+def test_api_refuses_a_parser_socket_path(tmp_path: Path) -> None:
+    d = tmp_path / "run"
+    d.mkdir()
+    assess_wiring.assert_no_parser_surface(d / "parser.sock", d)  # bare dir: fine
+    (d / "parser.sock").write_text("")
+    with pytest.raises(StartupValidationError, match=r"parser\.sock"):
+        assess_wiring.assert_no_parser_surface(d / "parser.sock", d)
+
+
+def test_api_refuses_a_mounted_socket_volume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = tmp_path / "run"
+    d.mkdir()
+    monkeypatch.setattr("os.path.ismount", lambda p: str(p) == str(d))
+    with pytest.raises(StartupValidationError, match="mounted volume"):
+        assess_wiring.assert_no_parser_surface(d / "parser.sock", d)
+
+
+def test_api_refuses_a_non_empty_socket_dir(tmp_path: Path) -> None:
+    d = tmp_path / "run"
+    d.mkdir()
+    (d / "anything").write_text("")
+    with pytest.raises(StartupValidationError, match="not empty"):
+        assess_wiring.assert_no_parser_surface(d / "parser.sock", d)
+
+
+async def test_step_12_runs_the_guard_even_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = tmp_path / "run"
+    d.mkdir()
+    (d / "parser.sock").write_text("")
+    monkeypatch.setenv("VEKTRA_ASSESS_PARSER_SOCKET", str(d / "parser.sock"))
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "false")
+    with pytest.raises(StartupValidationError, match="parser socket is reachable"):
+        await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]

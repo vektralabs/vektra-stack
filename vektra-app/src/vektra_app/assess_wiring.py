@@ -12,6 +12,8 @@ wires it in. Two rules:
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -54,6 +56,41 @@ def include_assess_router(app: FastAPI) -> bool:
     return True
 
 
+PARSER_SOCKET_DIR = Path("/run/vektra-assess-parser")
+
+
+def assert_no_parser_surface(
+    socket_path: Path, socket_dir: Path = PARSER_SOCKET_DIR
+) -> None:
+    """Dormant-capability guard (plan assess-parser): the API never sees the parser.
+
+    The parser socket volume belongs to the parser and the worker only. An API container
+    that has it mounted, or a ``parser.sock`` anywhere on the path, could talk to the
+    parser; refuse to start. The image carries an empty ``/run/vektra-assess-parser`` (so a
+    named volume initialises with the right owner); that bare directory is not a finding,
+    a mount point or a socket in it is.
+    """
+    problems: list[str] = []
+    for candidate in {socket_path, socket_dir / "parser.sock"}:
+        if candidate.exists() or candidate.is_symlink():
+            problems.append(f"{candidate} exists")
+    for d in {socket_dir, socket_path.parent}:
+        if os.path.ismount(d):
+            problems.append(f"{d} is a mounted volume")
+        elif d.is_dir() and any(d.iterdir()):
+            problems.append(f"{d} is not empty")
+    if problems:
+        raise StartupValidationError(
+            step=STEP,
+            detail="the parser socket is reachable from the API container: "
+            + "; ".join(sorted(problems)),
+            remediation=(
+                "Mount the assess-parser socket volume only into vektra-assess-parser "
+                "and vektra-assess-worker (docker-compose.assess.yml), never the API."
+            ),
+        )
+
+
 async def step_12_assess_check(
     app: FastAPI, main_database_url: str, registry: ProviderRegistry | None = None
 ) -> None:
@@ -66,6 +103,7 @@ async def step_12_assess_check(
     from vektra_assess.keys import enforce_key_matrix
 
     settings = load_assess_settings()
+    assert_no_parser_surface(settings.parser_socket)
     app.state.assess_enabled = settings.enabled
     if registry is not None:
         registry.register(

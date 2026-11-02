@@ -60,11 +60,26 @@ def test_contract_c_covers_every_child() -> None:
     } == WORKER_ONLY_MODULES
 
 
+PARSER_CONTRACT = "vektra_assess.parser_sidecar imports only parser_protocol"
+
+
+def test_parser_contract_forbids_every_other_assess_child() -> None:
+    forbidden = {
+        m.removeprefix("vektra_assess.")
+        for m in _contracts()[PARSER_CONTRACT]["forbidden_modules"]
+        if m.startswith("vektra_assess.")
+    }
+    assert forbidden == _children() - {"parser_protocol", "parser_sidecar"}
+
+
 def test_every_existing_contract_forbids_vektra_assess() -> None:
     for name, c in _contracts().items():
         if c["type"] != "forbidden" or "vektra_assess" in str(c["source_modules"]):
             continue
-        if name == "No component shall import the app entrypoint":
+        if name in (
+            "No component shall import the app entrypoint",
+            "vektra_app.main must not import the parser entry",
+        ):
             continue
         assert "vektra_assess" in c["forbidden_modules"], name
 
@@ -148,6 +163,17 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
             "api/_canary.py",
             "import vektra_assess.worker.parser_client\n",
             CONTRACT_C,
+        ),
+        (
+            "parser_sidecar/_canary.py",
+            "import vektra_assess.config\n",
+            PARSER_CONTRACT,
+        ),
+        ("parser_sidecar/_canary.py", "import sqlalchemy\n", PARSER_CONTRACT),
+        (
+            "parser_sidecar/_canary.py",
+            "import vektra_assess.worker.parser_client\n",
+            PARSER_CONTRACT,
         ),
         (
             "llm/_canary.py",

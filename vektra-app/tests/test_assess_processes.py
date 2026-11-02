@@ -10,7 +10,6 @@ import asyncio
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -157,41 +156,51 @@ def test_parser_refuses_secrets_and_dsn(
         assess_parser.check_environment()
 
 
-async def _roundtrip(sock: Path, payloads: list[bytes]) -> list[dict]:  # type: ignore[type-arg]
-    reader, writer = await asyncio.open_unix_connection(str(sock))
-    out = []
-    for raw in payloads:
-        writer.write(raw)
-        await writer.drain()
-        out.append(await assess_parser.read_frame(reader))
-    writer.close()
-    return out
+def test_parser_import_ceiling_in_a_fresh_process() -> None:
+    """What the parser process really holds after importing its serving code."""
+    code = (
+        "import sys; from vektra_app import assess_parser; "
+        "from vektra_assess.parser_sidecar import server; "
+        "assess_parser.assert_import_ceiling(); print('ceiling ok')"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.stdout.strip() == "ceiling ok", out.stderr
 
 
-async def test_parser_socket_ping_and_not_implemented() -> None:
-    short = Path(tempfile.mkdtemp(prefix="vp"))
-    sock = short / "p.sock"
-    sock.write_text("stale")  # a stale path from a previous run is replaced
-    server = await assess_parser.start_server(sock)
-    try:
-        replies = await _roundtrip(
-            sock,
-            [
-                assess_parser.encode_frame({"op": "ping"}),
-                assess_parser.encode_frame({"op": "parse", "file": "x.pdf"}),
-            ],
-        )
-        assert replies == [
-            {"ok": True, "op": "pong"},
-            {"ok": False, "error": "not_implemented"},
+def test_parser_ceiling_refuses_forbidden_and_stray_modules() -> None:
+    for bad in ("sqlalchemy", "httpx", "torch", "vektra_shared.db", "vektra_index.x"):
+        with pytest.raises(StartupValidationError, match="forbidden modules"):
+            assess_parser.assert_import_ceiling(["vektra_assess.parser_protocol", bad])
+    for stray in (
+        "vektra_assess.worker",
+        "vektra_assess.moodle.client",
+        "vektra_assess.crypto",
+    ):
+        with pytest.raises(StartupValidationError, match="forbidden modules"):
+            assess_parser.assert_import_ceiling([stray])
+    assess_parser.assert_import_ceiling(
+        [
+            "vektra_assess",
+            "vektra_assess.config",
+            "vektra_assess.keys",
+            "vektra_assess.parser_sidecar.server",
+            "vektra_assess.parser_protocol",
         ]
-        oversized = (assess_parser.MAX_FRAME + 1).to_bytes(4, "big")
-        assert await _roundtrip(sock, [oversized]) == [
-            {"ok": False, "error": "bad_frame"}
-        ]
-    finally:
-        server.close()
-        await server.wait_closed()
+    )
+
+
+def test_api_entry_does_not_import_the_parser_entry() -> None:
+    code = (
+        "import sys, vektra_app.main; "
+        "print([m for m in sys.modules if m.startswith(('vektra_app.assess_parser', "
+        "'vektra_assess.parser_sidecar'))])"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=300
+    )
+    assert out.stdout.strip() == "[]", out.stdout + out.stderr
 
 
 # --- worker positive path against a real Postgres (integration) ---------------
@@ -307,27 +316,6 @@ def test_no_generic_worker_target(tmp_path: Path) -> None:
     code, out = _entry(tmp_path, "worker")
     assert code == 1
     assert "assess-worker, assess-parser" in out
-
-
-def test_parser_refuses_truncated_and_deep_frames():
-    import asyncio
-    import struct
-
-    import pytest
-
-    from vektra_app.assess_parser import read_frame
-
-    async def run(data: bytes):
-        r = asyncio.StreamReader()
-        r.feed_data(data)
-        r.feed_eof()
-        return await read_frame(r)
-
-    with pytest.raises(ValueError):
-        asyncio.run(run(struct.pack(">I", 50) + b"{}"))  # body shorter than header says
-    deep = b"[" * 200000
-    with pytest.raises(ValueError):
-        asyncio.run(run(struct.pack(">I", len(deep)) + deep))
 
 
 async def test_heartbeat_loop_touches_file_and_beats_the_database(tmp_path):

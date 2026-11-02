@@ -218,6 +218,22 @@ type = "forbidden"
 source_modules = ["vektra_assess"]
 forbidden_modules = ["sentence_transformers", "torch", "transformers", "qdrant_client", "presidio_analyzer", "presidio_anonymizer", "spacy", "unstructured"]
 
+# (f) the parser sidecar holds nothing but its own packages and the stdlib/parsing libraries:
+# it may import vektra_assess.parser_protocol only. The forbidden list must equal the other
+# assess children (tests/test_boundaries.py) plus the stacks it must never load.
+[[tool.importlinter.contracts]]
+name = "vektra_assess.parser_sidecar imports only parser_protocol"
+type = "forbidden"
+source_modules = ["vektra_assess.parser_sidecar"]
+forbidden_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.worker", "vektra_assess.moodle", "vektra_shared", "vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app", "sqlalchemy", "asyncpg", "httpx", "litellm", "pydantic", "pydantic_settings", "structlog", "fastapi"]
+
+# (g) the API entry never reaches the parser entry: parsing happens in the sidecar only
+[[tool.importlinter.contracts]]
+name = "vektra_app.main must not import the parser entry"
+type = "forbidden"
+source_modules = ["vektra_app.main"]
+forbidden_modules = ["vektra_app.assess_parser", "vektra_assess.parser_sidecar"]
+
 # ---------------------------------------------------------------------------
 # pytest coverage (workspace-level config; each component overrides testpaths)
 # ---------------------------------------------------------------------------

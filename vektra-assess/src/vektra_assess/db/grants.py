@@ -177,7 +177,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "UPDATE": _ALL,
             "DELETE": _ALL,
         },
-        "assess_activity_config": {"SELECT": _ALL},
+        "assess_activity_config": {
+            "SELECT": _ALL,
+            "UPDATE": ("teacher_config_sealed", "teacher_config_kid"),
+        },
         "assess_extra_time": {"SELECT": _ALL},
         "assess_reset_grants": {"SELECT": _ALL, "UPDATE": ("consumed_at",)},
         # session data. Snapshots and turns are never UPDATEd (BR-015); the worker reads

@@ -54,6 +54,7 @@ GRANT_STATEMENTS = (
     "GRANT SELECT ON assess_transcripts TO vektra_assess_api",
     "GRANT USAGE ON SEQUENCE assess_audit_events_id_seq, assess_erasure_records_id_seq, assess_jobs_id_seq, assess_render_checks_id_seq, assess_start_attempts_id_seq TO vektra_assess_api",
     "GRANT SELECT ON assess_activity_config TO vektra_assess_worker",
+    "GRANT UPDATE (teacher_config_sealed, teacher_config_kid) ON assess_activity_config TO vektra_assess_worker",
     "GRANT INSERT ON assess_audit_events TO vektra_assess_worker",
     "GRANT DELETE ON assess_consumed_jtis TO vektra_assess_worker",
     "GRANT SELECT ON assess_consumed_jtis TO vektra_assess_worker",

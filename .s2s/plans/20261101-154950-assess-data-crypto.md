@@ -316,28 +316,28 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
       round trip contains no key or plaintext canary
 
 ### 5. Shredding, purge and rotation helpers (library functions; jobs are wired in later plans)
-- [ ] 5.1 `crypto/shred.py` `shred_session(conn, session_id) -> ShredReport`: in one worker-role
+- [x] 5.1 `crypto/shred.py` `shred_session(conn, session_id) -> ShredReport`: in one worker-role
       transaction set `kek_wrapped = NULL, shredded_at = now()`, then delete turns, snapshot,
       hand-off, session row; return per-table deleted counts; refuse non-CLOSED sessions
-- [ ] 5.2 `shred_transcript(conn, transcript_id)`: null `dek_wrapped`, delete deliveries and the
+- [x] 5.2 `shred_transcript(conn, transcript_id)`: null `dek_wrapped`, delete deliveries and the
       transcript; same report shape (used by plan 20261101-154950-assess-privacy-retention for
       retention purge and OQ-033 erasure)
-- [ ] 5.3 `rotation.py` `rewrap_session_keys(conn, keyring, from_kid, batch)`: unwrap with old kid,
+- [x] 5.3 `rotation.py` `rewrap_session_keys(conn, keyring, from_kid, batch)`: unwrap with old kid,
       wrap with active kid, update `kek_kid/key_version` per row in short transactions; resumable;
       returns remaining count
-- [ ] 5.4 `reseal_handoffs(conn, kek_keyring, new_api_pub, new_kid)` (worker side, at most K live
+- [x] 5.4 `reseal_handoffs(conn, kek_keyring, new_api_pub, new_kid)` (worker side, at most K live
       rows): unwrap from `assess_session_keys`, re-seal, update hand-off rows still live; skips rows
       whose session closed meanwhile (the composite FK makes the race safe)
-- [ ] 5.5 `reseal_teacher_configs(conn, old_worker_priv, new_worker_pub)` and
+- [x] 5.5 `reseal_teacher_configs(conn, old_worker_priv, new_worker_pub)` and
       `rewrap_transcript_deks(conn, keyring, from_kid)`
-- [ ] 5.6 Tests: after `shred_session`, `unwrap_dek` on any surviving bytes is impossible (row
+- [x] 5.6 Tests: after `shred_session`, `unwrap_dek` on any surviving bytes is impossible (row
       absent), per-table counts are 0 by `SELECT count(*)`, and a `pg_dump --data-only` of the test
       DB contains neither the session id in any assess table nor the plaintext canary; rotation
       tests verify every row decrypts under the new kid and the old kid can be removed from the
       keyring afterwards
 
 ### 6. End-to-end data tests on real roles
-- [ ] 6.1 Fixture `vektra-assess/tests/integration/conftest.py`: PostgresContainer
+- [x] 6.1 Fixture `vektra-assess/tests/integration/conftest.py`: PostgresContainer
       `pgvector/pgvector:pg16`, `alembic upgrade head` as superuser, set LOGIN passwords for the
       assess roles, yield three engines (superuser for setup, API role, worker role); generated
       keyrings from `vektra_assess.keys generate`
@@ -498,3 +498,5 @@ session with savepoints.
 > Note (2026-11-02, task 3): the design text says "snapshots (INSERT and DELETE only), turns (INSERT and purge DELETE)" for the worker. The worker also needs SELECT on both to build the opening turn and the transcript, so the matrix grants SELECT, INSERT, DELETE and never UPDATE (BR-015). `vektra_assess_definer` owns the functions and so always holds EXECUTE; the catalog test accounts for that. Task 3.4's canary runs the comparison inside a rolled-back transaction instead of a separate revision.
 
 > Note (2026-11-02, task 4): the locked `cryptography` 49.0.0 ships `hazmat.primitives.hpke`, but sealing uses the primitive construction (ephemeral X25519, HKDF-SHA256 with salt `eph_pub|recipient_pub`, AES-256-GCM) always. The plan's "HPKE if present, same wire format otherwise" cannot give one wire format across two code paths; one documented format keeps a library bump from ever being a data migration. A pinned known-answer vector and an independent re-derivation guard it. The envelope AAD is exactly the Design Notes format (the kid is not in the AAD: a kid swap selects another key and fails authentication, an unknown kid raises `KeyNotAvailable`).
+
+> Note (2026-11-02, task 5): `shred_session` refuses while a transcript still references the session (the FK has no cascade, retention of transcript and session can differ) unless `with_transcript=True`, which shreds the transcript in the same transaction. The worker gets column UPDATE on `assess_activity_config(teacher_config_sealed, teacher_config_kid)` for `reseal_teacher_configs`; the matrix and revision 0015 were regenerated. The single `teacher_config_sealed` column is sealed with the fixed field name `"config"` (`rotation.TEACHER_CONFIG_FIELD`).

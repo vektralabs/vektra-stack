@@ -32,6 +32,7 @@ ROLES = {"api": "vektra_assess_api", "worker": "vektra_assess_worker"}
 @dataclass(frozen=True)
 class Pg:
     super_url: str
+    container_id: str = ""
 
     def url(self, who: str) -> str:
         if who == "super":
@@ -107,7 +108,7 @@ def pg() -> Iterator[Pg]:
         url = c.get_connection_url().replace("psycopg2", "asyncpg")
         res = _alembic(url, "upgrade", "head")
         assert res.returncode == 0, res.stderr
-        handle = Pg(url)
+        handle = Pg(url, c.get_wrapped_container().id)
         asyncio.run(_prepare(handle))
         yield handle
 
@@ -159,3 +160,26 @@ async def make_session(pg: Pg, state: str = "ACTIVE", *, epoch: int = 1) -> uuid
             )
         await c.commit()
     return sid
+
+
+def dump_data(pg: Pg) -> str:
+    """``pg_dump --data-only`` of every assess table, as text (plaintext/id scans)."""
+    out = subprocess.run(
+        [
+            "docker",
+            "exec",
+            pg.container_id,
+            "pg_dump",
+            "-U",
+            "test",
+            "--data-only",
+            "--inserts",
+            "-t",
+            "assess_*",
+            "test",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout

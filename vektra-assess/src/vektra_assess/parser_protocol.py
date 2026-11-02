@@ -110,7 +110,7 @@ def parse_header_length(prefix: bytes) -> int:
     (n,) = _LEN.unpack(prefix)
     if n == 0 or n > MAX_HEADER:
         raise FrameError(f"header length {n} outside 1..{MAX_HEADER}")
-    return n
+    return int(n)
 
 
 def parse_header(raw: bytes) -> dict[str, Any]:

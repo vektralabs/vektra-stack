@@ -17,7 +17,7 @@ EXPECTED_SUBPACKAGES = {
     "api",
     "worker",
     "moodle",
-    "parser_client",
+    "parser_sidecar",
     "context",
     "llm",
     "transcript",
@@ -25,7 +25,7 @@ EXPECTED_SUBPACKAGES = {
     "crypto",
     "db",
 }
-EXPECTED_MODULES = {"config", "keys", "errors", "health"}
+EXPECTED_MODULES = {"config", "keys", "errors", "health", "parser_protocol"}
 
 
 def _children() -> tuple[set[str], set[str]]:

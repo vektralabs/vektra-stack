@@ -22,7 +22,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "vektra-assess" / "src" / "vektra_assess"
-WORKER_ONLY = {"moodle", "parser_client"}
+WORKER_ONLY = {"moodle"}
+WORKER_ONLY_MODULES = {"moodle", "worker.parser_client"}
 CONTRACT_C = "only vektra_assess.worker imports vektra_assess.moodle and parser_client"
 
 
@@ -56,7 +57,7 @@ def test_contract_c_covers_every_child() -> None:
     assert {
         m.removeprefix("vektra_assess.")
         for m in _contracts()[CONTRACT_C]["forbidden_modules"]
-    } == WORKER_ONLY
+    } == WORKER_ONLY_MODULES
 
 
 def test_every_existing_contract_forbids_vektra_assess() -> None:
@@ -143,6 +144,11 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
             "vektra_assess must not import from other vektra components",
         ),
         ("api/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
+        (
+            "api/_canary.py",
+            "import vektra_assess.worker.parser_client\n",
+            CONTRACT_C,
+        ),
         (
             "llm/_canary.py",
             "import torch\n",

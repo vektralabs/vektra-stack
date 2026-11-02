@@ -103,7 +103,9 @@ async def test_truncated_and_oversize_and_negative_payload() -> None:
         )
     neg = json.dumps({"payload_len": -1}).encode()
     with pytest.raises(FrameError, match="payload_len"):
-        await read_frame(await _reader(struct.pack(">I", len(neg)) + neg), max_payload=5)
+        await read_frame(
+            await _reader(struct.pack(">I", len(neg)) + neg), max_payload=5
+        )
     boolean = json.dumps({"payload_len": True}).encode()
     with pytest.raises(FrameError, match="payload_len"):
         parse_header(boolean)

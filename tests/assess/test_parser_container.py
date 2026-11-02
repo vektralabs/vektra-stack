@@ -521,15 +521,63 @@ def test_slow_large_senders_are_bounded_and_the_container_stays_within_its_limit
     None
 ):
     cid = _cid("vektra-assess-parser")
+
+    def server_lines() -> list[str]:
+        r = subprocess.run(["docker", "logs", cid], capture_output=True, text=True)
+        return (r.stdout + r.stderr).splitlines()
+
+    before = len(
+        server_lines()
+    )  # a line offset, not --since: the VM clock drifts from the host's
     res = _compose(
         "exec", "-T", "vektra-assess-worker", "python", "-c", FLOOD, timeout=120
     )
     assert res.returncode == 0, res.stderr.decode()[-1500:]
     out = json.loads(_text(res).splitlines()[-1])
-    print("flood of 80 stalled 10 MiB senders:", out)
-    assert out.get("BUSY", 0) >= 70, (
-        out
-    )  # only the byte budget (4 x 10 MiB) is admitted
+    print("flood of 80 stalled 10 MiB senders (client view):", out)
+
+    # The client's view is racy (a refused sender still pushing its payload can be reset
+    # before it reads the BUSY frame), so the server's own events are the authority. Every
+    # one of the 80 connections ends in exactly one server event: refused at connect
+    # (connection cap, no req_id), refused from the header (byte budget, req_id flood*), or
+    # admitted and then released when the stalled sender went away (BAD_REQUEST).
+    def tally() -> tuple[int, int, int]:
+        ev = [
+            json.loads(ln)
+            for ln in server_lines()[before:]
+            if ln.startswith('{"event":"request"')
+        ]
+        cap = sum(e["status"] == "BUSY" and e["req_id"] is None for e in ev)
+        budget = sum(
+            e["status"] == "BUSY" and str(e["req_id"]).startswith("flood") for e in ev
+        )
+        admitted = sum(
+            e["status"] == "BAD_REQUEST" and str(e["req_id"]).startswith("flood")
+            for e in ev
+        )
+        return cap, budget, admitted
+
+    deadline = time.time() + 40
+    while sum(tally()) < 80 and time.time() < deadline:
+        time.sleep(1)
+    cap, budget, admitted = tally()
+    print(
+        f"server: {cap} refused at connect, {budget} refused from the header, {admitted} admitted"
+    )
+    assert cap + budget + admitted == 80, (
+        cap,
+        budget,
+        admitted,
+    )  # nothing lost, nothing leaked
+    assert admitted <= (40 * MiB) // (10 * MiB), (
+        admitted
+    )  # admitted payload bytes <= the 40 MiB budget
+    assert admitted >= 1 and budget >= 1 and cap >= 1, (
+        cap,
+        budget,
+        admitted,
+    )  # all three paths ran
+    assert cap + budget >= 70, (cap, budget, admitted)
     assert out["ping_during"] == "ok"
     mem = _mem_files(cid)
     assert int(mem["memory.peak"]) <= PEAK_BUDGET, mem

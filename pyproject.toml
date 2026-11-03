@@ -87,6 +87,8 @@ plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
 [[tool.mypy.overrides]]
 module = [
     "litellm.*",
+    "asyncpg",
+    "asyncpg.*",
     "pdfplumber.*",
     "magic.*",
     "sentence_transformers.*",

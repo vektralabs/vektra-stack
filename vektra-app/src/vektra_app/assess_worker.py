@@ -13,9 +13,12 @@ if any check fails:
    index components is loaded (ARCH-073), measured after ``LitellmProvider`` is imported
    so its cost is part of the idle footprint.
 
-This stub then refreshes a heartbeat file every 10 s until SIGTERM (stopping well inside
-the 30 s grace period). Plan assess-job-loop replaces the loop with the real job loop and
-keeps every check above.
+Then it composes the job loop (plan assess-job-loop): policy and slot table, the control
+connection with its NOTIFY self-test, startup reconciliation, the heartbeat, the claim loop and
+the ticks, and runs until SIGTERM/SIGINT, when it drains, releases its leases and exits 0.
+Production slots that have no handler yet make it refuse to start; only in development
+(``VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true``) it starts anyway, and a job of an unbound kind
+then fails with ``handler_not_bound`` instead of completing silently.
 
 This module must not import ``vektra_app.main``: that builds the whole API.
 """
@@ -25,10 +28,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import signal
+import socket
 import sys
-from collections.abc import Iterable
-from pathlib import Path
+import uuid
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from importlib import metadata
 from typing import Any
 
 import structlog
@@ -39,7 +45,11 @@ log = structlog.get_logger(__name__)
 
 STEP = "assess_worker_check"
 WORKER_ROLE = "vektra_assess_worker"
-HEARTBEAT_INTERVAL_S = 10.0
+APPLICATION_NAME = "vektra-assess-worker"
+# ``fastapi`` is deliberately not listed: ``litellm`` (the LLM provider the worker needs) imports
+# ``fastapi.exceptions`` itself, so it is always present with it. What ARCH-073 keeps out is the
+# Vektra API stack (``vektra_app.main``, ``vektra_learn``, ``uvicorn``), checked here and in the
+# fresh-process test.
 FORBIDDEN_MODULES: tuple[str, ...] = (
     "sentence_transformers",
     "torch",
@@ -47,6 +57,8 @@ FORBIDDEN_MODULES: tuple[str, ...] = (
     "qdrant_client",
     "vektra_index",
     "vektra_ingest",
+    "vektra_learn",
+    "uvicorn",
     "presidio_analyzer",
     "presidio_anonymizer",
     "spacy",
@@ -72,8 +84,37 @@ def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:
         )
 
 
+def make_engine(url: str, pool_size: int) -> Any:
+    """The worker's single pool: it serves the job SQL and the handlers' transactions.
+
+    Pool plus the control connection is the 5 + 1 of the connection budget (INT-002): no
+    overflow, and a short wait for a free connection instead of opening a sixth one.
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    return create_async_engine(
+        url,
+        pool_size=pool_size,
+        max_overflow=0,
+        pool_timeout=5,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"application_name": APPLICATION_NAME}},
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Checked:
+    engine: Any  # AsyncEngine
+    settings: Any  # VektraAssessSettings
+    worker_url: str
+
+
 async def run_checks() -> object:
     """Run checks 1-5. Returns the worker engine (an AsyncEngine)."""
+    return (await _checks()).engine
+
+
+async def _checks() -> Checked:
     from vektra_assess.config import VektraAssessSettings
     from vektra_assess.crypto.selftest import run_crypto_selftest
     from vektra_assess.db.roles import (
@@ -99,6 +140,18 @@ async def run_checks() -> object:
             ),
             remediation="Unset VEKTRA_ASSESS_MOODLE_ALLOW_HTTP; use https to Moodle.",
         )
+    if settings.worker_allow_unbound and settings.env != "development":
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true is only honoured with "
+                f"VEKTRA_ENV=development (this process runs with VEKTRA_ENV={settings.env})"
+            ),
+            remediation=(
+                "Unset VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND: a production worker must have "
+                "every handler bound."
+            ),
+        )
     run_crypto_selftest()
     if not settings.worker_database_url:
         raise StartupValidationError(
@@ -120,67 +173,198 @@ async def run_checks() -> object:
 
     assert_import_ceiling()
 
-    from sqlalchemy.ext.asyncio import create_async_engine
-
-    engine = create_async_engine(
-        worker_url,
-        pool_size=settings.worker_pool_size,
-        pool_pre_ping=True,
-    )
+    engine = make_engine(worker_url, settings.worker_pool_size)
     try:
         await assert_session_role(engine, WORKER_ROLE, step=STEP)
     except BaseException:
         await engine.dispose()
         raise
-    return engine
+    return Checked(engine, settings, worker_url)
 
 
-# a hung database must not delay the file heartbeat that the container healthcheck reads
-DB_BEAT_TIMEOUT_S = 5.0
-_BEAT_SQL = (
-    "INSERT INTO assess_heartbeat (component, beat_at) VALUES ('worker', now()) "
-    "ON CONFLICT (component) DO UPDATE SET beat_at = now()"
-)
+def _asyncpg_dsn(sqlalchemy_url: str) -> str:
+    """The control connection speaks asyncpg directly: drop the SQLAlchemy driver suffix."""
+    return sqlalchemy_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
-async def _beat_db(engine: Any) -> None:
-    """Record the beat the API's /health/assess reads. A failure is logged, never fatal:
-    the file heartbeat (the container healthcheck) keeps working without the database."""
-    from sqlalchemy import text
-
+def _version() -> str:
     try:
-        async with asyncio.timeout(DB_BEAT_TIMEOUT_S), engine.begin() as conn:
-            await conn.execute(text(_BEAT_SQL))
-    except Exception as exc:
-        log.warning("assess_worker_heartbeat_db_failed", error=type(exc).__name__)
+        return metadata.version("vektra-app")
+    except metadata.PackageNotFoundError:
+        return "unknown"
 
 
-async def heartbeat_loop(
-    path: Path,
-    stop: asyncio.Event,
-    interval_s: float = HEARTBEAT_INTERVAL_S,
-    engine: Any | None = None,
-) -> None:
-    """Touch ``path`` (and the heartbeat row, when ``engine`` is given) every
-    ``interval_s`` until ``stop`` is set."""
-    while not stop.is_set():
-        path.touch()
-        if engine is not None:
-            await _beat_db(engine)
+def _compose(checked: Checked) -> Any:
+    """Build runtime, scheduler, heartbeat and control; nothing is started or connected yet."""
+    from vektra_assess.worker.audit import make_audit
+    from vektra_assess.worker.cleanup import cleanup_done_jobs
+    from vektra_assess.worker.heartbeat import Heartbeat
+    from vektra_assess.worker.listener import ControlConnection
+    from vektra_assess.worker.policy import WorkerPolicyError, load_policy
+    from vektra_assess.worker.runtime import SqlStore, WorkerRuntime
+    from vektra_assess.worker.slots import (
+        Bindings,
+        SlotsNotBound,
+        assert_all_bound,
+        build_slots,
+    )
+    from vektra_assess.worker.ticks import TickScheduler
+
+    settings, engine = checked.settings, checked.engine
+    try:
+        policy = load_policy(os.environ)
+    except WorkerPolicyError as exc:
+        raise StartupValidationError(
+            step=STEP,
+            detail=str(exc),
+            remediation="Fix the VEKTRA_ASSESS_JOB_* / VEKTRA_ASSESS_POOL_* settings.",
+        ) from exc
+
+    @asynccontextmanager
+    async def acquire_raw() -> AsyncIterator[Any]:
+        """An asyncpg connection from the SQLAlchemy pool: one pool, one budget."""
+        async with engine.connect() as sa_conn:
+            raw = await sa_conn.get_raw_connection()
+            yield raw.driver_connection
+
+    worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+    audit = make_audit(engine.connect)
+    runtime = WorkerRuntime(
+        SqlStore(acquire_raw),
+        worker_id=worker_id,
+        pools=policy.pools,
+        acquire_db=engine.connect,
+        audit=audit,
+        poll_interval_s=settings.job_poll_interval_s,
+        backoff_base_s=settings.job_backoff_base_s,
+        backoff_cap_s=settings.job_backoff_cap_s,
+    )
+    wiring: dict[
+        str, Any
+    ] = {}  # the scheduler needs the heartbeat, the heartbeat its stats
+
+    async def on_lost() -> None:
+        await wiring["scheduler"].cancel_running()
+
+    control = ControlConnection(
+        _asyncpg_dsn(checked.worker_url), on_notify=runtime.wake, on_lost=on_lost
+    )
+    heartbeat = Heartbeat(
+        acquire_raw,
+        worker_id=worker_id,
+        version=_version(),
+        file_path=settings.worker_heartbeat_file,
+        stats=lambda: {**runtime.stats(), **wiring["scheduler"].stats()},
+    )
+
+    async def cleanup() -> None:
+        await cleanup_done_jobs(acquire_raw, settings.job_done_retention_h)
+
+    slots = build_slots(
+        policy,
+        settings,
+        Bindings(
+            handlers={}, ticks={"heartbeat": heartbeat.beat, "job_cleanup": cleanup}
+        ),
+    )
+    try:
+        assert_all_bound(slots, enabled=not settings.worker_allow_unbound)
+    except SlotsNotBound as exc:
+        raise StartupValidationError(
+            step=STEP,
+            detail=str(exc),
+            remediation=(
+                "Bind every handler (later plans of the assess feature), or for development "
+                "only set VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true with VEKTRA_ENV=development."
+            ),
+        ) from exc
+    if settings.worker_allow_unbound and slots.unbound():
+        log.warning("assess_worker_unbound_slots", slots=slots.unbound())
+    for h in slots.handlers:
+        runtime.register_handler(h)
+    scheduler = TickScheduler(control, list(slots.ticks))
+    wiring["scheduler"] = scheduler
+    return runtime, scheduler, heartbeat, control, acquire_raw, audit
+
+
+async def _serve(checked: Checked, stop: asyncio.Event) -> None:
+    from vektra_assess.worker.listener import ControlConnectionError
+    from vektra_assess.worker.reconcile import ReconcileError, reconcile
+    from vektra_assess.worker.shutdown import shutdown
+
+    runtime, scheduler, heartbeat, control, acquire_raw, audit = _compose(checked)
+    try:
+        await (
+            control.start()
+        )  # NOTIFY self-test: refuses behind a transaction-mode pooler
+    except ControlConnectionError as exc:
+        raise StartupValidationError(
+            step=STEP,
+            detail=str(exc),
+            remediation="Give the worker a direct or session-mode Postgres connection.",
+        ) from exc
+    supervisor = asyncio.create_task(control.supervise())
+    try:
         try:
-            await asyncio.wait_for(stop.wait(), timeout=interval_s)
-        except TimeoutError:
-            continue
+            await reconcile(control, acquire_raw, audit, scheduler)
+        except ReconcileError as exc:
+            raise StartupValidationError(
+                step=STEP,
+                detail=str(exc),
+                remediation="Stop the other worker or wait for its reconciliation to finish.",
+            ) from exc
+        heartbeat.set_state("ready")
+        await heartbeat.beat()
+        scheduler.start()
+        run_task = asyncio.create_task(runtime.run())
+        log.info("assess_worker_started", role=WORKER_ROLE, worker_id=runtime.worker_id)
+        await stop.wait()
+        released = await shutdown(
+            runtime=runtime,
+            run_task=run_task,
+            scheduler=scheduler,
+            heartbeat=heartbeat,
+            control=control,
+            drain_s=checked.settings.worker_drain_s,
+        )
+        log.info("assess_worker_stopped", released=released)
+    finally:
+        supervisor.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await supervisor
+        await control.stop()
+
+
+def check_imports() -> None:
+    """``--check-imports``: import the whole composition and assert the ceiling, no DB or keys."""
+    from vektra_assess.worker import (  # noqa: F401
+        audit,
+        cleanup,
+        heartbeat,
+        listener,
+        policy,
+        reconcile,
+        runtime,
+        shutdown,
+        slots,
+        ticks,
+    )
+    from vektra_core.providers.litellm_provider import LitellmProvider  # noqa: F401
+
+    _compose_imports = (audit, cleanup, heartbeat, listener, policy, reconcile)
+    assert_import_ceiling()
+    print("ceiling ok")
 
 
 async def _amain() -> int:
     from vektra_assess.config import VektraAssessSettings
+    from vektra_assess.worker.shutdown import install_signal_handlers
 
     # A heartbeat left by a previous run must not vouch for this one.
     with contextlib.suppress(FileNotFoundError):
         VektraAssessSettings().worker_heartbeat_file.unlink()
     try:
-        engine = await run_checks()
+        checked = await _checks()
     except DisabledError as exc:
         print(f"[ASSESS WORKER] {exc}", file=sys.stderr)
         return 2
@@ -189,21 +373,22 @@ async def _amain() -> int:
         return 1
 
     stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop.set)
-    log.info("assess_worker_started", role=WORKER_ROLE)
+    remove_handlers = install_signal_handlers(stop)
     try:
-        await heartbeat_loop(
-            VektraAssessSettings().worker_heartbeat_file, stop, engine=engine
-        )
+        await _serve(checked, stop)
+    except StartupValidationError as exc:
+        print(exc.to_plain_text(), file=sys.stderr)
+        return 1
     finally:
-        await engine.dispose()  # type: ignore[attr-defined]
-        log.info("assess_worker_stopped")
+        remove_handlers()
+        await checked.engine.dispose()
     return 0
 
 
 def main() -> None:
+    if "--check-imports" in sys.argv[1:]:
+        check_imports()
+        raise SystemExit(0)
     raise SystemExit(asyncio.run(_amain()))
 
 

@@ -66,6 +66,16 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S",
         description="Seconds between worker heartbeats (row upsert plus the tmpfs file touch).",
     )
+    worker_allow_unbound: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND",
+        description=(
+            "Development and CI only: let the worker start while some job kinds or ticks have no "
+            "handler yet (they stay unbound and a job of that kind fails with handler_not_bound, "
+            "never completes silently). Honoured only with VEKTRA_ENV=development; the worker "
+            "refuses to start with it set in any other environment."
+        ),
+    )
     job_poll_interval_s: float = Field(
         1.0,
         gt=0,

@@ -6,11 +6,9 @@ The entrypoints are run as real subprocesses where the claim is about the proces
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -116,20 +114,6 @@ async def test_worker_refuses_main_dsn_user(
     )
     with pytest.raises(StartupValidationError, match="same user"):
         await assess_worker.run_checks()
-
-
-async def test_heartbeat_refreshes_and_stops_promptly(tmp_path: Path) -> None:
-    hb = tmp_path / "hb"
-    stop = asyncio.Event()
-    task = asyncio.create_task(assess_worker.heartbeat_loop(hb, stop, interval_s=0.05))
-    await asyncio.sleep(0.02)
-    first = hb.stat().st_mtime_ns
-    await asyncio.sleep(0.15)
-    assert hb.stat().st_mtime_ns > first
-    t0 = time.monotonic()
-    stop.set()
-    await asyncio.wait_for(task, timeout=1)
-    assert time.monotonic() - t0 < 0.5
 
 
 # --- parser (6.3) --------------------------------------------------------------
@@ -355,60 +339,6 @@ def test_no_generic_worker_target(tmp_path: Path) -> None:
     assert "assess-worker, assess-parser" in out
 
 
-async def test_heartbeat_loop_touches_file_and_beats_the_database(tmp_path):
-    import asyncio
-
-    from vektra_app.assess_worker import heartbeat_loop
-
-    calls = []
-
-    class Conn:
-        async def execute(self, sql):
-            calls.append(str(sql))
-
-    class Begin:
-        async def __aenter__(self):
-            return Conn()
-
-        async def __aexit__(self, *exc):
-            return False
-
-    class Engine:
-        def begin(self):
-            return Begin()
-
-    stop = asyncio.Event()
-    path = tmp_path / "hb"
-    task = asyncio.create_task(
-        heartbeat_loop(path, stop, interval_s=0.01, engine=Engine())
-    )
-    await asyncio.sleep(0.05)
-    stop.set()
-    await task
-    assert path.exists()
-    assert calls and "assess_heartbeat" in calls[0]
-
-
-async def test_a_failing_heartbeat_write_never_stops_the_file_heartbeat(tmp_path):
-    import asyncio
-
-    from vektra_app.assess_worker import heartbeat_loop
-
-    class Engine:
-        def begin(self):
-            raise ConnectionError("db down")
-
-    stop = asyncio.Event()
-    path = tmp_path / "hb"
-    task = asyncio.create_task(
-        heartbeat_loop(path, stop, interval_s=0.01, engine=Engine())
-    )
-    await asyncio.sleep(0.05)
-    stop.set()
-    await task
-    assert path.exists()
-
-
 async def test_worker_refuses_plain_http_outside_development(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -419,3 +349,106 @@ async def test_worker_refuses_plain_http_outside_development(
     monkeypatch.setenv("VEKTRA_ENV", "production")
     with pytest.raises(StartupValidationError, match="only honoured with"):
         await assess_worker.run_checks()
+
+
+# --- job loop composition (plan assess-job-loop, group C) ---------------------
+
+
+def _checked(monkeypatch: pytest.MonkeyPatch, **env: str):  # type: ignore[no-untyped-def]
+    """A ``Checked`` over a lazy engine: composition never connects until it is started."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    url = "postgresql+asyncpg://vektra_assess_worker:x@127.0.0.1:1/db"
+    return assess_worker.Checked(create_async_engine(url), VektraAssessSettings(), url)
+
+
+def test_unbound_slots_refuse_to_compose_with_the_owner_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked = _checked(monkeypatch)
+    with pytest.raises(StartupValidationError) as exc:
+        assess_worker._compose(checked)
+    text = exc.value.to_plain_text()
+    assert "job:transcript_generate" in text and "tick:sweeper" in text
+    assert "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND" in text
+
+
+def test_development_override_composes_with_only_framework_slots_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked = _checked(monkeypatch, VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true")
+    _runtime, scheduler, heartbeat, control, _acquire, _audit = assess_worker._compose(
+        checked
+    )
+    assert heartbeat.state == "starting"
+    assert not control.connected
+    # the heartbeat and the cleanup are the only bodies this plan writes
+    unbound = {t.name for t in scheduler._ticks if not t.bound}
+    assert "heartbeat" not in unbound and "job_cleanup" not in unbound
+    assert {"sweeper", "purge", "setup_check"} <= unbound
+
+
+async def test_unbound_override_is_refused_outside_development(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.setenv("VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND", "true")
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    with pytest.raises(
+        StartupValidationError, match="ALLOW_UNBOUND=true is only honoured"
+    ):
+        await assess_worker.run_checks()
+
+
+def test_invalid_job_policy_refuses_to_compose(monkeypatch: pytest.MonkeyPatch) -> None:
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_JOB_PURGE_BUDGET_S="60",
+        VEKTRA_ASSESS_JOB_PURGE_LEASE_S="100",
+    )
+    with pytest.raises(StartupValidationError, match="at least 2 x budget_s"):
+        assess_worker._compose(checked)
+
+
+def test_one_pool_serves_the_worker_within_the_connection_budget() -> None:
+    engine = assess_worker.make_engine(
+        "postgresql+asyncpg://vektra_assess_worker:x@127.0.0.1:1/db", 5
+    )
+    pool = engine.pool
+    assert (pool.size(), pool._max_overflow) == (5, 0)
+    assert pool._timeout == 5
+
+
+def test_asyncpg_dsn_drops_the_sqlalchemy_driver() -> None:
+    assert (
+        assess_worker._asyncpg_dsn("postgresql+asyncpg://u:p@h:5432/d")
+        == "postgresql://u:p@h:5432/d"
+    )
+
+
+def test_check_imports_flag_loads_the_whole_composition_under_the_ceiling() -> None:
+    """The plan's ``--check-imports``: the worker's real import set, in a fresh process."""
+    out = subprocess.run(
+        [sys.executable, "-m", "vektra_app.assess_worker", "--check-imports"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "ceiling ok"
+
+
+def test_the_ceiling_also_forbids_the_vektra_api_stack() -> None:
+    for module in ("uvicorn", "vektra_learn"):
+        with pytest.raises(StartupValidationError, match=module):
+            assess_worker.assert_import_ceiling([module])
+    # fastapi arrives with litellm (a third-party import), so it cannot be forbidden
+    assess_worker.assert_import_ceiling(["fastapi", "starlette"])

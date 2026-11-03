@@ -93,3 +93,17 @@ def test_scalar_settings_defaults_and_bounds(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("VEKTRA_ASSESS_WORKER_DRAIN_S", "30")
     with pytest.raises(ValueError):
         VektraAssessSettings()
+
+
+def test_the_typo_check_accepts_every_real_setting_that_shares_the_prefix() -> None:
+    """A strict prefix scan must not reject the settings class's own ``VEKTRA_ASSESS_JOB_*``."""
+    own = {
+        f.alias: "1"
+        for f in VektraAssessSettings.model_fields.values()
+        if f.alias and f.alias.startswith(("VEKTRA_ASSESS_JOB_", "VEKTRA_ASSESS_POOL_"))
+    }
+    assert (
+        "VEKTRA_ASSESS_JOB_POLL_INTERVAL_S" in own
+        and "VEKTRA_ASSESS_JOB_DONE_RETENTION_H" in own
+    )
+    assert load_policy(own).pools

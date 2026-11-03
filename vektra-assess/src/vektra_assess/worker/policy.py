@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from vektra_assess.config import VektraAssessSettings
 from vektra_assess.jobs import JobKind
 from vektra_assess.worker.runtime import PoolSpec
 
@@ -89,7 +90,11 @@ def _number(name: str, raw: str, kind: type[int] | type[float]) -> float:
 def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
     pools = dict(POOL_DEFAULTS)
     kinds = dict(KIND_DEFAULTS)
-    known: set[str] = {_PREFLIGHT_ALIAS}
+    # The typo check must not reject the other settings that share the prefix
+    # (VEKTRA_ASSESS_JOB_POLL_INTERVAL_S, ..._BACKOFF_BASE_S): they are the settings class's own.
+    known: set[str] = {_PREFLIGHT_ALIAS} | {
+        f.alias for f in VektraAssessSettings.model_fields.values() if f.alias
+    }
 
     for pool in POOL_DEFAULTS:
         name = f"{_POOL_PREFIX}{pool.upper()}_CONCURRENCY"

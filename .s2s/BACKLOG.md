@@ -2525,7 +2525,7 @@ For vertical deployments (e.g., a university running Vektra for their students),
 
 | Attribute | Default | Example |
 |-----------|---------|---------|
-| `data-title` | "Course Assistant" / i18n | "Assistente DEH-ALMA" |
+| `data-title` | "Course Assistant" / i18n | "Assistente Vektra" |
 | `data-primary-color` | `#2563eb` | `#8B0000` (university red) |
 | `data-icon` | speech bubble emoji | URL to institution logo |
 | `data-welcome-message` | (none) | "Ciao! Sono l'assistente del corso." |
@@ -2761,20 +2761,20 @@ Storage aligns with the same model as grounding mode: persisted in `namespaces.c
 - [ ] Validated with representative course scenarios
 - [ ] Instructor can enable/disable from Moodle block config
 
-### DEBT-040: Public-repo hygiene: university project name and dev artefacts in published assets
+### DEBT-040: ~~Public-repo hygiene: university project name and dev artefacts in published assets~~
 
-**Status**: planned | **Priority**: low | **Created**: 2026-11-03
+**Status**: completed | **Priority**: low | **Created**: 2026-11-03 | **Completed**: 2026-11-03
 **Related**: vektra-moodle releases v0.3.0, v0.5.0, v0.6.0
 
-**Context**: two leftovers found while closing wave W1, deferred by the product owner.
+**Context**: two leftovers found while closing wave W1.
 
-1. **University project name in a public repo**: `.s2s/BACKLOG.md` still carries the university project name in a widget `data-title` example (the line that shows an "Assistente ..." title). Public content must use "Vektra". Replacing the line is a normal commit. The name stays in git history; rewriting history is a separate maintainer decision.
-2. **Published `block_vektra` release assets are not clean**: the three published zips (v0.3.0, v0.5.0, v0.6.0) contain `docker/`, `.claude/`, `.s2s/` and, in v0.5.0 and v0.6.0, `n8n/`. They hold development-only passwords (docker env example, compose file, entrypoint, READMEs). No real `.env`, no tokens or keys, no university project name. Current `develop` already builds a clean zip (24 entries, allowlist check in `assert-release-zip.sh`). Open decision: delete the old assets, replace them with clean zips, or leave them.
+1. **University project name in a public repo**: `.s2s/BACKLOG.md` carried the name in a widget `data-title` example. Replaced with "Vektra". The name stays in two commits of the git history. Decision (product owner, 2026-11-03): do not rewrite the history of a public repo with open PRs; removing the line from the branch is enough.
+2. **Published `block_vektra` release assets are not clean**: the zips of v0.3.0, v0.5.0 and v0.6.0 contain `docker/`, `.claude/`, `.s2s/` and, from v0.5.0, `n8n/`, with development-only default passwords. No real `.env`, tokens or keys; no university project name. Decision (product owner, 2026-11-03): leave the three assets as they are. `develop` already builds a clean zip (24 entries, allowlist check in `assert-release-zip.sh`), so every release from the next one on is clean.
 
 **Acceptance Criteria**:
-- [ ] The university project name no longer appears in any public repo working tree
-- [ ] Decision recorded on the old release assets (delete / replace / keep) and applied
-- [ ] Decision recorded on rewriting history (yes / no)
+- [x] The university project name no longer appears in the public repos' working trees
+- [x] Decision on the old release assets: keep
+- [x] Decision on rewriting history: no
 
 ---
 

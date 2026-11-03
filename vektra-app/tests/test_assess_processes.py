@@ -452,3 +452,23 @@ def test_the_ceiling_also_forbids_the_vektra_api_stack() -> None:
             assess_worker.assert_import_ceiling([module])
     # fastapi arrives with litellm (a third-party import), so it cannot be forbidden
     assess_worker.assert_import_ceiling(["fastapi", "starlette"])
+
+
+async def test_notify_self_test_failure_refuses_to_start_naming_the_pooler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance: the worker refuses to start when the NOTIFY self-test fails."""
+    import asyncio
+
+    from vektra_assess.worker.listener import ControlConnectionError
+
+    class Control:
+        async def start(self) -> None:
+            raise ControlConnectionError(
+                "LISTEN/NOTIFY self-test failed: is the worker DSN behind a transaction-mode pooler?"
+            )
+
+    parts = (None, None, None, Control(), None, None)
+    monkeypatch.setattr(assess_worker, "_compose", lambda checked, bindings=None: parts)
+    with pytest.raises(StartupValidationError, match="transaction-mode pooler"):
+        await assess_worker._serve(object(), asyncio.Event())  # type: ignore[arg-type]

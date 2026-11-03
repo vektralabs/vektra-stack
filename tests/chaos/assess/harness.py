@@ -171,7 +171,8 @@ async def reset_tables(pg: Any) -> None:
     await pg.run("super", "DROP TABLE IF EXISTS assess_chaos_effects")
     await pg.run(
         "super",
-        "CREATE TABLE assess_chaos_effects (job_n INTEGER PRIMARY KEY, runs INTEGER NOT NULL)",
+        "CREATE TABLE assess_chaos_effects (job_n INTEGER PRIMARY KEY, runs INTEGER NOT NULL, "
+        "first_at TIMESTAMPTZ NOT NULL DEFAULT now())",
     )
     await pg.run(
         "super",

@@ -31,6 +31,14 @@ _UPSERT = text(
 )
 
 
+async def chaos_stall(ctx: JobContext) -> None:
+    """A handler that never returns on its own (a stalled Moodle call): it holds a pool slot until
+    its hard timeout cancels it. Used to saturate the ``ws`` pool."""
+    directory = Path(os.environ["CHAOS_DIR"])
+    (directory / f"stalled-{ctx.job_id}-{ctx.attempt}").touch()
+    await asyncio.sleep(3600)
+
+
 async def chaos_effect(ctx: JobContext) -> None:
     directory = Path(os.environ["CHAOS_DIR"])
     (directory / f"started-{ctx.job_id}-{ctx.attempt}").touch()
@@ -55,8 +63,18 @@ def _bindings() -> Bindings:
             handlers={k: _stub for k in JobKind},  # type: ignore[misc]
             ticks={n: _stub for n in TICK_OWNERS if n not in framework},  # type: ignore[misc]
         )
-    return Bindings(handlers={JobKind.PURGE: chaos_effect}, ticks={})
+    handlers = {JobKind.PURGE: chaos_effect}
+    if os.environ.get("CHAOS_STALL_WS") == "1":
+        handlers[JobKind.GATE_REFRESH] = chaos_stall  # type: ignore[assignment]
+    return Bindings(handlers=handlers, ticks={})  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
+    forbidden = os.environ.get("CHAOS_IMPORT_FORBIDDEN")
+    if forbidden:
+        # simulates something importing a forbidden module: the import ceiling must refuse to start
+        import sys
+        import types
+
+        sys.modules[forbidden] = types.ModuleType(forbidden)
     assess_worker.main(_bindings())

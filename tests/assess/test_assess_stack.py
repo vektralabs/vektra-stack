@@ -279,15 +279,18 @@ def test_stopped_worker_leaves_shallow_health_healthy(admin_key: str) -> None:
     try:
         code, body = _get("/health")
         assert code == 200 and body["status"] == "healthy", body
-        # the API reads the worker's heartbeat row: it only turns non-healthy once the
-        # row is older than VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S (default 60 s), so poll
-        deadline = time.time() + 120
+        # Acceptance (plan assess-job-loop): not-ready within 65 s of the stop. The worker writes
+        # state "stopped" into its heartbeat row on SIGTERM, so readiness drops at once; the row
+        # aging past VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S (60 s) is only the fallback for a kill -9.
+        deadline = time.time() + 65
         while True:
             code, body = _get("/health/assess", admin_key)
             assert code == 200, body
             if body["status"] not in ("healthy", "disabled") or time.time() > deadline:
                 break
-            time.sleep(5)
-        assert body["status"] not in ("healthy", "disabled"), body
+            time.sleep(2)
+        assert body["status"] not in ("healthy", "disabled"), (
+            f"/health/assess still {body} 65 s after docker stop"
+        )
     finally:
         _compose("start", "vektra-assess-worker", check=True)

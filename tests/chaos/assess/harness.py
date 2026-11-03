@@ -275,3 +275,40 @@ class Supervisor:
 
     def stop(self) -> None:
         self.current.stop()
+
+
+def rss_mb(pid: int) -> tuple[float, float]:
+    """``(VmRSS, VmHWM)`` in MiB: from /proc on Linux, from psutil elsewhere (HWM then = RSS)."""
+    status = Path(f"/proc/{pid}/status")
+    if status.exists():
+        vals = {}
+        for line in status.read_text().splitlines():
+            if line.startswith(("VmRSS:", "VmHWM:")):
+                key, rest = line.split(":", 1)
+                vals[key] = int(rest.split()[0]) / 1024  # kB -> MiB
+        return vals["VmRSS"], vals.get("VmHWM", vals["VmRSS"])
+    import psutil
+
+    rss = psutil.Process(pid).memory_info().rss / (1024 * 1024)
+    return rss, rss
+
+
+def interpreter_rss_mb(code: str) -> float:
+    """RSS of a fresh interpreter after running ``code`` (it prints nothing; read from /proc)."""
+    probe = (
+        code
+        + "\nimport os\nfrom pathlib import Path\n"
+        + "p = Path('/proc/self/status')\n"
+        + "if p.exists():\n"
+        + "    print([int(l.split()[1]) / 1024 for l in p.read_text().splitlines() if l.startswith('VmRSS:')][0])\n"
+        + "else:\n"
+        + "    import psutil; print(psutil.Process().memory_info().rss / 1048576)\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    return float(out.stdout.strip().splitlines()[-1])

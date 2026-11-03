@@ -40,5 +40,23 @@ async def chaos_effect(ctx: JobContext) -> None:
         await conn.commit()
 
 
+async def _stub(*_: object) -> None:
+    """A body that does nothing: only for measuring the idle footprint, never for behaviour."""
+
+
+def _bindings() -> Bindings:
+    if os.environ.get("CHAOS_BIND_ALL") == "1":
+        # Every production slot bound to a stub, so the worker starts WITHOUT the development
+        # override (the real fail-closed path) and idles like a fully bound worker (RSS test).
+        from vektra_assess.worker.slots import TICK_OWNERS
+
+        framework = {"heartbeat", "job_cleanup"}  # bound by the composition itself
+        return Bindings(
+            handlers={k: _stub for k in JobKind},  # type: ignore[misc]
+            ticks={n: _stub for n in TICK_OWNERS if n not in framework},  # type: ignore[misc]
+        )
+    return Bindings(handlers={JobKind.PURGE: chaos_effect}, ticks={})
+
+
 if __name__ == "__main__":
-    assess_worker.main(Bindings(handlers={JobKind.PURGE: chaos_effect}, ticks={}))
+    assess_worker.main(_bindings())

@@ -1,0 +1,21 @@
+{
+ "fixture": "rubric_hidden-stu1",
+ "params": {
+  "assignid": 19,
+  "userid": 15
+ },
+ "response": {
+  "allowsubmissionsfromdate": 1792755221,
+  "blindmarking": false,
+  "cutoffdate": 1793532821,
+  "duedate": 1793446421,
+  "duedatestr": "31 October 2026, 11:33 AM",
+  "fullname": "Alice Alpha",
+  "grantedextension": false,
+  "id": 15,
+  "requiregrading": true,
+  "submissionstatus": "submitted",
+  "submitted": true
+ },
+ "wsfunction": "mod_assign_get_participant"
+}

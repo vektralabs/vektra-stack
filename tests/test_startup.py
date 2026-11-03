@@ -21,7 +21,8 @@ import pytest
 # (DEBT-031).
 pytestmark = pytest.mark.integration
 
-# All 11 ARCH-057 startup step names in execution order
+# All 12 ARCH-057 startup step names in execution order (12: assess_check, which
+# runs even with assess disabled: the forbidden half of the key matrix, ARCH-066)
 _STARTUP_STEPS = [
     "config_validation",
     "database_connectivity",
@@ -34,6 +35,7 @@ _STARTUP_STEPS = [
     "analytics_check",
     "learn_check",
     "qdrant_check",
+    "assess_check",
 ]
 
 

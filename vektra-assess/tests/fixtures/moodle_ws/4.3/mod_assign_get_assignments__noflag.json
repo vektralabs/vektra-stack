@@ -1,0 +1,20 @@
+{
+ "fixture": "noflag",
+ "params": {
+  "courseids": [
+   10
+  ]
+ },
+ "response": {
+  "courses": [],
+  "warnings": [
+   {
+    "item": "course",
+    "itemid": 10,
+    "message": "User is not enrolled or does not have requested capability",
+    "warningcode": "2"
+   }
+  ]
+ },
+ "wsfunction": "mod_assign_get_assignments"
+}

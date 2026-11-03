@@ -39,6 +39,7 @@ COPY vektra-ingest/pyproject.toml vektra-ingest/pyproject.toml
 COPY vektra-index/pyproject.toml vektra-index/pyproject.toml
 COPY vektra-analytics/pyproject.toml vektra-analytics/pyproject.toml
 COPY vektra-learn/pyproject.toml vektra-learn/pyproject.toml
+COPY vektra-assess/pyproject.toml vektra-assess/pyproject.toml
 COPY vektra-app/pyproject.toml vektra-app/pyproject.toml
 
 # Install third-party dependencies only (no workspace packages yet).
@@ -53,6 +54,7 @@ COPY vektra-ingest/README.md vektra-ingest/README.md
 COPY vektra-index/README.md vektra-index/README.md
 COPY vektra-analytics/README.md vektra-analytics/README.md
 COPY vektra-learn/README.md vektra-learn/README.md
+COPY vektra-assess/README.md vektra-assess/README.md
 COPY vektra-app/README.md vektra-app/README.md
 
 # Copy all workspace source code
@@ -63,6 +65,7 @@ COPY vektra-ingest/src vektra-ingest/src
 COPY vektra-index/src vektra-index/src
 COPY vektra-analytics/src vektra-analytics/src
 COPY vektra-learn/src vektra-learn/src
+COPY vektra-assess/src vektra-assess/src
 COPY vektra-app/src vektra-app/src
 
 # Build and install workspace packages (non-editable: packages are placed
@@ -115,11 +118,21 @@ COPY --from=widget-builder /static/vektra-chat.js /app/vektra-learn/static/vektr
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Mount point of the assess parser socket volume. A named volume copies the
+# ownership and mode of the image directory on first use, so the parser (uid 1000)
+# can bind its socket there and the sidecar's own check (owner uid, mode 0700) holds
+# (plan assess-foundations 7.4, plan assess-parser E).
+RUN mkdir -p /run/vektra-assess-parser \
+    && chown vektra:vektra /run/vektra-assess-parser \
+    && chmod 0700 /run/vektra-assess-parser
+
 RUN chown -R vektra:vektra /app
 USER vektra
 
+# PYTHONDONTWRITEBYTECODE: the assess parser runs with a read-only root filesystem.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Pre-cache the embedding model so container startup doesn't download it from
 # the Hugging Face Hub on first run. The default matches the code default

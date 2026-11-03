@@ -9,7 +9,7 @@
 constraint-dependencies = ["numpy<2"]
 
 [tool.uv.workspace]
-members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-app"]
+members = ["vektra-shared", "vektra-core", "vektra-ingest", "vektra-index", "vektra-admin", "vektra-analytics", "vektra-learn", "vektra-assess", "vektra-app"]
 
 # PyTorch CPU-only index for CI and development (no NVIDIA CUDA packages).
 # Only used by packages with an explicit source override (explicit = true).
@@ -67,6 +67,7 @@ known-first-party = [
     "vektra_app",
     "vektra_analytics",
     "vektra_learn",
+    "vektra_assess",
 ]
 
 [tool.ruff.format]
@@ -104,6 +105,12 @@ module = [
     "unstructured.*",
     "cachetools",
     "cachetools.*",
+    "defusedxml",
+    "defusedxml.*",
+    "html5lib",
+    "html5lib.*",
+    "pdfminer",
+    "pdfminer.*",
 ]
 ignore_missing_imports = true
 
@@ -127,6 +134,7 @@ root_packages = [
     "vektra_analytics",
     "vektra_app",
     "vektra_learn",
+    "vektra_assess",
 ]
 include_external_packages = true
 
@@ -134,49 +142,97 @@ include_external_packages = true
 name = "vektra_shared must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_shared"]
-forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_assess"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_admin must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_admin"]
-forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn", "vektra_assess"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_core must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_core"]
-forbidden_modules = ["vektra_admin", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn"]
+forbidden_modules = ["vektra_admin", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn", "vektra_assess"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_ingest must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_ingest"]
-forbidden_modules = ["vektra_admin", "vektra_core", "vektra_index", "vektra_analytics", "vektra_learn"]
+forbidden_modules = ["vektra_admin", "vektra_core", "vektra_index", "vektra_analytics", "vektra_learn", "vektra_assess"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_index must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_index"]
-forbidden_modules = ["vektra_admin", "vektra_core", "vektra_ingest", "vektra_analytics", "vektra_learn"]
+forbidden_modules = ["vektra_admin", "vektra_core", "vektra_ingest", "vektra_analytics", "vektra_learn", "vektra_assess"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_analytics must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_analytics"]
-forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_learn"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_learn", "vektra_assess"]
 
 [[tool.importlinter.contracts]]
 name = "vektra_learn must not import from other vektra components"
 type = "forbidden"
 source_modules = ["vektra_learn"]
-forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_app"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_app", "vektra_assess"]
 
 [[tool.importlinter.contracts]]
 name = "No component shall import the app entrypoint"
 type = "forbidden"
-source_modules = ["vektra_shared", "vektra_admin", "vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn"]
+source_modules = ["vektra_shared", "vektra_admin", "vektra_core", "vektra_ingest", "vektra_index", "vektra_analytics", "vektra_learn", "vektra_assess"]
 forbidden_modules = ["vektra_app"]
+
+# --- vektra_assess (ARCH-073, adapted: see plan assess-foundations Design Notes) ---
+
+# (a) the assess vertical and the learn vertical do not know each other
+[[tool.importlinter.contracts]]
+name = "vektra_assess and vektra_learn are independent"
+type = "independence"
+modules = ["vektra_assess", "vektra_learn"]
+
+# (b) assess imports no other component; the LLM provider, safeguard and trace writer
+# are injected by the composition roots in vektra_app (create_app, assess_worker)
+[[tool.importlinter.contracts]]
+name = "vektra_assess must not import from other vektra components"
+type = "forbidden"
+source_modules = ["vektra_assess"]
+forbidden_modules = ["vektra_core", "vektra_analytics", "vektra_learn", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_app"]
+
+# (c) only the worker reaches Moodle and the parser sidecar. The source list must equal
+# the assess sub-packages/modules minus worker, moodle, parser_client: a test in
+# vektra-assess/tests/test_boundaries.py fails when a new one is not listed here.
+[[tool.importlinter.contracts]]
+name = "only vektra_assess.worker imports vektra_assess.moodle and parser_client"
+type = "forbidden"
+source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar"]
+forbidden_modules = ["vektra_assess.moodle", "vektra_assess.worker.parser_client"]
+
+# (e) the worker's import ceiling: no ML stack, vector store client or document parser
+[[tool.importlinter.contracts]]
+name = "vektra_assess must not import the ML, vector store or parsing stacks"
+type = "forbidden"
+source_modules = ["vektra_assess"]
+forbidden_modules = ["sentence_transformers", "torch", "transformers", "qdrant_client", "presidio_analyzer", "presidio_anonymizer", "spacy", "unstructured"]
+
+# (f) the parser sidecar holds nothing but its own packages and the stdlib/parsing libraries:
+# it may import vektra_assess.parser_protocol only. The forbidden list must equal the other
+# assess children (tests/test_boundaries.py) plus the stacks it must never load.
+[[tool.importlinter.contracts]]
+name = "vektra_assess.parser_sidecar imports only parser_protocol"
+type = "forbidden"
+source_modules = ["vektra_assess.parser_sidecar"]
+forbidden_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.worker", "vektra_assess.moodle", "vektra_shared", "vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app", "sqlalchemy", "asyncpg", "httpx", "litellm", "pydantic", "pydantic_settings", "structlog", "fastapi"]
+
+# (g) the API entry never reaches the parser entry: parsing happens in the sidecar only
+[[tool.importlinter.contracts]]
+name = "vektra_app.main must not import the parser entry"
+type = "forbidden"
+source_modules = ["vektra_app.main"]
+forbidden_modules = ["vektra_app.assess_parser", "vektra_assess.parser_sidecar"]
 
 # ---------------------------------------------------------------------------
 # pytest coverage (workspace-level config; each component overrides testpaths)
@@ -188,7 +244,10 @@ forbidden_modules = ["vektra_app"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
-markers = ["integration: integration tests requiring Docker (excluded from ci-unit)"]
+markers = [
+    "integration: integration tests requiring Docker (excluded from ci-unit)",
+    "moodle: live contract tests against the seeded Moodle 4.3 / 5.2 dev envs (assess WS readers)",
+]
 
 [tool.coverage.run]
 source = [
@@ -200,6 +259,7 @@ source = [
     "vektra_app",
     "vektra_analytics",
     "vektra_learn",
+    "vektra_assess",
 ]
 omit = [
     "tests/*",
@@ -214,6 +274,12 @@ omit = [
     "*/vektra_admin/keystore.py",
     "*/vektra_admin/middleware.py",
     "*/vektra_learn/api.py",
+    # vektra_assess data layer: exercised only against a real Postgres (testcontainers,
+    # vektra-assess/tests/integration), where the privileges, triggers and row counts
+    # they depend on actually exist.
+    "*/vektra_assess/db/models.py",
+    "*/vektra_assess/crypto/shred.py",
+    "*/vektra_assess/crypto/rotation.py",
 ]
 
 [tool.coverage.report]

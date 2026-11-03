@@ -12,6 +12,9 @@ from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from vektra_learn.service import (
+    TOKEN_ISSUER,
+    WIDGET_AUDIENCE,
+    WIDGET_KID,
     ContentIngestRequest,
     EnrollmentRequest,
     EnrollmentResponse,
@@ -21,6 +24,28 @@ from vektra_learn.service import (
 from vektra_shared.http_errors import register_error_handlers
 
 JWT_SECRET = "test-secret-key-for-api-tests!!x"  # 33 bytes for HS256
+
+
+def _bound_token(claims: dict, secret: str = JWT_SECRET) -> str:
+    """A token as the service mints it: aud, iss, iat and the kid header set."""
+    payload = {
+        "aud": WIDGET_AUDIENCE,
+        "iss": TOKEN_ISSUER,
+        "iat": datetime.now(UTC) - timedelta(minutes=1),
+        **claims,
+    }
+    return pyjwt.encode(payload, secret, algorithm="HS256", headers={"kid": WIDGET_KID})
+
+
+def _decode_bound(token: str) -> dict:
+    assert pyjwt.get_unverified_header(token)["kid"] == WIDGET_KID
+    return pyjwt.decode(
+        token,
+        JWT_SECRET,
+        algorithms=["HS256"],
+        audience=WIDGET_AUDIENCE,
+        issuer=TOKEN_ISSUER,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +109,7 @@ class TestTokenEndpoint:
         result = await service.generate_token(session, req)
 
         assert result.token is not None
-        payload = pyjwt.decode(result.token, JWT_SECRET, algorithms=["HS256"])
+        payload = _decode_bound(result.token)
         assert payload["sub"] == "s1"
         assert payload["course_id"] == "CS101"
 
@@ -97,42 +122,39 @@ class TestTokenEndpoint:
 class TestJWTValidation:
     async def test_valid_token_decoded(self):
         service = LearnService(jwt_secret=JWT_SECRET)
-        token = pyjwt.encode(
+        token = _bound_token(
             {
                 "sub": "s1",
                 "course_id": "CS101",
                 "exp": datetime.now(UTC) + timedelta(hours=1),
             },
             JWT_SECRET,
-            algorithm="HS256",
         )
         payload = await service.validate_token(token)
         assert payload["sub"] == "s1"
 
     async def test_expired_token_rejected(self):
         service = LearnService(jwt_secret=JWT_SECRET)
-        token = pyjwt.encode(
+        token = _bound_token(
             {
                 "sub": "s1",
                 "course_id": "CS101",
                 "exp": datetime.now(UTC) - timedelta(hours=1),
             },
             JWT_SECRET,
-            algorithm="HS256",
         )
         with pytest.raises(pyjwt.ExpiredSignatureError):
             await service.validate_token(token)
 
     async def test_wrong_secret_rejected(self):
         service = LearnService(jwt_secret=JWT_SECRET)
-        token = pyjwt.encode(
+        token = _bound_token(
             {
                 "sub": "s1",
                 "course_id": "CS101",
                 "exp": datetime.now(UTC) + timedelta(hours=1),
             },
             "wrong-secret-that-is-32-bytes!!x",
-            algorithm="HS256",
         )
         with pytest.raises(pyjwt.InvalidSignatureError):
             await service.validate_token(token)

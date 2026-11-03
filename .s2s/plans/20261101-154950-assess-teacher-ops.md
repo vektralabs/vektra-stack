@@ -240,3 +240,5 @@ the recording LLM provider's captured request bytes, not on bot replies.
   scope and audit; residual risk accepted in ARCH-067.
 - Dependency risk: editors/graders/override-capability sets must be in plan 4's gate_inputs; if
   not, this plan adds them to the refresh step.
+
+> Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.

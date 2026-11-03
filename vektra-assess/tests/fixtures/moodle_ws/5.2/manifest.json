@@ -1,0 +1,1884 @@
+{
+ "assigns": {
+  "cutoff": {
+   "cmid": 40,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": {
+     "stu2": {
+      "extensionduedate": 1793878421
+     },
+     "stu4": {
+      "cutoffdate": 1794137621,
+      "duedate": 1794051221
+     }
+    },
+    "teamsubmission": 0
+   },
+   "grades": [],
+   "id": 14,
+   "name": "AS with cut-off",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-cutoff-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    },
+    "stu2": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-cutoff-stu2-m52",
+     "status": "submitted",
+     "user": "stu2"
+    }
+   }
+  },
+  "files": {
+   "cmid": 51,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 0
+   },
+   "grades": [],
+   "id": 25,
+   "name": "AS submissions with files",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [
+      {
+       "content_canary": "CANARY-PDFTEXT-m52",
+       "filename": "report_text.pdf",
+       "mimetype": "application/pdf"
+      },
+      {
+       "content_canary": null,
+       "filename": "report_scan.pdf",
+       "mimetype": "application/pdf"
+      },
+      {
+       "content_canary": "CANARY-DOCX-m52",
+       "filename": "report.docx",
+       "mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      },
+      {
+       "content_canary": "CANARY-ODT-m52",
+       "filename": "report.odt",
+       "mimetype": "application/vnd.oasis.opendocument.text"
+      },
+      {
+       "content_canary": "CANARY-PPTX-m52",
+       "filename": "slides.pptx",
+       "mimetype": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      }
+     ],
+     "onlinetext": "VISIBLE-ONLINETEXT-files-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    },
+    "stu2": {
+     "files": [
+      {
+       "filename": "multi_01.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_02.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_03.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_04.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_05.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_06.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_07.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_08.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_09.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_10.txt",
+       "mimetype": "text/plain"
+      },
+      {
+       "filename": "multi_11.txt",
+       "mimetype": "text/plain"
+      }
+     ],
+     "onlinetext": "VISIBLE-ONLINETEXT-files-stu2-m52",
+     "status": "submitted",
+     "user": "stu2"
+    }
+   }
+  },
+  "guide": {
+   "cmid": 43,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "guide",
+    "guide": {
+     "criteria": 2,
+     "definitionid": 4,
+     "max_total": 100
+    },
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 0
+   },
+   "grades": [],
+   "id": 17,
+   "name": "AS marking guide",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-guide-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "hiddengrade": {
+   "cmid": 49,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_item_hidden": 1,
+    "grade_type": "point",
+    "gradeishidden": true,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 0
+   },
+   "grades": [
+    {
+     "feedback": "CANARY-UNRELEASEDFB-hiddengrade-stu1-m52",
+     "feedback_is_canary": true,
+     "grade": 70,
+     "gradingstatus": "graded",
+     "user": "stu1"
+    }
+   ],
+   "id": 23,
+   "name": "AS hidden grade item",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-hiddengrade-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "hiddenuntil": {
+   "cmid": 50,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_item_hidden": 1794224021,
+    "grade_type": "point",
+    "gradeishidden": true,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 0
+   },
+   "grades": [
+    {
+     "feedback": "CANARY-UNRELEASEDFB-hiddenuntil-stu1-m52",
+     "feedback_is_canary": true,
+     "grade": 65,
+     "gradingstatus": "graded",
+     "user": "stu1"
+    }
+   ],
+   "id": 24,
+   "name": "AS grade hidden until future",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-hiddenuntil-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "nocutoff": {
+   "cmid": 41,
+   "expected": {
+    "cutoffdate": 0,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 0
+   },
+   "grades": [],
+   "id": 15,
+   "name": "AS without cut-off",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-nocutoff-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "restricted": {
+   "cmid": 52,
+   "expected": {
+    "cutoffdate": 0,
+    "duedate": 1793792021,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "hidden_for": "stu3",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 0,
+    "visible_for": [
+     "stu1",
+     "stu2",
+     "stu4",
+     "stu5"
+    ]
+   },
+   "grades": [],
+   "id": 26,
+   "name": "AS hidden for stu3",
+   "seeded": true,
+   "submissions": []
+  },
+  "rubric_hidden": {
+   "cmid": 45,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "rubric",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "rubric": {
+     "canary_criterion_descriptions": [
+      "CANARY-RUBRICCRIT-rubric_hidden-Clarity-m52",
+      "CANARY-RUBRICCRIT-rubric_hidden-Method-m52"
+     ],
+     "criteria": 2,
+     "definitionid": 6,
+     "levels_per_criterion": 3,
+     "showdescriptionstudent": 0
+    },
+    "teamsubmission": 0
+   },
+   "grades": [
+    {
+     "grade": 50,
+     "gradingstatus": "graded",
+     "rubric_levels": {
+      "Clarity": 5,
+      "Method": 5
+     },
+     "rubric_max": 20,
+     "rubric_total": 10,
+     "user": "stu1"
+    }
+   ],
+   "id": 19,
+   "name": "AS rubric descriptors hidden",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-rubric_hidden-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "rubric_vis": {
+   "cmid": 44,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "rubric",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "rubric": {
+     "canary_criterion_descriptions": [
+      "CANARY-RUBRICCRIT-rubric_vis-Clarity-m52",
+      "CANARY-RUBRICCRIT-rubric_vis-Method-m52"
+     ],
+     "criteria": 2,
+     "definitionid": 5,
+     "levels_per_criterion": 3,
+     "showdescriptionstudent": 1
+    },
+    "teamsubmission": 0
+   },
+   "grades": [
+    {
+     "grade": 75,
+     "gradingstatus": "graded",
+     "rubric_levels": {
+      "Clarity": 10,
+      "Method": 5
+     },
+     "rubric_max": 20,
+     "rubric_total": 15,
+     "user": "stu1"
+    }
+   ],
+   "id": 18,
+   "name": "AS rubric descriptors visible",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-rubric_vis-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "scale": {
+   "cmid": 47,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "scale",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "scale": {
+     "id": 4,
+     "items": [
+      "Poor",
+      "Fair",
+      "Good",
+      "Excellent"
+     ]
+    },
+    "teamsubmission": 0
+   },
+   "grades": [
+    {
+     "feedback": "VISIBLE-FEEDBACK-scale-stu1-m52",
+     "feedback_is_canary": false,
+     "grade": 3,
+     "gradingstatus": "graded",
+     "scale_label": "Good",
+     "user": "stu1"
+    }
+   ],
+   "id": 21,
+   "name": "AS scale grade",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-scale-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "simple": {
+   "cmid": 46,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 0
+   },
+   "grades": [
+    {
+     "feedback": "VISIBLE-FEEDBACK-simple-stu1-m52",
+     "feedback_is_canary": false,
+     "grade": 85,
+     "gradingstatus": "graded",
+     "user": "stu1"
+    }
+   ],
+   "id": 20,
+   "name": "AS simple direct grade",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-simple-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "team": {
+   "cmid": 42,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "markingworkflow": 0,
+    "reader_by_user": [],
+    "teamsubmission": 1
+   },
+   "grades": [],
+   "id": 16,
+   "name": "AS team submission",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-team-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    }
+   }
+  },
+  "wf": {
+   "cmid": 48,
+   "expected": {
+    "cutoffdate": 1793532821,
+    "duedate": 1793446421,
+    "grade_type": "point",
+    "gradeishidden": false,
+    "grading_method": "none",
+    "markingworkflow": 1,
+    "reader_by_user": [],
+    "teamsubmission": 0
+   },
+   "grades": [
+    {
+     "feedback": "VISIBLE-FEEDBACK-wf-stu1-m52",
+     "feedback_is_canary": false,
+     "grade": 80,
+     "gradingstatus": "released",
+     "user": "stu1"
+    },
+    {
+     "feedback": "CANARY-UNRELEASEDFB-wf-stu2-m52",
+     "feedback_is_canary": true,
+     "grade": 60,
+     "gradingstatus": "inmarking",
+     "user": "stu2"
+    }
+   ],
+   "id": 22,
+   "name": "AS marking workflow",
+   "seeded": true,
+   "submissions": {
+    "stu1": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-wf-stu1-m52",
+     "status": "submitted",
+     "user": "stu1"
+    },
+    "stu2": {
+     "files": [],
+     "onlinetext": "VISIBLE-ONLINETEXT-wf-stu2-m52",
+     "status": "submitted",
+     "user": "stu2"
+    }
+   }
+  }
+ },
+ "canaries": {
+  "CANARY-ESSAYCOMMENT-essay-stu1-m52": {
+   "field": "value",
+   "table": "question_attempt_step_data"
+  },
+  "CANARY-GENFB-dd-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-desc-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-es-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-gap-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-match-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-mc-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-multi-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-num-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-sa-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-tf-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GENFB-zero-m52": {
+   "field": "generalfeedback",
+   "table": "question"
+  },
+  "CANARY-GUIDEMARKERS-guide-CRIT-Content-m52": {
+   "field": "descriptionmarkers",
+   "table": "gradingform_guide_criteria"
+  },
+  "CANARY-GUIDEMARKERS-guide-CRIT-Structure-m52": {
+   "field": "descriptionmarkers",
+   "table": "gradingform_guide_criteria"
+  },
+  "CANARY-OVERALLFB-review_all-m52": {
+   "field": "feedbacktext",
+   "table": "quiz_feedback"
+  },
+  "CANARY-OVERALLFB-review_mixed-m52": {
+   "field": "feedbacktext",
+   "table": "quiz_feedback"
+  },
+  "CANARY-OVERALLFB-review_none-m52": {
+   "field": "feedbacktext",
+   "table": "quiz_feedback"
+  },
+  "CANARY-RUBRICCRIT-rubric_hidden-Clarity-m52": {
+   "field": "description",
+   "table": "gradingform_rubric_criteria"
+  },
+  "CANARY-RUBRICCRIT-rubric_hidden-Method-m52": {
+   "field": "description",
+   "table": "gradingform_rubric_criteria"
+  },
+  "CANARY-RUBRICCRIT-rubric_vis-Clarity-m52": {
+   "field": "description",
+   "table": "gradingform_rubric_criteria"
+  },
+  "CANARY-RUBRICCRIT-rubric_vis-Method-m52": {
+   "field": "description",
+   "table": "gradingform_rubric_criteria"
+  },
+  "CANARY-RUBRICDESC-rubric_hidden-m52": {
+   "field": "description",
+   "table": "grading_definitions"
+  },
+  "CANARY-RUBRICDESC-rubric_vis-m52": {
+   "field": "description",
+   "table": "grading_definitions"
+  },
+  "CANARY-RUBRICLVL-rubric_hidden-Clarity-good-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_hidden-Clarity-ok-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_hidden-Clarity-poor-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_hidden-Method-full-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_hidden-Method-none-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_hidden-Method-some-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_vis-Clarity-good-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_vis-Clarity-ok-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_vis-Clarity-poor-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_vis-Method-full-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_vis-Method-none-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-RUBRICLVL-rubric_vis-Method-some-m52": {
+   "field": "definition",
+   "table": "gradingform_rubric_levels"
+  },
+  "CANARY-UNRELEASEDFB-hiddengrade-stu1-m52": {
+   "field": "commenttext",
+   "table": "assignfeedback_comments"
+  },
+  "CANARY-UNRELEASEDFB-hiddenuntil-stu1-m52": {
+   "field": "commenttext",
+   "table": "assignfeedback_comments"
+  },
+  "CANARY-UNRELEASEDFB-wf-stu2-m52": {
+   "field": "commenttext",
+   "table": "assignfeedback_comments"
+  }
+ },
+ "courseid": 3,
+ "graders": [
+  "grader1",
+  "grader2"
+ ],
+ "groups": {
+  "G1": {
+   "id": 3,
+   "members": [
+    "stu1",
+    "stu2"
+   ]
+  },
+  "G2": {
+   "id": 4,
+   "members": [
+    "stu3"
+   ]
+  }
+ },
+ "login_as": {
+  "by": "admin",
+  "eventname": "\\core\\event\\user_loggedinas",
+  "target_user": "stu1",
+  "targetuserid": 15
+ },
+ "questions": {
+  "dd": {
+   "defaultmark": 1,
+   "discussable": false,
+   "generalfeedback_canary": "CANARY-GENFB-dd-m52",
+   "id": 24,
+   "qtype": "ddwtos"
+  },
+  "desc": {
+   "defaultmark": 0,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-desc-m52",
+   "id": 25,
+   "qtype": "description"
+  },
+  "es": {
+   "defaultmark": 5,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-es-m52",
+   "id": 18,
+   "qtype": "essay"
+  },
+  "gap": {
+   "defaultmark": 1,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-gap-m52",
+   "id": 23,
+   "qtype": "gapselect"
+  },
+  "match": {
+   "defaultmark": 1,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-match-m52",
+   "id": 19,
+   "qtype": "match"
+  },
+  "mc": {
+   "defaultmark": 1,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-mc-m52",
+   "id": 15,
+   "qtype": "multichoice"
+  },
+  "multi": {
+   "defaultmark": 1,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-multi-m52",
+   "id": 20,
+   "qtype": "multianswer"
+  },
+  "num": {
+   "defaultmark": 1,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-num-m52",
+   "id": 17,
+   "qtype": "numerical"
+  },
+  "sa": {
+   "defaultmark": 1,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-sa-m52",
+   "id": 16,
+   "qtype": "shortanswer"
+  },
+  "tf": {
+   "defaultmark": 1,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-tf-m52",
+   "id": 14,
+   "qtype": "truefalse"
+  },
+  "zero": {
+   "defaultmark": 0,
+   "discussable": true,
+   "generalfeedback_canary": "CANARY-GENFB-zero-m52",
+   "id": 26,
+   "qtype": "truefalse"
+  }
+ },
+ "quizzes": {
+  "abandoned": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": null,
+     "expected_sumgrades": null,
+     "id": 58,
+     "state": "abandoned",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 38,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": [],
+    "graceperiod": 0,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "autoabandon",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 2,
+    "timeclose": 1793615621,
+    "timelimit": 600,
+    "timeopen": 1793014421
+   },
+   "id": 23,
+   "name": "QZ attempt abandoned",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "essay": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "mangrpartial"
+     },
+     "expected_sumgrades": 5,
+     "id": 59,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "needsgrading"
+     },
+     "expected_sumgrades": null,
+     "id": 60,
+     "state": "finished",
+     "user": "stu2"
+    }
+   ],
+   "cmid": 39,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 8.333333333333334
+    },
+    "graceperiod": 0,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "autosubmit",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 6,
+    "timeclose": 1793615621,
+    "timelimit": 0,
+    "timeopen": 1793014421
+   },
+   "id": 24,
+   "name": "QZ essay needs grading",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 5,
+     "qtype": "essay",
+     "question": "es",
+     "slot": 2
+    }
+   ]
+  },
+  "gm_average": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 1,
+     "id": 51,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 2,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 52,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 3,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 53,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 4,
+     "expected_slot_states": {
+      "1": "gradedwrong",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 0,
+     "id": 54,
+     "state": "finished",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 35,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 6.25
+    },
+    "graceperiod": 0,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "average",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "autosubmit",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 2,
+    "timeclose": 1793615621,
+    "timelimit": 0,
+    "timeopen": 1793014421
+   },
+   "id": 20,
+   "name": "QZ grademethod average",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "gm_first": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 1,
+     "id": 43,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 2,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 44,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 3,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 45,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 4,
+     "expected_slot_states": {
+      "1": "gradedwrong",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 0,
+     "id": 46,
+     "state": "finished",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 33,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 5
+    },
+    "graceperiod": 0,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "first",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "autosubmit",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 2,
+    "timeclose": 1793615621,
+    "timelimit": 0,
+    "timeopen": 1793014421
+   },
+   "id": 18,
+   "name": "QZ grademethod first",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "gm_highest": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 1,
+     "id": 39,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 2,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 40,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 3,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 41,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 4,
+     "expected_slot_states": {
+      "1": "gradedwrong",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 0,
+     "id": 42,
+     "state": "finished",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 32,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 10
+    },
+    "graceperiod": 0,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": {
+     "stu1": [
+      2,
+      3
+     ]
+    },
+    "overduehandling": "autosubmit",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 2,
+    "timeclose": 1793615621,
+    "timelimit": 0,
+    "timeopen": 1793014421
+   },
+   "id": 17,
+   "name": "QZ grademethod highest tie",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "gm_last": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 1,
+     "id": 47,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 2,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 48,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 3,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright"
+     },
+     "expected_sumgrades": 2,
+     "id": 49,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 4,
+     "expected_slot_states": {
+      "1": "gradedwrong",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 0,
+     "id": 50,
+     "state": "finished",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 34,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 0
+    },
+    "graceperiod": 0,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "last",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "autosubmit",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 2,
+    "timeclose": 1793615621,
+    "timelimit": 0,
+    "timeopen": 1793014421
+   },
+   "id": 19,
+   "name": "QZ grademethod last",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "inprogress": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": null,
+     "expected_sumgrades": null,
+     "id": 55,
+     "state": "inprogress",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 1,
+     "expected_slot_states": null,
+     "expected_sumgrades": null,
+     "id": 56,
+     "state": "inprogress",
+     "user": "stu2"
+    }
+   ],
+   "cmid": 36,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": [],
+    "graceperiod": 300,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "graceperiod",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 2,
+    "timeclose": 1794224021,
+    "timelimit": 3600,
+    "timeopen": 1793532821
+   },
+   "id": 21,
+   "name": "QZ attempt in progress",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "overdue": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": null,
+     "expected_sumgrades": null,
+     "id": 57,
+     "state": "overdue",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 37,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": [],
+    "graceperiod": 300,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "graceperiod",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 2,
+    "timeclose": 1793615621,
+    "timelimit": 600,
+    "timeopen": 1793014421
+   },
+   "id": 22,
+   "name": "QZ attempt overdue with grace",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "review_all": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright",
+      "3": "gradedright",
+      "4": "gradedright"
+     },
+     "expected_sumgrades": 4,
+     "id": 32,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 2,
+     "expected_slot_states": {
+      "1": "gradedwrong",
+      "2": "gradedwrong",
+      "3": "gradedwrong",
+      "4": "gradedwrong"
+     },
+     "expected_sumgrades": 0,
+     "id": 33,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedwrong",
+      "2": "gradedwrong",
+      "3": "gradedwrong",
+      "4": "gradedwrong"
+     },
+     "expected_sumgrades": 0,
+     "id": 34,
+     "state": "finished",
+     "user": "stu2"
+    },
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright",
+      "3": "gradedright",
+      "4": "gradedright"
+     },
+     "expected_sumgrades": 4,
+     "id": 35,
+     "state": "finished",
+     "user": "stu3"
+    }
+   ],
+   "cmid": 29,
+   "expected": {
+    "effective_by_user": {
+     "stu1": {
+      "source": "quiz",
+      "timeclose": 1793615621,
+      "timelimit": 1800
+     },
+     "stu2": {
+      "source": "user",
+      "timeclose": 1794224021,
+      "timelimit": 3600
+     },
+     "stu3": {
+      "source": "group:G2",
+      "timeclose": 1793792021,
+      "timelimit": 5400
+     },
+     "stu4": {
+      "source": "quiz",
+      "timeclose": 1793615621,
+      "timelimit": 1800
+     },
+     "stu5": {
+      "source": "quiz",
+      "timeclose": 1793615621,
+      "timelimit": 1800
+     }
+    },
+    "final_grades": {
+     "stu1": 10,
+     "stu2": 0,
+     "stu3": 10
+    },
+    "graceperiod": 600,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "graceperiod",
+    "overrides": [
+     {
+      "group": null,
+      "timeclose": 1794224021,
+      "timelimit": 3600,
+      "user": "stu2"
+     },
+     {
+      "group": "G2",
+      "timeclose": 1793792021,
+      "timelimit": 5400,
+      "user": null
+     }
+    ],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 4,
+    "timeclose": 1793615621,
+    "timelimit": 1800,
+    "timeopen": 1793014421
+   },
+   "id": 14,
+   "name": "QZ review all visible",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    },
+    {
+     "maxmark": 1,
+     "qtype": "shortanswer",
+     "question": "sa",
+     "slot": 3
+    },
+    {
+     "maxmark": 1,
+     "qtype": "numerical",
+     "question": "num",
+     "slot": 4
+    }
+   ]
+  },
+  "review_mixed": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedwrong"
+     },
+     "expected_sumgrades": 1,
+     "id": 38,
+     "state": "finished",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 31,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 5
+    },
+    "graceperiod": 600,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "graceperiod",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": false,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": false,
+     "rightanswer": true,
+     "specificfeedback": false
+    },
+    "sumgrades": 2,
+    "timeclose": 1793615621,
+    "timelimit": 1800,
+    "timeopen": 1793014421
+   },
+   "id": 16,
+   "name": "QZ review mixed",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    }
+   ]
+  },
+  "review_none": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "2": "gradedright",
+      "3": "gradedright",
+      "4": "gradedright"
+     },
+     "expected_sumgrades": 4,
+     "id": 36,
+     "state": "finished",
+     "user": "stu1"
+    },
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedwrong",
+      "2": "gradedwrong",
+      "3": "gradedwrong",
+      "4": "gradedwrong"
+     },
+     "expected_sumgrades": 0,
+     "id": 37,
+     "state": "finished",
+     "user": "stu2"
+    }
+   ],
+   "cmid": 30,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 10,
+     "stu2": 0
+    },
+    "graceperiod": 600,
+    "grade": 10,
+    "grade_item_hidden": true,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "graceperiod",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": false,
+     "generalfeedback": false,
+     "marks": true,
+     "overallfeedback": false,
+     "rightanswer": false,
+     "specificfeedback": false
+    },
+    "sumgrades": 4,
+    "timeclose": 1793615621,
+    "timelimit": 1800,
+    "timeopen": 1793014421
+   },
+   "id": 15,
+   "name": "QZ review hidden",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    },
+    {
+     "maxmark": 1,
+     "qtype": "shortanswer",
+     "question": "sa",
+     "slot": 3
+    },
+    {
+     "maxmark": 1,
+     "qtype": "numerical",
+     "question": "num",
+     "slot": 4
+    }
+   ]
+  },
+  "types": {
+   "attempts": [
+    {
+     "attempt_number": 1,
+     "expected_slot_states": {
+      "1": "gradedright",
+      "11": "gradedright",
+      "2": "gradedright",
+      "3": "gradedwrong",
+      "4": "gradedright",
+      "5": "gaveup"
+     },
+     "expected_sumgrades": 3,
+     "id": 31,
+     "state": "finished",
+     "user": "stu1"
+    }
+   ],
+   "cmid": 28,
+   "expected": {
+    "effective_by_user": [],
+    "final_grades": {
+     "stu1": 2.307692307692308
+    },
+    "graceperiod": 0,
+    "grade": 10,
+    "grade_item_hidden": false,
+    "grademethod": "highest",
+    "highest_ties_attempt_numbers": [],
+    "overduehandling": "autosubmit",
+    "overrides": [],
+    "review_after_close": {
+     "attempt": true,
+     "correctness": true,
+     "generalfeedback": true,
+     "marks": true,
+     "overallfeedback": true,
+     "rightanswer": true,
+     "specificfeedback": true
+    },
+    "sumgrades": 13,
+    "timeclose": 1793615621,
+    "timelimit": 0,
+    "timeopen": 1793014421
+   },
+   "id": 13,
+   "name": "QZ types catalogue",
+   "seeded": true,
+   "slots": [
+    {
+     "maxmark": 1,
+     "qtype": "truefalse",
+     "question": "tf",
+     "slot": 1
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multichoice",
+     "question": "mc",
+     "slot": 2
+    },
+    {
+     "maxmark": 1,
+     "qtype": "shortanswer",
+     "question": "sa",
+     "slot": 3
+    },
+    {
+     "maxmark": 1,
+     "qtype": "numerical",
+     "question": "num",
+     "slot": 4
+    },
+    {
+     "maxmark": 5,
+     "qtype": "essay",
+     "question": "es",
+     "slot": 5
+    },
+    {
+     "maxmark": 1,
+     "qtype": "match",
+     "question": "match",
+     "slot": 6
+    },
+    {
+     "maxmark": 1,
+     "qtype": "multianswer",
+     "question": "multi",
+     "slot": 7
+    },
+    {
+     "maxmark": 1,
+     "qtype": "gapselect",
+     "question": "gap",
+     "slot": 8
+    },
+    {
+     "maxmark": 1,
+     "qtype": "ddwtos",
+     "question": "dd",
+     "slot": 9
+    },
+    {
+     "maxmark": 0,
+     "qtype": "description",
+     "question": "desc",
+     "slot": 10
+    },
+    {
+     "maxmark": 0,
+     "qtype": "truefalse",
+     "question": "zero",
+     "slot": 11
+    }
+   ]
+  }
+ },
+ "release": "5.2.4+ (Build: 20261030)",
+ "scales": {
+  "quality": {
+   "id": 4,
+   "items": [
+    "Poor",
+    "Fair",
+    "Good",
+    "Excellent"
+   ]
+  }
+ },
+ "seeded_at": 1793619221,
+ "seeded_false": [],
+ "tag": "m52",
+ "teacher_without_grade_capability": "tnocap",
+ "users": {
+  "grader1": {
+   "id": 20,
+   "role": "editingteacher",
+   "username": "aas_grader1"
+  },
+  "grader2": {
+   "id": 21,
+   "role": "teacher",
+   "username": "aas_grader2"
+  },
+  "stu1": {
+   "id": 15,
+   "role": "student",
+   "username": "aas_stu1"
+  },
+  "stu2": {
+   "id": 16,
+   "role": "student",
+   "username": "aas_stu2"
+  },
+  "stu3": {
+   "id": 17,
+   "role": "student",
+   "username": "aas_stu3"
+  },
+  "stu4": {
+   "id": 18,
+   "role": "student",
+   "username": "aas_stu4"
+  },
+  "stu5": {
+   "id": 19,
+   "role": "student",
+   "username": "aas_stu5"
+  },
+  "tnocap": {
+   "id": 22,
+   "role": "eaa_teacher_nograde",
+   "username": "aas_tnocap"
+  }
+ },
+ "version": "2026042004.04",
+ "ws_get_overrides_available": true
+}

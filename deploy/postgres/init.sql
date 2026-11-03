@@ -9,3 +9,18 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Assess roles (plan assess-foundations 7.1), NOLOGIN. Fresh volumes get them here;
+-- migration 0009 creates them on existing volumes, where this script never re-runs.
+-- LOGIN and passwords are set by the one-shot vektra-assess-db-init service
+-- (deploy/postgres/assess-roles.sql) from secret files, never here.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vektra_assess_api') THEN
+        CREATE ROLE vektra_assess_api NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vektra_assess_worker') THEN
+        CREATE ROLE vektra_assess_worker NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOINHERIT;
+    END IF;
+END
+$$;

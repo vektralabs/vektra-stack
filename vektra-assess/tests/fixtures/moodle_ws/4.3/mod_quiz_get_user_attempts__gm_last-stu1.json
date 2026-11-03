@@ -1,0 +1,86 @@
+{
+ "fixture": "gm_last-stu1",
+ "params": {
+  "quizid": 92,
+  "status": "all",
+  "userid": 71
+ },
+ "response": {
+  "attempts": [
+   {
+    "attempt": 1,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619217,
+    "id": 227,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 92,
+    "state": "finished",
+    "sumgrades": 1,
+    "timecheckstate": null,
+    "timefinish": 1793446417,
+    "timemodified": 1793446417,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446417,
+    "uniqueid": 227,
+    "userid": 71
+   },
+   {
+    "attempt": 2,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619217,
+    "id": 228,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 92,
+    "state": "finished",
+    "sumgrades": 2,
+    "timecheckstate": null,
+    "timefinish": 1793446417,
+    "timemodified": 1793446417,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446417,
+    "uniqueid": 228,
+    "userid": 71
+   },
+   {
+    "attempt": 3,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619217,
+    "id": 229,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 92,
+    "state": "finished",
+    "sumgrades": 2,
+    "timecheckstate": null,
+    "timefinish": 1793446417,
+    "timemodified": 1793446417,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446417,
+    "uniqueid": 229,
+    "userid": 71
+   },
+   {
+    "attempt": 4,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619217,
+    "id": 230,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 92,
+    "state": "finished",
+    "sumgrades": 0,
+    "timecheckstate": null,
+    "timefinish": 1793446417,
+    "timemodified": 1793446417,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446417,
+    "uniqueid": 230,
+    "userid": 71
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_user_attempts"
+}

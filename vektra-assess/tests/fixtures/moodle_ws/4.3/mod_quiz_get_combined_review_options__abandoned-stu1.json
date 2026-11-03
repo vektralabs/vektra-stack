@@ -1,0 +1,55 @@
+{
+ "fixture": "abandoned-stu1",
+ "params": {
+  "quizid": 96,
+  "userid": 71
+ },
+ "response": {
+  "alloptions": [
+   {
+    "name": "feedback",
+    "value": 1
+   },
+   {
+    "name": "generalfeedback",
+    "value": 1
+   },
+   {
+    "name": "rightanswer",
+    "value": 1
+   },
+   {
+    "name": "overallfeedback",
+    "value": 1
+   },
+   {
+    "name": "marks",
+    "value": 2
+   }
+  ],
+  "someoptions": [
+   {
+    "name": "feedback",
+    "value": 1
+   },
+   {
+    "name": "generalfeedback",
+    "value": 1
+   },
+   {
+    "name": "rightanswer",
+    "value": 1
+   },
+   {
+    "name": "overallfeedback",
+    "value": 1
+   },
+   {
+    "name": "marks",
+    "value": 2
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_combined_review_options"
+}

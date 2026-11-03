@@ -164,6 +164,79 @@ Three things to know before turning it on:
 | `VEKTRA_LEARN_REQUIRE_ENROLLMENT` | bool | `true` | Require enrollment record for learn queries. Set to false when LMS manages enrollment externally. |
 | `VEKTRA_LEARN_SHOW_SOURCES` | bool | `true` | Default visibility of the source-citations section in the widget (FEAT-014). Per-namespace override via `PATCH /api/v1/admin/namespaces/{id}/config` > `show_sources`. Per-widget override via the `data-show-sources` script-tag attribute. The API always returns the full sources list; the flag only instructs the widget whether to render them. |
 
+## Assessment discussion (vektra-assess)
+
+Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
+`assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
+`make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
+These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
+process environment, never from an env file.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `VEKTRA_ASSESS_ENABLED` | bool | `false` | Master switch (see above). |
+| `VEKTRA_ASSESS_API_DATABASE_URL` | str | - | DSN of the `vektra_assess_api` role, **without a password** (read from the `assess_db_api_password` secret). A DSN with a password, or one that logs in as the `VEKTRA_DATABASE_URL` user, is refused at startup. |
+| `VEKTRA_ASSESS_WORKER_DATABASE_URL` | str | - | DSN of the `vektra_assess_worker` role, without a password (`assess_db_worker_password` secret). Worker only. |
+| `VEKTRA_ASSESS_SECRETS_DIR` | path | `/run/secrets` | Directory holding the assess secret files. |
+| `VEKTRA_ASSESS_API_POOL_SIZE` | int | `15` | Connection pool of the assess API engine. |
+| `VEKTRA_ASSESS_WORKER_POOL_SIZE` | int | `5` | Connection pool of the worker engine. |
+| `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. Minimum `30` (three beat intervals). |
+| `VEKTRA_ASSESS_MOODLE_CA_FILE` | path | - | CA bundle for verifying the Moodle TLS certificate (on-prem CA); the system store when unset. |
+| `VEKTRA_ASSESS_WS_TIMEOUT_CONNECT_S` | float | `3` | Connect timeout of one Moodle web-service call. |
+| `VEKTRA_ASSESS_WS_TIMEOUT_READ_S` | float | `10` | Read timeout of one Moodle web-service call. |
+| `VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S` | float | `30` | Overall deadline of one Moodle call including the body; a server dripping bytes under the byte cap cannot hold it open (`Unreadable(timeout)`). |
+| `VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES` | int | `8388608` | Byte cap of a JSON response; the stream is aborted on overflow (`Unreadable(size_cap)`). |
+| `VEKTRA_ASSESS_WS_MAX_FILE_BYTES` | int | `10485760` | Byte cap of one downloaded submission file (REQ-101). |
+| `VEKTRA_ASSESS_WS_RPS` | float | `10` | Cap on Moodle calls per second, shared by every caller in the worker **process** (one replica, COMP-003: running several worker replicas multiplies it). |
+| `VEKTRA_ASSESS_BREAKER_THRESHOLD` | int | `5` | Consecutive transport/5xx failures that open the per-site circuit breaker (in memory, per worker process). |
+| `VEKTRA_ASSESS_BREAKER_COOLDOWN_S` | float | `30` | Seconds the breaker stays open before one half-open probe. |
+| `VEKTRA_ASSESS_MOODLE_ALLOW_HTTP` | bool | `false` | Plain http to Moodle. Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set in any other environment. |
+| `VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS` | str | - | Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network, e.g. `10.20.0.0/16`). Empty: private addresses are refused. Metadata, link-local and multicast addresses are always refused. |
+| `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | str | - | Username of the ingestion web-service account. The setup check refuses an assess token that belongs to it; when unset that item is `UNVERIFIABLE` (not OK). |
+| `VEKTRA_ASSESS_UI_ORIGIN` | str | - | Origin (`https://host[:port]`) the chat UI is served from. The setup check item `ui_not_same_origin` refuses a UI origin that is the same host or the same site as the Moodle `base_url` or as the API public origin (CONF-004). Same-site is judged without the public-suffix list: the last two host labels are compared, which can refuse a legitimate pair under a multi-label suffix (e.g. two `*.co.uk` hosts) but never accepts a same-site pair. Unset: that item is `UNVERIFIABLE` (not OK). |
+| `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` | str | - | Public origin of the assess API, compared with the UI origin by `ui_not_same_origin`. Unset while the UI origin is set: the item is `UNVERIFIABLE`. |
+| `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every 10 s (container healthcheck). |
+| `VEKTRA_ASSESS_PARSER_SOCKET` | path | `/run/vektra-assess-parser/parser.sock` | Unix socket of the parser sidecar (worker and parser only). |
+| `VEKTRA_ASSESS_PARSER_POOL` | int | `3` | Concurrent child processes of the parser sidecar (one item per fresh process). Sized with the container `mem_limit` (768M): pool 3 within the measured per-child peak. |
+| `VEKTRA_ASSESS_PARSER_TIMEOUT_S` | float | `10` | Wall-clock budget per file in the sidecar; the child is SIGKILLed at the deadline and the file becomes `non letto: file danneggiato o non elaborabile`. The worker client waits this plus a 15 s queue allowance before treating the sidecar as unavailable. |
+| `VEKTRA_ASSESS_PARSER_MAX_CHARS` | int | `200000` | Character cap of the text returned per file; beyond it the file is `letto parzialmente`. |
+| `VEKTRA_ASSESS_PARSER_MAX_FILE_BYTES` | int | `10485760` | Largest file the sidecar accepts (REQ-101: 10 MB); larger is `non letto: troppo grande` with no child forked. The sidecar also holds at most four such payloads in memory at once and answers `BUSY` beyond that (the client retries). |
+| `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
+| `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
+
+### Secret files and the key matrix
+
+Each secret is a Docker secret file. Keys are JSON keyrings, `{"active": "<kid>", "keys": {"<kid>":
+"<base64 of 32 bytes>"}}`: rotation adds a kid and flips `active`. `assess_ws_tokens` and `assess_smtp`
+are JSON objects (credentials); the two role passwords are one line of text (at least 24 characters).
+Every file must be a regular file (no symlink), owned by the process uid or root, mode at most `0440`.
+`make assess-keys` writes a complete generated set to `./secrets/assess/` (mode `0400`, never
+overwrites; `secrets/` is gitignored).
+
+Each process checks the matrix at start, in both directions, and refuses to start naming every key that
+is missing (required) or present (forbidden). A forbidden key counts as present when its file exists OR
+when an environment variable carries its name. The API applies the forbidden column even with assess
+disabled (ARCH-066).
+
+| Secret | API | Worker | Parser |
+|---|---|---|---|
+| `assess_token_signing` | required | forbidden | forbidden |
+| `assess_handoff_private` (X25519) | required | forbidden | forbidden |
+| `assess_handoff_public` | allowed | required | forbidden |
+| `assess_transcript_kek` | required | required | forbidden |
+| `assess_teacher_config_public` | required | allowed | forbidden |
+| `assess_teacher_config_private` | forbidden | required | forbidden |
+| `assess_kek` | forbidden | required | forbidden |
+| `assess_ws_tokens` | forbidden | required | forbidden |
+| `assess_smtp` | forbidden | required | forbidden |
+| `assess_db_api_password` | required | forbidden | forbidden |
+| `assess_db_worker_password` | forbidden | required | forbidden |
+
+The one-shot `vektra-assess-db-init` service holds only the two role passwords; it sets `LOGIN` and the
+passwords of `vektra_assess_api` and `vektra_assess_worker` (re-run it to rotate a password). The parser
+holds no secret, no DSN and has no network. Postgres runs with `log_statement=none` and no parameter
+logging (ARCH-078).
+
 ## Observability
 
 | Variable | Type | Default | Description |
@@ -193,7 +266,7 @@ Three things to know before turning it on:
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `CMD_TARGET` | str | `server` | Container entrypoint target: `server` (default) or `migrate` |
+| `CMD_TARGET` | str | `server` | Container entrypoint target: `server` (default), `migrate`, `assess-worker` or `assess-parser`. The assess targets never run migrations. |
 
 ## Variable count summary
 
@@ -203,6 +276,27 @@ Three things to know before turning it on:
 | VEKTRA_* variables read directly from env (`VEKTRA_CORS_ORIGINS`) | 1 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
-| **Total documented** | **71** |
+| VEKTRA_ASSESS_* variables in `VektraAssessSettings` (assess processes only) | 9 |
+| **Total documented** | **80** |
 
 The 66 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
+
+### Assess key purposes and rotation
+
+Every secret is a JSON keyring `{"active": "<kid>", "keys": {"<kid>": "<base64>"}}` (the role passwords are one-line files). Each ciphertext stores the kid it was written under, so rotation adds a kid and flips `active`; older kids keep opening older data until nothing references them.
+
+| Secret | Held by | Protects |
+|---|---|---|
+| `assess_kek` | worker only | per-session DEKs (`assess_session_keys.kek_wrapped`) |
+| `assess_handoff_public` / `assess_handoff_private` | worker seals with the public key, API opens with the private key | the DEK of a LIVE session (`assess_session_handoff.sealed_dek`) |
+| `assess_transcript_kek` | API and worker | per-transcript DEKs |
+| `assess_teacher_config_public` / `_private` | API seals with the public key, only the worker holds the private key | the solution or pasted rubric: the API can write it, never read it |
+
+Rotation order (each step is idempotent and resumable; the helper returns what is left):
+
+1. add the new kid to the keyring and make it `active`; deploy;
+2. `rewrap_session_keys`, `rewrap_transcript_deks`, `reseal_handoffs` and `reseal_teacher_configs` (worker): each returns how many rows still carry the old key, so loop until it returns 0;
+3. remove the old kid from the keyring only after every helper returned 0.
+
+The envelope AAD binds each ciphertext to its row (`snapshot` to the session, `turn` to session and turn number, and so on), so a ciphertext copied to another row fails authentication.
+

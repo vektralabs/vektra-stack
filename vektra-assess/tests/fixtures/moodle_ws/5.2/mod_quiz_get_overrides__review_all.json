@@ -1,0 +1,37 @@
+{
+ "fixture": "review_all",
+ "params": {
+  "quizid": 14
+ },
+ "response": {
+  "overrides": [
+   {
+    "attempts": null,
+    "groupid": null,
+    "id": 3,
+    "password": null,
+    "quiz": 14,
+    "reason": null,
+    "reasonformat": 0,
+    "timeclose": 1794224021,
+    "timelimit": 3600,
+    "timeopen": null,
+    "userid": 16
+   },
+   {
+    "attempts": null,
+    "groupid": 4,
+    "id": 4,
+    "password": null,
+    "quiz": 14,
+    "reason": null,
+    "reasonformat": 0,
+    "timeclose": 1793792021,
+    "timelimit": 5400,
+    "timeopen": null,
+    "userid": null
+   }
+  ]
+ },
+ "wsfunction": "mod_quiz_get_overrides"
+}

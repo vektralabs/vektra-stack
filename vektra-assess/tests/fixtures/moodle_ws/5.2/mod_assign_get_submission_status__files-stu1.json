@@ -1,0 +1,137 @@
+{
+ "fixture": "files-stu1",
+ "params": {
+  "assignid": 25,
+  "userid": 15
+ },
+ "response": {
+  "assignmentdata": {
+   "attachments": {
+    "intro": []
+   }
+  },
+  "gradingsummary": {
+   "participantcount": 5,
+   "submissiondraftscount": 0,
+   "submissionsenabled": true,
+   "submissionsneedgradingcount": 2,
+   "submissionssubmittedcount": 2,
+   "warnofungroupedusers": ""
+  },
+  "lastattempt": {
+   "blindmarking": false,
+   "canedit": false,
+   "caneditowner": false,
+   "cansubmit": false,
+   "extensionduedate": null,
+   "graded": false,
+   "gradingstatus": "notgraded",
+   "locked": false,
+   "submission": {
+    "assignment": 25,
+    "attemptnumber": 0,
+    "groupid": 0,
+    "id": 33,
+    "latest": 1,
+    "plugins": [
+     {
+      "editorfields": [
+       {
+        "description": "Online text submissions",
+        "format": 1,
+        "name": "onlinetext",
+        "text": "VISIBLE-ONLINETEXT-files-stu1-m52"
+       }
+      ],
+      "fileareas": [
+       {
+        "area": "submissions_onlinetext",
+        "files": []
+       }
+      ],
+      "name": "Online text",
+      "type": "onlinetext"
+     },
+     {
+      "fileareas": [
+       {
+        "area": "submission_files",
+        "files": [
+         {
+          "filename": "report.docx",
+          "filepath": "/",
+          "filesize": 917,
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/33/report.docx",
+          "icon": "f/document",
+          "isexternalfile": false,
+          "mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "timemodified": 1793619222
+         },
+         {
+          "filename": "report.odt",
+          "filepath": "/",
+          "filesize": 711,
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/33/report.odt",
+          "icon": "f/writer",
+          "isexternalfile": false,
+          "mimetype": "application/vnd.oasis.opendocument.text",
+          "timemodified": 1793619222
+         },
+         {
+          "filename": "report_scan.pdf",
+          "filepath": "/",
+          "filesize": 1065,
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/33/report_scan.pdf",
+          "icon": "f/pdf",
+          "isexternalfile": false,
+          "mimetype": "application/pdf",
+          "timemodified": 1793619222
+         },
+         {
+          "filename": "report_text.pdf",
+          "filepath": "/",
+          "filesize": 593,
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/33/report_text.pdf",
+          "icon": "f/pdf",
+          "isexternalfile": false,
+          "mimetype": "application/pdf",
+          "timemodified": 1793619222
+         },
+         {
+          "filename": "slides.pptx",
+          "filepath": "/",
+          "filesize": 4333,
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/33/slides.pptx",
+          "icon": "f/powerpoint",
+          "isexternalfile": false,
+          "mimetype": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          "timemodified": 1793619222
+         }
+        ]
+       }
+      ],
+      "name": "File submissions",
+      "type": "file"
+     },
+     {
+      "name": "Submission comments",
+      "type": "comments"
+     }
+    ],
+    "status": "submitted",
+    "timecreated": 1793619222,
+    "timemodified": 1793619222,
+    "timestarted": null,
+    "userid": 15
+   },
+   "submissiongroupmemberswhoneedtosubmit": [],
+   "submissionsenabled": true,
+   "timelimit": 0,
+   "usergroups": [
+    3
+   ]
+  },
+  "warnings": []
+ },
+ "wsfunction": "mod_assign_get_submission_status"
+}

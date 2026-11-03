@@ -1,0 +1,92 @@
+# Contract test of the assess Moodle web-service readers against real Moodle 4.3 and 5.2
+# (plan assess-moodle-ws, group G). Manual and weekly: it builds two Moodle sites, so it is
+# not part of the PR gate. The dev environments live in the vektra-moodle repository
+# (docker/compose.moodle.yml, make moodle43-up / moodle52-up); this job checks out its
+# `develop` branch (so it works once the environments are merged there).
+name: assess-moodle-contract
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  moodle-contract:
+    name: Readers vs Moodle ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { version: "4.3", target: moodle43, tag: m43, port: 8080 }
+          - { version: "5.2", target: moodle52, tag: m52, port: 8082 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@v7
+        with:
+          repository: vektralabs/vektra-moodle
+          # a fixed ref, never an input: the job must not execute code chosen by whoever dispatches it
+          ref: develop
+          path: vektra-moodle
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          # No cache: this job checks out another repository next to this one and runs its
+          # Makefile; a cache written by such a run must never be reused (CodeQL
+          # actions/cache-poisoning).
+          enable-cache: false
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: Bring up Moodle ${{ matrix.version }}, provision and seed
+        working-directory: vektra-moodle/docker
+        run: |
+          make ${{ matrix.target }}-up
+          # wait for the installer to finish and Apache to serve
+          for i in $(seq 1 60); do
+            curl -fsS -o /dev/null http://localhost:${{ matrix.port }}/login/index.php && break
+            sleep 10
+          done
+          make ${{ matrix.target }}-provision
+          make ${{ matrix.target }}-devdeps
+          make ${{ matrix.target }}-seed
+          make ${{ matrix.target }}-check
+
+      - name: Run the live reader and setup-check tests
+        env:
+          VEKTRA_ASSESS_MOODLE43_URL: http://localhost:8080
+          VEKTRA_ASSESS_MOODLE52_URL: http://localhost:8082
+          VEKTRA_ASSESS_MOODLE_MANIFEST_DIR: ${{ github.workspace }}/vektra-moodle/docker/fixtures/out
+          VEKTRA_ASSESS_MOODLE_TOKEN_DIR: ${{ github.workspace }}/vektra-moodle/docker/fixtures/out
+        run: |
+          # only this job's version is up: the other one's tests skip with BLOCKED
+          uv run pytest vektra-assess -m moodle -v --tb=short -k "${{ matrix.tag }} or ${{ matrix.version }}"
+
+      - name: Capability matrix (content-free)
+        if: always()
+        run: |
+          mkdir -p matrix
+          OUT=vektra-moodle/docker/fixtures/out
+          uv run python -m vektra_assess.moodle.spike \
+            --site http://localhost:${{ matrix.port }} \
+            --manifest $OUT/manifest-${{ matrix.tag }}.json \
+            --token-file $OUT/provision-${{ matrix.tag }}.json \
+            --allow-http --allow-cidr 127.0.0.0/8 --resolve-ipv4 \
+            > matrix/matrix-${{ matrix.tag }}.txt || true
+
+      - name: Upload the matrix
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assess-capability-matrix-${{ matrix.tag }}
+          path: matrix/
+          retention-days: 30

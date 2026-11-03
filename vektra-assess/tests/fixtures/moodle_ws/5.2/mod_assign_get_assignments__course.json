@@ -1,0 +1,1362 @@
+{
+ "fixture": "course",
+ "params": {
+  "courseids": [
+   3
+  ],
+  "includenotenrolledcourses": 1
+ },
+ "response": {
+  "courses": [
+   {
+    "assignments": [
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 40,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 14,
+      "intro": "Test assign 1",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS with cut-off",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619221
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 41,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 0,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 15,
+      "intro": "Test assign 2",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS without cut-off",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619221
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 42,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 16,
+      "intro": "Test assign 3",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS team submission",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 1,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 43,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 17,
+      "intro": "Test assign 4",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS marking guide",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 44,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 18,
+      "intro": "Test assign 5",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS rubric descriptors visible",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 45,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 19,
+      "intro": "Test assign 6",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS rubric descriptors hidden",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 46,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 20,
+      "intro": "Test assign 7",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS simple direct grade",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 47,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": -4,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 21,
+      "intro": "Test assign 8",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS scale grade",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 48,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 22,
+      "intro": "Test assign 9",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 1,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS marking workflow",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 49,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 23,
+      "intro": "Test assign 10",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS hidden grade item",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 50,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 24,
+      "intro": "Test assign 11",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS grade hidden until future",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 51,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "20"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 1793532821,
+      "duedate": 1793446421,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 25,
+      "intro": "Test assign 12",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS submissions with files",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     },
+     {
+      "allowsubmissionsfromdate": 1792755221,
+      "attemptreopenmethod": "untilpass",
+      "blindmarking": 0,
+      "cmid": 52,
+      "completionsubmit": 0,
+      "configs": [
+       {
+        "name": "enabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "wordlimit",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "wordlimitenabled",
+        "plugin": "onlinetext",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1"
+       },
+       {
+        "name": "maxfilesubmissions",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "5"
+       },
+       {
+        "name": "maxsubmissionsizebytes",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": "1048576"
+       },
+       {
+        "name": "filetypeslist",
+        "plugin": "file",
+        "subtype": "assignsubmission",
+        "value": ""
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignsubmission",
+        "value": "0"
+       },
+       {
+        "name": "enabled",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "1"
+       },
+       {
+        "name": "commentinline",
+        "plugin": "comments",
+        "subtype": "assignfeedback",
+        "value": "0"
+       }
+      ],
+      "course": 3,
+      "cutoffdate": 0,
+      "duedate": 1793792021,
+      "grade": 100,
+      "gradepenalty": 0,
+      "gradingduedate": 1793705621,
+      "hidegrader": 0,
+      "id": 26,
+      "intro": "Test assign 13",
+      "introattachments": [],
+      "introfiles": [],
+      "introformat": 1,
+      "markercount": 0,
+      "markingallocation": 0,
+      "markinganonymous": 0,
+      "markingworkflow": 0,
+      "maxattempts": 1,
+      "multimarkmethod": null,
+      "multimarkrounding": null,
+      "name": "AS hidden for stu3",
+      "nosubmissions": 0,
+      "preventsubmissionnotingroup": 0,
+      "requireallteammemberssubmit": 0,
+      "requiresubmissionstatement": 0,
+      "revealidentities": 0,
+      "sendlatenotifications": 0,
+      "sendnotifications": 0,
+      "sendstudentnotifications": 1,
+      "submissionattachments": 0,
+      "submissiondrafts": 0,
+      "teamsubmission": 0,
+      "teamsubmissiongroupingid": 0,
+      "timelimit": 0,
+      "timemodified": 1793619222
+     }
+    ],
+    "fullname": "Assess bot fixtures",
+    "id": 3,
+    "shortname": "EAASSESS",
+    "timemodified": 1793619221
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_assign_get_assignments"
+}

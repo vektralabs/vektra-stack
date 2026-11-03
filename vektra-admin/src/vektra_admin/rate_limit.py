@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from uuid import UUID
+from collections.abc import Hashable
 
 import structlog
 
@@ -22,16 +22,23 @@ _WINDOW_SECONDS = 60.0
 
 
 class RateLimiter:
-    """Sliding window rate limiter keyed by API key UUID."""
+    """Sliding window rate limiter keyed by any hashable value.
+
+    The API-key middleware keys it by key UUID; other users (the assess per-token
+    limits) key their own instance by token id or a tuple. One instance per use:
+    windows of different key spaces must never share a dict.
+    """
 
     def __init__(self) -> None:
-        self._windows: dict[UUID, deque[float]] = {}
+        self._windows: dict[Hashable, deque[float]] = {}
 
-    def check(self, key_id: UUID, rpm_limit: int | None) -> tuple[bool, dict[str, str]]:
+    def check(
+        self, key: Hashable, rpm_limit: int | None
+    ) -> tuple[bool, dict[str, str]]:
         """Check if a request is within the rate limit.
 
         Args:
-            key_id: the API key UUID
+            key: what is being limited (an API key UUID, a token id, a tuple)
             rpm_limit: requests per minute limit. None means unlimited.
 
         Returns:
@@ -44,10 +51,10 @@ class RateLimiter:
         window_start = now - _WINDOW_SECONDS
 
         # Get or create window
-        if key_id not in self._windows:
-            self._windows[key_id] = deque()
+        if key not in self._windows:
+            self._windows[key] = deque()
 
-        window = self._windows[key_id]
+        window = self._windows[key]
 
         # Evict expired entries
         while window and window[0] < window_start:
@@ -74,7 +81,7 @@ class RateLimiter:
         if current_count >= rpm_limit:
             log.info(
                 "rate_limit_exceeded",
-                key_id=str(key_id),
+                key_id=str(key),
                 rpm_limit=rpm_limit,
                 current=current_count,
             )

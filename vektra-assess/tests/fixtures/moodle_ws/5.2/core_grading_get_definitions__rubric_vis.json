@@ -1,0 +1,95 @@
+{
+ "fixture": "rubric_vis",
+ "params": {
+  "activeonly": 1,
+  "areaname": "submissions",
+  "cmids": [
+   44
+  ]
+ },
+ "response": {
+  "areas": [
+   {
+    "activemethod": "rubric",
+    "areaname": "submissions",
+    "cmid": 44,
+    "component": "mod_assign",
+    "contextid": 77,
+    "definitions": [
+     {
+      "copiedfromid": null,
+      "description": "CANARY-RUBRICDESC-rubric_vis-m52",
+      "descriptionformat": 1,
+      "id": 5,
+      "method": "rubric",
+      "name": "Rubric V",
+      "rubric": {
+       "rubric_criteria": [
+        {
+         "description": "CANARY-RUBRICCRIT-rubric_vis-Clarity-m52",
+         "descriptionformat": 1,
+         "id": 5,
+         "levels": [
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_vis-Clarity-poor-m52",
+           "definitionformat": 1,
+           "id": 13,
+           "score": 0
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_vis-Clarity-ok-m52",
+           "definitionformat": 1,
+           "id": 14,
+           "score": 5
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_vis-Clarity-good-m52",
+           "definitionformat": 1,
+           "id": 15,
+           "score": 10
+          }
+         ],
+         "sortorder": 1
+        },
+        {
+         "description": "CANARY-RUBRICCRIT-rubric_vis-Method-m52",
+         "descriptionformat": 1,
+         "id": 6,
+         "levels": [
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_vis-Method-none-m52",
+           "definitionformat": 1,
+           "id": 16,
+           "score": 0
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_vis-Method-some-m52",
+           "definitionformat": 1,
+           "id": 17,
+           "score": 5
+          },
+          {
+           "definition": "CANARY-RUBRICLVL-rubric_vis-Method-full-m52",
+           "definitionformat": 1,
+           "id": 18,
+           "score": 10
+          }
+         ],
+         "sortorder": 2
+        }
+       ]
+      },
+      "status": 20,
+      "timecopied": 0,
+      "timecreated": 1793619222,
+      "timemodified": 1793619222,
+      "usercreated": 2,
+      "usermodified": 2
+     }
+    ]
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "core_grading_get_definitions"
+}

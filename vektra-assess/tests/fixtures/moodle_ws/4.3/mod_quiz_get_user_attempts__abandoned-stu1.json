@@ -1,0 +1,32 @@
+{
+ "fixture": "abandoned-stu1",
+ "params": {
+  "quizid": 96,
+  "status": "all",
+  "userid": 71
+ },
+ "response": {
+  "attempts": [
+   {
+    "attempt": 1,
+    "currentpage": 0,
+    "gradednotificationsenttime": null,
+    "id": 238,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 96,
+    "state": "abandoned",
+    "sumgrades": null,
+    "timecheckstate": null,
+    "timefinish": 0,
+    "timemodified": 1793446417,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446417,
+    "uniqueid": 238,
+    "userid": 71
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_user_attempts"
+}

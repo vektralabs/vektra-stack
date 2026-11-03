@@ -215,3 +215,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
 - The structural guards in `tests/` were written for Python suites; confirm how a JS suite is
   registered so it is not silently unrun.
 - OQ-026 (reference model) affects only latency feel, not this plan's acceptance.
+
+> Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.

@@ -12,6 +12,7 @@ dependencies = [
     "vektra-index",
     "vektra-analytics",
     "vektra-learn",
+    "vektra-assess",
     "uvicorn[standard]>=0.30",
     "prometheus-fastapi-instrumentator>=8.0",
     "structlog>=24.0",
@@ -39,6 +40,7 @@ vektra-ingest = { workspace = true }
 vektra-index = { workspace = true }
 vektra-analytics = { workspace = true }
 vektra-learn = { workspace = true }
+vektra-assess = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -33,7 +33,7 @@ endif
 # Targets
 # --------------------------------------------------------------------------
 
-.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest eval-retrieval eval-e2e
+.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest eval-retrieval eval-e2e assess-keys
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { \
@@ -76,8 +76,12 @@ test: ## Run unit tests with coverage
 		vektra-index/tests/ \
 		vektra-analytics/tests/ \
 		vektra-learn/tests/ \
+		vektra-assess/tests/ \
 		vektra-app/tests/ \
 		-v --tb=short -m "not integration"
+
+assess-keys: ## Generate a complete set of assess keyrings in ./secrets/assess/ (mode 0400, never overwrites)
+	uv run python -m vektra_assess.keys generate --out ./secrets/assess
 
 lint: ## Run linters (ruff + mypy + import-linter)
 	uv run ruff check .
@@ -89,7 +93,9 @@ lint: ## Run linters (ruff + mypy + import-linter)
 		vektra-ingest/src/vektra_ingest \
 		vektra-index/src/vektra_index \
 		vektra-analytics/src/vektra_analytics \
-		vektra-learn/src/vektra_learn
+		vektra-learn/src/vektra_learn \
+		vektra-assess/src/vektra_assess \
+		vektra-app/src/vektra_app
 	uv run lint-imports
 
 reindex: ## Create reindex job (skeleton): make reindex VER=2 [NS=default]

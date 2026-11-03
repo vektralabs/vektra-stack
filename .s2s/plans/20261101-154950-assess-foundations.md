@@ -1,8 +1,8 @@
 # Implementation Plan: Assess foundations — package, boundaries, keys, roles, topology skeleton
 
 **ID**: 20261101-154950-assess-foundations
-**Status**: active
-**Branch**: N/A
+**Status**: completed
+**Branch**: feat/assess-w1
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
 **Approved**: 2026-11-01 (coordinator)
@@ -196,170 +196,172 @@ instantiates its own limiter instance for per-token limits.
 ## Tasks
 
 ### 1. Package scaffold and the six touch points
-- [ ] 1.1 Create `vektra-assess/pyproject.toml` (hatchling, `packages=["src/vektra_assess"]`,
+- [x] 1.1 Create `vektra-assess/pyproject.toml` (hatchling, `packages=["src/vektra_assess"]`,
       version 0.7.1, deps: vektra-shared (workspace), sqlalchemy, asyncpg, httpx, pydantic-settings,
       cryptography, defusedxml, html5lib, aiosmtplib), `README.md`, `src/vektra_assess/__init__.py`,
       and the stub sub-packages listed in Design Notes, each with an owning-plan docstring
-- [ ] 1.2 Wire the touch points: root `[tool.uv.workspace] members`, `[tool.ruff.lint.isort]
+- [x] 1.2 Wire the touch points: root `[tool.uv.workspace] members`, `[tool.ruff.lint.isort]
       known-first-party`, `[tool.importlinter] root_packages`, `[tool.coverage.run] source`,
       `vektra-app/pyproject.toml` dependency + `[tool.uv.sources]`, `Dockerfile` (copy
       pyproject/README/src for vektra-assess in the builder stage); run `uv lock` and commit the lock
-- [ ] 1.3 Declare `cryptography`, `defusedxml`, `html5lib` explicitly (today transitive or
+- [x] 1.3 Declare `cryptography`, `defusedxml`, `html5lib` explicitly (today transitive or
       ocr-extra only) and add `aiosmtplib` (absent); verify with `uv tree --package vektra-assess`
       that they resolve in the DEFAULT image, not only with the ocr extra
-- [ ] 1.4 Create `vektra-assess/tests/conftest.py` importing `vektra_shared.testing.hermetic_env`
+- [x] 1.4 Create `vektra-assess/tests/conftest.py` importing `vektra_shared.testing.hermetic_env`
       (required by `vektra-shared/tests/test_env_isolation_coverage.py`) and a smoke test that
       imports every stub sub-package
 
 ### 2. Week-1 BUG-027 baseline (ARCH-078) — run before plan 2's crypto tasks
-- [ ] 2.1 Add `vektra_assess`, `vektra_app.assess_worker`, `cryptography.hazmat.primitives.ciphers.aead`,
+- [x] 2.1 Add `vektra_assess`, `vektra_app.assess_worker`, `cryptography.hazmat.primitives.ciphers.aead`,
       `cryptography.hazmat.primitives.asymmetric.x25519`, `cryptography.hazmat.primitives.kdf.hkdf`,
       `defusedxml.ElementTree`, `html5lib`, `aiosmtplib` to the hand-written import list of the
       "Image imports on a pre-x86-64-v2 CPU (BUG-027)" step in `.github/workflows/integration.yml`
-- [ ] 2.2 Extend that step to EXECUTE one AES-256-GCM encrypt/decrypt round trip and one X25519
+- [x] 2.2 Extend that step to EXECUTE one AES-256-GCM encrypt/decrypt round trip and one X25519
       exchange under `qemu64,+sse3` (import alone does not exercise the OpenSSL code path that
       would use missing instructions); keep the existing numpy control assertion first
-- [ ] 2.3 Record the result in Notes of this plan and of 20261101-154950-assess-data-crypto:
+- [x] 2.3 Record the result in Notes of this plan and of 20261101-154950-assess-data-crypto:
       PASS → proceed; FAIL → BLOCKER: fix the image so the wheel passes (no pgcrypto fallback
       exists, ADR-0031 amended 2026-11-01). Add a startup self-test (one AES-GCM + one X25519
       round trip) to the assess API and worker; failure refuses startup (fail closed)
 
 ### 3. Shared JWT helpers and learn refactor
-- [ ] 3.1 Add `pyjwt` to `vektra-shared/pyproject.toml`; create `vektra_shared/tokens.py` with
+- [x] 3.1 Add `pyjwt` to `vektra-shared/pyproject.toml`; create `vektra_shared/tokens.py` with
       `SigningKey`, `Keyring`, `encode_jwt`, `decode_jwt` per Design Notes (kw-only, no defaults
       for audience/issuer/require; HS256 pinned; kid mandatory and looked up in keyring)
-- [ ] 3.2 Unit tests `vektra-shared/tests/test_tokens.py`: wrong aud, missing aud, wrong iss,
+- [x] 3.2 Unit tests `vektra-shared/tests/test_tokens.py`: wrong aud, missing aud, wrong iss,
       missing exp, expired, `alg: none`, `alg: HS512`, unknown kid, missing kid header, key from a
       different keyring, call without `audience=` (TypeError) — each asserted on the exception type
-- [ ] 3.3 Refactor `vektra_learn/service.py` `LearnService.generate_token`/`validate_token` onto
+- [x] 3.3 Refactor `vektra_learn/service.py` `LearnService.generate_token`/`validate_token` onto
       the helpers with `aud="vektra-learn-widget"`, `iss="vektra"`, `kid="learn-1"`; keep
       `VEKTRA_LEARN_JWT_SECRET` ≥ 32 chars (startup step 10) and existing claims
-- [ ] 3.4 Verify empirically (running stack + block_vektra dev env from plan
+- [x] 3.4 Verify empirically (running stack + block_vektra dev env from plan
       20261101-154950-assess-moodle-ws, or the widget's fetch path if the env is not up yet) what
       happens to a pre-upgrade learn token: if the widget re-mints on 401, document the one-off
       invalidation in CHANGELOG; otherwise add the learn-private legacy decoder for one release
-- [ ] 3.5 Regression test in `vektra-learn/tests/`: a token signed with the learn secret but
+- [x] 3.5 Regression test in `vektra-learn/tests/`: a token signed with the learn secret but
       carrying `aud="discussion"` is rejected by `validate_token`; a learn token is rejected by
       `decode_jwt(audience="discussion")`; the suite proves learn is not looser than before
       (missing exp now rejected, previously accepted)
 
 ### 4. Non-inheriting scopes
-- [ ] 4.1 Add `require_exact_scope(scope)` to `vektra_shared/auth.py` (same key-store lookup,
+- [x] 4.1 Add `require_exact_scope(scope)` to `vektra_shared/auth.py` (same key-store lookup,
       `request.state.key_id`, ERR-AUTH-001/003 envelopes; no admin superscope)
-- [ ] 4.2 Unit tests in `vektra-shared/tests/test_auth.py` with the existing `MockKeyStore`: an
+- [x] 4.2 Unit tests in `vektra-shared/tests/test_auth.py` with the existing `MockKeyStore`: an
       admin-only key is REJECTED by `require_exact_scope("assess:mint")` (403, ERR-AUTH-003); a key
       with `assess:mint` passes; `assess:teacher` does not satisfy `assess:mint`
-- [ ] 4.3 Migration `migrations/versions/0009_assess_scopes_roles.py` (revision "0009", down
+- [x] 4.3 Migration `migrations/versions/0009_assess_scopes_roles.py` (revision "0009", down
       revision "0008"): drop/re-add `ck_api_keys_scopes` with the seven scopes, add
       `ck_api_keys_assess_scope_exclusive`, create the two NOLOGIN roles idempotently; downgrade
       refuses if any key holds an `assess:*` scope (no silent data loss)
-- [ ] 4.4 Mirror the constraints in `vektra_admin/models.py` `__table_args__`; update
+- [x] 4.4 Mirror the constraints in `vektra_admin/models.py` `__table_args__`; update
       `valid_scopes` in `vektra_admin/api.py` (create-key handler) and add the four checkboxes in
       `vektra_admin/templates/keys.html`, grouped under an "assess (site-bound)" label; the API
       rejects mixed admin+assess requests with the same message as the DB constraint
-- [ ] 4.5 Route guard test `vektra-app/tests/test_assess_route_scopes.py`: introspects
+- [x] 4.5 Route guard test `vektra-app/tests/test_assess_route_scopes.py`: introspects
       `create_app()` routes under `/api/v1/assess`, asserts each depends on `require_exact_scope`
       or the assess token verifier and never on `require_scope`; SKIPPED with reason "no assess
       routes registered yet" while the count is 0 (plan 20261101-154950-assess-session-lifecycle
       removes the skip by adding routes)
 
 ### 5. Settings, errors, keys
-- [ ] 5.1 `vektra_assess/config.py` `VektraAssessSettings` (pydantic-settings, explicit
+- [x] 5.1 `vektra_assess/config.py` `VektraAssessSettings` (pydantic-settings, explicit
       `alias="VEKTRA_ASSESS_*"`, no env_file): `ENABLED` (default false), `API_DATABASE_URL`,
       `WORKER_DATABASE_URL`, `SECRETS_DIR` (default `/run/secrets`), `API_POOL_SIZE` (15),
       `WORKER_POOL_SIZE` (5), `HEARTBEAT_MAX_AGE_S` (60), `PARSER_SOCKET` path; later plans add
       their fields to this class only
-- [ ] 5.2 Add `ERR_ASSESS_001` ("assess unavailable", 503, remediation names the failing
+- [x] 5.2 Add `ERR_ASSESS_001` ("assess unavailable", 503, remediation names the failing
       readiness item) to `vektra_shared/errors.py` with `_CODE_STATUS_OVERRIDE`; document the
       ERR-ASSESS-NNN namespace rule in `docs/reference/error-codes.md` (later plans take the next
       free number; codes are never reused)
-- [ ] 5.3 `vektra_assess/keys.py`: keyring loader, `KEY_MATRIX`, `enforce_key_matrix(role)`,
+- [x] 5.3 `vektra_assess/keys.py`: keyring loader, `KEY_MATRIX`, `enforce_key_matrix(role)`,
       redacted repr; `python -m vektra_assess.keys generate --out <dir>` writing all keyrings
       (X25519 pairs via cryptography, 32-byte random symmetric keys) with mode 0400; `make
       assess-keys` target writing to `./secrets/assess/` (gitignored)
-- [ ] 5.4 Unit tests: for each role, every required key missing → refusal naming it; every
+- [x] 5.4 Unit tests: for each role, every required key missing → refusal naming it; every
       forbidden key present (file AND env-var variants) → refusal naming it; mode 0644 file →
       refusal; wrong key length → refusal; generated set satisfies all three roles
 
 ### 6. Startup wiring (API) and worker entry
-- [ ] 6.1 `vektra_app/main.py`: add `_step_12_assess_check` to the `_run_startup` list. It always
+- [x] 6.1 `vektra_app/main.py`: add `_step_12_assess_check` to the `_run_startup` list. It always
       runs `enforce_key_matrix("api")` forbidden half. When enabled it also: runs the required
       half, builds the assess engine from `VEKTRA_ASSESS_API_DATABASE_URL`, asserts `SELECT
       current_user, rolsuper` returns `vektra_assess_api`/false, and asserts the DSN user differs
-      from `VEKTRA_DATABASE_URL`'s; registers the engine on `app.state.assess_engine`
-- [ ] 6.1b Dormant by default (added 2026-11-01, plans merge into `develop` one PR at a time):
+      from `VEKTRA_DATABASE_URL`'s; registers the engine on `app.state.assess_engine`; runs
+      `run_crypto_selftest()` before serving (task 2.3, fail closed)
+- [x] 6.1b Dormant by default (added 2026-11-01; second line of defence behind the wave-gated merges):
       `create_app()` includes the assess router ONLY when `VEKTRA_ASSESS_ENABLED=true`; with the
       default `false`, no route under `/api/v1/assess` is mounted, `/api/v1/assess/ui` is not
       served, `/health/assess` reports `disabled`, and the `assess-worker` / `assess-parser`
       entrypoints exit non-zero with a clear message instead of running. Test: build the app with
       the flag off and assert the route table contains zero `/api/v1/assess` paths and that a
       request to one returns 404 (the route table is the evidence, not a status field)
-- [ ] 6.2 `vektra_app/assess_worker.py`: composition root stub — load settings,
+- [x] 6.2 `vektra_app/assess_worker.py`: composition root stub — load settings,
       `enforce_key_matrix("worker")`, connect with `VEKTRA_ASSESS_WORKER_DATABASE_URL` asserting
       role `vektra_assess_worker`, import `LitellmProvider` (to measure its cost now), assert
       none of `sentence_transformers`, `torch`, `qdrant_client`, `vektra_index`, `vektra_ingest`,
       `presidio_analyzer`, `spacy` are in `sys.modules`, write a heartbeat FILE every 10 s,
-      handle SIGTERM within 30 s; exits non-zero on any failed check
-- [ ] 6.3 `vektra_app/assess_parser.py` stub: `enforce_key_matrix("parser")` (no secrets, no
+      handle SIGTERM within 30 s; runs `run_crypto_selftest()`; exits non-zero on any failed check;
+      add `vektra_app.assess_worker` to the BUG-027 import list (task 2.1)
+- [x] 6.3 `vektra_app/assess_parser.py` stub: `enforce_key_matrix("parser")` (no secrets, no
       DSN), bind the unix socket at `VEKTRA_ASSESS_PARSER_SOCKET`, answer a framed `ping`, reply
       `not_implemented` to everything else (plan 20261101-154950-assess-parser replaces it)
-- [ ] 6.4 `docker/entrypoint.sh`: add `assess-worker` and `assess-parser` targets (no
+- [x] 6.4 `docker/entrypoint.sh`: add `assess-worker` and `assess-parser` targets (no
       `alembic upgrade`; `exec python -m vektra_app.assess_worker` / `assess_parser`), update the
       "Valid targets" message; never route assess through a generic `worker` target (ARCH-066)
-- [ ] 6.5 Tests `vektra-app/tests/test_assess_startup.py`: API with a WS keyring file present and
+- [x] 6.5 Tests `vektra-app/tests/test_assess_startup.py`: API with a WS keyring file present and
       assess DISABLED still fails step 12 with `StartupValidationError(step="assess_check")`;
       API with an assess DSN that logs in as `vektra` fails; worker entry with `torch` pre-imported
       (monkeypatched `sys.modules`) fails the assertion
 
 ### 7. Compose 'assess' profile and Postgres
-- [ ] 7.1 `deploy/postgres/init.sql`: create `vektra_assess_api` / `vektra_assess_worker` NOLOGIN
+- [x] 7.1 `deploy/postgres/init.sql`: create `vektra_assess_api` / `vektra_assess_worker` NOLOGIN
       with the attributes in Design Notes; add `deploy/postgres/assess-roles.sql` run by the
       one-shot service (`ALTER ROLE ... LOGIN PASSWORD` from `/run/secrets/assess_db_*_password`)
-- [ ] 7.2 `docker-compose.yml` postgres command adds `-c log_statement=none -c
+- [x] 7.2 `docker-compose.yml` postgres command adds `-c log_statement=none -c
       log_min_duration_statement=-1 -c log_parameter_max_length=0 -c
       log_parameter_max_length_on_error=0` (ARCH-078); verify with `SHOW` in an integration test
-- [ ] 7.3 Profile `assess`: `vektra-assess-db-init` (one-shot, superuser DSN, db password
+- [x] 7.3 Profile `assess`: `vektra-assess-db-init` (one-shot, superuser DSN, db password
       secrets only), `vektra-assess-worker` (same image, `CMD_TARGET=assess-worker`, no ports,
       `mem_limit: 512m`, `stop_grace_period: 30s`, `restart: unless-stopped`, healthcheck = heartbeat
       file mtime < 30 s, secrets per the worker column, `depends_on` db-init completed),
       `vektra-assess-parser` (`network_mode: none`, `read_only: true`, `user: "1000:1000"`, tmpfs
       `/tmp` size cap, `mem_limit: 768m`, `pids_limit`, `cpus`, NO secrets, no env DSN)
-- [ ] 7.4 Named volume `assess_parser_sock` mounted ONLY into worker and parser; the `vektra` API
+- [x] 7.4 Named volume `assess_parser_sock` mounted ONLY into worker and parser; the `vektra` API
       service gets the API-column secrets and `VEKTRA_ASSESS_API_DATABASE_URL`, and no socket volume
-- [ ] 7.5 Compose policy test `tests/test_compose_assess_profile.py` parsing `docker compose
+- [x] 7.5 Compose policy test `tests/test_compose_assess_profile.py` parsing `docker compose
       --profile assess config` output: parser has `network_mode: none` and zero secrets; socket
       volume mounted in exactly {worker, parser}; every secret mounted into each service is allowed
       for that role by `KEY_MATRIX` (reuses the module, so the matrix and compose cannot diverge)
-- [ ] 7.6 Integration test (compose, `-m integration`): from inside the parser container, a TCP
+- [x] 7.6 Integration test (compose, `-m integration`): from inside the parser container, a TCP
       connect to `postgres:5432` and a DNS lookup both fail; `/run/secrets` is absent; from the API
       container the socket path does not exist
 
 ### 8. Health and rate limiter
-- [ ] 8.1 `vektra_admin/health.py`: `SHALLOW_EXCLUDED = {"llm", "assess"}`; unit test that a
+- [x] 8.1 `vektra_admin/health.py`: `SHALLOW_EXCLUDED = {"llm", "assess"}`; unit test that a
       registered failing `assess` check leaves shallow status `healthy` while `?detail=full` and
       `/health/assess` report it
-- [ ] 8.2 `vektra_assess/health.py` readiness function registered as `("health", "assess")` by
+- [x] 8.2 `vektra_assess/health.py` readiness function registered as `("health", "assess")` by
       create_app when enabled: returns `disabled` when off; when on, reads the heartbeat source
       (the table arrives with plan 20261101-154950-assess-data-crypto; until then reports
       `degraded` with reason `heartbeat_source_missing`, never `healthy`)
-- [ ] 8.3 `vektra_admin/rate_limit.py`: `check(key: Hashable, rpm_limit)`; tests with UUID,
+- [x] 8.3 `vektra_admin/rate_limit.py`: `check(key: Hashable, rpm_limit)`; tests with UUID,
       `tuple`, and `str` keys; test asserting `app.state.rate_limiter` is still unset after
       `create_app()` (the dormant per-key RPM stays dormant)
 
 ### 9. CI and docs
-- [ ] 9.1 Root `pyproject.toml` import-linter: contracts (a)-(c), (e) and `vektra_assess` added to
+- [x] 9.1 Root `pyproject.toml` import-linter: contracts (a)-(c), (e) and `vektra_assess` added to
       all existing `forbidden_modules`; AST test (d) and the contract-coverage test in
       `vektra-assess/tests/test_boundaries.py`; a canary test that a temporary module importing
       `vektra_core` from `vektra_assess.api` makes `lint-imports` fail (run in a tmp copy)
-- [ ] 9.2 `.github/workflows/ci-unit.yml`: `assess` paths filter (`vektra-assess/**`,
+- [x] 9.2 `.github/workflows/ci-unit.yml`: `assess` paths filter (`vektra-assess/**`,
       `vektra-shared/**`), `test-assess` job, add to `ci-gate` needs; `Makefile` `test` target adds
       `vektra-assess/tests/`; confirm `test_suite_execution_coverage.py` passes with the new suite
-- [ ] 9.3 `.github/workflows/lint.yml`: add `vektra-assess/src` (and `vektra-app/src`, missing
+- [x] 9.3 `.github/workflows/lint.yml`: add `vektra-assess/src` (and `vektra-app/src`, missing
       today) to the mypy path list
-- [ ] 9.4 Integration job: build image, run `CMD_TARGET=assess-worker` with generated test keys
+- [x] 9.4 Integration job: build image, run `CMD_TARGET=assess-worker` with generated test keys
       and a pg16 service, wait 15 s idle, read `VmRSS` from `/proc/1/status`; fail above 300 MB;
       print the top import contributors (`python -X importtime`) as an artifact
-- [ ] 9.5 `.env.example` (VEKTRA_ASSESS_* with comments, no secrets), `docs/reference/configuration.md`
+- [x] 9.5 `.env.example` (VEKTRA_ASSESS_* with comments, no secrets), `docs/reference/configuration.md`
       (settings + key matrix + secret file format), `docs/reference/api.md` (`/health/assess`
       readiness semantics; new scopes), CHANGELOG `[Unreleased]` (scopes, learn token aud/iss,
       postgres logging flags, new profile)
@@ -380,19 +382,19 @@ instantiates its own limiter instance for per-token limits.
 
 ## Acceptance Criteria
 
-- [ ] `uv run lint-imports` passes; adding `import vektra_core` to any `vektra_assess` module, or `import vektra_assess.moodle` to `vektra_assess.api`, makes it fail (canary test 9.1) — ARCH-073
-- [ ] With `VEKTRA_ASSESS_ENABLED=false` (the default) the app's route table contains zero `/api/v1/assess` paths, a request to any of them returns 404, and the assess worker/parser entrypoints refuse to run (task 6.1b) — dormant-capability rule, `.claude/CLAUDE.md`
-- [ ] An API container with `assess_ws_tokens` mounted refuses to start with `VEKTRA_ASSESS_ENABLED=false`, exit code non-zero, `[STARTUP ERROR] assess_check` naming the key — ARCH-066, REQ-079
-- [ ] For each of the three roles, removing any required key or adding any forbidden key (file or env var) produces a refusal naming exactly that key (5.4, 6.5) — ARCH-071
-- [ ] An `admin`-only key receives 403 ERR-AUTH-003 from a `require_exact_scope("assess:mint")` route; inserting a key row with `{admin,assess:mint}` fails with the DB constraint name in the error — NFR-014
-- [ ] `decode_jwt` rejects the full negative matrix of 3.2 (11 cases), and a learn token and an assess-audience token are mutually rejected (3.5) — NFR-014
-- [ ] `SELECT current_user, rolsuper` over the assess API DSN returns `vektra_assess_api, false`; over the worker DSN returns `vektra_assess_worker, false` (integration) — INT-002
-- [ ] From inside the parser container: 0 successful TCP connects, 0 DNS resolutions, `/run/secrets` absent (7.6) — REQ-101, ARCH-066
-- [ ] Stopping the worker container leaves `GET /health` 200 `healthy` while `GET /health/assess` reports a non-healthy status (8.1 + integration) — COMP-002
-- [ ] Worker idle RSS measured from `/proc/1/status` ≤ 300 MB, and `sys.modules` contains none of the forbidden ML modules (9.4) — ARCH-073, NFR-020
-- [ ] BUG-027 qemu step executes an AES-GCM round trip and an X25519 exchange on `qemu64,+sse3` and the result is recorded (task 2.3) — ARCH-078
-- [ ] `SHOW log_statement` returns `none` and `SHOW log_parameter_max_length` returns `0` on the compose postgres — ARCH-078
-- [ ] No `app.state.rate_limiter` after `create_app()` (dormant per-key RPM not armed as a side effect)
+- [x] `uv run lint-imports` passes; adding `import vektra_core` to any `vektra_assess` module, or `import vektra_assess.moodle` to `vektra_assess.api`, makes it fail (canary test 9.1) — ARCH-073
+- [x] With `VEKTRA_ASSESS_ENABLED=false` (the default) the app's route table contains zero `/api/v1/assess` paths, a request to any of them returns 404, and the assess worker/parser entrypoints refuse to run (task 6.1b) — dormant-capability rule, `.claude/CLAUDE.md`
+- [x] An API container with `assess_ws_tokens` mounted refuses to start with `VEKTRA_ASSESS_ENABLED=false`, exit code non-zero, `[STARTUP ERROR] assess_check` naming the key — ARCH-066, REQ-079
+- [x] For each of the three roles, removing any required key or adding any forbidden key (file or env var) produces a refusal naming exactly that key (5.4, 6.5) — ARCH-071
+- [x] An `admin`-only key receives 403 ERR-AUTH-003 from a `require_exact_scope("assess:mint")` route; inserting a key row with `{admin,assess:mint}` fails with the DB constraint name in the error — NFR-014
+- [x] `decode_jwt` rejects the full negative matrix of 3.2 (11 cases), and a learn token and an assess-audience token are mutually rejected (3.5) — NFR-014
+- [x] `SELECT current_user, rolsuper` over the assess API DSN returns `vektra_assess_api, false`; over the worker DSN returns `vektra_assess_worker, false` (integration) — INT-002
+- [x] From inside the parser container: 0 successful TCP connects, 0 DNS resolutions, `/run/secrets` absent (7.6) — REQ-101, ARCH-066
+- [x] Stopping the worker container leaves `GET /health` 200 `healthy` while `GET /health/assess` reports a non-healthy status (8.1 + integration) — COMP-002
+- [x] Worker idle RSS measured from `/proc/1/status` ≤ 300 MB, and `sys.modules` contains none of the forbidden ML modules (9.4) — ARCH-073, NFR-020
+- [x] BUG-027 qemu step executes an AES-GCM round trip and an X25519 exchange on `qemu64,+sse3` and the result is recorded (task 2.3) — ARCH-078
+- [x] `SHOW log_statement` returns `none` and `SHOW log_parameter_max_length` returns `0` on the compose postgres — ARCH-078
+- [x] No `app.state.rate_limiter` after `create_app()` (dormant per-key RPM not armed as a side effect)
 
 ## Testing Approach
 
@@ -450,12 +452,59 @@ config`, not the YAML source, so env interpolation and profile merging are what 
   measures it in week 1. If it exceeds, options are a lazy import inside the Part-B handler or a
   thin httpx OpenAI-compatible provider in vektra_app (decision recorded in plan
   20261101-154950-assess-llm-runner).
-- **Risk: learn token tightening** may log out in-flight widget sessions once (task 3.4 decides).
+- **Learn token tightening (task 3.4, decided 2026-11-01)**: pre-upgrade tokens get one 401; the widget POSTs to
+  `data-token-refresh-url` (block_vektra sets it, `ajax.php` re-mints) and retries once. Proved on the real
+  `ApiClient` by `vektra-learn/widget/test/api-client.test.mjs` (stubbed fetch) plus the server-side rejection in
+  `vektra-learn/tests/test_token_binding.py`. No legacy decoder kept; CHANGELOG documents the one-off effect.
+- **Task 9.2 pulled forward** with section 3: `make test` and ci-unit run `vektra-assess/tests/` (job
+  `test-assess`, in `ci-gate`), because `test_suite_execution_coverage.py` fails as soon as the suite exists.
+  ci-unit also gains `test-learn-widget` (`npm test`, node 22, as the Dockerfile widget stage).
 - **Risk: role creation in a migration** requires CREATEROLE; managed Postgres deployments may
   forbid it — the migration's DO block must fail with a clear message, and the operator runbook
   offers pre-created roles.
 - **OQ-026 / OQ-032** (hardware, memory envelope): the profile limits here (512M worker, 768M
   parser) are design defaults; NFR-020's K is not fixed by this plan.
+- **Section 4 notes (2026-11-01)**: the scope vocabulary lives in `vektra_shared.auth` (`LEGACY_SCOPES`,
+  `ASSESS_SCOPES`, `ALL_SCOPES`, `scope_set_error`); a test pins the ORM and migration 0009 CHECK texts to it.
+  The admin UI create form had no scope validation at all (a bad set was an IntegrityError 500); it now
+  answers with an error flash (HTTP 200, because htmx does not swap 4xx) and creates nothing. Migration 0009
+  downgrade leaves the two roles in place (cluster objects shared with init.sql).
+- **Found, pre-existing (not fixed here)**: `vektra-shared/tests/test_migration.py` has no `integration`
+  marker and skips itself when the `docker` SDK is missing. `test-shared` syncs only `--package vektra-shared`
+  (no docker SDK), so it SKIPS there, and `package-integration` (`-m integration`) deselects it: the
+  migration suite runs in no CI job. Candidate DEBT item; the new `vektra-assess/tests/test_migration_0009.py`
+  is marked `integration` so it does run in `package-integration`. Also seen: `audit_log_write_failed`
+  errors logged by the vektra-admin integration fixture (tests still pass), not investigated.
+- **Section 5 notes (2026-11-01)**: `assess_ws_tokens` and `assess_smtp` are credentials (a JSON object),
+  not 32-byte keyrings; `KEY_MATRIX` carries a `kind` per secret. Symlinked secret files are refused.
+  Risk for 7.x: Compose file secrets are bind mounts that keep the host file's uid/mode, so a 0400 file
+  owned by the host user may be unreadable by container uid 1000 or fail the owner check; resolve in the
+  compose profile (db-init/entrypoint copy, or generate with the container uid), not by loosening `keys.py`.
+- **Section 6 notes (2026-11-01)**: step 12 lives in `vektra_app/assess_wiring.py` (main.py only lists it);
+  role assertion helpers in `vektra_assess/db/roles.py`. 6.1b route-table part done (`test_assess_startup.py`);
+  its worker/parser/health parts close with 6.2, 6.3 and 8.2. **FastAPI 0.139 drift**: `app.routes` holds an
+  included router as one `_IncludedRouter`, not its APIRoutes, so any test filtering `app.routes` on
+  `APIRoute` sees no included route at all. Both assess route tests walk `effective_route_contexts()` and the
+  4.5 vacuity test now routes through `include_router`. 8.2 deviation: the readiness check is registered by
+  startup step 12 (the registry is built there, not in `create_app`), enabled or not, so `/health/assess`
+  answers `disabled` instead of "no health check registered"; `/health/{component}` requires an API key. Other suites that inspect `app.routes` may be blind
+  the same way (not audited here).
+- **Section 9 notes (2026-11-01)**: contract (c) also lists `vektra_assess.errors` (a module on disk); the
+  "No component shall import the app entrypoint" contract gains `vektra_assess` as a source rather than a
+  forbidden module. `vektra-app/src` was never type-checked: adding it surfaced two real annotation gaps in
+  `main.py` (`event_emitter`, `pipeline` typed as the Protocols), fixed; mypy is clean on 102 files.
+- **Section 7 notes (2026-11-01)**: implemented as an overlay `docker-compose.assess.yml` whose three assess
+  services carry `profiles: [assess]`. Reason: the API service is always on and Compose has no optional
+  secrets, so assess secrets mounted into `vektra` from the base file would break every deployment without
+  `./secrets/assess`. Usage: `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile
+  assess up -d`. Compose v5 honours `uid/gid/mode` on file secrets (verified empirically), so the keyring
+  owner/mode check holds inside the containers (uid 1000, 0400). Role passwords are secret files
+  (`assess_db_api_password`, `assess_db_worker_password`) and the DSNs carry none. The policy test lives in
+  `vektra-app/tests/test_compose_assess_profile.py` (run by `test-app`), not in the root `tests/`.
 - **Pending activation**: test (d) ContextBundle AST guard and 4.5 route-scope guard are SKIPPED
   until plans 20261101-154950-assess-context and 20261101-154950-assess-session-lifecycle land.
-- BUG-027 result (task 2.3): _pending_.
+- BUG-027 result (task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. `vektra_app.assess_worker` is added to the import list by task 6.2 (the module does not exist before it). Self-test: `vektra_assess/crypto/selftest.py::run_crypto_selftest`, wired into API step 12 (6.1) and worker start (6.2).
+
+> Acceptance evidence (2026-11-02): refusal check run on the local isolated stack image: `assess_ws_tokens` mounted, `VEKTRA_ASSESS_ENABLED=false` -> exit 1, `[STARTUP ERROR] Step: assess_check ... assess_ws_tokens: forbidden for api but mounted`. Stack tests 10/10, worker idle RSS 240.8 MB. CI `assess-stack` job re-runs them on the PR.
+
+> Code review (2026-11-02, high): 10 findings. Fixed: learn secret short -> structured step-10 error (bytes, not chars); pyjwt>=2.10 (strict_aud); `generate()` all-or-nothing; exact-name env matching; parser truncated/deep/stalled frames; worker heartbeat cleared at start and healthcheck path from env; `log_min_error_statement=panic`; rate-limit log field `key_id` kept. Not changed: `/health/assess` always `degraded` while enabled is the plan 8.2 decision (no evidence source until assess-data-crypto adds the heartbeat table, owner of that fix); `generate_token` second decode left as is (cosmetic).

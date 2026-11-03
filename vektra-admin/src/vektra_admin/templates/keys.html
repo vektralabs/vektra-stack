@@ -14,6 +14,14 @@
       <label><input type="checkbox" name="scopes" value="ingest"> ingest</label>
       <label><input type="checkbox" name="scopes" value="query"> query</label>
     </fieldset>
+    <fieldset>
+      <legend>assess (site-bound)</legend>
+      <small>For the Moodle discussion plugin. Cannot be combined with admin, ingest or query.</small>
+      <label><input type="checkbox" name="scopes" value="assess:mint"> assess:mint</label>
+      <label><input type="checkbox" name="scopes" value="assess:teacher"> assess:teacher</label>
+      <label><input type="checkbox" name="scopes" value="assess:privacy-export"> assess:privacy-export</label>
+      <label><input type="checkbox" name="scopes" value="assess:privacy-erase"> assess:privacy-erase</label>
+    </fieldset>
     <button type="submit">Create key</button>
   </form>
 </details>

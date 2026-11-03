@@ -1,7 +1,7 @@
 # Implementation Plan: Assess data model, DB-enforced invariants and envelope encryption
 
 **ID**: 20261101-154950-assess-data-crypto
-**Status**: active
+**Status**: completed
 **Branch**: N/A
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
@@ -240,121 +240,121 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
 ## Tasks
 
 ### 1. Schema revisions (next revisions in the chain after 0009)
-- [ ] 1.1 Revision "sites and config": `assess_sites`, `assess_site_keys`, `assess_site_capabilities`,
+- [x] 1.1 Revision "sites and config": `assess_sites`, `assess_site_keys`, `assess_site_capabilities`,
       `assess_setup_checks`, `assess_activity_config`, `assess_extra_time`, `assess_reset_grants`;
       ORM mirrors in `vektra_assess/db/models.py` (internal to the package, ADR-0022 style)
-- [ ] 1.2 Revision "sessions": `assess_sessions` with the partial unique index, CHECKs, `UNIQUE (id,
+- [x] 1.2 Revision "sessions": `assess_sessions` with the partial unique index, CHECKs, `UNIQUE (id,
       state)`, `assess_start_attempts`, `assess_outage_incidents`, `assess_enrolment_checks`,
       `assess_snapshots` (+ immutability trigger), `assess_turns`, the deferred opening-turn
       constraint trigger
-- [ ] 1.3 Revision "keys": `assess_session_keys`, `assess_session_handoff` with the composite FK
+- [x] 1.3 Revision "keys": `assess_session_keys`, `assess_session_handoff` with the composite FK
       `ON UPDATE CASCADE` and the live-state CHECK; role `vektra_assess_definer` (NOLOGIN,
       idempotent DO block like 0009)
-- [ ] 1.4 Revision "transcripts and plumbing": `assess_transcripts`, `assess_deliveries`,
+- [x] 1.4 Revision "transcripts and plumbing": `assess_transcripts`, `assess_deliveries`,
       `assess_jobs` (+ autovacuum settings), `assess_render_checks`, `assess_render_state`,
       `assess_gate_inputs`, `assess_consumed_jtis`, `assess_transcript_download_tokens`,
       `assess_audit_events` (+ append-only trigger), `assess_erasure_records`, `assess_heartbeat`
-- [ ] 1.5 Downgrades drop in reverse order and refuse (RAISE) if any `assess_sessions` row exists,
+- [x] 1.5 Downgrades drop in reverse order and refuse (RAISE) if any `assess_sessions` row exists,
       so a downgrade can never silently discard exam evidence
-- [ ] 1.6 Migration test (testcontainers pg16): upgrade head → downgrade to 0009 on an empty
+- [x] 1.6 Migration test (testcontainers pg16): upgrade head → downgrade to 0009 on an empty
       schema → upgrade head; `check_database_schema()` passes; `\d`-equivalent catalog query lists
       exactly the expected `assess_%` tables
 
 ### 2. SECURITY DEFINER functions and triggers
-- [ ] 2.1 `get_session_material`, `assess_append_turn`, `assess_close_session` per Design Notes,
+- [x] 2.1 `get_session_material`, `assess_append_turn`, `assess_close_session` per Design Notes,
       owned by `vektra_assess_definer`, `SET search_path = pg_catalog, pg_temp`, `REVOKE EXECUTE
       FROM PUBLIC`, `GRANT EXECUTE TO vektra_assess_api` (and worker for close)
-- [ ] 2.2 BEFORE UPDATE OF state trigger on `assess_sessions` deleting the hand-off row on CLOSED;
+- [x] 2.2 BEFORE UPDATE OF state trigger on `assess_sessions` deleting the hand-off row on CLOSED;
       trigger forbidding transitions out of CLOSED (`OLD.state='CLOSED' AND NEW.state<>'CLOSED'`
       raises), so no job can revive a closed session or re-wrap its DEK
-- [ ] 2.3 Function tests as the real API role: wrong epoch → 0 rows; state CLOSED/STARTING → 0 rows;
+- [x] 2.3 Function tests as the real API role: wrong epoch → 0 rows; state CLOSED/STARTING → 0 rows;
       stale `p_expected_seq` → NULL and 0 turn rows added; wrong `p_prev_hash` → NULL; two
       concurrent `assess_append_turn` with the same seq → exactly one turn row (count verified)
-- [ ] 2.4 Search-path hijack test: as the API role, create a temp function/table shadowing a name
+- [x] 2.4 Search-path hijack test: as the API role, create a temp function/table shadowing a name
       used inside the functions (`pg_temp.assess_sessions`); the function still reads the real table
-- [ ] 2.5 Hand-off invariants test: INSERT hand-off for a STARTING or CLOSED session → error;
+- [x] 2.5 Hand-off invariants test: INSERT hand-off for a STARTING or CLOSED session → error;
       UPDATE session to CLOSED (worker role, raw SQL, no explicit delete) → hand-off row count 0;
       transition CLOSED → ACTIVE → error
 
 ### 3. Grant matrix (INT-002)
-- [ ] 3.1 `vektra_assess/db/grants.py`: the matrix as data (role → table → privileges, with column
+- [x] 3.1 `vektra_assess/db/grants.py`: the matrix as data (role → table → privileges, with column
       lists where column-level); revision "grants" generated FROM this module's rendered SQL, with
       the rendered SQL committed in the revision (no import of app code from the migration at run time)
-- [ ] 3.2 `vektra-assess/tests/integration/test_grant_matrix.py`: query
+- [x] 3.2 `vektra-assess/tests/integration/test_grant_matrix.py`: query
       `information_schema.role_table_grants`, `column_privileges`, `pg_proc.proacl/prosecdef/proconfig`,
       `pg_roles` and compare to the matrix BOTH WAYS; fail on any `assess_%` table absent from the
       matrix; assert PUBLIC has no EXECUTE on the three functions; assert roles are not super,
       no BYPASSRLS, no CREATEROLE
-- [ ] 3.3 Behavioural cross-check, connecting AS `vektra_assess_api`: `SELECT` on `assess_turns`,
+- [x] 3.3 Behavioural cross-check, connecting AS `vektra_assess_api`: `SELECT` on `assess_turns`,
       `assess_snapshots`, `assess_session_keys`, `assess_session_handoff`, and on
       `assess_activity_config.teacher_config_sealed` each raise `InsufficientPrivilege` (asserted on
       SQLSTATE 42501, not on "an exception")
-- [ ] 3.4 Wire 3.2/3.3 into CI via the package-integration glob (`-m integration`); add a
+- [x] 3.4 Wire 3.2/3.3 into CI via the package-integration glob (`-m integration`); add a
       negative canary: a test-only revision adding `GRANT SELECT ON assess_turns TO
       vektra_assess_api` in a throwaway DB makes 3.2 fail
 
 ### 4. Crypto module `vektra_assess.crypto`
-- [ ] 4.1 `crypto/envelope.py`: versioned envelope encode/decode, `aead_encrypt(key, plaintext,
+- [x] 4.1 `crypto/envelope.py`: versioned envelope encode/decode, `aead_encrypt(key, plaintext,
       purpose, binding)` / `aead_decrypt(...)`, AAD construction per Design Notes; `new_dek()`
-- [ ] 4.2 `crypto/kek.py`: `wrap_dek(keyring, dek, session_id) -> (blob, kid, key_version)`,
+- [x] 4.2 `crypto/kek.py`: `wrap_dek(keyring, dek, session_id) -> (blob, kid, key_version)`,
       `unwrap_dek(keyring, blob, session_id)`; unknown kid → `KeyNotAvailable` (never a fallback
       to another kid)
-- [ ] 4.3 `crypto/seal.py`: `seal(recipient_pub, kid, plaintext, purpose, binding)` /
+- [x] 4.3 `crypto/seal.py`: `seal(recipient_pub, kid, plaintext, purpose, binding)` /
       `open_sealed(recipient_priv_keyring, blob, purpose, binding)`; HPKE API if present in the
       locked version, primitive construction otherwise, identical wire format; known-answer tests
       for the primitive path
-- [ ] 4.4 `crypto/teacher_config.py`: `seal_teacher_config(worker_pub, site_id, cmid, field, text)`
+- [x] 4.4 `crypto/teacher_config.py`: `seal_teacher_config(worker_pub, site_id, cmid, field, text)`
       (API side) and `open_teacher_config(worker_priv, ...)` (worker side); a test that the API key
       set (per `KEY_MATRIX`) cannot open it
-- [ ] 4.5 `crypto/transcript.py`: per-transcript DEK, wrapped by the `assess_transcript_kek` keyring;
+- [x] 4.5 `crypto/transcript.py`: per-transcript DEK, wrapped by the `assess_transcript_kek` keyring;
       `encrypt_transcript` / `decrypt_transcript`
-- [ ] 4.6 `crypto/hashing.py`: canonical snapshot hash, turn hash chain, transcript hash;
+- [x] 4.6 `crypto/hashing.py`: canonical snapshot hash, turn hash chain, transcript hash;
       `verify_chain(turns)`
-- [ ] 4.7 Unit tests: round trips; tamper one byte of ct, nonce, kid or AAD binding → `InvalidTag`;
+- [x] 4.7 Unit tests: round trips; tamper one byte of ct, nonce, kid or AAD binding → `InvalidTag`;
       ciphertext moved to another session_id/turn_no → `InvalidTag`; nonce uniqueness over 10⁵
       encryptions; repr/str of key objects contain no key bytes; structlog capture of a full
       round trip contains no key or plaintext canary
 
 ### 5. Shredding, purge and rotation helpers (library functions; jobs are wired in later plans)
-- [ ] 5.1 `crypto/shred.py` `shred_session(conn, session_id) -> ShredReport`: in one worker-role
+- [x] 5.1 `crypto/shred.py` `shred_session(conn, session_id) -> ShredReport`: in one worker-role
       transaction set `kek_wrapped = NULL, shredded_at = now()`, then delete turns, snapshot,
       hand-off, session row; return per-table deleted counts; refuse non-CLOSED sessions
-- [ ] 5.2 `shred_transcript(conn, transcript_id)`: null `dek_wrapped`, delete deliveries and the
+- [x] 5.2 `shred_transcript(conn, transcript_id)`: null `dek_wrapped`, delete deliveries and the
       transcript; same report shape (used by plan 20261101-154950-assess-privacy-retention for
       retention purge and OQ-033 erasure)
-- [ ] 5.3 `rotation.py` `rewrap_session_keys(conn, keyring, from_kid, batch)`: unwrap with old kid,
+- [x] 5.3 `rotation.py` `rewrap_session_keys(conn, keyring, from_kid, batch)`: unwrap with old kid,
       wrap with active kid, update `kek_kid/key_version` per row in short transactions; resumable;
       returns remaining count
-- [ ] 5.4 `reseal_handoffs(conn, kek_keyring, new_api_pub, new_kid)` (worker side, at most K live
+- [x] 5.4 `reseal_handoffs(conn, kek_keyring, new_api_pub, new_kid)` (worker side, at most K live
       rows): unwrap from `assess_session_keys`, re-seal, update hand-off rows still live; skips rows
       whose session closed meanwhile (the composite FK makes the race safe)
-- [ ] 5.5 `reseal_teacher_configs(conn, old_worker_priv, new_worker_pub)` and
+- [x] 5.5 `reseal_teacher_configs(conn, old_worker_priv, new_worker_pub)` and
       `rewrap_transcript_deks(conn, keyring, from_kid)`
-- [ ] 5.6 Tests: after `shred_session`, `unwrap_dek` on any surviving bytes is impossible (row
+- [x] 5.6 Tests: after `shred_session`, `unwrap_dek` on any surviving bytes is impossible (row
       absent), per-table counts are 0 by `SELECT count(*)`, and a `pg_dump --data-only` of the test
       DB contains neither the session id in any assess table nor the plaintext canary; rotation
       tests verify every row decrypts under the new kid and the old kid can be removed from the
       keyring afterwards
 
 ### 6. End-to-end data tests on real roles
-- [ ] 6.1 Fixture `vektra-assess/tests/integration/conftest.py`: PostgresContainer
+- [x] 6.1 Fixture `vektra-assess/tests/integration/conftest.py`: PostgresContainer
       `pgvector/pgvector:pg16`, `alembic upgrade head` as superuser, set LOGIN passwords for the
       assess roles, yield three engines (superuser for setup, API role, worker role); generated
       keyrings from `vektra_assess.keys generate`
-- [ ] 6.2 Race test: 20 concurrent API-role transactions inserting STARTING for the same (site,
+- [x] 6.2 Race test: 20 concurrent API-role transactions inserting STARTING for the same (site,
       student, cmid) → exactly 1 row (`SELECT count(*)`), 19 `UniqueViolation` (REQ-067)
-- [ ] 6.3 Lifecycle walk with real ciphertext: worker inserts snapshot+keys+opening turn and
+- [x] 6.3 Lifecycle walk with real ciphertext: worker inserts snapshot+keys+opening turn and
       commits ACTIVE with hand-off; API role decrypts via `get_session_material` + `open_sealed`;
       API appends 3 turns; `assess_close_session` → hand-off count 0, outbox job count 1, audit row
       count 1; `get_session_material` → 0 rows
-- [ ] 6.4 Rollback walk: STARTING with snapshot deleted by the worker → 0 session, 0 snapshot,
+- [x] 6.4 Rollback walk: STARTING with snapshot deleted by the worker → 0 session, 0 snapshot,
       0 key rows, 1 `assess_start_attempts` row (BR-015, REQ-071); committing ACTIVE without an
       opening turn fails at COMMIT (deferred constraint)
-- [ ] 6.5 Plaintext canary scan: after 6.3, `pg_dump --data-only` and a full-table `bytea` scan of
+- [x] 6.5 Plaintext canary scan: after 6.3, `pg_dump --data-only` and a full-table `bytea` scan of
       every `assess_%` table contain 0 occurrences of the snapshot/turn/teacher-config canaries;
       postgres container logs contain 0 occurrences (with `log_statement=none` from plan
       20261101-154950-assess-foundations)
-- [ ] 6.6 Snapshot immutability: worker-role UPDATE of `assess_snapshots` raises; a superuser
+- [x] 6.6 Snapshot immutability: worker-role UPDATE of `assess_snapshots` raises; a superuser
       forced mutation (trigger disabled) is detected by `hashing` re-verification (BR-015 "forced
       post-commit mutation is detected")
 
@@ -363,17 +363,17 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
   dependency; no pgcrypto or weaker path. Numbering kept so cross-references stay valid.
 
 ### 8. Wiring, docs, CI
-- [ ] 8.1 `vektra_assess/health.py` (from plan 20261101-154950-assess-foundations): read
+- [x] 8.1 `vektra_assess/health.py` (from plan 20261101-154950-assess-foundations): read
       `assess_heartbeat` via the API role; report `degraded` when no row or age >
       `HEARTBEAT_MAX_AGE_S`; unit test with a stale row
-- [ ] 8.2 Add `vektra_assess.crypto` and `vektra_assess.db` to the mypy path (already covered by
+- [x] 8.2 Add `vektra_assess.crypto` and `vektra_assess.db` to the mypy path (already covered by
       `vektra-assess/src`) and confirm `test-assess` runs the new unit tests; integration tests run
       under the package-integration glob
-- [ ] 8.3 Docs: `docs/reference/configuration.md` (keyring purposes, kid rotation); operator runbook
+- [x] 8.3 Docs: `docs/reference/configuration.md` (keyring purposes, kid rotation); operator runbook
       section "assess keys: backup, restore drill, KEK re-wrap, hand-off re-seal" in
       `docs/guides/` (offline backup separate from DB dumps; a lost KEK = all snapshots lost);
       `.s2s/architecture.md` is NOT edited here — drift is listed in Notes for the design owner
-- [ ] 8.4 CHANGELOG `[Unreleased]`: assess schema, roles' grants, crypto module
+- [x] 8.4 CHANGELOG `[Unreleased]`: assess schema, roles' grants, crypto module
 
 ## State & Data Lifecycle
 
@@ -398,18 +398,18 @@ REFERENCES, TRIGGER, and any privilege on non-assess tables.
 
 ## Acceptance Criteria
 
-- [ ] 20 concurrent Start inserts for the same (site, student, cmid) → `SELECT count(*)` = 1 non-CLOSED session (REQ-067)
-- [ ] Committing ACTIVE without an opening turn fails at COMMIT; for every session row in the test corpus, `state <> 'STARTING'` ⇔ an `opening` turn exists (REQ-067 consumed rule)
-- [ ] Rollback → 0 snapshot rows, 0 key rows, 0 session rows, 1 start-attempt row, counted (BR-015, REQ-071)
-- [ ] As `vektra_assess_api`: SELECT on turns, snapshots, session_keys, session_handoff and `teacher_config_sealed` each raise SQLSTATE 42501 (INT-002, ARCH-079)
-- [ ] The grant-matrix test passes in both directions, and the canary extra grant makes it fail (INT-002)
-- [ ] `get_session_material` returns 0 rows for a wrong epoch, a CLOSED session and a STARTING session; `assess_append_turn` with a stale seq adds 0 rows under concurrency (NFR-014)
-- [ ] After any close path, the hand-off row count for that session = 0, including a raw `UPDATE ... SET state='CLOSED'` with no explicit delete (ARCH-079)
-- [ ] `pg_dump --data-only` plus the postgres container logs contain 0 plaintext canaries after a full lifecycle walk (BR-015, REQ-085)
-- [ ] After `shred_session` / `shred_transcript`: per-table counts = 0 by query, and `pg_dump` contains no row for that session or transcript (REQ-089)
-- [ ] Teacher config sealed by the API key set cannot be opened by any key the API holds per `KEY_MATRIX`; it is opened by the worker key (ARCH-071, BR-013)
-- [ ] An `assess_audit_events` insert failure inside a business transaction aborts that transaction (fail closed; REQ-085)
-- [ ] `rewrap_session_keys` leaves 0 rows on the old kid, and every DEK unwraps under the new kid (ARCH-071)
+- [x] 20 concurrent Start inserts for the same (site, student, cmid) → `SELECT count(*)` = 1 non-CLOSED session (REQ-067)
+- [x] Committing ACTIVE without an opening turn fails at COMMIT; for every session row in the test corpus, `state <> 'STARTING'` ⇔ an `opening` turn exists (REQ-067 consumed rule)
+- [x] Rollback → 0 snapshot rows, 0 key rows, 0 session rows, 1 start-attempt row, counted (BR-015, REQ-071)
+- [x] As `vektra_assess_api`: SELECT on turns, snapshots, session_keys, session_handoff and `teacher_config_sealed` each raise SQLSTATE 42501 (INT-002, ARCH-079)
+- [x] The grant-matrix test passes in both directions, and the canary extra grant makes it fail (INT-002)
+- [x] `get_session_material` returns 0 rows for a wrong epoch, a CLOSED session and a STARTING session; `assess_append_turn` with a stale seq adds 0 rows under concurrency (NFR-014)
+- [x] After any close path, the hand-off row count for that session = 0, including a raw `UPDATE ... SET state='CLOSED'` with no explicit delete (ARCH-079)
+- [x] `pg_dump --data-only` plus the postgres container logs contain 0 plaintext canaries after a full lifecycle walk (BR-015, REQ-085)
+- [x] After `shred_session` / `shred_transcript`: per-table counts = 0 by query, and `pg_dump` contains no row for that session or transcript (REQ-089)
+- [x] Teacher config sealed by the API key set cannot be opened by any key the API holds per `KEY_MATRIX`; it is opened by the worker key (ARCH-071, BR-013)
+- [x] An `assess_audit_events` insert failure inside a business transaction aborts that transaction (fail closed; REQ-085)
+- [x] `rewrap_session_keys` leaves 0 rows on the old kid, and every DEK unwraps under the new kid (ARCH-071)
 
 ## Testing Approach
 
@@ -492,5 +492,13 @@ session with savepoints.
   would need a symmetric API-held key (a documented exposure).
 - Hash columns are stored in the clear by design (integrity anchoring). The equality-oracle
   trade-off is recorded in Design Notes.
-- BUG-027 baseline result (from plan 20261101-154950-assess-foundations task 2.3): _pending_.
+- BUG-027 baseline result (from plan 20261101-154950-assess-foundations task 2.3): PASS (local, 2026-11-01): `cryptography==49.0.0` (the locked version) under `qemu-x86_64 -cpu qemu64,+sse3` in a linux/amd64 `python:3.12-slim` container: numpy control assertion ok (no POPCNT/SSE41/SSE42), AES-256-GCM round trip, X25519 exchange and HKDF all ok. The CI step in `integration.yml` now runs the same operations against the built image; its run on the W1 PR is the gate evidence. Crypto tasks may start.
   Section 7 is N/A on PASS.
+
+> Note (2026-11-02, task 3): the design text says "snapshots (INSERT and DELETE only), turns (INSERT and purge DELETE)" for the worker. The worker also needs SELECT on both to build the opening turn and the transcript, so the matrix grants SELECT, INSERT, DELETE and never UPDATE (BR-015). `vektra_assess_definer` owns the functions and so always holds EXECUTE; the catalog test accounts for that. Task 3.4's canary runs the comparison inside a rolled-back transaction instead of a separate revision.
+
+> Note (2026-11-02, task 4): the locked `cryptography` 49.0.0 ships `hazmat.primitives.hpke`, but sealing uses the primitive construction (ephemeral X25519, HKDF-SHA256 with salt `eph_pub|recipient_pub`, AES-256-GCM) always. The plan's "HPKE if present, same wire format otherwise" cannot give one wire format across two code paths; one documented format keeps a library bump from ever being a data migration. A pinned known-answer vector and an independent re-derivation guard it. The envelope AAD is exactly the Design Notes format (the kid is not in the AAD: a kid swap selects another key and fails authentication, an unknown kid raises `KeyNotAvailable`).
+
+> Note (2026-11-02, task 5): `shred_session` refuses while a transcript still references the session (the FK has no cascade, retention of transcript and session can differ) unless `with_transcript=True`, which shreds the transcript in the same transaction. The worker gets column UPDATE on `assess_activity_config(teacher_config_sealed, teacher_config_kid)` for `reseal_teacher_configs`; the matrix and revision 0015 were regenerated. The single `teacher_config_sealed` column is sealed with the fixed field name `"config"` (`rotation.TEACHER_CONFIG_FIELD`).
+
+> Code review (2026-11-02, high, `bd31db9...`): 10 findings. Fixed: reseal helpers return the rows still on the old kid (and `reseal_teacher_configs` is batched and in the runbook); `GRANT CREATE` lent to the definer around `ALTER FUNCTION ... OWNER` in 0014; close audit records `worker` vs `api` from `session_user`; `session_no` numbered by a BEFORE INSERT trigger under an advisory lock; the shred test counted transcripts by the wrong key (now by session and id); the DB heartbeat has a 5 s timeout and `HEARTBEAT_MAX_AGE_S` has a floor of 30; the API lost UPDATE on `seq`/`last_activity_at` (functions only) and on config identity columns; `open_sealed` shares `envelope.read_header` and validates the kid first. Not changed: coverage still omits `shred.py`, `rotation.py` and `models.py` from the unit gate (real-Postgres only); the new CI step fails the integration job if the assess suite is skipped.

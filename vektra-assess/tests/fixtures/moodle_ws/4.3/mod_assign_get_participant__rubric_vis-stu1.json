@@ -1,0 +1,21 @@
+{
+ "fixture": "rubric_vis-stu1",
+ "params": {
+  "assignid": 96,
+  "userid": 71
+ },
+ "response": {
+  "allowsubmissionsfromdate": 1792755217,
+  "blindmarking": false,
+  "cutoffdate": 1793532817,
+  "duedate": 1793446417,
+  "duedatestr": "31 October 2026, 11:33 AM",
+  "fullname": "Alice Alpha",
+  "grantedextension": false,
+  "id": 71,
+  "requiregrading": true,
+  "submissionstatus": "submitted",
+  "submitted": true
+ },
+ "wsfunction": "mod_assign_get_participant"
+}

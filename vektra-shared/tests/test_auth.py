@@ -193,3 +193,114 @@ class TestRequireScope:
             "/protected", headers={"Authorization": "Bearer anything"}
         )
         assert response.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# require_exact_scope: no admin superscope (plan assess-foundations 4.2, NFR-014)
+# ---------------------------------------------------------------------------
+
+
+def _exact_app(store: MockKeyStore) -> FastAPI:
+    from vektra_shared.auth import require_exact_scope
+
+    app = FastAPI()
+    registry = ProviderRegistry()
+    registry.register("key_store", "default", store)
+    app.state.registry = registry
+
+    @app.get("/mint")
+    async def mint(key: ApiKeyInfo = Depends(require_exact_scope("assess:mint"))):
+        return {"key_id": str(key.key_id)}
+
+    register_error_handlers(app)
+    return app
+
+
+class TestRequireExactScope:
+    def _get(self, scopes: list[str]):
+        key_id = uuid4()
+        store = MockKeyStore({"t": ApiKeyInfo(key_id=key_id, scopes=scopes)})
+        resp = TestClient(_exact_app(store)).get(
+            "/mint", headers={"Authorization": "Bearer t"}
+        )
+        return resp, key_id
+
+    def test_admin_only_key_rejected(self):
+        resp, _ = self._get(["admin"])
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == ERR_AUTH_003
+
+    def test_admin_with_every_legacy_scope_rejected(self):
+        resp, _ = self._get(["admin", "ingest", "query"])
+        assert resp.status_code == 403
+
+    def test_exact_scope_passes(self):
+        resp, key_id = self._get(["assess:mint"])
+        assert resp.status_code == 200
+        assert resp.json()["key_id"] == str(key_id)
+
+    def test_other_assess_scope_does_not_satisfy(self):
+        resp, _ = self._get(["assess:teacher"])
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == ERR_AUTH_003
+
+    def test_missing_token_401(self):
+        resp = TestClient(_exact_app(MockKeyStore({}))).get("/mint")
+        assert resp.status_code == 401
+        assert resp.json()["error"]["code"] == ERR_AUTH_001
+
+    def test_require_scope_still_honours_admin(self):
+        """The superscope is removed only for exact scopes, not globally."""
+        store = MockKeyStore({"t": ApiKeyInfo(key_id=uuid4(), scopes=["admin"])})
+        resp = TestClient(_make_app(store)).get(
+            "/query-only", headers={"Authorization": "Bearer t"}
+        )
+        assert resp.status_code == 200
+
+    def test_dependency_names(self):
+        from vektra_shared.auth import require_exact_scope
+
+        assert (
+            require_exact_scope("assess:mint").__name__
+            == "require_exact_scope_assess:mint"
+        )
+        assert require_scope("admin").__name__ == "require_scope_admin"
+
+
+class TestScopeSetError:
+    def test_valid_sets(self):
+        from vektra_shared.auth import scope_set_error
+
+        assert scope_set_error(["admin", "query"]) is None
+        assert scope_set_error(["assess:mint", "assess:privacy-erase"]) is None
+
+    def test_invalid_and_empty(self):
+        from vektra_shared.auth import scope_set_error
+
+        assert "Invalid scopes" in (scope_set_error(["root"]) or "")
+        assert scope_set_error([]) is not None
+
+    def test_mixed_refused_for_every_pair(self):
+        from vektra_shared.auth import ASSESS_SCOPES, LEGACY_SCOPES, scope_set_error
+
+        for legacy in LEGACY_SCOPES:
+            for assess in ASSESS_SCOPES:
+                msg = scope_set_error([legacy, assess])
+                assert msg is not None and "ck_api_keys_assess_scope_exclusive" in msg
+
+    def test_model_constraints_mirror_the_vocabulary(self):
+        """vektra_admin's ORM CHECKs name exactly ALL_SCOPES (migration 0009 mirror)."""
+        import re
+        from pathlib import Path
+
+        from vektra_shared.auth import ALL_SCOPES, ASSESS_SCOPES
+
+        root = Path(__file__).resolve().parents[2]
+        for src in (
+            root / "vektra-admin/src/vektra_admin/models.py",
+            root / "migrations/versions/0009_assess_scopes_roles.py",
+        ):
+            text = src.read_text(encoding="utf-8")
+            found = set(re.findall(r"'((?:admin|ingest|query|assess:[a-z-]+))'", text))
+            assert found == set(ALL_SCOPES), (src.name, found ^ set(ALL_SCOPES))
+            assert ASSESS_SCOPES <= found

@@ -41,6 +41,7 @@ members = [
     "vektra-admin",
     "vektra-analytics",
     "vektra-app",
+    "vektra-assess",
     "vektra-core",
     "vektra-index",
     "vektra-ingest",
@@ -211,6 +212,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl", hash = "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e", size = 7490, upload-time = "2025-07-03T22:54:42.156Z" },
+]
+
+[[package]]
+name = "aiosmtplib"
+version = "5.1.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/5c/9cabc5db6d607616e81ba6d8f1f231cd5a75955807a308c1090a59072d6d/aiosmtplib-5.1.3.tar.gz", hash = "sha256:ac2b418d3260ba62d9cfd0fe7359726e9dc009a4e8e8d9909fdfae332f522a7c", size = 77010, upload-time = "2026-09-08T02:11:20.532Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/0a/b56ab8163d54960337fdca475d3dfd56c8badf6172e79cf2ad00d5335dc1/aiosmtplib-5.1.3-py3-none-any.whl", hash = "sha256:f7d76ce3d4995a65a178c1f11e1bd1607706b921d00cb768e7a2c7f7ef5517a8", size = 30116, upload-time = "2026-09-08T02:11:19.352Z" },
 ]
 
 [[package]]
@@ -6121,6 +6131,7 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "vektra-admin" },
     { name = "vektra-analytics" },
+    { name = "vektra-assess" },
     { name = "vektra-core" },
     { name = "vektra-index" },
     { name = "vektra-ingest" },
@@ -6144,6 +6155,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "vektra-admin", editable = "vektra-admin" },
     { name = "vektra-analytics", editable = "vektra-analytics" },
+    { name = "vektra-assess", editable = "vektra-assess" },
     { name = "vektra-core", editable = "vektra-core" },
     { name = "vektra-index", editable = "vektra-index" },
     { name = "vektra-ingest", editable = "vektra-ingest" },
@@ -6157,6 +6169,55 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.8" },
+]
+
+[[package]]
+name = "vektra-assess"
+version = "0.7.1"
+source = { editable = "vektra-assess" }
+dependencies = [
+    { name = "aiosmtplib" },
+    { name = "asyncpg" },
+    { name = "cryptography" },
+    { name = "defusedxml" },
+    { name = "html5lib" },
+    { name = "httpx" },
+    { name = "pdfminer-six" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "sqlalchemy" },
+    { name = "structlog" },
+    { name = "vektra-shared" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosmtplib", specifier = ">=3.0" },
+    { name = "asyncpg", specifier = ">=0.29" },
+    { name = "cryptography", specifier = ">=42" },
+    { name = "defusedxml", specifier = ">=0.7" },
+    { name = "html5lib", specifier = ">=1.1" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pdfminer-six", specifier = ">=20231228" },
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "structlog", specifier = ">=24.0" },
+    { name = "vektra-shared", editable = "vektra-shared" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=1.0" },
 ]
 
 [[package]]
@@ -6352,7 +6413,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pydantic", specifier = ">=2,<3" },
-    { name = "pyjwt", specifier = ">=2.8" },
+    { name = "pyjwt", specifier = ">=2.10" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "vektra-shared", editable = "vektra-shared" },
@@ -6375,6 +6436,7 @@ dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyjwt" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
 ]
@@ -6395,6 +6457,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "pyjwt", specifier = ">=2.10" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.0" },
 ]

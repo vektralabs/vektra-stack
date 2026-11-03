@@ -1,0 +1,21 @@
+{
+ "fixture": "cutoff-stu2",
+ "params": {
+  "assignid": 14,
+  "userid": 16
+ },
+ "response": {
+  "allowsubmissionsfromdate": 1792755221,
+  "blindmarking": false,
+  "cutoffdate": 1793532821,
+  "duedate": 1793446421,
+  "duedatestr": "31 October 2026, 11:33 AM",
+  "fullname": "Bruno Beta",
+  "grantedextension": true,
+  "id": 16,
+  "requiregrading": true,
+  "submissionstatus": "submitted",
+  "submitted": true
+ },
+ "wsfunction": "mod_assign_get_participant"
+}

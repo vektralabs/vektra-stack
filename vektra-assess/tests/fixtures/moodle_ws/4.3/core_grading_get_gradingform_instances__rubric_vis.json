@@ -1,0 +1,41 @@
+{
+ "fixture": "rubric_vis",
+ "params": {
+  "definitionid": 23,
+  "since": 0
+ },
+ "response": {
+  "instances": [
+   {
+    "feedback": "",
+    "feedbackformat": 0,
+    "id": 15,
+    "itemid": 57,
+    "raterid": 2,
+    "rawgrade": null,
+    "rubric": {
+     "criteria": [
+      {
+       "criterionid": 29,
+       "id": 29,
+       "levelid": 87,
+       "remark": "VISIBLE-REMARK-rubric_vis-Clarity-m43",
+       "remarkformat": 1
+      },
+      {
+       "criterionid": 30,
+       "id": 30,
+       "levelid": 89,
+       "remark": "VISIBLE-REMARK-rubric_vis-Method-m43",
+       "remarkformat": 1
+      }
+     ]
+    },
+    "status": 1,
+    "timemodified": 1793619218
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "core_grading_get_gradingform_instances"
+}

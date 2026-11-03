@@ -140,3 +140,35 @@ def test_check_memory_returns_response():
     assert result.rss_mb >= 0
     assert result.vms_mb >= 0
     assert 0 <= result.percent <= 100
+
+
+async def test_check_all_shallow_excludes_assess():
+    """A failing assess worker leaves shallow /health healthy (plan assess-foundations 8.1).
+
+    The worker is another container; the Docker HEALTHCHECK of the API must not depend
+    on it. Deep health and /health/assess still report it.
+    """
+    from vektra_shared.registry import ProviderRegistry
+
+    async def unhealthy_assess():
+        return HealthStatus(status="unhealthy", message="worker heartbeat stale")
+
+    async def healthy_db():
+        return HealthStatus(status="healthy", latency_ms=1)
+
+    registry = ProviderRegistry()
+    registry.register("health", "assess", unhealthy_assess)
+    registry.register("health", "database", healthy_db)
+
+    shallow, deep = await check_all(registry, version="0.1.0")
+    assert shallow.status == "healthy"
+    assert deep.status == "unhealthy"
+    assert {c.name: c.status for c in deep.components}["assess"] == "unhealthy"
+    component = await check_component(registry, "assess")
+    assert component.status == "unhealthy"
+
+
+def test_shallow_excluded_set():
+    from vektra_admin.health import SHALLOW_EXCLUDED
+
+    assert frozenset({"llm", "assess"}) == SHALLOW_EXCLUDED

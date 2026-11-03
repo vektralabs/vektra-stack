@@ -14,7 +14,9 @@ All endpoints except `GET /health` (shallow) require a Bearer token:
 Authorization: Bearer <api-key>
 ```
 
-API keys have scopes: `admin`, `ingest`, `query`. Each endpoint requires specific scopes as noted below.
+API keys have scopes: `admin`, `ingest`, `query`. Each endpoint requires specific scopes as noted below. `admin` satisfies any of these three.
+
+The assessment discussion feature adds four **site-bound** scopes for the Moodle plugin: `assess:mint`, `assess:teacher`, `assess:privacy-export`, `assess:privacy-erase`. They are exact: `admin` does **not** satisfy them, and a key holding any `assess:*` scope cannot also hold `admin`, `ingest` or `query` (refused with `422 ERR-ADMIN-001`, and by the database constraint `ck_api_keys_assess_scope_exclusive`). No assess route exists while `VEKTRA_ASSESS_ENABLED=false`.
 
 ## Health
 
@@ -74,7 +76,24 @@ curl -s \
 }
 ```
 
-Components: `llm`, `embedding`, `vector_store`.
+Components: `llm`, `embedding`, `vector_store`, `assess`.
+
+`/health/assess` is the readiness of the assessment discussion feature. It reports `disabled` when
+`VEKTRA_ASSESS_ENABLED=false`, and is never `healthy` without evidence from the worker: until the worker
+heartbeat is wired, it reports `degraded` with message `heartbeat_source_missing`. Like `llm`, it is left
+out of the shallow `GET /health`, so a stopped assess worker (a separate container) does not make the API
+container look unhealthy; it is included in `?detail=full`.
+
+### Assess setup check (assess)
+
+Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Callable by an `admin` key or by the site's own `assess:teacher` key (a narrow key bound to another site gets the same `404` as an unknown site; no cross-site probing).
+
+| Method | Path | Success | Errors |
+|--------|------|---------|--------|
+| POST | `/api/v1/assess/sites/{site_id}/setup-check` | `202 {"report_id": "<uuid>"}` | `401 ERR-AUTH-001`, `403 ERR-AUTH-003`, `404 ERR-ASSESS-003`, `429 ERR-ASSESS-002` (one check per site per 5 minutes, `Retry-After` set), `503 ERR-ASSESS-001` (no fresh worker heartbeat: the check would otherwise stay queued forever) |
+| GET | `/api/v1/assess/sites/{site_id}/setup-check/{report_id}` | `200` content-free report | `401`, `403`, `404 ERR-ASSESS-003` |
+
+The report is `{"report_id", "site_id", "status": "queued|running|done|failed", "moodle_release", "items": [{"name", "result": "OK|MISSING|UNVERIFIABLE", "reason_code"}], "created_at", "finished_at"}`. It carries no Moodle text, no emails and no ids beyond `site_id`. The feature is available for a site only if its latest finished report for the current Moodle release has every item `OK`.
 
 ### GET /api/v1/health
 
@@ -113,7 +132,7 @@ Request body:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `label` | string | no | Human-readable label |
-| `scopes` | string[] | no | Permissions: `admin`, `ingest`, `query`. Defaults to `["admin"]`. Invalid scopes are rejected with `422 ERR-ADMIN-001`. |
+| `scopes` | string[] | no | Permissions: `admin`, `ingest`, `query`, or the site-bound `assess:mint`, `assess:teacher`, `assess:privacy-export`, `assess:privacy-erase` (never mixed with the first three). Defaults to `["admin"]`. Invalid scopes and mixed sets are rejected with `422 ERR-ADMIN-001`. |
 | `expires_at` | datetime | no | Expiry timestamp. Must be timezone-aware and in the future, otherwise `422 ERR-ADMIN-004`. Omit for a non-expiring key. |
 
 Response (HTTP 201):
@@ -652,6 +671,12 @@ Response (HTTP 201):
     "expires_at": "2026-04-25T15:00:00Z"
 }
 ```
+
+The token is an HS256 JWT bound to its audience: header `kid: "learn-1"`, claims `aud:
+"vektra-learn-widget"`, `iss: "vektra"`, `sub`, `course_id`, `iat`, `exp` (and `namespace` when given).
+The learn endpoints accept only tokens with exactly that audience and issuer; a token minted by a
+version before 0.8 (no `aud`/`iss`/`kid`) is answered `401`, and the widget re-mints through
+`data-token-refresh-url`.
 
 ### POST /api/v1/learn/enrollments
 

@@ -109,6 +109,9 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-INDEX-004 | vektra-index | 404 | Reindex job not found |
 | ERR-ANALYTICS-001 | vektra-analytics | 503 | Analytics service or database session not available (starting up, or none configured) |
 | ERR-ANALYTICS-002 | vektra-analytics | 404 | Trace not found for the given `response_id` |
+| ERR-ASSESS-001 | vektra-assess | 503 | Assessment discussion service unavailable; the remediation names the failing readiness item (see `GET /health/assess`) |
+| ERR-ASSESS-002 | vektra-assess | 429 | Setup check requested too soon (one per site per 5 minutes); `Retry-After` gives the wait |
+| ERR-ASSESS-003 | vektra-assess | 404 | Site or setup-check report not found (also returned for a key bound to another site) |
 
 ### Deliberately not listed
 
@@ -128,3 +131,9 @@ Follow this procedure (REQ-011 convention):
 5. **Write a test** that triggers the error via HTTP and asserts the response matches the REQ-010 envelope.
 
 Convention: define the code in the registry *before* implementing the handler.
+
+**`ERR-ASSESS-NNN` namespace.** Assess codes (`vektra_assess`, the assessment discussion feature) are
+numbered in the order they are added: a new code takes the next free number, whichever plan adds
+it, and a code is never reused or renumbered, even after the condition it named is removed (a
+Moodle plugin release in the field may still branch on it). The constant lives in
+`vektra_shared/errors.py`; `vektra_assess.errors` only re-exports it.

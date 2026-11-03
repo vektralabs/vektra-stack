@@ -1,0 +1,33 @@
+{
+ "fixture": "types-stu1",
+ "params": {
+  "quizid": 13,
+  "status": "all",
+  "userid": 15
+ },
+ "response": {
+  "attempts": [
+   {
+    "attempt": 1,
+    "currentpage": 0,
+    "gradednotificationsenttime": 1793619221,
+    "gradeitemmarks": [],
+    "id": 31,
+    "layout": "1,2,3,4,5,6,7,8,9,10,11,0",
+    "preview": 0,
+    "quiz": 13,
+    "state": "finished",
+    "sumgrades": 3,
+    "timecheckstate": null,
+    "timefinish": 1793446421,
+    "timemodified": 1793446421,
+    "timemodifiedoffline": 0,
+    "timestart": 1793446421,
+    "uniqueid": 31,
+    "userid": 15
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_user_attempts"
+}

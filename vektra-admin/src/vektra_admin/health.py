@@ -66,6 +66,14 @@ class MemoryHealthResponse(BaseModel):
     percent: float
 
 
+# Components left out of the shallow, unauthenticated GET /health. That probe drives the
+# Docker HEALTHCHECK and the CI startup wait, so it must reflect the API container only:
+# - llm: a paid external call on every probe, and not infrastructure of this container;
+# - assess: the assess worker is a separate container, and a stopped worker must not
+#   make the API look down (COMP-002). Both stay in ?detail=full and /health/{name}.
+SHALLOW_EXCLUDED: frozenset[str] = frozenset({"llm", "assess"})
+
+
 # --- Aggregation logic -------------------------------------------------------
 
 
@@ -117,7 +125,7 @@ async def check_all(
 ) -> tuple[ShallowHealthResponse, DeepHealthResponse]:
     """Run all registered health checks and return both shallow and deep responses.
 
-    The shallow (unauthenticated) check excludes the LLM component because:
+    The shallow (unauthenticated) check excludes SHALLOW_EXCLUDED. The LLM because:
     - It makes a paid API call on every probe (Docker health checks run every 10s)
     - External LLM availability shouldn't determine infrastructure health
     - LLM health is still available on-demand via GET /health/llm
@@ -134,8 +142,8 @@ async def check_all(
         )
         return shallow, deep
 
-    # Shallow: infrastructure only (exclude LLM)
-    infra_names = [n for n in registry.list("health") if n != "llm"]
+    # Shallow: infrastructure only (see SHALLOW_EXCLUDED)
+    infra_names = [n for n in registry.list("health") if n not in SHALLOW_EXCLUDED]
     infra_tasks = [
         _call_health_check(name, registry.get("health", name)) for name in infra_names
     ]

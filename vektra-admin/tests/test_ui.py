@@ -321,3 +321,58 @@ async def test_health_partial_returns_table():
     assert resp.status_code == 200
     assert "<table>" in resp.text
     assert "db" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Key creation form: scope validation (assess scopes are exclusive, ARCH-067)
+# ---------------------------------------------------------------------------
+
+
+def _fake_session(rows: list | None = None) -> MagicMock:
+    session = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows or []
+    session.execute = AsyncMock(return_value=result)
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.add = MagicMock()
+    return session
+
+
+async def _post_create(scopes: list[str]) -> tuple[object, MagicMock]:
+    from vektra_shared.db import get_session
+
+    app = _make_app()
+    session = _fake_session()
+
+    async def _override():
+        yield session
+
+    app.dependency_overrides[get_session] = _override
+    async with _client(app) as client:
+        client.cookies.set(_COOKIE_NAME, "test-admin-token")
+        resp = await client.post("/admin/keys/create", data={"scopes": scopes})
+    return resp, session
+
+
+async def test_create_key_refuses_assess_scope_mixed_with_admin():
+    resp, session = await _post_create(["admin", "assess:mint"])
+    assert resp.status_code == 200  # 200 on purpose: htmx does not swap error responses
+    assert "assess" in resp.text.lower()
+    session.add.assert_not_called()  # nothing was created
+    session.commit.assert_not_called()
+
+
+async def test_create_key_refuses_an_unknown_scope():
+    resp, session = await _post_create(["superuser"])
+    assert resp.status_code == 200
+    assert "Invalid scopes" in resp.text
+    session.add.assert_not_called()
+
+
+async def test_create_key_accepts_a_lone_assess_scope():
+    resp, session = await _post_create(["assess:teacher"])
+    assert resp.status_code == 200
+    assert "Key created" in resp.text
+    session.add.assert_called_once()
+    assert session.add.call_args.args[0].scopes == ["assess:teacher"]

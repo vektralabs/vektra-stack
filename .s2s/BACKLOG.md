@@ -2761,6 +2761,21 @@ Storage aligns with the same model as grounding mode: persisted in `namespaces.c
 - [ ] Validated with representative course scenarios
 - [ ] Instructor can enable/disable from Moodle block config
 
+### DEBT-040: Public-repo hygiene: university project name and dev artefacts in published assets
+
+**Status**: planned | **Priority**: low | **Created**: 2026-11-03
+**Related**: vektra-moodle releases v0.3.0, v0.5.0, v0.6.0
+
+**Context**: two leftovers found while closing wave W1, deferred by the product owner.
+
+1. **University project name in a public repo**: `.s2s/BACKLOG.md` still carries the university project name in a widget `data-title` example (the line that shows an "Assistente ..." title). Public content must use "Vektra". Replacing the line is a normal commit. The name stays in git history; rewriting history is a separate maintainer decision.
+2. **Published `block_vektra` release assets are not clean**: the three published zips (v0.3.0, v0.5.0, v0.6.0) contain `docker/`, `.claude/`, `.s2s/` and, in v0.5.0 and v0.6.0, `n8n/`. They hold development-only passwords (docker env example, compose file, entrypoint, READMEs). No real `.env`, no tokens or keys, no university project name. Current `develop` already builds a clean zip (24 entries, allowlist check in `assert-release-zip.sh`). Open decision: delete the old assets, replace them with clean zips, or leave them.
+
+**Acceptance Criteria**:
+- [ ] The university project name no longer appears in any public repo working tree
+- [ ] Decision recorded on the old release assets (delete / replace / keep) and applied
+- [ ] Decision recorded on rewriting history (yes / no)
+
 ---
 
 ## In Progress

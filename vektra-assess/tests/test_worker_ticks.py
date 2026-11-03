@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from typing import Any
 
 import pytest
 
 from vektra_assess.worker.listener import ControlConnectionError
-from vektra_assess.worker.runner import TickSpec
+from vektra_assess.worker.runner import TickBody, TickSpec
 from vektra_assess.worker.ticks import TickScheduler
 
 
@@ -36,7 +37,7 @@ class FakeLocks:
         self.history.append(("unlock", key))
 
 
-def _tick(name: str, body, key: int, **kw) -> TickSpec:
+def _tick(name: str, body: TickBody | None, key: int, **kw: Any) -> TickSpec:
     return TickSpec(
         name,
         interval_s=kw.pop("interval_s", 0.05),
@@ -170,7 +171,7 @@ async def test_timeout_and_failure_are_counted_and_the_lock_is_released(
 async def test_startup_ticks_run_once_in_order_and_are_awaited() -> None:
     locks, order = FakeLocks(), []
 
-    def mk(label: str):
+    def mk(label: str) -> TickBody:
         async def body() -> None:
             await asyncio.sleep(0.02)
             order.append(label)
@@ -218,3 +219,17 @@ def test_duplicate_names_or_keys_are_rejected() -> None:
         TickScheduler(FakeLocks(), [_tick("t", body, 1), _tick("t", body, 2)])
     with pytest.raises(ValueError, match="share one advisory lock key"):
         TickScheduler(FakeLocks(), [_tick("a", body, 1), _tick("b", body, 1)])
+
+
+async def test_stats_sum_skips_into_tick_skipped_for_the_heartbeat_row() -> None:
+    locks = FakeLocks()
+    locks.elsewhere.add(1)
+
+    async def body() -> None: ...
+
+    sch = TickScheduler(locks, [_tick("t", body, 1)])
+    sch.start()
+    await asyncio.sleep(0.2)
+    await sch.stop()
+    ticks = sch.stats()["ticks"]
+    assert ticks["t"]["tick_skipped"] >= 2 and "skipped_locked" not in ticks["t"]

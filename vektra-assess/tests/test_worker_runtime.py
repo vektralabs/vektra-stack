@@ -333,3 +333,28 @@ def test_registration_rules_and_backoff_shape() -> None:
     assert max(steps) <= 40 and steps[-1] >= 20, (
         "capped at 40, jitter keeps at least half"
     )
+
+
+async def test_runtime_stats_carry_the_counters_the_plan_lists() -> None:
+    store = MemStore()
+
+    async def ok(ctx: JobContext) -> None: ...
+
+    async def boom(ctx: JobContext) -> None:
+        raise RuntimeError("x")
+
+    store.add(JobKind.PURGE)
+    store.add(JobKind.SETUP_CHECK, max_attempts=1)
+    rt = _rt(store, pools=[PoolSpec("maintenance", 2)])
+    rt.register_handler(_spec(JobKind.PURGE, ok))
+    rt.register_handler(_spec(JobKind.SETUP_CHECK, boom))
+    await rt.claim_once()
+    await rt.wait_idle()
+    stats = rt.stats()
+    assert stats["pools_in_use"] == {"maintenance": 0}
+    assert {
+        "claimed:purge",
+        "completed:purge",
+        "claimed:setup_check",
+        "dead:setup_check",
+    } <= set(stats["jobs"])

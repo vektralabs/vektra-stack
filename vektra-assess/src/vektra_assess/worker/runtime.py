@@ -233,6 +233,15 @@ class WorkerRuntime:
     def in_flight(self) -> int:
         return len(self._tasks)
 
+    def stats(self) -> dict[str, Any]:
+        """Content-free figures for the heartbeat row: pool occupancy and per-kind counters."""
+        return {
+            "pools_in_use": {n: self._in_use[n] for n in self._pools},
+            "jobs": {
+                f"{what}:{kind.value}": n for (what, kind), n in self.counters.items()
+            },
+        }
+
     # --- one job ---------------------------------------------------------------------------
 
     async def _run_job(self, job: sql.ClaimedJob, spec: HandlerSpec) -> None:

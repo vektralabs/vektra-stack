@@ -23,7 +23,7 @@ import logging
 import random
 from collections import Counter
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 from vektra_assess.worker.listener import ControlConnectionError
 from vektra_assess.worker.runner import TickSpec
@@ -95,6 +95,15 @@ class TickScheduler:
     @property
     def running(self) -> frozenset[str]:
         return frozenset(self._running)
+
+    def stats(self) -> dict[str, Any]:
+        """Per-tick counters for the heartbeat row; skips are summed into ``tick_skipped``."""
+        out: dict[str, dict[str, int]] = {}
+        for (name, event), n in self.counters.items():
+            row = out.setdefault(name, {})
+            key = "tick_skipped" if event.startswith("skipped_") else event
+            row[key] = row.get(key, 0) + n
+        return {"ticks": out}
 
     # --- scheduling ------------------------------------------------------------------------
 

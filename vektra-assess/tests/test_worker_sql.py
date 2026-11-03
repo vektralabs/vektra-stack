@@ -92,3 +92,19 @@ async def test_cleanup_only_touches_done_rows() -> None:
     rec = _Rec(status="DELETE 42")
     assert await sql.cleanup_done(rec, 24, 1000) == 42
     assert rec.calls == [(sql.CLEANUP_DONE, (24, 1000))]
+
+
+async def test_exhausted_expiry_is_listed_then_killed_one_row_at_a_time() -> None:
+    assert "attempts >= max_attempts" in sql.EXHAUSTED_EXPIRED
+    for part in (
+        "id = $1",
+        "state = 'leased'",
+        "lease_until < now()",
+        "attempts >= max_attempts",
+    ):
+        assert part in sql.KILL_EXHAUSTED, part
+    rec = _Rec(rows=[{"id": 3, "kind": "purge", "attempts": 5}])
+    assert await sql.list_exhausted_expired(rec) == [(3, JobKind.PURGE, 5)]
+    assert await sql.kill_exhausted(_Rec(status="UPDATE 1"), 3) is True
+    assert await sql.kill_exhausted(_Rec(status="UPDATE 0"), 3) is False
+    assert await sql.requeue_expired(_Rec(status="UPDATE 4")) == 4

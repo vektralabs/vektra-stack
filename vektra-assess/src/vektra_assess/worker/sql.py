@@ -97,6 +97,21 @@ UPDATE assess_jobs SET
 WHERE state = 'leased' AND lease_until < now() AND attempts >= max_attempts
 """
 
+# Reconciliation splits the exhausted case in two so the audit event comes first: list the
+# candidates, write the audit row for each, then kill that one row if it is still exactly that.
+EXHAUSTED_EXPIRED = """
+SELECT id, kind, attempts FROM assess_jobs
+WHERE state = 'leased' AND lease_until < now() AND attempts >= max_attempts
+ORDER BY id
+"""
+
+KILL_EXHAUSTED = """
+UPDATE assess_jobs SET
+    state = 'dead', lease_until = NULL, done_at = now(),
+    last_error_code = 'lease_expired_exhausted'
+WHERE id = $1 AND state = 'leased' AND lease_until < now() AND attempts >= max_attempts
+"""
+
 CLEANUP_DONE = """
 DELETE FROM assess_jobs WHERE id IN (
     SELECT id FROM assess_jobs
@@ -195,3 +210,19 @@ async def cleanup_done(conn: Conn, retention_h: int, batch: int = 1000) -> int:
 
 async def oldest_ready_age_s(conn: Conn) -> float:
     return float(await conn.fetchval(OLDEST_READY_AGE_S))
+
+
+async def requeue_expired(conn: Conn) -> int:
+    """Expired leases with attempts left go back to ``ready``; returns how many."""
+    return _rowcount(await conn.execute(RECLAIM_EXPIRED))
+
+
+async def list_exhausted_expired(conn: Conn) -> list[tuple[int, JobKind, int]]:
+    """``(id, kind, attempts)`` of leased jobs that expired with no attempt left."""
+    rows = await conn.fetch(EXHAUSTED_EXPIRED)
+    return [(r["id"], JobKind(r["kind"]), r["attempts"]) for r in rows]
+
+
+async def kill_exhausted(conn: Conn, job_id: int) -> bool:
+    """Mark one exhausted-and-expired job dead; False if it changed in the meantime."""
+    return _rowcount(await conn.execute(KILL_EXHAUSTED, job_id)) == 1

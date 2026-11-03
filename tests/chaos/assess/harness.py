@@ -45,6 +45,7 @@ class Worker:
     proc: subprocess.Popen[str]
     name: str
     chaos_dir: Path
+    log_path: Path
 
     def started(self) -> list[Path]:
         return sorted(self.chaos_dir.glob("started-*"))
@@ -59,7 +60,12 @@ class Worker:
         return self.proc.wait(timeout=timeout_s)
 
     def output(self) -> str:
-        return self.proc.stdout.read() if self.proc.stdout else ""
+        """The worker's log. It goes to a FILE, never an unread pipe: a worker writes its logs
+        synchronously, so a full pipe blocks its event loop (found as a 'stall' of this very
+        harness: the process was alive, the watchdog could not run, the log writer was blocked)."""
+        return (
+            self.log_path.read_text(errors="replace") if self.log_path.exists() else ""
+        )
 
     def stop(self) -> None:
         if self.proc.poll() is None:
@@ -92,16 +98,19 @@ def start_worker(
         "VEKTRA_ASSESS_JOB_BACKOFF_BASE_S": "0.2",
         "VEKTRA_ASSESS_JOB_BACKOFF_CAP_S": "1",
         "CHAOS_DIR": str(chaos_dir),
+        "PYTHONFAULTHANDLER": "1",  # SIGABRT dumps every thread: how a wedged worker is inspected
         **env,
     }
-    proc = subprocess.Popen(
-        [sys.executable, str(WORKER_MAIN)],
-        env=full_env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    return Worker(proc, name, chaos_dir)
+    log_path = tmp / f"worker-{name}.log"
+    with log_path.open("w") as log_file:
+        proc = subprocess.Popen(
+            [sys.executable, str(WORKER_MAIN)],
+            env=full_env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    return Worker(proc, name, chaos_dir, log_path)
 
 
 async def wait_until(
@@ -177,3 +186,92 @@ async def enqueue(pg: Any, n: int, *, sleep_ms: int) -> None:
         "jsonb_build_object('n', g, 'sleep_ms', CAST(:s AS integer)) FROM generate_series(1, :n) g",
         {"n": n, "s": sleep_ms},
     )
+
+
+class Proxy:
+    """A TCP proxy that can blackhole: keep every socket open but stop forwarding.
+
+    That is a half-open connection, the failure a database restart or a dropped network leaves
+    behind: no FIN, no RST, no error, only silence. It is the case an ordinary ``close()`` or
+    ``pg_terminate_backend`` cannot reproduce, and the one a client without timeouts waits on forever.
+    """
+
+    def __init__(self, target_host: str, target_port: int) -> None:
+        self._target = (target_host, target_port)
+        self.blackhole = False
+        self._server: Any = None
+        self._tasks: set[Any] = set()
+        self.port = 0
+
+    async def start(self) -> int:
+        import asyncio
+
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+        return self.port
+
+    async def stop(self) -> None:
+        import asyncio
+
+        if self._server is not None:
+            self._server.close()
+        for t in list(self._tasks):
+            t.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+
+    async def _handle(self, client_r: Any, client_w: Any) -> None:
+        import asyncio
+
+        try:
+            up_r, up_w = await asyncio.open_connection(*self._target)
+        except OSError:
+            client_w.close()
+            return
+
+        async def pump(src: Any, dst: Any) -> None:
+            try:
+                while data := await src.read(65536):
+                    if not self.blackhole:  # while blackholed the bytes are swallowed
+                        dst.write(data)
+                        await dst.drain()
+            except (OSError, asyncio.CancelledError):
+                pass
+            finally:
+                dst.close()
+
+        for coro in (pump(client_r, up_w), pump(up_r, client_w)):
+            t = asyncio.ensure_future(coro)
+            self._tasks.add(t)
+            t.add_done_callback(self._tasks.discard)
+
+
+class Supervisor:
+    """Emulates ``restart: unless-stopped``: a worker that exits non-zero is started again.
+
+    The watchdog's answer to a wedged process is to exit 70 and let the supervisor restart it, so
+    the scenarios that can wedge a worker (a database restart leaving half-open sockets) are run
+    under this. ``restarts`` counts how often that happened; ``stop()`` ends the current worker.
+    """
+
+    def __init__(self, pg: Any, tmp: Path, secrets: Path, **env: str) -> None:
+        self._args = (pg, tmp, secrets)
+        self._env = env
+        self.restarts = 0
+        self.exit_codes: list[int] = []
+        self.current = self._start("a")
+
+    def _start(self, name: str) -> Worker:
+        pg, tmp, secrets = self._args
+        return start_worker(
+            pg, tmp, name, secrets, chaos_dir=tmp / f"chaos-{name}", **self._env
+        )
+
+    def tick(self) -> None:
+        code = self.current.proc.poll()
+        if code is not None and code != 0:
+            self.exit_codes.append(code)
+            self.restarts += 1
+            self.current = self._start(f"r{self.restarts}")
+
+    def stop(self) -> None:
+        self.current.stop()

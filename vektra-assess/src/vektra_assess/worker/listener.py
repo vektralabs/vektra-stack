@@ -20,6 +20,7 @@ Lock calls are serialised by an ``asyncio.Lock`` (one connection runs one statem
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 from collections.abc import Awaitable, Callable
@@ -34,6 +35,9 @@ log = logging.getLogger("vektra_assess.worker")
 
 APPLICATION_NAME = "vektra-assess-worker-control"
 _SELFTEST_CHANNEL = "assess_selftest"
+# what a dead or half-open control connection raises: a statement timeout, a reset socket, a server
+# shutdown, a closed interface. Any of them means the session (and its locks) cannot be trusted.
+_LOST = (TimeoutError, OSError, asyncpg.PostgresError, asyncpg.InterfaceError)
 
 
 class ControlConnectionError(RuntimeError):
@@ -48,6 +52,7 @@ class ControlConnection:
         on_notify: Callable[[], None],
         on_lost: Callable[[], Awaitable[None] | None] | None = None,
         connect_timeout_s: float = 5.0,
+        command_timeout_s: float = 5.0,
         selftest_timeout_s: float = 2.0,
         reconnect_base_s: float = 0.5,
         reconnect_cap_s: float = 10.0,
@@ -57,6 +62,7 @@ class ControlConnection:
         self._on_notify = on_notify
         self._on_lost = on_lost
         self._connect_timeout_s = connect_timeout_s
+        self._command_timeout_s = command_timeout_s
         self._selftest_timeout_s = selftest_timeout_s
         self._reconnect = (reconnect_base_s, reconnect_cap_s)
         self._rng = rng
@@ -96,6 +102,7 @@ class ControlConnection:
             conn = await asyncpg.connect(
                 self._dsn,
                 timeout=self._connect_timeout_s,
+                command_timeout=self._command_timeout_s,
                 server_settings={"application_name": APPLICATION_NAME},
             )
         except (OSError, asyncpg.PostgresError, TimeoutError) as exc:
@@ -112,9 +119,13 @@ class ControlConnection:
 
     def _terminated(self, _conn: asyncpg.Connection) -> None:
         # asyncpg calls this when the connection closes, whatever the cause
-        if self._stopping.is_set():
+        self._mark_lost()
+
+    def _mark_lost(self) -> None:
+        """Idempotent: the server released every session lock with the session."""
+        if self._stopping.is_set() or self._lost.is_set():
             return
-        self._held.clear()  # the server released every session lock with the session
+        self._held.clear()
         self._lost.set()
         if self._on_lost is not None:
             result = self._on_lost()
@@ -122,6 +133,22 @@ class ControlConnection:
                 task = asyncio.ensure_future(result)
                 self._bg.add(task)
                 task.add_done_callback(self._bg.discard)
+
+    def _declare_lost(
+        self, conn: asyncpg.Connection, exc: BaseException
+    ) -> ControlConnectionError:
+        """A statement failed or timed out: the connection may be half-open (no FIN, no error).
+
+        It cannot be trusted, so drop the socket without waiting for it, report the loss, and let
+        ``supervise`` reconnect. Returns the error to raise.
+        """
+        log.warning(
+            "assess_control_connection_lost", extra={"error_type": type(exc).__name__}
+        )
+        with contextlib.suppress(Exception):
+            conn.terminate()
+        self._mark_lost()
+        return ControlConnectionError(f"control connection lost: {type(exc).__name__}")
 
     # --- self-test -------------------------------------------------------------------------
 
@@ -160,7 +187,10 @@ class ControlConnection:
         """``pg_try_advisory_lock``: True when this process now holds ``key``."""
         async with self._stmt_lock:
             conn = self._require()
-            got = bool(await conn.fetchval("SELECT pg_try_advisory_lock($1)", key))
+            try:
+                got = bool(await conn.fetchval("SELECT pg_try_advisory_lock($1)", key))
+            except _LOST as exc:
+                raise self._declare_lost(conn, exc) from exc
             if got:
                 self._held.add(key)
             return got
@@ -170,7 +200,11 @@ class ControlConnection:
             self._held.discard(key)
             if self.connected:  # a lost connection already released it
                 assert self._conn is not None
-                await self._conn.fetchval("SELECT pg_advisory_unlock($1)", key)
+                conn = self._conn
+                try:
+                    await conn.fetchval("SELECT pg_advisory_unlock($1)", key)
+                except _LOST as exc:
+                    raise self._declare_lost(conn, exc) from exc
 
     def _require(self) -> asyncpg.Connection:
         if not self.connected:

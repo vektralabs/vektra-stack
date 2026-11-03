@@ -338,11 +338,17 @@ class WorkerRuntime:
                 await self._settle_success(job)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            # a store or audit failure while settling: the lease expires and the job is retried
-            log.exception(
+        except Exception as exc:
+            # A store or audit failure while settling: the lease expires and the job is retried.
+            # The error TYPE is logged, not a traceback: it may carry data, and an outage would
+            # print one per in-flight job.
+            log.warning(
                 "assess_job_settle_failed",
-                extra={"job_id": job.id, "kind": job.kind.value},
+                extra={
+                    "job_id": job.id,
+                    "kind": job.kind.value,
+                    "error_type": type(exc).__name__,
+                },
             )
         finally:
             self._in_use[spec.pool] -= 1

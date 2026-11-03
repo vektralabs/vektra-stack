@@ -76,6 +76,31 @@ class VektraAssessSettings(BaseSettings):
             "refuses to start with it set in any other environment."
         ),
     )
+    worker_db_command_timeout_s: float = Field(
+        30.0,
+        gt=0,
+        le=300,
+        alias="VEKTRA_ASSESS_WORKER_DB_COMMAND_TIMEOUT_S",
+        description=(
+            "Upper bound on any single worker database statement. A database that restarts or a "
+            "network that drops can leave a connection half-open (no FIN, no error, just silence); "
+            "without a bound the worker would wait on it forever. After it the connection is "
+            "discarded and replaced."
+        ),
+    )
+    worker_wedge_exit_s: float = Field(
+        60.0,
+        ge=10,
+        le=600,
+        alias="VEKTRA_ASSESS_WORKER_WEDGE_EXIT_S",
+        description=(
+            "Liveness watchdog: if the worker has not managed to write its heartbeat row for this "
+            "long while it should be ready, it exits with code 70 and the supervisor "
+            "(restart: unless-stopped) starts a fresh process, which reconciles on startup. A "
+            "database connection that went half-open (restart, dropped network) can leave a "
+            "process alive but doing nothing; this is the backstop for any such wedge."
+        ),
+    )
     job_poll_interval_s: float = Field(
         1.0,
         gt=0,

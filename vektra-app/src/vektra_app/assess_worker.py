@@ -84,7 +84,7 @@ def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:
         )
 
 
-def make_engine(url: str, pool_size: int) -> Any:
+def make_engine(url: str, pool_size: int, command_timeout_s: float = 30.0) -> Any:
     """The worker's single pool: it serves the job SQL and the handlers' transactions.
 
     Pool plus the control connection is the 5 + 1 of the connection budget (INT-002): no
@@ -98,7 +98,13 @@ def make_engine(url: str, pool_size: int) -> Any:
         max_overflow=0,
         pool_timeout=5,
         pool_pre_ping=True,
-        connect_args={"server_settings": {"application_name": APPLICATION_NAME}},
+        connect_args={
+            "server_settings": {"application_name": APPLICATION_NAME},
+            # a half-open connection (database restart, dropped network) answers nothing and
+            # raises nothing: without these bounds every worker call would wait on it forever
+            "timeout": 5,
+            "command_timeout": command_timeout_s,
+        },
     )
 
 
@@ -173,7 +179,9 @@ async def _checks() -> Checked:
 
     assert_import_ceiling()
 
-    engine = make_engine(worker_url, settings.worker_pool_size)
+    engine = make_engine(
+        worker_url, settings.worker_pool_size, settings.worker_db_command_timeout_s
+    )
     try:
         await assert_session_role(engine, WORKER_ROLE, step=STEP)
     except BaseException:
@@ -295,6 +303,7 @@ async def _serve(
     from vektra_assess.worker.listener import ControlConnectionError
     from vektra_assess.worker.reconcile import ReconcileError, reconcile
     from vektra_assess.worker.shutdown import shutdown
+    from vektra_assess.worker.watchdog import watchdog
 
     runtime, scheduler, heartbeat, control, acquire_raw, audit = _compose(
         checked, bindings
@@ -310,6 +319,7 @@ async def _serve(
             remediation="Give the worker a direct or session-mode Postgres connection.",
         ) from exc
     supervisor = asyncio.create_task(control.supervise())
+    wedge: asyncio.Task[None] | None = None
     try:
         try:
             await reconcile(control, acquire_raw, audit, scheduler)
@@ -323,6 +333,9 @@ async def _serve(
         await heartbeat.beat()
         scheduler.start()
         run_task = asyncio.create_task(runtime.run())
+        wedge = asyncio.create_task(
+            watchdog(heartbeat, stop, exit_after_s=checked.settings.worker_wedge_exit_s)
+        )
         log.info("assess_worker_started", role=WORKER_ROLE, worker_id=runtime.worker_id)
         await stop.wait()
         released = await shutdown(
@@ -335,6 +348,8 @@ async def _serve(
         )
         log.info("assess_worker_stopped", released=released)
     finally:
+        if wedge is not None:
+            wedge.cancel()
         supervisor.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await supervisor

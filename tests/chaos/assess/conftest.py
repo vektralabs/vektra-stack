@@ -58,8 +58,15 @@ def _alembic(url: str, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-@pytest.fixture(scope="module")
-def pg() -> Iterator[Pg]:
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _migrated_pg(fixed_port: int | None) -> Iterator[Pg]:
     docker = pytest.importorskip("docker", reason="docker SDK not installed")
     try:
         docker.from_env().ping()
@@ -67,7 +74,11 @@ def pg() -> Iterator[Pg]:
         pytest.skip(f"Docker not available: {exc}")
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("pgvector/pgvector:pg16") as c:
+    container = PostgresContainer("pgvector/pgvector:pg16")
+    if fixed_port is not None:
+        # a restarted container must come back on the same host port: the worker's DSN is fixed
+        container = container.with_bind_ports(5432, fixed_port)
+    with container as c:
         url = c.get_connection_url().replace("psycopg2", "asyncpg")
         res = _alembic(url, "upgrade", "head")
         assert res.returncode == 0, res.stderr
@@ -81,3 +92,14 @@ def pg() -> Iterator[Pg]:
 
         asyncio.run(prepare())
         yield handle
+
+
+@pytest.fixture(scope="module")
+def pg() -> Iterator[Pg]:
+    yield from _migrated_pg(None)
+
+
+@pytest.fixture(scope="module")
+def pg_fixed_port() -> Iterator[Pg]:
+    """Postgres on a fixed host port, for the scenarios that restart the container."""
+    yield from _migrated_pg(_free_port())

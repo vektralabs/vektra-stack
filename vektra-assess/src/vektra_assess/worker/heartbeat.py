@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
@@ -55,6 +56,8 @@ class Heartbeat:
         self._stats = stats
         self._started_at = datetime.now(UTC)
         self.state: State = "starting"
+        # monotonic time of the last row written: the watchdog's evidence that the database answers
+        self.last_ok = time.monotonic()
 
     def touch_file(self) -> None:
         try:
@@ -79,6 +82,7 @@ class Heartbeat:
                 **self._stats(),
             }
             await conn.execute(UPSERT, json.dumps(details))
+        self.last_ok = time.monotonic()
 
     def set_state(self, state: State) -> None:
         self.state = state

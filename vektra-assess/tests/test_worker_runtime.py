@@ -265,7 +265,7 @@ async def test_audit_failure_leaves_the_job_leased_and_is_logged(
     (jid,) = store.add(JobKind.PURGE, max_attempts=1)
     rt = _rt(store, Audit(fail=True))
     rt.register_handler(_spec(JobKind.PURGE, boom))
-    with caplog.at_level(logging.ERROR, logger="vektra_assess.worker"):
+    with caplog.at_level(logging.WARNING, logger="vektra_assess.worker"):
         await rt.claim_once()
         await rt.wait_idle()
     assert store.rows[jid]["state"] == "leased", "no audit row, so no dead job"

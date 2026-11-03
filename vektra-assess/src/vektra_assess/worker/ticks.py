@@ -65,6 +65,11 @@ class TickScheduler:
     def start(self) -> None:
         """Start one timer per tick. Startup runs (``run_on_startup``) are the caller's job."""
         for spec in self._ticks:
+            if not spec.bound:
+                # Known unbound (a development start with the override): one line at startup, not
+                # a failure every interval. A production start refuses before reaching here.
+                log.info("assess_tick_unbound", extra={"tick": spec.name})
+                continue
             self._loops.append(asyncio.create_task(self._timer(spec)))
 
     async def stop(self) -> None:
@@ -86,7 +91,7 @@ class TickScheduler:
     async def run_startup_ticks(self) -> None:
         """Run each ``run_on_startup`` tick once, in registration order, and wait for it."""
         for spec in self._ticks:
-            if spec.run_on_startup:
+            if spec.run_on_startup and spec.bound:
                 await self.fire(spec.name)
                 task = self._running.get(spec.name)
                 if task is not None:

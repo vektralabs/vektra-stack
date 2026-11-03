@@ -50,7 +50,11 @@ class JobStore(Protocol):
     """The fenced persistence the runtime needs; ``SqlStore`` is the Postgres implementation."""
 
     async def claim(
-        self, kinds: Sequence[JobKind], worker_id: str, lease_s: float, free: int
+        self,
+        kinds: Sequence[JobKind],
+        worker_id: str,
+        lease_s: float | Mapping[JobKind, float],
+        free: int,
     ) -> list[sql.ClaimedJob]: ...
 
     async def complete(self, job_id: int, worker_id: str, attempt: int) -> bool: ...
@@ -75,7 +79,11 @@ class SqlStore:
         self._acquire = acquire
 
     async def claim(
-        self, kinds: Sequence[JobKind], worker_id: str, lease_s: float, free: int
+        self,
+        kinds: Sequence[JobKind],
+        worker_id: str,
+        lease_s: float | Mapping[JobKind, float],
+        free: int,
     ) -> list[sql.ClaimedJob]:
         async with self._acquire() as conn:
             return await sql.claim(conn, kinds, worker_id, lease_s, free)
@@ -167,6 +175,7 @@ class WorkerRuntime:
         self._stopping = asyncio.Event()
         # per-kind counters, exposed through the heartbeat row (no listening socket)
         self.counters: Counter[tuple[str, JobKind]] = Counter()
+        self.claim_errors = 0
 
     # --- JobRunner -------------------------------------------------------------------------
 
@@ -185,7 +194,19 @@ class WorkerRuntime:
     async def run(self) -> None:
         """Claim and run jobs until ``stop()``. In-flight jobs are left to ``wait_idle``/drain."""
         while not self._stopping.is_set():
-            claimed = await self.claim_once()
+            try:
+                claimed = await self.claim_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # A database restart or a dropped connection must not end the loop: the pool
+                # reconnects, jobs wait in the table, and the next pass claims them. The error
+                # TYPE is logged, never its text.
+                self.claim_errors += 1
+                log.warning(
+                    "assess_claim_failed", extra={"error_type": type(exc).__name__}
+                )
+                claimed = 0
             if claimed:
                 continue  # more may be waiting: do not sleep while there is work
             self._wake.clear()
@@ -215,10 +236,12 @@ class WorkerRuntime:
             free = self.free_slots(pool.name)
             if not specs or free <= 0:
                 continue
-            # a pool shares one lease length (settings enforce it); use the longest to be safe
-            lease_s = max(s.lease_s for s in specs)
+            # each claimed row gets the lease of its own kind
             jobs = await self._store.claim(
-                [s.kind for s in specs], self.worker_id, lease_s, free
+                [s.kind for s in specs],
+                self.worker_id,
+                {s.kind: s.lease_s for s in specs},
+                free,
             )
             for job in jobs:
                 self._start(job, self._handlers[job.kind])
@@ -249,6 +272,7 @@ class WorkerRuntime:
         """Content-free figures for the heartbeat row: pool occupancy and per-kind counters."""
         return {
             "pools_in_use": {n: self._in_use[n] for n in self._pools},
+            "claim_errors": self.claim_errors,
             "jobs": {
                 f"{what}:{kind.value}": n for (what, kind), n in self.counters.items()
             },

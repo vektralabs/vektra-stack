@@ -233,3 +233,24 @@ async def test_stats_sum_skips_into_tick_skipped_for_the_heartbeat_row() -> None
     await sch.stop()
     ticks = sch.stats()["ticks"]
     assert ticks["t"]["tick_skipped"] >= 2 and "skipped_locked" not in ticks["t"]
+
+
+async def test_unbound_ticks_are_not_scheduled_and_never_counted_as_failures() -> None:
+    locks = FakeLocks()
+    bound_hits: list[int] = []
+
+    async def body() -> None:
+        bound_hits.append(1)
+
+    sch = TickScheduler(
+        locks, [_tick("bound", body, 1), _tick("unbound", None, 2, run_on_startup=True)]
+    )
+    sch.start()
+    await sch.run_startup_ticks()
+    await asyncio.sleep(0.2)
+    await sch.stop()
+    assert bound_hits
+    assert (
+        sch.counters[("unbound", "failed")] == 0
+        and sch.counters[("unbound", "started")] == 0
+    )

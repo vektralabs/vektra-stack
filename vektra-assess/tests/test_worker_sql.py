@@ -63,7 +63,9 @@ async def test_claim_passes_kind_values_worker_lease_and_free_slots() -> None:
         ]
     )
     jobs = await sql.claim(rec, [JobKind.PURGE, JobKind.SETUP_CHECK], "w1", 120.0, 3)
-    assert rec.calls == [(sql.CLAIM, (["purge", "setup_check"], "w1", 120.0, 3))]
+    assert rec.calls == [
+        (sql.CLAIM, (["purge", "setup_check"], "w1", [120.0, 120.0], 3))
+    ]
     assert jobs == [sql.ClaimedJob(5, JobKind.PURGE, {"k": 1}, 1, 5)]
 
 
@@ -108,3 +110,24 @@ async def test_exhausted_expiry_is_listed_then_killed_one_row_at_a_time() -> Non
     assert await sql.kill_exhausted(_Rec(status="UPDATE 1"), 3) is True
     assert await sql.kill_exhausted(_Rec(status="UPDATE 0"), 3) is False
     assert await sql.requeue_expired(_Rec(status="UPDATE 4")) == 4
+
+
+async def test_claim_passes_one_lease_per_kind_in_kind_order() -> None:
+    rec = _Rec()
+    await sql.claim(
+        rec,
+        [JobKind.PURGE, JobKind.SETUP_CHECK, JobKind.ERASURE],
+        "w1",
+        {JobKind.PURGE: 8.0, JobKind.SETUP_CHECK: 240.0, JobKind.ERASURE: 120.0},
+        2,
+    )
+    assert rec.calls[0][1] == (
+        ["purge", "setup_check", "erasure"],
+        "w1",
+        [8.0, 240.0, 120.0],
+        2,
+    )
+    assert (
+        "unnest($1::text[], $3::float8[])" in sql.CLAIM
+        and "assess_jobs.kind" in sql.CLAIM
+    )

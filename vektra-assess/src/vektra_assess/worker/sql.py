@@ -36,7 +36,10 @@ class Conn(Protocol):
 CLAIM = """
 UPDATE assess_jobs SET
     state = 'leased',
-    lease_until = now() + make_interval(secs => $3),
+    lease_until = now() + make_interval(secs => (
+        SELECT t.lease FROM unnest($1::text[], $3::float8[]) AS t(kind, lease)
+        WHERE t.kind = assess_jobs.kind
+    )),
     attempts = attempts + 1,
     leased_by = $2
 WHERE id IN (
@@ -146,12 +149,24 @@ def _args(raw: Any) -> Mapping[str, str | int]:
 
 
 async def claim(
-    conn: Conn, kinds: Sequence[JobKind], worker_id: str, lease_s: float, free: int
+    conn: Conn,
+    kinds: Sequence[JobKind],
+    worker_id: str,
+    lease_s: float | Mapping[JobKind, float],
+    free: int,
 ) -> list[ClaimedJob]:
-    """Claim up to ``free`` jobs of ``kinds``: never more than the pool has free slots."""
+    """Claim up to ``free`` jobs of ``kinds``: never more than the pool has free slots.
+
+    ``lease_s`` is one number for all kinds or a mapping per kind: each claimed row gets the lease
+    of ITS kind (a short-lived kind must not inherit the longest lease of its pool, or a crashed
+    worker's jobs would wait for that longer expiry).
+    """
     if free <= 0:
         return []
-    rows = await conn.fetch(CLAIM, [k.value for k in kinds], worker_id, lease_s, free)
+    leases = [
+        float(lease_s[k] if isinstance(lease_s, Mapping) else lease_s) for k in kinds
+    ]
+    rows = await conn.fetch(CLAIM, [k.value for k in kinds], worker_id, leases, free)
     return [
         ClaimedJob(
             id=r["id"],

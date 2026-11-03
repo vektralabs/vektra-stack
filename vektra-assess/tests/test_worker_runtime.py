@@ -420,3 +420,32 @@ async def test_a_job_that_finished_while_cancelling_is_not_counted_as_released()
     await rt.claim_once()
     assert await rt.drain(timeout_s=0.05) == 0
     assert store.rows[jid]["state"] == "done"
+
+
+async def test_run_loop_survives_database_errors_and_keeps_claiming() -> None:
+    class Flaky(MemStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next = 3
+
+        async def claim(self, kinds, worker_id, lease_s, free):  # type: ignore[no-untyped-def]
+            if self.fail_next:
+                self.fail_next -= 1
+                raise ConnectionError("student 4711: the server closed the connection")
+            return await super().claim(kinds, worker_id, lease_s, free)
+
+    store, done = Flaky(), []
+
+    async def ok(ctx: JobContext) -> None:
+        done.append(ctx.job_id)
+
+    store.add(JobKind.PURGE)
+    rt = _rt(store, poll_interval_s=0.02)
+    rt.register_handler(_spec(JobKind.PURGE, ok))
+    task = asyncio.create_task(rt.run())
+    await asyncio.sleep(0.3)
+    await rt.stop()
+    await asyncio.wait_for(task, timeout=1)
+    await rt.wait_idle()
+    assert len(done) == 1, "the loop outlived three failed claims"
+    assert rt.claim_errors == 3 and rt.stats()["claim_errors"] == 3

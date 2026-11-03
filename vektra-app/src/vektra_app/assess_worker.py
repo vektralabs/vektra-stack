@@ -194,7 +194,7 @@ def _version() -> str:
         return "unknown"
 
 
-def _compose(checked: Checked) -> Any:
+def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     """Build runtime, scheduler, heartbeat and control; nothing is started or connected yet."""
     from vektra_assess.worker.audit import make_audit
     from vektra_assess.worker.cleanup import cleanup_done_jobs
@@ -260,11 +260,13 @@ def _compose(checked: Checked) -> Any:
     async def cleanup() -> None:
         await cleanup_done_jobs(acquire_raw, settings.job_done_retention_h)
 
+    extra = bindings or Bindings(handlers={}, ticks={})
     slots = build_slots(
         policy,
         settings,
         Bindings(
-            handlers={}, ticks={"heartbeat": heartbeat.beat, "job_cleanup": cleanup}
+            handlers=extra.handlers,
+            ticks={"heartbeat": heartbeat.beat, "job_cleanup": cleanup, **extra.ticks},
         ),
     )
     try:
@@ -287,12 +289,16 @@ def _compose(checked: Checked) -> Any:
     return runtime, scheduler, heartbeat, control, acquire_raw, audit
 
 
-async def _serve(checked: Checked, stop: asyncio.Event) -> None:
+async def _serve(
+    checked: Checked, stop: asyncio.Event, bindings: Any | None = None
+) -> None:
     from vektra_assess.worker.listener import ControlConnectionError
     from vektra_assess.worker.reconcile import ReconcileError, reconcile
     from vektra_assess.worker.shutdown import shutdown
 
-    runtime, scheduler, heartbeat, control, acquire_raw, audit = _compose(checked)
+    runtime, scheduler, heartbeat, control, acquire_raw, audit = _compose(
+        checked, bindings
+    )
     try:
         await (
             control.start()
@@ -356,7 +362,7 @@ def check_imports() -> None:
     print("ceiling ok")
 
 
-async def _amain() -> int:
+async def _amain(bindings: Any | None = None) -> int:
     from vektra_assess.config import VektraAssessSettings
     from vektra_assess.worker.shutdown import install_signal_handlers
 
@@ -375,7 +381,7 @@ async def _amain() -> int:
     stop = asyncio.Event()
     remove_handlers = install_signal_handlers(stop)
     try:
-        await _serve(checked, stop)
+        await _serve(checked, stop, bindings)
     except StartupValidationError as exc:
         print(exc.to_plain_text(), file=sys.stderr)
         return 1
@@ -385,11 +391,13 @@ async def _amain() -> int:
     return 0
 
 
-def main() -> None:
+def main(bindings: Any | None = None) -> None:
+    """Entry point. ``bindings`` is a test seam: the chaos harness binds its own bodies to
+    production slots; ``python -m vektra_app.assess_worker`` always runs with ``None``."""
     if "--check-imports" in sys.argv[1:]:
         check_imports()
         raise SystemExit(0)
-    raise SystemExit(asyncio.run(_amain()))
+    raise SystemExit(asyncio.run(_amain(bindings)))
 
 
 if __name__ == "__main__":

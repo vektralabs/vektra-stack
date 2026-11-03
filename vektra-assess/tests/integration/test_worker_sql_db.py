@@ -221,3 +221,30 @@ async def test_oldest_ready_age_ignores_future_and_leased_rows(pg):
         assert 85 <= age <= 120, age
     finally:
         await c.close()
+
+
+async def test_each_kind_gets_the_lease_of_its_own_kind_not_its_pools_longest(pg):
+    """Found by the chaos harness: one lease per pool made a short kind wait for the longest."""
+    await pg.run("super", "DELETE FROM assess_jobs")
+    await pg.run(
+        "super", "INSERT INTO assess_jobs (kind) VALUES ('purge'), ('setup_check')"
+    )
+    c = await asyncpg.connect(_dsn(pg, "worker"))
+    try:
+        got = await sql.claim(
+            c,
+            [JobKind.PURGE, JobKind.SETUP_CHECK],
+            "w",
+            {JobKind.PURGE: 8.0, JobKind.SETUP_CHECK: 240.0},
+            5,
+        )
+        assert len(got) == 2
+        rows = await pg.run(
+            "super",
+            "SELECT kind, extract(epoch FROM lease_until - now()) FROM assess_jobs ORDER BY kind",
+        )
+        by = {r[0]: float(r[1]) for r in rows}
+        assert 5 <= by["purge"] <= 8.5, by
+        assert 230 <= by["setup_check"] <= 240.5, by
+    finally:
+        await c.close()

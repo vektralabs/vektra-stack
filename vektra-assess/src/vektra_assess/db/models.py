@@ -340,6 +340,7 @@ class JobOrm(Base):
     max_attempts: Mapped[int] = mapped_column(INTEGER, server_default=text("5"))
     created_at: Mapped[datetime] = _ts(default=True)
     done_at: Mapped[datetime | None] = _ts(nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(TEXT)
 
 
 class RenderCheckOrm(Base):

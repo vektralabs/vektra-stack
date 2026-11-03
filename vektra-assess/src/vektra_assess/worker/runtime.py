@@ -63,6 +63,8 @@ class JobStore(Protocol):
         self, job_id: int, worker_id: str, attempt: int, code: str
     ) -> bool: ...
 
+    async def release(self, job_id: int, worker_id: str, attempt: int) -> bool: ...
+
 
 class SqlStore:
     """``JobStore`` over ``worker.sql``; each call takes a short-lived connection."""
@@ -93,6 +95,10 @@ class SqlStore:
     ) -> bool:
         async with self._acquire() as conn:
             return await sql.mark_dead(conn, job_id, worker_id, attempt, code)
+
+    async def release(self, job_id: int, worker_id: str, attempt: int) -> bool:
+        async with self._acquire() as conn:
+            return await sql.release(conn, job_id, worker_id, attempt)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +162,7 @@ class WorkerRuntime:
         self._handlers: dict[JobKind, HandlerSpec] = {}
         self._ticks: dict[str, TickSpec] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self._jobs: dict[asyncio.Task[None], sql.ClaimedJob] = {}
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
         # per-kind counters, exposed through the heartbeat row (no listening socket)
@@ -223,7 +230,12 @@ class WorkerRuntime:
         self.counters[("claimed", job.kind)] += 1
         task = asyncio.create_task(self._run_job(job, spec))
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._jobs[task] = job
+        task.add_done_callback(self._forget)
+
+    def _forget(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        self._jobs.pop(task, None)
 
     async def wait_idle(self) -> None:
         while self._tasks:
@@ -241,6 +253,43 @@ class WorkerRuntime:
                 f"{what}:{kind.value}": n for (what, kind), n in self.counters.items()
             },
         }
+
+    async def drain(self, timeout_s: float) -> int:
+        """Shutdown: wait up to ``timeout_s`` for in-flight jobs, cancel the rest and release them.
+
+        Call after ``run()`` has returned (no new claim can start). A cancelled job goes back to
+        ``ready`` at once (fenced; the aborted run does not count as an attempt) so the next worker
+        takes it immediately instead of after the lease expires. A job that finished while we were
+        cancelling matches no row on release and is simply not counted. Returns how many jobs were
+        released.
+        """
+        tasks = set(self._tasks)
+        if not tasks:
+            return 0
+        _, pending = await asyncio.wait(tasks, timeout=timeout_s)
+        if not pending:
+            return 0
+        held = {t: self._jobs[t] for t in pending if t in self._jobs}
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        released = 0
+        for job in held.values():
+            try:
+                if await self._store.release(job.id, self.worker_id, job.attempt):
+                    released += 1
+                    self.counters[("released", job.kind)] += 1
+            except Exception:
+                # the lease expires and the job is retried: slower, never lost
+                log.exception(
+                    "assess_job_release_failed",
+                    extra={"job_id": job.id, "kind": job.kind.value},
+                )
+        log.info(
+            "assess_worker_drained",
+            extra={"cancelled": len(pending), "released": released},
+        )
+        return released
 
     # --- one job ---------------------------------------------------------------------------
 

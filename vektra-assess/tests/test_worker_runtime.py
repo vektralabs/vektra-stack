@@ -79,6 +79,12 @@ class MemStore:
             r.update(state="ready", owner=None, code=code, backoff=backoff)
         return r is not None
 
+    async def release(self, jid: int, worker: str, attempt: int) -> bool:
+        r = self._fenced(jid, worker, attempt)
+        if r:
+            r.update(state="ready", owner=None, attempts=r["attempts"] - 1)
+        return r is not None
+
     async def mark_dead(self, jid: int, worker: str, attempt: int, code: str) -> bool:
         r = self._fenced(jid, worker, attempt)
         if r:
@@ -358,3 +364,59 @@ async def test_runtime_stats_carry_the_counters_the_plan_lists() -> None:
         "claimed:setup_check",
         "dead:setup_check",
     } <= set(stats["jobs"])
+
+
+async def test_drain_waits_for_quick_jobs_and_releases_the_stuck_ones() -> None:
+    store, gate = MemStore(), asyncio.Event()
+    quick_done: list[int] = []
+
+    async def stuck(ctx: JobContext) -> None:
+        await gate.wait()  # never set: only cancellation ends it
+
+    async def quick(ctx: JobContext) -> None:
+        await asyncio.sleep(0.05)
+        quick_done.append(ctx.job_id)
+
+    stuck_ids = store.add(JobKind.PURGE, 2)
+    (q,) = store.add(JobKind.SETUP_CHECK)
+    rt = _rt(store, pools=[PoolSpec("maintenance", 3)])
+    rt.register_handler(_spec(JobKind.PURGE, stuck, budget_s=60, lease_s=120))
+    rt.register_handler(_spec(JobKind.SETUP_CHECK, quick))
+    await rt.claim_once()
+    released = await rt.drain(timeout_s=0.5)
+    assert quick_done == [q] and store.rows[q]["state"] == "done"
+    assert released == 2
+    for jid in stuck_ids:
+        assert (
+            store.rows[jid]["state"],
+            store.rows[jid]["owner"],
+            store.rows[jid]["attempts"],
+        ) == ("ready", None, 0)
+    assert rt.in_flight == 0 and rt.free_slots("maintenance") == 3
+    assert rt.counters[("released", JobKind.PURGE)] == 2
+
+
+async def test_drain_with_nothing_in_flight_is_a_no_op() -> None:
+    assert await _rt(MemStore()).drain(0.1) == 0
+
+
+async def test_a_job_that_finished_while_cancelling_is_not_counted_as_released() -> (
+    None
+):
+    store = MemStore()
+    (jid,) = store.add(JobKind.PURGE)
+
+    async def finishes_late(ctx: JobContext) -> None:
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            store.rows[jid]["state"] = (
+                "done"  # it completed elsewhere before the release
+            )
+            raise
+
+    rt = _rt(store, pools=[PoolSpec("maintenance", 1)])
+    rt.register_handler(_spec(JobKind.PURGE, finishes_late, budget_s=60, lease_s=120))
+    await rt.claim_once()
+    assert await rt.drain(timeout_s=0.05) == 0
+    assert store.rows[jid]["state"] == "done"

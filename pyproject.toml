@@ -208,7 +208,7 @@ forbidden_modules = ["vektra_core", "vektra_analytics", "vektra_learn", "vektra_
 [[tool.importlinter.contracts]]
 name = "only vektra_assess.worker imports vektra_assess.moodle and parser_client"
 type = "forbidden"
-source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar"]
+source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar"]
 forbidden_modules = ["vektra_assess.moodle", "vektra_assess.worker.parser_client"]
 
 # (e) the worker's import ceiling: no ML stack, vector store client or document parser
@@ -225,7 +225,7 @@ forbidden_modules = ["sentence_transformers", "torch", "transformers", "qdrant_c
 name = "vektra_assess.parser_sidecar imports only parser_protocol"
 type = "forbidden"
 source_modules = ["vektra_assess.parser_sidecar"]
-forbidden_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.worker", "vektra_assess.moodle", "vektra_shared", "vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app", "sqlalchemy", "asyncpg", "httpx", "litellm", "pydantic", "pydantic_settings", "structlog", "fastapi"]
+forbidden_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.worker", "vektra_assess.moodle", "vektra_shared", "vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app", "sqlalchemy", "asyncpg", "httpx", "litellm", "pydantic", "pydantic_settings", "structlog", "fastapi"]
 
 # (g) the API entry never reaches the parser entry: parsing happens in the sidecar only
 [[tool.importlinter.contracts]]

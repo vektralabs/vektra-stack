@@ -229,6 +229,15 @@ type = "forbidden"
 source_modules = ["vektra_assess.parser_sidecar"]
 forbidden_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.worker", "vektra_assess.moodle", "vektra_shared", "vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app", "sqlalchemy", "asyncpg", "httpx", "litellm", "pydantic", "pydantic_settings", "structlog", "fastapi"]
 
+# (h) the API never reaches the worker (plan assess-job-loop): the worker holds the KEK, the Moodle
+# tokens and the SMTP account, and the API process must not be able to import any of that code. The
+# outbox helper `vektra_assess.jobs` is the API-safe seam and is not under `worker`.
+[[tool.importlinter.contracts]]
+name = "vektra_assess.api and vektra_app.main must not import vektra_assess.worker"
+type = "forbidden"
+source_modules = ["vektra_assess.api", "vektra_app.main"]
+forbidden_modules = ["vektra_assess.worker"]
+
 # (g) the API entry never reaches the parser entry: parsing happens in the sidecar only
 [[tool.importlinter.contracts]]
 name = "vektra_app.main must not import the parser entry"

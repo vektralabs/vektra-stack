@@ -10,7 +10,9 @@
   system store; plain http only with ``VEKTRA_ENV=development`` and ``..._ALLOW_HTTP=true``;
 - the token travels in the POST body (``wstoken``), never in a URL that could be logged;
 - the response is streamed with a byte cap and aborted on overflow;
-- the per-site breaker and the global token bucket are consulted before any traffic;
+- the per-site breaker and the token bucket are consulted before any traffic. Both are
+  in-memory and per worker process (single replica, COMP-003): "global" means shared by every
+  caller in that process, not across replicas;
 - logging carries wsfunction, site_id, http status, duration_ms, bytes and the Moodle
   errorcode. Never a body, a parameter, a URL or the token.
 """
@@ -20,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 import ssl
 import time
@@ -32,7 +35,7 @@ import httpx
 import structlog
 
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.breaker import BreakerRegistry
+from vektra_assess.moodle.breaker import BreakerRegistry, BreakerState
 from vektra_assess.moodle.errors import (
     error_code,
     is_error_envelope,
@@ -49,6 +52,38 @@ from vektra_shared.netguard import (
 )
 
 log = structlog.get_logger()
+
+_TOKEN_IN_TEXT = re.compile(r"((?:ws)?token=)[^&\s\"')]+", re.IGNORECASE)
+_HTTP_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "httpcore.connection",
+    "httpcore.http11",
+    "httpcore.http2",
+    "httpcore.proxy",
+)
+
+
+class _RedactTokens(logging.Filter):
+    """Redacts ``token=`` / ``wstoken=`` values in the FORMATTED record.
+
+    httpx logs every request URL, query included, and file downloads carry the token in
+    the query. A level is a mutable global (a later ``basicConfig(level=DEBUG)`` lowers
+    it); a filter on the loggers survives that.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            text = record.getMessage()
+        except Exception:
+            text = str(record.msg)
+        if "token=" in text.lower():
+            record.msg = _TOKEN_IN_TEXT.sub(r"\1<redacted>", text)
+            record.args = None
+        return True
+
+
+_REDACTOR = _RedactTokens()
 
 REST_PATH = "/webservice/rest/server.php"
 FILE_PATH = "/webservice/pluginfile.php"
@@ -117,6 +152,10 @@ class MoodleWsClient:
             verify = ssl.create_default_context(cafile=str(settings.moodle_ca_file))
         # httpx logs every request URL at INFO and file downloads carry the token in the
         # query: keep those loggers quiet, whatever the application's logging level
+        for noisy in _HTTP_LOGGERS:
+            lg = logging.getLogger(noisy)
+            if _REDACTOR not in lg.filters:
+                lg.addFilter(_REDACTOR)
         for noisy in ("httpx", "httpcore"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
         self._http = httpx.AsyncClient(
@@ -149,13 +188,15 @@ class MoodleWsClient:
         size = 0
         code = ""
         result: Reading[Any]
-        breaker = self._breakers.for_site(site.site_id)
-        if not breaker.allow():
+        if not await self._admit(site):
             result = Unreadable(UnreadableReason.BREAKER_OPEN)
         else:
-            result, status, size, code = await self._exchange(
-                site, wsfunction, params or {}
-            )
+            try:
+                result, status, size, code = await self._exchange(
+                    site, wsfunction, params or {}
+                )
+            except Exception:  # RecursionError on a hostile document included
+                result = Unreadable(UnreadableReason.UNKNOWN_SHAPE, "client_error")
         log.info(
             "moodle_ws_call",
             wsfunction=wsfunction,
@@ -167,6 +208,19 @@ class MoodleWsClient:
             outcome="ok" if isinstance(result, Readable) else result.reason.value,
         )
         return result
+
+    async def _admit(self, site: SiteRef) -> bool:
+        """Breaker and rate cap, in an order that cannot strand the half-open probe.
+
+        An open breaker answers at once. Otherwise the limiter token is awaited FIRST and
+        only then does ``allow()`` take the half-open probe slot: waiting for a token must
+        not hold the one slot that lets the breaker recover.
+        """
+        breaker = self._breakers.for_site(site.site_id)
+        if breaker.state is BreakerState.OPEN:
+            return False
+        await self._limiter.acquire()
+        return breaker.allow()
 
     async def _exchange(
         self, site: SiteRef, wsfunction: str, params: Mapping[str, Any]
@@ -215,21 +269,24 @@ class MoodleWsClient:
         after ``/webservice/pluginfile.php``; the host of any URL Moodle returned is never used.
         """
         started = time.perf_counter()
-        breaker = self._breakers.for_site(site.site_id)
         token = self._token_for(site.site_id)
         status: int | None = None
         size = 0
-        if not breaker.allow():
-            result: Reading[bytes] = Unreadable(UnreadableReason.BREAKER_OPEN)
+        result: Reading[bytes]
+        if not await self._admit(site):
+            result = Unreadable(UnreadableReason.BREAKER_OPEN)
         else:
-            result, status, size = await self._send(
-                site,
-                "GET",
-                FILE_PATH + path,
-                token=token,
-                query={"token": token or ""},
-                cap=self._s.ws_max_file_bytes,
-            )
+            try:
+                result, status, size = await self._send(
+                    site,
+                    "GET",
+                    FILE_PATH + path,
+                    token=token,
+                    query={"token": token or ""},
+                    cap=self._s.ws_max_file_bytes,
+                )
+            except Exception:
+                result = Unreadable(UnreadableReason.UNKNOWN_SHAPE, "client_error")
         log.info(
             "moodle_file_fetch",
             site_id=site.site_id,
@@ -291,6 +348,7 @@ class MoodleWsClient:
                 site.base_url.rstrip("/") + path,
                 allowed_hosts=[parts.hostname or ""],
                 allowed_cidrs=self._cidrs(),
+                allow_loopback=self._s.env == "development",
                 resolver=self._resolver,
             )
         except ResolutionFailed:
@@ -308,7 +366,6 @@ class MoodleWsClient:
                 0,
             )
 
-        await self._limiter.acquire()
         try:
             async with (
                 asyncio.timeout(self._s.ws_total_timeout_s),

@@ -86,8 +86,23 @@ def resolve_pinned(
     allowed_hosts: Iterable[str],
     allowed_cidrs: Iterable[str] = (),
     deny_private: bool = True,
+    allow_loopback: bool = False,
     resolver: Resolver = socket.getaddrinfo,
 ) -> PinnedTarget:
+    """Validate ``url`` and pin it to one resolved address.
+
+    ``allowed_hosts`` is the caller's allowlist. A caller that builds the URL from a
+    registered base URL and passes that URL's own host (as the assess Moodle client does)
+    makes this check tautological ON PURPOSE: the registered URL is written only by
+    operator provisioning, so the host is trusted by construction and the real guard here
+    is the address check below.
+
+    A CIDR allowlist opens exactly the networks it names, but loopback is never among
+    them unless ``allow_loopback`` is True (development only): an ``allowed_cidrs`` that
+    happens to cover 127.0.0.0/8 or a wide internal range does not make the machine's own
+    services reachable. Unspecified, multicast and link-local (cloud metadata) addresses
+    are always refused.
+    """
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise EgressDenied("only http and https URLs are allowed")
@@ -124,6 +139,11 @@ def resolve_pinned(
         if reason := _always_denied(ip):
             raise EgressDenied(f"{host!r} resolves to a {reason}")
         if networks:
+            if ip.is_loopback and not allow_loopback:
+                raise EgressDenied(
+                    f"{host!r} resolves to a loopback address (not allowed even "
+                    "inside an allowed network)"
+                )
             if not any(ip in net for net in networks):
                 raise EgressDenied(f"{host!r} resolves outside the allowed networks")
         elif deny_private and (not ip.is_global or ip.is_loopback or ip.is_reserved):

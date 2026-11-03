@@ -461,11 +461,121 @@ async def test_dns_failure_trips_the_breaker_and_local_refusals_do_not():
     assert (await c2.call(SITE, "f")).reason is UnreadableReason.BREAKER_OPEN  # type: ignore[union-attr]
 
 
-async def test_the_file_download_token_never_reaches_the_logs(caplog):
+async def test_the_file_download_token_never_reaches_the_stdlib_http_logs(caplog):
+    """httpx logs the request URL, query included, on the stdlib `httpx` logger. A level is
+    a mutable global, so the logger is forced to DEBUG AFTER the client was built (a later
+    `basicConfig(level=DEBUG)`): the redaction filter must hold regardless."""
     import logging
 
-    caplog.set_level(logging.INFO)
     client = make(lambda r: httpx.Response(200, content=b"data"))
-    res = await client.fetch_file(SITE, "/1/mod_assign/submission_files/9/f.txt")
+    httpx_logger = logging.getLogger("httpx")
+    old = httpx_logger.level
+    httpx_logger.setLevel(logging.DEBUG)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            res = await client.fetch_file(
+                SITE, "/1/mod_assign/submission_files/9/f.txt"
+            )
+    finally:
+        httpx_logger.setLevel(old)
     assert isinstance(res, Readable)
+    records = [r for r in caplog.records if r.name == "httpx"]
+    texts = [r.getMessage() for r in records]
+    assert any("pluginfile.php" in t for t in texts), (
+        "no httpx record: the test is vacuous"
+    )
+    assert not [t for t in texts if TOKEN in t], texts
+    assert any("token=<redacted>" in t for t in texts), texts
     assert TOKEN not in caplog.text
+
+
+def test_the_redaction_filter_handles_formatted_args_and_other_spellings():
+    import logging
+
+    from vektra_assess.moodle.client import _REDACTOR
+
+    rec = logging.LogRecord(
+        "httpx", logging.INFO, "", 0,
+        'HTTP Request: %s %s "%s"',
+        ("GET", "https://1.2.3.4/x?wstoken=SECRET1&token=SECRET2&a=b", "HTTP/1.1 200 OK"),
+        None,
+    )  # fmt: skip
+    assert _REDACTOR.filter(rec)
+    out = rec.getMessage()
+    assert "SECRET" not in out and "a=b" in out and out.count("<redacted>") == 2
+
+
+async def test_a_loopback_resolution_is_refused_outside_development():
+    prod = settings(
+        VEKTRA_ENV="production", VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
+    )
+    res = await make(ok({}), s=prod, ip="127.0.0.1").call(SITE, "f")
+    assert isinstance(res, Unreadable) and res.detail_code == "egress_denied"
+    dev = settings(
+        VEKTRA_ENV="development", VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS="127.0.0.0/8"
+    )
+    assert isinstance(
+        await make(ok({"a": 1}), s=dev, ip="127.0.0.1").call(SITE, "f"), Readable
+    )
+
+
+async def test_a_hostile_deeply_nested_document_never_escapes_call_or_fetch_file(
+    monkeypatch,
+):
+    # a document that parses (json is under its own recursion limit) and then blows the
+    # stack in shape analysis: the contract says call() never raises
+    import vektra_assess.moodle.client as client_mod
+
+    def explode(*_a, **_k):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(client_mod, "evidence_for", explode)
+    nested = {"a": json.loads(("[" * 900 + "]" * 900).encode())}
+    c = make(lambda r: httpx.Response(200, json=nested))
+    res = await c.call(SITE, "mod_quiz_get_quizzes_by_courses")
+    assert isinstance(res, Unreadable) and res.detail_code == "client_error"
+    # and a file fetch whose post-processing raises is contained too
+    c2 = make(lambda r: httpx.Response(200, content=b"x"))
+
+    async def boom(*_a, **_k):
+        raise RecursionError
+
+    c2._send = boom  # type: ignore[method-assign]
+    res2 = await c2.fetch_file(SITE, "/p")
+    assert isinstance(res2, Unreadable) and res2.detail_code == "client_error"
+    assert c2._breakers.for_site(SITE.site_id).state is BreakerState.CLOSED
+
+
+async def test_a_slow_rate_limiter_does_not_strand_the_half_open_probe_slot():
+    class Clock:
+        t = 0.0
+
+        def __call__(self):
+            return self.t
+
+    clock = Clock()
+    reg = BreakerRegistry(threshold=1, cooldown_s=10, clock=clock)  # type: ignore[arg-type]
+    breaker = reg.for_site(SITE.site_id)
+    breaker.record_failure()
+    clock.t = 11.0  # cooled down: half-open, one probe allowed
+    assert breaker.state is BreakerState.HALF_OPEN
+
+    gate = asyncio.Event()
+    waiting = asyncio.Event()
+
+    async def slow_sleep(_s: float) -> None:
+        waiting.set()
+        await gate.wait()
+
+    limiter = AsyncTokenBucket(1.0, burst=1.0, sleep=slow_sleep)
+    await limiter.acquire()  # drain the burst: the next acquire has to wait
+    client = make(ok({"a": 1}), breakers=reg, limiter=limiter)  # type: ignore[arg-type]
+    task = asyncio.create_task(client.call(SITE, "f"))
+    await asyncio.wait_for(waiting.wait(), 2)
+    # the call is parked on the limiter: it must NOT be holding the probe slot
+    assert breaker._probe_in_flight is False
+    gate.set()
+    limiter._clock = lambda: 100.0  # type: ignore[attr-defined]
+    res = await asyncio.wait_for(task, 5)
+    assert isinstance(res, Readable)
+    assert breaker.state is BreakerState.CLOSED

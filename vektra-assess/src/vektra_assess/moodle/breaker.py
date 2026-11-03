@@ -3,7 +3,7 @@
 closed -> open after ``threshold`` consecutive transport/5xx failures; open for
 ``cooldown_s``; then half-open, which lets exactly ONE probe through. Success closes it,
 failure re-opens it. Open means ``Unreadable(breaker_open)``, never an error page.
-In-memory in the single worker process (COMP-003). The clock is injectable for tests.
+In-memory and per worker process (single replica, COMP-003): replicas do not share state. The clock is injectable for tests.
 """
 
 from __future__ import annotations

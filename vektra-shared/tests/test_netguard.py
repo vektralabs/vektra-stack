@@ -211,3 +211,38 @@ def test_resolution_failure_and_empty_answer_are_refused_without_leaking_the_que
         )
     except EgressDenied as exc:
         assert "SECRET" not in str(exc)
+
+
+@pytest.mark.parametrize(
+    ("cidr", "ip"),
+    [("127.0.0.0/8", "127.0.0.1"), ("::1/128", "::1"), ("0.0.0.0/0", "127.0.0.9")],
+)
+def test_loopback_is_denied_even_inside_an_allowed_cidr_unless_development(cidr, ip):
+    kw = {
+        "allowed_hosts": ["m.example.org"],
+        "allowed_cidrs": [cidr],
+        "resolver": fake(ip),
+    }
+    with pytest.raises(EgressDenied, match="loopback"):
+        resolve_pinned("https://m.example.org/", **kw)
+    t = resolve_pinned("https://m.example.org/", allow_loopback=True, **kw)
+    assert t.ip == ip
+
+
+def test_allow_loopback_does_not_open_other_ranges_or_metadata():
+    with pytest.raises(EgressDenied, match="outside the allowed networks"):
+        resolve_pinned(
+            "https://m.example.org/",
+            allowed_hosts=["m.example.org"],
+            allowed_cidrs=["127.0.0.0/8"],
+            allow_loopback=True,
+            resolver=fake("10.0.0.1"),
+        )
+    with pytest.raises(EgressDenied, match="link-local"):
+        resolve_pinned(
+            "https://m.example.org/",
+            allowed_hosts=["m.example.org"],
+            allowed_cidrs=["0.0.0.0/0"],
+            allow_loopback=True,
+            resolver=fake("169.254.169.254"),
+        )

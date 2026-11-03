@@ -28,7 +28,7 @@ def _dsn(pg) -> str:
     )
 
 
-async def test_only_one_process_runs_a_tick_at_a_time(pg):
+async def test_only_one_process_runs_a_tick_at_a_time_over_60_runs(pg):
     a = ControlConnection(_dsn(pg), on_notify=lambda: None)
     b = ControlConnection(_dsn(pg), on_notify=lambda: None)
     await a.start()
@@ -39,30 +39,34 @@ async def test_only_one_process_runs_a_tick_at_a_time(pg):
         inside[0] += 1
         peak[0] = max(peak[0], inside[0])
         runs[0] += 1
-        await asyncio.sleep(0.12)
+        await asyncio.sleep(0.02)
         inside[0] -= 1
 
     def spec() -> TickSpec:
         return TickSpec(
-            "t", interval_s=0.03, timeout_s=2, lock_key=locks.SWEEPER, body=body
+            "t", interval_s=0.01, timeout_s=2, lock_key=locks.SWEEPER, body=body
         )
 
     sa, sb = TickScheduler(a, [spec()]), TickScheduler(b, [spec()])
     try:
         sa.start()
         sb.start()
-        await asyncio.sleep(0.8)
+        async with asyncio.timeout(30):
+            while runs[0] < 60:
+                await asyncio.sleep(0.05)
     finally:
         await sa.stop()
         await sb.stop()
         await a.stop()
         await b.stop()
-    assert runs[0] >= 3
-    assert peak[0] == 1, "two processes ran the same tick at once"
+    assert runs[0] >= 60
+    assert peak[0] == 1, (
+        "overlap counter must stay 0: two processes ran one tick at once"
+    )
     skipped = (
         sa.counters[("t", "skipped_locked")] + sb.counters[("t", "skipped_locked")]
     )
-    assert skipped >= 1
+    assert skipped >= 1, "the loser of each round was skipped, not queued"
 
 
 async def test_losing_the_control_session_cancels_the_running_tick(pg):

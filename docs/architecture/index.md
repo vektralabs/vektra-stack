@@ -28,6 +28,31 @@ Optional profiles:
 
 - `local-llm`: adds Ollama for local LLM inference
 - `qdrant`: adds Qdrant vector store (Phase 2)
+- `assess` (overlay `docker-compose.assess.yml`): the assessment discussion feature, dormant unless
+  `VEKTRA_ASSESS_ENABLED=true`. It adds **vektra-assess-worker** and **vektra-assess-parser**; there is no Redis.
+
+### Assess worker topology
+
+`vektra-assess-worker` is a single asyncio process, the same image as `vektra` started with `CMD_TARGET=assess-worker`. It has no
+listener and no published port, it is the only holder of the KEK, the Moodle tokens and the SMTP account, and it connects to
+Postgres as its own role (`vektra_assess_worker`). It does three things:
+
+- **Job loop.** It claims leased jobs from `assess_jobs` with `FOR UPDATE SKIP LOCKED`, bounded by free slots per concurrency
+  pool, runs each under a hard timeout, and settles it through fenced statements (a worker whose lease was reclaimed cannot
+  overwrite the newer claim). A failed attempt backs off; the last one writes an audit event and marks the job `dead`. The API
+  enqueues work through a transactional outbox (`INSERT` plus an empty `NOTIFY` in the caller's transaction); `NOTIFY` is only a
+  latency hint, the one-second poll is the correctness backstop.
+- **Ticks.** Periodic work (heartbeat, done-job cleanup, and the session, delivery, purge and setup-check ticks that later plans bind)
+  runs under session-level advisory locks held on one control connection, so a second process never runs the same tick.
+- **Lifecycle.** On start it reconciles the table (expired leases requeued, exhausted ones audited then marked dead) before the first
+  claim. On `SIGTERM` it stops claiming, drains, and returns the leases of what is left to `ready` without spending an attempt. A
+  watchdog exits with code 70 if its heartbeat row cannot be written for 60 s, and the supervisor restarts it.
+
+A production worker refuses to start while any job kind or tick has no handler; only with `VEKTRA_ENV=development` and
+`VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true` does it start with unbound slots, which then fail closed. It holds at most 5 + 1 Postgres
+connections (its pool and the control connection); the connection budget of the whole deployment is in
+[configuration.md](../reference/configuration.md#connection-budget-assess). Readiness (`/health/assess`) reads the worker's heartbeat
+row, which also carries its state and the age of its oldest ready job. Design: ADR-0028 (trust domains), ADR-0029 (job loop).
 
 ## Detailed documentation
 

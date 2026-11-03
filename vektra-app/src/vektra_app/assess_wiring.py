@@ -30,6 +30,11 @@ STEP = "assess_check"
 API_ROLE = "vektra_assess_api"
 
 
+# SQLAlchemy's own default overflow, made explicit: the connection budget counts it
+# (docs/reference/configuration.md, test_connection_budget).
+API_MAX_OVERFLOW = 10
+
+
 def load_assess_settings() -> VektraAssessSettings:
     try:
         return VektraAssessSettings()
@@ -145,7 +150,10 @@ async def step_12_assess_check(
     api_url = dsn_with_password(settings.api_database_url, password, step=STEP)
     assert_distinct_dsn(api_url, main_database_url, step=STEP)
     engine = create_async_engine(
-        api_url, pool_size=settings.api_pool_size, pool_pre_ping=True
+        api_url,
+        pool_size=settings.api_pool_size,
+        max_overflow=API_MAX_OVERFLOW,
+        pool_pre_ping=True,
     )
     try:
         await assert_session_role(engine, API_ROLE, step=STEP)

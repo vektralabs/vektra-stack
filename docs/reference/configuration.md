@@ -212,6 +212,26 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
 | `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
 
+#### Connection budget (assess)
+
+Postgres `max_connections` is 100. The shipped defaults add up to 65, and a test
+(`vektra-app/tests/test_connection_budget.py`) fails above 85, so a changed pool default cannot
+silently exhaust the server:
+
+| Holder | Connections | Setting |
+|---|---|---|
+| Main API pool | 30 (10 + 20 overflow) | `vektra_shared.db` defaults, not changed by assess |
+| Assess API pool | 25 (15 + 10 overflow) | `VEKTRA_ASSESS_API_POOL_SIZE` |
+| Assess worker pool | 5 (no overflow) | `VEKTRA_ASSESS_WORKER_POOL_SIZE` |
+| Assess worker control connection | 1 | fixed (LISTEN and advisory locks, outside the pool) |
+| `migrate` (Alembic) | 1 | while it runs |
+| Reserved | 3 | Postgres `superuser_reserved_connections` |
+| **Total** | **65** | ceiling 85 |
+
+The worker's 5 + 1 is the INT-002 budget: its single pool serves the job SQL and the handlers'
+transactions. INT-002 assumed about 15 for the API; the main API pool alone is larger by default,
+which is why the margin is tracked here.
+
 ### Secret files and the key matrix
 
 Each secret is a Docker secret file. Keys are JSON keyrings, `{"active": "<kid>", "keys": {"<kid>":

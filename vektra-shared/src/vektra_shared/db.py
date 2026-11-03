@@ -26,6 +26,12 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+# Declared (not changed) so the connection budget in docs/reference/configuration.md can be
+# checked against them by a test; INT-002 assumes the API holds far fewer than this.
+DEFAULT_POOL_SIZE = 10
+DEFAULT_MAX_OVERFLOW = 20
+
+
 def init_db(database_url: str, **engine_kwargs: object) -> None:
     """Initialize the async engine and session factory.
 
@@ -40,8 +46,8 @@ def init_db(database_url: str, **engine_kwargs: object) -> None:
     global _engine, _session_factory
     _engine = create_async_engine(
         database_url,
-        pool_size=engine_kwargs.pop("pool_size", 10),
-        max_overflow=engine_kwargs.pop("max_overflow", 20),
+        pool_size=engine_kwargs.pop("pool_size", DEFAULT_POOL_SIZE),
+        max_overflow=engine_kwargs.pop("max_overflow", DEFAULT_MAX_OVERFLOW),
         pool_pre_ping=engine_kwargs.pop("pool_pre_ping", True),
         echo=engine_kwargs.pop("echo", False),
         **engine_kwargs,

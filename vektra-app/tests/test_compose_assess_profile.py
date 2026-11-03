@@ -121,6 +121,23 @@ def test_worker_has_no_listener_and_bounded_stop(rendered: dict) -> None:  # typ
     assert "healthcheck" in w
 
 
+def test_worker_heartbeat_file_is_on_tmpfs_and_the_healthcheck_reads_it(
+    rendered: dict,
+) -> None:  # type: ignore[type-arg]
+    w = rendered["services"]["vektra-assess-worker"]
+    path = w["environment"]["VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE"]
+    assert path == "/run/assess-worker/heartbeat"
+    tmpfs = [
+        t["target"] if isinstance(t, dict) else str(t).split(":")[0] for t in w["tmpfs"]
+    ]
+    assert "/run/assess-worker" in tmpfs
+    probe = " ".join(w["healthcheck"]["test"])
+    assert "VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE" in probe and "< 30" in probe
+    assert "env_file" not in w, (
+        "the worker takes its DSN and settings from environment only"
+    )
+
+
 def test_assess_dsns_carry_no_password(rendered: dict) -> None:  # type: ignore[type-arg]
     from sqlalchemy.engine import make_url
 

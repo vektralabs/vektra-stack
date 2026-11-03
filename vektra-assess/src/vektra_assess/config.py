@@ -57,7 +57,40 @@ class VektraAssessSettings(BaseSettings):
     worker_heartbeat_file: Path = Field(
         Path("/tmp/vektra-assess-worker.heartbeat"),
         alias="VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE",
-        description="File whose mtime the worker refreshes every 10 s (container healthcheck).",
+        description="File whose mtime the worker refreshes every VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S (container healthcheck).",
+    )
+    worker_heartbeat_interval_s: float = Field(
+        5.0,
+        gt=0,
+        le=10,  # heartbeat_max_age_s (>= 30) must stay at least three beats
+        alias="VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S",
+        description="Seconds between worker heartbeats (row upsert plus the tmpfs file touch).",
+    )
+    job_poll_interval_s: float = Field(
+        1.0,
+        gt=0,
+        le=10,
+        alias="VEKTRA_ASSESS_JOB_POLL_INTERVAL_S",
+        description="Claim-loop poll when no NOTIFY arrives; the correctness backstop, NOTIFY is only a latency hint.",
+    )
+    job_backoff_base_s: float = Field(
+        5.0, gt=0, le=3600, alias="VEKTRA_ASSESS_JOB_BACKOFF_BASE_S"
+    )
+    job_backoff_cap_s: float = Field(
+        300.0, gt=0, le=86_400, alias="VEKTRA_ASSESS_JOB_BACKOFF_CAP_S"
+    )
+    job_done_retention_h: int = Field(
+        24,
+        ge=1,
+        alias="VEKTRA_ASSESS_JOB_DONE_RETENTION_H",
+        description="Hours a done job row is kept before the hourly cleanup tick deletes it; dead rows are kept for the purge plan.",
+    )
+    worker_drain_s: float = Field(
+        20.0,
+        gt=0,
+        le=25,  # below the Compose stop_grace_period of 30 s
+        alias="VEKTRA_ASSESS_WORKER_DRAIN_S",
+        description="On SIGTERM, seconds to wait for in-flight handlers before cancelling them and releasing their leases.",
     )
     parser_socket: Path = Field(
         Path("/run/vektra-assess-parser/parser.sock"),

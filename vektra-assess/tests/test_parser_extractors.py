@@ -441,3 +441,106 @@ def test_tex_spans_keep_verbatim_and_a_too_long_span_is_prose() -> None:
     long_span = "\\(" + "x  " * MAX_TEX_SPAN + "\\)"
     assert "x x" in _collapse(long_span)  # not verbatim: collapsed like prose
     assert _collapse("\\( never closed   here") == "\\( never closed here"
+
+
+# --- independent review: PlainText contract and invisible characters ---------------------
+
+
+def test_markup_like_review_output_is_plain_text_that_an_escaper_neutralises() -> None:
+    import html5lib
+
+    from vektra_assess.parser_protocol import PlainText, html_escape
+
+    html = (
+        b"<p>&lt;img src=x onerror=alert(1)&gt; and &lt;script&gt;steal()&lt;/script&gt;</p>"
+        b'<math><mi onclick="evil()">x</mi><mo>&lt;</mo></math>'
+    )
+    res = sanitize_review_html(html, 10_000)
+    text = PlainText(res.text)
+    # the sanitiser does NOT escape: decoded entities and rebuilt MathML are literal markup
+    assert "<img src=x onerror=alert(1)>" in text and "<script>steal()</script>" in text
+    assert (
+        '<mi onclick="evil()">' in text
+    )  # MathML without a TeX annotation, via serialize_xml
+    # a renderer that follows the contract (html_escape) leaves nothing that parses as an element
+    escaped = html_escape(text)
+    assert "<" not in escaped and ">" not in escaped
+    doc = html5lib.parse(
+        f"<div>{escaped}</div>", treebuilder="etree", namespaceHTMLElements=False
+    )
+    tags = {e.tag for e in doc.iter()} - {"html", "head", "body", "div"}
+    assert tags == set(), tags
+    # ... while the same text dropped into HTML unescaped DOES create elements (why the type exists)
+    raw = html5lib.parse(
+        f"<div>{text}</div>", treebuilder="etree", namespaceHTMLElements=False
+    )
+    assert {"img", "script"} <= {e.tag for e in raw.iter()}
+    assert html_escape(PlainText("\"q\" & 'a'")) == "&quot;q&quot; &amp; &#x27;a&#x27;"
+
+
+async def test_the_client_returns_plain_text_for_review_html(tmp_path) -> None:
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from vektra_assess.parser_sidecar.server import ParserServer, ServerConfig
+    from vektra_assess.worker.parser_client import ParserClient, SanitizeResult
+
+    class Fake(ParserServer):
+        def _supervise(self, op, data, ext, max_pages, max_chars, timeout_s):  # type: ignore[no-untyped-def]
+            from vektra_assess.parser_sidecar.child import run
+            from vektra_assess.parser_sidecar.server import ChildOutcome
+
+            return ChildOutcome(
+                run(op, data, ext, max_pages=max_pages, max_chars=max_chars),
+                1,
+                0,
+                0,
+                False,
+            )
+
+    d = Path(tempfile.mkdtemp(prefix="vp", dir="/tmp"))
+    d.chmod(0o700)
+    srv = Fake(ServerConfig(socket_path=d / "p.sock"))
+    await srv.start()
+    try:
+        res = await ParserClient(d / "p.sock").sanitize_html(
+            b"<p>&lt;b&gt;x&lt;/b&gt;</p>"
+        )
+        assert isinstance(res, SanitizeResult) and res.text == "<b>x</b>"
+        assert res.label == "letto"
+    finally:
+        await srv.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_clean_drops_invisible_and_reordering_characters_but_keeps_joiners() -> None:
+    dropped = "\u0080\u0085\u009f‪‫‬‭‮⁦⁧⁨⁩​⁠﻿"
+    assert clean(f"a{dropped}b") == "ab"
+    for keep in ("‍", "‌", "‎", "‏"):
+        assert clean(f"a{keep}b") == f"a{keep}b", hex(ord(keep))
+    # real scripts that need ZWJ/ZWNJ survive; a bidi-override "trojan source" does not
+    assert clean("क्‍ष") == "क्‍ष"
+    assert clean("access = 'user‮ ⁦// admin⁩ ⁦'") == "access = 'user // admin '"
+    # legacy text decoded through latin-1 sheds its C1 controls too
+    res = extract_text(b"perch\xe9 \x81\x8d ok", 100)
+    assert res.text == "perch\xe9  ok"
+
+
+def test_overlap_check_counts_the_local_filename_and_extra_field() -> None:
+    """Entry b is pointed into the tail of entry a's real span (local header = 30 bytes +
+    a 200-byte name + data). The old check (30 + compressed size) saw no overlap."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("n" * 200, b"A" * 100)
+        z.writestr("b", b"B" * 100)
+    raw = bytearray(buf.getvalue())
+    a_off = 0
+    old_end = a_off + 30 + 100  # what the previous check believed
+    new_b = old_end + 20  # beyond the old end, inside a's name+data
+    assert new_b < a_off + 30 + 200 + 100
+    cds = [i for i in range(len(raw)) if raw[i : i + 4] == b"PK\x01\x02"]
+    raw[cds[1] + 42 : cds[1] + 46] = new_b.to_bytes(4, "little")
+    with pytest.raises(zipguard.ZipRefused, match="overlap"):
+        zipguard.open_checked(bytes(raw))
+    assert zipguard.open_checked(buf.getvalue()).names  # the untouched archive is fine

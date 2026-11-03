@@ -13,13 +13,14 @@ Owning plan: .s2s/plans/20261101-154950-assess-parser.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import os
 import socket
 import struct
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, NewType
 
 PROTOCOL_VERSION = 1
 MAX_HEADER = 4096
@@ -32,6 +33,20 @@ DEFAULT_TIMEOUT_MS = 10_000
 
 OPS = ("parse", "sanitize_html", "ping")
 TRANSPORT_BUSY = "BUSY"
+
+
+# Text that came out of the review-HTML sanitiser. It is TEXT, not markup: it can legitimately
+# contain "<img src=x onerror=...>" (a student answer that talks about HTML, or MathML
+# serialised without a TeX annotation). Every render site that puts it into an HTML context
+# MUST pass it through ``html_escape`` (or an equivalent contextual escaper) and must have a
+# test proving it. The type exists so that a call that forgets shows up in review and in mypy:
+# ``html_escape`` accepts only ``PlainText``, a bare ``str`` does not type-check.
+PlainText = NewType("PlainText", str)
+
+
+def html_escape(text: PlainText) -> str:
+    """The sanctioned escape of ``PlainText`` for an HTML text or attribute context."""
+    return html.escape(text, quote=True)
 
 
 class FrameError(ValueError):

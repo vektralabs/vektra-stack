@@ -257,3 +257,5 @@ real-time run guards against clock-injection bugs.
   baseline in week 1 (ARCH-078). `aiosmtpd` is dev-only.
 - Drift: the existing `_pii_redactor` only redacts at WARNING+ by key name; delivery code must
   never log addresses or bodies at any level (plan 12 adds the assess log allowlist processor).
+
+> Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.

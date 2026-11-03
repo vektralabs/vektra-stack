@@ -7,12 +7,24 @@ from typing import Any
 
 from vektra_assess.parser_protocol import Extracted, FileStatus
 
-_STRIP = {c for c in range(0x20) if c not in (9, 10)} | {0x7F}
+# Dropped from every text that leaves the sidecar: C0 controls (except tab and newline), DEL,
+# C1 controls, bidi overrides, embeddings and isolates (they reorder what a reader sees, the
+# "trojan source" family), and the invisible joiners that hide text (zero-width space, word
+# joiner, BOM). KEPT on purpose: ZWJ/ZWNJ (U+200D/U+200C, needed by Indic, Arabic and emoji
+# sequences) and LRM/RLM (U+200E/U+200F, ordinary directional marks).
+_STRIP = (
+    {c for c in range(0x20) if c not in (9, 10)}
+    | {0x7F}
+    | set(range(0x80, 0xA0))
+    | set(range(0x202A, 0x202F))
+    | set(range(0x2066, 0x206A))
+    | {0x200B, 0x2060, 0xFEFF}
+)
 _TABLE = {c: None for c in _STRIP}
 
 
 def clean(text: str) -> str:
-    """NFC, C0 controls (except newline and tab) dropped, CRLF normalised."""
+    """NFC; control, bidi-override and invisible characters dropped (see ``_STRIP``); CRLF normalised."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     return unicodedata.normalize("NFC", text.translate(_TABLE))
 

@@ -3,8 +3,13 @@
 The HTML comes from Moodle but carries student-authored content: it is parsed with
 html5lib (stdlib etree builder), never rendered and never fetched. Everything that could
 execute or load is dropped; images become a placeholder; the student's answer, which
-Moodle keeps in form state, is preserved as text. The output is plain text, and escaping
-it for display stays the renderer's job.
+Moodle keeps in form state, is preserved as text.
+
+The output is ``PlainText``: text, never markup, and NOT escaped. A decoded
+``&lt;img onerror=...&gt;`` node comes out as the literal characters ``<img onerror=...>``,
+and a ``<math>`` without a TeX annotation is rebuilt as ``<math>...</math>`` source text.
+Every consumer that renders it into HTML must escape it (``parser_protocol.html_escape``)
+and have a test that proves it.
 """
 
 from __future__ import annotations
@@ -235,6 +240,7 @@ def _assemble(tokens: Iterator[Token]) -> str:
 
 
 def sanitize_review_html(data: bytes, max_chars: int) -> Extracted:
+    """The text of a review page, as an ``Extracted`` whose ``text`` is ``PlainText``."""
     try:
         source = data.decode("utf-8", errors="replace")
         doc = html5lib.parse(source, treebuilder="etree", namespaceHTMLElements=False)

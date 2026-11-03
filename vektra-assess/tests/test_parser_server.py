@@ -376,3 +376,61 @@ async def test_config_defaults_and_derived_bounds() -> None:
     )
     assert cfg.max_open == 3 + 32 + 8
     assert cfg.payload_budget == 4 * cfg.max_file_bytes == 40 * 1024 * 1024
+
+
+# --- independent review: fds on a failed fork, locked counters, no dead constants -----------
+
+
+async def test_a_failed_start_closes_all_six_pipe_ends() -> None:
+    import multiprocessing
+
+    from vektra_assess.parser_sidecar import server as server_mod
+
+    ctx = multiprocessing.get_context("forkserver")
+
+    class Boom:
+        def __init__(self, *a, **k) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def start(self) -> None:
+            raise OSError("fork failed")
+
+    class Ctx:
+        Pipe = staticmethod(ctx.Pipe)
+        Process = Boom
+
+    srv = ParserServer(ServerConfig(socket_path=Path("/x/s")), Ctx())  # type: ignore[arg-type]
+
+    def fds() -> int:
+        return len(os.listdir("/dev/fd"))
+
+    before = fds()
+    for _ in range(40):
+        with pytest.raises(OSError, match="fork failed"):
+            srv._supervise("parse", b"x", "txt", 50, 1000, 1.0)
+    assert fds() - before <= 1, (before, fds())  # 40 failures x 6 ends would be +240
+    assert srv.children_spawned == 0
+    assert not hasattr(server_mod, "IO_TIMEOUT_S")
+
+
+async def test_spawn_bookkeeping_is_exact_under_thread_contention() -> None:
+    import sys
+
+    srv = ParserServer(ServerConfig(socket_path=Path("/x/s")))
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+
+        def hammer() -> None:
+            for i in range(2000):
+                srv._note_spawn(i)
+
+        threads = [threading.Thread(target=hammer) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(old)
+    assert srv.children_spawned == 8 * 2000
+    assert len(srv.child_pids) == 1000

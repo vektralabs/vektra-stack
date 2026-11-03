@@ -46,7 +46,6 @@ from vektra_assess.parser_sidecar.ping import ping_pdf
 
 log = logging.getLogger("vektra_assess.parser")
 
-IO_TIMEOUT_S = 10.0  # a peer that sends a header and stalls must not hold a task
 DISCARD_LIMIT = 64 * 1024 * 1024
 MiB = 1024 * 1024
 
@@ -150,9 +149,10 @@ class ParserServer:
         self._open = 0
         self._reserved = 0  # payload bytes reserved by admitted requests
         self._deep_lock = asyncio.Lock()
-        self.children_spawned = (
-            0  # the counter the "0 children for TOO_LARGE" test reads
-        )
+        # the counter the "0 children for TOO_LARGE" test reads; written from several
+        # executor threads, so every update goes through _note_spawn under a lock
+        self._spawn_lock = threading.Lock()
+        self.children_spawned = 0
         self.child_pids: list[int] = []
         self.server: asyncio.base_events.Server | None = None
 
@@ -215,7 +215,8 @@ class ParserServer:
             counted = True
             try:
                 async with asyncio.timeout(self.cfg.read_deadline_s):
-                    # one deadline for the whole receive phase: a sender that drips
+                    # the ONLY receive guard is this one deadline for the whole phase (there is no
+                    # per-read timeout): a sender that drips
                     # bytes, each read inside a per-read timeout, still runs out of it
                     n = parse_header_length(await reader.readexactly(4))
                     header = parse_header(await reader.readexactly(n))
@@ -381,6 +382,13 @@ class ParserServer:
         )
         return "pong"
 
+    def _note_spawn(self, pid: int | None) -> None:
+        with self._spawn_lock:
+            self.children_spawned += 1
+            if pid is not None:
+                self.child_pids.append(pid)
+                del self.child_pids[:-1000]
+
     # --- the supervisor ---------------------------------------------------------------
 
     def _supervise(
@@ -402,16 +410,24 @@ class ParserServer:
             "timeout_ms": int(timeout_s * 1000),
             "rlimit_as": self.cfg.rlimit_as,
         }
-        in_r, in_w = self.ctx.Pipe(duplex=False)
-        out_r, out_w = self.ctx.Pipe(duplex=False)
-        err_r, err_w = self.ctx.Pipe(duplex=False)
-        proc = self.ctx.Process(target=child_main, args=(in_r, out_w, err_w, spec))
-        proc.start()
-        self.children_spawned += 1
+        opened: list[Any] = []
+        try:
+            in_r, in_w = self.ctx.Pipe(duplex=False)
+            opened += [in_r, in_w]
+            out_r, out_w = self.ctx.Pipe(duplex=False)
+            opened += [out_r, out_w]
+            err_r, err_w = self.ctx.Pipe(duplex=False)
+            opened += [err_r, err_w]
+            proc = self.ctx.Process(target=child_main, args=(in_r, out_w, err_w, spec))
+            proc.start()
+        except BaseException:
+            # a failed fork (pids_limit, memory) must not leak the descriptors it got
+            for c in opened:
+                with contextlib.suppress(Exception):
+                    c.close()
+            raise
         pid = proc.pid
-        if pid is not None:
-            self.child_pids.append(pid)
-            del self.child_pids[:-1000]
+        self._note_spawn(pid)
         for c in (in_r, out_w, err_w):
             c.close()
         counted = [0]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import struct
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -86,6 +87,17 @@ class GuardedZip:
             return fh.read()
 
 
+def _local_end(data: bytes, info: zipfile.ZipInfo) -> int:
+    """End of an entry's data: its LOCAL header (30 bytes plus the local filename and extra
+    field, whose lengths are in the local header and may differ from the central
+    directory's) plus the compressed size."""
+    off = info.header_offset
+    if off < 0 or off + 30 > len(data):
+        raise ZipRefused("zip_unreadable")
+    name_len, extra_len = struct.unpack("<HH", data[off + 26 : off + 30])
+    return int(off + 30 + name_len + extra_len + info.compress_size)
+
+
 def open_checked(
     data: bytes,
     *,
@@ -112,6 +124,6 @@ def open_checked(
             raise ZipRefused("zip_ratio")
     ordered = sorted(infos, key=lambda i: i.header_offset)
     for cur, nxt in itertools.pairwise(ordered):
-        if cur.header_offset + 30 + cur.compress_size > nxt.header_offset:
+        if _local_end(data, cur) > nxt.header_offset:
             raise ZipRefused("zip_overlap")
     return GuardedZip(zf, Budget(max_total))

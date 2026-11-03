@@ -41,6 +41,7 @@ from vektra_assess.parser_protocol import (
     FileStatus,
     FrameError,
     Limits,
+    PlainText,
     encode_frame,
     new_req_id,
     parse_header,
@@ -82,7 +83,30 @@ class ParseResult:
         return status_label(self.status, self.upto_page)
 
 
-SanitizeResult = ParseResult
+_EMPTY = PlainText("")
+
+
+@dataclass(frozen=True)
+class SanitizeResult:
+    """A sanitised quiz review page. ``text`` is ``PlainText``: markup-like characters in
+    it are text, and every render site must escape it (``parser_protocol.html_escape``)."""
+
+    status: FileStatus
+    text: PlainText = _EMPTY
+    upto_page: int | None = None
+    pages_total: int | None = None
+    chars: int = 0
+    code: str = ""
+
+    @property
+    def label(self) -> str:
+        return status_label(self.status, self.upto_page)
+
+    @classmethod
+    def of(cls, r: ParseResult) -> SanitizeResult:
+        return cls(
+            r.status, PlainText(r.text), r.upto_page, r.pages_total, r.chars, r.code
+        )
 
 
 def _violation_result(reason: str) -> ParseResult:
@@ -130,7 +154,9 @@ class ParserClient:
     async def sanitize_html(
         self, html: bytes, limits: Limits | None = None
     ) -> SanitizeResult:
-        return await self._call("sanitize_html", html, "html", limits or self.limits)
+        return SanitizeResult.of(
+            await self._call("sanitize_html", html, "html", limits or self.limits)
+        )
 
     async def ping(self, deep: bool = False) -> float:
         """Round-trip in seconds. ``ParserUnavailableError`` unless the sidecar answers

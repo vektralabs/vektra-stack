@@ -37,6 +37,7 @@ COMPOSE = [
     str(ROOT / "docker-compose.yml"),
     "-f",
     str(ROOT / "docker-compose.assess.yml"),
+    "-f",
     str(ROOT / "docker-compose.assess.dev.yml"),
     "--profile",
     "assess",

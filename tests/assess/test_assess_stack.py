@@ -36,6 +36,7 @@ COMPOSE = [
     str(ROOT / "docker-compose.yml"),
     "-f",
     str(ROOT / "docker-compose.assess.yml"),
+    "-f",
     str(ROOT / "docker-compose.assess.dev.yml"),
     "--profile",
     "assess",
@@ -213,7 +214,9 @@ def test_worker_idle_rss_and_heartbeat() -> None:
         "vektra-assess-worker",
         "python",
         "-c",
-        "import os,time; print(time.time()-os.path.getmtime('/tmp/vektra-assess-worker.heartbeat'))",
+        # the path comes from the container's own environment (the overlay puts it on tmpfs)
+        "import os,time; p=os.environ['VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE']; "
+        "print(time.time()-os.path.getmtime(p))",
     )
     assert hb.returncode == 0, f"worker never reached the heartbeat state: {hb.stderr}"
     assert float(hb.stdout) < 30
@@ -284,7 +287,9 @@ def test_stopped_worker_leaves_shallow_health_healthy(admin_key: str) -> None:
         # Acceptance (plan assess-job-loop): not-ready within 65 s of the stop. The worker writes
         # state "stopped" into its heartbeat row on SIGTERM, so readiness drops at once; the row
         # aging past VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S (60 s) is only the fallback for a kill -9.
-        deadline = time.time() + 65
+        # A 15 s deadline would not be enough to tell the two apart by time alone, so the row's
+        # own state is asserted below: a lost "stopped" write must fail this test.
+        deadline = time.time() + 15
         while True:
             code, body = _get("/health/assess", admin_key)
             assert code == 200, body
@@ -292,7 +297,20 @@ def test_stopped_worker_leaves_shallow_health_healthy(admin_key: str) -> None:
                 break
             time.sleep(2)
         assert body["status"] not in ("healthy", "disabled"), (
-            f"/health/assess still {body} 65 s after docker stop"
+            f"/health/assess still {body} 15 s after docker stop"
+        )
+        state = _exec(
+            "postgres",
+            "psql",
+            "-U",
+            "vektra",
+            "-d",
+            "vektra",
+            "-tAc",
+            "SELECT details->>'state' FROM assess_heartbeat WHERE component = 'worker'",
+        )
+        assert state.stdout.strip() == "stopped", (
+            f"the worker did not write 'stopped' on SIGTERM: {state.stdout!r} {state.stderr!r}"
         )
     finally:
         _compose("start", "vektra-assess-worker", check=True)

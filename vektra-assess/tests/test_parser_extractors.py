@@ -546,13 +546,19 @@ def test_overlap_check_counts_the_local_filename_and_extra_field() -> None:
     assert zipguard.open_checked(buf.getvalue()).names  # the untouched archive is fine
 
 
-def _pdf(content: bytes, *, image: bool) -> bytes:
-    """A minimal one-page PDF: optional 8x8 image XObject, and ``content`` as its page stream."""
+def _pdf(content: bytes, *, image: bool, form: bool = False) -> bytes:
+    """A minimal one-page PDF: optional 8x8 image XObject, and ``content`` as its page stream.
+
+    ``form``: the page resources also list ``/Fm0``, a Form XObject that paints ``/Im0`` across
+    the page, so a scan can be drawn one level down (``/Fm0 Do``)."""
     objs = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     ]
-    res = b"/Font << /F1 5 0 R >>" + (b" /XObject << /Im0 6 0 R >>" if image else b"")
+    xobjs = (b"/Im0 6 0 R" if image else b"") + (b" /Fm0 7 0 R" if form else b"")
+    res = b"/Font << /F1 5 0 R >>" + (
+        b" /XObject << " + xobjs + b" >>" if xobjs else b""
+    )
     objs.append(
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << "
         + res
@@ -567,6 +573,14 @@ def _pdf(content: bytes, *, image: bool) -> bytes:
         + pix
         + b">\nendstream"
     )
+    if form:
+        draw = b"q 600 0 0 780 6 6 cm /Im0 Do Q"
+        objs.append(
+            b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources << /XObject << /Im0 6 0 R >> >> /Length %d >>\nstream\n"
+            % len(draw)
+            + draw
+            + b"\nendstream"
+        )
     out, offsets = b"%PDF-1.4\n", []
     for n, body in enumerate(objs, start=1):
         offsets.append(len(out))
@@ -594,9 +608,27 @@ def _pdf(content: bytes, *, image: bool) -> bytes:
             FileStatus.NO_TEXT,
         ),  # scan + footer
         (b"q 600 0 0 780 6 6 cm /Im0 Do Q", True, FileStatus.NO_TEXT),  # bare scan
+        (
+            b"q 40 0 0 40 20 740 cm /Im0 Do Q BT /F1 18 Tf 72 700 Td (Una riga sola) Tj ET",
+            True,
+            FileStatus.READ,
+        ),  # short text page with a small logo
+        (
+            b"BT /F1 18 Tf 72 720 Td (Una riga sola) Tj ET",
+            True,
+            FileStatus.READ,
+        ),  # image listed in the resources, never drawn
     ],
 )
 def test_scanned_detection_uses_page_images_not_a_character_count(
     content: bytes, image: bool, status: FileStatus
 ) -> None:
     assert extract_pdf(_pdf(content, image=image), 50, 1000).status is status
+
+
+def test_a_scan_drawn_inside_a_form_xobject_is_detected() -> None:
+    footer = b"/Fm0 Do BT /F1 8 Tf 500 20 Td (Pag. 1/20) Tj ET"
+    assert (
+        extract_pdf(_pdf(footer, image=True, form=True), 50, 1000).status
+        is FileStatus.NO_TEXT
+    )

@@ -51,6 +51,54 @@ class ReconcileReport:
     audit_failed: int
 
 
+async def _audit_then_kill_exhausted(conn: sql.Conn, audit: Audit) -> tuple[int, int]:
+    """Audit first, then kill: returns ``(marked_dead, audit_failed)``.
+
+    A job whose audit write fails stays ``leased`` and is retried by the next pass (the lease
+    reaper tick runs this every minute, so the retry does not wait for a restart).
+    """
+    dead = failed = 0
+    for job_id, kind, attempts in await sql.list_exhausted_expired(conn):
+        try:
+            await audit(
+                "assess_job_dead",
+                {
+                    "job_id": job_id,
+                    "kind": kind.value,
+                    "attempts": attempts,
+                    "error_code": "lease_expired_exhausted",
+                },
+            )
+        except Exception as exc:
+            failed += 1
+            log.warning(
+                "assess_reconcile_audit_failed",
+                extra={"job_id": job_id, "error_type": type(exc).__name__},
+            )
+            continue
+        if await sql.kill_exhausted(conn, job_id):
+            dead += 1
+    return dead, failed
+
+
+async def reap_exhausted(
+    acquire: Callable[[], AbstractAsyncContextManager[sql.Conn]], audit: Audit
+) -> ReconcileReport:
+    """Tick body (``lease_reaper``): finish what a failed audit write left ``leased``.
+
+    The claim never picks a job with no attempt left, so without this a transient audit error
+    on the last attempt would leave the row ``leased`` until the next worker restart, and its
+    dedupe key would keep covering it.
+    """
+    async with acquire() as conn:
+        dead, failed = await _audit_then_kill_exhausted(conn, audit)
+    if dead or failed:
+        log.info(
+            "assess_lease_reaper", extra={"marked_dead": dead, "audit_failed": failed}
+        )
+    return ReconcileReport(0, dead, failed)
+
+
 async def reconcile(
     control: _Locks,
     acquire: Callable[[], AbstractAsyncContextManager[sql.Conn]],
@@ -72,26 +120,7 @@ async def reconcile(
     try:
         async with acquire() as conn:
             requeued = await sql.requeue_expired(conn)
-            dead = failed = 0
-            for job_id, kind, attempts in await sql.list_exhausted_expired(conn):
-                try:
-                    await audit(
-                        "assess_job_dead",
-                        {
-                            "job_id": job_id,
-                            "kind": kind.value,
-                            "attempts": attempts,
-                            "error_code": "lease_expired_exhausted",
-                        },
-                    )
-                except Exception:
-                    failed += 1
-                    log.exception(
-                        "assess_reconcile_audit_failed", extra={"job_id": job_id}
-                    )
-                    continue  # stays leased; the next pass retries
-                if await sql.kill_exhausted(conn, job_id):
-                    dead += 1
+            dead, failed = await _audit_then_kill_exhausted(conn, audit)
         if ticks is not None:
             await ticks.run_startup_ticks()
         report = ReconcileReport(requeued, dead, failed)

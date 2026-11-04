@@ -169,6 +169,8 @@ Three things to know before turning it on:
 Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
 `assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
 `make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
+Until every job handler of the feature is bound (later plans), a production worker refuses to start; for development and CI add
+`-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development` for the worker only.
 These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
 process environment, never from an env file.
 
@@ -200,7 +202,7 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_JOB_POLL_INTERVAL_S` | float | `1` | Claim-loop poll when no `NOTIFY` arrives. The poll is the correctness backstop; `NOTIFY` is only a latency hint. |
 | `VEKTRA_ASSESS_JOB_BACKOFF_BASE_S` / `_CAP_S` | float | `5` / `300` | Retry backoff of a failed job attempt: exponential from the base, jittered to 50-100 % of the step, capped. |
 | `VEKTRA_ASSESS_JOB_DONE_RETENTION_H` | int | `24` | Hours a `done` job row is kept before the hourly cleanup deletes it. `dead` rows are kept for the purge plan. |
-| `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` | bool | `false` | Development and CI only: start the worker while some job kinds or ticks have no handler yet. Unbound slots stay unbound and a job of that kind fails with `handler_not_bound`, never completing silently. Honoured only with `VEKTRA_ENV=development`; set in any other environment the worker refuses to start. Default: a worker with an unbound slot refuses to start and names each slot and the plan that owns it. |
+| `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` | bool | `false` | Development and CI only: start the worker while some job kinds or ticks have no handler yet. Unbound slots stay unbound and a job of that kind fails with `handler_not_bound`, never completing silently. Honoured only with `VEKTRA_ENV=development`; set in any other environment the worker refuses to start. The shipped overlay does **not** set it; the dev-only `docker-compose.assess.dev.yml` does. Default: a worker with an unbound slot refuses to start and names each slot and the plan that owns it. |
 | `VEKTRA_ASSESS_WORKER_DB_COMMAND_TIMEOUT_S` | float | `30` | Upper bound on any single worker database statement (pool). A restart or a dropped network can leave a connection half-open: no error, only silence; without a bound the worker would wait on it. The control connection uses a fixed 5 s bound. |
 | `VEKTRA_ASSESS_WORKER_WEDGE_EXIT_S` | float | `60` | Liveness watchdog (10-600): if the heartbeat row has not been written for this long while the worker should be ready, it exits with code 70 and the supervisor (`restart: unless-stopped`) starts a fresh process, which reconciles on startup. Backstop for any wedge the timeouts do not catch. |
 | `VEKTRA_ASSESS_WORKER_DRAIN_S` | float | `20` | On SIGTERM, seconds to wait for in-flight handlers before cancelling them and releasing their leases. At most 25, under the Compose `stop_grace_period` of 30 s. |

@@ -85,9 +85,17 @@ class ControlConnection:
         return frozenset(self._held)
 
     async def start(self) -> None:
-        """Connect, LISTEN and run the NOTIFY self-test; raise ``ControlConnectionError``."""
-        await self._connect()
-        await self._selftest()
+        """Connect, LISTEN and run the NOTIFY self-test; raise ``ControlConnectionError``.
+
+        On any failure the half-open session is closed before the error leaves: a refusal to
+        start must not leave a live connection (and its termination listener) behind.
+        """
+        try:
+            await self._connect()
+            await self._selftest()
+        except BaseException:
+            await self.stop()
+            raise
 
     async def stop(self) -> None:
         self._stopping.set()
@@ -109,16 +117,33 @@ class ControlConnection:
             raise ControlConnectionError(
                 f"control connection failed: {type(exc).__name__}"
             ) from exc
-        await conn.add_listener(NOTIFY_CHANNEL, self._notified)
+        self._conn = conn  # stored first so a failure below is closed by ``stop``
+        try:
+            await conn.add_listener(NOTIFY_CHANNEL, self._notified)
+        except (
+            OSError,
+            asyncpg.PostgresError,
+            asyncpg.InterfaceError,
+            TimeoutError,
+        ) as exc:
+            with contextlib.suppress(Exception):
+                conn.terminate()
+            self._conn = None
+            raise ControlConnectionError(
+                f"control connection failed: {type(exc).__name__}"
+            ) from exc
         conn.add_termination_listener(self._terminated)
-        self._conn = conn
         self._lost.clear()
 
     def _notified(self, *_: Any) -> None:
         self._on_notify()
 
-    def _terminated(self, _conn: asyncpg.Connection) -> None:
-        # asyncpg calls this when the connection closes, whatever the cause
+    def _terminated(self, conn: asyncpg.Connection) -> None:
+        # asyncpg calls this when a connection closes, whatever the cause. A late callback from a
+        # connection that was already replaced must not mark the healthy new one as lost: that
+        # would cancel every running tick and drop fencing on a good session.
+        if conn is not self._conn:
+            return
         self._mark_lost()
 
     def _mark_lost(self) -> None:

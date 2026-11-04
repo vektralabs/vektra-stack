@@ -185,3 +185,21 @@ async def test_a_lock_that_stays_taken_refuses_to_start(pg):
     finally:
         await held.close()
         await ctl.stop()
+
+
+async def test_lease_reaper_finishes_what_a_failed_audit_left_leased(pg):
+    """Review finding: without a periodic pass the row would stay leased until a restart."""
+    from vektra_assess.worker.reconcile import reap_exhausted
+
+    ids = await _seed(pg)
+    ok, bad = _Audit(), _Audit(fail=True)
+    first = await reap_exhausted(lambda: _acquire(_dsn(pg)), bad)
+    assert (first.marked_dead, first.audit_failed) == (0, 1)
+    assert (await _state(pg, ids["exhausted"]))[0] == "leased"
+    second = await reap_exhausted(lambda: _acquire(_dsn(pg)), ok)
+    assert (second.marked_dead, second.audit_failed) == (1, 0)
+    assert (await _state(pg, ids["exhausted"]))[0] == "dead"
+    assert len(ok.events) == 1
+    assert (await _state(pg, ids["retry"]))[0] == "leased", (
+        "the reaper only handles exhausted jobs"
+    )

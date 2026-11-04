@@ -84,6 +84,12 @@ async def enqueue_job(
 
     Returns ``True`` when a job was inserted, ``False`` when ``dedupe_key`` matched a job that
     is still ``ready`` or ``leased`` (the existing job covers it; no notification is sent).
+
+    **Choose the dedupe key with that in mind.** A ``ready`` job has not read anything yet, so
+    covering a newer change is safe. A ``leased`` job is already running: its handler may have read
+    its inputs before the change was committed, so the change is NOT covered and no new job is
+    queued. A caller whose change must always be seen puts a version, epoch or generation in the
+    key (a new value is a new key), or relies on a later periodic tick that re-reads the row.
     The id is not returned: reading it back would need SELECT, which the API role lacks.
     """
     if max_attempts is not None and max_attempts < 1:

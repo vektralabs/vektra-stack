@@ -115,3 +115,65 @@ async def test_sigterm_and_sigint_set_the_event_once_and_a_second_signal_is_igno
         assert stop.is_set()
     finally:
         remove()
+
+
+async def test_a_hung_heartbeat_does_not_eat_the_grace_period() -> None:
+    """Review finding: one hung call on a half-open database must not delay the drain."""
+    order: list[str] = []
+
+    class Hung(Heartbeat):
+        async def beat(self) -> None:
+            order.append(f"beat:{self.state}")
+            await asyncio.sleep(3600)
+
+    drained: list[float] = []
+
+    class Rt(Runtime):
+        async def drain(self, timeout_s: float) -> int:
+            drained.append(timeout_s)
+            return 0
+
+    run_task = asyncio.create_task(_done())
+    t0 = asyncio.get_running_loop().time()
+    await shutdown(
+        runtime=Rt(order),
+        run_task=run_task,
+        scheduler=Scheduler(order),
+        heartbeat=Hung(order),
+        control=Control(order),
+        drain_s=20,
+    )
+    elapsed = asyncio.get_running_loop().time() - t0
+    assert elapsed < 8, f"two hung beats cost {elapsed:.1f}s: each step is bounded"
+    assert order[-1] == "control.stop"
+    assert drained and drained[0] <= 20
+
+
+async def test_the_drain_gets_only_what_is_left_of_the_grace_period() -> None:
+    now = [0.0]
+
+    class Rt(Runtime):
+        async def drain(self, timeout_s: float) -> int:
+            self.budget = timeout_s
+            return 0
+
+    rt = Rt([])
+    run_task = asyncio.create_task(_done())
+
+    class SlowTicks(Scheduler):
+        async def stop(self) -> None:
+            now[0] += 12.0  # earlier steps consumed 12 s of the 28 s grace
+
+    await shutdown(
+        runtime=rt,
+        run_task=run_task,
+        scheduler=SlowTicks([]),
+        heartbeat=Heartbeat([]),
+        control=Control([]),
+        drain_s=20,
+        grace_s=28.0,
+        clock=lambda: now[0],
+    )
+    assert rt.budget == 10.0, (
+        "28 - 12 elapsed - 6 reserved = 10 s, below the configured 20 s"
+    )

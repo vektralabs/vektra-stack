@@ -118,7 +118,7 @@ on Moodle 4.3 and 5.2, parser sidecar, installable plugin.
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
-| 3 | [assess-job-loop](20261101-154950-assess-job-loop.md) | Postgres-native leased job loop, ticks, heartbeat | 29 | 2 | pending |
+| 3 | [assess-job-loop](20261101-154950-assess-job-loop.md) | Postgres-native leased job loop, ticks, heartbeat | 29 | 2 | completed (2 criteria verified by the first CI run, see plan) |
 | 6 | [assess-context](20261101-154950-assess-context.md) | Snapshot capture, assemble_context, canary suite | 34 | 2, 4, 5 | pending |
 | 7 | [assess-llm-runner](20261101-154950-assess-llm-runner.md) | DiscussionTurnRunner, post-check, prompts, eval gate | 44 | 6 | pending |
 

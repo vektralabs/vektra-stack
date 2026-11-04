@@ -88,7 +88,10 @@ def make_engine(url: str, pool_size: int, command_timeout_s: float = 30.0) -> An
     """The worker's single pool: it serves the job SQL and the handlers' transactions.
 
     Pool plus the control connection is the 5 + 1 of the connection budget (INT-002): no
-    overflow, and a short wait for a free connection instead of opening a sixth one.
+    overflow, and a bounded wait for a free connection instead of opening a sixth one. The
+    pools allow more concurrent jobs than there are connections (a handler holds one only while it
+    runs a statement), so a handler may queue here; 15 s is long enough to ride out a burst and
+    short enough to fail inside a lease.
     """
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -96,7 +99,7 @@ def make_engine(url: str, pool_size: int, command_timeout_s: float = 30.0) -> An
         url,
         pool_size=pool_size,
         max_overflow=0,
-        pool_timeout=5,
+        pool_timeout=15,
         pool_pre_ping=True,
         connect_args={
             "server_settings": {"application_name": APPLICATION_NAME},
@@ -209,6 +212,7 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     from vektra_assess.worker.heartbeat import Heartbeat
     from vektra_assess.worker.listener import ControlConnection
     from vektra_assess.worker.policy import WorkerPolicyError, load_policy
+    from vektra_assess.worker.reconcile import reap_exhausted
     from vektra_assess.worker.runtime import SqlStore, WorkerRuntime
     from vektra_assess.worker.slots import (
         Bindings,
@@ -268,13 +272,21 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     async def cleanup() -> None:
         await cleanup_done_jobs(acquire_raw, settings.job_done_retention_h)
 
+    async def lease_reaper() -> None:
+        await reap_exhausted(acquire_raw, audit)
+
     extra = bindings or Bindings(handlers={}, ticks={})
     slots = build_slots(
         policy,
         settings,
         Bindings(
             handlers=extra.handlers,
-            ticks={"heartbeat": heartbeat.beat, "job_cleanup": cleanup, **extra.ticks},
+            ticks={
+                "heartbeat": heartbeat.beat,
+                "job_cleanup": cleanup,
+                "lease_reaper": lease_reaper,
+                **extra.ticks,
+            },
         ),
     )
     try:
@@ -320,9 +332,13 @@ async def _serve(
         ) from exc
     supervisor = asyncio.create_task(control.supervise())
     wedge: asyncio.Task[None] | None = None
+    startup_ticks: asyncio.Task[None] | None = None
     try:
         try:
-            await reconcile(control, acquire_raw, audit, scheduler)
+            # Startup ticks are NOT run inside the reconcile lock: a slow one (the setup check
+            # makes about twenty live Moodle calls) would hold the lock, delay the first heartbeat
+            # and the claim loop, trip the container healthcheck and ignore SIGTERM.
+            await reconcile(control, acquire_raw, audit)
         except ReconcileError as exc:
             raise StartupValidationError(
                 step=STEP,
@@ -332,6 +348,7 @@ async def _serve(
         heartbeat.set_state("ready")
         await heartbeat.beat()
         scheduler.start()
+        startup_ticks = asyncio.create_task(scheduler.run_startup_ticks())
         run_task = asyncio.create_task(runtime.run())
         wedge = asyncio.create_task(
             watchdog(heartbeat, stop, exit_after_s=checked.settings.worker_wedge_exit_s)
@@ -348,8 +365,9 @@ async def _serve(
         )
         log.info("assess_worker_stopped", released=released)
     finally:
-        if wedge is not None:
-            wedge.cancel()
+        for background in (wedge, startup_ticks):
+            if background is not None:
+                background.cancel()
         supervisor.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await supervisor
@@ -358,21 +376,16 @@ async def _serve(
 
 def check_imports() -> None:
     """``--check-imports``: import the whole composition and assert the ceiling, no DB or keys."""
-    from vektra_assess.worker import (  # noqa: F401
-        audit,
-        cleanup,
-        heartbeat,
-        listener,
-        policy,
-        reconcile,
-        runtime,
-        shutdown,
-        slots,
-        ticks,
-    )
-    from vektra_core.providers.litellm_provider import LitellmProvider  # noqa: F401
+    import importlib
 
-    _compose_imports = (audit, cleanup, heartbeat, listener, policy, reconcile)
+    importlib.import_module(
+        "vektra_core.providers.litellm_provider"
+    )  # the LLM provider's cost
+    for name in (
+        "audit", "cleanup", "heartbeat", "listener", "policy", "reconcile",
+        "runtime", "shutdown", "slots", "ticks", "watchdog",
+    ):  # fmt: skip
+        importlib.import_module(f"vektra_assess.worker.{name}")
     assert_import_ceiling()
     print("ceiling ok")
 

@@ -141,7 +141,11 @@ async def test_exhausted_job_is_never_claimed_again_and_becomes_dead(pg):
         (job,) = await sql.claim(c, [JobKind.PURGE], "w", 0.1, 1)
         await asyncio.sleep(0.3)
         assert await sql.claim(c, [JobKind.PURGE], "w2", 60.0, 1) == []
-        assert await sql.reclaim_expired(c) == (0, 1)
+        exhausted = await sql.list_exhausted_expired(c)
+        assert [(j[0], j[2]) for j in exhausted] == [(job.id, 1)]
+        assert await sql.requeue_expired(c) == 0, "no attempt left: not requeued"
+        assert await sql.kill_exhausted(c, job.id) is True
+        assert await sql.kill_exhausted(c, job.id) is False, "already dead"
         state, _, _, code, _ = await _row(pg, job.id)
         assert (state, code) == ("dead", "lease_expired_exhausted")
     finally:
@@ -155,7 +159,8 @@ async def test_reclaim_requeues_expired_leases_with_attempts_left(pg):
     try:
         await sql.claim(c, [JobKind.PURGE], "w", 0.1, 2)
         await asyncio.sleep(0.3)
-        assert await sql.reclaim_expired(c) == (2, 0)
+        assert await sql.requeue_expired(c) == 2
+        assert await sql.list_exhausted_expired(c) == []
         assert (
             await pg.run(
                 "super", "SELECT count(*) FROM assess_jobs WHERE state='ready'"

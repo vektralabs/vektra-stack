@@ -194,6 +194,10 @@ class WorkerRuntime:
     async def run(self) -> None:
         """Claim and run jobs until ``stop()``. In-flight jobs are left to ``wait_idle``/drain."""
         while not self._stopping.is_set():
+            # Clear BEFORE claiming: a NOTIFY or a freed slot that arrives while the claim is in
+            # flight sets the event again and the wait below returns at once. Clearing after the
+            # claim would erase that wake-up and sleep a full poll interval.
+            self._wake.clear()
             try:
                 claimed = await self.claim_once()
             except asyncio.CancelledError:
@@ -209,7 +213,6 @@ class WorkerRuntime:
                 claimed = 0
             if claimed:
                 continue  # more may be waiting: do not sleep while there is work
-            self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self._poll_s)
             except TimeoutError:

@@ -50,6 +50,7 @@ HANDLER_OWNERS: dict[JobKind, str] = {
 TICK_OWNERS: dict[str, str] = {
     "heartbeat": JOB_LOOP,
     "job_cleanup": JOB_LOOP,
+    "lease_reaper": JOB_LOOP,
     "sweeper": SESSION,
     "starting_reaper": SESSION,
     "outage_probe": SESSION,
@@ -105,6 +106,7 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
     return [
         t("heartbeat", s.worker_heartbeat_interval_s, 5, locks.HEARTBEAT),
         t("job_cleanup", 3600, 60, locks.JOB_CLEANUP, jitter_s=300),
+        t("lease_reaper", 60, 30, locks.LEASE_REAPER, jitter_s=10),
         t("sweeper", 10, 20, locks.SWEEPER, jitter_s=5),  # 10-15 s (ownership table)
         t("starting_reaper", 15, 20, locks.STARTING_REAPER, jitter_s=3),
         t("outage_probe", 5, 10, locks.OUTAGE_PROBE, jitter_s=4),  # 5-10 s per provider

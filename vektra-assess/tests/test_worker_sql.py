@@ -82,12 +82,6 @@ async def test_a_rowcount_of_zero_means_the_fence_was_lost() -> None:
     assert await sql.release(_Rec(status="UPDATE 0"), 1, "w", 1) is False
 
 
-async def test_reclaim_expired_kills_exhausted_rows_before_requeueing() -> None:
-    rec = _Rec(status="UPDATE 2")
-    assert await sql.reclaim_expired(rec) == (2, 2)
-    assert [c[0] for c in rec.calls] == [sql.DEAD_EXPIRED, sql.RECLAIM_EXPIRED]
-
-
 async def test_cleanup_only_touches_done_rows() -> None:
     assert "state = 'done'" in sql.CLEANUP_DONE
     assert "'dead'" not in sql.CLEANUP_DONE

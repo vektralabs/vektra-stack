@@ -389,7 +389,7 @@ def test_development_override_composes_with_only_framework_slots_bound(
     assert not control.connected
     # the heartbeat and the cleanup are the only bodies this plan writes
     unbound = {t.name for t in scheduler._ticks if not t.bound}
-    assert "heartbeat" not in unbound and "job_cleanup" not in unbound
+    assert not ({"heartbeat", "job_cleanup", "lease_reaper"} & unbound)
     assert {"sweeper", "purge", "setup_check"} <= unbound
 
 
@@ -424,7 +424,7 @@ def test_one_pool_serves_the_worker_within_the_connection_budget() -> None:
     )
     pool = engine.pool
     assert (pool.size(), pool._max_overflow) == (5, 0)
-    assert pool._timeout == 5
+    assert pool._timeout == 15
 
 
 def test_asyncpg_dsn_drops_the_sqlalchemy_driver() -> None:

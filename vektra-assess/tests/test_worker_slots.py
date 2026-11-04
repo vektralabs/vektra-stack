@@ -26,7 +26,7 @@ PRODUCTION_KINDS = {
     "rotate_keys", "session_deadline", "setup_check", "transcript_deliver", "transcript_generate",
 }  # fmt: skip
 PRODUCTION_TICKS = [
-    "heartbeat", "job_cleanup", "sweeper", "starting_reaper", "outage_probe",
+    "heartbeat", "job_cleanup", "lease_reaper", "sweeper", "starting_reaper", "outage_probe",
     "enrolment_recheck", "gate_refresh", "delivery_retry", "purge", "setup_check",
 ]  # fmt: skip
 

@@ -1,6 +1,7 @@
 """Assess compose stack, observed from inside the containers (plan assess-foundations 7.6, 9.4).
 
-Runs against `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile
+Runs against `docker compose -f docker-compose.yml -f docker-compose.assess.yml
+-f docker-compose.assess.dev.yml --profile
 assess up`. Every claim is checked empirically: the parser's network is probed by trying
 to connect, the roles by asking Postgres, the worker's memory by reading /proc.
 
@@ -35,6 +36,7 @@ COMPOSE = [
     str(ROOT / "docker-compose.yml"),
     "-f",
     str(ROOT / "docker-compose.assess.yml"),
+    str(ROOT / "docker-compose.assess.dev.yml"),
     "--profile",
     "assess",
 ]

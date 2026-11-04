@@ -28,6 +28,7 @@ GATE_REFRESH = _key(8)
 DELIVERY_RETRY = _key(9)  # plan transcript-delivery
 PURGE = _key(10)  # plan privacy-retention
 SETUP_CHECK = _key(11)  # daily setup-check tick (plan assess-moodle-ws handler)
+LEASE_REAPER = _key(12)  # finishes exhausted leases whose audit write failed
 
 
 def all_keys() -> dict[str, int]:

@@ -32,7 +32,7 @@ class Conn(Protocol):
 
 
 # A job is claimable when ready, or leased with an expired lease, and it still has attempts
-# left; exhausted-and-expired rows are moved to ``dead`` by ``DEAD_EXPIRED``, never re-run.
+# left; exhausted-and-expired rows are audited and then moved to ``dead`` (``KILL_EXHAUSTED``), never re-run.
 CLAIM = """
 UPDATE assess_jobs SET
     state = 'leased',
@@ -91,13 +91,6 @@ UPDATE assess_jobs SET
 RECLAIM_EXPIRED = """
 UPDATE assess_jobs SET state = 'ready', lease_until = NULL, leased_by = NULL
 WHERE state = 'leased' AND lease_until < now() AND attempts < max_attempts
-"""
-
-DEAD_EXPIRED = """
-UPDATE assess_jobs SET
-    state = 'dead', lease_until = NULL, done_at = now(),
-    last_error_code = 'lease_expired_exhausted'
-WHERE state = 'leased' AND lease_until < now() AND attempts >= max_attempts
 """
 
 # Reconciliation splits the exhausted case in two so the audit event comes first: list the
@@ -209,13 +202,6 @@ async def mark_dead(
 
 async def release(conn: Conn, job_id: int, worker_id: str, attempt: int) -> bool:
     return _rowcount(await conn.execute(RELEASE, job_id, worker_id, attempt)) == 1
-
-
-async def reclaim_expired(conn: Conn) -> tuple[int, int]:
-    """``(returned_to_ready, marked_dead)`` for leases that expired while no worker ran."""
-    dead = _rowcount(await conn.execute(DEAD_EXPIRED))
-    ready = _rowcount(await conn.execute(RECLAIM_EXPIRED))
-    return ready, dead
 
 
 async def cleanup_done(conn: Conn, retention_h: int, batch: int = 1000) -> int:

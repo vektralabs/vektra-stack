@@ -346,15 +346,15 @@ jobs:
       - name: Build and start the assess stack
         run: |
           docker compose build
-          docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d
+          docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess up -d
           timeout 120 bash -c 'until curl -so /dev/null http://localhost:8000/health; do sleep 2; done'
-          timeout 90 bash -c 'until [ "$(docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess ps vektra-assess-worker --format "{{.Health}}")" = "healthy" ]; do sleep 3; done'
+          timeout 90 bash -c 'until [ "$(docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess ps vektra-assess-worker --format "{{.Health}}")" = "healthy" ]; do sleep 3; done'
 
       - name: Worker import profile (artifact)
         if: always()
         run: |
           mkdir -p test-results
-          docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess \
+          docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess \
             exec -T vektra-assess-worker python -X importtime -c \
             "import vektra_app.assess_worker; from vektra_core.providers.litellm_provider import LitellmProvider" \
             2> test-results/assess-worker-importtime.txt || true
@@ -386,7 +386,7 @@ jobs:
 
       - name: Dump container logs on failure
         if: failure()
-        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess logs --tail=200
+        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess logs --tail=200
 
       - name: Upload test results
         if: always()
@@ -398,7 +398,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess down -v
+        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess down -v
 
   # Chaos on the assess worker (plan assess-job-loop): the real worker process against a real
   # Postgres, killed (kill -9), terminated (SIGTERM), cut off (container restart, backend

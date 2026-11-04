@@ -213,3 +213,25 @@ def test_socket_volume_consumers_are_exactly_parser_and_worker(rendered: dict) -
                 for v in s.get("volumes", [])
                 if "vektra-assess-parser" in str(v.get("target"))
             ], n
+
+
+def test_the_shipped_overlay_keeps_the_worker_fail_closed(rendered: dict) -> None:  # type: ignore[type-arg]
+    """Review finding: VEKTRA_ENV defaults to development, so the override must not ship by default."""
+    env = rendered["services"]["vektra-assess-worker"]["environment"]
+    assert "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND" not in env
+
+
+def test_the_dev_file_only_opts_the_worker_in_and_pins_the_environment() -> None:
+    dev = _render(
+        "docker-compose.yml",
+        "docker-compose.assess.yml",
+        "docker-compose.assess.dev.yml",
+    )
+    env = dev["services"]["vektra-assess-worker"]["environment"]
+    assert env["VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND"] == "true"
+    assert env["VEKTRA_ENV"] == "development", "explicit, not the code default"
+    base = _render("docker-compose.yml", "docker-compose.assess.yml")
+    for name, svc in dev["services"].items():
+        if name == "vektra-assess-worker":
+            continue
+        assert svc == base["services"][name], f"the dev file must not change {name}"

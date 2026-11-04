@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+import time
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -72,9 +73,11 @@ def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
     return remove
 
 
-async def _guarded(step: str, call: Awaitable[object]) -> None:
+async def _guarded(step: str, call: Awaitable[object], timeout_s: float) -> None:
+    """Run one best-effort step with its own deadline: a hung database must not eat the grace period."""
     try:
-        await call
+        async with asyncio.timeout(timeout_s):
+            await call
     except Exception:
         log.exception("assess_shutdown_step_failed", extra={"step": step})
 
@@ -87,19 +90,30 @@ async def shutdown(
     heartbeat: _Heartbeat,
     control: _Control,
     drain_s: float,
+    grace_s: float = 28.0,
+    clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    """Run the shutdown sequence; return how many leases were released."""
+    """Run the shutdown sequence inside ``grace_s`` (Compose gives 30 s); return leases released.
+
+    Every best-effort step has a short deadline of its own, and the drain gets whatever is left
+    (never more than ``drain_s``) after reserving time for the closing steps. Without that, one
+    hung call on a half-open database could push the drain past the grace period and Docker would
+    SIGKILL the worker before it released a single lease.
+    """
+    started = clock()
+    reserve_s = 6.0  # the final heartbeat and closing the control connection
     heartbeat.set_state("draining")
-    await _guarded("heartbeat_draining", heartbeat.beat())
+    await _guarded("heartbeat_draining", heartbeat.beat(), 2.0)
     await runtime.stop()
-    await _guarded("claim_loop", asyncio.wait_for(asyncio.shield(run_task), timeout=5))
-    await _guarded("ticks", scheduler.stop())
+    await _guarded("claim_loop", asyncio.shield(run_task), 3.0)
+    await _guarded("ticks", scheduler.stop(), 3.0)
+    drain_budget = max(1.0, min(drain_s, grace_s - (clock() - started) - reserve_s))
     released = 0
     try:
-        released = await runtime.drain(drain_s)
+        released = await runtime.drain(drain_budget)
     except Exception:
         log.exception("assess_shutdown_step_failed", extra={"step": "drain"})
     heartbeat.set_state("stopped")
-    await _guarded("heartbeat_stopped", heartbeat.beat())
-    await _guarded("control", control.stop())
+    await _guarded("heartbeat_stopped", heartbeat.beat(), 2.0)
+    await _guarded("control", control.stop(), 2.0)
     return released

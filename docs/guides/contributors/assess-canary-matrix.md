@@ -28,7 +28,7 @@ A new value can reach the model only through a change to the allowlist models in
 
 ## Re-recording on a Moodle upgrade
 
-The extraction of the question text and the student's answer depends on Moodle's question markup (`div.qtext`, `fieldset.ablock`). After re-recording on a new Moodle release, run the matrix and `tests/test_review_block_extraction.py`: a markup change fails closed (the item becomes structured-only and is flagged) and shows up there, not in production.
+The extraction of the question text and the student's answer depends on Moodle's question markup (`div.qtext`, `fieldset.ablock`). Both fail closed, differently: a change to `div.qtext` omits the question text and makes the item degraded, so Part A flags it; a change to `fieldset.ablock` omits only the student's response and does not set the degraded flag. After re-recording on a new Moodle release, run the matrix and `tests/test_review_block_extraction.py`, which catch either change before production.
 
 ## Live subset
 

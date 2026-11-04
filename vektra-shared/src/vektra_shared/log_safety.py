@@ -188,7 +188,9 @@ class AssessAllowlistFilter(logging.Filter):
         if record.args:
             # the formatted message could interpolate content; keep the constant template only
             record.args = ()
-        # the message itself is an event name; anything else (an f-string, str(exc)) is dropped
+        # the message is an event name. A non-string or long message is dropped here; a short
+        # f-string cannot be told from an event name at runtime, so the call sites are held to
+        # literal messages by a static guard (vektra-assess tests/test_log_safety_wiring.py)
         if not isinstance(record.msg, str) or len(record.msg) > _MAX_VALUE_LEN:
             record.msg = DROPPED
         for key in list(record.__dict__):
@@ -237,11 +239,14 @@ class _ScrubHandler(logging.Handler):
 
 
 def install_assess_stdlib_handler(level: int = logging.INFO) -> logging.Handler:
-    """Scrub every stdlib record of ``vektra_assess.*`` before any other handler sees it.
+    """Scrub every stdlib record of ``vektra_assess.*`` before the root handlers see it.
 
     A handler on the ``vektra_assess`` logger runs before the root's (the logger hierarchy is
-    walked upwards), and its filter mutates the record. ``propagate`` stays True, so the records
-    keep reaching the root handlers and flushing the root still flushes them. Idempotent.
+    walked upwards), and its filter mutates the record. Handlers already attached to
+    ``vektra_assess``, and handlers on a child logger such as ``vektra_assess.worker``, run
+    BEFORE the scrub and see unscrubbed records: do not attach handlers there (none does today).
+    ``propagate`` stays True, so the records keep reaching the root handlers and flushing the
+    root still flushes them. Idempotent.
     """
     target = logging.getLogger(ASSESS_LOGGER_PREFIX)
     for old in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:

@@ -20,7 +20,7 @@ from vektra_shared.log_safety import (
     is_assess_logger,
 )
 
-SECRET = "CNRY-right_answer-multichoice-1a2b3c4d"
+CANARY = "CNRY-right_answer-multichoice-1a2b3c4d"
 
 
 def _reset() -> None:
@@ -51,13 +51,13 @@ def test_structlog_assess_logger_keeps_only_allowlisted_keys(
 ) -> None:
     log = structlog.get_logger("vektra_assess.context.capture")
     getattr(log, level)(
-        "assess_capture_done", session_id="s1", count=3, answer=SECRET, text=SECRET
+        "assess_capture_done", session_id="s1", count=3, answer=CANARY, text=CANARY
     )
     (line,) = _lines(stream)
     assert line["event"] == "assess_capture_done"
     assert (line["session_id"], line["count"]) == ("s1", 3)
     assert line["answer"] == DROPPED and line["text"] == DROPPED
-    assert SECRET not in stream.getvalue()
+    assert CANARY not in stream.getvalue()
 
 
 def test_structlog_other_loggers_are_untouched(stream: io.StringIO) -> None:
@@ -69,19 +69,19 @@ def test_structlog_other_loggers_are_untouched(stream: io.StringIO) -> None:
 def test_structlog_exception_becomes_its_type(stream: io.StringIO) -> None:
     log = structlog.get_logger("vektra_assess.worker")
     try:
-        raise ValueError(SECRET)
+        raise ValueError(CANARY)
     except ValueError:
         log.exception("assess_failed")
     (line,) = _lines(stream)
     assert line["error_type"] == "ValueError" and "exception" not in line
-    assert SECRET not in stream.getvalue()
+    assert CANARY not in stream.getvalue()
 
 
 def test_allowlisted_key_cannot_carry_a_long_or_nested_value(
     stream: io.StringIO,
 ) -> None:
     log = structlog.get_logger("vektra_assess.x")
-    log.info("e", status="x" * 500, count={"nested": SECRET})
+    log.info("e", status="x" * 500, count={"nested": CANARY})
     (line,) = _lines(stream)
     assert line["status"] == DROPPED and line["count"] == DROPPED
 
@@ -92,20 +92,20 @@ def test_stdlib_assess_logger_drops_extras_args_and_tracebacks(
 ) -> None:
     log = logging.getLogger("vektra_assess.worker")
     try:
-        raise RuntimeError(SECRET)
+        raise RuntimeError(CANARY)
     except RuntimeError:
         log.log(
             level,
             "assess_job_failed %s",
-            SECRET,
+            CANARY,
             exc_info=True,
-            extra={"job_id": 7, "kind": "purge", "payload": SECRET},
+            extra={"job_id": 7, "kind": "purge", "payload": CANARY},
         )
     (line,) = _lines(stream)
     assert line["event"] == "assess_job_failed %s"  # template kept, argument dropped
     assert (line["job_id"], line["kind"], line["payload"]) == (7, "purge", DROPPED)
     assert line["error_type"] == "RuntimeError"
-    assert SECRET not in stream.getvalue()
+    assert CANARY not in stream.getvalue()
 
 
 def test_stdlib_handler_does_not_touch_other_packages(
@@ -133,34 +133,34 @@ def test_assess_records_still_propagate_but_scrubbed(
         assert logging.getLogger("vektra_assess").propagate is True
         with caplog.at_level(logging.INFO, logger="vektra_assess.worker"):
             logging.getLogger("vektra_assess.worker").info(
-                "assess_x", extra={"job_id": 1, "payload": SECRET}
+                "assess_x", extra={"job_id": 1, "payload": CANARY}
             )
         (rec,) = caplog.records
         assert rec.job_id == 1 and rec.payload == DROPPED  # type: ignore[attr-defined]
-        assert SECRET not in caplog.text
+        assert CANARY not in caplog.text
     finally:
         _reset()
 
 
 def test_a_long_or_interpolated_message_is_dropped(stream: io.StringIO) -> None:
     log = logging.getLogger("vektra_assess.worker")
-    log.warning(f"bad answer {SECRET} " + "x" * 300)
+    log.warning(f"bad answer {CANARY} " + "x" * 300)
     (line,) = _lines(stream)
-    assert line["event"] == DROPPED and SECRET not in stream.getvalue()
+    assert line["event"] == DROPPED and CANARY not in stream.getvalue()
 
 
 def test_a_caller_cannot_opt_out_with_a_logger_key(stream: io.StringIO) -> None:
     structlog.get_logger("vektra_assess.context").info(
-        "e", logger="vektra_core.other", answer=SECRET
+        "e", logger="vektra_core.other", answer=CANARY
     )
     (line,) = _lines(stream)
-    assert line["answer"] == DROPPED and SECRET not in stream.getvalue()
+    assert line["answer"] == DROPPED and CANARY not in stream.getvalue()
 
 
 def test_a_caller_supplied_logger_value_is_scrubbed_too(stream: io.StringIO) -> None:
-    structlog.get_logger("vektra_assess.context").info("e", logger=SECRET)
+    structlog.get_logger("vektra_assess.context").info("e", logger=CANARY)
     (line,) = _lines(stream)
-    assert line["logger"] == DROPPED and SECRET not in stream.getvalue()
+    assert line["logger"] == DROPPED and CANARY not in stream.getvalue()
 
 
 def test_stdlib_filter_lets_non_assess_records_through_unchanged() -> None:
@@ -208,6 +208,6 @@ def test_prefix_match_is_exact() -> None:
 
 def test_processor_reads_the_logger_key_too() -> None:
     out = assess_allowlist_processor(
-        None, "info", {"event": "e", "logger": "vektra_assess.a", "text": SECRET}
+        None, "info", {"event": "e", "logger": "vektra_assess.a", "text": CANARY}
     )
     assert out["text"] == DROPPED

@@ -7,6 +7,7 @@ from test_context_snapshot import make
 
 from vektra_assess.context.assemble import assemble_context
 from vektra_assess.context.payload import BEGIN, END, bundle_to_model_payload
+from vektra_assess.context.snapshot import MarksHidden
 from vektra_shared.testing_recorders import RecordingLLMProvider
 
 
@@ -35,6 +36,19 @@ def test_an_unanswered_item_is_not_described_as_a_hidden_mark() -> None:
     assert "Punteggio massimo: 1 (nessun punteggio registrato)" in text
     hidden = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
     assert "nessun punteggio registrato" not in hidden
+
+
+def test_a_zero_mark_item_is_not_described_as_a_hidden_mark() -> None:
+    s = make()
+    info = s.quiz_items[0].model_copy(
+        update={"mark": None, "max_mark": None, "marks_hidden": MarksHidden.NOT_GRADED}
+    )
+    s = s.model_copy(update={"quiz_items": (info, s.quiz_items[1])})
+    for frozen in (_with_review(s, _ALL, "unreadable"), _frozen(s)):
+        text = bundle_to_model_payload(assemble_context(s, frozen))[0].content
+        block = text.split("## ")[1]
+        assert "Punteggio: elemento senza punteggio" in block
+        assert "non visibile" not in block
 
 
 def test_payload_is_deterministic_and_has_only_labels() -> None:

@@ -13,7 +13,7 @@ from __future__ import annotations
 from vektra_assess.context import strings as S
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.part_a import fmt_number, grade_text
-from vektra_assess.context.snapshot import GradeKind
+from vektra_assess.context.snapshot import GradeKind, MarksHidden
 from vektra_assess.parser_protocol import label as file_label
 from vektra_shared.types import Message
 
@@ -33,7 +33,10 @@ def _lines(bundle: ContextBundle) -> list[str]:
         )
     for i in bundle.quiz_items:
         out.append(f"## {S.QUIZ_LABEL.format(label=i.label)} (tipo: {i.qtype})")
-        if i.mark is not None and i.max_mark is not None:
+        if i.marks_hidden is MarksHidden.NOT_GRADED:
+            # a zero-mark or information item: there is no score to hide (as in Part A)
+            out.append("Punteggio: elemento senza punteggio")
+        elif i.mark is not None and i.max_mark is not None:
             out.append(f"Punteggio: {fmt_number(i.mark)}/{fmt_number(i.max_mark)}")
         elif i.max_mark is not None and i.marks_hidden is None:
             # marks are visible but this question has none: it was not answered ("gaveup")

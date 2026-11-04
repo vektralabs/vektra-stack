@@ -157,10 +157,14 @@ def test_a_caller_cannot_opt_out_with_a_logger_key(stream: io.StringIO) -> None:
     assert line["answer"] == DROPPED and CANARY not in stream.getvalue()
 
 
-def test_a_caller_supplied_logger_value_is_scrubbed_too(stream: io.StringIO) -> None:
-    structlog.get_logger("vektra_assess.context").info("e", logger=CANARY)
+@pytest.mark.parametrize("key", ["logger", "log_level"])
+def test_a_caller_supplied_bookkeeping_key_is_scrubbed_too(
+    stream: io.StringIO, key: str
+) -> None:
+    structlog.get_logger("vektra_assess.context").info("e", **{key: CANARY})
     (line,) = _lines(stream)
-    assert line["logger"] == DROPPED and CANARY not in stream.getvalue()
+    assert line[key] == DROPPED and CANARY not in stream.getvalue()
+    assert line["level"] == "info"  # the processor's own key is untouched
 
 
 def test_stdlib_filter_lets_non_assess_records_through_unchanged() -> None:

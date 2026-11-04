@@ -86,9 +86,10 @@ OPERATIONAL_KEYS = frozenset(
     }
 )
 ALLOWED_KEYS = PLAN_KEYS | OPERATIONAL_KEYS
-# structlog's own bookkeeping keys, added by the processors that run before this one. Not
-# "logger": no processor in the chain adds it, so a value there came from the caller
-_STRUCTLOG_KEYS = frozenset({"level", "timestamp", "log_level"})
+# structlog's own bookkeeping keys, added by the processors that run before this one
+# (add_log_level sets "level", TimeStamper "timestamp"). Not "logger" nor "log_level": no
+# processor in the chain adds them, so a value there came from the caller
+_STRUCTLOG_KEYS = frozenset({"level", "timestamp"})
 _MAX_VALUE_LEN = 200  # an allowlisted key still cannot carry a paragraph
 
 

@@ -133,9 +133,11 @@ class OverallItem(_Frozen):
     grade_kind: GradeKind
     grade: Mark | None  # decimal string for points; None for a scale (see scale_label)
     grade_max: Mark | None
-    scale_label: str | None = (
-        None  # BR-014: a scale grade is its label, never "punti/max"
-    )
+    #: the grade exactly as Moodle shows it to the student ("2.31", "85.00"): what the BR-009
+    #: statement quotes. ``grade`` keeps the full value for the regrade comparison.
+    grade_display: str | None = None
+    #: BR-014: a scale grade is its label, never "punti/max"
+    scale_label: str | None = None
     overall_feedback: str | None = None  # released and visible only
     grade_read_at: int  # epoch seconds: the "letto il <data>" of the BR-009 statement
 

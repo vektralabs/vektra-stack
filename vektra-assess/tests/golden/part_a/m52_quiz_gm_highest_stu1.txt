@@ -1,0 +1,17 @@
+Quiz
+Tentativo #2 di 4 (metodo: voto più alto)
+Voto registrato: 10,00/10 (letto il 15/01/2027). Il voto NON è stato modificato da questa discussione; decide l'orale
+Sessione #1
+Durata: 30 minuti
+Materiale del corso: non usato
+Soluzione: non mostrata
+
+Elementi della prova:
+- Domanda 1: 1/1 (Correct)
+- Domanda 2: 1/1 (Correct)
+- Valutazione complessiva: 10,00/10
+
+File consegnati:
+Nessun file consegnato.
+
+Come procedere: chiedi di un elemento usando la sua etichetta (per esempio «Domanda 2» o «Valutazione complessiva»). L'assistente spiega e discute, ma non cambia il voto.

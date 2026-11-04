@@ -430,6 +430,7 @@ async def capture_quiz(
             grade_kind=GradeKind.POINTS,
             grade=mark_str(gr.grade),
             grade_max=mark_str(gr.grade_max),
+            grade_display=gr.grade_formatted,
             overall_feedback=None,
             grade_read_at=t_now,
         ),
@@ -565,6 +566,7 @@ async def capture_assign(
             grade_kind=GradeKind.POINTS,
             grade=mark_str(gi.grade),
             grade_max=mark_str(gi.grade_max),
+            grade_display=gi.grade_formatted,
             overall_feedback=_feedback(policy, fb.comments),
             grade_read_at=t_now,
         )

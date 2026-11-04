@@ -1,0 +1,26 @@
+Quiz
+Tentativo #1 di 1 (metodo: voto più alto)
+Voto registrato: 2,31/10 (letto il 15/01/2027). Il voto NON è stato modificato da questa discussione; decide l'orale
+Sessione #1
+Durata: 30 minuti
+Materiale del corso: non usato
+Soluzione: non mostrata
+
+Elementi della prova:
+- Domanda 1: 1/1 (Correct)
+- Domanda 2: 1/1 (Correct)
+- Domanda 3: 0/1 (Incorrect)
+- Domanda 4: 1/1 (Correct)
+- Domanda 5: nessun punteggio su 5 (Not answered)
+- Domanda 6: nessun punteggio su 1 (Not answered) [contenuto non disponibile all'assistente: si discute solo esito e punteggio]
+- Domanda 7: nessun punteggio su 1 (Not answered) [contenuto non disponibile all'assistente: si discute solo esito e punteggio]
+- Domanda 8: nessun punteggio su 1 (Not answered) [contenuto non disponibile all'assistente: si discute solo esito e punteggio]
+- Domanda 9: nessun punteggio su 1 (Not answered) [contenuto non disponibile all'assistente: si discute solo esito e punteggio]
+- Domanda 10: elemento senza punteggio
+- Valutazione complessiva: 2,31/10
+Per gli elementi segnalati l'assistente non vede il testo della domanda né la tua risposta.
+
+File consegnati:
+Nessun file consegnato.
+
+Come procedere: chiedi di un elemento usando la sua etichetta (per esempio «Domanda 2» o «Valutazione complessiva»). L'assistente spiega e discute, ma non cambia il voto.

@@ -152,3 +152,21 @@ async def test_lost_connection_releases_locks_calls_back_and_reconnects(pg):
         await conn.stop()
         await asyncio.wait_for(sup, timeout=2)
         await other.close()
+
+
+async def test_a_probe_that_cannot_send_is_a_control_error_not_a_raw_oserror(
+    pg, monkeypatch
+):
+    """Review finding: the self-test's NOTIFY had no bound and leaked an unconverted OSError."""
+    conn = ControlConnection(_dsn(pg), on_notify=lambda: None, selftest_timeout_s=0.5)
+
+    async def broken() -> None:
+        raise OSError("network unreachable")
+
+    monkeypatch.setattr(conn, "_send_probe_notify", broken)
+    try:
+        with pytest.raises(ControlConnectionError, match="probe could not send"):
+            await conn.start()
+    finally:
+        await conn.stop()
+    assert not conn.connected, "a failed start leaves no session behind"

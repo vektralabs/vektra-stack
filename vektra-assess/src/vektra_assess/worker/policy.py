@@ -15,6 +15,7 @@ force) all raise ``WorkerPolicyError`` before the worker claims anything.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -82,8 +83,8 @@ def _number(name: str, raw: str, kind: type[int] | type[float]) -> float:
         value = kind(raw)
     except ValueError:
         raise WorkerPolicyError(f"{name}={raw!r} is not a number") from None
-    if value <= 0:
-        raise WorkerPolicyError(f"{name} must be positive")
+    if not math.isfinite(value) or value <= 0:
+        raise WorkerPolicyError(f"{name} must be a positive, finite number")
     return float(value)
 
 

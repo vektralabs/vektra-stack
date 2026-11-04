@@ -103,8 +103,9 @@ WHERE state = 'leased' AND lease_until < now() AND attempts < max_attempts
 # candidates, write the audit row for each, then kill that one row if it is still exactly that.
 EXHAUSTED_EXPIRED = """
 SELECT id, kind, attempts FROM assess_jobs
-WHERE state = 'leased' AND lease_until < now() AND attempts >= max_attempts
+WHERE state = 'leased' AND lease_until < now() AND attempts >= max_attempts AND id > $1
 ORDER BY id
+LIMIT $2
 """
 
 KILL_EXHAUSTED = """
@@ -240,9 +241,16 @@ async def requeue_expired(conn: Conn) -> int:
     return _rowcount(await conn.execute(RECLAIM_EXPIRED))
 
 
-async def list_exhausted_expired(conn: Conn) -> list[tuple[int, JobKind, int]]:
-    """``(id, kind, attempts)`` of leased jobs that expired with no attempt left."""
-    rows = await conn.fetch(EXHAUSTED_EXPIRED)
+async def list_exhausted_expired(
+    conn: Conn, after_id: int = 0, limit: int = 200
+) -> list[tuple[int, JobKind, int]]:
+    """``(id, kind, attempts)`` of leased jobs that expired with no attempt left, by id.
+
+    Keyset-paged (``after_id``, ``limit``): a large backlog is processed in batches, and the cursor
+    moves past every row it returned, so a row whose audit write keeps failing cannot block the
+    ones after it.
+    """
+    rows = await conn.fetch(EXHAUSTED_EXPIRED, after_id, limit)
     return [(r["id"], JobKind(r["kind"]), r["attempts"]) for r in rows]
 
 

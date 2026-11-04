@@ -203,3 +203,39 @@ async def test_lease_reaper_finishes_what_a_failed_audit_left_leased(pg):
     assert (await _state(pg, ids["retry"]))[0] == "leased", (
         "the reaper only handles exhausted jobs"
     )
+
+
+async def test_the_exhausted_pass_pages_by_id_and_a_failing_row_does_not_block_the_rest(
+    pg, monkeypatch
+):
+    from vektra_assess.worker import reconcile as rec
+
+    monkeypatch.setattr(rec, "_BATCH", 2)
+    await pg.run("super", "DELETE FROM assess_jobs")
+    ids = []
+    for _ in range(5):
+        ids.append(
+            (
+                await pg.run(
+                    "super",
+                    "INSERT INTO assess_jobs (kind, state, lease_until, leased_by, attempts, max_attempts) "
+                    "VALUES ('purge', 'leased', now() - interval '1 minute', 'x', 1, 1) RETURNING id",
+                )
+            )[0][0]
+        )
+    seen: list[int] = []
+
+    async def flaky(event, data) -> None:
+        seen.append(data["job_id"])
+        if data["job_id"] == ids[1]:
+            raise RuntimeError("audit unavailable for this one")
+
+    report = await rec.reap_exhausted(lambda: _acquire(_dsn(pg)), flaky)
+    assert (report.marked_dead, report.audit_failed) == (4, 1)
+    assert seen == ids, "every row was visited once, in id order, across three batches"
+    states = {
+        r[0]: r[1] for r in await pg.run("super", "SELECT id, state FROM assess_jobs")
+    }
+    assert states[ids[1]] == "leased" and all(
+        states[i] == "dead" for i in ids if i != ids[1]
+    )

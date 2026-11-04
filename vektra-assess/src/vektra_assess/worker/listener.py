@@ -180,11 +180,15 @@ class ControlConnection:
     async def _send_probe_notify(self) -> None:
         """NOTIFY from a different session: a pooler that maps both to one backend would hide
         the problem, one that does not breaks LISTEN, and either way delivery is the check."""
-        other = await asyncpg.connect(self._dsn, timeout=self._connect_timeout_s)
+        other = await asyncpg.connect(
+            self._dsn,
+            timeout=self._connect_timeout_s,
+            command_timeout=self._command_timeout_s,
+        )
         try:
             await other.execute(f"SELECT pg_notify('{_SELFTEST_CHANNEL}', '')")
         finally:
-            await other.close(timeout=2)
+            other.terminate()  # never wait on a peer that may be silent
 
     async def _selftest(self) -> None:
         assert self._conn is not None
@@ -192,7 +196,12 @@ class ControlConnection:
         listener = lambda *_: seen.set()  # noqa: E731
         await self._conn.add_listener(_SELFTEST_CHANNEL, listener)
         try:
-            await self._send_probe_notify()
+            try:
+                await self._send_probe_notify()
+            except _LOST as exc:
+                raise ControlConnectionError(
+                    f"LISTEN/NOTIFY self-test failed: the probe could not send ({type(exc).__name__})"
+                ) from exc
             try:
                 await asyncio.wait_for(seen.wait(), timeout=self._selftest_timeout_s)
             except TimeoutError:

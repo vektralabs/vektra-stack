@@ -64,7 +64,9 @@ async def test_claim_is_bounded_ordered_and_leases_the_rows(pg):
     c = await asyncpg.connect(_dsn(pg, "worker"))
     try:
         got = await sql.claim(c, [JobKind.PURGE], "w1", 60.0, 2)
-        assert [j.args["n"] for j in got] == [0, 1], "oldest not_before first"
+        # which rows are claimed follows the subquery's ORDER BY; the order of the RETURNING list
+        # is not specified, so compare the set (sorted) rather than the list order
+        assert sorted(j.args["n"] for j in got) == [0, 1], "the two oldest not_before"
         assert all(j.attempt == 1 for j in got)
         states = await pg.run(
             "super", "SELECT state, count(*) FROM assess_jobs GROUP BY state ORDER BY 1"

@@ -48,6 +48,8 @@ Postgres as its own role (`vektra_assess_worker`). It does three things:
   claim. On `SIGTERM` it stops claiming, drains, and returns the leases of what is left to `ready` without spending an attempt. A
   watchdog exits with code 70 if its heartbeat row cannot be written for 60 s, and the supervisor restarts it.
 
+**One worker process is supported.** The advisory locks and the fenced SQL keep an accidental second process from corrupting jobs or running a tick twice, but readiness and liveness are not designed for two: both write the single `assess_heartbeat` row (a stopping worker's `draining` or `stopped` can hide the other's `ready`), and a tick skipped because the other process holds its lock does not refresh the heartbeat, so a long run of skips could trip the watchdog. Run one replica.
+
 A production worker refuses to start while any job kind or tick has no handler; only with `VEKTRA_ENV=development` and
 `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true` does it start with unbound slots, which then fail closed. It holds at most 5 + 1 Postgres
 connections (its pool and the control connection); the connection budget of the whole deployment is in

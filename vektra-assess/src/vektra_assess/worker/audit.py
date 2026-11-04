@@ -17,6 +17,12 @@ from sqlalchemy import text
 from vektra_assess.worker.runner import AcquireDb
 from vektra_assess.worker.runtime import Audit
 
+# INSERT only, on purpose: the worker role has no SELECT on ``assess_audit_events`` (the log is
+# append-only and the DB boundary gives no role a read of it), so the hook cannot check for an
+# earlier row. The two writes that matter (this row, then ``dead``) are separate transactions: if the
+# update fails after the audit committed, the reaper retries and the log holds a second
+# ``assess_job_dead`` for that job. A duplicate in an append-only trail is acknowledged and rare (it
+# needs two failures in a row); consumers identify the job by ``data.job_id``.
 _INSERT = text(
     "INSERT INTO assess_audit_events (event, reason_code, actor_kind, data) "
     "VALUES (:event, :reason, 'worker', CAST(:data AS jsonb))"

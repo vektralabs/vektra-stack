@@ -22,12 +22,13 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from vektra_assess.worker import locks, sql
 from vektra_assess.worker.runtime import Audit
 
 log = logging.getLogger("vektra_assess.worker")
+_BATCH = 200
 
 
 class ReconcileError(RuntimeError):
@@ -58,7 +59,25 @@ async def _audit_then_kill_exhausted(conn: sql.Conn, audit: Audit) -> tuple[int,
     reaper tick runs this every minute, so the retry does not wait for a restart).
     """
     dead = failed = 0
-    for job_id, kind, attempts in await sql.list_exhausted_expired(conn):
+    cursor = 0
+    while True:
+        batch = await sql.list_exhausted_expired(conn, cursor, _BATCH)
+        if not batch:
+            break
+        cursor = batch[-1][0]  # past every row of the batch, audit-failed ones included
+        dead_n, failed_n = await _handle_batch(conn, audit, batch)
+        dead += dead_n
+        failed += failed_n
+        if len(batch) < _BATCH:
+            break
+    return dead, failed
+
+
+async def _handle_batch(
+    conn: sql.Conn, audit: Audit, batch: list[tuple[int, Any, int]]
+) -> tuple[int, int]:
+    dead = failed = 0
+    for job_id, kind, attempts in batch:
         try:
             await audit(
                 "assess_job_dead",

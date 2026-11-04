@@ -115,7 +115,14 @@ class TickScheduler:
     async def _timer(self, spec: TickSpec) -> None:
         while True:
             await asyncio.sleep(spec.interval_s + self._rng.uniform(0, spec.jitter_s))
-            await self.fire(spec.name)
+            try:
+                await self.fire(spec.name)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # one bad firing must not end this tick's timer for good
+                self.counters[(spec.name, "fire_errors")] += 1
+                log.exception("assess_tick_fire_failed", extra={"tick": spec.name})
 
     async def fire(self, name: str) -> bool:
         """Start one run of ``name`` unless it must be skipped; True when a run started."""

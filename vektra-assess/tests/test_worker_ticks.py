@@ -254,3 +254,26 @@ async def test_unbound_ticks_are_not_scheduled_and_never_counted_as_failures() -
         sch.counters[("unbound", "failed")] == 0
         and sch.counters[("unbound", "started")] == 0
     )
+
+
+async def test_an_unexpected_error_in_a_firing_does_not_end_the_timer() -> None:
+    class Flaky(FakeLocks):
+        calls = 0
+
+        async def try_lock(self, key: int) -> bool:
+            Flaky.calls += 1
+            if Flaky.calls == 1:
+                raise RuntimeError("connection in an odd state")
+            return await super().try_lock(key)
+
+    locks, hits = Flaky(), []
+
+    async def body() -> None:
+        hits.append(1)
+
+    sch = TickScheduler(locks, [_tick("t", body, 1)])
+    sch.start()
+    await asyncio.sleep(0.3)
+    await sch.stop()
+    assert sch.counters[("t", "fire_errors")] == 1
+    assert hits, "the timer kept firing after the error"

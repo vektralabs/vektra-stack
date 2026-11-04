@@ -244,13 +244,22 @@ class WorkerRuntime:
             if not specs or free <= 0:
                 continue
             # each claimed row gets the lease of its own kind
-            jobs = await self._store.claim(
-                [s.kind for s in specs],
-                self.worker_id,
-                {s.kind: s.lease_s for s in specs},
-                free,
-                {s.kind: s.max_attempts for s in specs},
-            )
+            try:
+                jobs = await self._store.claim(
+                    [s.kind for s in specs],
+                    self.worker_id,
+                    {s.kind: s.lease_s for s in specs},
+                    free,
+                    {s.kind: s.max_attempts for s in specs},
+                )
+            except Exception as exc:
+                # a failing pool must not stop the pools after it from being claimed
+                self.claim_errors += 1
+                log.warning(
+                    "assess_claim_failed",
+                    extra={"pool": pool.name, "error_type": type(exc).__name__},
+                )
+                continue
             if jobs and self._stopping.is_set():
                 # Shutdown began while this claim was in flight: the drain has already taken its
                 # snapshot and would not know these jobs. Give the rows back instead of starting
@@ -318,9 +327,16 @@ class WorkerRuntime:
         held = {t: self._jobs[t] for t in pending if t in self._jobs}
         for task in pending:
             task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
         released = 0
-        for job in held.values():
+
+        async def settle(task: asyncio.Task[None]) -> None:
+            # release each lease as soon as ITS task is gone: one handler slow to cancel must not
+            # keep the others' leases from going back (the caller's deadline may cut this short)
+            nonlocal released
+            await asyncio.gather(task, return_exceptions=True)
+            job = held.get(task)
+            if job is None:
+                return
             try:
                 if await self._store.release(job.id, self.worker_id, job.attempt):
                     released += 1
@@ -331,6 +347,8 @@ class WorkerRuntime:
                     "assess_job_release_failed",
                     extra={"job_id": job.id, "kind": job.kind.value},
                 )
+
+        await asyncio.gather(*(settle(t) for t in pending))
         log.info(
             "assess_worker_drained",
             extra={"cancelled": len(pending), "released": released},

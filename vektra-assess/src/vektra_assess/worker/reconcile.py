@@ -149,4 +149,8 @@ async def reconcile(
         )
         return report
     finally:
-        await control.unlock(locks.RECONCILE)
+        try:
+            await control.unlock(locks.RECONCILE)
+        except Exception:
+            # the lock dies with the connection; never replace the result or the real error
+            log.warning("assess_reconcile_unlock_failed", exc_info=True)

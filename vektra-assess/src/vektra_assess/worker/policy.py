@@ -78,13 +78,26 @@ class WorkerPolicy:
     kinds: Mapping[JobKind, KindPolicy]
 
 
-def _number(name: str, raw: str, kind: type[int] | type[float]) -> float:
+# Upper bounds: a value past the column type (int4, interval) passes a bare "positive and finite"
+# check and then fails inside every claim, leaving a worker that looks ready and never claims.
+MAX_COUNT = 10_000
+MAX_SECONDS = 86_400.0
+
+
+def _number(
+    name: str,
+    raw: str,
+    kind: type[int] | type[float],
+    maximum: float | None = None,
+) -> float:
     try:
         value = kind(raw)
     except ValueError:
         raise WorkerPolicyError(f"{name}={raw!r} is not a number") from None
     if not math.isfinite(value) or value <= 0:
         raise WorkerPolicyError(f"{name} must be a positive, finite number")
+    if maximum is not None and value > maximum:
+        raise WorkerPolicyError(f"{name} must not exceed {maximum:g}")
     return float(value)
 
 
@@ -108,7 +121,7 @@ def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
                 )
             name, raw = _PREFLIGHT_ALIAS, env[_PREFLIGHT_ALIAS]
         if raw is not None:
-            pools[pool] = int(_number(name, raw, int))
+            pools[pool] = int(_number(name, raw, int, MAX_COUNT))
 
     for kind, base in KIND_DEFAULTS.items():
         names = {f: f"{_JOB_PREFIX}{kind.value.upper()}_{f}" for f in _KIND_FIELDS}
@@ -116,14 +129,21 @@ def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
         budget, lease, attempts = base.budget_s, base.lease_s, base.max_attempts
         explicit_budget = names["BUDGET_S"] in env
         if explicit_budget:
-            budget = _number(names["BUDGET_S"], env[names["BUDGET_S"]], float)
+            budget = _number(
+                names["BUDGET_S"], env[names["BUDGET_S"]], float, MAX_SECONDS
+            )
         if names["LEASE_S"] in env:
-            lease = _number(names["LEASE_S"], env[names["LEASE_S"]], float)
+            lease = _number(names["LEASE_S"], env[names["LEASE_S"]], float, MAX_SECONDS)
         elif explicit_budget:
             lease = 2 * budget  # keeps the 2 x rule without forcing two overrides
         if names["MAX_ATTEMPTS"] in env:
             attempts = int(
-                _number(names["MAX_ATTEMPTS"], env[names["MAX_ATTEMPTS"]], int)
+                _number(
+                    names["MAX_ATTEMPTS"],
+                    env[names["MAX_ATTEMPTS"]],
+                    int,
+                    MAX_COUNT,
+                )
             )
         if lease < 2 * budget:
             raise WorkerPolicyError(

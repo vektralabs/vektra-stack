@@ -483,3 +483,57 @@ async def test_jobs_returned_by_a_claim_that_finishes_after_stop_are_released_no
     assert ran == [] and rt.in_flight == 0
     assert store.rows[jid]["state"] == "ready", "returned to ready, not left leased"
     assert await rt.claim_once() == 0, "nothing new starts once stopping"
+
+
+async def test_a_failing_pool_does_not_stop_the_pools_after_it() -> None:
+    store = MemStore()
+    real_claim = store.claim
+
+    async def claim(kinds: Any, *a: Any, **k: Any) -> Any:
+        if JobKind.PURGE in kinds:
+            raise RuntimeError("statement timeout")
+        return await real_claim(kinds, *a, **k)
+
+    store.claim = claim  # type: ignore[method-assign]
+    (q,) = store.add(JobKind.SETUP_CHECK)
+    store.add(JobKind.PURGE)
+    ran: list[int] = []
+
+    async def ok(ctx: JobContext) -> None:
+        ran.append(ctx.job_id)
+
+    rt = _rt(store, pools=[PoolSpec("maintenance", 2), PoolSpec("setup", 2)])
+    rt.register_handler(_spec(JobKind.PURGE, ok))
+    rt.register_handler(_spec(JobKind.SETUP_CHECK, ok, pool="setup"))
+    started = await rt.claim_once()
+    await rt.drain(timeout_s=1)
+    assert rt.claim_errors == 1 and started >= 1 and q in ran
+
+
+async def test_drain_releases_each_lease_even_when_one_handler_will_not_cancel() -> (
+    None
+):
+    store = MemStore()
+    stubborn_release = asyncio.Event()
+
+    async def stubborn(ctx: JobContext) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await stubborn_release.wait()  # cleanup that never finishes
+
+    async def polite(ctx: JobContext) -> None:
+        await asyncio.Event().wait()
+
+    (s_id,) = store.add(JobKind.PURGE)
+    (p_id,) = store.add(JobKind.SETUP_CHECK)
+    rt = _rt(store, pools=[PoolSpec("maintenance", 2)])
+    rt.register_handler(_spec(JobKind.PURGE, stubborn, budget_s=60, lease_s=120))
+    rt.register_handler(_spec(JobKind.SETUP_CHECK, polite))
+    await rt.claim_once()
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.5):
+            await rt.drain(timeout_s=0.05)
+    assert store.rows[p_id]["state"] == "ready"  # released although the other task hung
+    assert store.rows[s_id]["state"] == "leased"
+    stubborn_release.set()

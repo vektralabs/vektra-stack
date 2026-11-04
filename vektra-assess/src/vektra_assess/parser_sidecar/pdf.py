@@ -21,9 +21,13 @@ from pdfminer.pdftypes import resolve1
 from vektra_assess.parser_protocol import Extracted, FileStatus
 from vektra_assess.parser_sidecar.text import clean
 
-# Scanned-PDF heuristic, copied from vektra_ingest/extractors/pdf.py (the ingest
-# extractor is deliberately not imported: ARCH-073, plan assess-parser Design Notes).
-_SCAN_THRESHOLD = 100  # avg chars/page below which we call it scanned
+# Scanned-PDF heuristic. NOT the ingest one (avg < 100 chars/page): ingest uses that figure to
+# decide on OCR, while REQ-101 reads any "PDF with a text layer", and a one-line PDF has one. A PDF
+# is "testo non estraibile" here only when the sampled pages carry almost no visible characters
+# (found on the plan 4 recordings: a real one-line text PDF was reported as scanned).
+_SCAN_THRESHOLD = (
+    5  # avg NON-WHITESPACE chars per sampled page below which it is scanned
+)
 _SCAN_SAMPLE_PAGES = 5  # pages to sample for scanned detection
 
 
@@ -75,7 +79,8 @@ def extract_pdf(data: bytes, max_pages: int, max_chars: int) -> Extracted:
         return Extracted(FileStatus.CORRUPT, code="pdf_no_pages")
 
     sample = texts[:_SCAN_SAMPLE_PAGES]
-    if sum(len(t) for t in sample) / len(sample) < _SCAN_THRESHOLD:
+    visible = sum(len("".join(t.split())) for t in sample)
+    if visible / len(sample) < _SCAN_THRESHOLD:
         return Extracted(
             FileStatus.NO_TEXT, pages_total=pages_total, code="pdf_scanned"
         )

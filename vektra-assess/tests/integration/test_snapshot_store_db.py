@@ -188,3 +188,60 @@ async def test_a_failed_audit_write_aborts_the_transaction(pg: Pg) -> None:
         )
         == 0
     )
+
+
+async def test_persist_capture_writes_snapshot_and_exclusion_event_together(
+    pg: Pg,
+) -> None:
+    from assess_moodle_support import uid
+    from test_context_capture import OFF, InProcessParser, _env  # recorded 5.2 quiz
+
+    from vektra_assess.context.capture.capture import (
+        Built,
+        Capabilities,
+        QuizTarget,
+        capture_quiz,
+        persist_capture,
+    )
+
+    _replay, readers, m = _env("5.2")
+    q = m["quizzes"]["review_mixed"]
+    built = await capture_quiz(
+        QuizTarget(m["courseid"], q["id"], q["cmid"], uid("5.2", "stu1")),
+        readers,
+        InProcessParser(),
+        OFF,
+        Capabilities(),
+        moodle_release=m["release"],
+        now=1,
+    )
+    assert isinstance(built, Built)
+    sid = await make_session(pg, "STARTING")
+    dek = os.urandom(32)
+    async with pg.conn("worker") as c:
+        digest = await persist_capture(c, sid, dek, built)
+        await c.commit()
+    assert (
+        await _count(
+            pg, "SELECT count(*) FROM assess_snapshots WHERE session_id=:s", sid
+        )
+        == 1
+    )
+    rows = await pg.run(
+        "super",
+        "SELECT event, data FROM assess_audit_events WHERE session_id=:s ORDER BY id",
+        {"s": sid},
+    )
+    assert [r[0] for r in rows] == ["assess_context_exclusion_applied"]
+    data = rows[0][1]
+    assert data["excluded_field_set_hash"] == built.snapshot.exclusion.field_set_hash()
+    assert set(data) == {
+        "policy_version",
+        "excluded_field_set_hash",
+        "html_structured_only",
+        "rubric_descriptors_excluded",
+        "solution_shown",
+    }
+    async with pg.conn("worker") as c:
+        assert isinstance(await verify_snapshot_integrity(c, sid, dek, digest), Ok)
+        await c.commit()

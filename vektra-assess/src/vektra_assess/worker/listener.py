@@ -264,7 +264,7 @@ class ControlConnection:
                 except ControlConnectionError as exc:
                     log.warning(
                         "assess_control_reconnect_failed",
-                        extra={"attempt": attempt, "error": str(exc)},
+                        extra={"attempt": attempt, "error_type": type(exc).__name__},
                     )
                     await asyncio.sleep(
                         backoff_s(

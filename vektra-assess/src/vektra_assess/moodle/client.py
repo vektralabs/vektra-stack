@@ -51,7 +51,7 @@ from vektra_shared.netguard import (
     resolve_pinned,
 )
 
-log = structlog.get_logger()
+log = structlog.get_logger(__name__)
 
 _TOKEN_IN_TEXT = re.compile(r"((?:ws)?token=)[^&\s\"')]+", re.IGNORECASE)
 _HTTP_LOGGERS = (

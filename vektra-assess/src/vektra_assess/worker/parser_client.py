@@ -110,9 +110,8 @@ class SanitizeResult:
 
 
 def _violation_result(reason: str) -> ParseResult:
-    log.warning(
-        PROTOCOL_VIOLATION_CODE, reason=reason
-    )  # a fixed reason code, never content
+    # a fixed reason code, never content
+    log.warning(PROTOCOL_VIOLATION_CODE, reason_code=reason)
     return ParseResult(FileStatus.CORRUPT, code="protocol_violation")
 
 
@@ -345,7 +344,9 @@ def parser_setup_check(client: ParserClient) -> Any:
         try:
             rtt = await client.ping(deep=True)
         except ParserUnavailableError as exc:
-            log.warning("assess_parser_setup_check_failed", reason=str(exc))
+            log.warning(
+                "assess_parser_setup_check_failed", error_type=type(exc).__name__
+            )
             return missing("parser_unavailable")
         log.info("assess_parser_setup_check", round_trip_ms=int(rtt * 1000))
         return ok()

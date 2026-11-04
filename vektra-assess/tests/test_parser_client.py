@@ -181,7 +181,7 @@ async def test_malformed_reply_is_corrupt_and_never_text(fake: Fake, name: str) 
     assert res.text == "" and res.code == "protocol_violation"
     events = [e for e in logs if e["event"] == "assess_parser_protocol_violation"]
     assert len(events) == 1
-    assert set(events[0]) <= {"event", "log_level", "reason"}  # content-free
+    assert set(events[0]) <= {"event", "log_level", "reason_code"}  # content-free
     assert "exfiltrated" not in json.dumps(events)
 
 

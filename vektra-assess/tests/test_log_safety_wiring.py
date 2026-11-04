@@ -85,11 +85,18 @@ def _message_violations(src: Path = SRC) -> list[str]:
         }
         for call in ast.walk(tree):
             if id(call) in exempt or not (
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and isinstance(call.func.value, ast.Name)
-                and "log" in call.func.value.id.lower()
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
             ):
+                continue
+            # the logger is a name (log.info) or an attribute (self._log.info)
+            owner = call.func.value
+            if isinstance(owner, ast.Name):
+                owner_name = owner.id
+            elif isinstance(owner, ast.Attribute):
+                owner_name = owner.attr
+            else:
+                continue
+            if "log" not in owner_name.lower():
                 continue
             attr = call.func.attr
             if attr in _LEVELS:
@@ -128,11 +135,15 @@ def test_the_message_guard_catches_interpolated_messages(tmp_path: Path) -> None
         "    )\n"
         '    log.log(30, "t %s".format(x))\n'
         '    log.info("ok %s", x)\n'
+        "class C:\n"
+        "    def g(self, x):\n"
+        '        self._log.error(f"bad {x}")\n'
     )
     assert _message_violations(pkg) == [
         "planted.py:4 warning(<non-literal>)",
         "planted.py:5 info(<non-literal>)",
         "planted.py:8 log(<non-literal>)",
+        "planted.py:12 error(<non-literal>)",
     ]
 
 

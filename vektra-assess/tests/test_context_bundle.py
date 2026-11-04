@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import pickle
-from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -35,28 +34,31 @@ def _bundle() -> ContextBundle:
     return assemble_context(s, _frozen(s))
 
 
-ESCAPES: dict[str, Callable[[ContextBundle], Any]] = {
-    "init": lambda b: ContextBundle(**b.model_dump()),
-    "init_forged_sentinel": lambda b: ContextBundle(
-        _sentinel=object(), **b.model_dump()
-    ),
-    "model_construct": lambda b: ContextBundle.model_construct(**b.model_dump()),
-    "model_validate": lambda b: ContextBundle.model_validate(b.model_dump()),
-    "model_validate_json": lambda b: ContextBundle.model_validate_json(
-        b.model_dump_json()
-    ),
-    "model_validate_strings": lambda b: ContextBundle.model_validate_strings({}),
-    "model_copy": lambda b: b.model_copy(update={"solution_text": "x"}),
-    "copy": copy.copy,
-    "deepcopy": copy.deepcopy,
-    "pickle": pickle.dumps,
-}
-
-
-@pytest.mark.parametrize("name", list(ESCAPES))
-def test_every_escape_hatch_is_closed(name: str) -> None:
+def test_every_escape_hatch_is_closed() -> None:
+    # each attempt sits inside pytest.raises(BundleConstructionError): the AST guard
+    # (test_context_guards.py) treats only that as a legitimate mention outside the package
+    b = _bundle()
+    data = b.model_dump()
     with pytest.raises(BundleConstructionError):
-        ESCAPES[name](_bundle())
+        ContextBundle(**data)
+    with pytest.raises(BundleConstructionError):
+        ContextBundle(_sentinel=object(), **data)
+    with pytest.raises(BundleConstructionError):
+        ContextBundle.model_construct(**data)
+    with pytest.raises(BundleConstructionError):
+        ContextBundle.model_validate(data)
+    with pytest.raises(BundleConstructionError):
+        ContextBundle.model_validate_json(b.model_dump_json())
+    with pytest.raises(BundleConstructionError):
+        ContextBundle.model_validate_strings({})
+    with pytest.raises(BundleConstructionError):
+        b.model_copy(update={"solution_text": "x"})
+    with pytest.raises(BundleConstructionError):
+        copy.copy(b)
+    with pytest.raises(BundleConstructionError):
+        copy.deepcopy(b)
+    with pytest.raises(BundleConstructionError):
+        pickle.dumps(b)
 
 
 def test_assembly_is_deterministic_and_bound_to_the_snapshot() -> None:

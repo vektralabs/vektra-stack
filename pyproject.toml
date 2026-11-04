@@ -233,6 +233,29 @@ type = "forbidden"
 source_modules = ["vektra_assess.api", "vektra_assess.context.*", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle", "vektra_app.main"]
 forbidden_modules = ["vektra_assess.context.capture"]
 
+# (d) the only constructor of ContextBundle is private to vektra_assess.context (plan assess-context):
+# nothing outside the package may import vektra_assess.context._assembly
+[[tool.importlinter.contracts]]
+name = "vektra_assess.context._assembly is private to vektra_assess.context"
+type = "forbidden"
+source_modules = ["vektra_assess.api", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle", "vektra_assess.worker", "vektra_app"]
+forbidden_modules = ["vektra_assess.context._assembly"]
+
+# (d-ctx) the model context holds no vector store, retrieval or HTTP client: structural NFR-015
+# evidence (RAG OFF means no path to a retriever). Capture reaches Moodle through the readers, which
+# use httpx: those edges are the one exception.
+[[tool.importlinter.contracts]]
+name = "vektra_assess.context imports no retrieval stack and no HTTP client"
+type = "forbidden"
+source_modules = ["vektra_assess.context"]
+forbidden_modules = ["vektra_index", "vektra_core", "vektra_ingest", "qdrant_client", "httpx"]
+ignore_imports = [
+    "vektra_assess.context.capture.** -> vektra_assess.moodle",
+    "vektra_assess.context.capture.** -> vektra_assess.moodle.**",
+    "vektra_assess.context.capture.** -> vektra_assess.worker.parser_client",
+]
+unmatched_ignore_imports_alerting = "none"
+
 # (e) the worker's import ceiling: no ML stack, vector store client or document parser
 [[tool.importlinter.contracts]]
 name = "vektra_assess must not import the ML, vector store or parsing stacks"

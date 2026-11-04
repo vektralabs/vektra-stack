@@ -212,6 +212,26 @@ name = "only vektra_assess.worker imports vektra_assess.moodle and parser_client
 type = "forbidden"
 source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar"]
 forbidden_modules = ["vektra_assess.moodle", "vektra_assess.worker.parser_client"]
+# the one exception (plan assess-context): worker-only capture code lives in
+# vektra_assess.context.capture, and the next contract keeps it reachable from the worker only
+ignore_imports = [
+    "vektra_assess.context.capture.** -> vektra_assess.moodle",
+    "vektra_assess.context.capture.** -> vektra_assess.moodle.**",
+    "vektra_assess.context.capture.** -> vektra_assess.worker.parser_client",
+]
+# capture is built task by task: an exception that is not used yet is not an error
+unmatched_ignore_imports_alerting = "none"
+
+# (c-ctx) capture reads Moodle and the parser: only the worker may import it, never the API or the
+# API-importable half of vektra_assess.context (snapshot, policy, assembly, Part A, payload)
+[[tool.importlinter.contracts]]
+name = "only vektra_assess.worker imports vektra_assess.context.capture"
+type = "forbidden"
+# "vektra_assess.context.*", not "vektra_assess.context": import-linter SKIPS a source that contains
+# the forbidden module ("overlapping modules"), so the parent package would check nothing. The
+# wildcard checks every child of context; capture itself overlaps and is skipped, as intended.
+source_modules = ["vektra_assess.api", "vektra_assess.context.*", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle", "vektra_app.main"]
+forbidden_modules = ["vektra_assess.context.capture"]
 
 # (e) the worker's import ceiling: no ML stack, vector store client or document parser
 [[tool.importlinter.contracts]]

@@ -6,16 +6,16 @@ from vektra_assess.health import make_readiness_check
 
 
 class _Result:
-    def __init__(self, value):
-        self._value = value
+    def __init__(self, row):
+        self._row = row
 
-    def scalar(self):
-        return self._value
+    def first(self):
+        return self._row
 
 
 class _Conn:
-    def __init__(self, value, boom):
-        self._value, self._boom = value, boom
+    def __init__(self, row, boom):
+        self._row, self._boom = row, boom
 
     async def __aenter__(self):
         if self._boom:
@@ -26,15 +26,16 @@ class _Conn:
         return False
 
     async def execute(self, _sql, _params):
-        return _Result(self._value)
+        return _Result(self._row)
 
 
 class FakeEngine:
-    def __init__(self, age=None, boom=False):
-        self._age, self._boom = age, boom
+    def __init__(self, age=None, boom=False, state=None, backlog=None):
+        self._row = None if age is None else (age, state, backlog)
+        self._boom = boom
 
     def connect(self):
-        return _Conn(self._age, self._boom)
+        return _Conn(self._row, self._boom)
 
 
 async def _status(engine, max_age_s=60):
@@ -73,3 +74,22 @@ async def test_no_engine_wired_never_reports_healthy():
 
 async def test_disabled_needs_no_engine():
     assert (await make_readiness_check(enabled=False)()).status == "disabled"
+
+
+async def test_worker_state_other_than_ready_is_degraded():
+    for state in ("starting", "draining", "stopped"):
+        res = await _status(FakeEngine(age=1.0, state=state))
+        assert (res.status, res.message) == ("degraded", "worker_not_ready"), state
+    assert (await _status(FakeEngine(age=1.0, state="ready"))).status == "healthy"
+
+
+async def test_old_ready_job_backlog_is_degraded_from_the_row_alone():
+    res = await _status(FakeEngine(age=1.0, state="ready", backlog="31.0"))
+    assert (res.status, res.message) == ("degraded", "job_backlog")
+    assert (
+        await _status(FakeEngine(age=1.0, state="ready", backlog="29.9"))
+    ).status == "healthy"
+
+
+async def test_a_row_without_the_optional_fields_is_judged_on_age_only():
+    assert (await _status(FakeEngine(age=2.0))).status == "healthy"

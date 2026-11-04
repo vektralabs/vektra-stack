@@ -169,6 +169,8 @@ Three things to know before turning it on:
 Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
 `assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
 `make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
+Until every job handler of the feature is bound (later plans), a production worker refuses to start; for development and CI add
+`-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development` for the worker only.
 These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
 process environment, never from an env file.
 
@@ -195,7 +197,17 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | str | - | Username of the ingestion web-service account. The setup check refuses an assess token that belongs to it; when unset that item is `UNVERIFIABLE` (not OK). |
 | `VEKTRA_ASSESS_UI_ORIGIN` | str | - | Origin (`https://host[:port]`) the chat UI is served from. The setup check item `ui_not_same_origin` refuses a UI origin that is the same host or the same site as the Moodle `base_url` or as the API public origin (CONF-004). Same-site is judged without the public-suffix list: the last two host labels are compared, which can refuse a legitimate pair under a multi-label suffix (e.g. two `*.co.uk` hosts) but never accepts a same-site pair. Unset: that item is `UNVERIFIABLE` (not OK). |
 | `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` | str | - | Public origin of the assess API, compared with the UI origin by `ui_not_same_origin`. Unset while the UI origin is set: the item is `UNVERIFIABLE`. |
-| `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every 10 s (container healthcheck). |
+| `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` (container healthcheck). |
+| `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` | float | `5` | Seconds between worker heartbeats (row upsert and file touch). At most 10, so `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` (minimum 30) always spans at least three beats. |
+| `VEKTRA_ASSESS_JOB_POLL_INTERVAL_S` | float | `1` | Claim-loop poll when no `NOTIFY` arrives. The poll is the correctness backstop; `NOTIFY` is only a latency hint. |
+| `VEKTRA_ASSESS_JOB_BACKOFF_BASE_S` / `_CAP_S` | float | `5` / `300` | Retry backoff of a failed job attempt: exponential from the base, jittered to 50-100 % of the step, capped. |
+| `VEKTRA_ASSESS_JOB_DONE_RETENTION_H` | int | `24` | Hours a `done` job row is kept before the hourly cleanup deletes it. `dead` rows are kept for the purge plan. |
+| `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` | bool | `false` | Development and CI only: start the worker while some job kinds or ticks have no handler yet. Unbound slots stay unbound and a job of that kind fails with `handler_not_bound`, never completing silently. Honoured only with `VEKTRA_ENV=development`; set in any other environment the worker refuses to start. The shipped overlay does **not** set it; the dev-only `docker-compose.assess.dev.yml` does. Default: a worker with an unbound slot refuses to start and names each slot and the plan that owns it. |
+| `VEKTRA_ASSESS_WORKER_DB_COMMAND_TIMEOUT_S` | float | `30` | Upper bound on any single worker database statement (pool). A restart or a dropped network can leave a connection half-open: no error, only silence; without a bound the worker would wait on it. The control connection uses a fixed 5 s bound. |
+| `VEKTRA_ASSESS_WORKER_WEDGE_EXIT_S` | float | `60` | Liveness watchdog (10-600): if the heartbeat row has not been written for this long while the worker should be ready, it exits with code 70 and the supervisor (`restart: unless-stopped`) starts a fresh process, which reconciles on startup. Backstop for any wedge the timeouts do not catch. |
+| `VEKTRA_ASSESS_WORKER_DRAIN_S` | float | `20` | On SIGTERM, seconds to wait for in-flight handlers before cancelling them and releasing their leases. At most 25, under the Compose `stop_grace_period` of 30 s. |
+| `VEKTRA_ASSESS_POOL_<POOL>_CONCURRENCY` | int | `preflight` 10, `ws` 2, `transcript` 2, `delivery` 2, `setup` 1, `maintenance` 1 | Concurrent jobs of a pool. `VEKTRA_ASSESS_PREFLIGHT_CONCURRENCY` is an accepted alias for the pre-flight pool (the NFR-020 admission number K; 10 is a placeholder until the reference hardware is decided). |
+| `VEKTRA_ASSESS_JOB_<KIND>_BUDGET_S` / `_LEASE_S` / `_MAX_ATTEMPTS` | float / float / int | per kind (for example `ws` kinds 20 / 40 / 5, `setup_check` 120 / 240 / 5) | Hard timeout, lease and attempts of a job kind, e.g. `VEKTRA_ASSESS_JOB_PURGE_BUDGET_S`. The lease must be at least twice the budget (no renewal exists); setting only the budget sets the lease to twice it. `_MAX_ATTEMPTS` can **lower** the attempts a job row allows (the row's own `max_attempts`, default 5, is the ceiling: an enqueuer that wants more passes it); the effective value is written back on claim. The write-back is one-way: raising the setting again does not restore the attempts of rows already claimed under the lower value. Lowering it does not retroactively kill rows that are already `ready` at or above the new limit; such a row is no longer claimed and stays `ready` until an operator deletes or re-enqueues it. A wrong name, a non-number, a value above the ceiling (10000 for attempts and concurrency, 86400 s for budget and lease) or a lease under that rule makes the worker refuse to start. |
 | `VEKTRA_ASSESS_PARSER_SOCKET` | path | `/run/vektra-assess-parser/parser.sock` | Unix socket of the parser sidecar (worker and parser only). |
 | `VEKTRA_ASSESS_PARSER_POOL` | int | `3` | Concurrent child processes of the parser sidecar (one item per fresh process). Sized with the container `mem_limit` (768M): pool 3 within the measured per-child peak. |
 | `VEKTRA_ASSESS_PARSER_TIMEOUT_S` | float | `10` | Wall-clock budget per file in the sidecar; the child is SIGKILLed at the deadline and the file becomes `non letto: file danneggiato o non elaborabile`. The worker client waits this plus a 15 s queue allowance before treating the sidecar as unavailable. |
@@ -203,6 +215,26 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_PARSER_MAX_FILE_BYTES` | int | `10485760` | Largest file the sidecar accepts (REQ-101: 10 MB); larger is `non letto: troppo grande` with no child forked. The sidecar also holds at most four such payloads in memory at once and answers `BUSY` beyond that (the client retries). |
 | `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
 | `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
+
+#### Connection budget (assess)
+
+Postgres `max_connections` is 100. The shipped defaults add up to 65, and a test
+(`vektra-app/tests/test_connection_budget.py`) fails above 85, so a changed pool default cannot
+silently exhaust the server:
+
+| Holder | Connections | Setting |
+|---|---|---|
+| Main API pool | 30 (10 + 20 overflow) | `vektra_shared.db` defaults, not changed by assess |
+| Assess API pool | 25 (15 + 10 overflow) | `VEKTRA_ASSESS_API_POOL_SIZE` |
+| Assess worker pool | 5 (no overflow) | `VEKTRA_ASSESS_WORKER_POOL_SIZE` |
+| Assess worker control connection | 1 | fixed (LISTEN and advisory locks, outside the pool) |
+| `migrate` (Alembic) | 1 | while it runs |
+| Reserved | 3 | Postgres `superuser_reserved_connections` |
+| **Total** | **65** | ceiling 85 |
+
+The worker's 5 + 1 is the INT-002 budget: its single pool serves the job SQL and the handlers'
+transactions. INT-002 assumed about 15 for the API; the main API pool alone is larger by default,
+which is why the margin is tracked here.
 
 ### Secret files and the key matrix
 

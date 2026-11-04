@@ -1,6 +1,7 @@
 """The real parser sidecar container, attacked from outside and inside (plan assess-parser, task F).
 
-Runs against `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile
+Runs against `docker compose -f docker-compose.yml -f docker-compose.assess.yml
+-f docker-compose.assess.dev.yml --profile
 assess up`. The corpus is generated on the host and pushed through a worker-side client that
 runs INSIDE the worker container (the only other holder of the socket volume), so the whole
 path is the production one. Hardening is read from `docker inspect` and probed from inside
@@ -36,6 +37,8 @@ COMPOSE = [
     str(ROOT / "docker-compose.yml"),
     "-f",
     str(ROOT / "docker-compose.assess.yml"),
+    "-f",
+    str(ROOT / "docker-compose.assess.dev.yml"),
     "--profile",
     "assess",
 ]

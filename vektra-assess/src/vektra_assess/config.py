@@ -57,7 +57,75 @@ class VektraAssessSettings(BaseSettings):
     worker_heartbeat_file: Path = Field(
         Path("/tmp/vektra-assess-worker.heartbeat"),
         alias="VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE",
-        description="File whose mtime the worker refreshes every 10 s (container healthcheck).",
+        description="File whose mtime the worker refreshes every VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S (container healthcheck).",
+    )
+    worker_heartbeat_interval_s: float = Field(
+        5.0,
+        gt=0,
+        le=10,  # heartbeat_max_age_s (>= 30) must stay at least three beats
+        alias="VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S",
+        description="Seconds between worker heartbeats (row upsert plus the tmpfs file touch).",
+    )
+    worker_allow_unbound: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND",
+        description=(
+            "Development and CI only: let the worker start while some job kinds or ticks have no "
+            "handler yet (they stay unbound and a job of that kind fails with handler_not_bound, "
+            "never completes silently). Honoured only with VEKTRA_ENV=development; the worker "
+            "refuses to start with it set in any other environment."
+        ),
+    )
+    worker_db_command_timeout_s: float = Field(
+        30.0,
+        gt=0,
+        le=300,
+        alias="VEKTRA_ASSESS_WORKER_DB_COMMAND_TIMEOUT_S",
+        description=(
+            "Upper bound on any single worker database statement. A database that restarts or a "
+            "network that drops can leave a connection half-open (no FIN, no error, just silence); "
+            "without a bound the worker would wait on it forever. After it the connection is "
+            "discarded and replaced."
+        ),
+    )
+    worker_wedge_exit_s: float = Field(
+        60.0,
+        ge=10,
+        le=600,
+        alias="VEKTRA_ASSESS_WORKER_WEDGE_EXIT_S",
+        description=(
+            "Liveness watchdog: if the worker has not managed to write its heartbeat row for this "
+            "long while it should be ready, it exits with code 70 and the supervisor "
+            "(restart: unless-stopped) starts a fresh process, which reconciles on startup. A "
+            "database connection that went half-open (restart, dropped network) can leave a "
+            "process alive but doing nothing; this is the backstop for any such wedge."
+        ),
+    )
+    job_poll_interval_s: float = Field(
+        1.0,
+        gt=0,
+        le=10,
+        alias="VEKTRA_ASSESS_JOB_POLL_INTERVAL_S",
+        description="Claim-loop poll when no NOTIFY arrives; the correctness backstop, NOTIFY is only a latency hint.",
+    )
+    job_backoff_base_s: float = Field(
+        5.0, gt=0, le=3600, alias="VEKTRA_ASSESS_JOB_BACKOFF_BASE_S"
+    )
+    job_backoff_cap_s: float = Field(
+        300.0, gt=0, le=86_400, alias="VEKTRA_ASSESS_JOB_BACKOFF_CAP_S"
+    )
+    job_done_retention_h: int = Field(
+        24,
+        ge=1,
+        alias="VEKTRA_ASSESS_JOB_DONE_RETENTION_H",
+        description="Hours a done job row is kept before the hourly cleanup tick deletes it; dead rows are kept for the purge plan.",
+    )
+    worker_drain_s: float = Field(
+        20.0,
+        gt=0,
+        le=25,  # below the Compose stop_grace_period of 30 s
+        alias="VEKTRA_ASSESS_WORKER_DRAIN_S",
+        description="On SIGTERM, seconds to wait for in-flight handlers before cancelling them and releasing their leases.",
     )
     parser_socket: Path = Field(
         Path("/run/vektra-assess-parser/parser.sock"),

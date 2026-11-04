@@ -124,6 +124,9 @@ jobs:
               # on the production CPU. defusedxml/html5lib/aiosmtplib are pure
               # Python but listed so a future native rewrite is caught here.
               "vektra_assess", "vektra_app.assess_worker", "vektra_app.assess_parser",
+              # The job loop (plan assess-job-loop): asyncpg and the asyncio runtime it
+              # sits on must import on the production CPU, in the process that runs them.
+              "vektra_assess.worker.runtime", "vektra_assess.worker.listener", "asyncpg",
               # The parser sidecar (plan assess-parser): its parsing stack, native or not,
               # must import on the production CPU. pdfminer.six pulls cryptography.
               "vektra_assess.parser_sidecar.server", "pdfminer.high_level",
@@ -343,15 +346,15 @@ jobs:
       - name: Build and start the assess stack
         run: |
           docker compose build
-          docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d
+          docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess up -d
           timeout 120 bash -c 'until curl -so /dev/null http://localhost:8000/health; do sleep 2; done'
-          timeout 90 bash -c 'until [ "$(docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess ps vektra-assess-worker --format "{{.Health}}")" = "healthy" ]; do sleep 3; done'
+          timeout 90 bash -c 'until [ "$(docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess ps vektra-assess-worker --format "{{.Health}}")" = "healthy" ]; do sleep 3; done'
 
       - name: Worker import profile (artifact)
         if: always()
         run: |
           mkdir -p test-results
-          docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess \
+          docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess \
             exec -T vektra-assess-worker python -X importtime -c \
             "import vektra_app.assess_worker; from vektra_core.providers.litellm_provider import LitellmProvider" \
             2> test-results/assess-worker-importtime.txt || true
@@ -383,7 +386,7 @@ jobs:
 
       - name: Dump container logs on failure
         if: failure()
-        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess logs --tail=200
+        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess logs --tail=200
 
       - name: Upload test results
         if: always()
@@ -395,7 +398,56 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess down -v
+        run: docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml --profile assess down -v
+
+  # Chaos on the assess worker (plan assess-job-loop): the real worker process against a real
+  # Postgres, killed (kill -9), terminated (SIGTERM), cut off (container restart, backend
+  # termination, a blackholed half-open link) and left idle (RSS ceiling, read from /proc on
+  # Linux). Assertions are row counts: jobs done = N, effects = N, no expired lease, no dead job.
+  assess-chaos:
+    name: Assess chaos (kill, restart, half-open, refusals, idle RSS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: Run the chaos harness
+        run: |
+          mkdir -p test-results
+          uv run pytest tests/chaos/assess -v --tb=short --junitxml=test-results/assess-chaos.xml
+
+      # A skipped chaos case is a hole, not a pass (no Docker would skip every one of them).
+      - name: Every chaos case must have run, not skipped
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("test-results/assess-chaos.xml").getroot()
+          cases = list(root.iter("testcase"))
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          print(f"assess chaos: {len(cases)} collected, {len(skipped)} skipped")
+          if len(cases) < 14 or skipped:
+              sys.exit(f"assess chaos did not fully run: collected={len(cases)} skipped={skipped}")
+          PY
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assess-chaos-test-results
+          path: test-results/
+          retention-days: 14
 
   # Aggregator, and the single required status check in branch protection. The
   # matrix reports one check per provider ("Integration tests (pgvector)", "…
@@ -406,7 +458,7 @@ jobs:
   # sits BLOCKED with all checks green.
   integration-gate:
     name: Integration tests + NFR gates
-    needs: [integration, package-integration, assess-stack]
+    needs: [integration, package-integration, assess-stack, assess-chaos]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -415,6 +467,7 @@ jobs:
           MATRIX="${{ needs.integration.result }}"
           PACKAGES="${{ needs.package-integration.result }}"
           ASSESS="${{ needs.assess-stack.result }}"
+          CHAOS="${{ needs.assess-chaos.result }}"
           if [[ "$MATRIX" != "success" ]]; then
             echo "Integration matrix did not pass (result: $MATRIX)."
             exit 1
@@ -425,6 +478,10 @@ jobs:
           fi
           if [[ "$ASSESS" != "success" ]]; then
             echo "Assess stack tests did not pass (result: $ASSESS)."
+            exit 1
+          fi
+          if [[ "$CHAOS" != "success" ]]; then
+            echo "Assess chaos tests did not pass (result: $CHAOS)."
             exit 1
           fi
           echo "Integration tests passed on every vector store provider, and every package's integration suite passed."

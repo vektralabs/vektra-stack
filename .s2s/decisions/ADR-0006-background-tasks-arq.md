@@ -72,3 +72,19 @@ This architecture satisfies ADR-0004 three-service constraint while providing jo
 - arq dependency adds to maintenance burden
 - PostgreSQL jobs table adds schema complexity
 - Stale job recovery requires startup logic
+
+## Status note (2026-11-01, updated 2026-11-03)
+
+Two statements in this ADR describe intent, not the code that ships:
+
+- **arq has never run.** `registry["arq_pool"]` is never registered, `vektra_app/worker.py get_app_worker_settings()` and
+  `vektra_ingest/jobs.py get_worker_settings()` are dead code, the undeployed `CMD_TARGET=worker` is never started, and
+  `vektra_ingest/api.py _enqueue_ingest_job` always falls back to FastAPI `BackgroundTasks`. Ingestion is in-process.
+- **The 5-minute recovery rule is not implemented.** No reaper moves a stuck `PROCESSING` ingest job to `FAILED`; the "Stale job
+  recovery requires startup logic" consequence above was never built.
+
+This ADR is **superseded for the assess feature only** by
+[ADR-0029](ADR-0029-postgres-native-leased-job-loop-for-assess-with-db.md): `vektra_assess` runs its own Postgres-native
+leased job loop (`vektra-assess-worker`, claim with `FOR UPDATE SKIP LOCKED`, fenced completion, transactional outbox, no Redis),
+and does not use arq or this table. The ingest path is unchanged and is not fixed by that work: the drift above remains for
+ingestion and is recorded here so it is not mistaken for a working mechanism.

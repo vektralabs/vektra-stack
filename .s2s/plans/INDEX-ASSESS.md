@@ -15,19 +15,30 @@ changes status, update its plan file in vektra-moodle-discuss AND its row here.
 
 Development is done by Claude Code in **loop mode**, one wave at a time:
 
-1. **Branch per wave**, off `develop`: `feat/assess-wN` in vektra-stack and, when the wave contains
-   plugin plans, `feat/discuss-wN` in vektra-moodle-discuss. No per-plan branches.
+1. **Branches** (changed after W1, which was one 534-file PR that the review bot refused: it caps
+   at 100 files). From W2 on, **one branch and one PR per plan**, off `develop`:
+   `feat/assess-<plan-slug>` in vektra-stack (for example `feat/assess-job-loop`). A plan that
+   depends on an unmerged plan waits for that merge; independent plans run in any order. If a plan
+   is heading past about 100 changed files, split it before opening the PR (recorded fixtures and
+   datasets go in their own commit). W1 stays as it was run.
+   **The Moodle repos are not touched by this loop.** vektra-moodle and vektra-moodle-discuss are
+   changed only by the user's other session (the one working in those repos; it was
+   `vektra-moodle-cf` on 2026-11-03). When a task needs a change there, the loop writes the
+   request (repo, file, what and why) in the plan's `## Notes`, reports it to the user, and
+   carries on with tasks that do not depend on it. Plugin plans (P2, P3) are run by that session,
+   not by this loop.
 2. **Loop**: `/loop` with the wave prompt below. Each iteration does one task (or a small group of
    tightly coupled tasks), tests it, commits it, and updates the plan file in the same commit.
 3. **End of each plan** (inside the loop): run `/code-review` on that plan's diff, fix the findings,
    **re-run the plan's full test suite** (a fix that breaks something goes back to step 2), then set
    the plan to `completed` here and in the plan file and move on to the next plan.
-4. **End of wave**: run the wave gate; if it fails, fix, re-run the affected tests and **re-run the
-   whole gate** until it passes. Write the evidence to `.s2s/waves/assess-wN-review.md` (based on
-   `.s2s/waves/checklist-template.md`), then open ONE PR per repo `feat/*-wN` → `develop` **with the
+4. **End of each plan**: after step 3, open the plan's PR to `develop` **with the
    `/github-workflow:github-pr-creation` skill** (it asks the user to confirm target and content,
    so the loop waits there), handle the review (`/github-workflow:github-pr-review`), and merge only on the user's decision
-   (`/github-workflow:github-pr-merge`). The branch is deleted on merge.
+   (`/github-workflow:github-pr-merge`). The branch is deleted on merge. **End of wave**: when every
+   plan of the wave is merged, run the wave gate on `develop`; if it fails, fix on a new branch,
+   re-run the affected tests and **re-run the whole gate** until it passes. Write the evidence to
+   `.s2s/waves/assess-wN-review.md` (based on `.s2s/waves/checklist-template.md`) in a small docs PR.
 5. **Between waves**: `/compact`, then start the next wave from `develop`.
 
 `develop` therefore only ever receives complete, gate-verified waves. As a second line of defence,
@@ -38,7 +49,7 @@ route is mounted and no assess service runs (plan assess-foundations, task 6.1b)
 
 Start a wave with `/loop` and this prompt, replacing `N`:
 
-> Wave WN of `.s2s/plans/INDEX-ASSESS.md`. Work on branch `feat/assess-wN` (vektra-stack) and, for plugin plans, `feat/discuss-wN` (vektra-moodle-discuss); create them from `develop` if missing. Read INDEX-ASSESS, pick the `in_progress` plan of wave WN, or the first `pending` one whose dependencies are `completed`, and read the full plan file (plugin plans: `../vektra-moodle-discuss/.s2s/plans/`). If tasks are already `[x]`, check the code that implements them before continuing. Do the first unchecked task: implement, run its tests, check it off, commit (Conventional Commits, plan file in the same commit). If a test fails, fix and re-run until green. When the plan's tasks and acceptance criteria are all done, run `/code-review` on the plan's diff, fix the findings, re-run the plan's full test suite until green, and mark the plan `completed` in the plan file and in INDEX-ASSESS. When every plan of the wave is `completed`, run the wave gate; if it fails, fix, re-run the affected tests and the whole gate until it passes. Write `.s2s/waves/assess-wN-review.md`, push, create the wave PR(s) to `develop` with the `/github-workflow:github-pr-creation` skill, and stop the loop. Obey the stop rules in INDEX-ASSESS.
+> Wave WN of `.s2s/plans/INDEX-ASSESS.md`. Work in vektra-stack only: one branch and one PR per plan, `feat/assess-<plan-slug>` off `develop` (create it if missing). Never edit `../vektra-moodle` or `../vektra-moodle-discuss`: another session owns them; a needed change there goes in the plan's `## Notes` as a request and is reported to the user. Read INDEX-ASSESS, pick the `in_progress` plan of wave WN, or the first `pending` one whose dependencies are `completed` and merged, and read the full plan file. If tasks are already `[x]`, check the code that implements them before continuing. Do the first unchecked task: implement, run its tests, check it off, commit (Conventional Commits, plan file in the same commit). If a test fails, fix and re-run until green. When the plan's tasks and acceptance criteria are all done, run `/code-review` on the plan's diff, fix the findings, re-run the plan's full test suite until green, and mark the plan `completed` in the plan file and in INDEX-ASSESS. Check the plan's diff stays under about 100 files (split before opening the PR if not), push, create the plan's PR to `develop` with the `/github-workflow:github-pr-creation` skill, and stop the loop for that plan; the user merges it, then restart the loop for the next plan. After the last plan of the wave is merged, run the wave gate on `develop`, write `.s2s/waves/assess-wN-review.md` and open it as a small docs PR. Obey the stop rules in INDEX-ASSESS.
 
 ### Stop rules
 
@@ -54,7 +65,7 @@ The loop **stops and reports to the user** (it does not work around the problem)
   the test containers, touching a real Moodle or SMTP server, publishing anything.
 - **The environment is at risk**: disk nearly full (the dev machine was at 94%), a container that
   will not start, signed commits failing.
-- **The wave is complete**: the PR(s) are open, the gate evidence is written.
+- **A plan is complete**: its PR is open; or **the wave is complete**: the gate evidence is written.
 
 On every stop, the plan's `## Notes` gets the current state and the reason, and is committed, so
 the next run resumes from there.
@@ -107,7 +118,7 @@ on Moodle 4.3 and 5.2, parser sidecar, installable plugin.
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
-| 3 | [assess-job-loop](20261101-154950-assess-job-loop.md) | Postgres-native leased job loop, ticks, heartbeat | 29 | 2 | pending |
+| 3 | [assess-job-loop](20261101-154950-assess-job-loop.md) | Postgres-native leased job loop, ticks, heartbeat | 29 | 2 | completed (2 criteria verified by the first CI run, see plan) |
 | 6 | [assess-context](20261101-154950-assess-context.md) | Snapshot capture, assemble_context, canary suite | 34 | 2, 4, 5 | pending |
 | 7 | [assess-llm-runner](20261101-154950-assess-llm-runner.md) | DiscussionTurnRunner, post-check, prompts, eval gate | 44 | 6 | pending |
 
@@ -209,4 +220,4 @@ Phase 1: [INDEX-PHASE1.md](INDEX-PHASE1.md). Phase 2: [INDEX-PHASE2.md](INDEX-PH
 - vektra-moodle: the Moodle 5.1 `MOODLE_TGZ_SHA256` in `docker/Dockerfile` pins a moving `moodle-latest-501.tgz` and fails today; and `docker-moodle43/` is an orphan local directory.
 - ~~`.s2s/BACKLOG.md` contains the university project name; clean it (public repo rule).~~ Done 2026-11-03 (DEBT-040); history not rewritten, old `block_vektra` release assets kept (decision of the user).
 - FU-DISCUSS-1 (vektra-moodle-discuss, LOW, hardening), deferred from the review of PR #1: cap the buffered response body in `classes/local/http/curl_transport.php::send()` (used by `assess_client::request()`). `stream()` already has `MAX_STREAM_BYTES` (20 MB) via `CURLOPT_WRITEFUNCTION`; `send()` buffers everything through `\curl->get()/post()`, so a huge body can exhaust `memory_limit`. Fix: a `CURLOPT_WRITEFUNCTION` that accumulates and aborts over a threshold (1-5 MB) with error code `too_large`, like `stream()`; a check after `send()` does not help, the memory is already allocated. Mitigations today: 5 s total timeout, trusted server, small JSON endpoints. Acceptance: an integration test (local server serving a large body) plus PHPUnit on an installed Moodle; the plugin unit tests use a fake transport and cannot cover the real curl path. Natural home: plan discuss-foundation follow-up or the first plugin plan that touches the transport.
-- FU-DISCUSS-2 (vektra-moodle-discuss, LOW, process decision for the maintainer), deferred from the review of PR #1: the tag-triggered `release.yml` (`push` tag `v*`) does not wait for the Moodle matrix; `moodle-plugin-ci.yml` runs only on push to main/develop and on PRs, not on tags. A tag publishes the zip even if the Moodle 4.3/5.2 matrix and lint did not pass on that commit; the release job only checks tag == `v$plugin->release` and the zip content. As a result the strict mode of `checkout-block-vektra.sh` for `refs/tags` is effectively unused. Options: (a) `release.yml` depends on the CI workflow via `workflow_call`/`needs`; (b) check through the API that the tagged commit's checks are green before publishing; (c) leave it and document that tags are cut from main with green CI. (a) and (b) add complexity and couple two workflows; the review tool itself called it a poor tradeoff. Decision: maintainer, not taken.
+- FU-DISCUSS-2 (vektra-moodle-discuss, LOW, process decision: decided, option c), deferred from the review of PR #1: the tag-triggered `release.yml` (`push` tag `v*`) does not wait for the Moodle matrix; `moodle-plugin-ci.yml` runs only on push to main/develop and on PRs, not on tags. A tag publishes the zip even if the Moodle 4.3/5.2 matrix and lint did not pass on that commit; the release job only checks tag == `v$plugin->release` and the zip content. As a result the strict mode of `checkout-block-vektra.sh` for `refs/tags` is effectively unused. Options: (a) `release.yml` depends on the CI workflow via `workflow_call`/`needs`; (b) check through the API that the tagged commit's checks are green before publishing; (c) leave it and document that tags are cut from main with green CI. (a) and (b) add complexity and couple two workflows; the review tool itself called it a poor tradeoff. Decision 2026-11-03 (user): option (c). Tags are cut from `main` with green CI; nothing in the workflows changes. To do in the plugin repo: one line in its release notes or README saying so (not yet written). Revisit when the first real tag is cut.

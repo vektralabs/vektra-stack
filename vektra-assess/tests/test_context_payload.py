@@ -11,12 +11,16 @@ from vektra_shared.testing_recorders import RecordingLLMProvider
 
 
 async def test_payload_bytes_reach_the_provider_exactly() -> None:
-    s = make("risposta CNRY-allowed-onlinetext")
+    s = make()
+    q2 = s.quiz_items[1].model_copy(
+        update={"response_text": "risposta CNRY-allowed-response"}
+    )
+    s = s.model_copy(update={"quiz_items": (s.quiz_items[0], q2)})
     payload = bundle_to_model_payload(assemble_context(s, _frozen(s)))
     llm = RecordingLLMProvider(["ok"])
     await llm.complete(payload, "m")
     (sent,) = llm.all_request_bytes
-    assert len(sent) > 0 and b"CNRY-allowed-onlinetext" in sent
+    assert len(sent) > 0 and b"CNRY-allowed-response" in sent
     assert payload[0].content.startswith(BEGIN) and payload[0].content.endswith(END)
 
 

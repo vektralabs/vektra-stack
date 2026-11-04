@@ -1745,6 +1745,17 @@ OFF -> R-SOL. ON -> included, and "soluzione mostrata: sì" appears.
 FAIL-CLOSED FALLBACK for review HTML that cannot be filtered (OQ-025): per-question HTML is
 excluded and only verified student-visible structured fields are used; the form states this;
 audited.
+Amendment 2026-11-04 (coordinator, from the plan assess-context build): the fallback above
+excluded the question text and the student's own answer together with the hidden parts, because
+Moodle WS exposes them only inside the per-question review HTML, which the service account
+receives with teacher visibility (OQ-025: always contains the right answer and every feedback). The
+fallback is narrowed to an ALLOWLIST EXTRACTION in the parser sidecar: from each question's review
+HTML only the question text block (`qtext`) and the student's response are kept, as plain text;
+everything else (right answer, specific/general feedback, outcome, grade, response history, any
+unknown block) is dropped. An item whose kept blocks cannot be isolated, or whose type embeds
+answer material inside them (to verify per type: match, multianswer, gapselect), keeps the
+structured-only fields and is flagged degraded. Proven by canaries per question type in every sink
+(NFR-017). The removal-list path for a filterable HTML is unchanged.
 Context exclusion does not prevent the model from solving an item on its own (REQ-099).
 
 **Related**: REQ-077, REQ-095, BR-010, NFR-015, NFR-017, REQ-099, OQ-025

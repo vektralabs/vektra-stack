@@ -121,3 +121,29 @@ CONF-005 resolved 4/4. No scope change, because REQ-077's field and its default 
 - (+) NFR-015 verifiable in QueryTrace
 - (−) RAG ON may stay unavailable if per-student visibility proves unreadable
 
+### Amendment 2026-11-04: allowlist extraction of question text and response
+
+Status: accepted by the coordinator on 2026-11-04 (plan assess-context).
+
+Context: plan 4's readers expose per quiz question only number, type, state, status, mark and
+maximum; the question text and the student's answer exist only in the review HTML, which carries
+teacher-visibility material (right answer, all feedback) whatever the student's review options. The
+structured-only fallback of BR-011 therefore removed the question content from every quiz
+discussion.
+
+Decision: the sidecar's sanitizer gains an ALLOWLIST mode. Capture sends each question's review
+HTML with the question type, and the sidecar returns only the text of the `qtext` block and of the
+student's response (`answer` for the response-entry types, the selected choice for the choice
+types), as plain text; every other block is discarded, and so is anything it does not recognise.
+The HTML still never leaves the capture frame towards a model, log or store: only the extracted
+text enters the snapshot. Types whose kept blocks can embed answer material (match, multianswer,
+gapselect, ddwtos and other drag types) are enabled only once a per-type canary proves the right
+answer and the hidden feedback absent; until then they stay structured-only and are flagged.
+
+Consequences:
+- (+) quiz discussions regain the question and the answer the student gave
+- (+) still capture-time minimisation: the extraction is an allowlist, an unknown block is dropped
+- (−) depends on Moodle's question markup (CSS classes); a Moodle upgrade can change it, so the
+  per-type canaries run on every recorded release and a shape change fails closed to
+  structured-only
+

@@ -95,6 +95,11 @@ class QuizItem(_Frozen):
     mark: Mark | None  # None when hidden or not applicable (see marks_hidden)
     max_mark: Mark | None
     marks_hidden: MarksHidden | None = None
+    #: plain text extracted by ALLOWLIST from the review HTML (ADR-0032 amendment 2026-11-04):
+    #: only the question text block and the student's response. ``None`` when the type is not
+    #: enabled for extraction or the blocks could not be isolated (then ``degraded``).
+    question_text: str | None = None
+    response_text: str | None = None
     #: student-visible text from the sanitized review HTML (filterable path only). ``None`` on
     #: the structured-only path: the html never left the capture frame.
     review_text: str | None = None

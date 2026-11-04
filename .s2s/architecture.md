@@ -2497,6 +2497,10 @@ OQ-028 resolved 4/4. Correctness already rests on Postgres, and Redis would add 
 
 #### ARCH-069: BR-011 disclosure boundary enforced at snapshot capture and in a single typed assemble_context
 
+> Amended 2026-11-04 (ADR-0032 amendment): on the structured-only path the sidecar extracts, by
+> allowlist, the question text and the student's response from the review HTML; every other block is
+> dropped. See BR-011.
+
 **Context**:
 
 BR-011 and NFR-017: 'a prompt instruction is not a control'. Excluded data must be provably absent from model input, from any later code path, and from preview.

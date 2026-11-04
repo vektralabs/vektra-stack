@@ -83,6 +83,14 @@ _BR009 = re.compile(
 )
 
 
+def test_br009_wording_is_the_required_literal() -> None:
+    """Independent of the golden file: regenerating it cannot hide a change of the wording."""
+    assert S.BR009_TEMPLATE == (
+        "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa "
+        "discussione; decide l'orale"
+    )
+
+
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_br009_statement_is_the_shipped_constant_byte_for_byte(case: Case) -> None:
     text = GOLDEN[case.name]

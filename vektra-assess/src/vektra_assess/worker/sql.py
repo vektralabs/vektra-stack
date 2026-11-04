@@ -37,20 +37,26 @@ CLAIM = """
 UPDATE assess_jobs SET
     state = 'leased',
     lease_until = now() + make_interval(secs => (
-        SELECT t.lease FROM unnest($1::text[], $3::float8[]) AS t(kind, lease)
+        SELECT t.lease FROM unnest($1::text[], $3::float8[], $5::int[]) AS t(kind, lease, attempts)
         WHERE t.kind = assess_jobs.kind
     )),
-    attempts = attempts + 1,
-    leased_by = $2
+    attempts = assess_jobs.attempts + 1,
+    leased_by = $2,
+    -- the policy can lower the attempts a row allows (never raise the stored value): the row then
+    -- carries the effective limit, which settlement and the reaper read
+    max_attempts = LEAST(assess_jobs.max_attempts, (
+        SELECT t.attempts FROM unnest($1::text[], $3::float8[], $5::int[]) AS t(kind, lease, attempts)
+        WHERE t.kind = assess_jobs.kind
+    ))
 WHERE id IN (
-    SELECT id FROM assess_jobs
-    WHERE kind = ANY($1::text[])
-      AND (state = 'ready' OR (state = 'leased' AND lease_until < now()))
-      AND attempts < max_attempts
-      AND not_before <= now()
-    ORDER BY not_before, id
+    SELECT j.id FROM assess_jobs j
+    JOIN unnest($1::text[], $5::int[]) AS p(kind, attempts) ON p.kind = j.kind
+    WHERE (j.state = 'ready' OR (j.state = 'leased' AND j.lease_until < now()))
+      AND j.attempts < LEAST(j.max_attempts, p.attempts)
+      AND j.not_before <= now()
+    ORDER BY j.not_before, j.id
     LIMIT $4
-    FOR UPDATE SKIP LOCKED
+    FOR UPDATE OF j SKIP LOCKED
 )
 RETURNING id, kind, args, attempts, max_attempts
 """
@@ -147,19 +153,35 @@ async def claim(
     worker_id: str,
     lease_s: float | Mapping[JobKind, float],
     free: int,
+    max_attempts: int | Mapping[JobKind, int] | None = None,
 ) -> list[ClaimedJob]:
     """Claim up to ``free`` jobs of ``kinds``: never more than the pool has free slots.
 
     ``lease_s`` is one number for all kinds or a mapping per kind: each claimed row gets the lease
     of ITS kind (a short-lived kind must not inherit the longest lease of its pool, or a crashed
     worker's jobs would wait for that longer expiry).
+
+    ``max_attempts`` is the per-kind policy (``VEKTRA_ASSESS_JOB_<KIND>_MAX_ATTEMPTS``): it can
+    LOWER the attempts a row allows, never raise the value stored on the row (the enqueuer owns
+    that, default 5). The effective value is written back on claim.
     """
     if free <= 0:
         return []
     leases = [
         float(lease_s[k] if isinstance(lease_s, Mapping) else lease_s) for k in kinds
     ]
-    rows = await conn.fetch(CLAIM, [k.value for k in kinds], worker_id, leases, free)
+    unlimited = 2**31 - 1  # no policy: the stored value alone decides
+    attempts = [
+        int(
+            max_attempts[k]
+            if isinstance(max_attempts, Mapping)
+            else (max_attempts or unlimited)
+        )
+        for k in kinds
+    ]
+    rows = await conn.fetch(
+        CLAIM, [k.value for k in kinds], worker_id, leases, free, attempts
+    )
     return [
         ClaimedJob(
             id=r["id"],

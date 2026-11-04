@@ -55,6 +55,7 @@ class JobStore(Protocol):
         worker_id: str,
         lease_s: float | Mapping[JobKind, float],
         free: int,
+        max_attempts: int | Mapping[JobKind, int] | None = None,
     ) -> list[sql.ClaimedJob]: ...
 
     async def complete(self, job_id: int, worker_id: str, attempt: int) -> bool: ...
@@ -84,9 +85,10 @@ class SqlStore:
         worker_id: str,
         lease_s: float | Mapping[JobKind, float],
         free: int,
+        max_attempts: int | Mapping[JobKind, int] | None = None,
     ) -> list[sql.ClaimedJob]:
         async with self._acquire() as conn:
-            return await sql.claim(conn, kinds, worker_id, lease_s, free)
+            return await sql.claim(conn, kinds, worker_id, lease_s, free, max_attempts)
 
     async def complete(self, job_id: int, worker_id: str, attempt: int) -> bool:
         async with self._acquire() as conn:
@@ -247,6 +249,7 @@ class WorkerRuntime:
                 self.worker_id,
                 {s.kind: s.lease_s for s in specs},
                 free,
+                {s.kind: s.max_attempts for s in specs},
             )
             if jobs and self._stopping.is_set():
                 # Shutdown began while this claim was in flight: the drain has already taken its

@@ -40,7 +40,12 @@ class MemStore:
         return ids
 
     async def claim(
-        self, kinds: Sequence[JobKind], worker_id: str, lease_s: float, free: int
+        self,
+        kinds: Sequence[JobKind],
+        worker_id: str,
+        lease_s: Any,
+        free: int,
+        max_attempts: Any = None,
     ) -> list[sql.ClaimedJob]:
         self.claim_calls.append(([k.value for k in kinds], free))
         out: list[sql.ClaimedJob] = []
@@ -428,11 +433,11 @@ async def test_run_loop_survives_database_errors_and_keeps_claiming() -> None:
             super().__init__()
             self.fail_next = 3
 
-        async def claim(self, kinds, worker_id, lease_s, free):  # type: ignore[no-untyped-def]
+        async def claim(self, kinds, worker_id, lease_s, free, max_attempts=None):  # type: ignore[no-untyped-def]
             if self.fail_next:
                 self.fail_next -= 1
                 raise ConnectionError("student 4711: the server closed the connection")
-            return await super().claim(kinds, worker_id, lease_s, free)
+            return await super().claim(kinds, worker_id, lease_s, free, max_attempts)
 
     store, done = Flaky(), []
 
@@ -458,9 +463,9 @@ async def test_jobs_returned_by_a_claim_that_finishes_after_stop_are_released_no
     gate = asyncio.Event()
 
     class Slow(MemStore):
-        async def claim(self, kinds, worker_id, lease_s, free):  # type: ignore[no-untyped-def]
+        async def claim(self, kinds, worker_id, lease_s, free, max_attempts=None):  # type: ignore[no-untyped-def]
             await gate.wait()  # the claim is in flight while shutdown starts
-            return await super().claim(kinds, worker_id, lease_s, free)
+            return await super().claim(kinds, worker_id, lease_s, free, max_attempts)
 
     store, ran = Slow(), []
 

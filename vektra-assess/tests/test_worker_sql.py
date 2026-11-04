@@ -37,11 +37,11 @@ class _Rec:
 
 def test_claim_is_skip_locked_bounded_and_never_exceeds_max_attempts() -> None:
     q = sql.CLAIM
-    assert "FOR UPDATE SKIP LOCKED" in q
+    assert "FOR UPDATE OF j SKIP LOCKED" in q
     assert "LIMIT $4" in q
-    assert "attempts < max_attempts" in q
-    assert "state = 'ready' OR (state = 'leased' AND lease_until < now())" in q
-    assert "not_before <= now()" in q
+    assert "j.attempts < LEAST(j.max_attempts, p.attempts)" in q
+    assert "j.state = 'ready' OR (j.state = 'leased' AND j.lease_until < now())" in q
+    assert "j.not_before <= now()" in q
 
 
 @pytest.mark.parametrize("stmt", [sql.COMPLETE, sql.FAIL, sql.DEAD, sql.RELEASE])
@@ -64,7 +64,10 @@ async def test_claim_passes_kind_values_worker_lease_and_free_slots() -> None:
     )
     jobs = await sql.claim(rec, [JobKind.PURGE, JobKind.SETUP_CHECK], "w1", 120.0, 3)
     assert rec.calls == [
-        (sql.CLAIM, (["purge", "setup_check"], "w1", [120.0, 120.0], 3))
+        (
+            sql.CLAIM,
+            (["purge", "setup_check"], "w1", [120.0, 120.0], 3, [2**31 - 1, 2**31 - 1]),
+        )
     ]
     assert jobs == [sql.ClaimedJob(5, JobKind.PURGE, {"k": 1}, 1, 5)]
 
@@ -120,8 +123,26 @@ async def test_claim_passes_one_lease_per_kind_in_kind_order() -> None:
         "w1",
         [8.0, 240.0, 120.0],
         2,
+        [2**31 - 1] * 3,
     )
     assert (
-        "unnest($1::text[], $3::float8[])" in sql.CLAIM
+        "unnest($1::text[], $3::float8[], $5::int[])" in sql.CLAIM
         and "assess_jobs.kind" in sql.CLAIM
+    )
+
+
+async def test_claim_passes_the_per_kind_attempts_policy() -> None:
+    rec = _Rec()
+    await sql.claim(
+        rec,
+        [JobKind.PURGE, JobKind.ERASURE],
+        "w",
+        60.0,
+        1,
+        {JobKind.PURGE: 2, JobKind.ERASURE: 7},
+    )
+    assert rec.calls[0][1][-1] == [2, 7]
+    assert (
+        "LEAST(j.max_attempts, p.attempts)" in sql.CLAIM
+        and "LEAST(assess_jobs.max_attempts" in sql.CLAIM
     )

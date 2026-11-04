@@ -253,3 +253,43 @@ async def test_each_kind_gets_the_lease_of_its_own_kind_not_its_pools_longest(pg
         assert 230 <= by["setup_check"] <= 240.5, by
     finally:
         await c.close()
+
+
+async def test_the_attempts_policy_lowers_what_a_row_allows_and_never_raises_it(pg):
+    """Review finding: VEKTRA_ASSESS_JOB_<KIND>_MAX_ATTEMPTS had no effect on retries."""
+    await pg.run("super", "DELETE FROM assess_jobs")
+    await pg.run(
+        "super",
+        "INSERT INTO assess_jobs (kind, max_attempts) VALUES ('purge', 5), ('setup_check', 2)",
+    )
+    c = await asyncpg.connect(_dsn(pg, "worker"))
+    try:
+        got = await sql.claim(
+            c,
+            [JobKind.PURGE, JobKind.SETUP_CHECK],
+            "w",
+            60.0,
+            5,
+            {JobKind.PURGE: 2, JobKind.SETUP_CHECK: 9},
+        )
+        eff = {j.kind: j.max_attempts for j in got}
+        assert eff == {JobKind.PURGE: 2, JobKind.SETUP_CHECK: 2}, (
+            "policy 2 lowers the stored 5; policy 9 cannot raise the stored 2"
+        )
+        stored = {
+            r[0]: r[1]
+            for r in await pg.run("super", "SELECT kind, max_attempts FROM assess_jobs")
+        }
+        assert stored == {"purge": 2, "setup_check": 2}, (
+            "the effective limit is written back"
+        )
+        # with the policy at 2 a job that already used 2 attempts is no longer claimable
+        await pg.run(
+            "super",
+            "UPDATE assess_jobs SET state='ready', lease_until=NULL, leased_by=NULL, attempts=2 "
+            "WHERE kind='purge'",
+        )
+        again = await sql.claim(c, [JobKind.PURGE], "w", 60.0, 5, {JobKind.PURGE: 2})
+        assert again == []
+    finally:
+        await c.close()

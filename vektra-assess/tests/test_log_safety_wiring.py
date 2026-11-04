@@ -25,15 +25,15 @@ def _calls(tree: ast.AST, attr: str, owner: str) -> list[ast.Call]:
     ]
 
 
-def _violations() -> list[str]:
+def _violations(src: Path = SRC) -> list[str]:
     bad = []
-    for path in sorted(SRC.rglob("*.py")):
+    for path in sorted(src.rglob("*.py")):
         tree = ast.parse(path.read_text())
         for call in _calls(tree, "get_logger", "structlog"):
             # a bare get_logger() has no name, so the allowlist cannot tell it is an assess logger
             if not call.args:
                 bad.append(
-                    f"{path.relative_to(SRC)}:{call.lineno} structlog.get_logger()"
+                    f"{path.relative_to(src)}:{call.lineno} structlog.get_logger()"
                 )
         for call in _calls(tree, "getLogger", "logging"):
             arg = call.args[0] if call.args else None
@@ -42,7 +42,7 @@ def _violations() -> list[str]:
             )
             if arg is not None and not named and not isinstance(arg, ast.Name):
                 bad.append(
-                    f"{path.relative_to(SRC)}:{call.lineno} logging.getLogger(...)"
+                    f"{path.relative_to(src)}:{call.lineno} logging.getLogger(...)"
                 )
     return bad
 
@@ -51,14 +51,11 @@ def test_every_assess_logger_carries_an_assess_name() -> None:
     assert _violations() == []
 
 
-def test_the_guard_catches_a_bare_logger(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_guard_catches_a_bare_logger(tmp_path: Path) -> None:
     pkg = tmp_path / "vektra_assess"
     pkg.mkdir()
     (pkg / "planted.py").write_text("import structlog\nlog = structlog.get_logger()\n")
-    monkeypatch.setattr(__import__(__name__), "SRC", pkg)
-    assert _violations() == ["planted.py:2 structlog.get_logger()"]
+    assert _violations(pkg) == ["planted.py:2 structlog.get_logger()"]
 
 
 def test_real_module_loggers_are_filtered(canary_log_capture) -> None:  # type: ignore[no-untyped-def]

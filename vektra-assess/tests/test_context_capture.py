@@ -350,3 +350,105 @@ async def test_total_text_budget_cuts_to_partial(branch: str) -> None:
 async def test_oversized_files_are_not_downloaded(branch: str) -> None:
     out, _, _ = await _intake(branch, "stu1", CaptureLimits(max_file_bytes=10))
     assert {f.status for f in out} == {FileStatus.TOO_LARGE}
+
+
+async def test_a_foreign_file_is_rejected_and_audited(branch: str) -> None:
+    """REQ-101 (a): the reader re-checks ownership against the selected submission at download
+    time; a file that is not in it (here: the listing changes between list and fetch) is refused."""
+    replay, _readers, m = _env(branch)
+    client = make_client(replay)
+    site = site_for(branch)
+    a = m["assigns"]["files"]
+    status = await read_submission_status(client, site, a["id"], uid(branch, "stu1"))
+    assert isinstance(status, Readable)
+
+    def swap(wsfunction: str, body: Any) -> Any:
+        if wsfunction == "mod_assign_get_submission_status":
+            for plugin in body["lastattempt"]["submission"]["plugins"]:
+                for area in plugin.get("fileareas", []):
+                    for f in area.get("files", []):
+                        f["filename"] = "someone_else_" + f["filename"]
+        return body
+
+    replay.mutate = swap
+    audit: list[Any] = []
+    target = AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1"))
+    out = await _files(
+        target,
+        status.value,
+        MoodleCaptureReaders(client, site),
+        InProcessParser(),
+        CaptureLimits(),
+        audit,
+    )
+    assert {f.status for f in out} == {FileStatus.CORRUPT}
+    assert {e.event for e in audit} == {"assess_file_rejected"}
+    assert {e.reason_code for e in audit} == {"file_not_in_submission"}
+    assert replay.file_requests == []  # nothing was downloaded
+    assert all(f.text == "" for f in out)
+
+
+async def test_file_bytes_never_touch_the_disk(
+    branch: str, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-101 (f): bytes go from the WS response to the sidecar call and nowhere else."""
+    import os
+    import tempfile
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    tempfile.tempdir = None
+    try:
+        before = set(os.listdir(tmp_path))
+        out, _, _ = await _intake(branch, "stu1")
+        assert any(f.status is FileStatus.READ for f in out)
+        assert set(os.listdir(tmp_path)) == before
+    finally:
+        tempfile.tempdir = None
+
+
+@pytest.mark.parametrize(
+    ("snippet", "must_keep"),
+    [
+        (
+            "Calcola \\(\\int_0^1 x^2\\,dx\\) e \\[\\frac{a}{b}\\]",
+            ["\\(\\int_0^1 x^2\\,dx\\)", "\\[\\frac{a}{b}\\]"],
+        ),
+        (
+            '<math><semantics><mi>x</mi><annotation encoding="application/x-tex">x^{2}+1</annotation></semantics></math>',
+            ["x^{2}+1"],
+        ),
+        ("<pre>def f(x):\n    return x * 2</pre>", ["def f(x):", "    return x * 2"]),
+        (
+            "<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>",
+            ["| a | b |", "| 1 | 2 |"],
+        ),
+    ],
+)
+async def test_tex_mathml_code_and_tables_survive_into_the_context(
+    snippet: str, must_keep: list[str]
+) -> None:
+    """REQ-101 AC4: the source is preserved verbatim in the assembled context."""
+    from test_context_bundle import _frozen
+    from test_context_snapshot import make
+
+    from vektra_assess.context.assemble import assemble_context
+    from vektra_assess.context.payload import bundle_to_model_payload
+    from vektra_assess.context.snapshot import QuizItem
+
+    html = f"<div class='que'><div class='qtext'>{snippet}</div><fieldset class='ablock'>[x] A</fieldset></div>"
+    res = await InProcessParser().extract_review_block(html.encode(), "qtext")
+    assert res.status is FileStatus.READ
+    item = QuizItem(
+        label="1",
+        qtype="essay",
+        discussable=True,
+        state="gradedright",
+        status=None,
+        mark="1",
+        max_mark="1",
+        question_text=res.text,
+    )
+    s = make().model_copy(update={"quiz_items": (item,)})
+    payload = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
+    for piece in must_keep:
+        assert piece in payload, (piece, payload)

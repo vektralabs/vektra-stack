@@ -324,12 +324,13 @@ async def _serve(
     # and the first heartbeat. The watchdog only judges a worker that is already ready, so without
     # this a statement stuck on a half-open connection during startup would hang the process.
     startup_s = checked.settings.worker_wedge_exit_s
+    startup_deadline = asyncio.timeout(startup_s)
     supervisor: asyncio.Task[None] | None = None
     wedge: asyncio.Task[None] | None = None
     startup_ticks: asyncio.Task[None] | None = None
     try:
         try:
-            async with asyncio.timeout(startup_s):
+            async with startup_deadline:
                 try:
                     await control.start()  # refuses behind a transaction-mode pooler
                 except ControlConnectionError as exc:
@@ -351,9 +352,12 @@ async def _serve(
                         detail=str(exc),
                         remediation="Stop the other worker or wait for its reconciliation to finish.",
                     ) from exc
+                await heartbeat.beat()
                 heartbeat.set_state("ready")
                 await heartbeat.beat()
         except TimeoutError:
+            if not startup_deadline.expired():
+                raise  # an inner timeout (connect, statement): keep its own cause
             raise StartupValidationError(
                 step=STEP,
                 detail=f"startup did not complete within {startup_s:g} s",

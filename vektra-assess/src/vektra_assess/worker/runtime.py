@@ -258,6 +258,7 @@ class WorkerRuntime:
                 for job in jobs:
                     try:
                         await self._store.release(job.id, self.worker_id, job.attempt)
+                        self.counters[("released", job.kind)] += 1
                     except Exception as exc:
                         log.warning(
                             "assess_job_release_failed",

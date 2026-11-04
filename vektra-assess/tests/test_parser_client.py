@@ -112,6 +112,14 @@ async def test_sanitize_html_op(fake: Fake) -> None:
     assert fake.requests[0]["op"] == "sanitize_html"
 
 
+@pytest.mark.parametrize(
+    ("block", "op"), [("qtext", "review_qtext"), ("response", "review_response")]
+)
+async def test_review_block_ops(fake: Fake, block: str, op: str) -> None:
+    await client_for(fake).extract_review_block(b"<div class='qtext'>x</div>", block)
+    assert fake.requests[0]["op"] == op
+
+
 def lie(make: Callable[[dict[str, Any]], bytes | None]) -> Responder:
     async def responder(req: dict[str, Any], payload: bytes) -> bytes | None:
         return make(req)

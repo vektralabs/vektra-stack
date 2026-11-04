@@ -157,6 +157,15 @@ class ParserClient:
             await self._call("sanitize_html", html, "html", limits or self.limits)
         )
 
+    async def extract_review_block(
+        self, html: bytes, block: str, limits: Limits | None = None
+    ) -> SanitizeResult:
+        """One allowlisted block of one question's review HTML (``qtext`` or ``response``)."""
+        op = {"qtext": "review_qtext", "response": "review_response"}[block]
+        return SanitizeResult.of(
+            await self._call(op, html, "html", limits or self.limits)
+        )
+
     async def ping(self, deep: bool = False) -> float:
         """Round-trip in seconds. ``ParserUnavailableError`` unless the sidecar answers
         (a deep ping also needs its pool to parse the embedded fixture)."""

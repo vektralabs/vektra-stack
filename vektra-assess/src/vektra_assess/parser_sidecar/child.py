@@ -17,7 +17,10 @@ from typing import Any
 
 from vektra_assess.parser_protocol import Extracted, FileStatus
 from vektra_assess.parser_sidecar.docx import extract_docx
-from vektra_assess.parser_sidecar.html_review import sanitize_review_html
+from vektra_assess.parser_sidecar.html_review import (
+    extract_review_block,
+    sanitize_review_html,
+)
 from vektra_assess.parser_sidecar.odt import extract_odt
 from vektra_assess.parser_sidecar.pdf import extract_pdf
 from vektra_assess.parser_sidecar.sniff import Kind, sniff
@@ -35,6 +38,10 @@ def run(
     try:
         if op == "sanitize_html":
             return sanitize_review_html(data, max_chars)
+        if op == "review_qtext":
+            return extract_review_block(data, "qtext", max_chars)
+        if op == "review_response":
+            return extract_review_block(data, "response", max_chars)
         sn = sniff(data, ext_hint)
         if sn.kind is Kind.REFUSED:
             assert sn.status is not None

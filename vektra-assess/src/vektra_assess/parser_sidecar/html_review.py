@@ -252,3 +252,86 @@ def sanitize_review_html(data: bytes, max_chars: int) -> Extracted:
     if len(text) > max_chars:
         return Extracted(FileStatus.READ_PARTIAL, text[:max_chars], code="char_cap")
     return Extracted(FileStatus.READ, text)
+
+
+# --- allowlist extraction of one question's blocks (ADR-0032 amendment 2026-11-04) ----------------
+
+#: the blocks a caller may ask for, by the Moodle CSS class that marks them
+REVIEW_BLOCKS = {"qtext": "qtext", "response": "ablock"}
+#: removed from inside a kept block before it becomes text: everything that can carry the right
+#: answer, feedback (specific, general, per choice, per cloze gap), a grader comment or a mark
+DROP_CLASSES = frozenset(
+    {
+        "outcome",
+        "feedback",
+        "specificfeedback",
+        "generalfeedback",
+        "rightanswer",
+        "feedbackspan",
+        "feedbacktrigger",
+        "im-feedback",
+        "comment",
+        "history",
+        "grade",
+        "correctness",
+        "validationerror",
+    }
+)
+
+
+def _classes(el: Any) -> set[str]:
+    return set((el.get("class") or "").split())
+
+
+def _find_block(root: Any, cls: str) -> list[Any]:
+    return [el for el in root.iter() if isinstance(el.tag, str) and cls in _classes(el)]
+
+
+def _prune(el: Any) -> None:
+    for child in list(el):
+        if not isinstance(child.tag, str):
+            continue
+        if _classes(child) & DROP_CLASSES:
+            # keep the tail text (it belongs to the parent), drop the element and its subtree
+            tail = child.tail
+            idx = list(el).index(child)
+            el.remove(child)
+            if tail:
+                if idx == 0:
+                    el.text = (el.text or "") + tail
+                else:
+                    prev = list(el)[idx - 1]
+                    prev.tail = (prev.tail or "") + tail
+            continue
+        _prune(child)
+
+
+def extract_review_block(data: bytes, block: str, max_chars: int) -> Extracted:
+    """Plain text of ONE allowlisted block of one question's review HTML, pruned of feedback.
+
+    Exactly one matching block is required: zero or several means the markup is not the shape
+    this code was verified against, and the caller falls back to structured-only (fail closed).
+    """
+    cls = REVIEW_BLOCKS.get(block)
+    if cls is None:
+        return Extracted(FileStatus.CORRUPT, code="unknown_block")
+    try:
+        source = data.decode("utf-8", errors="replace")
+        doc = html5lib.parse(source, treebuilder="etree", namespaceHTMLElements=False)
+        found = _find_block(doc, cls)
+        if len(found) != 1:
+            return Extracted(
+                FileStatus.NO_TEXT,
+                code="block_missing" if not found else "block_ambiguous",
+            )
+        el = found[0]
+        _prune(el)
+        el.tail = None
+        text = clean(_assemble(_tokens(el)))
+    except RecursionError:
+        return Extracted(FileStatus.CORRUPT, code="html_too_deep")
+    if not text.strip():
+        return Extracted(FileStatus.NO_TEXT, code="empty")
+    if len(text) > max_chars:
+        return Extracted(FileStatus.READ_PARTIAL, text[:max_chars], code="char_cap")
+    return Extracted(FileStatus.READ, text)

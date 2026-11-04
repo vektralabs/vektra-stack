@@ -320,33 +320,48 @@ async def _serve(
     runtime, scheduler, heartbeat, control, acquire_raw, audit = _compose(
         checked, bindings
     )
-    try:
-        await (
-            control.start()
-        )  # NOTIFY self-test: refuses behind a transaction-mode pooler
-    except ControlConnectionError as exc:
-        raise StartupValidationError(
-            step=STEP,
-            detail=str(exc),
-            remediation="Give the worker a direct or session-mode Postgres connection.",
-        ) from exc
-    supervisor = asyncio.create_task(control.supervise())
+    # One deadline for everything before "ready": connecting, the NOTIFY self-test, reconciliation
+    # and the first heartbeat. The watchdog only judges a worker that is already ready, so without
+    # this a statement stuck on a half-open connection during startup would hang the process.
+    startup_s = checked.settings.worker_wedge_exit_s
+    supervisor: asyncio.Task[None] | None = None
     wedge: asyncio.Task[None] | None = None
     startup_ticks: asyncio.Task[None] | None = None
     try:
         try:
-            # Startup ticks are NOT run inside the reconcile lock: a slow one (the setup check
-            # makes about twenty live Moodle calls) would hold the lock, delay the first heartbeat
-            # and the claim loop, trip the container healthcheck and ignore SIGTERM.
-            await reconcile(control, acquire_raw, audit)
-        except ReconcileError as exc:
+            async with asyncio.timeout(startup_s):
+                try:
+                    await control.start()  # refuses behind a transaction-mode pooler
+                except ControlConnectionError as exc:
+                    raise StartupValidationError(
+                        step=STEP,
+                        detail=str(exc),
+                        remediation="Give the worker a direct or session-mode Postgres connection.",
+                    ) from exc
+                supervisor = asyncio.create_task(control.supervise())
+                try:
+                    # Startup ticks are NOT run inside the reconcile lock: a slow one (the setup
+                    # check makes about twenty live Moodle calls) would hold the lock, delay the
+                    # first heartbeat and the claim loop, trip the container healthcheck and
+                    # ignore SIGTERM.
+                    await reconcile(control, acquire_raw, audit)
+                except ReconcileError as exc:
+                    raise StartupValidationError(
+                        step=STEP,
+                        detail=str(exc),
+                        remediation="Stop the other worker or wait for its reconciliation to finish.",
+                    ) from exc
+                heartbeat.set_state("ready")
+                await heartbeat.beat()
+        except TimeoutError:
             raise StartupValidationError(
                 step=STEP,
-                detail=str(exc),
-                remediation="Stop the other worker or wait for its reconciliation to finish.",
-            ) from exc
-        heartbeat.set_state("ready")
-        await heartbeat.beat()
+                detail=f"startup did not complete within {startup_s:g} s",
+                remediation=(
+                    "The database is unreachable or not answering. Check the worker DSN and the "
+                    "network; the supervisor restarts the worker."
+                ),
+            ) from None
         scheduler.start()
         startup_ticks = asyncio.create_task(scheduler.run_startup_ticks())
         run_task = asyncio.create_task(runtime.run())
@@ -368,10 +383,13 @@ async def _serve(
         for background in (wedge, startup_ticks):
             if background is not None:
                 background.cancel()
-        supervisor.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await supervisor
-        await control.stop()
+        if supervisor is not None:
+            supervisor.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await supervisor
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(3):
+                await control.stop()
 
 
 def check_imports() -> None:
@@ -415,7 +433,11 @@ async def _amain(bindings: Any | None = None) -> int:
         return 1
     finally:
         remove_handlers()
-        await checked.engine.dispose()
+        # Bounded: a pooled connection with a pending query cancel can make ``dispose`` wait on a
+        # silent peer without limit, and the process would then outlive its own shutdown.
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(5):
+                await checked.engine.dispose()
     return 0
 
 

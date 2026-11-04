@@ -96,7 +96,8 @@ async def shutdown(
     """Run the shutdown sequence inside ``grace_s`` (Compose gives 30 s); return leases released.
 
     Every best-effort step has a short deadline of its own, and the drain gets whatever is left
-    (never more than ``drain_s``) after reserving time for the closing steps. Without that, one
+    (never more than ``drain_s``) after reserving time for the closing steps; the whole drain,
+    cancellation and releases included, is under one deadline. Without that, one
     hung call on a half-open database could push the drain past the grace period and Docker would
     SIGKILL the worker before it released a single lease.
     """
@@ -107,10 +108,20 @@ async def shutdown(
     await runtime.stop()
     await _guarded("claim_loop", asyncio.shield(run_task), 3.0)
     await _guarded("ticks", scheduler.stop(), 3.0)
-    drain_budget = max(1.0, min(drain_s, grace_s - (clock() - started) - reserve_s))
+    # What is left of the grace period after the closing steps is the drain's whole allowance:
+    # waiting for in-flight jobs, cancelling them and releasing each lease all fit inside it.
+    # No floor: a configured drain below one second means exactly that.
+    remaining = max(0.0, grace_s - (clock() - started) - reserve_s)
+    drain_wait = max(
+        0.0, min(drain_s, remaining - 3.0)
+    )  # 3 s kept for cancel and release
     released = 0
     try:
-        released = await runtime.drain(drain_budget)
+        async with asyncio.timeout(remaining):
+            released = await runtime.drain(drain_wait)
+    except TimeoutError:
+        # leases of what was not released in time simply expire and the jobs are retried
+        log.error("assess_shutdown_drain_deadline", extra={"deadline_s": remaining})
     except Exception:
         log.exception("assess_shutdown_step_failed", extra={"step": "drain"})
     heartbeat.set_state("stopped")

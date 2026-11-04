@@ -449,3 +449,32 @@ async def test_run_loop_survives_database_errors_and_keeps_claiming() -> None:
     await rt.wait_idle()
     assert len(done) == 1, "the loop outlived three failed claims"
     assert rt.claim_errors == 3 and rt.stats()["claim_errors"] == 3
+
+
+async def test_jobs_returned_by_a_claim_that_finishes_after_stop_are_released_not_started() -> (
+    None
+):
+    """Review finding: the drain's snapshot would not know them, and they would stay leased."""
+    gate = asyncio.Event()
+
+    class Slow(MemStore):
+        async def claim(self, kinds, worker_id, lease_s, free):  # type: ignore[no-untyped-def]
+            await gate.wait()  # the claim is in flight while shutdown starts
+            return await super().claim(kinds, worker_id, lease_s, free)
+
+    store, ran = Slow(), []
+
+    async def ok(ctx: JobContext) -> None:
+        ran.append(ctx.job_id)
+
+    (jid,) = store.add(JobKind.PURGE)
+    rt = _rt(store)
+    rt.register_handler(_spec(JobKind.PURGE, ok))
+    claim = asyncio.create_task(rt.claim_once())
+    await asyncio.sleep(0.02)
+    await rt.stop()
+    gate.set()
+    assert await claim == 0
+    assert ran == [] and rt.in_flight == 0
+    assert store.rows[jid]["state"] == "ready", "returned to ready, not left leased"
+    assert await rt.claim_once() == 0, "nothing new starts once stopping"

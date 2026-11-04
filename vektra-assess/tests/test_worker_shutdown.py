@@ -25,7 +25,7 @@ class Runtime(_Rec):
         self.order.append("runtime.stop")
 
     async def drain(self, timeout_s: float) -> int:
-        self.order.append(f"runtime.drain({timeout_s:g})")
+        self.order.append(f"runtime.drain({round(timeout_s):g})")
         if self.fail:
             raise RuntimeError("db gone")
         return self.drained
@@ -77,7 +77,7 @@ async def test_sequence_is_draining_stop_claims_ticks_drain_stopped_close() -> N
     )
     assert released == 2
     assert order == [
-        "beat:draining", "runtime.stop", "ticks.stop", "runtime.drain(20)", "beat:stopped", "control.stop",
+        "beat:draining", "runtime.stop", "ticks.stop", "runtime.drain(19)", "beat:stopped", "control.stop",
     ]  # fmt: skip
 
 
@@ -174,6 +174,44 @@ async def test_the_drain_gets_only_what_is_left_of_the_grace_period() -> None:
         grace_s=28.0,
         clock=lambda: now[0],
     )
-    assert rt.budget == 10.0, (
-        "28 - 12 elapsed - 6 reserved = 10 s, below the configured 20 s"
+    # 28 - 12 elapsed - 6 reserved = 10 s for the whole drain, 3 s of it kept for cancel and release
+    assert rt.budget == 7.0
+
+
+async def test_a_drain_below_one_second_is_honoured_and_a_stuck_drain_hits_the_deadline() -> (
+    None
+):
+    class Rt(Runtime):
+        async def drain(self, timeout_s: float) -> int:
+            self.budget = timeout_s
+            return 0
+
+    rt = Rt([])
+    await shutdown(
+        runtime=rt,
+        run_task=asyncio.create_task(_done()),
+        scheduler=Scheduler([]),
+        heartbeat=Heartbeat([]),
+        control=Control([]),
+        drain_s=0.3,
     )
+    assert rt.budget == 0.3, "no one-second floor"
+
+    class Stuck(Runtime):
+        async def drain(self, timeout_s: float) -> int:
+            await asyncio.sleep(3600)  # a release waiting on a dead connection
+            return 0
+
+    order: list[str] = []
+    t0 = asyncio.get_running_loop().time()
+    await shutdown(
+        runtime=Stuck(order),
+        run_task=asyncio.create_task(_done()),
+        scheduler=Scheduler(order),
+        heartbeat=Heartbeat(order),
+        control=Control(order),
+        drain_s=20,
+        grace_s=8.0,  # 8 - 6 reserved = 2 s for the whole drain
+    )
+    assert asyncio.get_running_loop().time() - t0 < 6, "the drain is under one deadline"
+    assert order[-1] == "control.stop"

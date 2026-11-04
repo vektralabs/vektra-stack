@@ -234,6 +234,8 @@ class WorkerRuntime:
     async def claim_once(self) -> int:
         """One pass over every pool; returns how many jobs were claimed and started."""
         started = 0
+        if self._stopping.is_set():
+            return 0  # shutting down: nothing new may start
         for pool in self._pools.values():
             specs = [s for s in self._handlers.values() if s.pool == pool.name]
             free = self.free_slots(pool.name)
@@ -246,6 +248,19 @@ class WorkerRuntime:
                 {s.kind: s.lease_s for s in specs},
                 free,
             )
+            if jobs and self._stopping.is_set():
+                # Shutdown began while this claim was in flight: the drain has already taken its
+                # snapshot and would not know these jobs. Give the rows back instead of starting
+                # work that would keep running past the drain and then sit leased until expiry.
+                for job in jobs:
+                    try:
+                        await self._store.release(job.id, self.worker_id, job.attempt)
+                    except Exception as exc:
+                        log.warning(
+                            "assess_job_release_failed",
+                            extra={"job_id": job.id, "error_type": type(exc).__name__},
+                        )
+                return started
             for job in jobs:
                 self._start(job, self._handlers[job.kind])
                 started += 1

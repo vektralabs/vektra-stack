@@ -459,7 +459,9 @@ async def test_notify_self_test_failure_refuses_to_start_naming_the_pooler(
 ) -> None:
     """Acceptance: the worker refuses to start when the NOTIFY self-test fails."""
     import asyncio
+    from types import SimpleNamespace
 
+    from vektra_assess.config import VektraAssessSettings
     from vektra_assess.worker.listener import ControlConnectionError
 
     class Control:
@@ -471,4 +473,34 @@ async def test_notify_self_test_failure_refuses_to_start_naming_the_pooler(
     parts = (None, None, None, Control(), None, None)
     monkeypatch.setattr(assess_worker, "_compose", lambda checked, bindings=None: parts)
     with pytest.raises(StartupValidationError, match="transaction-mode pooler"):
-        await assess_worker._serve(object(), asyncio.Event())  # type: ignore[arg-type]
+        await assess_worker._serve(  # type: ignore[arg-type]
+            SimpleNamespace(settings=VektraAssessSettings()), asyncio.Event()
+        )
+
+
+async def test_startup_that_never_finishes_is_refused_with_a_structured_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review finding: a stuck statement before 'ready' must not hang the process."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from vektra_assess.config import VektraAssessSettings
+
+    class Control:
+        async def start(self) -> None:
+            await asyncio.sleep(3600)
+
+        async def stop(self) -> None:
+            return None
+
+    parts = (None, None, None, Control(), None, None)
+    monkeypatch.setattr(assess_worker, "_compose", lambda checked, bindings=None: parts)
+    settings = SimpleNamespace(
+        worker_wedge_exit_s=0.2, worker_drain_s=1.0
+    )  # a short window for the test
+    _ = VektraAssessSettings  # the real settings class validates the minimum of 10 s
+    with pytest.raises(StartupValidationError, match="startup did not complete within"):
+        await assess_worker._serve(  # type: ignore[arg-type]
+            SimpleNamespace(settings=settings), asyncio.Event()
+        )

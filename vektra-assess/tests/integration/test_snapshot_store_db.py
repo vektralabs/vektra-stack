@@ -282,3 +282,75 @@ async def test_canary_matrix_subset_leaves_no_canary_in_any_row(pg: Pg) -> None:
     dump = dump_data(pg)
     assert "assess_snapshots" in dump
     assert sum(find_canaries(dump, forbidden).values()) == 0
+
+
+async def test_a_regrade_between_capture_and_close_changes_only_the_flag(
+    pg: Pg,
+) -> None:
+    """BR-008 / BR-015 AC2: Moodle regrades after Start; the snapshot, its hash and Part A stay
+    as captured, and the close-time comparison reports changed(old, new)."""
+    from assess_moodle_support import uid
+    from test_context_capture import OFF, InProcessParser, _env
+
+    from vektra_assess.context.assemble import assemble_context
+    from vektra_assess.context.capture.capture import (
+        Built,
+        Capabilities,
+        QuizTarget,
+        capture_quiz,
+        persist_capture,
+    )
+    from vektra_assess.context.part_a import SessionFacts, render_part_a
+    from vektra_assess.context.regrade import (
+        GradeReading,
+        RegradeFlag,
+        RegradeKind,
+        compare_grade,
+    )
+    from vektra_assess.context.snapshot import mark_str
+    from vektra_assess.readable import Readable
+
+    replay, readers, m = _env("5.2")
+    q = m["quizzes"]["gm_highest"]
+    target = QuizTarget(m["courseid"], q["id"], q["cmid"], uid("5.2", "stu1"))
+    built = await capture_quiz(
+        target,
+        readers,
+        InProcessParser(),
+        OFF,
+        Capabilities(),
+        moodle_release=m["release"],
+        now=1,
+    )
+    assert isinstance(built, Built)
+    sid, dek = await make_session(pg, "STARTING"), os.urandom(32)
+    async with pg.conn("worker") as c:
+        digest = await persist_capture(c, sid, dek, built)
+        await c.commit()
+    part_a_before = render_part_a(
+        assemble_context(built.snapshot, built.frozen_policy), SessionFacts(1, 30)
+    ).text
+
+    def regrade(wsfunction: str, body):  # type: ignore[no-untyped-def]
+        if wsfunction == "gradereport_user_get_grade_items":
+            for item in body["usergrades"][0]["gradeitems"]:
+                if item.get("cmid") == q["cmid"]:
+                    item["graderaw"] = 6.5
+                    item["gradeformatted"] = "6.50"
+        return body
+
+    replay.mutate = regrade
+    now = await readers.grade_release(m["courseid"], uid("5.2", "stu1"), q["cmid"])
+    assert isinstance(now, Readable) and now.value.grade == 6.5
+    flag = compare_grade(
+        built.snapshot, Readable(GradeReading(True, mark_str(now.value.grade)))
+    )
+    assert flag == RegradeFlag(RegradeKind.CHANGED, old="10", new="6.5")
+    async with pg.conn("worker") as c:
+        res = await verify_snapshot_integrity(c, sid, dek, digest)
+        await c.commit()
+    assert isinstance(res, Ok) and res.snapshot == built.snapshot  # never refreshed
+    part_a_after = render_part_a(
+        assemble_context(res.snapshot, built.frozen_policy), SessionFacts(1, 30)
+    ).text
+    assert part_a_after == part_a_before

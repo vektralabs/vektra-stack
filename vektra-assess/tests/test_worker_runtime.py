@@ -507,7 +507,8 @@ async def test_a_failing_pool_does_not_stop_the_pools_after_it() -> None:
     rt.register_handler(_spec(JobKind.SETUP_CHECK, ok, pool="setup"))
     started = await rt.claim_once()
     await rt.drain(timeout_s=1)
-    assert rt.claim_errors == 1 and started >= 1 and q in ran
+    assert rt.claim_errors == 1 and q in ran
+    assert started == 0, "a pass with a failed pool reports 0 so run() backs off"
 
 
 async def test_drain_releases_each_lease_even_when_one_handler_will_not_cancel() -> (

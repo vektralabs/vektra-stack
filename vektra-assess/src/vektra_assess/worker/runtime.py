@@ -236,6 +236,7 @@ class WorkerRuntime:
     async def claim_once(self) -> int:
         """One pass over every pool; returns how many jobs were claimed and started."""
         started = 0
+        failed = False
         if self._stopping.is_set():
             return 0  # shutting down: nothing new may start
         for pool in self._pools.values():
@@ -255,6 +256,7 @@ class WorkerRuntime:
             except Exception as exc:
                 # a failing pool must not stop the pools after it from being claimed
                 self.claim_errors += 1
+                failed = True
                 log.warning(
                     "assess_claim_failed",
                     extra={"pool": pool.name, "error_type": type(exc).__name__},
@@ -277,7 +279,9 @@ class WorkerRuntime:
             for job in jobs:
                 self._start(job, self._handlers[job.kind])
                 started += 1
-        return started
+        # A pass with a failed pool reports 0 so run() sleeps instead of hammering a failing
+        # database while other pools keep starting jobs (started jobs are already running).
+        return 0 if failed else started
 
     def _start(self, job: sql.ClaimedJob, spec: HandlerSpec) -> None:
         self._in_use[spec.pool] += 1

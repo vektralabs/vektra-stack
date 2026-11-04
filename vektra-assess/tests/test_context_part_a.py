@@ -19,9 +19,35 @@ from vektra_assess.context.assemble import assemble_context
 from vektra_assess.context.part_a import render_part_a
 from vektra_assess.context.snapshot import GradeKind, MarksHidden
 
-GOLDEN = Path(__file__).parent / "golden" / "part_a"
+#: one file, one block per case ("=== <name> ===" then the rendering): 60 separate files would
+#: push the plan's PR past the review tool's 100-file cap
+GOLDEN_FILE = Path(__file__).parent / "golden" / "part_a.txt"
 UPDATE = os.environ.get("VEKTRA_UPDATE_GOLDEN") == "1"
 CASES: list[Case] = asyncio.run(cases())
+_HEAD = re.compile(r"^=== (?P<name>[\w.-]+) ===$", re.M)
+
+
+def _render(case: Case) -> str:
+    return render_part_a(assemble_context(case.snapshot, case.frozen), case.facts).text
+
+
+def _load() -> dict[str, str]:
+    if UPDATE:
+        GOLDEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        GOLDEN_FILE.write_text(
+            "".join(f"=== {c.name} ===\n{_render(c)}\n" for c in CASES),
+            encoding="utf-8",
+        )
+    text = GOLDEN_FILE.read_text(encoding="utf-8")
+    heads = list(_HEAD.finditer(text))
+    out: dict[str, str] = {}
+    for h, nxt in zip(heads, [*heads[1:], None], strict=True):
+        body = text[h.end() + 1 : nxt.start() if nxt else len(text)]
+        out[h["name"]] = body[:-1] if body.endswith("\n") else body
+    return out
+
+
+GOLDEN = _load()
 
 
 def test_there_are_at_least_fifty_cases_and_names_are_unique() -> None:
@@ -37,21 +63,14 @@ def test_there_are_at_least_fifty_cases_and_names_are_unique() -> None:
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_part_a_equals_the_golden_rendering(case: Case) -> None:
-    part = render_part_a(assemble_context(case.snapshot, case.frozen), case.facts)
-    path = GOLDEN / f"{case.name}.txt"
-    if UPDATE:
-        GOLDEN.mkdir(parents=True, exist_ok=True)
-        path.write_text(part.text + "\n", encoding="utf-8")
-    assert path.exists(), (
-        f"missing golden file {path.name}: run with VEKTRA_UPDATE_GOLDEN=1 and review"
+    assert case.name in GOLDEN, (
+        f"no golden block for {case.name}: run with VEKTRA_UPDATE_GOLDEN=1 and review"
     )
-    assert part.text + "\n" == path.read_text(encoding="utf-8")
+    assert _render(case) == GOLDEN[case.name]
 
 
-def test_no_stale_golden_files() -> None:
-    names = {f"{c.name}.txt" for c in CASES}
-    stale = sorted(p.name for p in GOLDEN.glob("*.txt") if p.name not in names)
-    assert stale == []
+def test_no_stale_golden_blocks() -> None:
+    assert sorted(set(GOLDEN) - {c.name for c in CASES}) == []
 
 
 _BR009 = re.compile(
@@ -66,7 +85,7 @@ _BR009 = re.compile(
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_br009_statement_is_the_shipped_constant_byte_for_byte(case: Case) -> None:
-    text = (GOLDEN / f"{case.name}.txt").read_text(encoding="utf-8")
+    text = GOLDEN[case.name]
     matches = list(_BR009.finditer(text))
     assert len(matches) == 1
     line = matches[0].group(0)
@@ -77,7 +96,7 @@ def test_br009_statement_is_the_shipped_constant_byte_for_byte(case: Case) -> No
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_hidden_marks_never_appear_and_scale_has_no_points(case: Case) -> None:
-    text = (GOLDEN / f"{case.name}.txt").read_text(encoding="utf-8")
+    text = GOLDEN[case.name]
     for item in case.snapshot.quiz_items:
         line = next(
             ln for ln in text.splitlines() if ln.startswith(f"- Domanda {item.label}:")
@@ -96,7 +115,7 @@ def test_hidden_marks_never_appear_and_scale_has_no_points(case: Case) -> None:
 
 def test_solution_label_follows_the_toggle() -> None:
     for case in CASES:
-        text = (GOLDEN / f"{case.name}.txt").read_text(encoding="utf-8")
+        text = GOLDEN[case.name]
         shown = case.snapshot.solution_text is not None
         assert (S.SOLUTION[True] in text) is shown, case.name
         assert (S.SOLUTION[False] in text) is (not shown), case.name
@@ -104,7 +123,7 @@ def test_solution_label_follows_the_toggle() -> None:
 
 def test_file_statuses_use_the_req_101_strings() -> None:
     case = next(c for c in CASES if c.name.endswith("assign_files_all"))
-    text = (GOLDEN / f"{case.name}.txt").read_text(encoding="utf-8")
+    text = GOLDEN[case.name]
     for s in (
         "letto", "letto parzialmente (fino a pagina 50)", "non letto: formato non supportato",
         "non letto: troppo grande", "non letto: testo non estraibile", "non letto: protetto",
@@ -129,7 +148,7 @@ def test_rendering_is_deterministic() -> None:
 
 def test_technical_flags_stay_out_of_the_student_text() -> None:
     for case in CASES:
-        text = (GOLDEN / f"{case.name}.txt").read_text(encoding="utf-8")
+        text = GOLDEN[case.name]
         assert (
             "structured" not in text and "policy" not in text and "fallback" not in text
         )

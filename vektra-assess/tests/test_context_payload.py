@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from test_context_bundle import _frozen
+from test_context_bundle import _ALL, _frozen, _with_review
 from test_context_snapshot import make
 
 from vektra_assess.context.assemble import assemble_context
@@ -22,6 +22,19 @@ async def test_payload_bytes_reach_the_provider_exactly() -> None:
     (sent,) = llm.all_request_bytes
     assert len(sent) > 0 and b"CNRY-allowed-response" in sent
     assert payload[0].content.startswith(BEGIN) and payload[0].content.endswith(END)
+
+
+def test_an_unanswered_item_is_not_described_as_a_hidden_mark() -> None:
+    s = make()
+    q1 = s.quiz_items[0].model_copy(update={"mark": None, "state": "gaveup"})
+    s = s.model_copy(update={"quiz_items": (q1, s.quiz_items[1])})
+    # a policy where marks are visible: the missing mark is "not recorded", not "hidden"
+    text = bundle_to_model_payload(
+        assemble_context(s, _with_review(s, _ALL, "unreadable"))
+    )[0].content
+    assert "Punteggio massimo: 1 (nessun punteggio registrato)" in text
+    hidden = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
+    assert "nessun punteggio registrato" not in hidden
 
 
 def test_payload_is_deterministic_and_has_only_labels() -> None:

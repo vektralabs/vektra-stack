@@ -35,6 +35,11 @@ def _lines(bundle: ContextBundle) -> list[str]:
         out.append(f"## {S.QUIZ_LABEL.format(label=i.label)} (tipo: {i.qtype})")
         if i.mark is not None and i.max_mark is not None:
             out.append(f"Punteggio: {fmt_number(i.mark)}/{fmt_number(i.max_mark)}")
+        elif i.max_mark is not None and i.marks_hidden is None:
+            # marks are visible but this question has none: it was not answered ("gaveup")
+            out.append(
+                f"Punteggio massimo: {fmt_number(i.max_mark)} (nessun punteggio registrato)"
+            )
         elif i.max_mark is not None:
             out.append(
                 f"Punteggio massimo: {fmt_number(i.max_mark)} (punteggio non visibile)"

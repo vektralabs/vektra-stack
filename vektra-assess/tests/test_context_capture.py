@@ -579,3 +579,16 @@ async def test_online_text_counts_against_the_total_budget_and_a_cut_names_no_pa
     assert isinstance(built, Built) and built.snapshot.submission is not None
     used = len(built.snapshot.submission.onlinetext or "")
     assert used > 0 and seen["budget"] == 1000 - used
+
+
+async def test_online_text_never_exceeds_the_total_budget(branch: str) -> None:
+    _replay, readers, m = _env(branch)
+    a = m["assigns"]["simple"]
+    limits = CaptureLimits(total_text_chars=5, onlinetext_chars=50_000)
+    built = await capture_assign(
+        AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
+        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"], limits=limits,
+    )  # fmt: skip
+    assert isinstance(built, Built) and built.snapshot.submission is not None
+    sub = built.snapshot.submission
+    assert len(sub.onlinetext or "") == 5 and sub.truncated

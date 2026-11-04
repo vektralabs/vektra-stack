@@ -642,12 +642,10 @@ async def _onlinetext(
     if res.status not in (FileStatus.READ, FileStatus.READ_PARTIAL):
         return SubmissionItem(onlinetext=None, truncated=False)
     text = str(res.text)
-    truncated = (
-        len(text) > limits.onlinetext_chars or res.status is FileStatus.READ_PARTIAL
-    )
-    return SubmissionItem(
-        onlinetext=text[: limits.onlinetext_chars], truncated=truncated
-    )
+    # the online text is charged to the total budget too, so it can never exceed it alone
+    cap = min(limits.onlinetext_chars, limits.total_text_chars)
+    truncated = len(text) > cap or res.status is FileStatus.READ_PARTIAL
+    return SubmissionItem(onlinetext=text[:cap], truncated=truncated)
 
 
 def _ext(name: str) -> str:

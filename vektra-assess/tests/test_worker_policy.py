@@ -64,6 +64,7 @@ def test_overrides_for_pool_budget_lease_and_attempts() -> None:
         ({"VEKTRA_ASSESS_POOL_MAINTENANCE_CONCURRENCY": "3000000000"}, "must not exceed"),
         ({"VEKTRA_ASSESS_JOB_PURGE_LEASE_S": "1e300"}, "must not exceed"),
         ({"VEKTRA_ASSESS_JOB_PURGE_BUDGET_S": "1e300"}, "must not exceed"),
+        ({"VEKTRA_ASSESS_JOB_PURGE_BUDGET_S": "50000"}, "derived lease"),
         ({"VEKTRA_ASSESS_JOB_PURG_BUDGET_S": "10"}, "unknown job setting"),
         ({"VEKTRA_ASSESS_POOL_NOPE_CONCURRENCY": "3"}, "unknown job setting"),
         (

@@ -119,10 +119,14 @@ class TickScheduler:
                 await self.fire(spec.name)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 # one bad firing must not end this tick's timer for good
                 self.counters[(spec.name, "fire_errors")] += 1
-                log.exception("assess_tick_fire_failed", extra={"tick": spec.name})
+                # the error TYPE only: exception text and traceback can carry row data
+                log.error(
+                    "assess_tick_fire_failed",
+                    extra={"tick": spec.name, "error_type": type(exc).__name__},
+                )
 
     async def fire(self, name: str) -> bool:
         """Start one run of ``name`` unless it must be skipped; True when a run started."""

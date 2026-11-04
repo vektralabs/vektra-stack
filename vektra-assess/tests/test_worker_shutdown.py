@@ -74,6 +74,7 @@ async def test_sequence_is_draining_stop_claims_ticks_drain_stopped_close() -> N
         heartbeat=Heartbeat(order),
         control=Control(order),
         drain_s=20,
+        clock=lambda: 0.0,
     )
     assert released == 2
     assert order == [

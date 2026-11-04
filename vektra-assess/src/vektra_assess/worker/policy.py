@@ -136,6 +136,11 @@ def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
             lease = _number(names["LEASE_S"], env[names["LEASE_S"]], float, MAX_SECONDS)
         elif explicit_budget:
             lease = 2 * budget  # keeps the 2 x rule without forcing two overrides
+            if lease > MAX_SECONDS:
+                raise WorkerPolicyError(
+                    f"{names['BUDGET_S']} must not exceed {MAX_SECONDS / 2:g} "
+                    f"(the derived lease would pass {MAX_SECONDS:g})"
+                )
         if names["MAX_ATTEMPTS"] in env:
             attempts = int(
                 _number(

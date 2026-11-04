@@ -178,6 +178,7 @@ class WorkerRuntime:
         # per-kind counters, exposed through the heartbeat row (no listening socket)
         self.counters: Counter[tuple[str, JobKind]] = Counter()
         self.claim_errors = 0
+        self.pass_failed = False  # the last claim pass had a failing pool
 
     # --- JobRunner -------------------------------------------------------------------------
 
@@ -215,8 +216,11 @@ class WorkerRuntime:
                 claimed = 0
             if claimed:
                 continue  # more may be waiting: do not sleep while there is work
+            # After a failed pass only the poll timeout (or stop) ends the sleep: a job completion
+            # sets the wake event and would otherwise retry the failing claim at once.
+            waiter = self._stopping if self.pass_failed else self._wake
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self._poll_s)
+                await asyncio.wait_for(waiter.wait(), timeout=self._poll_s)
             except TimeoutError:
                 pass
 
@@ -237,6 +241,7 @@ class WorkerRuntime:
         """One pass over every pool; returns how many jobs were claimed and started."""
         started = 0
         failed = False
+        self.pass_failed = False
         if self._stopping.is_set():
             return 0  # shutting down: nothing new may start
         for pool in self._pools.values():
@@ -257,6 +262,7 @@ class WorkerRuntime:
                 # a failing pool must not stop the pools after it from being claimed
                 self.claim_errors += 1
                 failed = True
+                self.pass_failed = True
                 log.warning(
                     "assess_claim_failed",
                     extra={"pool": pool.name, "error_type": type(exc).__name__},
@@ -268,8 +274,10 @@ class WorkerRuntime:
                 # work that would keep running past the drain and then sit leased until expiry.
                 for job in jobs:
                     try:
-                        await self._store.release(job.id, self.worker_id, job.attempt)
-                        self.counters[("released", job.kind)] += 1
+                        if await self._store.release(
+                            job.id, self.worker_id, job.attempt
+                        ):
+                            self.counters[("released", job.kind)] += 1
                     except Exception as exc:
                         log.warning(
                             "assess_job_release_failed",

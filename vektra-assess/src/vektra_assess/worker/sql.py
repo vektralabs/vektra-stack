@@ -176,7 +176,7 @@ async def claim(
         int(
             max_attempts[k]
             if isinstance(max_attempts, Mapping)
-            else (max_attempts or unlimited)
+            else (unlimited if max_attempts is None else max_attempts)
         )
         for k in kinds
     ]

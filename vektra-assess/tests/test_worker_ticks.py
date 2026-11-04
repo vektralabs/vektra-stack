@@ -277,3 +277,23 @@ async def test_an_unexpected_error_in_a_firing_does_not_end_the_timer() -> None:
     await sch.stop()
     assert sch.counters[("t", "fire_errors")] == 1
     assert hits, "the timer kept firing after the error"
+
+
+async def test_the_fire_error_log_carries_the_type_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Boom(FakeLocks):
+        async def try_lock(self, key: int) -> bool:
+            raise RuntimeError("secret row data")
+
+    async def body() -> None:
+        return None
+
+    sch = TickScheduler(Boom(), [_tick("t", body, 1)])
+    with caplog.at_level(logging.ERROR, logger="vektra_assess.worker"):
+        sch.start()
+        await asyncio.sleep(0.15)
+        await sch.stop()
+    rec = [r for r in caplog.records if r.getMessage() == "assess_tick_fire_failed"]
+    assert rec and rec[0].error_type == "RuntimeError"  # type: ignore[attr-defined]
+    assert "secret row data" not in caplog.text and rec[0].exc_info is None

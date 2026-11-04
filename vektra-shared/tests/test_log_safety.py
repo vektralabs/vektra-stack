@@ -157,6 +157,12 @@ def test_a_caller_cannot_opt_out_with_a_logger_key(stream: io.StringIO) -> None:
     assert line["answer"] == DROPPED and SECRET not in stream.getvalue()
 
 
+def test_a_caller_supplied_logger_value_is_scrubbed_too(stream: io.StringIO) -> None:
+    structlog.get_logger("vektra_assess.context").info("e", logger=SECRET)
+    (line,) = _lines(stream)
+    assert line["logger"] == DROPPED and SECRET not in stream.getvalue()
+
+
 def test_stdlib_filter_lets_non_assess_records_through_unchanged() -> None:
     rec = logging.makeLogRecord(
         {"name": "uvicorn.error", "msg": "x %s", "args": ("y",), "answer": "z"}

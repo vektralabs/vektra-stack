@@ -39,6 +39,7 @@ from vektra_assess.context.policy import (
     CapabilityState,
     DisclosurePolicy,
     FrozenPolicy,
+    HtmlPath,
     PolicyInputs,
     ReviewOptions,
     freeze,
@@ -434,7 +435,9 @@ async def capture_quiz(
             overall_feedback=None,
             grade_read_at=t_now,
         ),
-        exclusion=_exclusion(policy, paths, structured_only=True),
+        exclusion=_exclusion(
+            policy, paths, structured_only=policy.html_path is HtmlPath.STRUCTURED_ONLY
+        ),
         solution_text=_solution(policy, teacher),
         pasted_rubric=_pasted(policy, teacher),
         degraded_count=degraded,
@@ -589,7 +592,9 @@ async def capture_assign(
         overall=overall,
         submission=submission,
         files=tuple(files),
-        exclusion=_exclusion(policy, paths, structured_only=True),
+        exclusion=_exclusion(
+            policy, paths, structured_only=policy.html_path is HtmlPath.STRUCTURED_ONLY
+        ),
         solution_text=_solution(policy, teacher),
         pasted_rubric=_pasted(policy, teacher),
     )

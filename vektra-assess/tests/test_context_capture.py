@@ -58,15 +58,14 @@ class InProcessParser:
         self.calls.append("sanitize_html")
         return run("sanitize_html", html, "html", max_pages=1, max_chars=200_000)
 
-    async def extract_review_block(self, html: bytes, block: str) -> Any:
-        self.calls.append(f"review_{block}")
-        return run(
-            f"review_{'qtext' if block == 'qtext' else 'response'}",
-            html,
-            "html",
-            max_pages=1,
-            max_chars=200_000,
-        )
+    async def extract_review_item(self, html: bytes) -> tuple[str | None, str | None]:
+        """The real client's parsing of the sidecar's reply, without the socket."""
+        import json
+
+        self.calls.append("review_item")
+        res = run("review_item", html, "html", max_pages=1, max_chars=200_000)
+        doc = json.loads(res.text)
+        return doc["qtext"], doc["response"]
 
 
 @pytest.fixture(params=BRANCHES)
@@ -147,6 +146,13 @@ async def test_quiz_items_carry_question_and_answer_for_enabled_types(
     ) == dict.fromkeys([c for c in _all_canaries(m) if "GENFB" in c], 0)
     assert b"The correct answer" not in blob
     assert "sanitize_html" not in parser.calls  # the whole page is never sent
+    # one sidecar call per extracted question, never two
+    extracted = [
+        i
+        for i in out.snapshot.quiz_items
+        if i.qtype in ("truefalse", "multichoice", "shortanswer", "numerical", "essay")
+    ]
+    assert parser.calls.count("review_item") == len(extracted)
 
 
 async def test_highest_selects_the_earliest_tie_and_freezes_k_of_m(branch: str) -> None:
@@ -436,8 +442,8 @@ async def test_tex_mathml_code_and_tables_survive_into_the_context(
     from vektra_assess.context.snapshot import QuizItem
 
     html = f"<div class='que'><div class='qtext'>{snippet}</div><fieldset class='ablock'>[x] A</fieldset></div>"
-    res = await InProcessParser().extract_review_block(html.encode(), "qtext")
-    assert res.status is FileStatus.READ
+    qtext, _response = await InProcessParser().extract_review_item(html.encode())
+    assert qtext
     item = QuizItem(
         label="1",
         qtype="essay",
@@ -446,9 +452,130 @@ async def test_tex_mathml_code_and_tables_survive_into_the_context(
         status=None,
         mark="1",
         max_mark="1",
-        question_text=res.text,
+        question_text=qtext,
     )
     s = make().model_copy(update={"quiz_items": (item,)})
     payload = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
     for piece in must_keep:
         assert piece in payload, (piece, payload)
+
+
+# --- regressions from the plan's code review ------------------------------------------------------
+
+
+async def test_a_rubric_edited_after_grading_fails_closed(branch: str) -> None:
+    """The filling points at a level the definition no longer has: NotEligible, never a crash."""
+    replay, readers, m = _env(branch)
+    a = m["assigns"]["rubric_vis"]
+
+    def drop_levels(wsfunction: str, body: Any) -> Any:
+        if wsfunction == "core_grading_get_definitions":
+            for area in body.get("areas", []):
+                for d in area.get("definitions", []):
+                    for c in (d.get("rubric") or {}).get("rubric_criteria", []):
+                        for lv in c.get("levels", []):
+                            lv["id"] = (
+                                lv["id"] + 100_000
+                            )  # renumbered: no filling matches
+        return body
+
+    replay.mutate = drop_levels
+    out = await capture_assign(
+        AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
+        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"],
+    )  # fmt: skip
+    assert out == CaptureNotEligible(NotEligibleReason.UNREADABLE)
+
+
+async def test_only_the_selected_attempt_is_read_twice_and_reads_stop_early(
+    branch: str,
+) -> None:
+    replay, readers, m = _env(branch)
+    q = m["quizzes"]["gm_highest"]
+    out = await capture_quiz(
+        QuizTarget(m["courseid"], q["id"], q["cmid"], uid(branch, "stu1")),
+        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"], now=1_800_000_000,
+    )  # fmt: skip
+    assert isinstance(out, Built)
+    reviews = [p for f, p in replay.calls if f == "mod_quiz_get_attempt_review"]
+    assert (
+        len(reviews) == len(q["attempts"]) + 1
+    )  # every attempt once, the chosen one again
+    replay2, readers2, _m = _env(branch)
+    e = m["quizzes"]["essay"]
+    await capture_quiz(
+        QuizTarget(m["courseid"], e["id"], e["cmid"], uid(branch, "stu2")),
+        readers2, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"],
+    )  # fmt: skip
+    assert [f for f, _ in replay2.calls].count(
+        "mod_quiz_get_attempt_review"
+    ) == 1  # stops at the ungraded one
+
+
+async def test_review_options_closed_follows_the_quiz_close_date(branch: str) -> None:
+    replay, readers, m = _env(branch)
+    q = m["quizzes"]["gm_highest"]
+    target = QuizTarget(m["courseid"], q["id"], q["cmid"], uid(branch, "stu1"))
+    close = await readers.quiz_close_inputs(m["courseid"], q["id"])
+    assert isinstance(close, Readable)
+    timeclose = close.value.timeclose
+    for now in (1, 2_000_000_000):
+        out = await capture_quiz(
+            target,
+            readers,
+            InProcessParser(),
+            OFF,
+            Capabilities(),
+            moodle_release=m["release"],
+            now=now,
+        )
+        assert isinstance(out, Built)
+        assert out.snapshot.header.review_options_closed is (
+            timeclose != 0 and now >= timeclose
+        )
+
+    def no_options(wsfunction: str, body: Any) -> Any:
+        if wsfunction == "mod_quiz_get_combined_review_options":
+            body["alloptions"] = body["alloptions"][:2]  # an unknown shape: unreadable
+        return body
+
+    replay.mutate = no_options
+    out = await capture_quiz(
+        target,
+        readers,
+        InProcessParser(),
+        OFF,
+        Capabilities(),
+        moodle_release=m["release"],
+        now=2_000_000_000,
+    )
+    assert isinstance(out, Built) and out.snapshot.header.review_options_closed is False
+
+
+async def test_online_text_counts_against_the_total_budget_and_a_cut_names_no_page(
+    branch: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vektra_assess.context.capture import capture as cap
+
+    out, _, _ = await _intake(branch, "stu1", CaptureLimits(total_text_chars=10))
+    partial = [f for f in out if f.status is FileStatus.READ_PARTIAL]
+    assert partial and all(f.upto_page is None for f in partial)
+
+    seen: dict[str, int] = {}
+    real = cap._files
+
+    async def spy(*args: Any, budget: int | None = None, **kw: Any) -> Any:
+        seen["budget"] = budget if budget is not None else -1
+        return await real(*args, budget=budget, **kw)
+
+    monkeypatch.setattr(cap, "_files", spy)
+    _replay, readers, m = _env(branch)
+    a = m["assigns"]["simple"]
+    limits = CaptureLimits(total_text_chars=1000)
+    built = await capture_assign(
+        AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
+        readers, InProcessParser(), OFF, Capabilities(), moodle_release=m["release"], limits=limits,
+    )  # fmt: skip
+    assert isinstance(built, Built) and built.snapshot.submission is not None
+    used = len(built.snapshot.submission.onlinetext or "")
+    assert used > 0 and seen["budget"] == 1000 - used

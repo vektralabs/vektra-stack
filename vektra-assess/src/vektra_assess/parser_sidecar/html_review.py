@@ -275,6 +275,10 @@ DROP_CLASSES = frozenset(
         "grade",
         "correctness",
         "validationerror",
+        # correctness icons: FA <i class="icon ..."> or pix <img class="icon questioncorrectnessicon"
+        # alt="Correct">, whose alt text would otherwise become "Correct" in the response
+        "icon",
+        "questioncorrectnessicon",
     }
 )
 
@@ -335,3 +339,25 @@ def extract_review_block(data: bytes, block: str, max_chars: int) -> Extracted:
     if len(text) > max_chars:
         return Extracted(FileStatus.READ_PARTIAL, text[:max_chars], code="char_cap")
     return Extracted(FileStatus.READ, text)
+
+
+def extract_review_item(data: bytes, max_chars: int) -> Extracted:
+    """Both allowlisted blocks of one question from ONE parse, as JSON ``{"qtext", "response"}``.
+
+    Each value is the block's plain text, or ``null`` when the block is missing, ambiguous or
+    empty. Each is capped at half of ``max_chars`` so the JSON itself never exceeds the cap (a cut
+    JSON would be unreadable and the item would degrade).
+    """
+    import json
+
+    half = max(1, max_chars // 2 - 32)
+    out: dict[str, str | None] = {}
+    for block in ("qtext", "response"):
+        res = extract_review_block(data, block, half)
+        out[block] = (
+            res.text
+            if res.status in (FileStatus.READ, FileStatus.READ_PARTIAL)
+            else None
+        )
+    text = json.dumps(out, ensure_ascii=False)
+    return Extracted(FileStatus.READ, text, code="review_item")

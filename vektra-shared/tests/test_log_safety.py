@@ -23,16 +23,22 @@ from vektra_shared.log_safety import (
 SECRET = "CNRY-right_answer-multichoice-1a2b3c4d"
 
 
+def _reset() -> None:
+    structlog.reset_defaults()
+    for name in ("", "vektra_assess"):
+        lg = logging.getLogger(name)
+        for h in [h for h in lg.handlers if getattr(h, "_vektra_assess", False)]:
+            lg.removeHandler(h)
+    logging.getLogger("vektra_assess").setLevel(logging.NOTSET)
+    logging.getLogger().setLevel(logging.WARNING)
+
+
 @pytest.fixture
 def stream() -> Iterator[io.StringIO]:
     buf = io.StringIO()
     configure_assess_worker_logging(buf, level=logging.DEBUG)
     yield buf
-    structlog.reset_defaults()
-    target = logging.getLogger("vektra_assess")
-    for h in list(target.handlers):
-        target.removeHandler(h)
-    target.propagate = True
+    _reset()
 
 
 def _lines(buf: io.StringIO) -> list[dict[str, object]]:
@@ -105,8 +111,7 @@ def test_stdlib_assess_logger_drops_extras_args_and_tracebacks(
 def test_stdlib_handler_does_not_touch_other_packages(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    buf = io.StringIO()
-    install_assess_stdlib_handler(buf)
+    install_assess_stdlib_handler()
     try:
         with caplog.at_level(logging.INFO, logger="vektra_core"):
             logging.getLogger("vektra_core.x").info(
@@ -114,12 +119,42 @@ def test_stdlib_handler_does_not_touch_other_packages(
             )
         assert caplog.records[0].getMessage() == "hello world"
         assert caplog.records[0].answer == "a"  # type: ignore[attr-defined]
-        assert buf.getvalue() == ""  # not routed through the assess handler
     finally:
-        target = logging.getLogger("vektra_assess")
-        for h in list(target.handlers):
-            target.removeHandler(h)
-        target.propagate = True
+        _reset()
+
+
+def test_assess_records_still_propagate_but_scrubbed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """propagate stays True: caplog, uvicorn and the root stream keep receiving assess records,
+    and they arrive already scrubbed."""
+    install_assess_stdlib_handler()
+    try:
+        assert logging.getLogger("vektra_assess").propagate is True
+        with caplog.at_level(logging.INFO, logger="vektra_assess.worker"):
+            logging.getLogger("vektra_assess.worker").info(
+                "assess_x", extra={"job_id": 1, "payload": SECRET}
+            )
+        (rec,) = caplog.records
+        assert rec.job_id == 1 and rec.payload == DROPPED  # type: ignore[attr-defined]
+        assert SECRET not in caplog.text
+    finally:
+        _reset()
+
+
+def test_a_long_or_interpolated_message_is_dropped(stream: io.StringIO) -> None:
+    log = logging.getLogger("vektra_assess.worker")
+    log.warning(f"bad answer {SECRET} " + "x" * 300)
+    (line,) = _lines(stream)
+    assert line["event"] == DROPPED and SECRET not in stream.getvalue()
+
+
+def test_a_caller_cannot_opt_out_with_a_logger_key(stream: io.StringIO) -> None:
+    structlog.get_logger("vektra_assess.context").info(
+        "e", logger="vektra_core.other", answer=SECRET
+    )
+    (line,) = _lines(stream)
+    assert line["answer"] == DROPPED and SECRET not in stream.getvalue()
 
 
 def test_stdlib_filter_lets_non_assess_records_through_unchanged() -> None:
@@ -132,15 +167,24 @@ def test_stdlib_filter_lets_non_assess_records_through_unchanged() -> None:
 
 def test_install_is_idempotent() -> None:
     try:
-        install_assess_stdlib_handler(io.StringIO())
-        install_assess_stdlib_handler(io.StringIO())
-        handlers = logging.getLogger("vektra_assess").handlers
-        assert len(handlers) == 1
+        install_assess_stdlib_handler()
+        install_assess_stdlib_handler()
+        assert len(logging.getLogger("vektra_assess").handlers) == 1
     finally:
-        target = logging.getLogger("vektra_assess")
-        for h in list(target.handlers):
-            target.removeHandler(h)
-        target.propagate = True
+        _reset()
+
+
+def test_the_worker_stream_sits_on_the_root_so_flushing_root_flushes_it(
+    stream: io.StringIO,
+) -> None:
+    root_handlers = [
+        h for h in logging.getLogger().handlers if getattr(h, "_vektra_assess", False)
+    ]
+    assert len(root_handlers) == 1
+    logging.getLogger("vektra_assess.worker").info("assess_tick")
+    for h in logging.getLogger().handlers:
+        h.flush()
+    assert "assess_tick" in stream.getvalue()
 
 
 def test_named_factory_keeps_the_logger_name() -> None:

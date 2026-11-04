@@ -51,8 +51,12 @@ async def test_zero_forbidden_canaries_in_every_sink(version: str) -> None:
             out = await run_case(case)
         finally:
             structlog.reset_defaults()
-            for h in list(logging.getLogger("vektra_assess").handlers):
-                logging.getLogger("vektra_assess").removeHandler(h)
+            for name in ("", "vektra_assess"):
+                lg = logging.getLogger(name)
+                for h in [
+                    h for h in lg.handlers if getattr(h, "_vektra_assess", False)
+                ]:
+                    lg.removeHandler(h)
         out.sinks["logs"] = buf.getvalue().encode()
         EXECUTED[version] += 1
         assert out.sinks["logs"], f"{case.name}: log sink empty"

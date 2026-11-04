@@ -79,8 +79,9 @@ def canary_log_capture() -> Iterator[CanaryLogCapture]:
         yield cap
     finally:
         structlog.reset_defaults()
-        target = logging.getLogger("vektra_assess")
-        for h in list(target.handlers):
-            target.removeHandler(h)
-        target.propagate = True
-        target.setLevel(logging.NOTSET)
+        for name in ("", "vektra_assess"):
+            lg = logging.getLogger(name)
+            for h in [h for h in lg.handlers if getattr(h, "_vektra_assess", False)]:
+                lg.removeHandler(h)
+        logging.getLogger("vektra_assess").setLevel(logging.NOTSET)
+        logging.getLogger().setLevel(logging.WARNING)

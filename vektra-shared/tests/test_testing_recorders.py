@@ -160,3 +160,12 @@ def test_a_production_registry_refuses_the_doubles() -> None:
     test_reg.register("llm", "rec", RecordingLLMProvider())
     assert test_reg.has("llm", "rec")
     assert not is_recorder(object()) and not is_recorder(uuid4())
+
+
+def test_a_subclass_of_a_double_is_refused_too() -> None:
+    class Mine(RecordingLLMProvider):
+        pass
+
+    with pytest.raises(ValueError, match="test double"):
+        ProviderRegistry().register("llm", "x", Mine())
+    assert is_recorder(Mine())

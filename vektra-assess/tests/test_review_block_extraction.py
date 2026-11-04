@@ -156,11 +156,31 @@ def test_unknown_block_name_is_refused() -> None:
     )
 
 
-def test_the_child_dispatches_the_block_ops_without_sniffing() -> None:
+def test_the_child_returns_both_blocks_from_one_parse() -> None:
+    import json
+
     from vektra_assess.parser_sidecar.child import run
 
     html = b"<div class='qtext'>Domanda</div><fieldset class='ablock'>[x] A</fieldset>"
-    assert (
-        run("review_qtext", html, "html", max_pages=1, max_chars=100).text == "Domanda"
+    doc = json.loads(run("review_item", html, "html", max_pages=1, max_chars=100).text)
+    assert doc["qtext"] == "Domanda" and "A" in doc["response"]
+    doc = json.loads(
+        run("review_item", b"<p>nothing</p>", "html", max_pages=1, max_chars=100).text
     )
-    assert "A" in run("review_response", html, "html", max_pages=1, max_chars=100).text
+    assert doc == {"qtext": None, "response": None}
+    big = b"<div class='qtext'>" + b"x" * 500 + b"</div>"
+    out = run("review_item", big, "html", max_pages=1, max_chars=200).text
+    assert len(out) <= 200 and json.loads(out)["qtext"]  # the JSON itself fits the cap
+
+
+@pytest.mark.parametrize(
+    "icon",
+    [
+        '<img class="icon questioncorrectnessicon" alt="Correct" src="x.svg">',
+        '<i class="icon fa fa-check text-success" title="Correct"></i>',
+    ],
+)
+def test_correctness_icons_inside_the_response_are_dropped(icon: str) -> None:
+    html = f"<fieldset class='ablock'><div class='answer'><div class='r0 correct'>[x] Vero {icon}</div></div></fieldset>"
+    text = extract_review_block(html.encode(), "response", 1000).text
+    assert "Vero" in text and "Correct" not in text

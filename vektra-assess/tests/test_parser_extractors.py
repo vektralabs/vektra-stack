@@ -544,3 +544,59 @@ def test_overlap_check_counts_the_local_filename_and_extra_field() -> None:
     with pytest.raises(zipguard.ZipRefused, match="overlap"):
         zipguard.open_checked(bytes(raw))
     assert zipguard.open_checked(buf.getvalue()).names  # the untouched archive is fine
+
+
+def _pdf(content: bytes, *, image: bool) -> bytes:
+    """A minimal one-page PDF: optional 8x8 image XObject, and ``content`` as its page stream."""
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    ]
+    res = b"/Font << /F1 5 0 R >>" + (b" /XObject << /Im0 6 0 R >>" if image else b"")
+    objs.append(
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << "
+        + res
+        + b" >> >>"
+    )
+    objs.append(b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream")
+    objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    pix = b"00" * 192
+    objs.append(
+        b"<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length %d >>\nstream\n"
+        % (len(pix) + 1)
+        + pix
+        + b">\nendstream"
+    )
+    out, offsets = b"%PDF-1.4\n", []
+    for n, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % n + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objs) + 1,
+        xref,
+    )
+
+
+@pytest.mark.parametrize(
+    ("content", "image", "status"),
+    [
+        (
+            b"BT /F1 18 Tf 72 720 Td (Una riga sola) Tj ET",
+            False,
+            FileStatus.READ,
+        ),  # short text PDF
+        (
+            b"q 600 0 0 780 6 6 cm /Im0 Do Q BT /F1 8 Tf 500 20 Td (Pag. 1/20) Tj ET",
+            True,
+            FileStatus.NO_TEXT,
+        ),  # scan + footer
+        (b"q 600 0 0 780 6 6 cm /Im0 Do Q", True, FileStatus.NO_TEXT),  # bare scan
+    ],
+)
+def test_scanned_detection_uses_page_images_not_a_character_count(
+    content: bytes, image: bool, status: FileStatus
+) -> None:
+    assert extract_pdf(_pdf(content, image=image), 50, 1000).status is status

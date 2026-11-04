@@ -157,14 +157,25 @@ class ParserClient:
             await self._call("sanitize_html", html, "html", limits or self.limits)
         )
 
-    async def extract_review_block(
-        self, html: bytes, block: str, limits: Limits | None = None
-    ) -> SanitizeResult:
-        """One allowlisted block of one question's review HTML (``qtext`` or ``response``)."""
-        op = {"qtext": "review_qtext", "response": "review_response"}[block]
-        return SanitizeResult.of(
-            await self._call(op, html, "html", limits or self.limits)
-        )
+    async def extract_review_item(
+        self, html: bytes, limits: Limits | None = None
+    ) -> tuple[str | None, str | None]:
+        """Question text and student response of one question's review HTML, from one sidecar
+        call (allowlist extraction). ``(None, None)`` for anything that is not the expected reply:
+        the item then degrades, it is never read as text."""
+        import json
+
+        res = await self._call("review_item", html, "html", limits or self.limits)
+        if res.status is not FileStatus.READ:
+            return None, None
+        try:
+            doc = json.loads(res.text)
+        except ValueError:
+            return None, None
+        if not isinstance(doc, dict) or set(doc) != {"qtext", "response"}:
+            return None, None
+        q, r = doc["qtext"], doc["response"]
+        return (q if isinstance(q, str) else None), (r if isinstance(r, str) else None)
 
     async def ping(self, deep: bool = False) -> float:
         """Round-trip in seconds. ``ParserUnavailableError`` unless the sidecar answers

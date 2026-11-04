@@ -140,8 +140,9 @@ def assess_allowlist_processor(
     logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
     """structlog processor: allowlist for ``vektra_assess.*`` loggers, untouched otherwise."""
-    name = event_dict.get("logger") or getattr(logger, "name", None)
-    if is_assess_logger(name):
+    # either name makes it an assess event: a caller cannot opt out by passing logger="other"
+    names = (getattr(logger, "name", None), event_dict.get("logger"))
+    if any(is_assess_logger(n if isinstance(n, str) else None) for n in names):
         return scrub_event_dict(event_dict)
     return event_dict
 
@@ -186,6 +187,9 @@ class AssessAllowlistFilter(logging.Filter):
         if record.args:
             # the formatted message could interpolate content; keep the constant template only
             record.args = ()
+        # the message itself is an event name; anything else (an f-string, str(exc)) is dropped
+        if not isinstance(record.msg, str) or len(record.msg) > _MAX_VALUE_LEN:
+            record.msg = DROPPED
         for key in list(record.__dict__):
             if key in _RECORD_ATTRS:
                 continue
@@ -221,25 +225,32 @@ def install_stdlib_filter(handlers: Iterable[logging.Handler]) -> None:
             handler.addFilter(AssessAllowlistFilter())
 
 
-def install_assess_stdlib_handler(
-    stream: TextIO | None = None, level: int = logging.INFO
-) -> logging.Handler:
-    """Give the ``vektra_assess`` stdlib logger its own filtered JSON handler.
+class _ScrubHandler(logging.Handler):
+    """Writes nothing: its filter scrubs the record in place, and the record then propagates to
+    the root handlers (the worker's stream, uvicorn's, pytest's caplog) already scrubbed."""
 
-    The handler sits on ``vektra_assess`` (``propagate=False``), not on the root logger, so the
-    records of other packages keep whatever handling they had. Idempotent: a second call replaces
-    the previous handler instead of adding one.
+    def emit(
+        self, record: logging.LogRecord
+    ) -> None:  # pragma: no cover - never writes
+        return None
+
+
+def install_assess_stdlib_handler(level: int = logging.INFO) -> logging.Handler:
+    """Scrub every stdlib record of ``vektra_assess.*`` before any other handler sees it.
+
+    A handler on the ``vektra_assess`` logger runs before the root's (the logger hierarchy is
+    walked upwards), and its filter mutates the record. ``propagate`` stays True, so the records
+    keep reaching the root handlers and flushing the root still flushes them. Idempotent.
     """
     target = logging.getLogger(ASSESS_LOGGER_PREFIX)
     for old in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:
         target.removeHandler(old)
-    handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
-    handler.setFormatter(JsonExtrasFormatter())
+    handler = _ScrubHandler(logging.NOTSET)
     install_stdlib_filter([handler])
     handler._vektra_assess = True  # type: ignore[attr-defined]
     target.addHandler(handler)
-    target.setLevel(level)
-    target.propagate = False
+    if target.level == logging.NOTSET or target.level > level:
+        target.setLevel(level)
     return handler
 
 
@@ -269,7 +280,9 @@ def configure_assess_worker_logging(
 ) -> logging.Handler:
     """Logging for the assess worker process: JSON on stderr, allowlist on both stacks.
 
-    Returns the ``vektra_assess`` stdlib handler.
+    The JSON stream handler sits on the ROOT logger (the watchdog flushes the root handlers before
+    a hard exit); it carries the same filter, so a record from any logger is scrubbed if it is an
+    assess one. Returns that handler.
     """
     out = stream if stream is not None else sys.stderr
     structlog.configure(
@@ -279,4 +292,14 @@ def configure_assess_worker_logging(
         wrapper_class=structlog.make_filtering_bound_logger(level),
         cache_logger_on_first_use=False,
     )
-    return install_assess_stdlib_handler(out, level)
+    install_assess_stdlib_handler(level)
+    root = logging.getLogger()
+    for old in [h for h in root.handlers if getattr(h, "_vektra_assess", False)]:
+        root.removeHandler(old)
+    handler = logging.StreamHandler(out)
+    handler.setFormatter(JsonExtrasFormatter())
+    install_stdlib_filter([handler])
+    handler._vektra_assess = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+    root.setLevel(level)
+    return handler

@@ -138,7 +138,9 @@ class CaptureParser(Protocol):
 
     async def parse_file(self, data: bytes, ext_hint: str = "") -> Any: ...
     async def sanitize_html(self, html: bytes) -> Any: ...
-    async def extract_review_block(self, html: bytes, block: str) -> Any: ...
+    async def extract_review_item(
+        self, html: bytes
+    ) -> tuple[str | None, str | None]: ...
 
 
 # --- inputs and results --------------------------------------------------------------------------
@@ -278,15 +280,14 @@ def _flags(teacher: TeacherConfigView) -> FrozenFlags:
     )
 
 
-async def _block_text(
-    parser: CaptureParser, html: str | None, block: str
-) -> str | None:
+async def _item_text(
+    parser: CaptureParser, html: str | None
+) -> tuple[str | None, str | None]:
+    """Question text and response from ONE sidecar call (allowlist extraction)."""
     if not html:
-        return None
-    res = await parser.extract_review_block(html.encode("utf-8"), block)
-    if res.status in (FileStatus.READ, FileStatus.READ_PARTIAL) and res.text.strip():
-        return str(res.text)
-    return None
+        return None, None
+    q, r = await parser.extract_review_item(html.encode("utf-8"))
+    return (q if q and q.strip() else None), (r if r and r.strip() else None)
 
 
 # --- quiz ----------------------------------------------------------------------------------------
@@ -331,29 +332,33 @@ async def capture_quiz(
         )
     )
     policy = frozen.policy
-    # 2. selection over every attempt; a review read only for "fully graded" is stripped of its
-    #    html at once
+    # 2. selection over every attempt. A review read for "fully graded" keeps only the boolean:
+    #    its html (teacher visibility) is dropped at once. The first unreadable or ungraded
+    #    attempt already makes the result NotEligible, so the reads stop there.
     attempts = await readers.user_attempts(target.quizid, target.userid)
     graded: dict[int, bool | None] = {}
-    reviews: dict[int, AttemptReview] = {}
     if isinstance(attempts, Readable):
         for a in attempts.value:
             if a.preview or a.state is not AttemptState.FINISHED:
                 continue
             r = await readers.attempt_review(a.attemptid)
-            if isinstance(r, Readable):
-                graded[a.attemptid] = is_fully_graded(r.value)
-                reviews[a.attemptid] = r.value
-            else:
-                graded[a.attemptid] = None
+            graded[a.attemptid] = (
+                is_fully_graded(r.value) if isinstance(r, Readable) else None
+            )
+            del r
+            if graded[a.attemptid] is not True:
+                break
     selected = select_attempt(
         attempts, close.value.grademethod, graded, released=policy.eligible
     )
     if isinstance(selected, NotEligible):
         return CaptureNotEligible(selected.reason)
     assert isinstance(selected, Selected)
-    chosen = reviews[selected.attempt.attemptid]
-    reviews.clear()  # the other attempts' html goes out of scope here
+    # 3. read the selected attempt again: the only review whose html is kept, for this frame
+    reread = await readers.attempt_review(selected.attempt.attemptid)
+    if not isinstance(reread, Readable) or not is_fully_graded(reread.value):
+        return CaptureNotEligible(NotEligibleReason.UNREADABLE)
+    chosen = reread.value
     # 3-5. project each item; html goes to the sidecar as allowlisted blocks only
     items: list[QuizItem] = []
     paths = _common_paths(policy)
@@ -377,8 +382,7 @@ async def capture_quiz(
         question_text = response_text = None
         item_degraded = False
         if slot.qtype in EXTRACTION_QTYPES:
-            question_text = await _block_text(parser, slot.html, "qtext")
-            response_text = await _block_text(parser, slot.html, "response")
+            question_text, response_text = await _item_text(parser, slot.html)
             item_degraded = question_text is None
         else:
             item_degraded = True  # mark-and-feedback level only (REQ-101), flagged
@@ -420,7 +424,13 @@ async def capture_quiz(
             attempt_number=selected.attempt_number,
             attempt_count=selected.attempt_count,
             grade_method=GradeMethod(method),
-            review_options_closed=True,
+            # the after-close review options apply only once the quiz is closed, and only if
+            # they could be read at all (otherwise the fail-closed set was used)
+            review_options_closed=(
+                review is not None
+                and close.value.timeclose != 0
+                and t_now >= close.value.timeclose
+            ),
             grade_released=True,
             grade_modified_at=None,
             captured_at=t_now,
@@ -535,8 +545,13 @@ async def capture_assign(
             ordered = sorted(crit.levels, key=lambda lv: lv.score)
             chosen_id = levels[crit.criterionid] if levels else None
             idx = next(
-                n for n, lv in enumerate(ordered, start=1) if lv.levelid == chosen_id
+                (n for n, lv in enumerate(ordered, start=1) if lv.levelid == chosen_id),
+                None,
             )
+            if idx is None:
+                # the filling points at a level the definition no longer has (rubric edited
+                # after grading) or the criterion has no levels: fail closed, never guess
+                return CaptureNotEligible(NotEligibleReason.UNREADABLE)
             label = f"C{i}"
             if not policy.rubric_descriptors:
                 paths += [
@@ -574,7 +589,17 @@ async def capture_assign(
             grade_read_at=t_now,
         )
     submission = await _onlinetext(parser, st.onlinetext, limits)
-    files = await _files(target, st, readers, parser, limits, audit)
+    # the online text counts against the same total extracted-text cap (REQ-101 (c))
+    used = len(submission.onlinetext or "") if submission is not None else 0
+    files = await _files(
+        target,
+        st,
+        readers,
+        parser,
+        limits,
+        audit,
+        budget=limits.total_text_chars - used,
+    )
     snapshot = Snapshot(
         header=SnapshotHeader(
             activity_kind=ActivityKind.ASSIGN,
@@ -636,9 +661,10 @@ async def _files(
     parser: CaptureParser,
     limits: CaptureLimits,
     audit: list[AuditEvent],
+    budget: int | None = None,
 ) -> list[FileEntry]:
     out: list[FileEntry] = []
-    budget = limits.total_text_chars
+    budget = limits.total_text_chars if budget is None else budget
     for n, ref in enumerate(st.files, start=1):
         label = f"F{n}"
         if n > limits.max_files:
@@ -683,9 +709,11 @@ async def _files(
             if status in (FileStatus.READ, FileStatus.READ_PARTIAL)
             else ""
         )
+        cut = False
         if status in (FileStatus.READ, FileStatus.READ_PARTIAL) and not text.strip():
             status, text = FileStatus.NO_TEXT, ""
         elif text and len(text) > budget:
+            cut = True
             # the total extracted-text cap (REQ-101 (c)): what fits is kept as partial; a file
             # that gets nothing at all is "troppo grande", not "testo non estraibile"
             if budget > 0:
@@ -699,7 +727,12 @@ async def _files(
                 filename=ref.filename,
                 status=status,
                 text=text,
-                upto_page=res.upto_page if status is FileStatus.READ_PARTIAL else None,
+                # a cut by the text budget does not end at the parser's page: no page claimed
+                upto_page=(
+                    res.upto_page
+                    if status is FileStatus.READ_PARTIAL and not cut
+                    else None
+                ),
                 pages_total=res.pages_total,
             )
         )

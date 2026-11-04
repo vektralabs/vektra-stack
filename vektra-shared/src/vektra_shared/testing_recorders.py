@@ -42,6 +42,13 @@ from vektra_shared.types import (
 )
 
 RECORDER_CLASS_PREFIX = "Recording"
+#: class attribute every test double carries; ``ProviderRegistry`` refuses any instance whose class
+#: has it, subclasses included (one predicate for both checks: ``is_recorder``)
+TEST_DOUBLE_MARKER = "__vektra_test_double__"
+
+
+class _TestDouble:
+    __vektra_test_double__ = True
 
 
 def _jsonable(value: Any) -> Any:
@@ -81,7 +88,7 @@ class ScriptExhausted(AssertionError):
     """More calls than scripted responses: the test under-specified its script."""
 
 
-class RecordingLLMProvider:
+class RecordingLLMProvider(_TestDouble):
     """``LLMProvider`` that records the exact request bytes and plays scripted responses."""
 
     def __init__(
@@ -209,7 +216,7 @@ class RecordedCall:
     args: Mapping[str, Any] = field(default_factory=dict)
 
 
-class RecordingVectorStoreProvider:
+class RecordingVectorStoreProvider(_TestDouble):
     """Full ``VectorStoreProvider`` that records every call; ``forbid_calls`` makes any use raise.
 
     The call is recorded BEFORE the raise, so a caller that swallows the exception is still
@@ -291,7 +298,7 @@ class RecordingVectorStoreProvider:
 # --- safeguards --------------------------------------------------------------------------------
 
 
-class RecordingSafeguardHook:
+class RecordingSafeguardHook(_TestDouble):
     """``SafeguardHook`` that records the three trust-boundary calls and allows everything."""
 
     def __init__(self) -> None:
@@ -368,7 +375,5 @@ def assert_no_canaries(
 
 
 def is_recorder(obj: object) -> bool:
-    """True for an instance of one of the ``Recording*`` doubles (startup registry guard)."""
-    return type(obj).__module__ == __name__ and type(obj).__name__.startswith(
-        RECORDER_CLASS_PREFIX
-    )
+    """True for an instance of a test double (the startup registry guard)."""
+    return bool(getattr(type(obj), TEST_DOUBLE_MARKER, False))

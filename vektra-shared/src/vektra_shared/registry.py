@@ -22,7 +22,9 @@ from __future__ import annotations
 
 from typing import Any
 
-_RECORDERS_MODULE = "vektra_shared.testing_recorders"
+#: same marker as ``vektra_shared.testing_recorders.TEST_DOUBLE_MARKER`` (not imported: the
+#: registry is product code and the recorders are a test asset)
+_TEST_DOUBLE_MARKER = "__vektra_test_double__"
 
 
 class ProviderRegistry:
@@ -46,9 +48,8 @@ class ProviderRegistry:
         Overwrites any existing registration for the same key without error. Refuses a
         recording test double unless the registry was built with ``allow_test_doubles``.
         """
-        if (
-            not self._allow_test_doubles
-            and type(instance).__module__ == _RECORDERS_MODULE
+        if not self._allow_test_doubles and getattr(
+            type(instance), _TEST_DOUBLE_MARKER, False
         ):
             raise ValueError(
                 f"refusing to register test double {type(instance).__name__} as "

@@ -287,3 +287,8 @@ class VektraAssessSettings(BaseSettings):
     llm_price_per_1k_out: float | None = Field(
         None, ge=0, alias="VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT"
     )
+    store_traces: bool = Field(
+        True,
+        alias="VEKTRA_ASSESS_STORE_TRACES",
+        description="Store the runner's content-free QueryTrace per turn and per Part B (pipeline 'assess-discussion'), independent of VEKTRA_ANALYTICS store settings.",
+    )

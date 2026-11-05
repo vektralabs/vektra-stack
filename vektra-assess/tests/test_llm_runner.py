@@ -473,3 +473,97 @@ async def test_a_rejected_part_b_is_paid_for_too() -> None:
     one, _, _ = _part_b_runner([PART_B_OK])
     single = await one.run_part_b(_visible_bundle())
     assert out.usage.prompt_tokens == 2 * single.usage.prompt_tokens
+
+
+# --- content-free QueryTrace (task C) -----------------------------------------------------------
+
+import json  # noqa: E402
+from dataclasses import asdict  # noqa: E402
+
+
+def _trace_json(trace: Any) -> str:
+    return json.dumps(asdict(trace), default=str)
+
+
+async def _traced(reply: str, text: str, **settings_kw: Any):  # type: ignore[no-untyped-def]
+    llm, writer, audit = RecordingLLMProvider([reply]), _Trace(), _Audit()
+    r = DiscussionTurnRunner(
+        llm=llm,
+        safeguard=Guard(),
+        trace_writer=writer,
+        settings=settings(**settings_kw),
+        audit=audit,
+    )
+    turn = StudentTurn(text, 3)
+    result = await r.run(_visible_bundle(), turn)
+    return r, turn, result, writer, audit
+
+
+async def test_each_turn_writes_one_content_free_trace() -> None:
+    reply = "Hai ragione SEGRETO-RISPOSTA. Nella [Domanda 2] manca la conclusione."
+    r, turn, result, writer, _ = await _traced(reply, "SEGRETO-STUDENTE perché?")
+    ((trace, namespace),) = writer.rows
+    assert trace is result.trace and namespace == "assess-discussion"
+    assert trace.pipeline == "assess-discussion" and trace.response_id == turn.turn_id
+    assert trace.chunks_retrieved == [] and trace.prompt_version == r.prompt_version
+    assert trace.llm_model == "test/model"
+    assert [s.name for s in trace.steps] == [
+        "safeguard_pre_query",
+        "build_prompt",
+        "llm_call",
+        "postcheck",
+        "safeguard_pre_response",
+    ]
+    post = trace.steps[3].metadata
+    assert post["replacements"] == {"lexicon": 1} and post["language"] == "it"
+    blob = _trace_json(trace)
+    for content in ("SEGRETO", "conclusione", "Domanda", "ragione"):
+        assert content not in blob  # counts, codes and timings only
+
+
+async def test_trace_storage_can_be_switched_off() -> None:
+    _, _, result, writer, _ = await _traced(
+        "Ok.", "ciao", VEKTRA_ASSESS_STORE_TRACES=False
+    )
+    assert writer.rows == [] and result.trace is None
+
+
+async def test_a_failing_trace_writer_never_fails_the_turn() -> None:
+    class Broken(_Trace):
+        async def write(self, trace: QueryTrace, namespace: str) -> None:
+            raise RuntimeError("db down CNRY")
+
+    audit = _Audit()
+    r = DiscussionTurnRunner(
+        llm=RecordingLLMProvider(["Ok."]), safeguard=Guard(), trace_writer=Broken(),
+        settings=settings(), audit=audit,
+    )  # fmt: skip
+    result = await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    assert result.text == "Ok."
+    assert ("assess_trace_write_failed", {"error_type": "RuntimeError"}) in audit.rows
+
+
+async def test_part_b_is_traced_accepted_or_rejected() -> None:
+    writer = _Trace()
+    r = DiscussionTurnRunner(
+        llm=RecordingLLMProvider(["Il voto è 7.", PART_B_OK]), safeguard=Guard(),
+        trace_writer=writer, settings=settings(), audit=_Audit(),
+    )  # fmt: skip
+    out = await r.run_part_b(_visible_bundle())
+    ((trace, _),) = writer.rows
+    assert out.trace is trace
+    assert [s.name for s in trace.steps] == [
+        "llm_call",
+        "postcheck",
+        "llm_call",
+        "postcheck",
+    ]
+    assert trace.steps[1].metadata["violations"] == ["part_b_value"]
+    assert "voto" not in _trace_json(trace)
+    bad = DiscussionTurnRunner(
+        llm=RecordingLLMProvider(["Il voto è 7.", "Il voto è 7."]), safeguard=Guard(),
+        trace_writer=writer, settings=settings(), audit=_Audit(),
+    )  # fmt: skip
+    with pytest.raises(PartBRejectedError):
+        await bad.run_part_b(_visible_bundle())
+    assert len(writer.rows) == 2

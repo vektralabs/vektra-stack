@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.bundle import ContextBundle
@@ -49,7 +51,13 @@ from vektra_assess.llm.types import (
     TurnUsage,
 )
 from vektra_shared.protocols import LLMProvider, SafeguardHook
-from vektra_shared.types import CompletionChunk, Message, SafeguardContext
+from vektra_shared.types import (
+    CompletionChunk,
+    Message,
+    QueryTrace,
+    SafeguardContext,
+    StepTrace,
+)
 
 PIPELINE = "assess-discussion"
 ASSESS_NAMESPACE = "assess-discussion"  # reserved namespace (plan task C migration)
@@ -103,6 +111,31 @@ class DiscussionTurnRunner:
                 6,
             )
         return TurnUsage(prompt_tokens, completion_tokens, estimated=True, cost=cost)
+
+    async def _write_trace(
+        self, response_id: UUID, steps: _Steps, t_all: float
+    ) -> QueryTrace | None:
+        """Build the content-free trace and hand it to the writer; a writer failure never fails
+        the turn (the student already has the reply), it is audited instead."""
+        if not self._settings.store_traces:
+            return None
+        trace = QueryTrace(
+            response_id=response_id,
+            steps=steps.items,
+            total_duration_ms=int((time.monotonic() - t_all) * 1000),
+            chunks_retrieved=[],  # RAG is OFF in v1
+            llm_model=self.model,
+            prompt_version=self.prompt_version,
+            created_at=_now(),
+            pipeline=PIPELINE,
+        )
+        try:
+            await self._trace_writer.write(trace, ASSESS_NAMESPACE)
+        except Exception as exc:
+            await self._audit(
+                "assess_trace_write_failed", {"error_type": type(exc).__name__}
+            )
+        return trace
 
     @staticmethod
     def _admit(bundle: ContextBundle) -> None:
@@ -193,8 +226,17 @@ class DiscussionTurnRunner:
         prompt_tokens = 0
         completion = ""
         interrupted = False
+        steps = _Steps()
+        t_all = time.monotonic()
 
+        t = time.monotonic()
         pre = await self._safeguard.pre_query(turn.text, self._context(turn.turn_index))
+        steps.add(
+            "safeguard_pre_query",
+            t,
+            allowed=pre.allowed,
+            modified=pre.modified_content is not None,
+        )
         if not pre.allowed:
             # no model call at all; the student sees the fixed replacement, the audit says why
             await self._audit(
@@ -210,6 +252,7 @@ class DiscussionTurnRunner:
                 released.append(seg)
                 yield seg
             student_text = pre.modified_content or turn.text  # anonymised text, if any
+            t = time.monotonic()
             head, past, tail = self._renderer.turn_parts(
                 bundle, turn.history, student_text, language
             )
@@ -222,8 +265,17 @@ class DiscussionTurnRunner:
                 max_tokens=self._settings.llm_max_tokens,
             )
             prompt_tokens = prompt.prompt_tokens
+            steps.add(
+                "build_prompt",
+                t,
+                prompt_tokens=prompt.prompt_tokens,
+                history_kept=prompt.history_kept,
+                history_dropped=prompt.history_dropped,
+            )
+            t_llm = time.monotonic()
             it, first, started = await self._open_stream(prompt.messages, records)
             first_at = _now()
+            first_token_ms = int((time.monotonic() - t_llm) * 1000)
             buf = first.content if first is not None else ""
             completion = buf
             outcome: CallOutcome = "ok"
@@ -258,6 +310,13 @@ class DiscussionTurnRunner:
             finally:
                 await _close(it)  # the provider stream is closed on every path
             records.append(ProviderCallRecord(started, first_at, _now(), outcome))
+            steps.add(
+                "llm_call",
+                t_llm,
+                first_token_ms=first_token_ms,
+                completion_tokens=self._count(completion),
+                outcome=outcome,
+            )
             if outcome == "cancelled":
                 interrupted = True  # the unfinished sentence in the buffer is dropped
             else:
@@ -269,12 +328,28 @@ class DiscussionTurnRunner:
                         yield seg
 
         delivered = " ".join(s.text for s in released)
+        steps.add_measured(
+            "postcheck",
+            gate_ms=int(gate.elapsed_ms),
+            replacements=dict(gate.by_stage),
+            behaviour_class=gate.behaviour_class,
+            language=language,
+            released=len(released),
+        )
         # the whole turn once more, for the safeguard's audit only: nothing is retracted
+        t = time.monotonic()
         await self._safeguard.pre_response(
             delivered, self._context(turn.turn_index, partial=False)
         )
+        steps.add(
+            "safeguard_pre_response",
+            t,
+            sentences=len(released),
+            replaced=gate.by_stage.get(MARK_SAFEGUARD, 0),
+        )
         for event, data in gate.audit:
             await self._audit(event, data)
+        trace = await self._write_trace(turn.turn_id, steps, t_all)
         yield TurnResult(
             text=delivered,
             marks=tuple(gate.marks),
@@ -286,6 +361,7 @@ class DiscussionTurnRunner:
             replaced_count=gate.replaced,
             content_hash=hashlib.sha256(delivered.encode("utf-8")).hexdigest(),
             interrupted=interrupted,
+            trace=trace,
         )
 
     async def _part_b_once(
@@ -351,6 +427,9 @@ class DiscussionTurnRunner:
         records: list[ProviderCallRecord] = []
         codes: tuple[str, ...] = ()
         prompt_spent = completion_spent = 0
+        steps = _Steps()
+        t_all = time.monotonic()
+        part_b_id = uuid4()
         for attempt in (1, 2):
             if (
                 attempt == 2
@@ -358,7 +437,18 @@ class DiscussionTurnRunner:
                 and loop.time() - t0 >= remaining_s
             ):
                 break  # no time left for a second generation
+            t_attempt = time.monotonic()
             text, codes, raw = await self._part_b_once(bundle, language, records)
+            steps.add(
+                "llm_call",
+                t_attempt,
+                attempt=attempt,
+                completion_tokens=self._count(raw),
+                outcome=records[-1].outcome,
+            )
+            steps.add_measured(
+                "postcheck", 0, mode="part_b", violations=list(codes), language=language
+            )
             # every generation is paid for, the rejected one too (REQ-083 accounting)
             prompt_spent += sum(
                 self._count(m.content) + MESSAGE_OVERHEAD
@@ -366,6 +456,7 @@ class DiscussionTurnRunner:
             )
             completion_spent += self._count(raw)
             if not codes:
+                trace = await self._write_trace(part_b_id, steps, t_all)
                 return TurnResult(
                     text=text,
                     marks=(),
@@ -376,11 +467,15 @@ class DiscussionTurnRunner:
                     call_records=tuple(records),
                     replaced_count=0,
                     content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    trace=trace,
                 )
             await self._audit(
                 "assess_part_b_rejected",
                 {"attempt": attempt, "reason_code": ",".join(codes)},
             )
+        await self._write_trace(
+            part_b_id, steps, t_all
+        )  # a rejected Part B is traced too
         raise PartBRejectedError(codes[0] if codes else part_b.EMPTY)
 
     async def run(self, bundle: ContextBundle, turn: StudentTurn) -> TurnResult:
@@ -398,6 +493,22 @@ def _now() -> datetime:
 
 
 _STOPPED = object()
+
+
+class _Steps:
+    """Content-free StepTrace list: names, durations, counts and codes only."""
+
+    def __init__(self) -> None:
+        self.items: list[StepTrace] = []
+
+    def add(self, name: str, started: float, **metadata: object) -> None:
+        ms = int((time.monotonic() - started) * 1000)
+        self.items.append(StepTrace(name=name, duration_ms=ms, metadata=dict(metadata)))
+
+    def add_measured(self, name: str, gate_ms: int, **metadata: object) -> None:
+        self.items.append(
+            StepTrace(name=name, duration_ms=gate_ms, metadata=dict(metadata))
+        )
 
 
 async def _next_chunk(

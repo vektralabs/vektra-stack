@@ -9,9 +9,10 @@ transcript against it).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
+from uuid import UUID, uuid4
 
 from vektra_shared.types import QueryTrace
 
@@ -54,6 +55,8 @@ class StudentTurn:
     turn_index: int
     history: tuple[PriorTurn, ...] = ()
     ui_language: str = "it"
+    #: the turn's id, also the QueryTrace ``response_id``; plan 8 passes the persisted one
+    turn_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,8 @@ class TurnResult:
     content_hash: str
     # cancelled by the caller: ``text`` is only what had been released
     interrupted: bool = False
+    #: the content-free trace written for this turn (None when trace storage is off)
+    trace: QueryTrace | None = None
 
 
 class TraceWriter(Protocol):

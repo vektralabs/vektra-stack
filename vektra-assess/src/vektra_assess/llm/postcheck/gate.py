@@ -17,6 +17,8 @@ The safeguard's ``pre_response`` runs after the gate, in the runner (it is async
 
 from __future__ import annotations
 
+import time
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,6 +56,9 @@ class SentenceGate:
     contest: list[ContestEntry] = field(default_factory=list)
     marks: list[str] = field(default_factory=list)
     replaced: int = 0
+    # content-free counts and timing for the trace
+    by_stage: Counter[str] = field(default_factory=Counter)
+    elapsed_ms: float = 0.0
     audit: list[tuple[str, Mapping[str, Any]]] = field(default_factory=list)
     _first: bool = True
     _contextual_left: int | None = None
@@ -67,9 +72,17 @@ class SentenceGate:
         if code not in self.marks:
             self.marks.append(code)
         self.replaced += n
+        self.by_stage[code] += max(n, 1)
 
     def feed(self, sentence: str) -> list[tuple[str, bool]]:
         """``[(text, marked), ...]`` releasable for this sentence, in order."""
+        t = time.perf_counter()
+        try:
+            return self._feed(sentence)
+        finally:
+            self.elapsed_ms += (time.perf_counter() - t) * 1000
+
+    def _feed(self, sentence: str) -> list[tuple[str, bool]]:
         out: list[tuple[str, bool]] = []
         m = markers.extract(sentence, self._labels)
         for code in m.dropped:

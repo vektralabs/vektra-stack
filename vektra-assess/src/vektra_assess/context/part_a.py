@@ -124,7 +124,9 @@ def _quiz_line(item: QuizItem) -> str:
         )
     else:
         line = S.QUIZ_ITEM_HIDDEN.format(label=item.label)
-    return line + (S.DEGRADED if item.degraded else "")
+    return line + (
+        S.DEGRADED if item.degraded else S.TRUNCATED if item.truncated else ""
+    )
 
 
 def overview(bundle: ContextBundle) -> tuple[str, ...]:

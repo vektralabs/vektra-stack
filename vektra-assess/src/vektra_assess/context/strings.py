@@ -46,6 +46,7 @@ SUBMISSION_LABEL = "Consegna"
 DEGRADED = (
     " [contenuto non disponibile all'assistente: si discute solo esito e punteggio]"
 )
+TRUNCATED = " [testo della domanda o della risposta troncato: l'assistente ne vede solo l'inizio]"
 HIDDEN_MARKS_NOTE = "Alcuni punteggi non sono mostrati perché le opzioni di revisione del quiz li nascondono."
 DEGRADED_NOTE = "Per gli elementi segnalati l'assistente non vede il testo della domanda né la tua risposta."
 

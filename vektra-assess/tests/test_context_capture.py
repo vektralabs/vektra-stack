@@ -58,14 +58,16 @@ class InProcessParser:
         self.calls.append("sanitize_html")
         return run("sanitize_html", html, "html", max_pages=1, max_chars=200_000)
 
-    async def extract_review_item(self, html: bytes) -> tuple[str | None, str | None]:
+    async def extract_review_item(
+        self, html: bytes
+    ) -> tuple[str | None, str | None, bool]:
         """The real client's parsing of the sidecar's reply, without the socket."""
         import json
 
         self.calls.append("review_item")
         res = run("review_item", html, "html", max_pages=1, max_chars=200_000)
         doc = json.loads(res.text)
-        return doc["qtext"], doc["response"]
+        return doc["qtext"], doc["response"], doc["truncated"]
 
 
 @pytest.fixture(params=BRANCHES)
@@ -442,7 +444,7 @@ async def test_tex_mathml_code_and_tables_survive_into_the_context(
     from vektra_assess.context.snapshot import QuizItem
 
     html = f"<div class='que'><div class='qtext'>{snippet}</div><fieldset class='ablock'>[x] A</fieldset></div>"
-    qtext, _response = await InProcessParser().extract_review_item(html.encode())
+    qtext, _response, _cut = await InProcessParser().extract_review_item(html.encode())
     assert qtext
     item = QuizItem(
         label="1",

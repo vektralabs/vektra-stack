@@ -59,6 +59,10 @@ def _lines(bundle: ContextBundle) -> list[str]:
             out += ["Revisione visibile allo studente:", i.review_text]
         if i.degraded:
             out.append("Nota: testo della domanda e risposta non disponibili.")
+        elif i.truncated:
+            out.append(
+                "Nota: testo della domanda o della risposta troncato; non trattarlo come completo."
+            )
     for n, c in enumerate(bundle.criteria, start=1):
         out.append(f"## {S.CRITERION_LABEL.format(n=n)}")
         out.append(

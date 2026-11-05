@@ -116,21 +116,33 @@ async def test_review_item_op_and_reply_parsing(fake: Fake) -> None:
     import json
 
     fake.responder = lie(
-        lambda r: reply(r, text=json.dumps({"qtext": "Q", "response": "[x] A"}))
+        lambda r: reply(
+            r, text=json.dumps({"qtext": "Q", "response": "[x] A", "truncated": True})
+        )
     )
     out = await client_for(fake).extract_review_item(b"<div class='qtext'>x</div>")
-    assert fake.requests[0]["op"] == "review_item" and out == ("Q", "[x] A")
+    assert fake.requests[0]["op"] == "review_item" and out == ("Q", "[x] A", True)
 
 
 @pytest.mark.parametrize(
     "text",
-    ["not json", '{"qtext": "Q"}', '["Q", "A"]', '{"qtext": 1, "response": null}'],
+    [
+        "not json",
+        '{"qtext": "Q"}',
+        '["Q", "A"]',
+        '{"qtext": 1, "response": null}',
+        '{"qtext": "Q", "response": "A"}',  # a reply without the truncation flag is not trusted
+    ],
 )
 async def test_a_bad_review_item_reply_degrades_to_nothing(
     fake: Fake, text: str
 ) -> None:
     fake.responder = lie(lambda r: reply(r, text=text))
-    assert await client_for(fake).extract_review_item(b"<p>x</p>") == (None, None)
+    assert await client_for(fake).extract_review_item(b"<p>x</p>") == (
+        None,
+        None,
+        False,
+    )
 
 
 def lie(make: Callable[[dict[str, Any]], bytes | None]) -> Responder:

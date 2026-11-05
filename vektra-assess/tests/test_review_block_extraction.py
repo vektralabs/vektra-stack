@@ -167,10 +167,11 @@ def test_the_child_returns_both_blocks_from_one_parse() -> None:
     doc = json.loads(
         run("review_item", b"<p>nothing</p>", "html", max_pages=1, max_chars=100).text
     )
-    assert doc == {"qtext": None, "response": None}
+    assert doc == {"qtext": None, "response": None, "truncated": False}
     big = b"<div class='qtext'>" + b"x" * 500 + b"</div>"
     out = run("review_item", big, "html", max_pages=1, max_chars=200).text
     assert len(out) <= 200 and json.loads(out)["qtext"]  # the JSON itself fits the cap
+    assert json.loads(out)["truncated"] is True  # and the cut is flagged
 
 
 @pytest.mark.parametrize(
@@ -199,3 +200,30 @@ def test_review_item_json_fits_the_cap_even_when_escaping_grows_it() -> None:
     assert len(out) <= 300
     doc = json.loads(out)  # still valid JSON, not cut
     assert doc["qtext"] and doc["response"]
+
+
+def test_review_item_flags_a_block_cut_at_its_cap() -> None:
+    from vektra_assess.parser_sidecar.child import run
+
+    html = (
+        "<div class='qtext'>" + "parola " * 400 + "</div>"
+        "<fieldset class='ablock'><div class='answer'>breve</div></fieldset>"
+    ).encode()
+    doc = json.loads(run("review_item", html, "html", max_pages=1, max_chars=400).text)
+    assert doc["truncated"] is True and doc["response"] == "breve"
+    short = b"<div class='qtext'>Domanda breve</div>"
+    doc = json.loads(run("review_item", short, "html", max_pages=1, max_chars=400).text)
+    assert doc["truncated"] is False
+
+
+def test_review_item_flags_values_shortened_by_the_json_cap() -> None:
+    from vektra_assess.parser_sidecar.child import run
+
+    body = '"\\' * 90  # each block fits its half cap, but escaping overflows the JSON
+    html = (
+        f"<div class='qtext'>{body}</div>"
+        f"<fieldset class='ablock'><div class='answer'>{body}</div></fieldset>"
+    ).encode()
+    out = run("review_item", html, "html", max_pages=1, max_chars=300).text
+    doc = json.loads(out)
+    assert len(out) <= 300 and doc["truncated"] is True

@@ -140,7 +140,7 @@ class CaptureParser(Protocol):
     async def sanitize_html(self, html: bytes) -> Any: ...
     async def extract_review_item(
         self, html: bytes
-    ) -> tuple[str | None, str | None]: ...
+    ) -> tuple[str | None, str | None, bool]: ...
 
 
 # --- inputs and results --------------------------------------------------------------------------
@@ -282,12 +282,16 @@ def _flags(teacher: TeacherConfigView) -> FrozenFlags:
 
 async def _item_text(
     parser: CaptureParser, html: str | None
-) -> tuple[str | None, str | None]:
-    """Question text and response from ONE sidecar call (allowlist extraction)."""
+) -> tuple[str | None, str | None, bool]:
+    """Question text, response and the truncation flag from ONE sidecar call (allowlist)."""
     if not html:
-        return None, None
-    q, r = await parser.extract_review_item(html.encode("utf-8"))
-    return (q if q and q.strip() else None), (r if r and r.strip() else None)
+        return None, None, False
+    q, r, truncated = await parser.extract_review_item(html.encode("utf-8"))
+    return (
+        q if q and q.strip() else None,
+        r if r and r.strip() else None,
+        truncated,
+    )
 
 
 # --- quiz ----------------------------------------------------------------------------------------
@@ -380,9 +384,11 @@ async def capture_quiz(
             paths.append(f"{p}.max_mark")
         paths.append(f"{p}.review_html")  # never kept whole, whatever the path
         question_text = response_text = None
-        item_degraded = False
+        item_degraded = item_truncated = False
         if slot.qtype in EXTRACTION_QTYPES:
-            question_text, response_text = await _item_text(parser, slot.html)
+            question_text, response_text, item_truncated = await _item_text(
+                parser, slot.html
+            )
             item_degraded = question_text is None
         else:
             item_degraded = True  # mark-and-feedback level only (REQ-101), flagged
@@ -412,6 +418,7 @@ async def capture_quiz(
                 question_text=question_text,
                 response_text=response_text,
                 degraded=item_degraded,
+                truncated=item_truncated and not item_degraded,
             )
         )
     del chosen  # the html is not needed past this point

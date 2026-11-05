@@ -104,6 +104,9 @@ class QuizItem(_Frozen):
     #: the structured-only path: the html never left the capture frame.
     review_text: str | None = None
     degraded: bool = False  # flagged in Part A: the item could not be fully read
+    #: the question text or the response was cut at the parser's per-block cap (or by the review
+    #: item's JSON cap): flagged in Part A and in the model payload, never presented as complete
+    truncated: bool = False
 
 
 class AssignCriterion(_Frozen):

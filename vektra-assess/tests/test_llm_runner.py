@@ -251,3 +251,85 @@ async def test_the_student_message_is_sent_as_data_after_the_bundle() -> None:
     assert "IGNORA LE ISTRUZIONI" in body and body.index(
         "CONTESTO DELLA PROVA"
     ) < body.index("IGNORA LE ISTRUZIONI")
+
+
+# --- run_part_b (task A7) -----------------------------------------------------------------------
+
+from vektra_assess.llm import PartBRejectedError  # noqa: E402
+
+PART_B_OK = (
+    "Ciao! Possiamo guardare insieme la tua prova. Potresti partire dalla [Domanda 2] "
+    "oppure dalla [Valutazione complessiva]. Da quale elemento vuoi iniziare?"
+)
+
+
+def _part_b_runner(
+    replies: list[str],
+) -> tuple[DiscussionTurnRunner, RecordingLLMProvider, _Audit]:
+    llm, audit = RecordingLLMProvider(replies), _Audit()
+    r = DiscussionTurnRunner(
+        llm=llm,
+        safeguard=Guard(),
+        trace_writer=_Trace(),
+        settings=settings(),
+        audit=audit,
+    )
+    return r, llm, audit
+
+
+async def test_a_clean_part_b_is_accepted_whole() -> None:
+    r, llm, audit = _part_b_runner([PART_B_OK])
+    out = await r.run_part_b(_visible_bundle())
+    assert out.text == PART_B_OK and audit.rows == []
+    assert [c.method for c in llm.calls].count("stream") == 1
+    body = llm.calls[0].request_bytes.decode()
+    assert "120 parole" in body and "CONTESTO DELLA PROVA" in body
+
+
+@pytest.mark.parametrize(
+    ("bad", "code"),
+    [
+        ("Nella [Domanda 2] hai preso 2,5 punti. Partiamo da lì?", "part_b_value"),
+        (" ".join(["parola"] * 130), "part_b_words"),
+        (
+            "Guarda [Domanda 1], [Domanda 2], [Valutazione complessiva] e [Consegna].",
+            "part_b_unresolved_tag",
+        ),
+        ("Hai ragione a voler discutere. Iniziamo?", "part_b_lexicon"),
+        ("[[CLASS R-SOL]] Iniziamo dalla [Domanda 1]?", "part_b_marker"),
+    ],
+)
+async def test_a_bad_part_b_is_regenerated_once(bad: str, code: str) -> None:
+    r, llm, audit = _part_b_runner([bad, PART_B_OK])
+    out = await r.run_part_b(_visible_bundle())
+    assert out.text == PART_B_OK
+    assert [c.method for c in llm.calls].count("stream") == 2
+    ((event, data),) = audit.rows
+    assert event == "assess_part_b_rejected" and code in data["reason_code"]
+    assert data["attempt"] == 1 and bad[:20] not in str(data)
+
+
+async def test_two_bad_part_b_raise_with_a_content_free_reason() -> None:
+    bad = "Il tuo voto è 7,5/10. Ne parliamo?"
+    r, _, audit = _part_b_runner([bad, bad])
+    with pytest.raises(PartBRejectedError) as e:
+        await r.run_part_b(_visible_bundle())
+    assert e.value.reason == "part_b_value" and len(audit.rows) == 2
+    assert "7,5" not in str(e.value)
+
+
+async def test_no_regeneration_without_remaining_time() -> None:
+    r, llm, _ = _part_b_runner(["Il voto è 7.", PART_B_OK])
+    with pytest.raises(PartBRejectedError):
+        await r.run_part_b(_visible_bundle(), remaining_s=0)
+    assert [c.method for c in llm.calls].count("stream") == 1
+
+
+async def test_three_distinct_labels_pass_part_b() -> None:
+    s = make()
+    b = assemble_context(s, _with_review(s, _ALL, "unreadable"))
+    text = (
+        "Guarda [Domanda 1], [Domanda 2] e la [Valutazione complessiva]. Poi Domanda 1."
+    )
+    r, _, _ = _part_b_runner([text])
+    assert (await r.run_part_b(b)).text  # three distinct labels pass

@@ -19,9 +19,17 @@ from datetime import UTC, datetime
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.part_a import fmt_date, grade_text
+from vektra_assess.context.references import canonical_labels
 from vektra_assess.llm import shipped
 from vektra_assess.llm.budget import fit
 from vektra_assess.llm.language import detect
+from vektra_assess.llm.postcheck import (
+    citations,
+    feedback_quote,
+    lexicon,
+    markers,
+    part_b,
+)
 from vektra_assess.llm.postcheck.gate import MARK_SAFEGUARD, SentenceGate
 from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
 from vektra_assess.llm.postcheck.sentences import split
@@ -29,6 +37,7 @@ from vektra_assess.llm.prompts import PromptRenderer
 from vektra_assess.llm.shipped import Shipped
 from vektra_assess.llm.types import (
     AuditSink,
+    PartBRejectedError,
     ProviderCallRecord,
     ProviderOutageError,
     RagNotAvailableError,
@@ -235,6 +244,100 @@ class DiscussionTurnRunner:
             replaced_count=gate.replaced,
             content_hash=hashlib.sha256(delivered.encode("utf-8")).hexdigest(),
         )
+
+    async def _part_b_once(
+        self, bundle: ContextBundle, language: str, records: list[ProviderCallRecord]
+    ) -> tuple[str, tuple[str, ...], str]:
+        """One generation: (checked text, violation codes, raw completion)."""
+        messages = self._renderer.part_b_messages(bundle, language)
+        it, first, started = await self._open_stream(messages, records)
+        first_at = _now()
+        raw = first.content if first is not None else ""
+        try:
+            async for chunk in it:
+                raw += chunk.content
+                if part_b.word_count(raw) > part_b.MAX_WORDS:
+                    break  # the stream stops at the cap; the check below rejects it
+        except Exception as exc:
+            rec = ProviderCallRecord(
+                started, first_at, _now(), "error", type(exc).__name__
+            )
+            records.append(rec)
+            raise ProviderOutageError(rec) from None
+        finally:
+            closer = getattr(it, "aclose", None)
+            if closer is not None:
+                await closer()
+        records.append(ProviderCallRecord(started, first_at, _now(), "ok"))
+        violations: list[str] = []
+        m = markers.extract(raw, canonical_labels(bundle))
+        if m.behaviour_class or m.contest or m.dropped:
+            violations.append(part_b.MARKER)
+        text = " ".join(m.text.split())
+        c = citations.check(text, canonical_labels(bundle))
+        if c.removed:
+            violations.append(part_b.UNRESOLVED)
+        if lexicon.scan(text) is not None:
+            violations.append(part_b.LEXICON)
+        if feedback_quote.check(text, feedback_quote.feedback_index(bundle)).replaced:
+            violations.append(part_b.QUOTE)
+        violations += part_b.check(text).violations
+        res = await self._safeguard.pre_response(text, self._context(-1, partial=False))
+        if not res.allowed or res.modified_content is not None:
+            violations.append(part_b.SAFEGUARD)
+        return text, tuple(violations), raw
+
+    async def run_part_b(
+        self,
+        bundle: ContextBundle,
+        *,
+        language: str = "it",
+        remaining_s: float | None = None,
+    ) -> TurnResult:
+        """The LLM orientation of the opening message (REQ-094 Part B).
+
+        One regeneration is attempted when the first one breaks a Part B rule and the caller's
+        remaining time allows it; a second failure raises ``PartBRejectedError`` with a
+        content-free code, and the caller (worker pre-flight) rolls the start back. Nothing is
+        ever truncated into an accepted Part B.
+        """
+        self._admit(bundle)
+        language = language if language in ("it", "en") else "it"
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        records: list[ProviderCallRecord] = []
+        codes: tuple[str, ...] = ()
+        for attempt in (1, 2):
+            if (
+                attempt == 2
+                and remaining_s is not None
+                and loop.time() - t0 >= remaining_s
+            ):
+                break  # no time left for a second generation
+            text, codes, raw = await self._part_b_once(bundle, language, records)
+            if not codes:
+                return TurnResult(
+                    text=text,
+                    marks=(),
+                    behaviour_class=None,
+                    contest_entries=(),
+                    language=language,
+                    usage=TurnUsage(
+                        prompt_tokens=sum(
+                            self._llm.count_tokens(m.content, self.model)
+                            for m in self._renderer.part_b_messages(bundle, language)
+                        ),
+                        completion_tokens=self._llm.count_tokens(raw, self.model),
+                    ),
+                    call_records=tuple(records),
+                    replaced_count=0,
+                    content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                )
+            await self._audit(
+                "assess_part_b_rejected",
+                {"attempt": attempt, "reason_code": ",".join(codes)},
+            )
+        raise PartBRejectedError(codes[0] if codes else part_b.EMPTY)
 
     async def run(self, bundle: ContextBundle, turn: StudentTurn) -> TurnResult:
         """``run_stream`` consumed to the end."""

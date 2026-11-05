@@ -11,14 +11,22 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from vektra_assess.llm import prompts
 from vektra_assess.llm.postcheck.values import asserts_any_value
-from vektra_assess.llm.prompts import PART_B_MAX_LABELS as MAX_LABELS
-from vektra_assess.llm.prompts import PART_B_MAX_WORDS as MAX_WORDS
+
+MAX_WORDS = prompts.PART_B_MAX_WORDS
+MAX_LABELS = prompts.PART_B_MAX_LABELS
 
 VALUE = "part_b_value"
 WORDS = "part_b_words"
 LABELS = "part_b_labels"
 EMPTY = "part_b_empty"
+# set by the runner around ``check``: the other stages, applied to Part B as a whole
+MARKER = "part_b_marker"
+UNRESOLVED = "part_b_unresolved_tag"
+LEXICON = "part_b_lexicon"
+QUOTE = "part_b_quote"
+SAFEGUARD = "part_b_safeguard"
 
 _LABEL = re.compile(
     r"\b(Domanda\s+\w+|Criterio\s+\d+|Valutazione complessiva|Consegna)\b",

@@ -26,7 +26,7 @@ from assess_moodle_support import (
     uid,
     use_live,
 )
-from canary.runner import reference_turn
+from canary.runner import real_turn
 from test_context_capture import OFF, InProcessParser
 
 from vektra_assess.context.assemble import assemble_context
@@ -44,7 +44,6 @@ from vektra_assess.context.capture.selection import NotEligibleReason
 from vektra_assess.context.part_a import SessionFacts, render_part_a
 from vektra_assess.context.snapshot import canonical_bytes
 from vektra_shared.testing_recorders import (
-    RecordingLLMProvider,
     RecordingVectorStoreProvider,
     find_canaries,
 )
@@ -77,17 +76,18 @@ def _readers(branch: str) -> tuple[Replay, MoodleCaptureReaders, dict[str, Any]]
 
 async def _sinks(built: Built) -> dict[str, bytes]:
     bundle = assemble_context(built.snapshot, built.frozen_policy)
-    llm, vs = (
-        RecordingLLMProvider(["ok"]),
-        RecordingVectorStoreProvider(forbid_calls=True),
-    )
-    await reference_turn(bundle, llm, vs)
+    vs = RecordingVectorStoreProvider(forbid_calls=True)
+    turn = await real_turn(
+        bundle, vs
+    )  # the real DiscussionTurnRunner (plan assess-llm-runner)
     assert vs.calls == []
     out = {
         "snapshot": canonical_bytes(built.snapshot),
         "bundle": bundle.model_dump_json().encode(),
         "part_a": render_part_a(bundle, SessionFacts(1, 30)).text.encode(),
-        "request_bytes": b"".join(llm.all_request_bytes),
+        "request_bytes": turn["request_bytes"],
+        "query_trace": turn["query_trace"],
+        "released": turn["released"],
     }
     assert all(out.values()), "every sink is non-empty"
     return out

@@ -333,8 +333,10 @@ async def test_no_first_token_in_time_is_an_outage() -> None:
 
 async def test_a_slow_but_progressing_stream_is_not_an_outage() -> None:
     """Each gap is under the timeout but the whole reply takes longer than it."""
-    llm = TimedLLM([(0.03, "Uno"), (0.03, " due"), (0.03, " tre"), (0.03, " quattro.")])
-    r, _ = _timed_runner(llm, timeout=0.05)
+    # each gap (0.1 s) is well under the timeout (0.3 s), the whole reply (0.4 s) is over it:
+    # margins wide enough for a loaded CI runner
+    llm = TimedLLM([(0.1, "Uno"), (0.1, " due"), (0.1, " tre"), (0.1, " quattro.")])
+    r, _ = _timed_runner(llm, timeout=0.3)
     out = await r.run(_visible_bundle(), StudentTurn("ciao", 0))
     assert out.text == "Uno due tre quattro." and out.call_records[-1].outcome == "ok"
     assert out.call_records[-1].first_token_at is not None

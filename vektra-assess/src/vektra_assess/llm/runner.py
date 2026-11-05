@@ -37,6 +37,7 @@ from vektra_assess.llm.prompts import PromptRenderer
 from vektra_assess.llm.shipped import Shipped
 from vektra_assess.llm.types import (
     AuditSink,
+    CallOutcome,
     PartBRejectedError,
     ProviderCallRecord,
     ProviderOutageError,
@@ -149,10 +150,18 @@ class DiscussionTurnRunner:
         return ReleasedSegment(text, marked)
 
     async def run_stream(
-        self, bundle: ContextBundle, turn: StudentTurn
+        self,
+        bundle: ContextBundle,
+        turn: StudentTurn,
+        stop: asyncio.Event | None = None,
     ) -> AsyncIterator[ReleasedSegment | TurnResult]:
         """Yield each released segment as soon as its sentence passed every check, then one
-        ``TurnResult``. Nothing reaches the caller before the post-check (release discipline)."""
+        ``TurnResult``. Nothing reaches the caller before the post-check (release discipline).
+
+        ``stop`` is the caller's cancellation (client gone, deadline plus grace): once set, the
+        provider stream is closed, the unfinished sentence is dropped and the ``TurnResult`` has
+        ``interrupted=True`` and only the text already released.
+        """
         self._admit(bundle)
         detected = detect(turn.text)
         language = detected if detected in ("it", "en") else "it"
@@ -162,6 +171,7 @@ class DiscussionTurnRunner:
         records: list[ProviderCallRecord] = []
         prompt_tokens = 0
         completion = ""
+        interrupted = False
 
         pre = await self._safeguard.pre_query(turn.text, self._context(turn.turn_index))
         if not pre.allowed:
@@ -195,8 +205,19 @@ class DiscussionTurnRunner:
             first_at = _now()
             buf = first.content if first is not None else ""
             completion = buf
+            outcome: CallOutcome = "ok"
             try:
-                async for chunk in it:
+                while True:
+                    if stop is not None and stop.is_set():
+                        outcome = "cancelled"
+                        break
+                    chunk = await _next_chunk(it, stop)
+                    if chunk is _STOPPED:
+                        outcome = "cancelled"
+                        break
+                    if chunk is None:
+                        break
+                    assert isinstance(chunk, CompletionChunk)
                     completion += chunk.content
                     buf += chunk.content
                     done, buf = split(buf)
@@ -213,13 +234,18 @@ class DiscussionTurnRunner:
                 )
                 records.append(rec)
                 raise ProviderOutageError(rec) from None
-            records.append(ProviderCallRecord(started, first_at, _now(), "ok"))
-            done, _ = split(buf, final=True)
-            for sentence in done:
-                for text, marked in gate.feed(sentence):
-                    seg = await self._release(text, marked, gate, turn.turn_index)
-                    released.append(seg)
-                    yield seg
+            finally:
+                await _close(it)  # the provider stream is closed on every path
+            records.append(ProviderCallRecord(started, first_at, _now(), outcome))
+            if outcome == "cancelled":
+                interrupted = True  # the unfinished sentence in the buffer is dropped
+            else:
+                done, _ = split(buf, final=True)
+                for sentence in done:
+                    for text, marked in gate.feed(sentence):
+                        seg = await self._release(text, marked, gate, turn.turn_index)
+                        released.append(seg)
+                        yield seg
 
         delivered = " ".join(s.text for s in released)
         # the whole turn once more, for the safeguard's audit only: nothing is retracted
@@ -243,6 +269,7 @@ class DiscussionTurnRunner:
             call_records=tuple(records),
             replaced_count=gate.replaced,
             content_hash=hashlib.sha256(delivered.encode("utf-8")).hexdigest(),
+            interrupted=interrupted,
         )
 
     async def _part_b_once(
@@ -351,3 +378,31 @@ class DiscussionTurnRunner:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+_STOPPED = object()
+
+
+async def _next_chunk(
+    it: AsyncIterator[CompletionChunk], stop: asyncio.Event | None
+) -> CompletionChunk | object | None:
+    """The next chunk, ``None`` at the end, or ``_STOPPED`` if ``stop`` is set first."""
+    if stop is None:
+        return await anext(it, None)
+    nxt = asyncio.ensure_future(anext(it, None))
+    stopped = asyncio.ensure_future(stop.wait())
+    done, _ = await asyncio.wait({nxt, stopped}, return_when=asyncio.FIRST_COMPLETED)
+    if nxt in done:
+        stopped.cancel()
+        return nxt.result()
+    nxt.cancel()
+    return _STOPPED
+
+
+async def _close(it: AsyncIterator[CompletionChunk]) -> None:
+    closer = getattr(it, "aclose", None)
+    if closer is not None:
+        try:
+            await closer()
+        except Exception:
+            pass

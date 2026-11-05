@@ -333,3 +333,100 @@ async def test_three_distinct_labels_pass_part_b() -> None:
     )
     r, _, _ = _part_b_runner([text])
     assert (await r.run_part_b(b)).text  # three distinct labels pass
+
+
+# --- outage records and cancellation (task A8) ---------------------------------------------------
+
+import asyncio  # noqa: E402
+
+from vektra_assess.llm import ProviderOutageError  # noqa: E402
+from vektra_shared.types import CompletionChunk  # noqa: E402
+
+
+class TimedLLM(RecordingLLMProvider):
+    """Plays ``(delay_s, text)`` chunks; ``fail`` raises before or after the first chunk."""
+
+    def __init__(
+        self, chunks: list[tuple[float, str]], fail: str | None = None
+    ) -> None:
+        super().__init__([])
+        self.script, self.fail, self.closed = chunks, fail, False
+
+    async def stream(self, messages, model, temperature=0.7, max_tokens=None, **kw):  # type: ignore[no-untyped-def,override]
+        if self.fail == "open":
+            raise ConnectionError("provider down: CNRY-secret-in-error")
+        outer = self
+
+        async def gen():  # type: ignore[no-untyped-def]
+            try:
+                for i, (delay, text) in enumerate(outer.script):
+                    await asyncio.sleep(delay)
+                    if outer.fail == "mid" and i == 1:
+                        raise RuntimeError("broken pipe")
+                    yield CompletionChunk(content=text)
+            finally:
+                outer.closed = True
+
+        return gen()
+
+
+def _timed_runner(
+    llm: TimedLLM, timeout: float = 0.2
+) -> tuple[DiscussionTurnRunner, _Audit]:
+    audit = _Audit()
+    r = DiscussionTurnRunner(
+        llm=llm,
+        safeguard=Guard(),
+        trace_writer=_Trace(),
+        settings=settings(VEKTRA_ASSESS_OUTAGE_TIMEOUT_S=timeout),
+        audit=audit,
+    )
+    return r, audit
+
+
+async def test_a_provider_error_is_an_outage_without_its_message() -> None:
+    r, _ = _timed_runner(TimedLLM([], fail="open"))
+    with pytest.raises(ProviderOutageError) as e:
+        await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    rec = e.value.record
+    assert rec.outcome == "error" and rec.error_class == "ConnectionError"
+    assert rec.first_token_at is None and "CNRY" not in repr(e.value) + repr(rec)
+
+
+async def test_no_first_token_in_time_is_an_outage() -> None:
+    llm = TimedLLM([(1.0, "Troppo tardi.")])
+    r, _ = _timed_runner(llm, timeout=0.05)
+    with pytest.raises(ProviderOutageError) as e:
+        await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    assert e.value.record.outcome == "first_token_timeout"
+
+
+async def test_a_slow_but_progressing_stream_is_not_an_outage() -> None:
+    """Each gap is under the timeout but the whole reply takes longer than it."""
+    llm = TimedLLM([(0.03, "Uno"), (0.03, " due"), (0.03, " tre"), (0.03, " quattro.")])
+    r, _ = _timed_runner(llm, timeout=0.05)
+    out = await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    assert out.text == "Uno due tre quattro." and out.call_records[-1].outcome == "ok"
+    assert out.call_records[-1].first_token_at is not None
+
+
+async def test_an_error_after_the_first_token_is_an_outage_too() -> None:
+    r, _ = _timed_runner(TimedLLM([(0, "Uno."), (0, " Due.")], fail="mid"))
+    with pytest.raises(ProviderOutageError) as e:
+        await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    assert e.value.record.outcome == "error" and e.value.record.first_token_at
+
+
+async def test_cancellation_closes_the_stream_and_keeps_only_released_text() -> None:
+    llm = TimedLLM([(0, "Prima frase."), (0, " Seconda"), (5.0, " mai arrivata.")])
+    r, _ = _timed_runner(llm)
+    stop = asyncio.Event()
+    items = []
+    async for item in r.run_stream(_visible_bundle(), StudentTurn("ciao", 0), stop):
+        items.append(item)
+        if isinstance(item, ReleasedSegment):
+            stop.set()  # the client goes away after the first sentence
+    result = items[-1]
+    assert isinstance(result, TurnResult) and result.interrupted
+    assert result.text == "Prima frase." and llm.closed
+    assert result.call_records[-1].outcome == "cancelled"

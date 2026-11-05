@@ -93,8 +93,22 @@ class Outcome:
     solution_fetches: int = 0
 
 
+#: positive controls for the released sink: safe sentences the runner must let through, so an
+#: unwired or always-empty sink cannot pass the forbidden-canary search vacuously
+RELEASED_TURN_CANARY = "VISIBLE-RELEASED-TURN"
+RELEASED_PART_B_CANARY = "VISIBLE-RELEASED-PARTB"
+_RELEASABLE_TURN = f"Ripercorriamo insieme il ragionamento, {RELEASED_TURN_CANARY}."
+_RELEASABLE_PART_B = f"Possiamo partire dalla prima domanda, {RELEASED_PART_B_CANARY}."
+
+
 class EchoLLM(RecordingLLMProvider):
-    """Records the request like the recording provider, then replies with every message it got."""
+    """Records the request like the recording provider, then replies with every message it got
+    followed by ``tail``; ``next_reply``, when set, replaces the echo for the next call only."""
+
+    def __init__(self, tail: str = "") -> None:
+        super().__init__([])
+        self.tail = tail
+        self.next_reply: str | None = None
 
     async def stream(  # type: ignore[override]
         self,
@@ -104,7 +118,11 @@ class EchoLLM(RecordingLLMProvider):
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> Any:
-        self._responses = ["\n".join(m.content for m in messages)]
+        if self.next_reply is not None:
+            reply, self.next_reply = self.next_reply, None
+        else:
+            reply = "\n".join(m.content for m in messages) + self.tail
+        self._responses = [reply]
         self._served = 0
         return await super().stream(messages, model, temperature, max_tokens, **kwargs)
 
@@ -124,7 +142,8 @@ async def real_turn(
     )
 
     del store  # RAG is OFF in v1: the runner has no store at all (NFR-015)
-    llm, writer, audit = EchoLLM([]), RecordingTraceWriter(), RecordingAuditSink()
+    llm = EchoLLM(tail="\n\n" + _RELEASABLE_TURN)
+    writer, audit = RecordingTraceWriter(), RecordingAuditSink()
     runner = DiscussionTurnRunner(
         llm=llm,
         safeguard=RecordingSafeguard(),
@@ -143,6 +162,10 @@ async def real_turn(
         released.append(part_b.text)
     except PartBRejectedError:
         pass  # an echoed context is not a valid Part B; its request and trace still count
+    # a clean Part B, so the released sink is shown to collect Part B output too
+    llm.next_reply = _RELEASABLE_PART_B
+    part_b = await runner.run_part_b(bundle, remaining_s=0)
+    released.append(part_b.text)
     return {
         "request_bytes": b"".join(llm.all_request_bytes),
         "audit_runner": canon([[e, dict(d)] for e, d in audit.rows]),
@@ -171,6 +194,8 @@ async def run_case(case: Case) -> Outcome:
             "quiz" if case.kind == "quiz" else case.shape or "",
         )
     case.required[pasted] = ("snapshot", "bundle", "request_bytes")
+    for cnry in (RELEASED_TURN_CANARY, RELEASED_PART_B_CANARY):
+        case.required[cnry] = ("released",)
     caps = Capabilities(
         review_html_filterable="readable"
         if case.html_path == "filterable"

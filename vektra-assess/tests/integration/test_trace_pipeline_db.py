@@ -18,6 +18,25 @@ _INSERT = (
     "INSERT INTO query_traces (response_id, namespace_id, total_duration_ms, llm_model, "
     "prompt_version, pipeline) VALUES (:rid, :ns, 5, 'm', 'abcd1234', :pipeline)"
 )
+#: as _INSERT, with a chosen duration and retrieved chunk scores (the inputs of p95 and the
+#: average retrieval score)
+_INSERT_TIMED = (
+    "INSERT INTO query_traces (response_id, namespace_id, total_duration_ms, chunks_retrieved, "
+    "llm_model, prompt_version, pipeline) VALUES (:rid, :ns, :ms, CAST(:chunks AS jsonb), 'm', "
+    "'abcd1234', :pipeline)"
+)
+
+
+def _timed(ns: str, pipeline: str | None, ms: int, score: float) -> dict[str, object]:
+    import json
+
+    return {
+        "rid": uuid.uuid4(),
+        "ns": ns,
+        "pipeline": pipeline,
+        "ms": ms,
+        "chunks": json.dumps([{"chunk_id": f"c-{ms}", "score": score}]),
+    }
 
 
 async def test_upgrade_adds_the_column_and_the_reserved_namespace(pg: Pg) -> None:
@@ -67,24 +86,24 @@ async def test_assess_traces_do_not_move_the_rag_analytics(pg: Pg) -> None:
                 return (
                     m.total_queries,
                     m.avg_latency_ms,
+                    m.p95_latency_ms,
+                    m.avg_retrieval_score,
                     dict(m.model_distribution),
                     sorted(str(t.response_id) for t in listed),
                 )
 
-        await pg.run(
-            "super", _INSERT, {"rid": uuid.uuid4(), "ns": "default", "pipeline": None}
-        )
+        # RAG traces with distinct durations and non-empty chunk scores, so p95 and the average
+        # retrieval score are real numbers that an unfiltered assess row would move
+        for ms, score in ((10, 0.4), (30, 0.8)):
+            await pg.run("super", _INSERT_TIMED, _timed("default", None, ms, score))
         before = await snapshot()
+        assert (
+            before[2] > 0 and before[3] > 0
+        )  # p95 and avg score are not the empty 0.0
+        # an assess trace far outside both distributions: a missing RAG filter shows up
         assess_id = uuid.uuid4()
-        await pg.run(
-            "super",
-            _INSERT,
-            {
-                "rid": assess_id,
-                "ns": "assess-discussion",
-                "pipeline": "assess-discussion",
-            },
-        )
+        assess = _timed("assess-discussion", "assess-discussion", 100_000, 0.99)
+        await pg.run("super", _INSERT_TIMED, {**assess, "rid": assess_id})
         total = await pg.run(
             "super", "SELECT count(*) FROM query_traces WHERE pipeline IS NOT NULL"
         )
@@ -97,6 +116,8 @@ async def test_assess_traces_do_not_move_the_rag_analytics(pg: Pg) -> None:
 
 
 async def test_downgrade_removes_assess_traces_namespace_and_column(pg: Pg) -> None:
+    rag_id = uuid.uuid4()
+    await pg.run("super", _INSERT, {"rid": rag_id, "ns": "default", "pipeline": None})
     await pg.run(
         "super",
         _INSERT,
@@ -118,6 +139,12 @@ async def test_downgrade_removes_assess_traces_namespace_and_column(pg: Pg) -> N
             "WHERE table_name = 'query_traces' AND column_name = 'pipeline'",
         )
         assert cols == [(0,)]
+        # only the assess traces go: a RAG trace survives the downgrade
+        assert await pg.run(
+            "super",
+            "SELECT count(*) FROM query_traces WHERE response_id = :r",
+            {"r": rag_id},
+        ) == [(1,)]
     finally:
         res = _alembic(pg.super_url, "upgrade", "head")
         assert res.returncode == 0, res.stderr

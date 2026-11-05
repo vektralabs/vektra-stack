@@ -246,10 +246,31 @@ def test_the_dev_file_only_opts_the_worker_in_and_pins_the_environment() -> None
             continue
         if name == "vektra":
             svc = dict(svc)
-            svc["environment"] = {
-                k: v
-                for k, v in svc["environment"].items()
-                if k not in {*api_dev, "VEKTRA_ASSESS_LLM_MODEL"}
-                or k in base["services"][name]["environment"]
-            }
+            svc["environment"] = _without_permitted_overrides(
+                svc["environment"],
+                base["services"][name]["environment"],
+                {*api_dev, "VEKTRA_ASSESS_LLM_MODEL"},
+            )
         assert svc == base["services"][name], f"the dev file must not change {name}"
+
+
+def _without_permitted_overrides(
+    dev_env: dict[str, str], base_env: dict[str, str], permitted: set[str]
+) -> dict[str, str]:
+    """``dev_env`` with every permitted override undone: back to the base value when the base
+    sets the key, dropped when it does not. Any other key is kept as is, so a change outside the
+    permitted set still fails the comparison with the base."""
+    out = {k: v for k, v in dev_env.items() if k not in permitted}
+    out.update({k: base_env[k] for k in permitted if k in base_env})
+    return out
+
+
+def test_permitted_overrides_are_undone_to_the_base_value() -> None:
+    base = {"VEKTRA_ENV": "production", "KEEP": "1"}
+    dev = {"VEKTRA_ENV": "development", "KEEP": "1", "VEKTRA_ASSESS_LLM_MODEL": "m"}
+    permitted = {"VEKTRA_ENV", "VEKTRA_ASSESS_LLM_MODEL"}
+    # overridden base key restored, added key dropped
+    assert _without_permitted_overrides(dev, base, permitted) == base
+    # a non-permitted change survives and is caught by the comparison
+    changed = {**dev, "KEEP": "2"}
+    assert _without_permitted_overrides(changed, base, permitted) != base

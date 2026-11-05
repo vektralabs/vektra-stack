@@ -393,6 +393,9 @@ class QueryTrace:
     llm_model: str
     prompt_version: str  # SHA-256[:8] of concatenated template sources (ARCH-048)
     created_at: datetime
+    # None for the RAG pipeline; set by other emitters ("assess-discussion"), which analytics
+    # aggregations exclude. Last field, defaulted: existing constructors are unchanged.
+    pipeline: str | None = None
 
 
 def trace_from_dict(data: dict[str, Any]) -> QueryTrace:
@@ -415,6 +418,7 @@ def trace_from_dict(data: dict[str, Any]) -> QueryTrace:
         llm_model=data["llm_model"],
         prompt_version=data["prompt_version"],
         created_at=datetime.fromisoformat(data["created_at"]),
+        pipeline=data.get("pipeline"),
     )
 
 

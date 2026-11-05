@@ -63,6 +63,7 @@ class AnalyticsService:
             llm_model=trace.llm_model,
             prompt_version=trace.prompt_version,
             created_at=trace.created_at,
+            pipeline=trace.pipeline,
         )
         session.add(orm)
         await session.flush()
@@ -260,5 +261,6 @@ def _orm_to_trace(row: QueryTraceOrm) -> QueryTrace:
         chunks_retrieved=chunks,
         llm_model=row.llm_model,
         prompt_version=row.prompt_version,
+        pipeline=row.pipeline,
         created_at=row.created_at,
     )

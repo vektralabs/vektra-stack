@@ -76,6 +76,8 @@ class QueryTraceOrm(Base):
     )
     llm_model: Mapped[str] = mapped_column(String(255), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(8), nullable=False)
+    # NULL for RAG query traces; 'assess-discussion' for the assess runner (revision 0019)
+    pipeline: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )

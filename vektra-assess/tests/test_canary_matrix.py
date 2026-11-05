@@ -1,4 +1,4 @@
-"""NFR-017 / BR-011 / NFR-015 evidence: the full canary matrix through all 8 sinks.
+"""NFR-017 / BR-011 / NFR-015 evidence: the full canary matrix through all 9 sinks (the real runner).
 
 One test per Moodle version runs every case of that version and counts canaries per sink per case,
 so the executed-case count can be compared with the generated count whatever the test order.

@@ -235,7 +235,8 @@ default is never used.
   Done 2026-11-05: `tests/fakes.py` (`RecordingLLMProvider` re-exported from vektra_shared, `TimedLLM` slow / stalled / failing before or after the first token, `ScriptedHostileLLM` + `HOSTILE` (11 forbidden classes) + `FORBIDDEN` substrings, `RecordingSafeguard` (counts `post_retrieval`, which raises), `RecordingTraceWriter`, `RecordingAuditSink`); `test_llm_runner.py` now uses them. `conftest.py` already imports `hermetic_env` (plan 1). Self-test `test_llm_fakes.py` (14): every hostile reply carries a forbidden pattern and every pattern is exercised.
 - [x] Byte-level release test: with `ScriptedHostileLLM`, assert that the concatenated `ReleasedSegment` bytes contain 0 forbidden patterns and that no segment is yielded before its sentence passed all stages (instrumented ordering)
   Done 2026-11-05: `test_llm_release.py` (15): each of the 11 hostile replies, all of them in one turn, and the same streamed one character at a time release 0 `FORBIDDEN` substrings; an instrumented gate shows every yielded segment passed the gate first and every gate input was a whole sentence; a canary (lexicon switched off) lets `Hai ragione` through, so the zero is not vacuous.
-- [ ] Canary test on plan 6's fixture matrix: run every fixture through `assemble_context` → runner with `RecordingLLMProvider`; grep request bytes, released text, QueryTrace (as stored JSON) and audit rows for every canary → 0 hits
+- [x] Canary test on plan 6's fixture matrix: run every fixture through `assemble_context` → runner with `RecordingLLMProvider`; grep request bytes, released text, QueryTrace (as stored JSON) and audit rows for every canary → 0 hits
+  Done 2026-11-05 (also group G item 2): `tests/canary/runner.py` replaced the reference runner with `DiscussionTurnRunner` (one student turn via `run_stream` + one `run_part_b`), fed by an `EchoLLM` that replies with every message it received (a model repeating its whole context). Sinks: request bytes (all calls incl. count_tokens), the runner's audit rows appended to capture's, the stored QueryTrace JSON from the trace writer, and a 9th sink `released`. `test_canary_matrix.py`: 11 passed; every sink non-empty (e.g. quiz case: request 10.7 KB, trace 1.3 KB, released 4.8 KB), 0 forbidden canaries, positive controls present, 0 vector-store calls.
 - [ ] Structural NFR-015 test: AST scan of `vektra_assess/llm/**` finds 0 references to `VectorStoreProvider`, `vector_store`, `post_retrieval`; `RecordingSafeguard` shows 0 `post_retrieval` calls across the suite; a RAG-ON bundle raises `RagNotAvailableError`
 - [ ] Fail-closed tests: Presidio load failure in `build_assess_safeguard` → `StartupValidationError`; `pre_query` disallow → no LLM call (recording provider count 0); `pre_response` modify → marked replacement
 - [ ] Outage record tests: error → `ProviderOutageError`; stall 46 s (fake clock) → timeout; slow 40 s progressing → success, no outage
@@ -256,7 +257,8 @@ default is never used.
 
 ### G. Carried over from plan 6 (assess-context, PR #149)
 - [ ] Typing guard: add `DiscussionTurnRunner.run` / `run_stream` / `run_part_b` to the mypy case in `vektra-assess/tests/typing/` (a `Snapshot` and a `dict` must each give an arg-type error), next to `bundle_to_model_payload`
-- [ ] Rerun the exported canary matrix (`tests/` canary fixture module) through the REAL runner: request bytes and stored QueryTrace JSON, 0 hits (this is the D "canary test" task; plan 6 used a reference runner)
+- [x] Rerun the exported canary matrix (`tests/` canary fixture module) through the REAL runner: request bytes and stored QueryTrace JSON, 0 hits (this is the D "canary test" task; plan 6 used a reference runner)
+  Done with the D canary task above (same change).
 - [ ] Review block truncation indicator: a question/response block cut at the per-block cap, or shortened by the review item JSON cap (72464e2), is flagged in the sidecar reply, `ParserClient.extract_review_item`, `CaptureParser`, `QuizItem`, and gets a truncation note in Part A and the payload (CodeRabbit comments 4471764122, 4479124075)
 
 ### F. Docs
@@ -278,7 +280,7 @@ default is never used.
 ## Acceptance Criteria
 
 - [x] Byte-capture test: 0 forbidden patterns in released bytes from `ScriptedHostileLLM`, and 0 segments released before the post-check (REQ-096, REQ-097, NFR-022 HARD on CI tier) Evidence: `test_llm_release.py`.
-- [ ] Canary matrix from plan 6: 0 hits in request bytes, released text, stored QueryTrace JSON and audit rows (NFR-017, BR-011)
+- [x] Canary matrix from plan 6: 0 hits in request bytes, released text, stored QueryTrace JSON and audit rows (NFR-017, BR-011) Evidence: `test_canary_matrix.py` through the real runner (9 sinks).
 - [ ] AST check: 0 VectorStoreProvider/post_retrieval references in `vektra_assess.llm`; a RAG-ON bundle raises (NFR-015 structural evidence)
 - [ ] Core sentence + alternative clause present in 100% of scripted refusals per class × language (REQ-098)
 - [ ] Part B: 0 values and <= 120 words on 100% of the eval set; a forced Part B failure raises `PartBRejectedError` (REQ-094; the ELIGIBLE outcome is asserted in plan 8)

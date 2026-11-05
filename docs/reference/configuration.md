@@ -213,6 +213,19 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_PARSER_TIMEOUT_S` | float | `10` | Wall-clock budget per file in the sidecar; the child is SIGKILLed at the deadline and the file becomes `non letto: file danneggiato o non elaborabile`. The worker client waits this plus a 15 s queue allowance before treating the sidecar as unavailable. |
 | `VEKTRA_ASSESS_PARSER_MAX_CHARS` | int | `200000` | Character cap of the text returned per file; beyond it the file is `letto parzialmente`. |
 | `VEKTRA_ASSESS_PARSER_MAX_FILE_BYTES` | int | `10485760` | Largest file the sidecar accepts (REQ-101: 10 MB); larger is `non letto: troppo grande` with no child forked. The sidecar also holds at most four such payloads in memory at once and answers `BUSY` beyond that (the client retries). |
+| `VEKTRA_ASSESS_LLM_MODEL` | str | - | Dedicated discussion model (litellm id). Required when assess is enabled. No fallback model is ever used: `VEKTRA_LLM_FALLBACK_MODEL` is ignored for assess, because a fallback would answer students with a model that never passed the NFR-023 activation. |
+| `VEKTRA_ASSESS_LLM_API_BASE` | str | - | API base of the discussion model (Ollama or OpenAI-compatible endpoint). A cloud key is read by litellm from its own provider variable. |
+| `VEKTRA_ASSESS_LLM_TEMPERATURE` | float | `0.2` | Sampling temperature of the discussion model (REQ-100 determinism). |
+| `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. |
+| `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). |
+| `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. |
+| `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. |
+| `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. |
+| `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Safeguard of the discussion runner in the API. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
+| `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
+| `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request. |
+| `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED` | bool | `false` | Development and CI only: start the API while the (model, prompt_version) has no passing NFR-023 activation. Honoured only with `VEKTRA_ENV=development`; refused at startup otherwise. |
+| `VEKTRA_ASSESS_JUDGE_MODEL` / `VEKTRA_ASSESS_JUDGE_API_BASE` | str | - | Judge model of `make eval-assess` only (never read by the API or the worker). |
 | `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
 | `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
 

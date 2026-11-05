@@ -279,8 +279,10 @@ default is never used.
   Done 2026-11-05: the sidecar's review item reply is `{qtext, response, truncated}` (true when a block came back READ_PARTIAL at its cap, or when the JSON cap shortened a value); `ParserClient.extract_review_item` and `CaptureParser` return `(q, r, truncated)` and refuse a reply without the flag; `capture_quiz` sets `QuizItem.truncated` (only when not degraded); Part A appends `S.TRUNCATED`, the payload a 'non trattarlo come completo' note. Goldens unchanged (no golden item is truncated). Tests: `test_review_block_extraction.py` (+2, flag at the block cap and at the JSON cap), `test_parser_client.py` (flag parsed; a flagless reply degrades), `test_context_payload.py` (+1, Part A line and payload note). Resolves CodeRabbit comments 4471764122 and 4479124075 on PR #149.
 
 ### F. Docs
-- [ ] `docs/reference/api.md`: the model-activation endpoint; `docs/` page on the assess eval suite (how to run, data-basis rule, judge calibration); `tests/eval/README.md` assess section
-- [ ] `.env.example`: `VEKTRA_ASSESS_LLM_MODEL`, `VEKTRA_ASSESS_LLM_TEMPERATURE`, `VEKTRA_ASSESS_LLM_MAX_TOKENS`, `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW`, `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S`, `VEKTRA_ASSESS_SAFEGUARD_MODE`, `VEKTRA_ASSESS_STORE_TRACES`, `VEKTRA_ASSESS_PROVIDER_LOCALITY`, `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN/OUT`; CHANGELOG [Unreleased]
+- [x] `docs/reference/api.md`: the model-activation endpoint; `docs/` page on the assess eval suite (how to run, data-basis rule, judge calibration); `tests/eval/README.md` assess section
+  Done 2026-11-05: `docs/reference/api.md` (activation endpoint), `docs/reference/error-codes.md` (`ERR-ASSESS-004`, `ERR-NAMESPACE-001` is in shared errors), new `docs/guides/contributors/assess-eval-suite.md` (+ index entry), `tests/eval/README.md` assess section.
+- [x] `.env.example`: `VEKTRA_ASSESS_LLM_MODEL`, `VEKTRA_ASSESS_LLM_TEMPERATURE`, `VEKTRA_ASSESS_LLM_MAX_TOKENS`, `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW`, `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S`, `VEKTRA_ASSESS_SAFEGUARD_MODE`, `VEKTRA_ASSESS_STORE_TRACES`, `VEKTRA_ASSESS_PROVIDER_LOCALITY`, `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN/OUT`; CHANGELOG [Unreleased]
+  Done 2026-11-05: `.env.example` and `docs/reference/configuration.md` list every new setting (incl. `VEKTRA_ASSESS_LLM_API_BASE`, `VEKTRA_ASSESS_LLM_SEED`, `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED`, judge variables); CHANGELOG [Unreleased] Added (runner, analytics pipeline, reserved namespace) and Fixed (truncation flags).
 
 ## State & Data Lifecycle
 

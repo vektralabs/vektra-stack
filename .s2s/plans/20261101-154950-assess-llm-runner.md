@@ -239,7 +239,8 @@ default is never used.
   Done 2026-11-05 (also group G item 2): `tests/canary/runner.py` replaced the reference runner with `DiscussionTurnRunner` (one student turn via `run_stream` + one `run_part_b`), fed by an `EchoLLM` that replies with every message it received (a model repeating its whole context). Sinks: request bytes (all calls incl. count_tokens), the runner's audit rows appended to capture's, the stored QueryTrace JSON from the trace writer, and a 9th sink `released`. `test_canary_matrix.py`: 11 passed; every sink non-empty (e.g. quiz case: request 10.7 KB, trace 1.3 KB, released 4.8 KB), 0 forbidden canaries, positive controls present, 0 vector-store calls.
 - [x] Structural NFR-015 test: AST scan of `vektra_assess/llm/**` finds 0 references to `VectorStoreProvider`, `vector_store`, `post_retrieval`; `RecordingSafeguard` shows 0 `post_retrieval` calls across the suite; a RAG-ON bundle raises `RagNotAvailableError`
   Done 2026-11-05: `test_llm_nfr015.py` (6): AST scan of every file under `vektra_assess/llm` (names, attributes, imports, string literals) finds 0 references, with 4 planted canaries caught; a course-material bundle raises `RagNotAvailableError` from `run` and `run_part_b` with 0 provider calls and 0 safeguard calls. `RecordingSafeguard.post_retrieval` raises on any call, so every runner test in the suite (release, canary matrix, runner) would fail on one: none does.
-- [ ] Fail-closed tests: Presidio load failure in `build_assess_safeguard` → `StartupValidationError`; `pre_query` disallow → no LLM call (recording provider count 0); `pre_response` modify → marked replacement
+- [x] Fail-closed tests: Presidio load failure in `build_assess_safeguard` → `StartupValidationError`; `pre_query` disallow → no LLM call (recording provider count 0); `pre_response` modify → marked replacement
+  Done 2026-11-05: Presidio load failure through vektra_core's real `create_safeguard` (import made to fail) -> `StartupValidationError` (`vektra-app/tests/test_assess_llm.py::test_a_real_presidio_load_failure_refuses_startup`, plus the step-13 test); `pre_query` disallow -> 0 provider calls (`test_a_refused_query_never_reaches_the_model`); `pre_response` modify -> `[risposta sostituita dal sistema]`, marked (`test_a_rewritten_sentence_is_replaced_and_marked`).
 - [ ] Outage record tests: error → `ProviderOutageError`; stall 46 s (fake clock) → timeout; slow 40 s progressing → success, no outage
 - [ ] Class-core string-match test: for each class × language, a scripted class marker produces the exact shipped core sentence + alternative clause and at most one contextual sentence
 - [ ] False-replacement fixture set (math, matrices, page refs) → false replacements <= 1% (CI fails above)
@@ -292,7 +293,7 @@ default is never used.
 - [ ] 3 reruns: 100% identical post-checked values; >= 95% label/class agreement (REQ-100)
 - [ ] Oracle rate <= 2% per question type reported (REQ-099 P); the D3 disclosure sentence is exported for REQ-077 (consumed by plan 11)
 - [ ] An assess trace stored in `query_traces` has `pipeline='assess-discussion'`, namespace `assess-discussion` and no session/user identifiers (row inspected), and the RAG analytics metrics are unchanged (row counts)
-- [ ] Presidio load failure → startup refuses (no PassthroughSafeguard in assess)
+- [x] Presidio load failure → startup refuses (no PassthroughSafeguard in assess) Evidence: `test_a_real_presidio_load_failure_refuses_startup`, `test_step_13_refuses_a_safeguard_that_fell_open`.
 
 ## Testing Approach
 

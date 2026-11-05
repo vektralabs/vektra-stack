@@ -201,3 +201,26 @@ def test_step_13_runs_after_step_12_in_the_api_startup() -> None:
 
     src = inspect.getsource(main)
     assert src.index('"assess_check"') < src.index('"assess_llm_check"')
+
+
+def test_a_real_presidio_load_failure_refuses_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not a stub factory: vektra_core's own create_safeguard, with Presidio failing to import."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def failing(name: str, *a: Any, **k: Any) -> Any:
+        if name.startswith("vektra_core.safeguards.presidio") or name.startswith(
+            "presidio"
+        ):
+            raise ImportError("presidio not installed")
+        return real_import(name, *a, **k)
+
+    import sys
+
+    monkeypatch.delitem(sys.modules, "vektra_core.safeguards.presidio", raising=False)
+    monkeypatch.setattr(builtins, "__import__", failing)
+    with pytest.raises(StartupValidationError, match="fell back to passthrough"):
+        build_assess_safeguard("presidio")

@@ -77,7 +77,9 @@ class AnalyticsService:
         self, session: AsyncSession, response_id: UUID
     ) -> QueryTrace | None:
         """Retrieve a single trace by response_id."""
-        stmt = select(QueryTraceOrm).where(QueryTraceOrm.response_id == response_id)
+        stmt = select(QueryTraceOrm).where(
+            QueryTraceOrm.response_id == response_id, _RAG_ONLY
+        )
         result = await session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:
@@ -96,9 +98,13 @@ class AnalyticsService:
         offset: int = 0,
     ) -> list[QueryTrace]:
         """List traces with optional filters, ordered by created_at desc."""
-        stmt = select(QueryTraceOrm).order_by(
-            QueryTraceOrm.created_at.desc(),
-            QueryTraceOrm.response_id.desc(),
+        stmt = (
+            select(QueryTraceOrm)
+            .where(_RAG_ONLY)
+            .order_by(
+                QueryTraceOrm.created_at.desc(),
+                QueryTraceOrm.response_id.desc(),
+            )
         )
 
         if namespace is not None:
@@ -126,8 +132,8 @@ class AnalyticsService:
     ) -> MetricsResponse:
         """Compute aggregated metrics for the given time window."""
 
-        # Base filter
-        conditions = []
+        # Base filter: RAG query traces only (assess traces carry a pipeline, revision 0019)
+        conditions: list[Any] = [_RAG_ONLY]
         if namespace is not None:
             conditions.append(QueryTraceOrm.namespace_id == namespace)
         if from_dt is not None:
@@ -233,6 +239,12 @@ class AnalyticsService:
         count: int = result.rowcount or 0  # type: ignore[attr-defined]
         log.info("traces_deleted", count=count, cutoff=cutoff.isoformat())
         return count
+
+
+# Every read of the RAG analytics API sees RAG query traces only. Other emitters (the assess
+# discussion runner) store content-free traces with a non-NULL pipeline in the same table; they
+# must not shift RAG latency, volume or model metrics. Retention (delete_before) is not filtered.
+_RAG_ONLY = QueryTraceOrm.pipeline.is_(None)
 
 
 def _orm_to_trace(row: QueryTraceOrm) -> QueryTrace:

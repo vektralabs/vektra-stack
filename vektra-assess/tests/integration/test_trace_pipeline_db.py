@@ -50,6 +50,52 @@ async def test_an_assess_trace_round_trips_and_rag_traces_stay_null(pg: Pg) -> N
     assert dict((row[0], row[1]) for row in rows) == {a: "assess-discussion", r: None}
 
 
+async def test_assess_traces_do_not_move_the_rag_analytics(pg: Pg) -> None:
+    """Rows are counted before and after: an assess trace changes no RAG metric or listing."""
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from vektra_analytics.service import AnalyticsService
+
+    svc = AnalyticsService()
+    engine = create_async_engine(pg.super_url)
+    try:
+
+        async def snapshot() -> tuple[object, ...]:
+            async with AsyncSession(engine) as session:
+                m = await svc.get_metrics(session)
+                listed = await svc.list_traces(session, limit=1000)
+                return (
+                    m.total_queries,
+                    m.avg_latency_ms,
+                    dict(m.model_distribution),
+                    sorted(str(t.response_id) for t in listed),
+                )
+
+        await pg.run(
+            "super", _INSERT, {"rid": uuid.uuid4(), "ns": "default", "pipeline": None}
+        )
+        before = await snapshot()
+        assess_id = uuid.uuid4()
+        await pg.run(
+            "super",
+            _INSERT,
+            {
+                "rid": assess_id,
+                "ns": "assess-discussion",
+                "pipeline": "assess-discussion",
+            },
+        )
+        total = await pg.run(
+            "super", "SELECT count(*) FROM query_traces WHERE pipeline IS NOT NULL"
+        )
+        assert total[0][0] >= 1  # the assess rows are really there
+        assert await snapshot() == before
+        async with AsyncSession(engine) as session:
+            assert await svc.get_trace(session, assess_id) is None
+    finally:
+        await engine.dispose()
+
+
 async def test_downgrade_removes_assess_traces_namespace_and_column(pg: Pg) -> None:
     await pg.run(
         "super",

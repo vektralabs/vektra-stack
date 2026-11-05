@@ -145,6 +145,9 @@ class OverallItem(_Frozen):
 class SubmissionItem(_Frozen):
     onlinetext: str | None
     truncated: bool = False  # over the text budget
+    # the sanitizer could not read the online text (not merely blank): the model is told so,
+    # as it is for an unreadable file, instead of the text silently vanishing
+    unreadable: bool = False
 
 
 class FileEntry(_Frozen):

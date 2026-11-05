@@ -639,8 +639,10 @@ async def _onlinetext(
     if not html or not html.strip():
         return None
     res = await parser.sanitize_html(html.encode("utf-8"))
+    if res.status is FileStatus.NO_TEXT:
+        return None  # blank once sanitized: nothing was submitted as text
     if res.status not in (FileStatus.READ, FileStatus.READ_PARTIAL):
-        return SubmissionItem(onlinetext=None, truncated=False)
+        return SubmissionItem(onlinetext=None, unreadable=True)
     text = str(res.text)
     # the online text is charged to the total budget too, so it can never exceed it alone
     cap = min(limits.onlinetext_chars, limits.total_text_chars)

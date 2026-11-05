@@ -82,6 +82,8 @@ def _lines(bundle: ContextBundle) -> list[str]:
         out.append(f"## {S.SUBMISSION_LABEL}")
         if bundle.submission is not None and bundle.submission.onlinetext:
             out += ["Testo consegnato:", bundle.submission.onlinetext]
+        elif bundle.submission is not None and bundle.submission.unreadable:
+            out.append("Testo consegnato: non leggibile")
         for f in bundle.files:
             out.append(
                 f"File {f.label} ({f.filename}): {file_label(f.status, f.upto_page)}"

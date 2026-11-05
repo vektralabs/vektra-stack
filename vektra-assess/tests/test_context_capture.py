@@ -592,3 +592,34 @@ async def test_online_text_never_exceeds_the_total_budget(branch: str) -> None:
     assert isinstance(built, Built) and built.snapshot.submission is not None
     sub = built.snapshot.submission
     assert len(sub.onlinetext or "") == 5 and sub.truncated
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (FileStatus.CORRUPT, True),
+        (FileStatus.TOO_LARGE, True),
+        (FileStatus.NO_TEXT, None),
+    ],
+)
+async def test_an_unreadable_online_text_is_flagged_not_dropped(
+    branch: str, status: FileStatus, expected: bool | None
+) -> None:
+    from vektra_assess.parser_protocol import Extracted
+
+    class Broken(InProcessParser):
+        async def sanitize_html(self, html: bytes) -> Any:
+            return Extracted(status, code="x")
+
+    _replay, readers, m = _env(branch)
+    a = m["assigns"]["simple"]
+    built = await capture_assign(
+        AssignTarget(m["courseid"], a["id"], a["cmid"], uid(branch, "stu1")),
+        readers, Broken(), OFF, Capabilities(), moodle_release=m["release"],
+    )  # fmt: skip
+    assert isinstance(built, Built)
+    sub = built.snapshot.submission
+    if expected is None:
+        assert sub is None  # blank once sanitized: nothing to report
+    else:
+        assert sub is not None and sub.onlinetext is None and sub.unreadable

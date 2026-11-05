@@ -66,3 +66,13 @@ def test_solution_only_when_on() -> None:
     s = make()
     off = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
     assert "Soluzione fornita" not in off
+
+
+def test_an_unreadable_online_text_is_announced() -> None:
+    from vektra_assess.context.snapshot import SubmissionItem
+
+    s = make().model_copy(
+        update={"submission": SubmissionItem(onlinetext=None, unreadable=True)}
+    )
+    text = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
+    assert "Testo consegnato: non leggibile" in text

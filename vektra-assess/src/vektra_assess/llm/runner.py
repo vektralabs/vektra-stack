@@ -21,7 +21,7 @@ from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.part_a import fmt_date, grade_text
 from vektra_assess.context.references import canonical_labels
 from vektra_assess.llm import shipped
-from vektra_assess.llm.budget import fit
+from vektra_assess.llm.budget import MESSAGE_OVERHEAD, fit
 from vektra_assess.llm.language import detect
 from vektra_assess.llm.postcheck import (
     citations,
@@ -82,6 +82,27 @@ class DiscussionTurnRunner:
     @property
     def prompt_version(self) -> str:
         return self._renderer.prompt_version
+
+    def _count(self, text: str) -> int:
+        return self._llm.count_tokens(text, self.model) if text else 0
+
+    def _usage(self, prompt_tokens: int, completion_tokens: int) -> TurnUsage:
+        """Estimated tokens (the stream reports none) and, with an operator price table, cost.
+
+        On-prem models have no price: ``cost`` stays None rather than a misleading 0.
+        """
+        p_in, p_out = (
+            self._settings.llm_price_per_1k_in,
+            self._settings.llm_price_per_1k_out,
+        )
+        cost = None
+        if p_in is not None or p_out is not None:
+            cost = round(
+                prompt_tokens / 1000 * (p_in or 0.0)
+                + completion_tokens / 1000 * (p_out or 0.0),
+                6,
+            )
+        return TurnUsage(prompt_tokens, completion_tokens, estimated=True, cost=cost)
 
     @staticmethod
     def _admit(bundle: ContextBundle) -> None:
@@ -260,12 +281,7 @@ class DiscussionTurnRunner:
             behaviour_class=gate.behaviour_class,
             contest_entries=tuple(gate.contest),
             language=language,
-            usage=TurnUsage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=self._llm.count_tokens(completion, self.model)
-                if completion
-                else 0,
-            ),
+            usage=self._usage(prompt_tokens, self._count(completion)),
             call_records=tuple(records),
             replaced_count=gate.replaced,
             content_hash=hashlib.sha256(delivered.encode("utf-8")).hexdigest(),
@@ -334,6 +350,7 @@ class DiscussionTurnRunner:
         t0 = loop.time()
         records: list[ProviderCallRecord] = []
         codes: tuple[str, ...] = ()
+        prompt_spent = completion_spent = 0
         for attempt in (1, 2):
             if (
                 attempt == 2
@@ -342,6 +359,12 @@ class DiscussionTurnRunner:
             ):
                 break  # no time left for a second generation
             text, codes, raw = await self._part_b_once(bundle, language, records)
+            # every generation is paid for, the rejected one too (REQ-083 accounting)
+            prompt_spent += sum(
+                self._count(m.content) + MESSAGE_OVERHEAD
+                for m in self._renderer.part_b_messages(bundle, language)
+            )
+            completion_spent += self._count(raw)
             if not codes:
                 return TurnResult(
                     text=text,
@@ -349,13 +372,7 @@ class DiscussionTurnRunner:
                     behaviour_class=None,
                     contest_entries=(),
                     language=language,
-                    usage=TurnUsage(
-                        prompt_tokens=sum(
-                            self._llm.count_tokens(m.content, self.model)
-                            for m in self._renderer.part_b_messages(bundle, language)
-                        ),
-                        completion_tokens=self._llm.count_tokens(raw, self.model),
-                    ),
+                    usage=self._usage(prompt_spent, completion_spent),
                     call_records=tuple(records),
                     replaced_count=0,
                     content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),

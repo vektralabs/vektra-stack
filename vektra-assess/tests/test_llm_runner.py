@@ -430,3 +430,46 @@ async def test_cancellation_closes_the_stream_and_keeps_only_released_text() -> 
     assert isinstance(result, TurnResult) and result.interrupted
     assert result.text == "Prima frase." and llm.closed
     assert result.call_records[-1].outcome == "cancelled"
+
+
+# --- token accounting (task A9) -----------------------------------------------------------------
+
+
+def test_cost_is_null_without_a_price_table() -> None:
+    r = runner()
+    u = r._usage(1000, 500)
+    assert (u.prompt_tokens, u.completion_tokens, u.estimated, u.cost) == (
+        1000,
+        500,
+        True,
+        None,
+    )
+
+
+def test_cost_from_the_operator_price_table() -> None:
+    r = runner(
+        VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN=0.5, VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT=1.5
+    )
+    assert r._usage(2000, 1000).cost == 2.5
+    only_in = runner(VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN=0.5)
+    assert only_in._usage(2000, 1000).cost == 1.0
+
+
+async def test_turn_usage_counts_the_prompt_and_the_raw_completion() -> None:
+    reply = (
+        "Hai ragione. Ok."  # the delivered text differs, the paid completion does not
+    )
+    _, result, llm, _, _ = await _run(reply)
+    assert result.usage.completion_tokens == len(reply.split())
+    counted = [c for c in llm.calls if c.method == "count_tokens"]
+    assert counted and result.usage.estimated
+
+
+async def test_a_rejected_part_b_is_paid_for_too() -> None:
+    bad = "Il tuo voto è 7. Ne parliamo?"
+    r, _, _ = _part_b_runner([bad, PART_B_OK])
+    out = await r.run_part_b(_visible_bundle())
+    assert out.usage.completion_tokens == len(bad.split()) + len(PART_B_OK.split())
+    one, _, _ = _part_b_runner([PART_B_OK])
+    single = await one.run_part_b(_visible_bundle())
+    assert out.usage.prompt_tokens == 2 * single.usage.prompt_tokens

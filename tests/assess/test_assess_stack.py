@@ -237,6 +237,7 @@ def test_worker_loaded_no_forbidden_module() -> None:
     code = (
         "import sys, vektra_app.assess_worker as w\n"
         "from vektra_core.providers.litellm_provider import LitellmProvider\n"
+        "import vektra_app.assess_llm\n"
         "print([m for m in w.FORBIDDEN_MODULES if m in sys.modules])\n"
     )
     res = _exec("vektra-assess-worker", "python", "-c", code)

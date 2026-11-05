@@ -4,6 +4,7 @@ Owning plan: .s2s/plans/20261101-154950-assess-llm-runner. The only code path th
 discussion content to a model. It accepts a ``ContextBundle`` only and has no retrieval branch.
 """
 
+from vektra_assess.llm.runner import DiscussionTurnRunner
 from vektra_assess.llm.types import (
     PartBRejectedError,
     ProviderCallRecord,
@@ -16,8 +17,8 @@ from vektra_assess.llm.types import (
     TurnUsage,
 )
 
-# DiscussionTurnRunner joins this list when it exists (task A, runner core)
 __all__ = [
+    "DiscussionTurnRunner",
     "PartBRejectedError",
     "ProviderCallRecord",
     "ProviderOutageError",

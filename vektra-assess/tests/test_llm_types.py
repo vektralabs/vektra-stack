@@ -13,6 +13,7 @@ from vektra_assess.llm.types import ProviderCallRecord, StudentTurn, TurnUsage
 
 def test_the_package_exports_only_the_public_surface() -> None:
     assert set(llm.__all__) == {
+        "DiscussionTurnRunner",
         "PartBRejectedError",
         "ProviderCallRecord",
         "ProviderOutageError",

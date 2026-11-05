@@ -8,9 +8,10 @@ transcript against it).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from vektra_shared.types import QueryTrace
 
@@ -109,3 +110,9 @@ class TraceWriter(Protocol):
     """Where the runner's content-free QueryTrace goes; vektra_app adapts it (no analytics import)."""
 
     async def write(self, trace: QueryTrace, namespace: str) -> None: ...
+
+
+class AuditSink(Protocol):
+    """Content-free audit rows (event name, codes, counts): the worker and API hooks match it."""
+
+    async def __call__(self, event: str, data: Mapping[str, Any]) -> None: ...

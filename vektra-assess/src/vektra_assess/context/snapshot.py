@@ -258,8 +258,18 @@ def _nfc(value: Any) -> Any:
     return value
 
 
+#: fields added to an item after snapshots were already being stored: a snapshot that omits one
+#: keeps omitting it, so its canonical bytes (and its committed hash) are unchanged (BR-015)
+_ADDED_QUIZ_ITEM_FIELDS = ("truncated",)
+
+
 def canonical_bytes(snapshot: Snapshot) -> bytes:
-    data = _nfc(snapshot.model_dump(mode="json"))
+    data = snapshot.model_dump(mode="json")
+    for item, dumped in zip(snapshot.quiz_items, data["quiz_items"], strict=True):
+        for name in _ADDED_QUIZ_ITEM_FIELDS:
+            if name not in item.model_fields_set:
+                del dumped[name]
+    data = _nfc(data)
     return json.dumps(
         data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")

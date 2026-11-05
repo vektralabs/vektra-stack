@@ -132,6 +132,10 @@ async def test_review_item_op_and_reply_parsing(fake: Fake) -> None:
         '["Q", "A"]',
         '{"qtext": 1, "response": null}',
         '{"qtext": "Q", "response": "A"}',  # a reply without the truncation flag is not trusted
+        # a cut flag that is not a bool is malformed, not "not truncated"
+        '{"qtext": "Q", "response": "A", "truncated": "yes"}',
+        '{"qtext": "Q", "response": "A", "truncated": 1}',
+        '{"qtext": "Q", "response": "A", "truncated": null}',
     ],
 )
 async def test_a_bad_review_item_reply_degrades_to_nothing(

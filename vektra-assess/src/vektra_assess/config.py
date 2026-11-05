@@ -11,9 +11,9 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -270,6 +270,17 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_LLM_CONTEXT_WINDOW",
         description="Context window of the model in tokens. History is trimmed oldest first to fit; the context bundle is never trimmed (a bundle that does not fit is an error).",
     )
+
+    @model_validator(mode="after")
+    def _completion_fits_the_window(self) -> Self:
+        """The completion reserve must leave a positive prompt budget in the context window."""
+        if self.llm_max_tokens >= self.llm_context_window:
+            raise ValueError(
+                "VEKTRA_ASSESS_LLM_MAX_TOKENS must be lower than VEKTRA_ASSESS_LLM_CONTEXT_WINDOW: "
+                "the completion is reserved out of the window and the prompt needs the rest"
+            )
+        return self
+
     llm_seed: int | None = Field(
         None,
         alias="VEKTRA_ASSESS_LLM_SEED",

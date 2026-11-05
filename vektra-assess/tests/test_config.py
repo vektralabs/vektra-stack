@@ -70,3 +70,26 @@ def test_llm_defaults_and_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
         16384,
         30.0,
     )
+
+
+@pytest.mark.parametrize(
+    ("max_tokens", "window"), [("4096", "4096"), ("8192", "4096"), ("2048", "2048")]
+)
+def test_a_completion_reserve_that_fills_the_window_is_refused(
+    monkeypatch: pytest.MonkeyPatch, max_tokens: str, window: str
+) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MAX_TOKENS", max_tokens)
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_CONTEXT_WINDOW", window)
+    with pytest.raises(ValidationError, match="LLM_MAX_TOKENS must be lower"):
+        VektraAssessSettings()
+
+
+def test_a_completion_reserve_below_the_window_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MAX_TOKENS", "2047")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_CONTEXT_WINDOW", "2048")
+    s = VektraAssessSettings()
+    assert s.llm_context_window - s.llm_max_tokens == 1

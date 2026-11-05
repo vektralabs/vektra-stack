@@ -124,9 +124,14 @@ def _quiz_line(item: QuizItem) -> str:
         )
     else:
         line = S.QUIZ_ITEM_HIDDEN.format(label=item.label)
-    return line + (
-        S.DEGRADED if item.degraded else S.TRUNCATED if item.truncated else ""
-    )
+    # degradation and truncation are independent: a degraded item may still carry a (cut) response
+    if item.degraded:
+        line += S.DEGRADED_RESPONSE_ONLY if item.response_text else S.DEGRADED
+        if item.truncated and item.response_text:
+            line += S.RESPONSE_TRUNCATED
+    elif item.truncated:
+        line += S.TRUNCATED
+    return line
 
 
 def overview(bundle: ContextBundle) -> tuple[str, ...]:
@@ -148,7 +153,7 @@ def _notes(bundle: ContextBundle) -> list[str]:
     notes = []
     if any(i.marks_hidden is MarksHidden.REVIEW_OPTIONS for i in bundle.quiz_items):
         notes.append(S.HIDDEN_MARKS_NOTE)
-    if any(i.degraded for i in bundle.quiz_items):
+    if any(i.degraded and not i.response_text for i in bundle.quiz_items):
         notes.append(S.DEGRADED_NOTE)
     return notes
 

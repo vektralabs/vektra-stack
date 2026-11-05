@@ -175,10 +175,13 @@ class ParserClient:
         if not isinstance(doc, dict) or set(doc) != {"qtext", "response", "truncated"}:
             return None, None, False
         q, r, t = doc["qtext"], doc["response"], doc["truncated"]
+        if not isinstance(t, bool):
+            # an unreadable cut flag: the item degrades, its text is never presented as complete
+            return None, None, False
         return (
             q if isinstance(q, str) else None,
             r if isinstance(r, str) else None,
-            t is True,
+            t,
         )
 
     async def ping(self, deep: bool = False) -> float:

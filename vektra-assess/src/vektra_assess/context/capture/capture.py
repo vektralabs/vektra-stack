@@ -418,7 +418,8 @@ async def capture_quiz(
                 question_text=question_text,
                 response_text=response_text,
                 degraded=item_degraded,
-                truncated=item_truncated and not item_degraded,
+                # independent of degradation: a cut response survives a missing question
+                truncated=item_truncated,
             )
         )
     del chosen  # the html is not needed past this point

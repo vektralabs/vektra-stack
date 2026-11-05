@@ -211,3 +211,43 @@ def test_no_moodle_id_field_exists() -> None:
         "html",
     }
     assert names & forbidden == set()
+
+
+def test_a_snapshot_stored_before_the_truncated_flag_keeps_its_hash() -> None:
+    """BR-015: an older snapshot omits ``QuizItem.truncated``; reloading it must not add an
+    implicit ``false`` to its canonical form, or verify_snapshot_integrity would see a mismatch."""
+    import hashlib
+
+    explicit = make().model_copy(
+        update={
+            "quiz_items": tuple(
+                i.model_copy(update={"truncated": False}) for i in make().quiz_items
+            )
+        }
+    )
+    doc = json.loads(canonical_bytes(explicit))
+    assert all(i["truncated"] is False for i in doc["quiz_items"])  # explicit: kept
+    for item in doc["quiz_items"]:
+        del item["truncated"]  # as written before the field existed
+    old = json.dumps(
+        doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    committed = hashlib.sha256(old).hexdigest()
+    reloaded = from_canonical_bytes(old)
+    assert canonical_bytes(reloaded) == old and content_hash(reloaded) == committed
+    # an explicit flag, either value, still round-trips into the hash
+    for flag in (True, False):
+        s = explicit.model_copy(
+            update={
+                "quiz_items": tuple(
+                    i.model_copy(update={"truncated": flag})
+                    for i in explicit.quiz_items
+                )
+            }
+        )
+        back = from_canonical_bytes(canonical_bytes(s))
+        assert content_hash(back) == content_hash(s)
+        assert all(
+            i["truncated"] is flag
+            for i in json.loads(canonical_bytes(back))["quiz_items"]
+        )

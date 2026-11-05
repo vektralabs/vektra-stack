@@ -625,3 +625,87 @@ async def test_an_unreadable_online_text_is_flagged_not_dropped(
         assert sub is None  # blank once sanitized: nothing to report
     else:
         assert sub is not None and sub.onlinetext is None and sub.unreadable
+
+
+class _SmallCapParser(InProcessParser):
+    """The real sidecar extraction with a small char cap: the recorded items come back cut."""
+
+    async def extract_review_item(
+        self, html: bytes
+    ) -> tuple[str | None, str | None, bool]:
+        import json
+
+        self.calls.append("review_item")
+        res = run("review_item", html, "html", max_pages=1, max_chars=90)
+        doc = json.loads(res.text)
+        return doc["qtext"], doc["response"], doc["truncated"]
+
+
+class _NoQuestionParser(InProcessParser):
+    """The question block cannot be isolated, a long response is extracted and cut."""
+
+    async def extract_review_item(
+        self, html: bytes
+    ) -> tuple[str | None, str | None, bool]:
+        self.calls.append("review_item")
+        return None, "risposta lunga " * 20, True
+
+
+async def _quiz_with(branch: str, parser: InProcessParser) -> Any:
+    replay, readers, m = _env(branch)
+    q = m["quizzes"]["types"]
+    target = QuizTarget(
+        courseid=m["courseid"],
+        quizid=q["id"],
+        cmid=q["cmid"],
+        userid=uid(branch, "stu1"),
+    )
+    out = await capture_quiz(
+        target, readers, parser, OFF, Capabilities(),
+        moodle_release=m["release"], now=1_800_000_000,
+    )  # fmt: skip
+    assert not replay.unmatched, replay.unmatched
+    assert isinstance(out, Built), out
+    return out
+
+
+def _reloaded_texts(out: Any) -> tuple[Any, str, str]:
+    """The snapshot as stored and read back, with its Part A and model payload."""
+    from vektra_assess.context.assemble import assemble_context
+    from vektra_assess.context.part_a import SessionFacts, render_part_a
+    from vektra_assess.context.payload import bundle_to_model_payload
+    from vektra_assess.context.snapshot import content_hash, from_canonical_bytes
+
+    snap = from_canonical_bytes(canonical_bytes(out.snapshot))
+    assert content_hash(snap) == content_hash(out.snapshot)
+    bundle = assemble_context(snap, out.frozen_policy)
+    return (
+        snap,
+        render_part_a(bundle, SessionFacts(1, 30)).text,
+        bundle_to_model_payload(bundle)[0].content,
+    )
+
+
+async def test_a_long_non_degraded_item_stays_truncated_after_reload(
+    branch: str,
+) -> None:
+    out = await _quiz_with(branch, _SmallCapParser())
+    snap, part_a, payload = _reloaded_texts(out)
+    cut = [i for i in snap.quiz_items if i.truncated and not i.degraded]
+    assert cut, "the small cap must cut at least one extracted item"
+    for item in cut:
+        line = next(ln for ln in part_a.splitlines() if f"Domanda {item.label}:" in ln)
+        assert "troncato" in line  # Part A warning
+    assert "testo della domanda o della risposta troncato" in payload  # payload warning
+
+
+async def test_a_missing_question_does_not_clear_a_cut_response(branch: str) -> None:
+    out = await _quiz_with(branch, _NoQuestionParser())
+    snap, part_a, payload = _reloaded_texts(out)
+    extracted = [i for i in snap.quiz_items if i.response_text]
+    assert extracted
+    for item in extracted:
+        assert item.degraded and item.truncated
+        line = next(ln for ln in part_a.splitlines() if f"Domanda {item.label}:" in ln)
+        assert "vede solo la tua risposta" in line and "risposta troncata" in line
+    assert "risposta dello studente disponibile ma troncata" in payload

@@ -193,7 +193,8 @@ default is never used.
 - [ ] Implement token accounting via `llm.count_tokens` on the rendered prompt and the completion; optional price table; `TurnUsage.estimated=True`
 
 ### B. Post-check and behaviour strings
-- [ ] Implement `llm/postcheck/sentences.py` (segmenter aware of decimals, `p.12`, `3.5/10`, tags, quotes) with a fixture set of math/numerical and page-reference text
+- [x] Implement `llm/postcheck/sentences.py` (segmenter aware of decimals, `p.12`, `3.5/10`, tags, quotes) with a fixture set of math/numerical and page-reference text
+  Done 2026-11-05: incremental `split(buffer, final)` (stateless rescan: the caller keeps the rest); holds a trailing point, open quotes and open tags; a quoted sentence closes ours only when a capital follows. Fixture set `tests/fixtures/llm/sentences.json` (20 cases: decimals, `3.5/10`, `p.12`, matrices, formulas, quotes, markers, IT/EN abbreviations), each also fed one character at a time. Tests: `test_llm_sentences.py` (43).
 - [ ] Implement `postcheck/markers.py` (CLASS and PUNTO_CONTESTATO grammar; strip; validate labels against the bundle label index; drop and audit invalid)
 - [ ] Implement `postcheck/values.py` (scoped grade/mark/point/level patterns IT+EN; compare with the cited item; fixed replacement string; mark)
 - [ ] Implement `postcheck/citations.py` (tag resolution; `[Materiale:]` always removed in v1) and `postcheck/feedback_quote.py` (exact-substring rule)
@@ -318,6 +319,8 @@ migration, the trace persistence round trip and the activation table and endpoin
   `/api/v1/query` traces keep `pipeline=NULL`.
 
 ## Notes
+
+- **Order (2026-11-05)**: group B (post-check) is done before A6-A9 (`run_stream`, Part B, outage, token accounting), because the stream releases only post-checked sentences.
 
 - **Drift: the REQ-044 lexicon does not exist.** vektra_core safeguards contain no grade-change
   lexicon (only Presidio and passthrough). REQ-097's "extend the REQ-044 lexicon" is therefore

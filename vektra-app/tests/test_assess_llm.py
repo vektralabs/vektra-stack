@@ -131,3 +131,73 @@ def test_the_worker_module_does_not_pull_presidio() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.strip() == "[]"
+
+
+# --- startup step 13 ----------------------------------------------------------------------------
+
+
+class _App:
+    def __init__(self) -> None:
+        from types import SimpleNamespace
+
+        self.state = SimpleNamespace()
+
+
+async def test_step_13_is_dormant_when_assess_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.delenv("VEKTRA_ASSESS_ENABLED", raising=False)
+    app = _App()
+    await step_13_assess_llm_check(
+        app, safeguard_factory=lambda _m: PassthroughSafeguard()
+    )
+    assert vars(app.state) == {}
+
+
+async def test_step_13_refuses_a_safeguard_that_fell_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    with pytest.raises(StartupValidationError) as e:
+        await step_13_assess_llm_check(
+            _App(), safeguard_factory=lambda _m: PassthroughSafeguard()
+        )
+    assert e.value.step == "assess_llm_check"
+
+
+async def test_step_13_refuses_a_missing_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.delenv("VEKTRA_ASSESS_LLM_MODEL", raising=False)
+    with pytest.raises(StartupValidationError, match="VEKTRA_ASSESS_LLM_MODEL"):
+        await step_13_assess_llm_check(_App(), safeguard_factory=lambda _m: _Real())
+
+
+async def test_step_13_keeps_the_parts_for_the_turn_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    app = _App()
+    real = _Real()
+    await step_13_assess_llm_check(app, safeguard_factory=lambda _m: real)
+    assert app.state.assess_safeguard is real
+    assert app.state.assess_llm._config.provider == "ollama/x"
+    assert len(app.state.assess_prompt_version) == 8
+
+
+def test_step_13_runs_after_step_12_in_the_api_startup() -> None:
+    import inspect
+
+    import vektra_app.main as main
+
+    src = inspect.getsource(main)
+    assert src.index('"assess_check"') < src.index('"assess_llm_check"')

@@ -178,3 +178,42 @@ def build_worker_part_b_runner(
         audit=audit,
         llm=llm,
     )
+
+
+# --- startup ------------------------------------------------------------------------------------
+
+
+async def step_13_assess_llm_check(
+    app: Any, *, safeguard_factory: Callable[[str], SafeguardHook] | None = None
+) -> None:
+    """ARCH-057 step 13 (plan assess-llm-runner): the discussion runner's parts, fail closed.
+
+    Disabled: nothing is built (dormant). Enabled: the safeguard must load in the configured mode
+    (Presidio falling open is refused), ``VEKTRA_ASSESS_LLM_MODEL`` must be set, and the parts are
+    kept on ``app.state`` for the turn route (plan 8), which adds its own audit sink per request.
+    The NFR-023 activation of the (provider, model, prompt_version) triple is checked here too
+    once the activation table exists (plan task E).
+    """
+    import structlog
+
+    from vektra_app.assess_wiring import load_assess_settings
+    from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
+    from vektra_assess.llm.prompts import PromptRenderer
+
+    log = structlog.get_logger(__name__)
+    settings = load_assess_settings()
+    if not settings.enabled:
+        log.info("startup_step", step=STEP, status="disabled")
+        return
+    app.state.assess_safeguard = build_assess_safeguard(
+        settings.safeguard_mode, factory=safeguard_factory
+    )
+    app.state.assess_llm = build_assess_llm(settings)
+    app.state.assess_prompt_version = PromptRenderer(LEXICON_VERSION).prompt_version
+    log.info(
+        "startup_step",
+        step=STEP,
+        status="ok",
+        safeguard=settings.safeguard_mode,
+        prompt_version=app.state.assess_prompt_version,
+    )

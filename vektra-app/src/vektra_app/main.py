@@ -30,6 +30,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from vektra_app import __version__
+from vektra_app.assess_llm import step_13_assess_llm_check
 from vektra_app.assess_wiring import include_assess_router, step_12_assess_check
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
@@ -553,6 +554,7 @@ async def _run_startup(app: FastAPI) -> None:
             "assess_check",
             lambda: step_12_assess_check(app, settings.database_url, registry),
         ),
+        ("assess_llm_check", lambda: step_13_assess_llm_check(app)),
     ]
 
     step_1_ms = int((time.monotonic() - start_time) * 1000)

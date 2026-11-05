@@ -110,17 +110,28 @@ class PromptRenderer:
         text: str,
         language: str,
     ) -> list[Message]:
-        """System, context, the kept history (oldest first) and the student's message."""
-        out = [self._system(bundle, language), self._bundle(bundle)]
-        for prior in history:
-            out.append(
-                Message(
-                    role="user" if prior.role == "student" else "assistant",
-                    content=self._render("history", role=prior.role, text=prior.text),
-                )
+        """System, context, the history (oldest first) and the student's message."""
+        head, past, tail = self.turn_parts(bundle, history, text, language)
+        return [*head, *past, *tail]
+
+    def turn_parts(
+        self,
+        bundle: ContextBundle,
+        history: Sequence[PriorTurn],
+        text: str,
+        language: str,
+    ) -> tuple[list[Message], list[Message], list[Message]]:
+        """(system + context, history, current message): the budget trims the middle only."""
+        head = [self._system(bundle, language), self._bundle(bundle)]
+        past = [
+            Message(
+                role="user" if prior.role == "student" else "assistant",
+                content=self._render("history", role=prior.role, text=prior.text),
             )
-        out.append(Message(role="user", content=self._render("turn", text=text)))
-        return out
+            for prior in history
+        ]
+        tail = [Message(role="user", content=self._render("turn", text=text))]
+        return head, past, tail
 
     def part_b_messages(self, bundle: ContextBundle, language: str) -> list[Message]:
         return [

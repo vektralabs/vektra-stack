@@ -144,16 +144,30 @@ def test_a_refusal_check_is_not_a_violation(tmp_path: Path) -> None:
 TYPING_CASE = """
 from vektra_assess.context.payload import bundle_to_model_payload
 from vektra_assess.context.snapshot import Snapshot
+from vektra_assess.llm import DiscussionTurnRunner, StudentTurn
 
 
 def wrong(snapshot: Snapshot, raw: dict[str, object]) -> None:
     bundle_to_model_payload(snapshot)  # must not type-check
     bundle_to_model_payload(raw)  # must not type-check
+
+
+async def wrong_runner(r: DiscussionTurnRunner, snapshot: Snapshot, raw: dict[str, object]) -> None:
+    t = StudentTurn("x", 0)
+    await r.run(snapshot, t)  # must not type-check
+    await r.run(raw, t)  # must not type-check
+    r.run_stream(snapshot, t)  # must not type-check
+    r.run_stream(raw, t)  # must not type-check
+    await r.run_part_b(snapshot)  # must not type-check
+    await r.run_part_b(raw)  # must not type-check
 """
+TYPING_ERRORS = (
+    8  # 2 for the serializer, 6 for the runner (plan assess-llm-runner, group G)
+)
 
 
 def test_passing_a_snapshot_or_a_dict_does_not_type_check(tmp_path: Path) -> None:
-    """Plan 7's runner signature must follow; today the single serializer carries the type."""
+    """The single serializer and every runner entry point accept a ContextBundle only."""
     case = tmp_path / "typing_case.py"
     case.write_text(TYPING_CASE)
     # the sources, not the installed packages (they carry no py.typed): as CI's mypy step sees them
@@ -167,4 +181,4 @@ def test_passing_a_snapshot_or_a_dict_does_not_type_check(tmp_path: Path) -> Non
     errors = [
         ln for ln in res.stdout.splitlines() if ": error:" in ln and "arg-type" in ln
     ]
-    assert len(errors) == 2, res.stdout
+    assert len(errors) == TYPING_ERRORS, res.stdout

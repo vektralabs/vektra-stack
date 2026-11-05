@@ -32,7 +32,7 @@ _WORD_BEFORE = re.compile(r"([A-Za-zÀ-ÿ](?:[A-Za-zÀ-ÿ.]*[A-Za-zÀ-ÿ])?)$")
 
 def _is_abbreviation(text: str, dot: int) -> bool:
     m = _WORD_BEFORE.search(text, 0, dot)
-    return bool(m) and m.group(1).lower() in ABBREVIATIONS
+    return m is not None and m.group(1).lower() in ABBREVIATIONS
 
 
 def split(buffer: str, *, final: bool = False) -> tuple[list[str], str]:

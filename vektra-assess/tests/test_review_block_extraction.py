@@ -184,3 +184,18 @@ def test_correctness_icons_inside_the_response_are_dropped(icon: str) -> None:
     html = f"<fieldset class='ablock'><div class='answer'><div class='r0 correct'>[x] Vero {icon}</div></div></fieldset>"
     text = extract_review_block(html.encode(), "response", 1000).text
     assert "Vero" in text and "Correct" not in text
+
+
+def test_review_item_json_fits_the_cap_even_when_escaping_grows_it() -> None:
+    from vektra_assess.parser_sidecar.child import run
+
+    # every quote and backslash doubles under JSON escaping: half-capped values alone overflow
+    body = '"\\' * 200
+    html = (
+        f"<div class='qtext'>{body}</div>"
+        f"<fieldset class='ablock'><div class='answer'>{body}</div></fieldset>"
+    ).encode()
+    out = run("review_item", html, "html", max_pages=1, max_chars=300).text
+    assert len(out) <= 300
+    doc = json.loads(out)  # still valid JSON, not cut
+    assert doc["qtext"] and doc["response"]

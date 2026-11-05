@@ -39,7 +39,13 @@ from vektra_ingest.extractors.powerpoint import PowerPointExtractor
 from vektra_ingest.extractors.word import WordExtractor
 from vektra_ingest.models import NamespaceOrm, SourceDocumentOrm
 from vektra_shared.config import IngestConfig
-from vektra_shared.errors import ERR_INGEST_001, ERR_INGEST_004
+from vektra_shared.errors import (
+    ERR_INGEST_001,
+    ERR_INGEST_004,
+    ERR_NAMESPACE_001,
+    namespace_reserved,
+)
+from vektra_shared.namespace import is_reserved
 from vektra_shared.types import ChunkEmbedding, ExtractionRequest, SparseVector
 
 log = structlog.get_logger(__name__)
@@ -163,6 +169,12 @@ async def run_ingest(
         IngestConflictError: Concurrent duplicate filename insert (TOCTOU, → 409).
         IngestError: Unsupported type, scanned PDF, or storage failure.
     """
+    # The shared execution boundary of the sync route, the arq job and the learn vertical: a job
+    # queued before a namespace became reserved (or by a caller that skipped the HTTP check) must
+    # not write there either. Raised as IngestError so every caller fails the job cleanly.
+    if is_reserved(namespace):
+        raise IngestError(ERR_NAMESPACE_001, namespace_reserved(namespace).message)
+
     content_hash = hashlib.sha256(file_content).hexdigest()
 
     # ------------------------------------------------------------------

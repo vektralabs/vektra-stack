@@ -203,3 +203,49 @@ async def test_task_no_session_factory_marks_failed():
     # Should mark processing first, then fail
     statuses = [c.get("status") for c in update_calls]
     assert "failed" in statuses
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("namespace", ["assess-discussion", " Assess-Discussion "])
+async def test_a_queued_job_for_a_reserved_namespace_writes_nothing(namespace):
+    """run_ingest is the shared boundary: a job queued for a reserved namespace (the HTTP check
+    already passed, or was skipped) fails ERR-NAMESPACE-001 before any DB or vector store write."""
+    from vektra_ingest.jobs import ingest_document_task
+
+    job_id = str(uuid4())
+    vector_store = AsyncMock()
+    reg = MagicMock()
+    reg.get.side_effect = lambda *a, **kw: vector_store
+    session = AsyncMock()
+    update_calls: list[dict] = []
+
+    async def _mock_update(jid, **kwargs):
+        update_calls.append({"job_id": jid, **kwargs})
+
+    class FakeFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *a):
+            pass
+
+    import vektra_shared.db as db_mod
+
+    original = db_mod._session_factory
+    db_mod._session_factory = FakeFactory()
+    try:
+        with patch("vektra_ingest.jobs._update_job", side_effect=_mock_update):
+            await ingest_document_task(
+                {"registry": reg}, job_id, namespace, "notes.md", b"# content"
+            )
+    finally:
+        db_mod._session_factory = original
+
+    assert update_calls[-1]["status"] == "failed"
+    assert update_calls[-1]["error_code"] == "ERR-NAMESPACE-001"
+    session.execute.assert_not_called()
+    session.add.assert_not_called()
+    vector_store.store.assert_not_called()

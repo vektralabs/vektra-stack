@@ -65,3 +65,14 @@ def test_an_incomplete_file_fails_loudly(tmp_path: Path, edit, message: str) -> 
     p.write_text(edit(p.read_text(encoding="utf-8")), encoding="utf-8")
     with pytest.raises(shipped.ShippedStringsError, match=message):
         shipped._load("it", tmp_path)
+
+
+def test_the_d3_disclosure_is_shipped_verbatim() -> None:
+    """REQ-099 (b): the requirements' D3 sentence, byte for byte, for the REQ-077 help text."""
+    req = (Path(__file__).resolve().parents[2] / ".s2s" / "requirements.md").read_text(
+        encoding="utf-8"
+    )
+    flat = " ".join(req.split())
+    d3 = shipped.get("it").oracle_disclosure
+    assert d3 in flat
+    assert shipped.get("en").oracle_disclosure

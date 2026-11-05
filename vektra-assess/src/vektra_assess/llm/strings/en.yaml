@@ -30,3 +30,6 @@ missing:
   replaced_by_system: "[reply replaced by the system]"
 unsupported_language: "I am replying in Italian: this discussion supports only Italian and English."
 default_support_text: "If you need it, talk to your teacher."
+# REQ-099 (b) / REQ-077: the D3 disclosure of the solution-oracle limitation, shown in the
+# teacher help text by plan 11 (read through shipped.get(lang).oracle_disclosure)
+oracle_disclosure: "With this option off the assistant does not receive the solution and must not provide it, but for questions a model can solve on its own this cannot be guaranteed 100%: avoid enabling the discussion on questions you will reuse. Remember also that the student receives a copy of the transcript."

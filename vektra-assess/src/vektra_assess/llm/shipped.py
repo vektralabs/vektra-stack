@@ -42,6 +42,8 @@ class Shipped:
     missing: Mapping[str, str]
     unsupported_language: str
     default_support_text: str
+    #: REQ-099 (b): the D3 sentence of the REQ-077 teacher help text (plan 11 displays it)
+    oracle_disclosure: str
 
     def refusal(self, klass: str, support_text: str | None = None) -> str:
         """The fixed core sentence plus its alternative clause (W-DISTRESS: the support text)."""
@@ -88,6 +90,7 @@ def _load(language: str, directory: Path = DIR) -> Shipped:
         missing=MappingProxyType({k: _text(missing, k, where) for k in missing}),
         unsupported_language=_text(doc, "unsupported_language", where),
         default_support_text=_text(doc, "default_support_text", where),
+        oracle_disclosure=_text(doc, "oracle_disclosure", where),
     )
 
 

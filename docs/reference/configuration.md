@@ -223,9 +223,6 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. |
 | `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Safeguard of the discussion runner in the API. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
 | `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
-| `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request. |
-| `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED` | bool | `false` | Development and CI only: start the API while the (model, prompt_version) has no passing NFR-023 activation. Honoured only with `VEKTRA_ENV=development`; refused at startup otherwise. |
-| `VEKTRA_ASSESS_JUDGE_MODEL` / `VEKTRA_ASSESS_JUDGE_API_BASE` | str | - | Judge model of `make eval-assess` only (never read by the API or the worker). |
 | `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
 | `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
 

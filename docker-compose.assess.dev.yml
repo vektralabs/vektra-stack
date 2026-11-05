@@ -16,3 +16,11 @@ services:
     environment:
       VEKTRA_ENV: development
       VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND: "true"
+  # The discussion runner (plan assess-llm-runner): the API refuses to start without a model or with
+  # a safeguard that fell open. Dev and CI images carry no Presidio and no model: an explicit
+  # passthrough and a placeholder model let the stack start (no turn is served in CI).
+  vektra:
+    environment:
+      VEKTRA_ENV: development
+      VEKTRA_ASSESS_LLM_MODEL: ${VEKTRA_ASSESS_LLM_MODEL:-ollama/dev-placeholder}
+      VEKTRA_ASSESS_SAFEGUARD_MODE: none

@@ -231,7 +231,25 @@ def test_the_dev_file_only_opts_the_worker_in_and_pins_the_environment() -> None
     assert env["VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND"] == "true"
     assert env["VEKTRA_ENV"] == "development", "explicit, not the code default"
     base = _render("docker-compose.yml", "docker-compose.assess.yml")
+    # the API gets only the explicit dev settings of the discussion runner (plan assess-llm-runner):
+    # no model and no Presidio in dev/CI images
+    api_dev = {
+        "VEKTRA_ENV": "development",
+        "VEKTRA_ASSESS_SAFEGUARD_MODE": "none",
+    }
+    api_env = dev["services"]["vektra"]["environment"]
+    for key, value in api_dev.items():
+        assert api_env[key] == value, key
+    assert api_env["VEKTRA_ASSESS_LLM_MODEL"]
     for name, svc in dev["services"].items():
         if name == "vektra-assess-worker":
             continue
+        if name == "vektra":
+            svc = dict(svc)
+            svc["environment"] = {
+                k: v
+                for k, v in svc["environment"].items()
+                if k not in {*api_dev, "VEKTRA_ASSESS_LLM_MODEL"}
+                or k in base["services"][name]["environment"]
+            }
         assert svc == base["services"][name], f"the dev file must not change {name}"

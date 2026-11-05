@@ -45,6 +45,7 @@ from vektra_assess.llm.types import (
     ProviderOutageError,
     RagNotAvailableError,
     ReleasedSegment,
+    RunnerMetrics,
     StudentTurn,
     TraceWriter,
     TurnResult,
@@ -73,6 +74,7 @@ class DiscussionTurnRunner:
         settings: VektraAssessSettings,
         audit: AuditSink,
         renderer: PromptRenderer | None = None,
+        metrics: RunnerMetrics | None = None,
     ) -> None:
         if not settings.llm_model:
             raise ValueError("VEKTRA_ASSESS_LLM_MODEL is not set")
@@ -82,6 +84,7 @@ class DiscussionTurnRunner:
         self._settings = settings
         self._audit = audit
         self._renderer = renderer or PromptRenderer(LEXICON_VERSION)
+        self._metrics = metrics
 
     @property
     def model(self) -> str:
@@ -137,6 +140,21 @@ class DiscussionTurnRunner:
             )
         return trace
 
+    def _outage(self, rec: ProviderCallRecord) -> ProviderOutageError:
+        if self._metrics is not None:
+            self._metrics.call_outcome(rec.outcome)
+        return ProviderOutageError(rec)
+
+    def _emit_turn(self, gate: SentenceGate, records: list[ProviderCallRecord]) -> None:
+        if self._metrics is None:
+            return
+        for stage, n in gate.by_stage.items():
+            self._metrics.replacement(stage, n)
+        if gate.behaviour_class is not None:
+            self._metrics.behaviour_class(gate.behaviour_class)
+        for rec in records:
+            self._metrics.call_outcome(rec.outcome)
+
     @staticmethod
     def _admit(bundle: ContextBundle) -> None:
         """Fail closed on anything v1 cannot honour before a byte is rendered."""
@@ -183,13 +201,13 @@ class DiscussionTurnRunner:
         except TimeoutError:
             rec = ProviderCallRecord(started, None, _now(), "first_token_timeout")
             records.append(rec)
-            raise ProviderOutageError(rec) from None
+            raise self._outage(rec) from None
         except (
             Exception
         ) as exc:  # any provider failure is an outage record, never its text
             rec = ProviderCallRecord(started, None, _now(), "error", type(exc).__name__)
             records.append(rec)
-            raise ProviderOutageError(rec) from None
+            raise self._outage(rec) from None
         return it, first, started
 
     async def _release(
@@ -306,7 +324,7 @@ class DiscussionTurnRunner:
                     started, first_at, _now(), "error", type(exc).__name__
                 )
                 records.append(rec)
-                raise ProviderOutageError(rec) from None
+                raise self._outage(rec) from None
             finally:
                 await _close(it)  # the provider stream is closed on every path
             records.append(ProviderCallRecord(started, first_at, _now(), outcome))
@@ -350,6 +368,7 @@ class DiscussionTurnRunner:
         for event, data in gate.audit:
             await self._audit(event, data)
         trace = await self._write_trace(turn.turn_id, steps, t_all)
+        self._emit_turn(gate, records)
         yield TurnResult(
             text=delivered,
             marks=tuple(gate.marks),
@@ -382,7 +401,7 @@ class DiscussionTurnRunner:
                 started, first_at, _now(), "error", type(exc).__name__
             )
             records.append(rec)
-            raise ProviderOutageError(rec) from None
+            raise self._outage(rec) from None
         finally:
             closer = getattr(it, "aclose", None)
             if closer is not None:
@@ -473,6 +492,9 @@ class DiscussionTurnRunner:
                 "assess_part_b_rejected",
                 {"attempt": attempt, "reason_code": ",".join(codes)},
             )
+            if self._metrics is not None:
+                for code in codes:
+                    self._metrics.part_b_rejected(code)
         await self._write_trace(
             part_b_id, steps, t_all
         )  # a rejected Part B is traced too

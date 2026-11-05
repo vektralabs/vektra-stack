@@ -20,7 +20,7 @@ from typing import Any
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.llm import DiscussionTurnRunner
-from vektra_assess.llm.types import AuditSink, TraceWriter
+from vektra_assess.llm.types import AuditSink, RunnerMetrics, TraceWriter
 from vektra_shared.protocols import LLMProvider, SafeguardHook
 from vektra_shared.safeguards import PassthroughSafeguard
 from vektra_shared.startup import StartupValidationError
@@ -86,6 +86,54 @@ class AnalyticsTraceWriter:
             await session.commit()
 
 
+class PrometheusRunnerMetrics:
+    """``RunnerMetrics`` over prometheus_client (API process). Labels are codes, never content:
+    a post-check stage, a behaviour class, a call outcome, a Part B rejection code."""
+
+    _counters: dict[str, Any] = {}
+
+    def __init__(self) -> None:
+        from prometheus_client import Counter
+
+        c = PrometheusRunnerMetrics._counters
+        if (
+            not c
+        ):  # registered once per process (the default registry refuses duplicates)
+            c["replacement"] = Counter(
+                "vektra_assess_postcheck_replacements_total",
+                "Post-check replacements and removals in delivered turns, by stage",
+                ["stage"],
+            )
+            c["class"] = Counter(
+                "vektra_assess_behaviour_class_total",
+                "Turns answered with a behaviour-class core sentence, by class",
+                ["behaviour_class"],
+            )
+            c["outcome"] = Counter(
+                "vektra_assess_provider_calls_total",
+                "Discussion-model calls by outcome (ok, error, first_token_timeout, cancelled)",
+                ["outcome"],
+            )
+            c["part_b"] = Counter(
+                "vektra_assess_part_b_rejections_total",
+                "Part B generations rejected, by content-free rejection code",
+                ["code"],
+            )
+        self._c = c
+
+    def replacement(self, stage: str, count: int) -> None:
+        self._c["replacement"].labels(stage=stage).inc(count)
+
+    def behaviour_class(self, code: str) -> None:
+        self._c["class"].labels(behaviour_class=code).inc()
+
+    def call_outcome(self, outcome: str) -> None:
+        self._c["outcome"].labels(outcome=outcome).inc()
+
+    def part_b_rejected(self, code: str) -> None:
+        self._c["part_b"].labels(code=code).inc()
+
+
 def build_assess_runner(
     settings: VektraAssessSettings,
     *,
@@ -93,6 +141,7 @@ def build_assess_runner(
     trace_writer: TraceWriter,
     audit: AuditSink,
     llm: LLMProvider | None = None,
+    metrics: RunnerMetrics | None = None,
 ) -> DiscussionTurnRunner:
     return DiscussionTurnRunner(
         llm=llm or build_assess_llm(settings),
@@ -100,6 +149,7 @@ def build_assess_runner(
         trace_writer=trace_writer,
         settings=settings,
         audit=audit,
+        metrics=metrics,
     )
 
 
@@ -209,6 +259,9 @@ async def step_13_assess_llm_check(
         settings.safeguard_mode, factory=safeguard_factory
     )
     app.state.assess_llm = build_assess_llm(settings)
+    app.state.assess_metrics = (
+        PrometheusRunnerMetrics()
+    )  # served on /metrics with the rest
     app.state.assess_prompt_version = PromptRenderer(LEXICON_VERSION).prompt_version
     log.info(
         "startup_step",

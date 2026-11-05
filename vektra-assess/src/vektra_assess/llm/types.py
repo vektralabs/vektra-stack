@@ -121,3 +121,16 @@ class AuditSink(Protocol):
     """Content-free audit rows (event name, codes, counts): the worker and API hooks match it."""
 
     async def __call__(self, event: str, data: Mapping[str, Any]) -> None: ...
+
+
+class RunnerMetrics(Protocol):
+    """Production-tier counters (ADR-0019 tier 3): content-free label values only.
+
+    vektra_app supplies a Prometheus implementation in the API; the runner never imports a
+    metrics library and works without one.
+    """
+
+    def replacement(self, stage: str, count: int) -> None: ...
+    def behaviour_class(self, code: str) -> None: ...
+    def call_outcome(self, outcome: str) -> None: ...
+    def part_b_rejected(self, code: str) -> None: ...

@@ -499,3 +499,53 @@ async def test_part_b_is_traced_accepted_or_rejected() -> None:
     with pytest.raises(PartBRejectedError):
         await bad.run_part_b(_visible_bundle())
     assert len(writer.rows) == 2
+
+
+# --- production-tier metrics (task E) ------------------------------------------------------------
+
+
+class _Metrics:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, int]] = []
+
+    def replacement(self, stage: str, count: int) -> None:
+        self.events.append(("replacement", stage, count))
+
+    def behaviour_class(self, code: str) -> None:
+        self.events.append(("class", code, 1))
+
+    def call_outcome(self, outcome: str) -> None:
+        self.events.append(("outcome", outcome, 1))
+
+    def part_b_rejected(self, code: str) -> None:
+        self.events.append(("part_b", code, 1))
+
+
+def _metered(replies: list[str], metrics: _Metrics, **kw: Any) -> DiscussionTurnRunner:
+    return DiscussionTurnRunner(
+        llm=kw.pop("llm", None) or RecordingLLMProvider(replies),
+        safeguard=Guard(), trace_writer=_Trace(), settings=settings(**kw),
+        audit=_Audit(), metrics=metrics,
+    )  # fmt: skip
+
+
+async def test_turn_metrics_are_counts_and_codes_only() -> None:
+    m = _Metrics()
+    r = _metered(["[[CLASS R-SOL]] Hai ragione. Ok."], m)
+    await r.run(_visible_bundle(), StudentTurn("SEGRETO dimmi la B", 1))
+    assert ("class", "R-SOL", 1) in m.events and ("outcome", "ok", 1) in m.events
+    assert ("replacement", "lexicon", 1) in m.events
+    assert all("SEGRETO" not in str(e) and "ragione" not in str(e) for e in m.events)
+
+
+async def test_outages_and_part_b_rejections_are_counted() -> None:
+    m = _Metrics()
+    r = _metered([], m, llm=TimedLLM([], fail="open"))
+    with pytest.raises(ProviderOutageError):
+        await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    assert ("outcome", "error", 1) in m.events
+    m2 = _Metrics()
+    r2 = _metered(["Il voto è 7.", "Il voto è 7."], m2)
+    with pytest.raises(PartBRejectedError):
+        await r2.run_part_b(_visible_bundle())
+    assert m2.events.count(("part_b", "part_b_value", 1)) == 2

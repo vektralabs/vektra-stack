@@ -224,3 +224,27 @@ def test_a_real_presidio_load_failure_refuses_startup(
     monkeypatch.setattr(builtins, "__import__", failing)
     with pytest.raises(StartupValidationError, match="fell back to passthrough"):
         build_assess_safeguard("presidio")
+
+
+def test_prometheus_metrics_count_with_code_labels() -> None:
+    from prometheus_client import REGISTRY
+
+    from vektra_app.assess_llm import PrometheusRunnerMetrics
+
+    m = PrometheusRunnerMetrics()
+    PrometheusRunnerMetrics()  # a second instance reuses the registered counters
+
+    def val(name: str, **labels: str) -> float:
+        return REGISTRY.get_sample_value(name, labels) or 0.0
+
+    before = val("vektra_assess_postcheck_replacements_total", stage="lexicon")
+    m.replacement("lexicon", 2)
+    m.behaviour_class("R-SOL")
+    m.call_outcome("first_token_timeout")
+    m.part_b_rejected("part_b_value")
+    assert (
+        val("vektra_assess_postcheck_replacements_total", stage="lexicon") == before + 2
+    )
+    assert val("vektra_assess_behaviour_class_total", behaviour_class="R-SOL") >= 1
+    assert val("vektra_assess_provider_calls_total", outcome="first_token_timeout") >= 1
+    assert val("vektra_assess_part_b_rejections_total", code="part_b_value") >= 1

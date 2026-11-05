@@ -19,6 +19,7 @@ def test_the_package_exports_only_the_public_surface() -> None:
         "ProviderOutageError",
         "RagNotAvailableError",
         "ReleasedSegment",
+        "RunnerMetrics",
         "StudentTurn",
         "TraceWriter",
         "TurnResult",

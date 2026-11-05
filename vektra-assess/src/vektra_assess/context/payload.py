@@ -87,6 +87,9 @@ def _lines(bundle: ContextBundle) -> list[str]:
                 out.append("Nota: il testo consegnato è troncato.")
         elif bundle.submission is not None and bundle.submission.unreadable:
             out.append("Testo consegnato: non leggibile")
+        elif bundle.submission is not None and bundle.submission.truncated:
+            # a zero budget leaves an empty excerpt: the text exists but none of it is shown
+            out.append("Testo consegnato: omesso (troncato)")
         for f in bundle.files:
             out.append(
                 f"File {f.label} ({f.filename}): {file_label(f.status, f.upto_page)}"

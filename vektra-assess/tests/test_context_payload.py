@@ -90,3 +90,14 @@ def test_a_truncated_online_text_is_announced() -> None:
         text = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
         assert "Testo consegnato:\nestratto" in text
         assert ("Nota: il testo consegnato è troncato." in text) is truncated
+
+
+def test_an_online_text_cut_to_nothing_is_still_announced() -> None:
+    from vektra_assess.context.snapshot import SubmissionItem
+
+    # a zero budget: the excerpt is empty but the text exists
+    s = make().model_copy(
+        update={"submission": SubmissionItem(onlinetext="", truncated=True)}
+    )
+    text = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
+    assert "Testo consegnato: omesso (troncato)" in text

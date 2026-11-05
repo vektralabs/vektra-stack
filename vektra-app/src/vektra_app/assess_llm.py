@@ -101,3 +101,80 @@ def build_assess_runner(
         settings=settings,
         audit=audit,
     )
+
+
+# --- worker (Part B) ----------------------------------------------------------------------------
+
+_INSERT_TRACE = (
+    "INSERT INTO query_traces (response_id, namespace_id, steps, total_duration_ms, "
+    "chunks_retrieved, llm_model, prompt_version, created_at, pipeline) VALUES (:response_id, "
+    ":namespace_id, CAST(:steps AS jsonb), :total_duration_ms, CAST(:chunks AS jsonb), "
+    ":llm_model, :prompt_version, :created_at, :pipeline)"
+)
+
+
+class WorkerTraceWriter:
+    """``TraceWriter`` for the assess worker: raw SQL as ``vektra_assess_worker``.
+
+    The worker does not import vektra_analytics. Its role holds INSERT on the trace columns only
+    (revision 0020), and a RESTRICTIVE policy limits those rows to the assess namespace and
+    pipeline, so a trace aimed anywhere else is refused by the database, not by this code.
+    """
+
+    def __init__(self, acquire_db: Callable[[], Any]) -> None:
+        self._acquire_db = acquire_db
+
+    async def write(self, trace: QueryTrace, namespace: str) -> None:
+        import json
+
+        from sqlalchemy import text
+
+        async with self._acquire_db() as conn:
+            await conn.execute(
+                text(_INSERT_TRACE),
+                {
+                    "response_id": trace.response_id,
+                    "namespace_id": namespace,
+                    "steps": json.dumps(
+                        [
+                            {
+                                "name": s.name,
+                                "duration_ms": s.duration_ms,
+                                "metadata": s.metadata,
+                            }
+                            for s in trace.steps
+                        ]
+                    ),
+                    "total_duration_ms": trace.total_duration_ms,
+                    "chunks": json.dumps([]),
+                    "llm_model": trace.llm_model,
+                    "prompt_version": trace.prompt_version,
+                    "created_at": trace.created_at,
+                    "pipeline": trace.pipeline,
+                },
+            )
+            await conn.commit()
+
+
+def build_worker_part_b_runner(
+    settings: VektraAssessSettings,
+    *,
+    acquire_db: Callable[[], Any],
+    audit: AuditSink,
+    llm: LLMProvider | None = None,
+) -> DiscussionTurnRunner:
+    """The runner the worker uses for Part B (plan 8 pre-flight).
+
+    Its safeguard is an EXPLICIT passthrough, decided on 2026-11-05 (plan Notes): the worker's
+    import ceiling (ARCH-073) excludes Presidio and spaCy, Part B has no student-typed input (the
+    bundle only), and its output is rejected by the deterministic Part B checks (values, words,
+    labels, lexicon, tags, quotes). This is not the fail-open fallback ``build_assess_safeguard``
+    refuses: it is the worker's declared configuration, and the API keeps the fail-closed one.
+    """
+    return build_assess_runner(
+        settings,
+        safeguard=PassthroughSafeguard(),
+        trace_writer=WorkerTraceWriter(acquire_db),
+        audit=audit,
+        llm=llm,
+    )

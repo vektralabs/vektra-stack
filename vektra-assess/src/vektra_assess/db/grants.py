@@ -274,6 +274,28 @@ SEQUENCE_USAGE: Mapping[str, tuple[str, ...]] = {
     DEFINER: ("assess_audit_events_id_seq", "assess_jobs_id_seq"),
 }
 
+#: privileges on tables OUTSIDE ``assess_*`` (every other table: none at all, checked by the
+#: catalog test). The worker writes the content-free QueryTrace of Part B (plan assess-llm-runner,
+#: revision 0020): INSERT only, no SELECT, and a RESTRICTIVE RLS policy limits its rows to the
+#: reserved ``assess-discussion`` namespace and pipeline.
+QUERY_TRACE_COLUMNS = (
+    "response_id",
+    "namespace_id",
+    "steps",
+    "total_duration_ms",
+    "chunks_retrieved",
+    "llm_model",
+    "prompt_version",
+    "created_at",
+    "pipeline",
+)
+EXTERNAL: Mapping[str, Mapping[str, Privs]] = {
+    API: {},
+    WORKER: {"query_traces": {"INSERT": QUERY_TRACE_COLUMNS}},
+    DEFINER: {},
+}
+EXTERNAL_TABLES: tuple[str, ...] = ("query_traces",)
+
 #: SECURITY DEFINER functions (signature -> roles with EXECUTE). Never PUBLIC.
 FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     "get_session_material(uuid,integer)": (API,),
@@ -290,9 +312,14 @@ def render_statements() -> list[str]:
     out.append(f"REVOKE ALL ON {tables} FROM {roles}")
     out.append(f"REVOKE ALL ON SEQUENCE {', '.join(SEQUENCES)} FROM {roles}")
     out.append(f"REVOKE CREATE ON SCHEMA public FROM {roles}")
+    out.append(f"REVOKE ALL ON {', '.join(EXTERNAL_TABLES)} FROM {roles}")
     for role in ROLES:
         for table in sorted(MATRIX[role]):
             for priv, cols in sorted(MATRIX[role][table].items()):
+                col = f" ({', '.join(cols)})" if cols else ""
+                out.append(f"GRANT {priv}{col} ON {table} TO {role}")
+        for table in sorted(EXTERNAL[role]):
+            for priv, cols in sorted(EXTERNAL[role][table].items()):
                 col = f" ({', '.join(cols)})" if cols else ""
                 out.append(f"GRANT {priv}{col} ON {table} TO {role}")
         seqs = SEQUENCE_USAGE.get(role, ())

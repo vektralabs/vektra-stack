@@ -103,3 +103,31 @@ def _audit() -> Any:
         return None
 
     return audit
+
+
+def test_the_worker_part_b_runner_uses_an_explicit_passthrough() -> None:
+    from vektra_app.assess_llm import WorkerTraceWriter, build_worker_part_b_runner
+
+    r = build_worker_part_b_runner(
+        _settings(),
+        acquire_db=lambda: None,
+        audit=_audit(),
+        llm=RecordingLLMProvider([]),
+    )
+    assert isinstance(r._safeguard, PassthroughSafeguard)  # type: ignore[attr-defined]
+    assert isinstance(r._trace_writer, WorkerTraceWriter)  # type: ignore[attr-defined]
+
+
+def test_the_worker_module_does_not_pull_presidio() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, vektra_app.assess_llm as m; "
+        "m.build_worker_part_b_runner; "
+        "print([x for x in sys.modules if x.startswith(('presidio', 'spacy', 'vektra_analytics'))])"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "[]"

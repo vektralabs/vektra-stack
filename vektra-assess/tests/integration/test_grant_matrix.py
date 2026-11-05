@@ -72,7 +72,8 @@ async def grant_drift(conn) -> list[str]:
         ):
             drift.append(f"{role} can CREATE in schema public")
         for table, tcols in cols.items():
-            granted = g.MATRIX[role].get(table, {})
+            assess = table.startswith("assess_")
+            granted = (g.MATRIX if assess else g.EXTERNAL)[role].get(table, {})
             for priv in TABLE_PRIVS:
                 has = await _bool(
                     conn,
@@ -81,7 +82,7 @@ async def grant_drift(conn) -> list[str]:
                     t=table,
                     p=priv,
                 )
-                want = priv in granted and table.startswith("assess_")
+                want = priv in granted
                 if has != want:
                     drift.append(f"{role} {priv} on {table}: has={has} want={want}")
             for priv in COLUMN_PRIVS:
@@ -97,7 +98,7 @@ async def grant_drift(conn) -> list[str]:
                         p=priv,
                     )
                 }
-                if table.startswith("assess_") and priv in granted:
+                if priv in granted:
                     want_cols = (
                         set(tcols) if granted[priv] is None else set(granted[priv])
                     )

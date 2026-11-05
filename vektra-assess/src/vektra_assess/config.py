@@ -11,6 +11,7 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -291,4 +292,14 @@ class VektraAssessSettings(BaseSettings):
         True,
         alias="VEKTRA_ASSESS_STORE_TRACES",
         description="Store the runner's content-free QueryTrace per turn and per Part B (pipeline 'assess-discussion'), independent of VEKTRA_ANALYTICS store settings.",
+    )
+    llm_api_base: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_LLM_API_BASE",
+        description="API base of the discussion model (OpenAI-compatible or Ollama endpoint). A cloud key is read by litellm from its provider variable, never from this file.",
+    )
+    safeguard_mode: Literal["presidio", "none"] = Field(
+        "presidio",
+        alias="VEKTRA_ASSESS_SAFEGUARD_MODE",
+        description="Safeguard of the discussion runner in the API. 'presidio' fails startup if Presidio cannot load (no silent passthrough); 'none' must be set explicitly.",
     )

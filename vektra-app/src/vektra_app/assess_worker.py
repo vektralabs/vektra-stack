@@ -451,6 +451,11 @@ def main(bindings: Any | None = None) -> None:
     if "--check-imports" in sys.argv[1:]:
         check_imports()
         raise SystemExit(0)
+    # JSON on stderr with the assess allowlist on structlog AND stdlib records (plan
+    # assess-context A): before this the worker's stdlib INFO lines went nowhere.
+    from vektra_shared.log_safety import configure_assess_worker_logging
+
+    configure_assess_worker_logging()
     raise SystemExit(asyncio.run(_amain(bindings)))
 
 

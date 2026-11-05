@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Iterator
+from typing import Any
 
 from pdfminer.converter import TextConverter
 from pdfminer.layout import LAParams
@@ -21,9 +22,16 @@ from pdfminer.pdftypes import resolve1
 from vektra_assess.parser_protocol import Extracted, FileStatus
 from vektra_assess.parser_sidecar.text import clean
 
-# Scanned-PDF heuristic, copied from vektra_ingest/extractors/pdf.py (the ingest
-# extractor is deliberately not imported: ARCH-073, plan assess-parser Design Notes).
-_SCAN_THRESHOLD = 100  # avg chars/page below which we call it scanned
+# Scanned-PDF heuristic. NOT the ingest one (avg < 100 chars/page): ingest uses that figure to
+# decide on OCR, while REQ-101 reads any "PDF with a text layer". A character count alone cannot
+# tell a short text PDF (one line) from a scan whose scanner adds a footer ("Pag. 1/20"), so a PDF is
+# "testo non estraibile" when its sampled pages carry no visible character at all, or when they are
+# mostly page images with little text (below the ingest threshold).
+_SCAN_THRESHOLD = 100  # avg NON-WHITESPACE chars per sampled page, with page images
+_SCAN_IMAGE_SHARE = 0.5  # share of sampled pages that are page images
+_SCAN_COVERAGE = (
+    0.5  # a drawn image covering at least half the page makes it a page image
+)
 _SCAN_SAMPLE_PAGES = 5  # pages to sample for scanned detection
 
 
@@ -33,6 +41,32 @@ def _declared_pages(doc: PDFDocument) -> int | None:
     except Exception:
         return None
     return count if isinstance(count, int) and count >= 0 else None
+
+
+class _TextAndImages(TextConverter):
+    """TextConverter that also measures the largest image actually DRAWN on the page.
+
+    ``render_image`` runs for every painted image, inline or XObject, at any depth of nested Form
+    XObjects; the current figure's bbox is in page space. An image only listed in the page's
+    resources and never painted does not count, nor does a small logo (see ``_SCAN_COVERAGE``).
+    """
+
+    def __init__(self, rsrc: PDFResourceManager, out: io.StringIO) -> None:
+        super().__init__(rsrc, out, laparams=LAParams())
+        self.image_area = 0.0
+
+    def render_image(self, name: str, stream: Any) -> None:
+        fig = self.cur_item
+        self.image_area = max(self.image_area, abs(fig.width * fig.height))
+        super().render_image(name, stream)
+
+
+def _page_area(page: PDFPage) -> float:
+    try:
+        x0, y0, x1, y1 = (float(v) for v in page.mediabox)
+    except Exception:
+        return 0.0
+    return abs((x1 - x0) * (y1 - y0))
 
 
 def _pages(doc: PDFDocument) -> Iterator[PDFPage]:
@@ -53,6 +87,7 @@ def extract_pdf(data: bytes, max_pages: int, max_chars: int) -> Extracted:
 
     rsrc = PDFResourceManager()
     texts: list[str] = []
+    images: list[bool] = []
     page_no = 0
     truncated_pages = False
     try:
@@ -63,10 +98,13 @@ def extract_pdf(data: bytes, max_pages: int, max_chars: int) -> Extracted:
                 break
             page_no += 1
             out = io.StringIO()
-            conv = TextConverter(rsrc, out, laparams=LAParams())
+            conv = _TextAndImages(rsrc, out)
             PDFPageInterpreter(rsrc, conv).process_page(page)
             conv.close()
             texts.append(clean(out.getvalue()).strip())
+            if page_no <= _SCAN_SAMPLE_PAGES:
+                area = _page_area(page)
+                images.append(area > 0 and conv.image_area / area >= _SCAN_COVERAGE)
     except PDFPasswordIncorrect:
         return Extracted(FileStatus.PROTECTED, code="pdf_encrypted")
     except PDFException:
@@ -75,7 +113,9 @@ def extract_pdf(data: bytes, max_pages: int, max_chars: int) -> Extracted:
         return Extracted(FileStatus.CORRUPT, code="pdf_no_pages")
 
     sample = texts[:_SCAN_SAMPLE_PAGES]
-    if sum(len(t) for t in sample) / len(sample) < _SCAN_THRESHOLD:
+    visible = sum(len("".join(t.split())) for t in sample)
+    mostly_images = images and sum(images) / len(images) >= _SCAN_IMAGE_SHARE
+    if visible == 0 or (mostly_images and visible / len(sample) < _SCAN_THRESHOLD):
         return Extracted(
             FileStatus.NO_TEXT, pages_total=pages_total, code="pdf_scanned"
         )

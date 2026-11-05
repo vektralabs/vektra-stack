@@ -69,7 +69,7 @@ from vektra_assess.moodle.readers import (
 )
 from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
-log = structlog.get_logger()
+log = structlog.get_logger(__name__)
 
 OK = "OK"
 MISSING = "MISSING"
@@ -496,7 +496,9 @@ async def run_items(
         try:
             outcome = await check(ctx)
         except Exception as exc:
-            log.warning("setup_check_item_error", item=name, error=type(exc).__name__)
+            log.warning(
+                "setup_check_item_error", item=name, error_type=type(exc).__name__
+            )
             outcome = unverifiable("check_error")
         if outcome.result not in (OK, MISSING, UNVERIFIABLE):
             outcome = unverifiable("check_error")

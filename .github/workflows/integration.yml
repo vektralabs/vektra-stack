@@ -134,6 +134,10 @@ jobs:
               "cryptography.hazmat.primitives.asymmetric.x25519",
               "cryptography.hazmat.primitives.kdf.hkdf",
               "defusedxml.ElementTree", "html5lib", "aiosmtplib",
+              # The model context (plan assess-context): snapshot, assembly, Part A (Jinja2) and
+              # the worker-only capture must import on the production CPU too.
+              "vektra_assess.context.assemble", "vektra_assess.context.part_a",
+              "vektra_assess.context.capture.capture", "jinja2",
           ):
               importlib.import_module(name)
               print("imported", name, flush=True)
@@ -288,7 +292,7 @@ jobs:
           root = ET.parse("test-results/package-integration.xml").getroot()
           # the live-Moodle tests (-m moodle) need two Moodle sites and are run by
           # assess-moodle-contract.yml: here they SKIP by design and do not count
-          LIVE = ("test_moodle_live", "test_moodle_setup_live")
+          LIVE = ("test_moodle_live", "test_moodle_setup_live", "test_context_live")
           cases = [
               c for c in root.iter("testcase")
               if "vektra-assess.tests" in (c.get("classname") or "")

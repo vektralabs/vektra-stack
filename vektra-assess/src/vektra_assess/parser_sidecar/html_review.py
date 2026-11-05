@@ -252,3 +252,131 @@ def sanitize_review_html(data: bytes, max_chars: int) -> Extracted:
     if len(text) > max_chars:
         return Extracted(FileStatus.READ_PARTIAL, text[:max_chars], code="char_cap")
     return Extracted(FileStatus.READ, text)
+
+
+# --- allowlist extraction of one question's blocks (ADR-0032 amendment 2026-11-04) ----------------
+
+#: the blocks a caller may ask for, by the Moodle CSS class that marks them
+REVIEW_BLOCKS = {"qtext": "qtext", "response": "ablock"}
+#: removed from inside a kept block before it becomes text: everything that can carry the right
+#: answer, feedback (specific, general, per choice, per cloze gap), a grader comment or a mark
+DROP_CLASSES = frozenset(
+    {
+        "outcome",
+        "feedback",
+        "specificfeedback",
+        "generalfeedback",
+        "rightanswer",
+        "feedbackspan",
+        "feedbacktrigger",
+        "im-feedback",
+        "comment",
+        "history",
+        "grade",
+        "correctness",
+        "validationerror",
+        # correctness icons: FA <i class="icon ..."> or pix <img class="icon questioncorrectnessicon"
+        # alt="Correct">, whose alt text would otherwise become "Correct" in the response
+        "icon",
+        "questioncorrectnessicon",
+    }
+)
+
+
+def _classes(el: Any) -> set[str]:
+    return set((el.get("class") or "").split())
+
+
+def _find_block(root: Any, cls: str) -> list[Any]:
+    return [el for el in root.iter() if isinstance(el.tag, str) and cls in _classes(el)]
+
+
+def _prune(el: Any) -> None:
+    for child in list(el):
+        if not isinstance(child.tag, str):
+            continue
+        if _classes(child) & DROP_CLASSES:
+            # keep the tail text (it belongs to the parent), drop the element and its subtree
+            tail = child.tail
+            idx = list(el).index(child)
+            el.remove(child)
+            if tail:
+                if idx == 0:
+                    el.text = (el.text or "") + tail
+                else:
+                    prev = list(el)[idx - 1]
+                    prev.tail = (prev.tail or "") + tail
+            continue
+        _prune(child)
+
+
+def extract_review_block(data: bytes, block: str, max_chars: int) -> Extracted:
+    """Plain text of ONE allowlisted block of one question's review HTML, pruned of feedback.
+
+    Exactly one matching block is required: zero or several means the markup is not the shape
+    this code was verified against, and the caller falls back to structured-only (fail closed).
+    """
+    cls = REVIEW_BLOCKS.get(block)
+    if cls is None:
+        return Extracted(FileStatus.CORRUPT, code="unknown_block")
+    try:
+        source = data.decode("utf-8", errors="replace")
+        doc = html5lib.parse(source, treebuilder="etree", namespaceHTMLElements=False)
+        found = _find_block(doc, cls)
+        if len(found) != 1:
+            return Extracted(
+                FileStatus.NO_TEXT,
+                code="block_missing" if not found else "block_ambiguous",
+            )
+        el = found[0]
+        _prune(el)
+        el.tail = None
+        text = clean(_assemble(_tokens(el)))
+    except RecursionError:
+        return Extracted(FileStatus.CORRUPT, code="html_too_deep")
+    if not text.strip():
+        return Extracted(FileStatus.NO_TEXT, code="empty")
+    if len(text) > max_chars:
+        return Extracted(FileStatus.READ_PARTIAL, text[:max_chars], code="char_cap")
+    return Extracted(FileStatus.READ, text)
+
+
+def extract_review_item(data: bytes, max_chars: int) -> Extracted:
+    """Both allowlisted blocks of one question from ONE parse, as JSON ``{"qtext", "response"}``.
+
+    Each value is the block's plain text, or ``null`` when the block is missing, ambiguous or
+    empty. Each is first capped at half of ``max_chars``. JSON escaping (quotes, backslashes,
+    newlines) can still push the serialized text past the cap, and the child would then cut it
+    into unreadable JSON and the item would degrade: in that case the values are shortened to the
+    longest common length whose JSON fits, and serialized again.
+    """
+    import json
+
+    half = max(1, max_chars // 2 - 32)
+    out: dict[str, str | None] = {}
+    for block in ("qtext", "response"):
+        res = extract_review_block(data, block, half)
+        out[block] = (
+            res.text
+            if res.status in (FileStatus.READ, FileStatus.READ_PARTIAL)
+            else None
+        )
+
+    def dump(cap: int) -> str:
+        return json.dumps(
+            {k: v[:cap] if v is not None else None for k, v in out.items()},
+            ensure_ascii=False,
+        )
+
+    text = dump(half)
+    if len(text) > max_chars:
+        # the JSON length grows with the cap, so the largest fitting cap is a binary search
+        low, high = 0, half
+        while low < high:
+            mid = (low + high + 1) // 2
+            if len(dump(mid)) <= max_chars:
+                low = mid
+            else:
+                high = mid - 1
+        text = dump(low)
+    return Extracted(FileStatus.READ, text, code="review_item")

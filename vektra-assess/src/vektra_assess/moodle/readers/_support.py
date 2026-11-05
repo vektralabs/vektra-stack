@@ -23,7 +23,7 @@ from vektra_assess.moodle.client import MoodleWsClient, SiteRef
 from vektra_assess.moodle.models import SUPPORTED_BRANCHES, branch_of
 from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
-log = structlog.get_logger()
+log = structlog.get_logger(__name__)
 
 
 def reader[T](

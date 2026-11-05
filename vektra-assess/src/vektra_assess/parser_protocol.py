@@ -31,7 +31,7 @@ DEFAULT_MAX_PAGES = 50
 DEFAULT_MAX_CHARS = 200_000
 DEFAULT_TIMEOUT_MS = 10_000
 
-OPS = ("parse", "sanitize_html", "ping")
+OPS = ("parse", "sanitize_html", "review_item", "ping")
 TRANSPORT_BUSY = "BUSY"
 
 

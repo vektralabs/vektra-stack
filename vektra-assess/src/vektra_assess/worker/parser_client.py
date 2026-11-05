@@ -110,9 +110,8 @@ class SanitizeResult:
 
 
 def _violation_result(reason: str) -> ParseResult:
-    log.warning(
-        PROTOCOL_VIOLATION_CODE, reason=reason
-    )  # a fixed reason code, never content
+    # a fixed reason code, never content
+    log.warning(PROTOCOL_VIOLATION_CODE, reason_code=reason)
     return ParseResult(FileStatus.CORRUPT, code="protocol_violation")
 
 
@@ -157,6 +156,26 @@ class ParserClient:
         return SanitizeResult.of(
             await self._call("sanitize_html", html, "html", limits or self.limits)
         )
+
+    async def extract_review_item(
+        self, html: bytes, limits: Limits | None = None
+    ) -> tuple[str | None, str | None]:
+        """Question text and student response of one question's review HTML, from one sidecar
+        call (allowlist extraction). ``(None, None)`` for anything that is not the expected reply:
+        the item then degrades, it is never read as text."""
+        import json
+
+        res = await self._call("review_item", html, "html", limits or self.limits)
+        if res.status is not FileStatus.READ:
+            return None, None
+        try:
+            doc = json.loads(res.text)
+        except ValueError:
+            return None, None
+        if not isinstance(doc, dict) or set(doc) != {"qtext", "response"}:
+            return None, None
+        q, r = doc["qtext"], doc["response"]
+        return (q if isinstance(q, str) else None), (r if isinstance(r, str) else None)
 
     async def ping(self, deep: bool = False) -> float:
         """Round-trip in seconds. ``ParserUnavailableError`` unless the sidecar answers
@@ -345,7 +364,9 @@ def parser_setup_check(client: ParserClient) -> Any:
         try:
             rtt = await client.ping(deep=True)
         except ParserUnavailableError as exc:
-            log.warning("assess_parser_setup_check_failed", reason=str(exc))
+            log.warning(
+                "assess_parser_setup_check_failed", error_type=type(exc).__name__
+            )
             return missing("parser_unavailable")
         log.info("assess_parser_setup_check", round_trip_ms=int(rtt * 1000))
         return ok()

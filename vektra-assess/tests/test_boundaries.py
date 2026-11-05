@@ -61,6 +61,13 @@ def test_contract_c_covers_every_child() -> None:
 
 
 PARSER_CONTRACT = "vektra_assess.parser_sidecar imports only parser_protocol"
+CONTRACT_CTX = "only vektra_assess.worker imports vektra_assess.context.capture"
+CONTRACT_ASSEMBLY = (
+    "vektra_assess.context._assembly is private to vektra_assess.context"
+)
+CONTRACT_CTX_DEPS = (
+    "vektra_assess.context imports no retrieval stack and no HTTP client"
+)
 
 
 def test_parser_contract_forbids_every_other_assess_child() -> None:
@@ -159,6 +166,27 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
             "vektra_assess must not import from other vektra components",
         ),
         ("api/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
+        # the capture split (plan assess-context): the API-importable half of context may not
+        # reach Moodle, and nothing but the worker may import capture
+        ("context/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
+        (
+            "context/_canary.py",
+            "import vektra_assess.context.capture.selection\n",
+            CONTRACT_CTX,
+        ),
+        ("api/_canary.py", "import vektra_assess.context.capture\n", CONTRACT_CTX),
+        (
+            "api/_canary.py",
+            "import vektra_assess.context._assembly\n",
+            CONTRACT_ASSEMBLY,
+        ),
+        (
+            "worker/_canary.py",
+            "from vektra_assess.context import _assembly\n",
+            CONTRACT_ASSEMBLY,
+        ),
+        ("context/_canary.py", "import httpx\n", CONTRACT_CTX_DEPS),
+        ("context/capture/_canary.py", "import httpx\n", CONTRACT_CTX_DEPS),
         (
             "api/_canary.py",
             "import vektra_assess.worker.parser_client\n",

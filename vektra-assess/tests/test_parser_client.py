@@ -112,6 +112,27 @@ async def test_sanitize_html_op(fake: Fake) -> None:
     assert fake.requests[0]["op"] == "sanitize_html"
 
 
+async def test_review_item_op_and_reply_parsing(fake: Fake) -> None:
+    import json
+
+    fake.responder = lie(
+        lambda r: reply(r, text=json.dumps({"qtext": "Q", "response": "[x] A"}))
+    )
+    out = await client_for(fake).extract_review_item(b"<div class='qtext'>x</div>")
+    assert fake.requests[0]["op"] == "review_item" and out == ("Q", "[x] A")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["not json", '{"qtext": "Q"}', '["Q", "A"]', '{"qtext": 1, "response": null}'],
+)
+async def test_a_bad_review_item_reply_degrades_to_nothing(
+    fake: Fake, text: str
+) -> None:
+    fake.responder = lie(lambda r: reply(r, text=text))
+    assert await client_for(fake).extract_review_item(b"<p>x</p>") == (None, None)
+
+
 def lie(make: Callable[[dict[str, Any]], bytes | None]) -> Responder:
     async def responder(req: dict[str, Any], payload: bytes) -> bytes | None:
         return make(req)
@@ -181,7 +202,7 @@ async def test_malformed_reply_is_corrupt_and_never_text(fake: Fake, name: str) 
     assert res.text == "" and res.code == "protocol_violation"
     events = [e for e in logs if e["event"] == "assess_parser_protocol_violation"]
     assert len(events) == 1
-    assert set(events[0]) <= {"event", "log_level", "reason"}  # content-free
+    assert set(events[0]) <= {"event", "log_level", "reason_code"}  # content-free
     assert "exfiltrated" not in json.dumps(events)
 
 

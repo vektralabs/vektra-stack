@@ -68,7 +68,7 @@ from vektra_assess.moodle.readers import (
 from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
 from vektra_assess.moodle.shape import evidence_for
 
-log = structlog.get_logger()
+log = structlog.get_logger(__name__)
 
 MANIFEST_VERSION = 1
 #: the substring every hidden-feedback canary of the seed carries (``CANARY-GENFB-<q>-<tag>``)

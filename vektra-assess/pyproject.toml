@@ -21,6 +21,8 @@ dependencies = [
     "aiosmtplib>=3.0",
     # Prompt templates of the discussion runner (plan assess-llm-runner; ADR-0020, sandboxed).
     "jinja2>=3.1",
+    # Vektra-shipped discussion strings (llm/strings/*.yaml), safe_load only.
+    "pyyaml>=6.0",
 ]
 
 [build-system]

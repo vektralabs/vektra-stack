@@ -113,6 +113,8 @@ module = [
     "html5lib.*",
     "pdfminer",
     "pdfminer.*",
+    "yaml",
+    "yaml.*",
 ]
 ignore_missing_imports = true
 

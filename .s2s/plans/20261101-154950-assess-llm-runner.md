@@ -233,7 +233,8 @@ default is never used.
 ### D. CI-tier tests (synthetic, deterministic)
 - [x] Add `vektra-assess/tests/fakes.py`: `RecordingLLMProvider` (captures exact request bytes, scripted streams incl. slow, erroring and stalled), `ScriptedHostileLLM` (emits each forbidden pattern: fabricated values, verdicts, unresolved tags, wrong quotes, Part B grades, >120 words), `RecordingSafeguard`, `RecordingTraceWriter`, `RecordingAuditSink`; `conftest.py` imports `vektra_shared.testing.hermetic_env`
   Done 2026-11-05: `tests/fakes.py` (`RecordingLLMProvider` re-exported from vektra_shared, `TimedLLM` slow / stalled / failing before or after the first token, `ScriptedHostileLLM` + `HOSTILE` (11 forbidden classes) + `FORBIDDEN` substrings, `RecordingSafeguard` (counts `post_retrieval`, which raises), `RecordingTraceWriter`, `RecordingAuditSink`); `test_llm_runner.py` now uses them. `conftest.py` already imports `hermetic_env` (plan 1). Self-test `test_llm_fakes.py` (14): every hostile reply carries a forbidden pattern and every pattern is exercised.
-- [ ] Byte-level release test: with `ScriptedHostileLLM`, assert that the concatenated `ReleasedSegment` bytes contain 0 forbidden patterns and that no segment is yielded before its sentence passed all stages (instrumented ordering)
+- [x] Byte-level release test: with `ScriptedHostileLLM`, assert that the concatenated `ReleasedSegment` bytes contain 0 forbidden patterns and that no segment is yielded before its sentence passed all stages (instrumented ordering)
+  Done 2026-11-05: `test_llm_release.py` (15): each of the 11 hostile replies, all of them in one turn, and the same streamed one character at a time release 0 `FORBIDDEN` substrings; an instrumented gate shows every yielded segment passed the gate first and every gate input was a whole sentence; a canary (lexicon switched off) lets `Hai ragione` through, so the zero is not vacuous.
 - [ ] Canary test on plan 6's fixture matrix: run every fixture through `assemble_context` → runner with `RecordingLLMProvider`; grep request bytes, released text, QueryTrace (as stored JSON) and audit rows for every canary → 0 hits
 - [ ] Structural NFR-015 test: AST scan of `vektra_assess/llm/**` finds 0 references to `VectorStoreProvider`, `vector_store`, `post_retrieval`; `RecordingSafeguard` shows 0 `post_retrieval` calls across the suite; a RAG-ON bundle raises `RagNotAvailableError`
 - [ ] Fail-closed tests: Presidio load failure in `build_assess_safeguard` → `StartupValidationError`; `pre_query` disallow → no LLM call (recording provider count 0); `pre_response` modify → marked replacement
@@ -276,7 +277,7 @@ default is never used.
 
 ## Acceptance Criteria
 
-- [ ] Byte-capture test: 0 forbidden patterns in released bytes from `ScriptedHostileLLM`, and 0 segments released before the post-check (REQ-096, REQ-097, NFR-022 HARD on CI tier)
+- [x] Byte-capture test: 0 forbidden patterns in released bytes from `ScriptedHostileLLM`, and 0 segments released before the post-check (REQ-096, REQ-097, NFR-022 HARD on CI tier) Evidence: `test_llm_release.py`.
 - [ ] Canary matrix from plan 6: 0 hits in request bytes, released text, stored QueryTrace JSON and audit rows (NFR-017, BR-011)
 - [ ] AST check: 0 VectorStoreProvider/post_retrieval references in `vektra_assess.llm`; a RAG-ON bundle raises (NFR-015 structural evidence)
 - [ ] Core sentence + alternative clause present in 100% of scripted refusals per class × language (REQ-098)

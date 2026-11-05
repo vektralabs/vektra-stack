@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+import structlog
+
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.part_a import fmt_date, grade_text
@@ -43,6 +45,7 @@ from vektra_assess.llm.types import (
     AuditSink,
     CallOutcome,
     PartBRejectedError,
+    PriorTurn,
     ProviderCallRecord,
     ProviderOutageError,
     RagNotAvailableError,
@@ -65,6 +68,8 @@ from vektra_shared.types import (
 PIPELINE = "assess-discussion"
 ASSESS_NAMESPACE = "assess-discussion"  # reserved namespace (plan task C migration)
 KEY_SCOPE = "assess:session"
+
+log = structlog.get_logger(__name__)
 
 
 class DiscussionTurnRunner:
@@ -137,10 +142,52 @@ class DiscussionTurnRunner:
         try:
             await self._trace_writer.write(trace, ASSESS_NAMESPACE)
         except Exception as exc:
-            await self._audit(
-                "assess_trace_write_failed", {"error_type": type(exc).__name__}
-            )
+            try:
+                await self._audit(
+                    "assess_trace_write_failed", {"error_type": type(exc).__name__}
+                )
+            except Exception as audit_exc:
+                # neither failure may fail the turn: a content-free log line is the last resort
+                log.warning(
+                    "assess_trace_write_failed",
+                    error_type=type(exc).__name__,
+                    audit_error_type=type(audit_exc).__name__,
+                )
         return trace
+
+    async def _finish_failed(
+        self, gate: SentenceGate, turn: StudentTurn, steps: _Steps, t_all: float
+    ) -> None:
+        """A turn that ends in an outage after the post-check already ran: its buffered audits
+        and its content-free trace are still written before the outage propagates."""
+        for event, data in gate.audit:
+            await self._audit(event, data)
+        await self._write_trace(turn.turn_id, steps, t_all)
+
+    async def _student_history(
+        self, turn: StudentTurn, sh: Shipped
+    ) -> tuple[tuple[PriorTurn, ...], bool]:
+        """The history with every earlier STUDENT message through ``pre_query`` too, so the
+        original PII of a past message never reaches the prompt; delivered assistant text is
+        already post-checked. Returns the history and whether any message was changed."""
+        out: list[PriorTurn] = []
+        changed = False
+        for prior in turn.history:
+            if prior.role != "student":
+                out.append(prior)
+                continue
+            res = await self._safeguard.pre_query(
+                prior.text, self._context(turn.turn_index, history=True)
+            )
+            if not res.allowed:
+                text = sh.missing["replaced_by_system"]
+            elif res.modified_content is not None:
+                text = res.modified_content
+            else:
+                text = prior.text
+            changed = changed or text != prior.text
+            out.append(PriorTurn(prior.role, text))
+        return tuple(out), changed
 
     def _outage(self, rec: ProviderCallRecord) -> ProviderOutageError:
         if self._metrics is not None:
@@ -166,11 +213,13 @@ class DiscussionTurnRunner:
     # --- turns --------------------------------------------------------------------------------
 
     def _context(
-        self, turn_index: int, *, partial: bool | None = None
+        self, turn_index: int, *, partial: bool | None = None, history: bool = False
     ) -> SafeguardContext:
         meta: dict[str, object] = {"turn_index": turn_index, "pipeline": PIPELINE}
         if partial is not None:
             meta["partial"] = partial
+        if history:
+            meta["history"] = True
         # never the "admin" default: the assess turn has its own scope
         return SafeguardContext(
             namespace=ASSESS_NAMESPACE, key_scope=KEY_SCOPE, metadata=meta
@@ -182,15 +231,26 @@ class DiscussionTurnRunner:
         )
 
     async def _open_stream(
-        self, messages: list[Message], records: list[ProviderCallRecord]
-    ) -> tuple[AsyncIterator[CompletionChunk], CompletionChunk | None, datetime]:
-        """Open the provider stream and wait for its first chunk within the outage timeout."""
+        self,
+        messages: list[Message],
+        records: list[ProviderCallRecord],
+        stop: asyncio.Event | None = None,
+    ) -> tuple[AsyncIterator[CompletionChunk], CompletionChunk, datetime] | None:
+        """Open the provider stream and wait for its first non-empty chunk.
+
+        ONE outage deadline covers both the open and the first token (an empty role chunk does
+        not reset it), and a stream that ends before any text is an outage, never an empty
+        reply. ``None`` means the caller's ``stop`` won first: the stream is already closed and
+        a ``cancelled`` record appended.
+        """
         s = self._settings
         kwargs: dict[str, object] = {}
         if s.llm_seed is not None:
             kwargs["seed"] = s.llm_seed
         started = _now()
-        try:
+        holder: list[AsyncIterator[CompletionChunk]] = []
+
+        async def acquire() -> CompletionChunk | None:
             stream = await self._llm.stream(
                 messages,
                 self.model,
@@ -198,18 +258,51 @@ class DiscussionTurnRunner:
                 max_tokens=s.llm_max_tokens,
                 **kwargs,
             )
-            it = stream.__aiter__()
-            first = await asyncio.wait_for(anext(it, None), timeout=s.outage_timeout_s)
-        except TimeoutError:
-            rec = ProviderCallRecord(started, None, _now(), "first_token_timeout")
-            records.append(rec)
-            raise self._outage(rec) from None
+            holder.append(stream.__aiter__())
+            while True:
+                chunk = await anext(holder[0], None)
+                if chunk is None or chunk.content:
+                    return chunk
+
+        async def give_up(outcome: CallOutcome, error: str | None = None) -> None:
+            if holder:
+                await _close(holder[0])
+            records.append(ProviderCallRecord(started, None, _now(), outcome, error))
+
+        if stop is not None and stop.is_set():
+            await give_up("cancelled")
+            return None
+        task = asyncio.ensure_future(acquire())
+        stopper = asyncio.ensure_future(stop.wait()) if stop is not None else None
+        waits: set[asyncio.Future[Any]] = {task} | ({stopper} if stopper else set())
+        try:
+            done, _ = await asyncio.wait(
+                waits, timeout=s.outage_timeout_s, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            await _cancel(task)
+            await give_up("cancelled")
+            raise
+        finally:
+            if stopper is not None:
+                stopper.cancel()
+        if task not in done:
+            await _cancel(task)
+            if stopper is not None and stopper in done:
+                await give_up("cancelled")
+                return None
+            await give_up("first_token_timeout")
+            raise self._outage(records[-1]) from None
+        try:
+            first = task.result()
         # any provider failure is an outage record, never its text
         except Exception as exc:
-            rec = ProviderCallRecord(started, None, _now(), "error", type(exc).__name__)
-            records.append(rec)
-            raise self._outage(rec) from None
-        return it, first, started
+            await give_up("error", type(exc).__name__)
+            raise self._outage(records[-1]) from None
+        if first is None:
+            await give_up("error", "EmptyStream")
+            raise self._outage(records[-1]) from None
+        return holder[0], first, started
 
     async def _release(
         self, unit: Unit, gate: SentenceGate, turn_index: int
@@ -279,10 +372,14 @@ class DiscussionTurnRunner:
                 seg = ReleasedSegment(sh.unsupported_language)
                 released.append(seg)
                 yield seg
-            student_text = pre.modified_content or turn.text  # anonymised text, if any
+            # anonymised text, if any (an empty rewrite is a rewrite, not "no change")
+            student_text = (
+                pre.modified_content if pre.modified_content is not None else turn.text
+            )
             t = time.monotonic()
+            history, history_changed = await self._student_history(turn, sh)
             head, past, tail = self._renderer.turn_parts(
-                bundle, turn.history, student_text, language
+                bundle, history, student_text, language
             )
             prompt = fit(
                 head,
@@ -299,64 +396,83 @@ class DiscussionTurnRunner:
                 prompt_tokens=prompt.prompt_tokens,
                 history_kept=prompt.history_kept,
                 history_dropped=prompt.history_dropped,
+                history_anonymised=history_changed,
             )
             t_llm = time.monotonic()
-            it, first, started = await self._open_stream(prompt.messages, records)
-            first_at = _now()
-            first_token_ms = int((time.monotonic() - t_llm) * 1000)
-            buf = first.content if first is not None else ""
-            completion = buf
-            outcome: CallOutcome = "ok"
-            waiter = _StopWaiter(stop)
-            try:
-                while True:
-                    if stop is not None and stop.is_set():
-                        outcome = "cancelled"
-                        break
-                    try:
-                        # only the provider's own failure is an outage: a bug in the gate or
-                        # the safeguard below propagates as itself (REQ-086 must not fire)
-                        chunk = await waiter.next(it)
-                    except Exception as exc:
-                        rec = ProviderCallRecord(
-                            started, first_at, _now(), "error", type(exc).__name__
-                        )
-                        records.append(rec)
-                        raise self._outage(rec) from None
-                    if chunk is _STOPPED:
-                        outcome = "cancelled"
-                        break
-                    if chunk is None:
-                        break
-                    assert isinstance(chunk, CompletionChunk)
-                    completion += chunk.content
-                    buf += chunk.content
-                    done, buf = split(buf)
+            opened = await self._open_stream(prompt.messages, records, stop)
+            if opened is None:  # stopped before the first token: nothing was released
+                interrupted = True
+                steps.add("llm_call", t_llm, completion_tokens=0, outcome="cancelled")
+            else:
+                it, first, started = opened
+                first_at = _now()
+                first_token_ms = int((time.monotonic() - t_llm) * 1000)
+                buf = ""
+                outcome: CallOutcome = "ok"
+                waiter = _StopWaiter(stop)
+                chunk: CompletionChunk | object | None = first
+                try:
+                    while True:
+                        if chunk is None:
+                            break
+                        assert isinstance(chunk, CompletionChunk)
+                        completion += chunk.content
+                        buf += chunk.content
+                        done, buf = split(buf)
+                        for sentence in done:
+                            for unit in gate.feed(sentence):
+                                if stop is not None and stop.is_set():
+                                    break
+                                seg = await self._release(unit, gate, turn.turn_index)
+                                released.append(seg)
+                                yield seg
+                        if stop is not None and stop.is_set():
+                            outcome = "cancelled"
+                            break
+                        try:
+                            # only the provider's own failure is an outage: a bug in the gate
+                            # or the safeguard propagates as itself (REQ-086 must not fire); a
+                            # stream that stalls is bounded by the outage timeout
+                            chunk = await waiter.next(
+                                it, timeout=self._settings.outage_timeout_s
+                            )
+                        except Exception as exc:
+                            stall = isinstance(exc, TimeoutError)
+                            rec = ProviderCallRecord(
+                                started,
+                                first_at,
+                                _now(),
+                                "error",
+                                "StreamStall" if stall else type(exc).__name__,
+                            )
+                            records.append(rec)
+                            await self._finish_failed(gate, turn, steps, t_all)
+                            raise self._outage(rec) from None
+                        if chunk is _STOPPED:
+                            outcome = "cancelled"
+                            break
+                finally:
+                    waiter.close()
+                    await _close(it)  # the provider stream is closed on every path
+                records.append(ProviderCallRecord(started, first_at, _now(), outcome))
+                steps.add(
+                    "llm_call",
+                    t_llm,
+                    first_token_ms=first_token_ms,
+                    completion_tokens=(completion_tokens := self._count(completion)),
+                    outcome=outcome,
+                )
+                if outcome == "cancelled":
+                    interrupted = (
+                        True  # the unfinished sentence in the buffer is dropped
+                    )
+                else:
+                    done, _ = split(buf, final=True)
                     for sentence in done:
                         for unit in gate.feed(sentence):
                             seg = await self._release(unit, gate, turn.turn_index)
                             released.append(seg)
                             yield seg
-            finally:
-                waiter.close()
-                await _close(it)  # the provider stream is closed on every path
-            records.append(ProviderCallRecord(started, first_at, _now(), outcome))
-            steps.add(
-                "llm_call",
-                t_llm,
-                first_token_ms=first_token_ms,
-                completion_tokens=(completion_tokens := self._count(completion)),
-                outcome=outcome,
-            )
-            if outcome == "cancelled":
-                interrupted = True  # the unfinished sentence in the buffer is dropped
-            else:
-                done, _ = split(buf, final=True)
-                for sentence in done:
-                    for unit in gate.feed(sentence):
-                        seg = await self._release(unit, gate, turn.turn_index)
-                        released.append(seg)
-                        yield seg
 
         delivered = " ".join(s.text for s in released)
         steps.add_measured(
@@ -401,9 +517,20 @@ class DiscussionTurnRunner:
     ) -> tuple[str, tuple[str, ...], str]:
         """One generation: (checked text, violation codes, raw completion)."""
         messages = self._renderer.part_b_messages(bundle, language)
-        it, first, started = await self._open_stream(messages, records)
+        # the same budget as a turn: an oversized prompt fails before generation, not inside it
+        messages = fit(
+            messages,
+            [],
+            [],
+            count=lambda t: self._llm.count_tokens(t, self.model),
+            context_window=self._settings.llm_context_window,
+            max_tokens=self._settings.llm_max_tokens,
+        ).messages
+        opened = await self._open_stream(messages, records)
+        assert opened is not None  # no stop event: only an outage ends it early
+        it, first, started = opened
         first_at = _now()
-        raw = first.content if first is not None else ""
+        raw = first.content
         waiter = _StopWaiter(None)
         try:
             while True:
@@ -491,6 +618,8 @@ class DiscussionTurnRunner:
                 break  # no time left for a second generation
             t_attempt = time.monotonic()
             text, codes, raw = await self._part_b_once(bundle, language, records)
+            if self._metrics is not None:  # every completed call, accepted or rejected
+                self._metrics.call_outcome(records[-1].outcome)
             steps.add(
                 "llm_call",
                 t_attempt,
@@ -578,16 +707,18 @@ class _StopWaiter:
         waits: set[asyncio.Future[Any]] = {nxt}
         if self._stopped is not None:
             waits.add(self._stopped)
-        done, _ = await asyncio.wait(
-            waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
-        )
+        try:
+            done, _ = await asyncio.wait(
+                waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            await _cancel(nxt)  # the read stops before the caller closes the stream
+            raise
         if nxt in done:
             return nxt.result()
         # let the cancelled read finish unwinding, so the stream can then really be closed
         # (closing an async generator that is still running raises and leaves it open)
-        nxt.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await nxt
+        await _cancel(nxt)
         if self._stopped is not None and self._stopped in done:
             return _STOPPED
         raise TimeoutError("no chunk within the stall timeout")
@@ -595,6 +726,13 @@ class _StopWaiter:
     def close(self) -> None:
         if self._stopped is not None:
             self._stopped.cancel()
+
+
+async def _cancel(task: asyncio.Future[Any]) -> None:
+    """Cancel a pending read and wait until it has really stopped."""
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
 
 
 async def _close(it: AsyncIterator[CompletionChunk]) -> None:

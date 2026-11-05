@@ -154,3 +154,8 @@ def check(sentence: str, index: dict[str, ItemValues]) -> ValueCheck:
         last = e
     out.append(sentence[last:])
     return ValueCheck("".join(out), len(merged))
+
+
+def asserts_any_value(text: str) -> bool:
+    """Part B (REQ-094) allows no grade value at all: any grade-bound number or any ratio."""
+    return bool(_RATIO.search(text) or _AFTER.search(text) or _BEFORE.search(text))

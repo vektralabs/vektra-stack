@@ -61,6 +61,7 @@ from vektra_shared.errors import (
     http_status_for,
 )
 from vektra_shared.namespace import (
+    refuse_reserved_namespace,
     resolve_citations_enabled,
     resolve_grounding_mode,
     resolve_show_sources,
@@ -379,6 +380,7 @@ async def trigger_ingest(
     the ingest pipeline with course-scoped metadata. Without a URL,
     returns the enriched metadata for manual ingestion via /api/v1/ingest.
     """
+    refuse_reserved_namespace(req.namespace)
     metadata = service.build_ingest_metadata(req)
 
     if req.document_url:

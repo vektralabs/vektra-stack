@@ -51,6 +51,7 @@ from vektra_shared.errors import (
     ErrorResponse,
     http_status_for,
 )
+from vektra_shared.namespace import refuse_reserved_namespace
 from vektra_shared.types import HIDDEN_SOURCE_KEY
 
 log = structlog.get_logger(__name__)
@@ -255,6 +256,7 @@ async def ingest(
     # Form field overrides query param when explicitly provided
     if namespace_form is not None:
         namespace = namespace_form
+    refuse_reserved_namespace(namespace)
 
     # Before reading the upload: a malformed metadata field is the caller's
     # mistake and costs nothing to reject early.
@@ -419,6 +421,7 @@ async def batch_ingest(
     (FEAT-026); a 422 rejects the whole batch rather than ingesting some of
     the files without the visibility flag the caller asked for.
     """
+    refuse_reserved_namespace(namespace)
     extra_metadata = _parse_metadata_form(metadata)
 
     if not files:

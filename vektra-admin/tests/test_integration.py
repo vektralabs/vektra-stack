@@ -1072,3 +1072,20 @@ async def test_namespace_config_patch_rejects_citations_enabled_non_bool(
     assert resp.status_code == 400, resp.text
     err = resp.json()["error"]
     assert err["code"] == "ERR-ADMIN-007"
+
+
+async def test_namespace_config_patch_refuses_the_reserved_assess_namespace(
+    client, bootstrap_key, fresh_engine
+):
+    """assess-discussion (revision 0019) holds assess traces only: its config is not writable."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    before = await _read_namespace_config(fresh_engine, "assess-discussion")
+    resp = await client.patch(
+        "/api/v1/admin/namespaces/assess-discussion/config",
+        json={"grounding_mode": "hybrid"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["code"] == "ERR-NAMESPACE-001"
+    await asyncio.sleep(0.2)
+    assert await _read_namespace_config(fresh_engine, "assess-discussion") == before

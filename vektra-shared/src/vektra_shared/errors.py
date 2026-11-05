@@ -127,6 +127,9 @@ ERR_AUTH_004 = "ERR-AUTH-004"  # Rate limit exceeded
 # Quota errors (ARCH-047)
 ERR_QUOTA_001 = "ERR-QUOTA-001"  # Namespace quota exceeded
 
+# Namespace errors
+ERR_NAMESPACE_001 = "ERR-NAMESPACE-001"  # Reserved namespace: no content may be written
+
 # Analytics errors (ARCH-041)
 ERR_ANALYTICS_001 = "ERR-ANALYTICS-001"  # Analytics service not available
 ERR_ANALYTICS_002 = "ERR-ANALYTICS-002"  # Trace not found
@@ -184,6 +187,7 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_AUTH_003: 403,
     ERR_AUTH_004: 429,
     ERR_QUOTA_001: 422,
+    ERR_NAMESPACE_001: 403,
     ERR_INGEST_002: 413,  # Payload Too Large
     ERR_QUERY_003: 422,
     ERR_ANALYTICS_002: 404,
@@ -343,4 +347,13 @@ def service_initializing(request_id: UUID | None = None) -> ErrorResponse:
         message="The service is still initializing.",
         remediation="Retry shortly; the service is starting up.",
         request_id=request_id or uuid4(),
+    )
+
+
+def namespace_reserved(namespace: str) -> ErrorResponse:
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_NAMESPACE_001,
+        message=f"Namespace '{namespace}' is reserved and cannot hold content or be configured.",
+        remediation="Use a different namespace; reserved namespaces are managed by Vektra.",
     )

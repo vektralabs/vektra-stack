@@ -806,3 +806,48 @@ async def test_batch_ingest_rejects_bad_metadata_for_the_whole_request():
 
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "ERR-INGEST-005"
+
+
+# ---------------------------------------------------------------------------
+# Reserved namespace (plan assess-llm-runner, task C: revision 0019)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "files", "params", "data"),
+    [
+        (
+            "/api/v1/ingest",
+            {"file": ("d.pdf", b"%PDF-1.4 a", "application/pdf")},
+            {"namespace": "assess-discussion"},
+            None,
+        ),
+        (
+            "/api/v1/ingest",
+            {"file": ("d.pdf", b"%PDF-1.4 a", "application/pdf")},
+            None,
+            {"namespace_form": "Assess-Discussion"},
+        ),
+        (
+            "/api/v1/ingest/batch",
+            [("files", ("d.pdf", b"%PDF-1.4 a", "application/pdf"))],
+            {"namespace": "assess-discussion"},
+            None,
+        ),
+    ],
+)
+async def test_the_reserved_assess_namespace_is_refused(url, files, params, data):
+    app = _make_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            url,
+            files=files,
+            params=params,
+            data=data,
+            headers={"Authorization": "Bearer token"},
+        )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "ERR-NAMESPACE-001"

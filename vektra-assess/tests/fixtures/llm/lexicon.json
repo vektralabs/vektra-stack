@@ -1,0 +1,75 @@
+{
+  "hits": {
+    "verdict": [
+      "Hai ragione, il docente doveva darti di più.",
+      "Hai torto su questo punto.",
+      "Il tuo voto è troppo basso rispetto alla risposta.",
+      "Secondo me la valutazione è ingiusta.",
+      "Il docente ha sbagliato a toglierti quel punto.",
+      "Avresti meritato almeno un 7.",
+      "You are right, that is unfair.",
+      "Your grade is too harsh for this answer.",
+      "The teacher was wrong here."
+    ],
+    "merit": [
+      "Il tuo è un argomento forte.",
+      "La tua obiezione è molto convincente.",
+      "Ottimo argomento, davvero.",
+      "That is a strong argument.",
+      "You make a compelling case."
+    ],
+    "estimate": [
+      "Probabilmente otterrai un voto più alto all'orale.",
+      "All'orale recupererai senz'altro.",
+      "Il tuo voto potrebbe salire dopo la discussione.",
+      "La mia stima è che passerai.",
+      "You will probably pass the oral.",
+      "Your grade could go up after this."
+    ],
+    "grade_change": [
+      "Il docente potrebbe alzare il voto.",
+      "Il punteggio verrà rivisto dopo l'orale.",
+      "Ti daranno due punti in più.",
+      "The teacher may raise your grade.",
+      "Your mark will be revised."
+    ],
+    "teacher_intent": [
+      "Il docente voleva che tu citassi il teorema.",
+      "La professoressa si aspettava una dimostrazione.",
+      "L'intenzione del docente era verificare la sintassi.",
+      "The teacher wanted you to cite the theorem.",
+      "The instructor expected a proof."
+    ],
+    "person": [
+      "Sei molto brava in questa materia.",
+      "Sei stato superficiale.",
+      "Non sei portato per l'algebra.",
+      "You are really smart.",
+      "You're careless with signs."
+    ],
+    "tone": [
+      "Era una domanda banale.",
+      "Ovviamente la risposta è la B.",
+      "Era facile vederlo.",
+      "This was trivial.",
+      "Obviously you missed the sign."
+    ]
+  },
+  "clean": [
+    "Il tuo argomento è pertinente alla [Domanda 2].",
+    "Nella [Domanda 2] hai scritto che la derivata è nulla.",
+    "Il Commento del docente dice: \"manca la conclusione\".",
+    "Ecco i fatti coerenti con il tuo punto e quelli in tensione.",
+    "Registro il punto per l'orale.",
+    "La mia lettura (da verificare all'orale) è che manchi un passaggio.",
+    "Puoi chiedere chiarimenti al docente durante l'orale.",
+    "La risposta descrive due casi su tre.",
+    "Il criterio riguarda la chiarezza dell'esposizione.",
+    "Your argument relates to [Domanda 1].",
+    "In [Domanda 1] you described the loop condition.",
+    "I have recorded the point for the oral discussion.",
+    "Here are the facts consistent with your point and those in tension.",
+    "Il voto registrato è quello della pagina di revisione.",
+    "Vuoi rivedere la tua risposta alla domanda 3?"
+  ]
+}

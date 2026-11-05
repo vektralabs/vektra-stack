@@ -13,12 +13,10 @@ from __future__ import annotations
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.bundle import ContextBundle
+from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
 from vektra_assess.llm.prompts import PromptRenderer
 from vektra_assess.llm.types import AuditSink, RagNotAvailableError, TraceWriter
 from vektra_shared.protocols import LLMProvider, SafeguardHook
-
-# until the post-check lexicon exists (task B), the renderer is versioned with this placeholder
-_LEXICON_VERSION = "none"
 
 
 class DiscussionTurnRunner:
@@ -38,7 +36,7 @@ class DiscussionTurnRunner:
         self._trace_writer = trace_writer
         self._settings = settings
         self._audit = audit
-        self._renderer = renderer or PromptRenderer(_LEXICON_VERSION)
+        self._renderer = renderer or PromptRenderer(LEXICON_VERSION)
 
     @property
     def model(self) -> str:

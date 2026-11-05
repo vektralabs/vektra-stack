@@ -195,7 +195,8 @@ default is never used.
 ### B. Post-check and behaviour strings
 - [x] Implement `llm/postcheck/sentences.py` (segmenter aware of decimals, `p.12`, `3.5/10`, tags, quotes) with a fixture set of math/numerical and page-reference text
   Done 2026-11-05: incremental `split(buffer, final)` (stateless rescan: the caller keeps the rest); holds a trailing point, open quotes and open tags; a quoted sentence closes ours only when a capital follows. Fixture set `tests/fixtures/llm/sentences.json` (20 cases: decimals, `3.5/10`, `p.12`, matrices, formulas, quotes, markers, IT/EN abbreviations), each also fed one character at a time. Tests: `test_llm_sentences.py` (43).
-- [ ] Implement `postcheck/markers.py` (CLASS and PUNTO_CONTESTATO grammar; strip; validate labels against the bundle label index; drop and audit invalid)
+- [x] Implement `postcheck/markers.py` (CLASS and PUNTO_CONTESTATO grammar; strip; validate labels against the bundle label index; drop and audit invalid)
+  Done 2026-11-05: `markers.extract(sentence, labels) -> Markers(text, behaviour_class, contest, dropped)`; codes `marker_class_unknown`, `marker_contest_label_unknown`, `marker_contest_malformed` are what the runner audits (never the model's label text). Only `CLASS` and `PUNTO_CONTESTATO` are markers: a matrix `[[1, 2], [3, 4]]` stays text. Tests: `test_llm_markers.py` (15).
 - [ ] Implement `postcheck/values.py` (scoped grade/mark/point/level patterns IT+EN; compare with the cited item; fixed replacement string; mark)
 - [ ] Implement `postcheck/citations.py` (tag resolution; `[Materiale:]` always removed in v1) and `postcheck/feedback_quote.py` (exact-substring rule)
 - [ ] Implement `postcheck/lexicon.py` (verdict, merit, estimate, grade-change, teacher-intent, person-directed judgement and sarcasm lists IT+EN; `LEXICON_VERSION`); a replacement emits the BR-009 notice and the content-free `grade_claim_replaced` audit event

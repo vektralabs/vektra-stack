@@ -1,0 +1,802 @@
+[
+{
+"text": "Perché ho perso punti nella domanda 3?",
+"expect": "it"
+},
+{
+"text": "Non capisco il commento del docente sulla seconda domanda.",
+"expect": "it"
+},
+{
+"text": "Mi spieghi cosa manca nella mia risposta?",
+"expect": "it"
+},
+{
+"text": "Secondo me la risposta era giusta.",
+"expect": "it"
+},
+{
+"text": "Quale parte della dimostrazione è incompleta?",
+"expect": "it"
+},
+{
+"text": "Posso sapere perché il criterio 2 ha quel livello?",
+"expect": "it"
+},
+{
+"text": "Grazie, ora è più chiaro.",
+"expect": "it"
+},
+{
+"text": "Vorrei discutere la domanda sulle matrici.",
+"expect": "it"
+},
+{
+"text": "Non sono d'accordo con la valutazione della domanda 4.",
+"expect": "it"
+},
+{
+"text": "Che cosa intendeva il docente con \"manca la conclusione\"?",
+"expect": "it"
+},
+{
+"text": "Ho scritto la formula giusta ma il risultato è sbagliato?",
+"expect": "it"
+},
+{
+"text": "Puoi riassumere i punti da rivedere?",
+"expect": "it"
+},
+{
+"text": "Nella consegna ho spiegato tutto a pagina 3.",
+"expect": "it"
+},
+{
+"text": "Qual è la differenza tra il livello 2 e il livello 3?",
+"expect": "it"
+},
+{
+"text": "Mi sento molto giù per questo voto.",
+"expect": "it"
+},
+{
+"text": "Ok, passiamo alla prossima domanda.",
+"expect": "it"
+},
+{
+"text": "Non ho capito la tua risposta.",
+"expect": "it"
+},
+{
+"text": "La mia risposta alla domanda 1 era la B.",
+"expect": "it"
+},
+{
+"text": "Come posso prepararmi per l'orale?",
+"expect": "it"
+},
+{
+"text": "Il codice che ho scritto funziona, perché è segnato sbagliato?",
+"expect": "it"
+},
+{
+"text": "Ciao, vorrei capire il voto complessivo.",
+"expect": "it"
+},
+{
+"text": "Mi dici se la mia soluzione è corretta?",
+"expect": "it"
+},
+{
+"text": "Ho dimenticato un passaggio nel calcolo?",
+"expect": "it"
+},
+{
+"text": "Cosa significa che la risposta è parzialmente corretta?",
+"expect": "it"
+},
+{
+"text": "È possibile che ci sia un errore nella correzione?",
+"expect": "it"
+},
+{
+"text": "Puoi ripetere il commento del docente?",
+"expect": "it"
+},
+{
+"text": "Non trovo la domanda sul grafo.",
+"expect": "it"
+},
+{
+"text": "Scusa, intendevo la domanda 5.",
+"expect": "it"
+},
+{
+"text": "Quindi dovrei rivedere la parte sulla complessità?",
+"expect": "it"
+},
+{
+"text": "Il mio ragionamento era diverso da quello atteso.",
+"expect": "it"
+},
+{
+"text": "Ho usato un metodo alternativo, va bene lo stesso?",
+"expect": "it"
+},
+{
+"text": "Grazie mille per la spiegazione.",
+"expect": "it"
+},
+{
+"text": "Sono confuso sul criterio della chiarezza.",
+"expect": "it"
+},
+{
+"text": "Nella seconda parte ho citato il teorema di Bayes.",
+"expect": "it"
+},
+{
+"text": "Dove ho sbagliato nella domanda 6?",
+"expect": "it"
+},
+{
+"text": "La consegna era in ritardo, conta qualcosa?",
+"expect": "it"
+},
+{
+"text": "Il docente ha detto che mancava la bibliografia.",
+"expect": "it"
+},
+{
+"text": "Vorrei registrare un punto per l'orale.",
+"expect": "it"
+},
+{
+"text": "Mi puoi mostrare la domanda 2 di nuovo?",
+"expect": "it"
+},
+{
+"text": "Perché la risposta corretta non è visibile?",
+"expect": "it"
+},
+{
+"text": "Ho risposto in modo incompleto?",
+"expect": "it"
+},
+{
+"text": "Questa parte non mi è chiara per niente.",
+"expect": "it"
+},
+{
+"text": "Va bene, ho capito il punto.",
+"expect": "it"
+},
+{
+"text": "Sì, confermo che contesto la domanda 3.",
+"expect": "it"
+},
+{
+"text": "No, non era quello che intendevo.",
+"expect": "it"
+},
+{
+"text": "Ma la mia risposta non è uguale a quella del libro?",
+"expect": "it"
+},
+{
+"text": "In che senso il livello è basso?",
+"expect": "it"
+},
+{
+"text": "Posso chiedere al docente di rivedere?",
+"expect": "it"
+},
+{
+"text": "La tabella nel mio file è a pagina 7.",
+"expect": "it"
+},
+{
+"text": "Ho calcolato la media e viene 4,5.",
+"expect": "it"
+},
+{
+"text": "Il grafico era nel secondo file.",
+"expect": "it"
+},
+{
+"text": "Che cosa devo portare all'orale?",
+"expect": "it"
+},
+{
+"text": "Credo di aver frainteso la domanda.",
+"expect": "it"
+},
+{
+"text": "Il testo della domanda era ambiguo secondo me.",
+"expect": "it"
+},
+{
+"text": "Ho dimostrato il lemma in un altro modo.",
+"expect": "it"
+},
+{
+"text": "Spiegami meglio il criterio 1 per favore.",
+"expect": "it"
+},
+{
+"text": "La risposta B e la risposta C mi sembravano uguali.",
+"expect": "it"
+},
+{
+"text": "Non so da dove iniziare.",
+"expect": "it"
+},
+{
+"text": "Ci sono altri commenti del docente?",
+"expect": "it"
+},
+{
+"text": "Mi aiuti a capire dove ho perso tempo?",
+"expect": "it"
+},
+{
+"text": "Ho scritto troppo poco nella domanda aperta?",
+"expect": "it"
+},
+{
+"text": "Per me la consegna era completa.",
+"expect": "it"
+},
+{
+"text": "Questo esercizio l'avevo fatto anche a lezione.",
+"expect": "it"
+},
+{
+"text": "Il punteggio massimo era 10?",
+"expect": "it"
+},
+{
+"text": "La seconda domanda chiedeva una definizione.",
+"expect": "it"
+},
+{
+"text": "Voglio solo capire, non contestare.",
+"expect": "it"
+},
+{
+"text": "Il mio collega ha avuto un voto diverso, perché?",
+"expect": "it"
+},
+{
+"text": "Ho allegato il file sbagliato?",
+"expect": "it"
+},
+{
+"text": "Grazie, alla prossima.",
+"expect": "it"
+},
+{
+"text": "Quindi il problema è nella notazione?",
+"expect": "it"
+},
+{
+"text": "Why did I lose points on question 3?",
+"expect": "en"
+},
+{
+"text": "I don't understand the teacher's comment on the second question.",
+"expect": "en"
+},
+{
+"text": "Can you explain what is missing in my answer?",
+"expect": "en"
+},
+{
+"text": "I think my answer was right.",
+"expect": "en"
+},
+{
+"text": "Which part of the proof is incomplete?",
+"expect": "en"
+},
+{
+"text": "Why does criterion 2 have that level?",
+"expect": "en"
+},
+{
+"text": "Thanks, it is clearer now.",
+"expect": "en"
+},
+{
+"text": "I would like to discuss the question about matrices.",
+"expect": "en"
+},
+{
+"text": "I disagree with the assessment of question 4.",
+"expect": "en"
+},
+{
+"text": "What did the teacher mean by \"missing conclusion\"?",
+"expect": "en"
+},
+{
+"text": "I wrote the right formula but the result is wrong?",
+"expect": "en"
+},
+{
+"text": "Can you summarise the points to review?",
+"expect": "en"
+},
+{
+"text": "In my submission I explained everything on page 3.",
+"expect": "en"
+},
+{
+"text": "What is the difference between level 2 and level 3?",
+"expect": "en"
+},
+{
+"text": "I feel really down about this grade.",
+"expect": "en"
+},
+{
+"text": "Ok, let's move to the next question.",
+"expect": "en"
+},
+{
+"text": "I did not understand your reply.",
+"expect": "en"
+},
+{
+"text": "My answer to question 1 was B.",
+"expect": "en"
+},
+{
+"text": "How can I prepare for the oral?",
+"expect": "en"
+},
+{
+"text": "The code I wrote works, why is it marked wrong?",
+"expect": "en"
+},
+{
+"text": "Hi, I would like to understand the overall grade.",
+"expect": "en"
+},
+{
+"text": "Can you tell me if my solution is correct?",
+"expect": "en"
+},
+{
+"text": "Did I forget a step in the calculation?",
+"expect": "en"
+},
+{
+"text": "What does it mean that the answer is partially correct?",
+"expect": "en"
+},
+{
+"text": "Is it possible that there is a mistake in the marking?",
+"expect": "en"
+},
+{
+"text": "Can you repeat the teacher's comment?",
+"expect": "en"
+},
+{
+"text": "I can't find the question about the graph.",
+"expect": "en"
+},
+{
+"text": "Sorry, I meant question 5.",
+"expect": "en"
+},
+{
+"text": "So I should review the part on complexity?",
+"expect": "en"
+},
+{
+"text": "My reasoning was different from the expected one.",
+"expect": "en"
+},
+{
+"text": "I used an alternative method, is that fine?",
+"expect": "en"
+},
+{
+"text": "Thank you very much for the explanation.",
+"expect": "en"
+},
+{
+"text": "I am confused about the clarity criterion.",
+"expect": "en"
+},
+{
+"text": "In the second part I cited Bayes' theorem.",
+"expect": "en"
+},
+{
+"text": "Where did I go wrong in question 6?",
+"expect": "en"
+},
+{
+"text": "The submission was late, does that matter?",
+"expect": "en"
+},
+{
+"text": "The teacher said the bibliography was missing.",
+"expect": "en"
+},
+{
+"text": "I want to record a point for the oral.",
+"expect": "en"
+},
+{
+"text": "Can you show me question 2 again?",
+"expect": "en"
+},
+{
+"text": "Why is the correct answer not visible?",
+"expect": "en"
+},
+{
+"text": "Did I answer incompletely?",
+"expect": "en"
+},
+{
+"text": "This part is not clear to me at all.",
+"expect": "en"
+},
+{
+"text": "Fine, I got the point.",
+"expect": "en"
+},
+{
+"text": "Yes, I confirm that I contest question 3.",
+"expect": "en"
+},
+{
+"text": "No, that is not what I meant.",
+"expect": "en"
+},
+{
+"text": "But isn't my answer the same as the one in the book?",
+"expect": "en"
+},
+{
+"text": "In what sense is the level low?",
+"expect": "en"
+},
+{
+"text": "Can I ask the teacher to review it?",
+"expect": "en"
+},
+{
+"text": "The table in my file is on page 7.",
+"expect": "en"
+},
+{
+"text": "I computed the average and it is 4.5.",
+"expect": "en"
+},
+{
+"text": "The chart was in the second file.",
+"expect": "en"
+},
+{
+"text": "What should I bring to the oral?",
+"expect": "en"
+},
+{
+"text": "I think I misread the question.",
+"expect": "en"
+},
+{
+"text": "The text of the question was ambiguous in my opinion.",
+"expect": "en"
+},
+{
+"text": "I proved the lemma in a different way.",
+"expect": "en"
+},
+{
+"text": "Please explain criterion 1 better.",
+"expect": "en"
+},
+{
+"text": "Answers B and C looked the same to me.",
+"expect": "en"
+},
+{
+"text": "I don't know where to start.",
+"expect": "en"
+},
+{
+"text": "Are there other comments from the teacher?",
+"expect": "en"
+},
+{
+"text": "Can you help me see where I lost time?",
+"expect": "en"
+},
+{
+"text": "Did I write too little in the open question?",
+"expect": "en"
+},
+{
+"text": "For me the submission was complete.",
+"expect": "en"
+},
+{
+"text": "We had done this exercise in class too.",
+"expect": "en"
+},
+{
+"text": "Was the maximum score 10?",
+"expect": "en"
+},
+{
+"text": "The second question asked for a definition.",
+"expect": "en"
+},
+{
+"text": "I just want to understand, not to contest.",
+"expect": "en"
+},
+{
+"text": "My classmate got a different grade, why?",
+"expect": "en"
+},
+{
+"text": "Did I attach the wrong file?",
+"expect": "en"
+},
+{
+"text": "Thanks, see you next time.",
+"expect": "en"
+},
+{
+"text": "So the problem is in the notation?",
+"expect": "en"
+},
+{
+"text": "Pourquoi j'ai perdu des points à la question 3 ?",
+"expect": "other"
+},
+{
+"text": "Je ne comprends pas le commentaire du professeur.",
+"expect": "other"
+},
+{
+"text": "Pouvez-vous expliquer ce qui manque dans ma réponse ?",
+"expect": "other"
+},
+{
+"text": "Je pense que ma réponse était juste.",
+"expect": "other"
+},
+{
+"text": "Quelle est la différence entre le niveau 2 et le niveau 3 ?",
+"expect": "other"
+},
+{
+"text": "Merci, c'est plus clair maintenant.",
+"expect": "other"
+},
+{
+"text": "Je voudrais discuter de la question sur les matrices.",
+"expect": "other"
+},
+{
+"text": "Comment je peux préparer l'oral ?",
+"expect": "other"
+},
+{
+"text": "Est-ce que la note est définitive ?",
+"expect": "other"
+},
+{
+"text": "Je ne suis pas d'accord avec la correction.",
+"expect": "other"
+},
+{
+"text": "Le code fonctionne, pourquoi est-il faux ?",
+"expect": "other"
+},
+{
+"text": "Bonjour, je voudrais comprendre ma note.",
+"expect": "other"
+},
+{
+"text": "Il manque une étape dans le calcul ?",
+"expect": "other"
+},
+{
+"text": "Où est-ce que je me suis trompé ?",
+"expect": "other"
+},
+{
+"text": "Je suis un peu perdu avec ce critère.",
+"expect": "other"
+},
+{
+"text": "Merci pour votre aide.",
+"expect": "other"
+},
+{
+"text": "La question était ambiguë pour moi.",
+"expect": "other"
+},
+{
+"text": "Je veux seulement comprendre, pas contester.",
+"expect": "other"
+},
+{
+"text": "Le tableau est dans mon fichier à la page 7.",
+"expect": "other"
+},
+{
+"text": "Est-ce que le professeur peut revoir ma copie ?",
+"expect": "other"
+},
+{
+"text": "¿Por qué perdí puntos en la pregunta 3?",
+"expect": "other"
+},
+{
+"text": "No entiendo el comentario del profesor.",
+"expect": "other"
+},
+{
+"text": "¿Puedes explicar qué falta en mi respuesta?",
+"expect": "other"
+},
+{
+"text": "Creo que mi respuesta era correcta.",
+"expect": "other"
+},
+{
+"text": "¿Cuál es la diferencia entre el nivel 2 y el nivel 3?",
+"expect": "other"
+},
+{
+"text": "Gracias, ahora está más claro.",
+"expect": "other"
+},
+{
+"text": "Quiero hablar de la pregunta sobre las matrices.",
+"expect": "other"
+},
+{
+"text": "¿Cómo puedo preparar el examen oral?",
+"expect": "other"
+},
+{
+"text": "No estoy de acuerdo con la corrección.",
+"expect": "other"
+},
+{
+"text": "El código funciona, ¿por qué está mal?",
+"expect": "other"
+},
+{
+"text": "Hola, quiero entender mi nota.",
+"expect": "other"
+},
+{
+"text": "¿Me falta un paso en el cálculo?",
+"expect": "other"
+},
+{
+"text": "¿Dónde me equivoqué en la pregunta 6?",
+"expect": "other"
+},
+{
+"text": "Estoy confundido con este criterio.",
+"expect": "other"
+},
+{
+"text": "Muchas gracias por tu ayuda.",
+"expect": "other"
+},
+{
+"text": "La pregunta era ambigua para mí.",
+"expect": "other"
+},
+{
+"text": "Solo quiero entender, no protestar.",
+"expect": "other"
+},
+{
+"text": "La tabla está en mi archivo en la página 7.",
+"expect": "other"
+},
+{
+"text": "¿El profesor puede revisar mi examen?",
+"expect": "other"
+},
+{
+"text": "Mi compañero tiene una nota diferente, ¿por qué?",
+"expect": "other"
+},
+{
+"text": "Warum habe ich bei Frage 3 Punkte verloren?",
+"expect": "other"
+},
+{
+"text": "Ich verstehe den Kommentar des Lehrers nicht.",
+"expect": "other"
+},
+{
+"text": "Kannst du erklären, was in meiner Antwort fehlt?",
+"expect": "other"
+},
+{
+"text": "Ich denke, meine Antwort war richtig.",
+"expect": "other"
+},
+{
+"text": "Was ist der Unterschied zwischen Stufe 2 und Stufe 3?",
+"expect": "other"
+},
+{
+"text": "Danke, jetzt ist es klarer.",
+"expect": "other"
+},
+{
+"text": "Ich möchte die Frage zu den Matrizen besprechen.",
+"expect": "other"
+},
+{
+"text": "Wie kann ich mich auf die mündliche Prüfung vorbereiten?",
+"expect": "other"
+},
+{
+"text": "Ich bin mit der Korrektur nicht einverstanden.",
+"expect": "other"
+},
+{
+"text": "Der Code funktioniert, warum ist er falsch?",
+"expect": "other"
+},
+{
+"text": "Hallo, ich möchte meine Note verstehen.",
+"expect": "other"
+},
+{
+"text": "Fehlt ein Schritt in der Rechnung?",
+"expect": "other"
+},
+{
+"text": "Wo habe ich mich bei Frage 6 geirrt?",
+"expect": "other"
+},
+{
+"text": "Ich bin bei diesem Kriterium verwirrt.",
+"expect": "other"
+},
+{
+"text": "Vielen Dank für die Hilfe.",
+"expect": "other"
+},
+{
+"text": "Die Frage war für mich mehrdeutig.",
+"expect": "other"
+},
+{
+"text": "Ich will nur verstehen, nicht widersprechen.",
+"expect": "other"
+},
+{
+"text": "Die Tabelle ist in meiner Datei auf Seite 7.",
+"expect": "other"
+},
+{
+"text": "Kann der Lehrer meine Arbeit noch einmal ansehen?",
+"expect": "other"
+},
+{
+"text": "Mein Kollege hat eine andere Note, warum?",
+"expect": "other"
+}
+]

@@ -241,10 +241,14 @@ default is never used.
   Done 2026-11-05: `test_llm_nfr015.py` (6): AST scan of every file under `vektra_assess/llm` (names, attributes, imports, string literals) finds 0 references, with 4 planted canaries caught; a course-material bundle raises `RagNotAvailableError` from `run` and `run_part_b` with 0 provider calls and 0 safeguard calls. `RecordingSafeguard.post_retrieval` raises on any call, so every runner test in the suite (release, canary matrix, runner) would fail on one: none does.
 - [x] Fail-closed tests: Presidio load failure in `build_assess_safeguard` → `StartupValidationError`; `pre_query` disallow → no LLM call (recording provider count 0); `pre_response` modify → marked replacement
   Done 2026-11-05: Presidio load failure through vektra_core's real `create_safeguard` (import made to fail) -> `StartupValidationError` (`vektra-app/tests/test_assess_llm.py::test_a_real_presidio_load_failure_refuses_startup`, plus the step-13 test); `pre_query` disallow -> 0 provider calls (`test_a_refused_query_never_reaches_the_model`); `pre_response` modify -> `[risposta sostituita dal sistema]`, marked (`test_a_rewritten_sentence_is_replaced_and_marked`).
-- [ ] Outage record tests: error → `ProviderOutageError`; stall 46 s (fake clock) → timeout; slow 40 s progressing → success, no outage
-- [ ] Class-core string-match test: for each class × language, a scripted class marker produces the exact shipped core sentence + alternative clause and at most one contextual sentence
-- [ ] False-replacement fixture set (math, matrices, page refs) → false replacements <= 1% (CI fails above)
-- [ ] Wire CI: `ci-unit.yml` assess filter/job already from plan 1 runs these; add `vektra_assess.llm` to the BUG-027 import module list and the mypy path list if plan 1 did not
+- [x] Outage record tests: error → `ProviderOutageError`; stall 46 s (fake clock) → timeout; slow 40 s progressing → success, no outage
+  Done 2026-11-05 with A8 (`test_llm_runner.py`): error -> `ProviderOutageError` (exception type only, no message); no first token within the timeout -> `first_token_timeout`; slow but progressing -> success, no outage; error after the first token -> outage. Timings are scaled (timeout 0.05-0.2 s, real sleeps) rather than a fake clock at 45/46/40 s: the property tested is the same, first-token gap vs total duration.
+- [x] Class-core string-match test: for each class × language, a scripted class marker produces the exact shipped core sentence + alternative clause and at most one contextual sentence
+  Done 2026-11-05: `test_llm_classes.py` (14 = 7 classes x IT/EN): the released segments are exactly [shipped core + alternative clause, the one contextual sentence]; the model's further sentences are dropped.
+- [x] False-replacement fixture set (math, matrices, page refs) → false replacements <= 1% (CI fails above)
+  Done 2026-11-05 with B3: `tests/fixtures/llm/no_values.json` (20 math / matrix / page / unit sentences, IT+EN), 0 replacements; `test_false_replacements_stay_under_one_percent` fails CI above 1%.
+- [x] Wire CI: `ci-unit.yml` assess filter/job already from plan 1 runs these; add `vektra_assess.llm` to the BUG-027 import module list and the mypy path list if plan 1 did not
+  Done 2026-11-05: `ci-unit.yml` `test-assess` already runs every `vektra-assess/tests` unit test (the llm tests included) and `test-app` the vektra-app ones; the mypy path list already holds `vektra-assess/src/vektra_assess`; the BUG-027 import list (`integration.yml`) now adds `vektra_assess.llm`, `.llm.runner`, `.llm.shipped`, `yaml`, `vektra_app.assess_llm`.
 
 ### E. Eval adapter, NFR-022 suite and NFR-023 gate
 - [ ] Create `tests/eval/assess_adapter.py`: loads seeded snapshots from `tests/eval/assess/fixtures/`, builds bundles only via `assemble_context`, drives `DiscussionTurnRunner` with a real LLMProvider built by `vektra_app.build_assess_runner`, scores delivered output; refuses to run a dataset whose `data_basis` is not `synthetic` against a provider whose `VEKTRA_ASSESS_PROVIDER_LOCALITY=cloud` (NFR-022 data basis)
@@ -284,9 +288,9 @@ default is never used.
 - [x] Byte-capture test: 0 forbidden patterns in released bytes from `ScriptedHostileLLM`, and 0 segments released before the post-check (REQ-096, REQ-097, NFR-022 HARD on CI tier) Evidence: `test_llm_release.py`.
 - [x] Canary matrix from plan 6: 0 hits in request bytes, released text, stored QueryTrace JSON and audit rows (NFR-017, BR-011) Evidence: `test_canary_matrix.py` through the real runner (9 sinks).
 - [x] AST check: 0 VectorStoreProvider/post_retrieval references in `vektra_assess.llm`; a RAG-ON bundle raises (NFR-015 structural evidence) Evidence: `test_llm_nfr015.py`, plus contract (llm) in `test_boundaries.py`.
-- [ ] Core sentence + alternative clause present in 100% of scripted refusals per class × language (REQ-098)
+- [x] Core sentence + alternative clause present in 100% of scripted refusals per class × language (REQ-098) Evidence: `test_llm_classes.py`.
 - [ ] Part B: 0 values and <= 120 words on 100% of the eval set; a forced Part B failure raises `PartBRejectedError` (REQ-094; the ELIGIBLE outcome is asserted in plan 8)
-- [ ] Post-check false replacements <= 1% on the math/page fixture set (REQ-096 P)
+- [x] Post-check false replacements <= 1% on the math/page fixture set (REQ-096 P) Evidence: `test_llm_values.py::test_false_replacements_stay_under_one_percent` (0/20).
 - [ ] `make eval-assess` produces a report with every NFR-022 HARD target at 0 / 100% on delivered output, (P) targets with CIs, and the judge calibration (kappa >= 0.7, seeded recall >= 95%) (NFR-022)
 - [ ] An activation attempt with a failing or uncalibrated report is refused and audited; startup refuses an unactivated triple; changing one template string changes `prompt_version` and makes startup refuse until re-activated (NFR-023)
 - [ ] A cloud-locality provider run with a non-synthetic dataset is refused by the adapter before any request (counted by the recording transport: 0 requests) (NFR-022 data basis, NFR-023)

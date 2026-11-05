@@ -49,3 +49,34 @@ def test_an_open_quote_holds_everything_until_it_closes() -> None:
 
 def test_an_open_tag_holds_the_point_inside_it() -> None:
     assert split("Vedi [Consegna p.3. ")[0] == []
+
+
+def test_a_half_open_interval_does_not_freeze_the_stream() -> None:
+    text = "La funzione è definita su [0, 1). Poi cresce. Hai torto. Fine."
+    out, _ = split(text, final=True)
+    assert out == [
+        "La funzione è definita su [0, 1).",
+        "Poi cresce.",
+        "Hai torto.",
+        "Fine.",
+    ]
+
+
+def test_an_open_bracket_never_spans_a_line() -> None:
+    out, rest = split("Intervallo [0, 1)\nSeconda riga. Terza")
+    assert out == ["Intervallo [0, 1)", "Seconda riga."] and rest.strip() == "Terza"
+
+
+def test_a_stray_quote_is_released_after_the_hold_limit() -> None:
+    from vektra_assess.llm.postcheck.sentences import MAX_HOLD
+
+    text = (
+        'Il simbolo " indica pollici. ' + "Frase lunga. " * (MAX_HOLD // 10) + "Ultima"
+    )
+    out, _ = split(text)
+    assert len(out) > 5 and out[0] == 'Il simbolo " indica pollici.'
+
+
+def test_an_unclosed_quote_at_the_end_still_splits() -> None:
+    out, _ = split('Il docente scrive "manca. Poi niente. Fine.', final=True)
+    assert out == ['Il docente scrive "manca.', "Poi niente.", "Fine."]

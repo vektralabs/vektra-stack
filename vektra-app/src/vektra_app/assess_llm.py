@@ -39,6 +39,19 @@ def build_assess_safeguard(
 
         factory = create_safeguard
     hook = factory(mode)
+    # vektra_core's Presidio safeguard loads its engines lazily and falls open to "allowed" on
+    # a missing package or spaCy model, at the first call; load them NOW so that failure stops
+    # startup instead of shipping every turn unfiltered
+    warm = getattr(hook, "_ensure_engines", None)
+    if callable(warm) and not warm():
+        raise StartupValidationError(
+            step=STEP,
+            detail=f"VEKTRA_ASSESS_SAFEGUARD_MODE={mode} but its engines failed to load",
+            remediation=(
+                "Install the Presidio extra and a spaCy model (en_core_web_lg or _sm), or set "
+                "VEKTRA_ASSESS_SAFEGUARD_MODE=none explicitly."
+            ),
+        )
     if isinstance(hook, PassthroughSafeguard):
         raise StartupValidationError(
             step=STEP,

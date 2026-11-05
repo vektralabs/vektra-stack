@@ -361,6 +361,8 @@ migration, the trace persistence round trip and the activation table and endpoin
 
 ## Notes
 
+- **/code-review of the plan diff (2026-11-06), 10 findings, all fixed**: (1) the Presidio safeguard loads its engines lazily and fell open at the first call, so `build_assess_safeguard` now loads them at build time and refuses startup when they fail; (2) shipped text (refusal core, BR-009 notice with its date) is no longer passed to the response safeguard, and anonymised model text is released anonymised instead of replaced whole (disallowed text still is); (3) an unbalanced `[` or quote no longer freezes sentence ends: a bracket never spans a line, any opener older than 300 chars or still open at the end is demoted to text; (4) value and quote replacements use the reply language's shipped phrase; (5) the admin UI cannot delete the reserved namespace; (6) `evaluate_report` never raises (malformed -> refusal with audit), refuses an empty judge section and a prompt_version / SHA that would break the table CHECKs; (7) only the provider's own read failure is an outage, a gate or safeguard bug propagates as itself; (8) Part B is bounded after its first token (stall -> outage `StreamStall`), and a cancelled read is awaited before the stream is closed; (9) Part B uses the shared `_close`; (10) the Part B prompt is counted once, the completion once, one stop waiter per stream. Whole-monorepo unit suite 3034 passed; affected integration tests pass.
+
 - **Order (2026-11-05)**: group B (post-check) is done before A6-A9 (`run_stream`, Part B, outage, token accounting), because the stream releases only post-checked sentences.
 
 - **Drift: the REQ-044 lexicon does not exist.** vektra_core safeguards contain no grade-change

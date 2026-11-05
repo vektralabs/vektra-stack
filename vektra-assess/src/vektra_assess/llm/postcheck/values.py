@@ -114,7 +114,10 @@ def _cited(sentence: str) -> list[str]:
     return out
 
 
-def check(sentence: str, index: dict[str, ItemValues]) -> ValueCheck:
+def check(
+    sentence: str, index: dict[str, ItemValues], replacement: str = REPLACEMENT
+) -> ValueCheck:
+    """``replacement`` is the reply language's shipped phrase (Italian by default)."""
     cited = [index[k] for k in _cited(sentence) if k in index]
     spans: list[tuple[int, int]] = []
 
@@ -150,7 +153,7 @@ def check(sentence: str, index: dict[str, ItemValues]) -> ValueCheck:
     out, last = [], 0
     for s, e in merged:
         out.append(sentence[last:s])
-        out.append(REPLACEMENT)
+        out.append(replacement)
         last = e
     out.append(sentence[last:])
     return ValueCheck("".join(out), len(merged))

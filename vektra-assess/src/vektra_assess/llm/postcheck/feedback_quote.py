@@ -51,7 +51,7 @@ class QuoteCheck:
     replaced: int
 
 
-def check(sentence: str, index: dict[str, str]) -> QuoteCheck:
+def check(sentence: str, index: dict[str, str], missing: str = MISSING) -> QuoteCheck:
     cited = []
     for m in _LABEL.finditer(sentence):
         key = (
@@ -72,6 +72,6 @@ def check(sentence: str, index: dict[str, str]) -> QuoteCheck:
         if inner and any(inner in s for s in sources):
             return m.group(0)
         replaced += 1
-        return m.group("lead") + MISSING
+        return m.group("lead") + missing
 
     return QuoteCheck(_QUOTE.sub(take, sentence), replaced)

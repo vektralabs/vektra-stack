@@ -35,16 +35,37 @@ def _is_abbreviation(text: str, dot: int) -> bool:
     return m is not None and m.group(1).lower() in ABBREVIATIONS
 
 
+#: an opener ([ or a quote) left open longer than this is taken as a literal character: a half-open
+#: interval "[0, 1)" or a stray quote must not freeze every sentence end after it
+MAX_HOLD = 300
+
+
 def split(buffer: str, *, final: bool = False) -> tuple[list[str], str]:
     """``(complete sentences, rest)``; sentences keep their own text, stripped of outer spaces."""
+    literal: set[int] = set()  # opener positions demoted to plain characters
+    while True:
+        done, rest, stuck = _scan(buffer, final, literal)
+        if stuck is None:
+            return done, rest
+        literal.add(stuck)  # rescan with that opener as text
+
+
+def _scan(
+    buffer: str, final: bool, literal: set[int]
+) -> tuple[list[str], str, int | None]:
+    """One pass. Returns the position of an opener to demote, or None when the pass is final."""
     out: list[str] = []
     start = 0
     square = 0  # depth of [...] (a marker [[...]] counts twice)
+    square_at: list[int] = []
     quote: str | None = None  # the closer we are waiting for
+    quote_at = -1
     i, n = 0, len(buffer)
     while i < n:
         c = buffer[i]
         if quote is not None:
+            if i - quote_at > MAX_HOLD:
+                return [], "", quote_at
             if c == quote:
                 quote = None
                 if i and buffer[i - 1] in _TERMINATORS and not square:
@@ -60,14 +81,21 @@ def split(buffer: str, *, final: bool = False) -> tuple[list[str], str]:
                         start = i + 1
             i += 1
             continue
-        if c == '"':
-            quote = '"'
+        if square and (c == "\n" or i - square_at[0] > MAX_HOLD):
+            # a tag or a marker never spans a line or a paragraph: the opener was text
+            return [], "", square_at[0]
+        if i in literal:
+            pass
+        elif c == '"':
+            quote, quote_at = '"', i
         elif c in _OPEN_CLOSE:
-            quote = _OPEN_CLOSE[c]
+            quote, quote_at = _OPEN_CLOSE[c], i
         elif c == "[":
             square += 1
+            square_at.append(i)
         elif c == "]" and square:
             square -= 1
+            square_at.pop()
         elif square:
             pass
         elif c == "\n":
@@ -96,11 +124,14 @@ def split(buffer: str, *, final: bool = False) -> tuple[list[str], str]:
             i = k
             continue
         i += 1
+    if final and (quote is not None or square):
+        # the stream ended with an opener still open: it was text, split without it
+        return [], "", quote_at if quote is not None else square_at[0]
     rest = buffer[start:]
     if final:
         _emit(out, rest)
         rest = ""
-    return out, rest
+    return out, rest, None
 
 
 def _emit(out: list[str], piece: str) -> None:

@@ -21,7 +21,7 @@ import time
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.references import canonical_labels
@@ -44,6 +44,15 @@ MARK_SAFEGUARD = "safeguard"
 MARK_MARKER = "marker"
 
 CLASS_LATE = "marker_class_late"
+
+
+class Unit(NamedTuple):
+    """One releasable unit. ``system`` units are Vektra-shipped text (a refusal core sentence, the
+    BR-009 notice): never model output, so the response safeguard does not rewrite them."""
+
+    text: str
+    marked: bool
+    system: bool = False
 
 
 @dataclass
@@ -74,16 +83,16 @@ class SentenceGate:
         self.replaced += n
         self.by_stage[code] += max(n, 1)
 
-    def feed(self, sentence: str) -> list[tuple[str, bool]]:
-        """``[(text, marked), ...]`` releasable for this sentence, in order."""
+    def feed(self, sentence: str) -> list[Unit]:
+        """The units releasable for this sentence, in order."""
         t = time.perf_counter()
         try:
             return self._feed(sentence)
         finally:
             self.elapsed_ms += (time.perf_counter() - t) * 1000
 
-    def _feed(self, sentence: str) -> list[tuple[str, bool]]:
-        out: list[tuple[str, bool]] = []
+    def _feed(self, sentence: str) -> list[Unit]:
+        out: list[Unit] = []
         m = markers.extract(sentence, self._labels)
         for code in m.dropped:
             self.audit.append(("assess_marker_dropped", {"reason_code": code}))
@@ -94,7 +103,11 @@ class SentenceGate:
                 self.behaviour_class = m.behaviour_class
                 self._contextual_left = 1
                 out.append(
-                    (self.shipped.refusal(m.behaviour_class, self.support_text), False)
+                    Unit(
+                        self.shipped.refusal(m.behaviour_class, self.support_text),
+                        False,
+                        system=True,
+                    )
                 )
             else:  # a class only opens a reply; a late one is stripped and audited
                 self.audit.append(
@@ -115,17 +128,19 @@ class SentenceGate:
         if category is not None:
             self.audit.append(("grade_claim_replaced", {"reason_code": category}))
             self._mark(MARK_LEXICON)
-            out.append((self.br009, True))
+            out.append(Unit(self.br009, True, system=True))
             return out
-        v = values.check(text, self._values)
+        v = values.check(text, self._values, self.shipped.missing["value_unverified"])
         if v.replaced:
             self._mark(MARK_VALUES, v.replaced)
         c = citations.check(v.text, self._labels)
         if c.removed:
             self._mark(MARK_CITATIONS, c.removed)
-        q = feedback_quote.check(c.text, self._feedback)
+        q = feedback_quote.check(
+            c.text, self._feedback, self.shipped.missing["quote_unverified"]
+        )
         if q.replaced:
             self._mark(MARK_QUOTE, q.replaced)
         if q.text.strip():
-            out.append((q.text, bool(v.replaced or c.removed or q.replaced)))
+            out.append(Unit(q.text, bool(v.replaced or c.removed or q.replaced)))
         return out

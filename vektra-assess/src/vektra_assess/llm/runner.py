@@ -12,10 +12,12 @@ the material the session was promised.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from vektra_assess.config import VektraAssessSettings
@@ -32,7 +34,7 @@ from vektra_assess.llm.postcheck import (
     markers,
     part_b,
 )
-from vektra_assess.llm.postcheck.gate import MARK_SAFEGUARD, SentenceGate
+from vektra_assess.llm.postcheck.gate import MARK_SAFEGUARD, SentenceGate, Unit
 from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
 from vektra_assess.llm.postcheck.sentences import split
 from vektra_assess.llm.prompts import PromptRenderer
@@ -202,24 +204,32 @@ class DiscussionTurnRunner:
             rec = ProviderCallRecord(started, None, _now(), "first_token_timeout")
             records.append(rec)
             raise self._outage(rec) from None
-        except (
-            Exception
-        ) as exc:  # any provider failure is an outage record, never its text
+        # any provider failure is an outage record, never its text
+        except Exception as exc:
             rec = ProviderCallRecord(started, None, _now(), "error", type(exc).__name__)
             records.append(rec)
             raise self._outage(rec) from None
         return it, first, started
 
     async def _release(
-        self, text: str, marked: bool, gate: SentenceGate, turn_index: int
+        self, unit: Unit, gate: SentenceGate, turn_index: int
     ) -> ReleasedSegment:
+        """One unit through the response safeguard. Vektra-shipped text (a refusal core sentence,
+        the BR-009 notice with its date) is not model output and is released as shipped. Model
+        text the safeguard anonymises is released anonymised (ARCH-049) and marked; text it
+        disallows is replaced as a whole."""
+        if unit.system:
+            return ReleasedSegment(unit.text, unit.marked)
         res = await self._safeguard.pre_response(
-            text, self._context(turn_index, partial=True)
+            unit.text, self._context(turn_index, partial=True)
         )
-        if not res.allowed or res.modified_content is not None:
+        if not res.allowed:
             gate._mark(MARK_SAFEGUARD)
             return ReleasedSegment(gate.shipped.missing["replaced_by_system"], True)
-        return ReleasedSegment(text, marked)
+        if res.modified_content is not None:
+            gate._mark(MARK_SAFEGUARD)
+            return ReleasedSegment(res.modified_content, True)
+        return ReleasedSegment(unit.text, unit.marked)
 
     async def run_stream(
         self,
@@ -241,7 +251,7 @@ class DiscussionTurnRunner:
         gate = SentenceGate(bundle, sh, self._br009(bundle, sh))
         released: list[ReleasedSegment] = []
         records: list[ProviderCallRecord] = []
-        prompt_tokens = 0
+        prompt_tokens = completion_tokens = 0
         completion = ""
         interrupted = False
         steps = _Steps()
@@ -297,12 +307,22 @@ class DiscussionTurnRunner:
             buf = first.content if first is not None else ""
             completion = buf
             outcome: CallOutcome = "ok"
+            waiter = _StopWaiter(stop)
             try:
                 while True:
                     if stop is not None and stop.is_set():
                         outcome = "cancelled"
                         break
-                    chunk = await _next_chunk(it, stop)
+                    try:
+                        # only the provider's own failure is an outage: a bug in the gate or
+                        # the safeguard below propagates as itself (REQ-086 must not fire)
+                        chunk = await waiter.next(it)
+                    except Exception as exc:
+                        rec = ProviderCallRecord(
+                            started, first_at, _now(), "error", type(exc).__name__
+                        )
+                        records.append(rec)
+                        raise self._outage(rec) from None
                     if chunk is _STOPPED:
                         outcome = "cancelled"
                         break
@@ -313,26 +333,19 @@ class DiscussionTurnRunner:
                     buf += chunk.content
                     done, buf = split(buf)
                     for sentence in done:
-                        for text, marked in gate.feed(sentence):
-                            seg = await self._release(
-                                text, marked, gate, turn.turn_index
-                            )
+                        for unit in gate.feed(sentence):
+                            seg = await self._release(unit, gate, turn.turn_index)
                             released.append(seg)
                             yield seg
-            except Exception as exc:
-                rec = ProviderCallRecord(
-                    started, first_at, _now(), "error", type(exc).__name__
-                )
-                records.append(rec)
-                raise self._outage(rec) from None
             finally:
+                waiter.close()
                 await _close(it)  # the provider stream is closed on every path
             records.append(ProviderCallRecord(started, first_at, _now(), outcome))
             steps.add(
                 "llm_call",
                 t_llm,
                 first_token_ms=first_token_ms,
-                completion_tokens=self._count(completion),
+                completion_tokens=(completion_tokens := self._count(completion)),
                 outcome=outcome,
             )
             if outcome == "cancelled":
@@ -340,8 +353,8 @@ class DiscussionTurnRunner:
             else:
                 done, _ = split(buf, final=True)
                 for sentence in done:
-                    for text, marked in gate.feed(sentence):
-                        seg = await self._release(text, marked, gate, turn.turn_index)
+                    for unit in gate.feed(sentence):
+                        seg = await self._release(unit, gate, turn.turn_index)
                         released.append(seg)
                         yield seg
 
@@ -375,7 +388,7 @@ class DiscussionTurnRunner:
             behaviour_class=gate.behaviour_class,
             contest_entries=tuple(gate.contest),
             language=language,
-            usage=self._usage(prompt_tokens, self._count(completion)),
+            usage=self._usage(prompt_tokens, completion_tokens),
             call_records=tuple(records),
             replaced_count=gate.replaced,
             content_hash=hashlib.sha256(delivered.encode("utf-8")).hexdigest(),
@@ -391,21 +404,36 @@ class DiscussionTurnRunner:
         it, first, started = await self._open_stream(messages, records)
         first_at = _now()
         raw = first.content if first is not None else ""
+        waiter = _StopWaiter(None)
         try:
-            async for chunk in it:
+            while True:
+                try:
+                    # Part B has no caller stop: a stream that stalls after its first token is
+                    # bounded by the outage timeout, so the pre-flight never hangs on it
+                    chunk = await waiter.next(
+                        it, timeout=self._settings.outage_timeout_s
+                    )
+                except TimeoutError:
+                    rec = ProviderCallRecord(
+                        started, first_at, _now(), "error", "StreamStall"
+                    )
+                    records.append(rec)
+                    raise self._outage(rec) from None
+                except Exception as exc:
+                    rec = ProviderCallRecord(
+                        started, first_at, _now(), "error", type(exc).__name__
+                    )
+                    records.append(rec)
+                    raise self._outage(rec) from None
+                if chunk is None:
+                    break
+                assert isinstance(chunk, CompletionChunk)
                 raw += chunk.content
                 if part_b.word_count(raw) > part_b.MAX_WORDS:
                     break  # the stream stops at the cap; the check below rejects it
-        except Exception as exc:
-            rec = ProviderCallRecord(
-                started, first_at, _now(), "error", type(exc).__name__
-            )
-            records.append(rec)
-            raise self._outage(rec) from None
         finally:
-            closer = getattr(it, "aclose", None)
-            if closer is not None:
-                await closer()
+            waiter.close()
+            await _close(it)
         records.append(ProviderCallRecord(started, first_at, _now(), "ok"))
         violations: list[str] = []
         m = markers.extract(raw, canonical_labels(bundle))
@@ -446,6 +474,11 @@ class DiscussionTurnRunner:
         records: list[ProviderCallRecord] = []
         codes: tuple[str, ...] = ()
         prompt_spent = completion_spent = 0
+        # the Part B prompt is the same for every attempt: rendered and counted once
+        part_b_prompt_tokens = sum(
+            self._count(m.content) + MESSAGE_OVERHEAD
+            for m in self._renderer.part_b_messages(bundle, language)
+        )
         steps = _Steps()
         t_all = time.monotonic()
         part_b_id = uuid4()
@@ -469,10 +502,7 @@ class DiscussionTurnRunner:
                 "postcheck", 0, mode="part_b", violations=list(codes), language=language
             )
             # every generation is paid for, the rejected one too (REQ-083 accounting)
-            prompt_spent += sum(
-                self._count(m.content) + MESSAGE_OVERHEAD
-                for m in self._renderer.part_b_messages(bundle, language)
-            )
+            prompt_spent += part_b_prompt_tokens
             completion_spent += self._count(raw)
             if not codes:
                 trace = await self._write_trace(part_b_id, steps, t_all)
@@ -533,20 +563,38 @@ class _Steps:
         )
 
 
-async def _next_chunk(
-    it: AsyncIterator[CompletionChunk], stop: asyncio.Event | None
-) -> CompletionChunk | object | None:
-    """The next chunk, ``None`` at the end, or ``_STOPPED`` if ``stop`` is set first."""
-    if stop is None:
-        return await anext(it, None)
-    nxt = asyncio.ensure_future(anext(it, None))
-    stopped = asyncio.ensure_future(stop.wait())
-    done, _ = await asyncio.wait({nxt, stopped}, return_when=asyncio.FIRST_COMPLETED)
-    if nxt in done:
-        stopped.cancel()
-        return nxt.result()
-    nxt.cancel()
-    return _STOPPED
+class _StopWaiter:
+    """Races each next chunk against the caller's stop event, with ONE waiter per stream."""
+
+    def __init__(self, stop: asyncio.Event | None) -> None:
+        self._stopped = asyncio.ensure_future(stop.wait()) if stop is not None else None
+
+    async def next(
+        self, it: AsyncIterator[CompletionChunk], timeout: float | None = None
+    ) -> CompletionChunk | object | None:
+        """The next chunk, ``None`` at the end, ``_STOPPED`` if stop is set first; a chunk that
+        does not come within ``timeout`` raises ``TimeoutError``."""
+        nxt = asyncio.ensure_future(anext(it, None))
+        waits: set[asyncio.Future[Any]] = {nxt}
+        if self._stopped is not None:
+            waits.add(self._stopped)
+        done, _ = await asyncio.wait(
+            waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+        )
+        if nxt in done:
+            return nxt.result()
+        # let the cancelled read finish unwinding, so the stream can then really be closed
+        # (closing an async generator that is still running raises and leaves it open)
+        nxt.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await nxt
+        if self._stopped is not None and self._stopped in done:
+            return _STOPPED
+        raise TimeoutError("no chunk within the stall timeout")
+
+    def close(self) -> None:
+        if self._stopped is not None:
+            self._stopped.cancel()
 
 
 async def _close(it: AsyncIterator[CompletionChunk]) -> None:

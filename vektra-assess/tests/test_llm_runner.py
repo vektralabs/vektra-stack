@@ -167,7 +167,7 @@ async def test_a_rewritten_sentence_is_replaced_and_marked() -> None:
     segs, result, _, _, _ = await _run(
         "Prima frase. Seconda con Mario Rossi.", guard=Guard(rewrite="Mario")
     )
-    assert segs[1].text == "[risposta sostituita dal sistema]" and segs[1].marked
+    assert segs[1].text == "***" and segs[1].marked  # released anonymised (ARCH-049)
     assert "safeguard" in result.marks
 
 
@@ -240,7 +240,8 @@ async def test_a_clean_part_b_is_accepted_whole() -> None:
     out = await r.run_part_b(_visible_bundle())
     assert out.text == PART_B_OK and audit.rows == []
     assert [c.method for c in llm.calls].count("stream") == 1
-    body = llm.calls[0].request_bytes.decode()
+    (stream,) = [c for c in llm.calls if c.method == "stream"]
+    body = stream.request_bytes.decode()
     assert "120 parole" in body and "CONTESTO DELLA PROVA" in body
 
 
@@ -549,3 +550,58 @@ async def test_outages_and_part_b_rejections_are_counted() -> None:
     with pytest.raises(PartBRejectedError):
         await r2.run_part_b(_visible_bundle())
     assert m2.events.count(("part_b", "part_b_value", 1)) == 2
+
+
+# --- review fixes: shipped text, anonymisation, error scope, Part B stall ------------------------
+
+
+async def test_the_br009_notice_is_never_rewritten_by_the_safeguard() -> None:
+    """The notice carries a date ("letto il ..."): Presidio would tag it, but it is shipped text."""
+    guard = Guard(rewrite="letto")
+    segs, _result, _, _, _ = await _run("Hai ragione, il voto è ingiusto.", guard=guard)
+    assert segs[0].text.startswith("Voto registrato:") and "letto il" in segs[0].text
+    partial = [
+        e for e in guard.log if e[0] == "pre_response" and e[2].metadata.get("partial")
+    ]
+    assert all("letto il" not in e[1] for e in partial)
+
+
+async def test_a_refused_sentence_is_replaced_whole() -> None:
+    from vektra_shared.types import SafeguardResult
+
+    class Refuse(Guard):
+        async def pre_response(self, text: str, context: Any) -> SafeguardResult:
+            self.log.append(("pre_response", text, context))
+            if "Rossi" in text and context.metadata.get("partial"):
+                return SafeguardResult(allowed=False)
+            return SafeguardResult()
+
+    segs, result, _, _, _ = await _run("Prima. Seconda con Rossi.", guard=Refuse())
+    assert (
+        segs[1].text == "[risposta sostituita dal sistema]"
+        and "safeguard" in result.marks
+    )
+
+
+async def test_a_gate_bug_is_not_reported_as_a_provider_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_assess.llm.postcheck import gate as gate_mod
+
+    def boom(self: Any, sentence: str) -> Any:
+        raise KeyError("bug in a post-check stage")
+
+    monkeypatch.setattr(gate_mod.SentenceGate, "feed", boom)
+    m = _Metrics()
+    r = _metered(["Una frase. Due."], m)
+    with pytest.raises(KeyError):
+        await r.run(_visible_bundle(), StudentTurn("ciao", 0))
+    assert ("outcome", "error", 1) not in m.events
+
+
+async def test_a_part_b_stream_that_stalls_after_its_first_token_is_an_outage() -> None:
+    llm = TimedLLM([(0, "Ciao!"), (5.0, " mai")])
+    r, _ = _timed_runner(llm, timeout=0.1)
+    with pytest.raises(ProviderOutageError) as e:
+        await r.run_part_b(_visible_bundle())
+    assert e.value.record.error_class == "StreamStall" and llm.closed

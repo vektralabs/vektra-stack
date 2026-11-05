@@ -89,7 +89,7 @@ async def test_no_segment_is_yielded_before_its_sentence_passed_the_gate(
     def spy(self: gate_mod.SentenceGate, sentence: str) -> list[tuple[str, bool]]:
         out = original(self, sentence)
         events.append(("gate", sentence))
-        for text, _ in out:
+        for text, *_ in out:
             events.append(("passed", text))
         return out
 

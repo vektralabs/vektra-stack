@@ -544,6 +544,17 @@ async def test_ui_namespaces_crud(client, bootstrap_key, session):
     assert resp.status_code == 200
     assert "deleted" in resp.text.lower()
 
+    # The reserved assess namespace cannot be created nor deleted (its row anchors the assess
+    # traces' FK; plan assess-llm-runner)
+    resp = await client.post(
+        "/admin/namespaces/create", data={"name": "assess-discussion"}
+    )
+    assert resp.status_code == 403
+    resp = await client.request("DELETE", "/admin/namespaces/assess-discussion")
+    assert resp.status_code == 403
+    resp = await client.get("/admin/namespaces")
+    assert "assess-discussion" in resp.text
+
 
 async def test_ui_audit_page(client, bootstrap_key, session):
     """Audit page renders with entries and pagination markup."""

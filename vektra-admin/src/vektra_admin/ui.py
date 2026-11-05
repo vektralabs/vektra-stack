@@ -507,6 +507,10 @@ async def namespaces_delete(
 ) -> HTMLResponse:
     """Delete a namespace, return updated table partial."""
 
+    if is_reserved(ns_id):
+        # assess-discussion anchors the assess traces' FK: deleting it would make every later
+        # trace insert fail (plan assess-llm-runner, revision 0019)
+        raise HTTPException(status_code=403, detail="Namespace name is reserved")
     result = await session.execute(select(NamespaceOrm).where(NamespaceOrm.id == ns_id))
     ns = result.scalar_one_or_none()
     if ns is None:

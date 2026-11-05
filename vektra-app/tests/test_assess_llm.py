@@ -248,3 +248,24 @@ def test_prometheus_metrics_count_with_code_labels() -> None:
     assert val("vektra_assess_behaviour_class_total", behaviour_class="R-SOL") >= 1
     assert val("vektra_assess_provider_calls_total", outcome="first_token_timeout") >= 1
     assert val("vektra_assess_part_b_rejections_total", code="part_b_value") >= 1
+
+
+def test_a_lazily_failing_presidio_is_caught_at_startup() -> None:
+    """vektra_core's Presidio loads its engines on first use and falls open there: the build
+    loads them now, so a missing spaCy model stops startup instead of passing every turn."""
+
+    class LazyPresidio(_Real):
+        def _ensure_engines(self) -> bool:
+            return False  # no spaCy model installed
+
+    with pytest.raises(StartupValidationError, match="engines failed to load"):
+        build_assess_safeguard("presidio", factory=lambda _m: LazyPresidio())
+
+    class LoadedPresidio(_Real):
+        def _ensure_engines(self) -> bool:
+            return True
+
+    assert isinstance(
+        build_assess_safeguard("presidio", factory=lambda _m: LoadedPresidio()),
+        LoadedPresidio,
+    )

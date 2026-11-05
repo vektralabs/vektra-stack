@@ -82,6 +82,9 @@ def _lines(bundle: ContextBundle) -> list[str]:
         out.append(f"## {S.SUBMISSION_LABEL}")
         if bundle.submission is not None and bundle.submission.onlinetext:
             out += ["Testo consegnato:", bundle.submission.onlinetext]
+            if bundle.submission.truncated:
+                # over the budget or read in part: what follows the excerpt is unseen, not absent
+                out.append("Nota: il testo consegnato è troncato.")
         elif bundle.submission is not None and bundle.submission.unreadable:
             out.append("Testo consegnato: non leggibile")
         for f in bundle.files:

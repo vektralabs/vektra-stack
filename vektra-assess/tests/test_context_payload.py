@@ -76,3 +76,17 @@ def test_an_unreadable_online_text_is_announced() -> None:
     )
     text = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
     assert "Testo consegnato: non leggibile" in text
+
+
+def test_a_truncated_online_text_is_announced() -> None:
+    from vektra_assess.context.snapshot import SubmissionItem
+
+    for truncated in (True, False):
+        s = make().model_copy(
+            update={
+                "submission": SubmissionItem(onlinetext="estratto", truncated=truncated)
+            }
+        )
+        text = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
+        assert "Testo consegnato:\nestratto" in text
+        assert ("Nota: il testo consegnato è troncato." in text) is truncated

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 import pytest
+from fakes import RecordingAuditSink as _Audit
+from fakes import RecordingSafeguard as Guard
+from fakes import RecordingTraceWriter as _Trace
+from fakes import TimedLLM
 from test_context_bundle import _frozen
 from test_context_snapshot import make
 
@@ -14,22 +17,6 @@ from vektra_assess.context.assemble import assemble_context
 from vektra_assess.llm import DiscussionTurnRunner, RagNotAvailableError
 from vektra_shared.testing_recorders import RecordingLLMProvider
 from vektra_shared.types import QueryTrace
-
-
-class _Trace:
-    def __init__(self) -> None:
-        self.rows: list[tuple[QueryTrace, str]] = []
-
-    async def write(self, trace: QueryTrace, namespace: str) -> None:
-        self.rows.append((trace, namespace))
-
-
-class _Audit:
-    def __init__(self) -> None:
-        self.rows: list[tuple[str, Mapping[str, Any]]] = []
-
-    async def __call__(self, event: str, data: Mapping[str, Any]) -> None:
-        self.rows.append((event, data))
 
 
 class _Safeguard:
@@ -98,35 +85,6 @@ from test_context_bundle import _ALL, _with_review  # noqa: E402
 
 from vektra_assess.llm import ReleasedSegment, StudentTurn, TurnResult  # noqa: E402
 from vektra_assess.llm import shipped as shipped_strings  # noqa: E402
-from vektra_shared.types import SafeguardResult  # noqa: E402
-
-
-class Guard:
-    """Records every call in order; can refuse the query or rewrite a response."""
-
-    def __init__(
-        self, *, refuse_query: bool = False, rewrite: str | None = None
-    ) -> None:
-        self.log: list[tuple[str, str, Any]] = []
-        self.refuse_query = refuse_query
-        self.rewrite = rewrite
-
-    async def pre_query(self, query: str, context: Any) -> SafeguardResult:
-        self.log.append(("pre_query", query, context))
-        return SafeguardResult(allowed=not self.refuse_query)
-
-    async def post_retrieval(self, query: str, results: Any, context: Any) -> Any:
-        raise AssertionError("post_retrieval must never be called (RAG OFF)")
-
-    async def pre_response(self, text: str, context: Any) -> SafeguardResult:
-        self.log.append(("pre_response", text, context))
-        if (
-            self.rewrite is not None
-            and self.rewrite in text
-            and context.metadata["partial"]
-        ):
-            return SafeguardResult(allowed=True, modified_content="***")
-        return SafeguardResult()
 
 
 def _visible_bundle():  # type: ignore[no-untyped-def]
@@ -340,34 +298,6 @@ async def test_three_distinct_labels_pass_part_b() -> None:
 import asyncio  # noqa: E402
 
 from vektra_assess.llm import ProviderOutageError  # noqa: E402
-from vektra_shared.types import CompletionChunk  # noqa: E402
-
-
-class TimedLLM(RecordingLLMProvider):
-    """Plays ``(delay_s, text)`` chunks; ``fail`` raises before or after the first chunk."""
-
-    def __init__(
-        self, chunks: list[tuple[float, str]], fail: str | None = None
-    ) -> None:
-        super().__init__([])
-        self.script, self.fail, self.closed = chunks, fail, False
-
-    async def stream(self, messages, model, temperature=0.7, max_tokens=None, **kw):  # type: ignore[no-untyped-def,override]
-        if self.fail == "open":
-            raise ConnectionError("provider down: CNRY-secret-in-error")
-        outer = self
-
-        async def gen():  # type: ignore[no-untyped-def]
-            try:
-                for i, (delay, text) in enumerate(outer.script):
-                    await asyncio.sleep(delay)
-                    if outer.fail == "mid" and i == 1:
-                        raise RuntimeError("broken pipe")
-                    yield CompletionChunk(content=text)
-            finally:
-                outer.closed = True
-
-        return gen()
 
 
 def _timed_runner(

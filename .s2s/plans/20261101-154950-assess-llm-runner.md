@@ -1,10 +1,10 @@
 # Implementation Plan: vektra_assess.llm — DiscussionTurnRunner, post-check, prompts and the NFR-023 gate
 
 **ID**: 20261101-154950-assess-llm-runner
-**Status**: active
-**Branch**: N/A
+**Status**: in_progress
+**Branch**: feat/assess-llm-runner
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-01T20:58:19Z
+**Updated**: 2026-11-05T16:30:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -177,7 +177,8 @@ default is never used.
 ## Tasks
 
 ### A. Runner core
-- [ ] Create `vektra-assess/src/vektra_assess/llm/__init__.py` exporting only `DiscussionTurnRunner`, `StudentTurn`, `TurnResult`, `TurnUsage`, `ProviderCallRecord`, `ReleasedSegment`, `TraceWriter`, `RagNotAvailableError`, `ProviderOutageError`, `PartBRejectedError`; add `types.py` with frozen dataclasses (StudentTurn: text, turn_index, history: tuple[PriorTurn, ...], ui_language; TurnResult: text, marks, behaviour_class, contest_entries, language, usage, call_records, replaced_count, content_hash)
+- [x] Create `vektra-assess/src/vektra_assess/llm/__init__.py` exporting only `DiscussionTurnRunner`, `StudentTurn`, `TurnResult`, `TurnUsage`, `ProviderCallRecord`, `ReleasedSegment`, `TraceWriter`, `RagNotAvailableError`, `ProviderOutageError`, `PartBRejectedError`; add `types.py` with frozen dataclasses (StudentTurn: text, turn_index, history: tuple[PriorTurn, ...], ui_language; TurnResult: text, marks, behaviour_class, contest_entries, language, usage, call_records, replaced_count, content_hash)
+  Done 2026-11-05: `llm/types.py` + exports (test `test_llm_types.py`). `DiscussionTurnRunner` joins `__all__` with the runner task; `TurnResult` also carries `interrupted` (cancellation task) and `ContestEntry`/`PriorTurn` are the element types.
 - [ ] Add import-linter contracts in root `pyproject.toml`: `vektra_assess.llm` forbids `vektra_core`, `vektra_analytics`, `vektra_ingest`, `vektra_index`, `qdrant_client`, `sentence_transformers`, `torch`; only `vektra_assess.api`, `vektra_assess.worker` (pre-flight) and the tests may import `vektra_assess.llm`; verify `uv run lint-imports` fails on a deliberate violating import before removing it
 - [ ] Implement `PromptRenderer` (Jinja2 `StrictUndefined`, autoescape off, sandboxed environment) with templates `system.j2`, `bundle.j2`, `history.j2`, `turn.j2`, `part_b.j2`; compute `prompt_version` (SHA-256[:8] over templates + `strings/*.yaml` + `postcheck.LEXICON_VERSION`); unit test: changing any one input changes the version
 - [ ] Implement history token budgeting in `llm/budget.py` (context window from settings; history trimmed oldest-first, never the bundle; bundle overflow raises, it is never silently truncated)
@@ -227,6 +228,11 @@ default is never used.
 - [ ] Add `make eval-assess` (staging tier) and a CI-tier `make test` subset that runs the deterministic scorers on `ScriptedHostileLLM` and recorded transcripts (no network)
 - [ ] NFR-023 gate: table `assess_model_activations` (next revision; provider, model, prompt_version, report_sha256, hard_pass, activated_at, activated_by_key_id); admin endpoint `POST /api/v1/assess/admin/model-activations` (admin scope) that accepts a report, recomputes HARD pass from it, refuses on any HARD failure or missing calibration, and audits every attempt (accepted or refused); startup step and plan-8 pre-flight refuse an unactivated triple (fail closed)
 - [ ] Production tier (metrics only): Prometheus counters for post-check replacements by stage, class distribution, outage records, Part B rejections; content-free labels only
+
+### G. Carried over from plan 6 (assess-context, PR #149)
+- [ ] Typing guard: add `DiscussionTurnRunner.run` / `run_stream` / `run_part_b` to the mypy case in `vektra-assess/tests/typing/` (a `Snapshot` and a `dict` must each give an arg-type error), next to `bundle_to_model_payload`
+- [ ] Rerun the exported canary matrix (`tests/` canary fixture module) through the REAL runner: request bytes and stored QueryTrace JSON, 0 hits (this is the D "canary test" task; plan 6 used a reference runner)
+- [ ] Review block truncation indicator: a question/response block cut at the per-block cap, or shortened by the review item JSON cap (72464e2), is flagged in the sidecar reply, `ParserClient.extract_review_item`, `CaptureParser`, `QuizItem`, and gets a truncation note in Part A and the payload (CodeRabbit comments 4471764122, 4479124075)
 
 ### F. Docs
 - [ ] `docs/reference/api.md`: the model-activation endpoint; `docs/` page on the assess eval suite (how to run, data-basis rule, judge calibration); `tests/eval/README.md` assess section

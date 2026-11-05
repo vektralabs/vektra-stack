@@ -256,6 +256,23 @@ ignore_imports = [
 ]
 unmatched_ignore_imports_alerting = "none"
 
+# (llm) the discussion runner reaches no retrieval, analytics or ML stack (plan assess-llm-runner,
+# NFR-015 structural evidence): the LLM provider, safeguard and trace writer are injected by vektra_app
+[[tool.importlinter.contracts]]
+name = "vektra_assess.llm imports no retrieval, analytics or ML stack"
+type = "forbidden"
+source_modules = ["vektra_assess.llm"]
+forbidden_modules = ["vektra_core", "vektra_analytics", "vektra_ingest", "vektra_index", "qdrant_client", "sentence_transformers", "torch"]
+
+# (llm-callers) only the API turn route, the worker (Part B pre-flight) and the vektra_app composition
+# roots may import the runner. The source list must equal the assess children minus api, worker and
+# llm itself: tests/test_boundaries.py fails when a new child is not listed here.
+[[tool.importlinter.contracts]]
+name = "only vektra_assess.api and vektra_assess.worker import vektra_assess.llm"
+type = "forbidden"
+source_modules = ["vektra_assess.context", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle"]
+forbidden_modules = ["vektra_assess.llm"]
+
 # (e) the worker's import ceiling: no ML stack, vector store client or document parser
 [[tool.importlinter.contracts]]
 name = "vektra_assess must not import the ML, vector store or parsing stacks"

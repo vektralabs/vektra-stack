@@ -69,6 +69,22 @@ CONTRACT_CTX_DEPS = (
     "vektra_assess.context imports no retrieval stack and no HTTP client"
 )
 
+CONTRACT_LLM_DEPS = "vektra_assess.llm imports no retrieval, analytics or ML stack"
+CONTRACT_LLM_CALLERS = (
+    "only vektra_assess.api and vektra_assess.worker import vektra_assess.llm"
+)
+
+
+def test_llm_callers_contract_covers_every_other_child() -> None:
+    sources = {
+        m.removeprefix("vektra_assess.")
+        for m in _contracts()[CONTRACT_LLM_CALLERS]["source_modules"]
+    }
+    expected = _children() - {"api", "worker", "llm"}
+    assert sources == expected, (
+        f"missing: {sorted(expected - sources)}; stale: {sorted(sources - expected)}"
+    )
+
 
 def test_parser_contract_forbids_every_other_assess_child() -> None:
     forbidden = {
@@ -203,6 +219,10 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
             "import vektra_assess.worker.parser_client\n",
             PARSER_CONTRACT,
         ),
+        ("llm/_canary.py", "import vektra_analytics\n", CONTRACT_LLM_DEPS),
+        ("llm/_canary.py", "import qdrant_client\n", CONTRACT_LLM_DEPS),
+        ("context/_canary.py", "import vektra_assess.llm\n", CONTRACT_LLM_CALLERS),
+        ("delivery/_canary.py", "import vektra_assess.llm\n", CONTRACT_LLM_CALLERS),
         (
             "llm/_canary.py",
             "import torch\n",

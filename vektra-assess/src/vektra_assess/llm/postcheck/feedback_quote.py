@@ -2,9 +2,13 @@
 
 Text the model presents as "Commento del docente" must be an exact substring (whitespace
 normalised) of the feedback of the item cited in the same sentence: the quiz item's visible review
-text, the criterion remark or the overall feedback. With no item cited, any feedback in the bundle
-may match. Otherwise the quote is replaced with ``MISSING`` and the turn is marked: a paraphrase
-or an invented comment must never be shown to the student as the teacher's words.
+text, the criterion remark or the overall feedback. A sentence that cites an item is checked
+against that item's feedback only: a cited item that is not in the bundle, or has no feedback, can
+confirm no quote. Only a sentence with no item cited may match any feedback in the bundle.
+Otherwise the quote is replaced with ``MISSING`` and the turn is marked: a paraphrase or an invented
+comment must never be shown to the student as the teacher's words. A quotation opened after a lead
+and never closed in the sentence (cut by the splitter's hold limit or by the end of the stream) is
+replaced from its opener to the end of the sentence.
 """
 
 from __future__ import annotations
@@ -14,16 +18,21 @@ from dataclasses import dataclass
 
 from vektra_assess.context import strings as S
 from vektra_assess.context.bundle import ContextBundle
+from vektra_assess.llm.postcheck.values import cited_labels
 
 MISSING = "[commento del docente non verificato: vedi la pagina di revisione]"
 
+#: the words that present a quotation as the teacher's (shared with the sentence splitter)
+LEAD = r"(?:Commento del docente(?:\s+dice)?|Teacher(?:['\u2019]s)? (?:comment|feedback)(?:\s+says)?)"
 _QUOTE = re.compile(
-    r"(?P<lead>(?:Commento del docente|Teacher(?:'s)? (?:comment|feedback))\s*:?\s*)"
+    rf"(?P<lead>{LEAD}\s*:?\s*)"
     r"(?P<q>\"[^\"]*\"|“[^”]*”|«[^»]*»)",
     re.IGNORECASE,
 )
-_LABEL = re.compile(
-    r"\b(?:Domanda\s+(\w+)|Criterio\s+(\d+)|(Valutazione complessiva))\b", re.IGNORECASE
+# a quotation opened after a lead with no closer before the end of the sentence
+_OPEN_QUOTE = re.compile(
+    rf"(?P<lead>{LEAD}\s*:?\s*)(?:\"[^\"]*|“[^”]*|«[^»]*)$",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -52,18 +61,10 @@ class QuoteCheck:
 
 
 def check(sentence: str, index: dict[str, str], missing: str = MISSING) -> QuoteCheck:
-    cited = []
-    for m in _LABEL.finditer(sentence):
-        key = (
-            f"domanda {m.group(1).lower()}"
-            if m.group(1)
-            else f"criterio {m.group(2)}"
-            if m.group(2)
-            else S.OVERALL_LABEL.lower()
-        )
-        if key in index:
-            cited.append(index[key])
-    sources = [_norm(t) for t in (cited or index.values())]
+    keys = [k for _, k in cited_labels(sentence, index)]
+    # a citation restricts the sources to the cited items, even when none of them has feedback
+    pool = [index[k] for k in keys if k in index] if keys else list(index.values())
+    sources = [_norm(t) for t in pool]
     replaced = 0
 
     def take(m: re.Match[str]) -> str:
@@ -74,4 +75,11 @@ def check(sentence: str, index: dict[str, str], missing: str = MISSING) -> Quote
         replaced += 1
         return m.group("lead") + missing
 
-    return QuoteCheck(_QUOTE.sub(take, sentence), replaced)
+    def cut(m: re.Match[str]) -> str:
+        nonlocal replaced
+        replaced += 1
+        return m.group("lead") + missing
+
+    text = _QUOTE.sub(take, sentence)
+    text = _OPEN_QUOTE.sub(cut, text)
+    return QuoteCheck(text, replaced)

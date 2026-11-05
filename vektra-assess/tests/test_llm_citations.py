@@ -92,3 +92,41 @@ def test_feedback_index_holds_only_what_the_bundle_shows() -> None:
     idx = feedback_quote.feedback_index(b)
     assert idx["valutazione complessiva"] == "Bene."
     assert "domanda 2" not in idx  # structured-only path: no review text in the bundle
+
+
+def test_commento_del_docente_dice_is_a_quote_lead() -> None:
+    ok = 'Il Commento del docente dice: "manca la conclusione".'
+    assert feedback_quote.check(ok, INDEX).text == ok
+    out = feedback_quote.check('Il Commento del docente dice: "ottimo lavoro".', INDEX)
+    assert out.replaced == 1 and "ottimo" not in out.text
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # a cited item with no feedback confirms nothing: no fallback to the other items
+        'Per la [Domanda 3], Commento del docente: "manca la conclusione".',
+        'Nella Domanda 9 il Commento del docente: "Analisi corretta".',
+    ],
+)
+def test_a_quote_citing_an_item_without_feedback_is_replaced(sentence: str) -> None:
+    out = feedback_quote.check(sentence, INDEX)
+    assert out.replaced == 1 and MISSING in out.text
+
+
+def test_running_text_domanda_is_not_a_citation() -> None:
+    s = 'La domanda chiedeva altro. Commento del docente: "manca la conclusione".'
+    assert feedback_quote.check(s, INDEX).text == s
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        'Commento del docente: "manca la conclusione e poi il resto',
+        "Teacher\u2019s comment: “missing the conclusion",
+        "Per la [Domanda 2], Commento del docente: «Buona impostazione.",
+    ],
+)
+def test_an_unclosed_teacher_quote_is_replaced_to_the_end(sentence: str) -> None:
+    out = feedback_quote.check(sentence, INDEX)
+    assert out.replaced == 1 and out.text.endswith(MISSING)

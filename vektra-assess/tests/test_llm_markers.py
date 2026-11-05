@@ -9,6 +9,7 @@ from vektra_assess.llm.postcheck.markers import (
     CLASS_UNKNOWN,
     CONTEST_LABEL_UNKNOWN,
     CONTEST_MALFORMED,
+    UNTERMINATED,
     extract,
 )
 from vektra_assess.llm.types import ContestEntry
@@ -71,3 +72,36 @@ def test_markers_never_survive_in_the_text() -> None:
         LABELS,
     )
     assert "[[" not in m.text and m.behaviour_class == "R-SOL"
+
+
+@pytest.mark.parametrize(
+    ("sentence", "text"),
+    [
+        ("[[CLASS R-SOL Capisco la richiesta.", ""),
+        ("[[CLASS R-SOL] Capisco la richiesta.", "Capisco la richiesta."),
+        (
+            'Lo registro. [[PUNTO_CONTESTATO label="Domanda 2" status="proposed"',
+            "Lo registro.",
+        ),
+    ],
+)
+def test_an_unterminated_recognised_marker_is_removed_and_reported(
+    sentence: str, text: str
+) -> None:
+    m = extract(sentence, LABELS)
+    assert m.text == text and m.dropped == (UNTERMINATED,)
+    assert m.behaviour_class is None and m.contest == () and "[[" not in m.text
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["La matrice [[1, 2], [3, 4] è incompleta.", "Vedi [[nota]] e [[CLASSE A]]."],
+)
+def test_ordinary_unbalanced_brackets_are_text(sentence: str) -> None:
+    m = extract(sentence, LABELS)
+    assert m.text == sentence and m.dropped == ()
+
+
+def test_part_b_fails_on_an_unterminated_marker() -> None:
+    """The runner fails Part B with ``part_b.MARKER`` on any dropped marker code."""
+    assert extract("Iniziamo dalla Domanda 1. [[CLASS R-SOL", LABELS).dropped

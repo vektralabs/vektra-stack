@@ -16,7 +16,12 @@ DATA = json.loads(
         encoding="utf-8"
     )
 )
-HITS = [(cat, s) for cat, ss in DATA["hits"].items() for s in ss]
+HITS = [
+    (cat, s)
+    for cat, by_lang in DATA["hits"].items()
+    for ss in by_lang.values()
+    for s in ss
+]
 
 
 @pytest.mark.parametrize(("category", "sentence"), HITS)
@@ -33,7 +38,10 @@ def test_contest_and_explanation_wording_is_not_caught(sentence: str) -> None:
 
 def test_every_category_has_it_and_en_examples() -> None:
     assert set(DATA["hits"]) == set(lexicon.PATTERNS)
-    assert all(len(v) >= 3 for v in DATA["hits"].values())
+    for cat, by_lang in DATA["hits"].items():
+        assert set(by_lang) == {"it", "en"}, cat
+        assert by_lang["it"] and by_lang["en"], cat
+        assert len(by_lang["it"]) + len(by_lang["en"]) >= 3, cat
 
 
 def test_the_lexicon_version_enters_the_prompt_version() -> None:

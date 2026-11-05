@@ -2,8 +2,10 @@
 
 Dependency-free: a stopword vote. Italian and English are the supported languages; a message
 whose stopwords are mostly from another language is ``other`` (the runner then replies in Italian
-and prepends the shipped explanatory sentence). A tie, or a message with no stopwords at all
-("ok", "Domanda 3?"), is Italian, the default.
+and prepends the shipped explanatory sentence). A message written mostly in a non-Latin script
+(Arabic, Chinese, Cyrillic, Japanese ...) has no stopword to vote with, so its letters decide: it is
+``other`` too. A tie, or a message with no stopwords and no such letters ("ok", "Domanda 3?",
+"3.5/10"), is Italian, the default.
 """
 
 from __future__ import annotations
@@ -44,9 +46,30 @@ _OTHER = {
     ),
 }
 _WORD = re.compile(r"[a-zà-ÿ']+", re.IGNORECASE)
+# letters of a script other than Latin (Latin, Latin-1, Latin Extended A/B and Additional excluded)
+_LATIN_RANGES = ((0x0000, 0x024F), (0x1E00, 0x1EFF))
+#: fewer non-Latin letters than this is not substantive input (a stray symbol, a lone kanji)
+_MIN_SCRIPT_LETTERS = 2
+
+
+def _non_latin_letters(text: str) -> tuple[int, int]:
+    """``(non-Latin letters, Latin letters)`` of the text."""
+    other = latin = 0
+    for ch in text:
+        if not ch.isalpha():
+            continue
+        cp = ord(ch)
+        if any(lo <= cp <= hi for lo, hi in _LATIN_RANGES):
+            latin += 1
+        else:
+            other += 1
+    return other, latin
 
 
 def detect(text: str) -> Language:
+    script, latin = _non_latin_letters(text)
+    if script >= _MIN_SCRIPT_LETTERS and script > latin:
+        return "other"  # unsupported script: no stopword list could ever vote for it
     words = [w.strip("'") for w in _WORD.findall(text.lower())]
     words = [w for w in words if w]
     it = sum(w in _IT for w in words)

@@ -6,6 +6,12 @@ point is not part of a number (``3.5``, ``3.5/10``), a page reference (``p.12``,
 common abbreviation. A point at the very end of the buffer is ambiguous while the stream is open
 (``3.`` may become ``3.5``), so it is held until the next chunk or the end of the stream.
 
+A quotation opened right after a teacher-quote lead ("Commento del docente: \"...") is never
+demoted to text: it is held until it closes, however long, and if the stream ends with it still
+open the whole rest is one sentence. Demoting it would release its fragments as plain sentences
+that the verbatim-feedback check (``feedback_quote``) cannot recognise as the teacher's words; held
+whole, the check sees the lead and the quote together and replaces a quote it cannot confirm.
+
 ``split`` is incremental: it returns the complete sentences and the unfinished rest, which the
 caller keeps in its buffer. With ``final=True`` the rest is returned as the last sentence.
 """
@@ -13,6 +19,8 @@ caller keeps in its buffer. With ``final=True`` the rest is returned as the last
 from __future__ import annotations
 
 import re
+
+from vektra_assess.llm.postcheck.feedback_quote import LEAD
 
 _TERMINATORS = ".?!"
 _OPEN_CLOSE = {"“": "”", "«": "»"}
@@ -27,6 +35,7 @@ ABBREVIATIONS = frozenset(
         "pt", "pts", "approx",
     }
 )  # fmt: skip
+_LEAD_END = re.compile(rf"{LEAD}\s*:?\s*$", re.IGNORECASE)
 _WORD_BEFORE = re.compile(r"([A-Za-zÀ-ÿ](?:[A-Za-zÀ-ÿ.]*[A-Za-zÀ-ÿ])?)$")
 
 
@@ -60,11 +69,12 @@ def _scan(
     square_at: list[int] = []
     quote: str | None = None  # the closer we are waiting for
     quote_at = -1
+    quote_led = False  # the open quotation follows a teacher-quote lead: never demoted
     i, n = 0, len(buffer)
     while i < n:
         c = buffer[i]
         if quote is not None:
-            if i - quote_at > MAX_HOLD:
+            if i - quote_at > MAX_HOLD and not quote_led:
                 return [], "", quote_at
             if c == quote:
                 quote = None
@@ -86,10 +96,9 @@ def _scan(
             return [], "", square_at[0]
         if i in literal:
             pass
-        elif c == '"':
-            quote, quote_at = '"', i
-        elif c in _OPEN_CLOSE:
-            quote, quote_at = _OPEN_CLOSE[c], i
+        elif c == '"' or c in _OPEN_CLOSE:
+            quote, quote_at = _OPEN_CLOSE.get(c, '"'), i
+            quote_led = _LEAD_END.search(buffer, start, i) is not None
         elif c == "[":
             square += 1
             square_at.append(i)
@@ -124,6 +133,10 @@ def _scan(
             i = k
             continue
         i += 1
+    if final and quote is not None and quote_led:
+        # a teacher quotation still open at the end: one sentence, so the quote check sees it whole
+        _emit(out, buffer[start:])
+        return out, "", None
     if final and (quote is not None or square):
         # the stream ended with an opener still open: it was text, split without it
         return [], "", quote_at if quote is not None else square_at[0]

@@ -80,3 +80,37 @@ def test_a_stray_quote_is_released_after_the_hold_limit() -> None:
 def test_an_unclosed_quote_at_the_end_still_splits() -> None:
     out, _ = split('Il docente scrive "manca. Poi niente. Fine.', final=True)
     assert out == ['Il docente scrive "manca.', "Poi niente.", "Fine."]
+
+
+def test_a_teacher_quote_longer_than_the_hold_limit_is_never_split_into_fragments() -> (
+    None
+):
+    """Demoted, its fragments would reach the gate without the lead the quote check needs."""
+    from vektra_assess.llm.postcheck.feedback_quote import check
+    from vektra_assess.llm.postcheck.sentences import MAX_HOLD
+
+    quote = "Frase inventata. " * (MAX_HOLD // 10)
+    text = f'Commento del docente: "{quote}'
+    assert split(text) == ([], text)  # held past the limit, nothing released
+    out, rest = split(text + '" e poi altro.', final=True)
+    assert rest == "" and out == [text + '" e poi altro.']
+    assert check(out[0], {"domanda 1": "Bene."}).replaced == 1
+
+
+def test_a_teacher_quote_open_at_the_end_of_the_stream_is_one_replaced_sentence() -> (
+    None
+):
+    from vektra_assess.llm.postcheck.feedback_quote import MISSING, check
+
+    out, _ = split(
+        'Ok. Commento del docente: "Prima frase. Seconda frase. Terza', final=True
+    )
+    assert out == ["Ok.", 'Commento del docente: "Prima frase. Seconda frase. Terza']
+    assert check(out[1], {"domanda 1": "Prima frase."}).text == (
+        f"Commento del docente: {MISSING}"
+    )
+
+
+def test_a_teacher_quote_closed_within_the_limit_is_unchanged() -> None:
+    out, _ = split('Commento del docente: "Prima. Seconda." Poi altro.', final=True)
+    assert out == ['Commento del docente: "Prima. Seconda."', "Poi altro."]

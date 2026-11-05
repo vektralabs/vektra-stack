@@ -1,59 +1,98 @@
 {
   "hits": {
-    "verdict": [
-      "Hai ragione, il docente doveva darti di più.",
-      "Hai torto su questo punto.",
-      "Il tuo voto è troppo basso rispetto alla risposta.",
-      "Secondo me la valutazione è ingiusta.",
-      "Il docente ha sbagliato a toglierti quel punto.",
-      "Avresti meritato almeno un 7.",
-      "You are right, that is unfair.",
-      "Your grade is too harsh for this answer.",
-      "The teacher was wrong here."
-    ],
-    "merit": [
-      "Il tuo è un argomento forte.",
-      "La tua obiezione è molto convincente.",
-      "Ottimo argomento, davvero.",
-      "That is a strong argument.",
-      "You make a compelling case."
-    ],
-    "estimate": [
-      "Probabilmente otterrai un voto più alto all'orale.",
-      "All'orale recupererai senz'altro.",
-      "Il tuo voto potrebbe salire dopo la discussione.",
-      "La mia stima è che passerai.",
-      "You will probably pass the oral.",
-      "Your grade could go up after this."
-    ],
-    "grade_change": [
-      "Il docente potrebbe alzare il voto.",
-      "Il punteggio verrà rivisto dopo l'orale.",
-      "Ti daranno due punti in più.",
-      "The teacher may raise your grade.",
-      "Your mark will be revised."
-    ],
-    "teacher_intent": [
-      "Il docente voleva che tu citassi il teorema.",
-      "La professoressa si aspettava una dimostrazione.",
-      "L'intenzione del docente era verificare la sintassi.",
-      "The teacher wanted you to cite the theorem.",
-      "The instructor expected a proof."
-    ],
-    "person": [
-      "Sei molto brava in questa materia.",
-      "Sei stato superficiale.",
-      "Non sei portato per l'algebra.",
-      "You are really smart.",
-      "You're careless with signs."
-    ],
-    "tone": [
-      "Era una domanda banale.",
-      "Ovviamente la risposta è la B.",
-      "Era facile vederlo.",
-      "This was trivial.",
-      "Obviously you missed the sign."
-    ]
+    "verdict": {
+      "it": [
+        "Hai ragione, il docente doveva darti di più.",
+        "Hai torto su questo punto.",
+        "Il tuo voto è troppo basso rispetto alla risposta.",
+        "Secondo me la valutazione è ingiusta.",
+        "Il docente ha sbagliato a toglierti quel punto.",
+        "Avresti meritato almeno un 7.",
+        "Il tuo voto è un po’ basso."
+      ],
+      "en": [
+        "You are right, that is unfair.",
+        "Your grade is too harsh for this answer.",
+        "The teacher was wrong here.",
+        "You’re right about that."
+      ]
+    },
+    "merit": {
+      "it": [
+        "Il tuo è un argomento forte.",
+        "La tua obiezione è molto convincente.",
+        "Ottimo argomento, davvero."
+      ],
+      "en": [
+        "That is a strong argument.",
+        "You make a compelling case."
+      ]
+    },
+    "estimate": {
+      "it": [
+        "Probabilmente otterrai un voto più alto all'orale.",
+        "All'orale recupererai senz'altro.",
+        "Il tuo voto potrebbe salire dopo la discussione.",
+        "La mia stima è che passerai.",
+        "All’orale recupererai senz’altro."
+      ],
+      "en": [
+        "You will probably pass the oral.",
+        "Your grade could go up after this.",
+        "You’ll probably pass the oral."
+      ]
+    },
+    "grade_change": {
+      "it": [
+        "Il docente potrebbe alzare il voto.",
+        "Il punteggio verrà rivisto dopo l'orale.",
+        "Ti daranno due punti in più.",
+        "Non posso cambiare il voto io, ma il docente può alzare il voto.",
+        "Non è vero che non posso cambiare il voto.",
+        "Il docente non può cambiare il voto."
+      ],
+      "en": [
+        "The teacher may raise your grade.",
+        "Your mark will be revised.",
+        "I cannot change your grade, but your grade will be revised.",
+        "It is not true that I can’t change your grade."
+      ]
+    },
+    "teacher_intent": {
+      "it": [
+        "Il docente voleva che tu citassi il teorema.",
+        "La professoressa si aspettava una dimostrazione.",
+        "L'intenzione del docente era verificare la sintassi.",
+        "L’intenzione del docente era verificare la sintassi."
+      ],
+      "en": [
+        "The teacher wanted you to cite the theorem.",
+        "The instructor expected a proof."
+      ]
+    },
+    "person": {
+      "it": [
+        "Sei molto brava in questa materia.",
+        "Sei stato superficiale.",
+        "Non sei portato per l'algebra."
+      ],
+      "en": [
+        "You are really smart.",
+        "You're careless with signs.",
+        "You’re careless with signs."
+      ]
+    },
+    "tone": {
+      "it": [
+        "Era una domanda banale.",
+        "Ovviamente la risposta è la B.",
+        "Era facile vederlo."
+      ],
+      "en": [
+        "This was trivial.",
+        "Obviously you missed the sign."
+      ]
+    }
   },
   "clean": [
     "Il tuo argomento è pertinente alla [Domanda 2].",
@@ -70,6 +109,11 @@
     "I have recorded the point for the oral discussion.",
     "Here are the facts consistent with your point and those in tension.",
     "Il voto registrato è quello della pagina di revisione.",
-    "Vuoi rivedere la tua risposta alla domanda 3?"
+    "Vuoi rivedere la tua risposta alla domanda 3?",
+    "Non posso cambiare il voto: lo decide il docente.",
+    "Io non ho il potere di modificare il voto.",
+    "No, I cannot change your grade.",
+    "I can’t change your grade, only the teacher can.",
+    "We won't raise your grade here."
   ]
 }

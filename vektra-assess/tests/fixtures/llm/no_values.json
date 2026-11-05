@@ -1,0 +1,22 @@
+[
+  "La derivata di f(x) = 3x^2 + 2x vale 6x + 2.",
+  "Con x = 2.5 ottieni y = 7.25, che è il valore cercato.",
+  "La matrice [[1, 2], [3, 4]] ha determinante -2 e traccia 5.",
+  "Come scrivi a p.12 della consegna, il ciclo itera 10 volte.",
+  "Nel paragrafo 3 citi 1/2 come probabilità dell'evento.",
+  "Il teorema vale per n >= 3 e fallisce per n = 2.",
+  "La tua risposta dice 42, mentre il testo chiede la radice di 16.",
+  "Hai scritto che 0.75 è la frequenza relativa del campione.",
+  "L'algoritmo ha complessità O(n log n) per n = 1000 elementi.",
+  "Il costo totale è 3.50 euro per 4 unità.",
+  "Nella tabella 2 la colonna 3 somma a 120.",
+  "La velocità di 9.81 m/s^2 è l'accelerazione di gravità.",
+  "Il rapporto 3/4 compare nella tua semplificazione.",
+  "Hai diviso 10 per 4 e scritto 2.5, il passaggio è corretto nel calcolo.",
+  "Per la [Domanda 2] hai usato la formula a/b con a = 6 e b = 3.",
+  "In the second step you wrote 2/3 instead of 3/2.",
+  "The loop runs 5 times and prints 25.",
+  "On page 7 of your submission you derive x = 4.",
+  "The vector (1, 0, 2) has norm sqrt(5).",
+  "La soglia del 5% compare nel tuo test d'ipotesi."
+]

@@ -161,3 +161,29 @@ async def test_another_students_sid_is_404_audited_and_leaks_nothing(
             )
             >= 2
         )
+
+
+async def test_a_refused_resume_mint_leaves_the_jti_unconsumed(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4493109397: a session past deadline + grace cannot be resumed, and the
+    pre-session token's jti is not burnt by the refused attempt."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET deadline_at = now() - interval '5 minutes' WHERE id = :s",
+            {"s": s.session_id},
+        )
+        pre = await w.presession(sub=s.sub, cmid=s.cmid)
+        r = await w.client.get(
+            f"/api/v1/assess/sessions/{s.session_id}", headers=bearer(pre)
+        )
+        assert r.status_code == 401 and "token" not in r.json()
+        jti = jwt.decode(pre, options={"verify_signature": False})["jti"]
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_token_jti WHERE jti = :j AND consumed_at IS NULL",
+                j=jti,
+            )
+            == 1
+        )

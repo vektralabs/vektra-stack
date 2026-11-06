@@ -114,6 +114,22 @@ async def get_session(
                 except MaterialUnavailable:
                     raise GateRejected(state_conflict(row.state), "material") from None
             body = view(row, material)
+            if resume:
+                # minted INSIDE the transaction: a refusal (past deadline + grace) rolls the jti
+                # consumption back, so the pre-session token is not burnt for nothing
+                try:
+                    minted = tokens_of(request).mint_session(
+                        sub=row.student_userid,
+                        site=row.site_id,
+                        cmid=row.cmid,
+                        sid=row.id,
+                        seq=row.session_no,
+                        epoch=row.epoch,
+                        deadline=row.deadline_at,
+                    )
+                except TokenError:
+                    raise GateRejected(token_invalid(), "past_deadline") from None
+                body["token"] = minted.token
     except GateRejected as rejected:
         if rejected.step in ("closed", "epoch", "material"):
             dek_cache_of(request).evict(sid)
@@ -121,21 +137,4 @@ async def get_session(
             request, rejected, route=route, site_id=claims.site, session_id=sid
         )
         raise fail(rejected.err) from None
-    if resume:
-        try:
-            minted = tokens_of(request).mint_session(
-                sub=row.student_userid,
-                site=row.site_id,
-                cmid=row.cmid,
-                sid=row.id,
-                seq=row.session_no,
-                epoch=row.epoch,
-                deadline=row.deadline_at,
-                now=row.server_now,
-            )
-        except TokenError:
-            raise fail(
-                token_invalid()
-            ) from None  # past deadline + grace: nothing to resume
-        body["token"] = minted.token
     return JSONResponse(content=body, headers={"Cache-Control": "no-store"})

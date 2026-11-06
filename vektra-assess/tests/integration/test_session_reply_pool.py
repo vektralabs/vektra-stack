@@ -67,3 +67,47 @@ async def test_replies_beyond_the_pool_all_complete(pg, worker) -> None:  # type
                 assert tuple(last[0]) == ("bot", "normal"), s.session_id
         finally:
             await small.dispose()
+
+
+async def test_the_cut_stays_at_the_deadline_however_long_the_reply_waited(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (turns.py 310-313): the stop for deadline + grace is an
+    absolute time; a reply that waited for a slot is cut at the same moment, not later."""
+    from vektra_assess.api.events import broker_of
+    from vektra_assess.api.turns import driver_for_app
+
+    runner = FakeStreamRunner(
+        segments=tuple(f"Frase {i}. " for i in range(10)), segment_delay_s=0.3
+    )
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        # deadline in 1 s, grace 4 s: the cut is 3 s after the post (persist margin 2 s)
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET deadline_at = now() + interval '1 second', "
+            "reply_grace_s = 4 WHERE id = :s",
+            {"s": s.session_id},
+        )
+        driver = driver_for_app(w.app)
+        n_slots = driver.reply_slots()
+        for _ in range(n_slots):  # every reply slot busy for 2.5 s
+            await driver.slots.acquire()
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "x"},
+            headers={"Authorization": f"Bearer {s.session_token}"},
+        )
+        assert r.status_code == 202, r.text
+        await asyncio.sleep(2.5)
+        for _ in range(n_slots):
+            driver.slots.release()
+        await asyncio.wait_for(asyncio.gather(*list(driver.tasks.values())), 15)
+
+        class _R:
+            app = w.app
+
+        deltas = [
+            e for e in broker_of(_R()).after(s.session_id, 0) if e.type == "reply_delta"
+        ]
+        assert len(deltas) <= 3, len(deltas)  # cut ~0.5 s into the reply

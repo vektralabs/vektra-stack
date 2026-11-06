@@ -238,8 +238,15 @@ class TurnDriver:
         is stopped then and the released part is persisted as a marked interrupted turn.
         ``expected_seq``: the session's ``seq`` right after the student turn this reply
         answers; once the claim is held the turn is checked to be still that pending one."""
+        # the cut is an absolute time (CodeRabbit review 5808100754): time spent waiting for
+        # a slot or the claim is not added to it
+        cut_at = (
+            asyncio.get_running_loop().time() + cut_after_s
+            if cut_after_s is not None
+            else None
+        )
         task = asyncio.create_task(
-            self._drive(sid, epoch, bundle, turn, cut_after_s, expected_seq)
+            self._drive(sid, epoch, bundle, turn, cut_at, expected_seq)
         )
         self.tasks[sid] = task
         task.add_done_callback(
@@ -296,9 +303,10 @@ class TurnDriver:
         epoch: int,
         bundle: ContextBundle,
         turn: StudentTurn,
-        cut_after_s: float | None = None,
+        cut_at: float | None = None,
         expected_seq: int | None = None,
     ) -> None:
+        """``cut_at``: the loop time of deadline + grace minus the persist margin."""
         async with self.slots, self._claim(sid) as claimed:
             if not claimed:
                 log.info("assess_reply_not_claimed")  # another driver answers this turn
@@ -310,7 +318,12 @@ class TurnDriver:
             ):
                 log.info("assess_reply_stale")
                 return
-            await self._reply(sid, epoch, bundle, turn, cut_after_s)
+            remaining = (
+                cut_at - asyncio.get_running_loop().time()
+                if cut_at is not None
+                else None
+            )
+            await self._reply(sid, epoch, bundle, turn, remaining)
 
     async def _still_pending(self, sid: UUID, epoch: int, expected_seq: int) -> bool:
         async with self.engine.connect() as conn:

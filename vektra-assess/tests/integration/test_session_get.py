@@ -187,3 +187,36 @@ async def test_a_refused_resume_mint_leaves_the_jti_unconsumed(pg, worker) -> No
             )
             == 1
         )
+
+
+async def test_the_stored_deadline_is_the_one_formula(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M3.1: deadline_at == committed_at + cap + extra + credited, on the server's clock."""
+    from datetime import datetime
+
+    from vektra_assess.timing import deadline, remaining_s
+
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE", cap_minutes=30)
+        row = (
+            await pg.run(
+                "super",
+                "SELECT committed_at, duration_s, credited_outage_s, deadline_at "
+                "FROM assess_sessions WHERE id = :s",
+                {"s": s.session_id},
+            )
+        )[0]
+        assert row.deadline_at == deadline(
+            row.committed_at, row.duration_s, row.credited_outage_s
+        )
+        body = (
+            await w.client.get(
+                f"/api/v1/assess/sessions/{s.session_id}",
+                headers=bearer(s.session_token),
+            )
+        ).json()
+        now, dl = (
+            datetime.fromisoformat(body["server_now"]),
+            datetime.fromisoformat(body["deadline_at"]),
+        )
+        assert abs(body["remaining_s"] - remaining_s(dl, now)) <= 1
+        assert 29 * 60 <= body["remaining_s"] <= 30 * 60

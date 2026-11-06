@@ -239,7 +239,8 @@ _WITHIN_T = text(
     # student for the time the commit transaction itself took (CodeRabbit, PR #153)
     # (one clock reading for all three: clock_timestamp() changes on every call)
     "UPDATE assess_sessions SET last_activity_at = c.t, committed_at = c.t, "
-    "deadline_at = c.t + make_interval(secs => duration_s) "
+    # the one deadline formula (vektra_assess.timing.DEADLINE_SQL) with committed_at = c.t
+    "deadline_at = c.t + make_interval(secs => duration_s + credited_outage_s) "
     "FROM (SELECT clock_timestamp() AS t) AS c WHERE id = :sid "
     "AND state = 'ACTIVE' AND c.t - created_at < make_interval(secs => :t)"
 )

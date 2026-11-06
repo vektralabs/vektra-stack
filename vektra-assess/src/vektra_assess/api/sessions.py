@@ -39,6 +39,7 @@ from vektra_assess.api.session_gate import (
 )
 from vektra_assess.api.start import CONSUME_JTI
 from vektra_assess.errors import state_conflict, token_invalid
+from vektra_assess.timing import remaining_s
 from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
 
 router = APIRouter()
@@ -70,6 +71,12 @@ def view(row: SessionRow, material: Material | None) -> dict[str, Any]:
         "session_no": row.session_no,
         "deadline_at": _iso(row.deadline_at),
         "server_now": _iso(row.server_now),
+        # on the server's clock only (REQ-069): the client never sends a time
+        "remaining_s": (
+            remaining_s(row.deadline_at, row.server_now)
+            if row.deadline_at is not None
+            else None
+        ),
         "committed_at": _iso(row.committed_at),
         "reply_pending": pending,
         "turns": turns,

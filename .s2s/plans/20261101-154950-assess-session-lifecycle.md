@@ -240,7 +240,7 @@ version.
 - [x] M2.7 No query-string tokens: route-inventory test that every assess route rejects `?token=`/`?access_token=` without header (401) and that no handler reads `request.query_params`/cookies for credentials (shared with plan 9's inventory test; whichever lands first owns it)
 
 ### M3 — Timing, resume, finish, abandon
-- [ ] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
+- [x] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
 - [ ] M3.2 Warnings 10/5/1 from `TurnDriver` timer per live session (emitted once per (sid, threshold, deadline)); tests with outage credit X: fire at new deadline − 10/5/1 min ±5 s, none at the old deadline
 - [ ] M3.3 Input lock at the deadline; grace window `VEKTRA_ASSESS_REPLY_GRACE_S` (60): in-flight reply finishes or is cut → marked "risposta interrotta"; slowed fake-provider tests for both branches; `assess_append_turn` refuses bot turns after deadline + grace (DB test)
 - [ ] M3.4 Lazy enforcement on every API request: past deadline (not OUTAGE) → close `timed_out`; C exceeded → `service_failure`; STARTING past T → reported as rolled back (the reaper does the deletion)

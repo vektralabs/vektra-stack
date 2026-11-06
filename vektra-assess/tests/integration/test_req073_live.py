@@ -63,7 +63,15 @@ async def moodle_dump_hash(worker, branch: str, sid) -> str:  # type: ignore[no-
     built = await source.capture(target)
     snapshot = getattr(built, "snapshot", None)
     assert snapshot is not None, f"capture failed: {built!r}"
-    return hashlib.sha256(canonical_bytes(snapshot)).hexdigest()
+    # the read times change between two captures even when Moodle does not: they are
+    # normalised for THIS comparison only (production serialization untouched)
+    stable = snapshot.model_copy(
+        update={
+            "header": snapshot.header.model_copy(update={"captured_at": 0}),
+            "overall": snapshot.overall.model_copy(update={"grade_read_at": 0}),
+        }
+    )
+    return hashlib.sha256(canonical_bytes(stable)).hexdigest()
 
 
 async def test_a_full_session_leaves_moodle_byte_identical(pg, branch: str) -> None:  # type: ignore[no-untyped-def]

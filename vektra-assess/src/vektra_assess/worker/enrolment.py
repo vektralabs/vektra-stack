@@ -28,8 +28,12 @@ from vektra_assess.worker.runner import AcquireDb, JobContext
 
 log = structlog.get_logger(__name__)
 
+#: the live sessions whose last check is oldest first, never-checked ones before all
+#: (review fix 9): with more live sessions than one batch, every session is still reached
 _LIVE = text(
-    "SELECT id FROM assess_sessions WHERE state IN ('ACTIVE', 'OUTAGE') LIMIT :n"
+    "SELECT s.id FROM assess_sessions s LEFT JOIN LATERAL (SELECT max(c.checked_at) AS last "
+    "FROM assess_enrolment_checks c WHERE c.session_id = s.id) c ON true "
+    "WHERE s.state IN ('ACTIVE', 'OUTAGE') ORDER BY c.last ASC NULLS FIRST, s.id LIMIT :n"
 )
 _SESSION = text(
     "SELECT s.id, s.site_id, s.cmid, s.student_userid, s.courseid_hint, s.session_no, s.epoch, "

@@ -146,3 +146,43 @@ async def test_an_unreadable_enrolment_rejects_turns_and_closes_nothing(
             )
             == 1
         )
+
+
+async def test_every_live_session_is_rechecked_within_a_few_ticks(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 9: the re-check queue takes the sessions whose last check is oldest (never
+    checked first), so a batch limit below the number of live sessions still reaches all."""
+    from sqlalchemy.ext.asyncio import create_async_engine as _engine
+
+    from integration.conftest import make_session
+    from integration.test_session_preflight import _reset as _clean
+    from vektra_assess.worker.enrolment import queue_rechecks
+
+    await _clean(pg)
+    await pg.run("super", "DELETE FROM assess_jobs")
+    sids = [await make_session(pg) for _ in range(5)]
+    engine = _engine(pg.url("worker"))
+    try:
+        for _ in range(3):  # three ticks of two
+            await queue_rechecks(engine.connect, batch=2)
+            queued = await pg.run(
+                "super",
+                "SELECT (args->>'session_id')::uuid FROM assess_jobs "
+                "WHERE kind = 'enrolment_recheck'",
+            )
+            for (sid,) in queued:  # the handler's effect: one check row, the job done
+                await pg.run(
+                    "super",
+                    "INSERT INTO assess_enrolment_checks (session_id, result) "
+                    "VALUES (:s, 'enrolled')",
+                    {"s": sid},
+                )
+            await pg.run("super", "DELETE FROM assess_jobs")
+        checked = await pg.run(
+            "super",
+            "SELECT count(DISTINCT session_id) FROM assess_enrolment_checks "
+            "WHERE session_id = ANY(:s)",
+            {"s": sids},
+        )
+        assert checked[0][0] == 5
+    finally:
+        await engine.dispose()

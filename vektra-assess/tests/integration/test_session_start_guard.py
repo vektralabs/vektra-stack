@@ -231,3 +231,47 @@ async def test_concurrent_starts_on_a_half_open_breaker_let_one_through(
             await n(pg, "SELECT count(*) FROM assess_sessions WHERE state = 'STARTING'")
             <= 1
         )
+
+
+async def test_moodle_unreachable_alerts_the_operator_once_per_window(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """REQ-071: a pre-flight rolled back because Moodle could not be read queues ONE
+    content-free operator_notify per site per 15-minute window, in the rollback transaction;
+    a rollback for a negated gate queues nothing."""
+    limits = StartLimits(breaker_rollbacks=1000, rollback_notify_after=100)
+    async with world(pg) as w:
+        await rolled_back(w, worker, "not_released", limits, assignment="hiddengrade")
+        assert (
+            await n(
+                pg, "SELECT count(*) FROM assess_jobs WHERE kind = 'operator_notify'"
+            )
+            == 0
+        )
+        for i in range(1, 6):  # five Starts of five students in the window
+            await rolled_back(
+                w, worker, "unreadable", limits, assignment="rubric_vis", user=f"stu{i}"
+            )
+        # the first alert already delivered: still none for the same window
+        await pg.run(
+            "super",
+            "UPDATE assess_jobs SET state = 'done' WHERE kind = 'operator_notify'",
+        )
+        await rolled_back(
+            w,
+            worker,
+            "capture_failed_policy_input_unreadable",
+            limits,
+            assignment="simple",
+        )
+        jobs = await pg.run(
+            "super",
+            "SELECT args FROM assess_jobs WHERE kind = 'operator_notify'",
+        )
+        assert [j[0] for j in jobs] == [
+            {
+                "site_id": str(w.site),
+                "reason": "unreadable",
+                "kind": "moodle_unreachable",
+            }
+        ]

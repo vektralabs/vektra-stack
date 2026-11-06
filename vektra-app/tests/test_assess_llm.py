@@ -57,6 +57,60 @@ def test_the_assess_llm_has_its_own_model_and_no_fallback(
     assert cfg.api_base == "http://assess:11434" and cfg.api_key is None
 
 
+def test_the_assess_llm_uses_the_shared_key_and_its_own_extra_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M1.5a (OQ-026, decision of 2026-11-06): the key is the RAG's VEKTRA_LLM_API_KEY, the extra
+    body is VEKTRA_ASSESS_LLM_EXTRA_BODY; the RAG's extra body and fallback never leak in."""
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "hosted_vllm/qwen3.6")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_API_BASE", "http://vllm.example:8000/v1")
+    monkeypatch.setenv("VEKTRA_LLM_API_KEY", "sk-shared-test-key")
+    monkeypatch.setenv(
+        "VEKTRA_ASSESS_LLM_EXTRA_BODY",
+        '{"chat_template_kwargs": {"enable_thinking": false}}',
+    )
+    monkeypatch.setenv("VEKTRA_LLM_EXTRA_BODY", '{"rag": true}')
+    monkeypatch.setenv("VEKTRA_LLM_FALLBACK_MODEL", "openai/gpt-fallback")
+    settings = VektraAssessSettings()
+    assert "sk-shared-test-key" not in repr(settings)
+    llm = build_assess_llm(settings)
+    cfg = llm._config  # type: ignore[attr-defined]
+    assert cfg.api_key == "sk-shared-test-key"
+    assert cfg.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert cfg.fallback_model is None
+    kwargs = llm._base_kwargs  # type: ignore[attr-defined]
+    assert kwargs["extra_body"] == cfg.extra_body and kwargs["api_key"] == cfg.api_key
+
+
+@pytest.mark.parametrize("empty", ["", "   "])
+def test_empty_compose_values_mean_none(
+    monkeypatch: pytest.MonkeyPatch, empty: str
+) -> None:
+    """The worker gets ``${VAR:-}`` from compose: an empty value is "unset", not an error."""
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    for name in (
+        "VEKTRA_LLM_API_KEY",
+        "VEKTRA_ASSESS_LLM_EXTRA_BODY",
+        "VEKTRA_ASSESS_LLM_API_BASE",
+    ):
+        monkeypatch.setenv(name, empty)
+    s = VektraAssessSettings()
+    assert (s.llm_api_key, s.llm_extra_body, s.llm_api_base) == (None, None, None)
+    cfg = build_assess_llm(s)._config  # type: ignore[attr-defined]
+    assert cfg.api_key is None and cfg.extra_body is None
+
+
+@pytest.mark.parametrize("bad", ["{not json", "[1, 2]", '"text"'])
+def test_a_malformed_extra_body_refuses_startup(
+    monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_EXTRA_BODY", bad)
+    with pytest.raises(ValidationError):
+        VektraAssessSettings()
+
+
 def test_no_model_is_a_startup_error() -> None:
     with pytest.raises(StartupValidationError, match="VEKTRA_ASSESS_LLM_MODEL"):
         build_assess_llm(VektraAssessSettings())

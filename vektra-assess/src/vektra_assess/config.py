@@ -10,11 +10,12 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class VektraAssessSettings(BaseSettings):
@@ -307,8 +308,58 @@ class VektraAssessSettings(BaseSettings):
     llm_api_base: str | None = Field(
         None,
         alias="VEKTRA_ASSESS_LLM_API_BASE",
-        description="API base of the discussion model (OpenAI-compatible or Ollama endpoint). A cloud key is read by litellm from its provider variable, never from this file.",
+        description="API base of the discussion model (OpenAI-compatible, vLLM or Ollama endpoint). Its key is VEKTRA_LLM_API_KEY (shared with the RAG); a cloud key may also come from litellm's own provider variable.",
     )
+    llm_api_key: SecretStr | None = Field(
+        None,
+        alias="VEKTRA_LLM_API_KEY",
+        description=(
+            "API key of the discussion model's endpoint. Deliberately the SAME variable the RAG "
+            "pipeline uses (decision of 2026-11-06, OQ-026: one key for the on-prem vLLM, no new "
+            "secret). Read by the API and by the worker (Part B); an empty value means no key."
+        ),
+    )
+    llm_extra_body: Annotated[dict[str, Any] | None, NoDecode] = Field(
+        None,
+        alias="VEKTRA_ASSESS_LLM_EXTRA_BODY",
+        description=(
+            "JSON object passed as extra_body on every discussion-model call, e.g. "
+            '{"chat_template_kwargs": {"enable_thinking": false}} for Qwen3 on vLLM. Empty or '
+            "unset: none. Never the RAG's VEKTRA_LLM_EXTRA_BODY."
+        ),
+    )
+
+    @field_validator("llm_api_key", mode="before")
+    @classmethod
+    def _empty_key_is_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("llm_extra_body", mode="before")
+    @classmethod
+    def _parse_extra_body(cls, value: Any) -> Any:
+        """Compose passes ``${VAR:-}`` as an empty string: that is "none", not a JSON error."""
+        if isinstance(value, str):
+            if not value.strip():
+                return None
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise ValueError(
+                    "VEKTRA_ASSESS_LLM_EXTRA_BODY is not valid JSON"
+                ) from None
+        if value is not None and not isinstance(value, dict):
+            raise ValueError("VEKTRA_ASSESS_LLM_EXTRA_BODY must be a JSON object")
+        return value
+
+    @field_validator("llm_api_base", mode="before")
+    @classmethod
+    def _empty_base_is_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     safeguard_mode: Literal["presidio", "none"] = Field(
         "presidio",
         alias="VEKTRA_ASSESS_SAFEGUARD_MODE",

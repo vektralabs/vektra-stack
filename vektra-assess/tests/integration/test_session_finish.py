@@ -44,7 +44,7 @@ async def test_fine_twice_is_one_close_and_one_transcript_job(pg, state: str) ->
                     "super",
                     "SELECT state, close_reason, epoch, (SELECT count(*) FROM assess_jobs WHERE "
                     "kind='transcript_generate' AND args->>'session_id' = :t), (SELECT count(*) "
-                    "FROM assess_audit_events WHERE session_id = :s AND event = 'session_closed'), "
+                    "FROM assess_audit_events WHERE session_id = :s AND event = 'assess_close'), "
                     "(SELECT count(*) FROM assess_session_handoff WHERE session_id = :s) "
                     "FROM assess_sessions WHERE id = :s",
                     {"s": s.session_id, "t": str(s.session_id)},

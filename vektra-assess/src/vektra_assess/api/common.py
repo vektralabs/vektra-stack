@@ -40,9 +40,18 @@ def engine_of(request: Request) -> AsyncEngine:
 async def parse_body[M: BaseModel](
     request: Request, model: type[M], *, max_bytes: int = MAX_BODY_BYTES
 ) -> M:
-    raw = await request.body()
-    if len(raw) > max_bytes:
+    # streamed with the cap applied per chunk: an oversized body is refused as soon as it passes
+    # max_bytes, never buffered whole first (a declared Content-Length over the cap is refused at
+    # once, a chunked body as soon as it crosses it)
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > max_bytes:
         raise fail(bad_request("body_too_large"))
+    buf = bytearray()
+    async for chunk in request.stream():
+        if len(buf) + len(chunk) > max_bytes:
+            raise fail(bad_request("body_too_large"))
+        buf += chunk
+    raw = bytes(buf)
     try:
         doc: Any = json.loads(raw or b"null")
     except (UnicodeDecodeError, json.JSONDecodeError):

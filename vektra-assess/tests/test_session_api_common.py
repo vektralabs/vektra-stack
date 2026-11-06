@@ -111,3 +111,21 @@ def test_loginas_assertion_is_positive(body: dict[str, object], ok: bool) -> Non
         {"sub": 5, "cmid": 9, "plugin_version": "1.0.0", **body}
     )
     assert req.asserts_not_loginas() is ok
+
+
+async def test_an_oversized_body_is_refused_without_reading_it_all() -> None:
+    """CodeRabbit 4493109358: the size cap applies while the body streams in."""
+    chunks_read = {"n": 0}
+
+    async def body():  # type: ignore[no-untyped-def]
+        for _ in range(1000):  # 64 MB if read to the end
+            chunks_read["n"] += 1
+            yield b"x" * 65536
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app()), base_url="http://t"
+    ) as c:
+        r = await c.post("/turn", content=body())
+    assert r.status_code == 400
+    assert r.json()["error"]["details"]["reason"] == "body_too_large"
+    assert chunks_read["n"] < 10

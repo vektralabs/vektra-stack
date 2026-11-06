@@ -97,6 +97,10 @@ NOT_AN_OUTAGE = frozenset(
 _APPEND = text(
     "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
 )
+_PENDING_TURN = text(
+    "SELECT seq, pending_reply_since FROM assess_sessions "
+    "WHERE id = :s AND state = 'ACTIVE' AND epoch = :e"
+)
 _ADD_TOKENS = text(
     "UPDATE assess_sessions SET tokens_used = tokens_used + :n WHERE id = :s "
     "RETURNING tokens_used"
@@ -228,10 +232,15 @@ class TurnDriver:
         bundle: ContextBundle,
         turn: StudentTurn,
         cut_after_s: float | None = None,
+        expected_seq: int | None = None,
     ) -> asyncio.Task[None]:
         """``cut_after_s``: seconds until deadline + grace (minus the persist margin): the reply
-        is stopped then and the released part is persisted as a marked interrupted turn."""
-        task = asyncio.create_task(self._drive(sid, epoch, bundle, turn, cut_after_s))
+        is stopped then and the released part is persisted as a marked interrupted turn.
+        ``expected_seq``: the session's ``seq`` right after the student turn this reply
+        answers; once the claim is held the turn is checked to be still that pending one."""
+        task = asyncio.create_task(
+            self._drive(sid, epoch, bundle, turn, cut_after_s, expected_seq)
+        )
         self.tasks[sid] = task
         task.add_done_callback(
             lambda t: self.tasks.pop(sid, None) if self.tasks.get(sid) is t else None
@@ -288,12 +297,29 @@ class TurnDriver:
         bundle: ContextBundle,
         turn: StudentTurn,
         cut_after_s: float | None = None,
+        expected_seq: int | None = None,
     ) -> None:
         async with self.slots, self._claim(sid) as claimed:
             if not claimed:
                 log.info("assess_reply_not_claimed")  # another driver answers this turn
                 return
+            # the claim may come after another driver answered (CodeRabbit review
+            # 5808100754): generate only while this very student turn is still pending
+            if expected_seq is not None and not await self._still_pending(
+                sid, epoch, expected_seq
+            ):
+                log.info("assess_reply_stale")
+                return
             await self._reply(sid, epoch, bundle, turn, cut_after_s)
+
+    async def _still_pending(self, sid: UUID, epoch: int, expected_seq: int) -> bool:
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(_PENDING_TURN, {"s": sid, "e": epoch})).first()
+        return bool(
+            row is not None
+            and row.pending_reply_since is not None
+            and int(row.seq) == expected_seq
+        )
 
     async def _reply(
         self,
@@ -596,7 +622,10 @@ async def post_turn(
     # committed: the reply runs detached from this request from here on
     driver.broker.publish(sid, "turn_accepted", {"turn_no": turn_no})
     # stop early enough to persist the cut turn before the database's own limit
-    driver.start(sid, row.epoch, bundle, turn, cut_after_s(row))
+    # row.seq is the seq the student turn was appended at; the append moved it by one
+    driver.start(
+        sid, row.epoch, bundle, turn, cut_after_s(row), expected_seq=row.seq + 1
+    )
     return JSONResponse(
         status_code=202,
         content={"session_id": str(sid), "turn_no": turn_no},

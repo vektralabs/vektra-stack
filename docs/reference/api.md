@@ -110,8 +110,11 @@ The body is the JSON report written by `make eval-assess`. The endpoint never tr
 Only mounted when `VEKTRA_ASSESS_ENABLED=true` (plan assess-session-lifecycle). The Moodle plugin
 mints a pre-session token server-side with its site-bound `assess:mint` key; every other route
 takes a discussion token in `Authorization: Bearer` only (a token in a query string or a cookie is
-refused, ADR-0030). Request bodies forbid unknown fields; no route takes a Moodle, course or
-attempt id (the attempt is selected server-side at Start).
+refused, ADR-0030). Request bodies forbid unknown fields. The one exception to "no Moodle id" is
+`POST /tokens`, called server-side by the trusted plugin: it must send `cmid` (and `sub`) and may
+send `courseid` as an optional hint (never trusted: the activity is resolved inside the student's
+own courses). No student-facing route takes a Moodle, course or attempt id: the attempt is
+selected server-side at Start.
 
 | Method | Path | Token | Success | Errors |
 |--------|------|-------|---------|--------|

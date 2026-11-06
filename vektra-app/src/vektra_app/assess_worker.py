@@ -257,6 +257,18 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     return {JobKind.PREFLIGHT: preflight}
 
 
+def _session_ticks(checked: Checked) -> dict[str, Any]:
+    """The plan assess-session-lifecycle tick bodies (they need no key)."""
+    from vektra_assess.worker.reaper import reap_starting
+
+    settings, engine = checked.settings, checked.engine
+
+    async def starting_reaper() -> None:
+        await reap_starting(engine.connect, settings.start_t_s)
+
+    return {"starting_reaper": starting_reaper}
+
+
 def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     """Build runtime, scheduler, heartbeat and control; nothing is started or connected yet."""
     from vektra_assess.worker.audit import make_audit
@@ -329,7 +341,9 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
         await reap_exhausted(acquire_raw, audit)
 
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
-    extra = bindings or Bindings(handlers=_session_handlers(checked, audit), ticks={})
+    extra = bindings or Bindings(
+        handlers=_session_handlers(checked, audit), ticks=_session_ticks(checked)
+    )
     slots = build_slots(
         policy,
         settings,
@@ -459,7 +473,7 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "runtime", "shutdown", "slots", "start_source", "ticks", "watchdog",
+        "reaper", "runtime", "shutdown", "slots", "start_source", "ticks", "watchdog",
     ):  # fmt: skip
         importlib.import_module(f"vektra_assess.worker.{name}")
     assert_import_ceiling()

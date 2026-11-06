@@ -35,10 +35,13 @@ class FakePartB:
         *,
         fail: BaseException | None = None,
         delay_s: float = 0.0,
+        release: asyncio.Event | None = None,
     ) -> None:
         self.text = text
         self.fail = fail
         self.delay_s = delay_s
+        self.release = release  # a stalled provider: waits until the test sets it
+        self.started = asyncio.Event()
         self.calls: list[float | None] = []
 
     @property
@@ -57,6 +60,9 @@ class FakePartB:
         remaining_s: float | None = None,
     ) -> TurnResult:
         self.calls.append(remaining_s)
+        self.started.set()
+        if self.release is not None:
+            await self.release.wait()
         if self.delay_s:
             await asyncio.sleep(self.delay_s)
         if self.fail is not None:

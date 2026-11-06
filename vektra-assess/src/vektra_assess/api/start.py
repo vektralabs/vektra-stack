@@ -73,6 +73,10 @@ _BREAKER_LOCK = text(
     "CAST(:s AS text), 0)) FROM assess_start_breaker WHERE site_id = CAST(:s AS uuid) "
     "AND state = 'open'"
 )
+_STUDENT_LOCK = text(
+    "SELECT pg_advisory_xact_lock(hashtextextended('assess_start:' || :s || ':' || :u || ':' "
+    "|| :c, 0))"
+)
 _START_CAP = text(
     "SELECT count(*) AS n, extract(epoch FROM min(created_at) + interval '1 hour' - now()) "
     "AS wait_s FROM assess_start_attempts WHERE site_id = :s AND student_userid = :u "
@@ -134,9 +138,15 @@ _ONE_OPEN = "uq_assess_sessions_one_open"
 class _Refused(Exception):
     """Raised inside the Start transaction so that it rolls back (the jti stays unconsumed)."""
 
-    def __init__(self, err: ErrorResponse, audit_reason: str | None = None) -> None:
+    def __init__(
+        self,
+        err: ErrorResponse,
+        audit_reason: str | None = None,
+        event: AssessAuditEvent = AssessAuditEvent.START_REFUSED,
+    ) -> None:
         super().__init__(err.code)
         self.err = err
+        self.event = event
         self.audit_reason = (
             audit_reason  # audited after the rollback, in its own transaction
         )
@@ -268,6 +278,21 @@ async def start_session(
                         start_breaker_open(int(float(breaker.wait_s or 0))),
                         "start_breaker_open",
                     )
+            # REQ-071 Start cap, authoritative (CodeRabbit 4498466271): under a lock per
+            # (site, student, activity) held until this Start commits, the attempts are counted
+            # again in a new statement, so concurrent Starts that passed the advisory check
+            # cannot add a sixth attempt between them
+            params_cap = {"s": claims.site, "u": claims.sub, "c": claims.cmid}
+            await conn.execute(
+                _STUDENT_LOCK, {k: str(v) for k, v in params_cap.items()}
+            )
+            cap = (await conn.execute(_START_CAP, params_cap)).one()
+            if int(cap.n) >= settings.start_rate_per_hour:
+                raise _Refused(
+                    rate_limited(max(int(float(cap.wait_s or 0)), 1), "start_rate_cap"),
+                    "start_rate_cap",
+                    AssessAuditEvent.START_RATE_CAP_HIT,
+                )
             if consumed is None:
                 # mint-to-Start correlation (M5.5): a correctly signed token whose jti was never
                 # minted through /tokens for this (site, sub, cmid) by the site's CURRENT mint
@@ -323,7 +348,7 @@ async def start_session(
             async with engine.begin() as conn:
                 await write_event(
                     conn,
-                    AssessAuditEvent.START_REFUSED,
+                    exc.event,
                     actor="api",
                     site_id=claims.site,
                     reason_code=exc.audit_reason,

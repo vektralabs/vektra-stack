@@ -405,3 +405,42 @@ async def test_a_failed_half_open_probe_restarts_the_cooldown(pg, worker) -> Non
             )
             == 1
         )
+
+
+async def test_the_start_cap_is_rechecked_inside_the_start_transaction(  # type: ignore[no-untyped-def]
+    pg, worker, monkeypatch
+) -> None:
+    """CodeRabbit 4498466271: attempts that land between the advisory check and the Start
+    transaction (a concurrent Start) are counted again under a per-student lock."""
+    from vektra_assess.api import start as start_mod
+
+    async with world(pg) as w:
+        await seed_session(w, worker, "ELIGIBLE")
+        sub, cmid = fixture_target()
+        real = start_mod._advisory
+
+        async def racing(request, conn, claims):  # type: ignore[no-untyped-def]
+            await real(request, conn, claims)  # passes: no attempt yet
+            for _ in range(5):  # five concurrent Starts recorded meanwhile
+                await pg.run(
+                    "super",
+                    "INSERT INTO assess_start_attempts (site_id, cmid, student_userid, outcome) "
+                    "VALUES (:s, :c, :u, 'requested')",
+                    {"s": w.site, "c": cmid, "u": sub},
+                )
+
+        monkeypatch.setattr(start_mod, "_advisory", racing)
+        token = await w.presession(sub=sub, cmid=cmid)
+        rows = (
+            "SELECT (SELECT count(*) FROM assess_sessions WHERE student_userid = :u "
+            "AND cmid = :c), (SELECT count(*) FROM assess_token_jti WHERE student_userid = :u "
+            "AND cmid = :c AND consumed_at IS NOT NULL)"
+        )
+        before = tuple((await pg.run("super", rows, {"u": sub, "c": cmid}))[0])
+        r = await w.client.post(
+            "/api/v1/assess/sessions", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert r.status_code == 429, r.text
+        assert err(r)["details"] == {"reason": "start_rate_cap"}
+        # nothing written: no session, the jti not consumed
+        assert tuple((await pg.run("super", rows, {"u": sub, "c": cmid}))[0]) == before

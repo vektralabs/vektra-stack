@@ -246,6 +246,42 @@ def build_worker_part_b_runner(
 # --- startup ------------------------------------------------------------------------------------
 
 
+async def _check_activation(
+    app: Any, settings: VektraAssessSettings, prompt_version: str
+) -> None:
+    """NFR-023: refuse an unactivated (provider, model, prompt_version) triple, fail closed."""
+    from vektra_assess.llm.activation import is_activated
+
+    engine = getattr(app.state, "assess_engine", None)
+    activated = False
+    if engine is not None:
+        async with engine.connect() as conn:
+            activated = await is_activated(
+                conn, str(settings.llm_model), prompt_version
+            )
+    if activated:
+        return
+    if settings.llm_allow_unactivated:  # development only, checked above
+        import structlog
+
+        structlog.get_logger(__name__).warning(
+            "assess_llm_unactivated_allowed", step=STEP, prompt_version=prompt_version
+        )
+        return
+    raise StartupValidationError(
+        step=STEP,
+        detail=(
+            f"no passing NFR-023 activation for model {settings.llm_model} "
+            f"prompt_version {prompt_version}"
+        ),
+        remediation=(
+            "Run make eval-assess against this model and POST the PASS report to "
+            "/api/v1/assess/admin/model-activations. A changed template, shipped string or "
+            "lexicon is a new prompt_version and needs a new activation."
+        ),
+    )
+
+
 async def step_13_assess_llm_check(
     app: Any, *, safeguard_factory: Callable[[str], SafeguardHook] | None = None
 ) -> None:
@@ -268,6 +304,15 @@ async def step_13_assess_llm_check(
     if not settings.enabled:
         log.info("startup_step", step=STEP, status="disabled")
         return
+    if settings.llm_allow_unactivated and settings.env != "development":
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                "VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED is honoured only with VEKTRA_ENV=development "
+                f"(this process runs with VEKTRA_ENV={settings.env})"
+            ),
+            remediation="Unset it, and activate the model through the NFR-023 endpoint.",
+        )
     app.state.assess_safeguard = build_assess_safeguard(
         settings.safeguard_mode, factory=safeguard_factory
     )
@@ -276,6 +321,7 @@ async def step_13_assess_llm_check(
         PrometheusRunnerMetrics()
     )  # served on /metrics with the rest
     app.state.assess_prompt_version = PromptRenderer(LEXICON_VERSION).prompt_version
+    await _check_activation(app, settings, app.state.assess_prompt_version)
     log.info(
         "startup_step",
         step=STEP,

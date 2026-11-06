@@ -56,8 +56,6 @@ reviews:
     - "!**/migrations/**"
     - "!**/*.sql"
     - "!.s2s/**"
-    # generated test data (word lists, sentence corpora): no review value
-    - "!**/tests/fixtures/**/*.json"
 
   # Avoid noisy reviews on trivial changes
   collapse_walkthrough: true

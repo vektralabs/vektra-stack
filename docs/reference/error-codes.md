@@ -112,6 +112,7 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ASSESS-001 | vektra-assess | 503 | Assessment discussion service unavailable; the remediation names the failing readiness item (see `GET /health/assess`) |
 | ERR-ASSESS-002 | vektra-assess | 429 | Setup check requested too soon (one per site per 5 minutes); `Retry-After` gives the wait |
 | ERR-ASSESS-003 | vektra-assess | 404 | Site or setup-check report not found (also returned for a key bound to another site) |
+| ERR-ASSESS-004 | vektra-assess | 422 | Model activation refused: the eval report does not pass the NFR-023 gate (hash, HARD classes, judge calibration, data basis); the remediation lists the failing check codes |
 
 ### Deliberately not listed
 

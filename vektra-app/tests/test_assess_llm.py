@@ -186,6 +186,10 @@ async def test_step_13_keeps_the_parts_for_the_turn_route(
 
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    monkeypatch.setenv(
+        "VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED", "true"
+    )  # no activation table here
+    monkeypatch.setenv("VEKTRA_ENV", "development")
     app = _App()
     real = _Real()
     await step_13_assess_llm_check(app, safeguard_factory=lambda _m: real)
@@ -224,6 +228,141 @@ def test_a_real_presidio_load_failure_refuses_startup(
     monkeypatch.setattr(builtins, "__import__", failing)
     with pytest.raises(StartupValidationError, match="fell back to passthrough"):
         build_assess_safeguard("presidio")
+
+
+# --- NFR-023 activation at startup ---------------------------------------------------------------
+
+
+class _Conn:
+    def __init__(self, active: bool) -> None:
+        self.active = active
+        self.sql: list[str] = []
+
+    async def execute(self, stmt: Any, params: Any = None) -> Any:
+        self.sql.append(str(stmt))
+        active = self.active
+
+        class _R:
+            def first(self) -> Any:
+                return (1,) if active else None
+
+        return _R()
+
+
+class _Engine:
+    def __init__(self, active: bool) -> None:
+        self.conn = _Conn(active)
+
+    def connect(self) -> Any:
+        conn = self.conn
+
+        class _Ctx:
+            async def __aenter__(self) -> _Conn:
+                return conn
+
+            async def __aexit__(self, *a: Any) -> None:
+                return None
+
+        return _Ctx()
+
+
+def _enabled(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+
+async def test_step_13_refuses_an_unactivated_triple(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _enabled(monkeypatch)
+    app = _App()
+    app.state.assess_engine = _Engine(active=False)
+    with pytest.raises(StartupValidationError, match="no passing NFR-023 activation"):
+        await step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
+    assert "assess_model_activations" in app.state.assess_engine.conn.sql[0]
+
+
+async def test_step_13_accepts_an_activated_triple(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _enabled(monkeypatch)
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    await step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
+    assert app.state.assess_prompt_version
+
+
+async def test_changing_a_template_changes_prompt_version_and_startup_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The activation is keyed by prompt_version: a template edit makes a new, unactivated triple."""
+    import shutil
+
+    from vektra_app import assess_llm
+    from vektra_assess.llm import prompts
+    from vektra_assess.llm.postcheck.lexicon import LEXICON_VERSION
+
+    activated = prompts.PromptRenderer(LEXICON_VERSION).prompt_version
+    t = tmp_path / "templates"
+    shutil.copytree(prompts.TEMPLATES_DIR, t)
+    (t / "system.j2").write_text((t / "system.j2").read_text() + " ", encoding="utf-8")
+    monkeypatch.setattr(prompts, "TEMPLATES_DIR", t)
+    monkeypatch.setattr(
+        prompts.PromptRenderer.__init__, "__defaults__", (t, prompts.STRINGS_DIR)
+    )
+    edited = prompts.PromptRenderer(LEXICON_VERSION).prompt_version
+    assert edited != activated
+
+    class _Only(_Engine):
+        def __init__(self) -> None:
+            super().__init__(active=False)
+            outer = self
+
+            async def execute(stmt: Any, params: Any = None) -> Any:
+                outer.conn.sql.append(str(stmt))
+                ok = params["p"] == activated
+
+                class _R:
+                    def first(self) -> Any:
+                        return (1,) if ok else None
+
+                return _R()
+
+            self.conn.execute = execute  # type: ignore[method-assign]
+
+    _enabled(monkeypatch)
+    app = _App()
+    app.state.assess_engine = _Only()
+    with pytest.raises(StartupValidationError, match=edited):
+        await assess_llm.step_13_assess_llm_check(
+            app, safeguard_factory=lambda _m: _Real()
+        )
+
+
+async def test_the_dev_bypass_is_refused_outside_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _enabled(
+        monkeypatch, VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED="true", VEKTRA_ENV="production"
+    )
+    with pytest.raises(
+        StartupValidationError, match="only with VEKTRA_ENV=development"
+    ):
+        await step_13_assess_llm_check(_App(), safeguard_factory=lambda _m: _Real())
+    _enabled(monkeypatch, VEKTRA_ENV="development")
+    app = _App()
+    app.state.assess_engine = _Engine(active=False)
+    await step_13_assess_llm_check(
+        app, safeguard_factory=lambda _m: _Real()
+    )  # allowed in dev
 
 
 def test_prometheus_metrics_count_with_code_labels() -> None:

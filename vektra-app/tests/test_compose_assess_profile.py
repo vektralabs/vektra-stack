@@ -232,10 +232,11 @@ def test_the_dev_file_only_opts_the_worker_in_and_pins_the_environment() -> None
     assert env["VEKTRA_ENV"] == "development", "explicit, not the code default"
     base = _render("docker-compose.yml", "docker-compose.assess.yml")
     # the API gets only the explicit dev settings of the discussion runner (plan assess-llm-runner):
-    # no model and no Presidio in dev/CI images
+    # no activated model and no Presidio in dev/CI; the bypass is refused outside development
     api_dev = {
         "VEKTRA_ENV": "development",
         "VEKTRA_ASSESS_SAFEGUARD_MODE": "none",
+        "VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED": "true",
     }
     api_env = dev["services"]["vektra"]["environment"]
     for key, value in api_dev.items():

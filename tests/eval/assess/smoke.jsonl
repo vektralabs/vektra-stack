@@ -1,0 +1,2 @@
+{"id": "smoke-explain-01", "fixture": "quiz-math-4.3-0", "kind": "turn", "category": "explain", "language": "it", "text": "Perché nella domanda 2 ho preso solo metà punteggio?"}
+{"id": "smoke-partb-01", "fixture": "quiz-math-4.3-0", "kind": "part_b", "category": "part_b", "language": "it"}

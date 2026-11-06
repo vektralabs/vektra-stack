@@ -1,0 +1,215 @@
+{
+ "id": "quiz-history-5.2-7",
+ "policy_inputs": {
+  "flags": {
+   "course_material": false,
+   "rubric_source": "pasted",
+   "show_solution": false
+  },
+  "released": true,
+  "review": {
+   "feedback": true,
+   "generalfeedback": true,
+   "marks": 2,
+   "overallfeedback": true,
+   "rightanswer": false
+  },
+  "review_html_filterable": "unreadable",
+  "rubric_descriptors_visible": null,
+  "rubric_display_settings": "unreadable"
+ },
+ "snapshot": {
+  "criteria": [],
+  "degraded_count": 0,
+  "exclusion": {
+   "excluded_paths": [
+    "q1.right_answer",
+    "q10.right_answer",
+    "q2.right_answer",
+    "q3.right_answer",
+    "q4.right_answer",
+    "q5.right_answer",
+    "q6.right_answer",
+    "q7.right_answer",
+    "q8.right_answer",
+    "q9.right_answer"
+   ],
+   "html_structured_only": true,
+   "policy_version": 1,
+   "rubric_descriptors_excluded": true,
+   "solution_shown": false
+  },
+  "files": [],
+  "header": {
+   "activity_kind": "quiz",
+   "attempt_count": 3,
+   "attempt_number": 2,
+   "captured_at": 1800000100,
+   "flags": {
+    "course_material": false,
+    "rubric_source": "pasted",
+    "show_solution": false
+   },
+   "grade_method": "highest",
+   "grade_modified_at": 1800000000,
+   "grade_released": true,
+   "moodle_release": "5.2",
+   "review_options_closed": true,
+   "schema_version": 1
+  },
+  "overall": {
+   "grade": "9",
+   "grade_display": null,
+   "grade_kind": "points",
+   "grade_max": "12",
+   "grade_read_at": 1800000100,
+   "overall_feedback": "Manca la giustificazione del passaggio finale.",
+   "scale_label": null
+  },
+  "pasted_rubric": null,
+  "quiz_items": [
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "1",
+    "mark": "1",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "multichoice",
+    "question_text": "In che anno fu firmato il trattato di Roma?",
+    "response_text": "Ho scelto il 1957.",
+    "review_text": null,
+    "state": "gradedright",
+    "status": "Corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "2",
+    "mark": "0.5",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "truefalse",
+    "question_text": "La Costituzione italiana entrò in vigore nel 1948.",
+    "response_text": "Vero.",
+    "review_text": null,
+    "state": "gradedpartial",
+    "status": "Parzialmente corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "3",
+    "mark": "0.5",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "shortanswer",
+    "question_text": "Chi fu il primo presidente della Repubblica italiana?",
+    "response_text": "Enrico De Nicola",
+    "review_text": null,
+    "state": "gradedpartial",
+    "status": "Parzialmente corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "4",
+    "mark": "2",
+    "marks_hidden": null,
+    "max_mark": "2",
+    "qtype": "essay",
+    "question_text": "Descrivi due cause della prima guerra mondiale.",
+    "response_text": "Il sistema delle alleanze e il nazionalismo.",
+    "review_text": null,
+    "state": "gradedright",
+    "status": "Corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "5",
+    "mark": "1",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "multichoice",
+    "question_text": "Quale evento segna la fine dell'Impero romano d'Occidente?",
+    "response_text": "Ho scelto il 476.",
+    "review_text": null,
+    "state": "gradedright",
+    "status": "Corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "6",
+    "mark": "0.5",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "truefalse",
+    "question_text": "Il Congresso di Vienna si tenne nel 1815.",
+    "response_text": "Falso.",
+    "review_text": null,
+    "state": "gradedpartial",
+    "status": "Parzialmente corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "7",
+    "mark": "0.5",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "shortanswer",
+    "question_text": "In quale città fu firmata la Magna Carta?",
+    "response_text": "Londra",
+    "review_text": null,
+    "state": "gradedpartial",
+    "status": "Parzialmente corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "8",
+    "mark": "1",
+    "marks_hidden": null,
+    "max_mark": "2",
+    "qtype": "essay",
+    "question_text": "Spiega il ruolo delle corporazioni nel Medioevo.",
+    "response_text": "Regolavano i mestieri e i prezzi.",
+    "review_text": null,
+    "state": "gradedpartial",
+    "status": "Parzialmente corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "9",
+    "mark": "1",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "multichoice",
+    "question_text": "Quale trattato chiuse la guerra dei Trent'anni?",
+    "response_text": "Ho scelto Vestfalia.",
+    "review_text": null,
+    "state": "gradedright",
+    "status": "Corretta"
+   },
+   {
+    "degraded": false,
+    "discussable": true,
+    "label": "10",
+    "mark": "1",
+    "marks_hidden": null,
+    "max_mark": "1",
+    "qtype": "truefalse",
+    "question_text": "La rivoluzione francese iniziò nel 1789.",
+    "response_text": "Vero.",
+    "review_text": null,
+    "state": "gradedright",
+    "status": "Corretta"
+   }
+  ],
+  "solution_text": null,
+  "submission": null
+ }
+}

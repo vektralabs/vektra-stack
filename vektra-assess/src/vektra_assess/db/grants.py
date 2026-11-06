@@ -36,6 +36,7 @@ TABLES: tuple[str, ...] = (
     "assess_gate_inputs",
     "assess_heartbeat",
     "assess_jobs",
+    "assess_model_activations",
     "assess_outage_incidents",
     "assess_render_checks",
     "assess_render_state",
@@ -61,6 +62,7 @@ SEQUENCES: tuple[str, ...] = (
     "assess_enrolment_checks_id_seq",
     "assess_erasure_records_id_seq",
     "assess_jobs_id_seq",
+    "assess_model_activations_id_seq",
     "assess_outage_incidents_id_seq",
     "assess_render_checks_id_seq",
     "assess_setup_checks_id_seq",
@@ -102,6 +104,8 @@ _ALL: None = None
 MATRIX: Mapping[str, Mapping[str, Privs]] = {
     API: {
         "assess_jobs": {"INSERT": _ALL},
+        # NFR-023 (plan assess-llm-runner): the admin endpoint appends, startup reads; append-only
+        "assess_model_activations": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_render_checks": {"INSERT": _ALL},
         "assess_render_state": {"SELECT": _ALL},
         "assess_gate_inputs": {"SELECT": _ALL},
@@ -147,6 +151,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
     WORKER: {
         # plumbing and status
         "assess_jobs": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL, "DELETE": _ALL},
+        # the Part B pre-flight refuses an unactivated triple (plan 8): read only
+        "assess_model_activations": {"SELECT": _ALL},
         "assess_render_checks": {
             "SELECT": _ALL,
             "INSERT": _ALL,
@@ -267,6 +273,7 @@ SEQUENCE_USAGE: Mapping[str, tuple[str, ...]] = {
         "assess_audit_events_id_seq",
         "assess_erasure_records_id_seq",
         "assess_jobs_id_seq",
+        "assess_model_activations_id_seq",
         "assess_render_checks_id_seq",
         "assess_start_attempts_id_seq",
     ),

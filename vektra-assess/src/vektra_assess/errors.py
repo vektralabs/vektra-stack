@@ -11,6 +11,7 @@ from vektra_shared.errors import (
     ERR_ASSESS_001,
     ERR_ASSESS_002,
     ERR_ASSESS_003,
+    ERR_ASSESS_004,
     ErrorCategory,
     ErrorResponse,
 )
@@ -19,6 +20,8 @@ __all__ = [
     "ERR_ASSESS_001",
     "ERR_ASSESS_002",
     "ERR_ASSESS_003",
+    "ERR_ASSESS_004",
+    "activation_refused",
     "assess_unavailable",
     "setup_check_not_found",
     "setup_check_too_soon",
@@ -52,4 +55,16 @@ def setup_check_not_found() -> ErrorResponse:
         code=ERR_ASSESS_003,
         message="Site or setup-check report not found.",
         remediation="Check the site and report ids, and that the key belongs to this site.",
+    )
+
+
+def activation_refused(reasons: tuple[str, ...]) -> ErrorResponse:
+    """422: the report does not justify activating the triple (NFR-023). Codes only."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_004,
+        message="Model activation refused: the eval report does not pass the NFR-023 gate.",
+        remediation="Failing checks: "
+        + ", ".join(reasons)
+        + ". Rerun make eval-assess.",
     )

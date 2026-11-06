@@ -1,10 +1,10 @@
 # Implementation Plan: vektra_assess.llm — DiscussionTurnRunner, post-check, prompts and the NFR-023 gate
 
 **ID**: 20261101-154950-assess-llm-runner
-**Status**: in_progress
-**Branch**: feat/assess-llm-runner
+**Status**: completed
+**Branch**: feat/assess-llm-runner-core (PR #150, merged), feat/assess-eval-gate (PR B)
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-05T16:30:00Z
+**Updated**: 2026-11-06T01:50:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -360,6 +360,8 @@ migration, the trace persistence round trip and the activation table and endpoin
   `/api/v1/query` traces keep `pipeline=NULL`.
 
 ## Notes
+
+- **Completed (2026-11-06)**: part A merged as PR #150 (CodeRabbit: 3 rounds, about 45 findings); part B (group E: eval suite, NFR-023 activation gate, migration 0021) on `feat/assess-eval-gate`, applied as the exact diff between the split point and `backup/assess-llm-runner-full`. Every task is done; the acceptance criteria that need a model run stay **BLOCKED** on OQ-026 (reference model) and OQ-027 (judge human labels): `make eval-assess` PASS, the 3-rerun determinism numbers, the oracle rate, and Part B on 100% of the eval set. Activation must be run on the merged `prompt_version`.
 
 - **CodeRabbit review of PR #150 (2026-11-06)**: about 40 findings across runner, post-check, context capture, ingest and tests, fixed with regression tests. Two left as they are. (a) Line structure of the released text: segments are stripped sentences, so `TurnResult.text` joins them with spaces; keeping the model's line breaks needs the splitter to carry separators, deferred to plan 9 (discussion UI), where rendering is decided. (b) The whole-turn `pre_response` stays audit-only: release is per sentence by design (check-then-release, ARCH-072), and a retraction after release is not possible in a stream. The post-check changes alter `LEXICON_VERSION` and therefore `prompt_version`: any NFR-023 activation must be run on the merged version (PR B). A teacher quote opened after a quote lead is now held until it closes, without the 300-char cap (fail closed, bounded by `llm_max_tokens`).
 

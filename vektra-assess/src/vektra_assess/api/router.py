@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from vektra_assess.api import setup_check
+from vektra_assess.api import model_activations, setup_check
 
 PREFIX = "/api/v1/assess"
 
 router = APIRouter(prefix=PREFIX, tags=["assess"])
 router.include_router(setup_check.router)
+router.include_router(model_activations.router)

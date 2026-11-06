@@ -57,6 +57,11 @@ class JobKind(enum.StrEnum):
     PREFLIGHT = "preflight"  # plan assess-session-lifecycle (revision 0022)
 
 
+def render_dedupe_key(site_id: object, userid: int, cmid: int) -> str:
+    """One pending render check per (site, user, cmid), whoever queues it (API or tick)."""
+    return f"render_check:{site_id}:{userid}:{cmid}"
+
+
 _ARG_TYPES = (str, int)
 
 

@@ -233,7 +233,7 @@ version.
 ### M2 — Gates and isolation
 - [x] M2.1 `vektra_assess/gates.py`: pure `evaluate_start_gates(inputs) -> GateDecision(code)` for BR-006 (a)-(i), BR-007 (quiz close + grace; assignment cut-off required), BR-010, BR-014 (quiz requires-grading = 0 incl. regrade-in-progress; rubric every criterion has a level; scale; marking guide refused), REQ-091 (any Unreadable input → fallback: NOT_AVAILABLE without a teacher date; gate = max(automatic, teacher date) when readable again; never the activity close alone); fixture table test with every gate negated individually
 - [x] M2.2 Pre-flight calls the plan-4 readers fresh and `evaluate_start_gates`; a failed gate → rollback with the gate code; team submission → `team_submission_refused` audit
-- [ ] M2.3 Bind the gate-input refresh tick and `render_check` job (worker writes `render_state` / `gate_inputs`); `GET /state` returns the advisory enum + reason code for (token sub, cmid), dedupes `render_check` per (user, cmid), per-token rate-limited; another student's override never leaks a date, name or count (response and HTML fixture grep)
+- [x] M2.3 Bind the gate-input refresh tick and `render_check` job (worker writes `render_state` / `gate_inputs`); `GET /state` returns the advisory enum + reason code for (token sub, cmid), dedupes `render_check` per (user, cmid), per-token rate-limited; another student's override never leaks a date, name or count (response and HTML fixture grep)
 - [ ] M2.4 Enforce the fixed gate order in one dependency `session_gate(stage)` used by every session route; a test per step asserting that `get_session_material` is called 0 times when an earlier step fails (spy on the DB function)
 - [ ] M2.5 REQ-084: login-as rejection on mint and on any token lacking `loginas:false`; `loginas_rejected` audit; test that 0 session rows are created and the record is unchanged; record OQ-031(2) cross-check capability (default Unreadable) as residual risk
 - [ ] M2.6 IDOR / NFR-014 negative matrix `vektra-assess/tests/test_idor.py`: token for A with B's sid; other site; other cmid; other course; expired; replay after CLOSED; unenrolled; forged Moodle attempt id in body (ignored); each → rejected, audited, 0 cross-student bytes (response body grep for B's canary); run against 4.3 and 5.2 fixtures in the integration job
@@ -435,6 +435,15 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     needs the teacher-attested `attested_opening_at` (plan 11's form). A quiz regrade in progress is
     detected by the capture's per-item BR-014 check, not as a separate gate input. The gate order
     puts enrolment right after `enabled`.
+  - **Render state at Start (M2.3)**: the Design Notes list "stale or negative `render_state`" among
+    the advisory Start refusals. Implemented: a FRESH (`VEKTRA_ASSESS_RENDER_FRESH_S`, 300 s)
+    negative state of a Moodle-side gate refuses with that gate's code and writes nothing; a stale
+    or missing state does not refuse (the pre-flight re-reads and is authoritative), so a Start
+    right after a grade is released, or with no `/state` call before it, is never refused on old
+    data. Codes the Start transaction re-checks itself (`session_open`, `already_discussed`,
+    `not_enabled`) never refuse from a render row.
+  - `GET /state` uses the pre-session token's own cmid (the `?cmid=` the plugin adds is not read)
+    and does not consume its jti. Before the first render it answers `unavailable` / `checking`.
   - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
     `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
     API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base

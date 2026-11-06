@@ -5,7 +5,9 @@ token or job row (each audited ``assess_start_refused`` with its reason code):
 
 - the worker is not ready (heartbeat missing, stale or not ``ready``): 503;
 - the activity is not enabled or has no cap (BR-013): 409 ``activity_not_configured``;
-- admission: ``VEKTRA_ASSESS_ADMISSION_K`` or more non-closed sessions: 503 (NFR-020).
+- admission: ``VEKTRA_ASSESS_ADMISSION_K`` or more non-closed sessions: 503 (NFR-020);
+- a FRESH negative worker-computed render state of a Moodle-side gate (``GET /state``): 409 with
+  that gate's code. A stale or missing render state does not refuse: the pre-flight decides.
 
 Then ONE transaction:
 
@@ -58,6 +60,13 @@ _ACTIVITY = text(
     "SELECT enabled, cap_minutes FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
 )
 _LIVE = text("SELECT count(*) FROM assess_sessions WHERE state <> 'CLOSED'")
+_RENDER = text(
+    "SELECT status, reason_code, extract(epoch FROM now() - computed_at) AS age_s "
+    "FROM assess_render_state WHERE site_id = :s AND student_userid = :u AND cmid = :c"
+)
+_OPEN_STATES = frozenset({"eligible", "reset_granted"})
+#: codes the Start transaction itself re-checks on its own rows: never refused from a render row
+_DB_CHECKED = frozenset({"session_open", "already_discussed", "not_enabled"})
 CONSUME_JTI = text(
     "UPDATE assess_token_jti t SET consumed_at = now() "
     "WHERE t.jti = :jti AND t.consumed_at IS NULL AND t.expires_at > now() "
@@ -137,6 +146,25 @@ async def _advisory(request: Request, conn: AsyncConnection, claims: PreClaims) 
     live = int((await conn.execute(_LIVE)).scalar_one())
     if live >= settings.admission_k:
         await _refuse(request, claims, "capacity", capacity_reached())
+    render = (
+        await conn.execute(
+            _RENDER, {"s": claims.site, "u": claims.sub, "c": claims.cmid}
+        )
+    ).first()
+    if (
+        render is not None
+        and float(render.age_s) <= settings.render_fresh_s
+        and render.status not in _OPEN_STATES
+        and render.reason_code not in _DB_CHECKED
+    ):
+        # a FRESH negative render state of a Moodle-side gate: refused before anything is
+        # written; stale or missing goes on to the pre-flight, which re-reads (authoritative)
+        await _refuse(
+            request,
+            claims,
+            str(render.reason_code),
+            start_refused(str(render.reason_code)),
+        )
 
 
 @router.post("/sessions", status_code=202)

@@ -240,6 +240,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     from vektra_assess.moodle.tokens import secret_token_provider
     from vektra_assess.worker.parser_client import ParserClient
     from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
+    from vektra_assess.worker.render import RenderDeps, make_render_handler
     from vektra_assess.worker.start_source import MoodleStartSource
 
     settings, engine = checked.settings, checked.engine
@@ -266,19 +267,28 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
             runner=runner,
         )
     )
-    return {JobKind.PREFLIGHT: preflight}
+    render = make_render_handler(RenderDeps(settings=settings, source=source))
+    return {
+        JobKind.PREFLIGHT: preflight,
+        JobKind.RENDER_CHECK: render,
+        JobKind.GATE_REFRESH: render,
+    }
 
 
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.reaper import reap_starting
+    from vektra_assess.worker.render import gate_refresh_tick
 
     settings, engine = checked.settings, checked.engine
 
     async def starting_reaper() -> None:
         await reap_starting(engine.connect, settings.start_t_s)
 
-    return {"starting_reaper": starting_reaper}
+    async def gate_refresh() -> None:
+        await gate_refresh_tick(engine.connect, settings.render_fresh_s)
+
+    return {"starting_reaper": starting_reaper, "gate_refresh": gate_refresh}
 
 
 def _compose(checked: Checked, bindings: Any | None = None) -> Any:
@@ -485,7 +495,8 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "reaper", "runtime", "shutdown", "slots", "start_source", "ticks", "watchdog",
+        "reaper", "render", "runtime", "shutdown", "slots", "start_source", "ticks",
+        "watchdog",
     ):  # fmt: skip
         importlib.import_module(f"vektra_assess.worker.{name}")
     assert_import_ceiling()

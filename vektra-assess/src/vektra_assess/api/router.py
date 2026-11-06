@@ -15,6 +15,7 @@ from vektra_assess.api import (
     sessions,
     setup_check,
     start,
+    state,
     turns,
 )
 
@@ -28,3 +29,4 @@ router.include_router(start.router)
 router.include_router(sessions.router)
 router.include_router(events.router)
 router.include_router(turns.router)
+router.include_router(state.router)

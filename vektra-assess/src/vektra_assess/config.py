@@ -425,6 +425,24 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION",
         description="Version of the privacy notice shown before Start; recorded on the session and the start audit event.",
     )
+    render_fresh_s: int = Field(
+        300,
+        ge=10,
+        le=86_400,
+        alias="VEKTRA_ASSESS_RENDER_FRESH_S",
+        description=(
+            "Age under which a worker-computed button state (GET /state) is fresh. Older or "
+            "missing: /state answers 'unavailable' / 'checking' and queues a render check; a Start "
+            "is refused only on a FRESH negative state (the pre-flight is authoritative)."
+        ),
+    )
+    state_rpm: int = Field(
+        30,
+        ge=1,
+        le=6000,
+        alias="VEKTRA_ASSESS_STATE_RPM",
+        description="GET /state calls per minute per pre-session token (jti).",
+    )
     privacy_allow_unset: bool = Field(
         False,
         alias="VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET",

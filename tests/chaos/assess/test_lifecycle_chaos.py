@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -39,6 +40,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 pytestmark = pytest.mark.integration
 
 GENESIS = "0" * 64
+READY_TIMEOUT_S = 30
 REASONS = (
     "finished",
     "timed_out",
@@ -115,8 +117,16 @@ def hold(url: str, sql: str, params: dict[str, Any]) -> subprocess.Popen[str]:
         text=True,
     )
     assert proc.stdout is not None
-    line = proc.stdout.readline().strip()
-    assert line == "READY", proc.stderr.read() if proc.stderr else line
+    # bounded readiness wait (CodeRabbit review 5808100754): a child that never says READY
+    # (stuck connecting, crashed) is killed and reaped, never waited on forever
+    ready, _, _ = select.select([proc.stdout], [], [], READY_TIMEOUT_S)
+    line = proc.stdout.readline().strip() if ready else ""
+    if line != "READY":
+        proc.kill()
+        _out, err = proc.communicate(timeout=10)
+        raise AssertionError(
+            f"child not ready within {READY_TIMEOUT_S} s: {err[-500:]}"
+        )
     return proc
 
 

@@ -544,6 +544,17 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     needs a shared store the plan does not have (comment 4498473536, not applied);
   - the event stream's revocation bound stays "at most `poll_s` of reply text" (review fix 6,
     coordinator decision; comment 4498473544, not applied).
+  - not applied, recorded: the live REQ-073 test keeps comparing the plan-4 capture (read
+    times zeroed); comparing the unprojected reader records needs the plan-4 raw-dump helper
+    and a live site to write against, so it is left to the first live run (comment
+    4498473615); a session token minted before an outage credit keeps its earlier expiry:
+    tokens live at most `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` (15 min) and the client re-mints
+    through resume, which caps the new token at the current (credited) deadline (unverified
+    finding, outage_probe.py 94-97); the worker does not check the Alembic head at start: the
+    schema is migrated by the operator before the services start (`alembic upgrade head`, API
+    startup step 3 refuses a behind schema), and the worker role has no grant on
+    `alembic_version`; adding one is a grant-matrix change for a later plan (minor comment
+    on models.py 202-204).
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

@@ -38,6 +38,7 @@ from vektra_assess.api.session_gate import (
     audit_rejection,
     enforce_clock,
     gate,
+    on_session_closed,
 )
 from vektra_assess.api.start import CONSUME_JTI
 from vektra_assess.errors import state_conflict, token_invalid
@@ -145,7 +146,7 @@ async def get_session(
                 body["token"] = minted.token
     except GateRejected as rejected:
         if rejected.step in ("closed", "epoch", "material"):
-            dek_cache_of(request).evict(sid)
+            on_session_closed(request.app, sid)
         await audit_rejection(
             request, rejected, route=route, site_id=claims.site, session_id=sid
         )

@@ -19,6 +19,7 @@ route's own writes (a turn, a close) commit or roll back together with the gate'
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Collection
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -90,6 +91,23 @@ async def load_row(
         await conn.execute(_ROW_LOCKED if lock else _ROW_PLAIN, {"sid": sid})
     ).first()
     return SessionRow(**raw._mapping) if raw is not None else None
+
+
+def on_session_closed(app: Any, sid: UUID) -> None:
+    """The ONE API-side hook after a session is closed or its token revoked (review fix 7):
+    the DEK leaves the process and the reply in flight, if any, is cancelled so the model stops
+    generating (the runner closes the provider stream on cancellation). Called by every API
+    path that closes (Fine, the lazy close, budget_exhausted, the third failed call) or sees a
+    session closed or revoked. A reply never cancels itself: the caller inside the reply task
+    just ends. Closes made by the worker (sweeper, probe, enrolment) reach a running reply
+    through its own refused append."""
+    cache = getattr(app.state, "assess_dek_cache", None)
+    if cache is not None:
+        cache.evict(sid)
+    driver = getattr(app.state, "assess_turn_driver", None)
+    task = driver.tasks.get(sid) if driver is not None else None
+    if task is not None and not task.done() and task is not asyncio.current_task():
+        task.cancel()
 
 
 class GateRejected(Exception):
@@ -284,9 +302,7 @@ async def enforce_clock(
                 _CLOSE, {"sid": sid, "epoch": row.epoch, "reason": reason}
             )
     if reason is not None:
-        cache = getattr(request.app.state, "assess_dek_cache", None)
-        if cache is not None:
-            cache.evict(sid)
+        on_session_closed(request.app, sid)
     return reason
 
 
@@ -329,11 +345,9 @@ async def session_tx(
                 raise GateRejected(state_conflict(row.state), "material") from None
     except GateRejected as rejected:
         if rejected.step in ("closed", "epoch", "material"):
-            cache = getattr(request.app.state, "assess_dek_cache", None)
-            if cache is not None:
-                cache.evict(
-                    sid
-                )  # a closed or revoked session's DEK leaves the process now
+            on_session_closed(
+                request.app, sid
+            )  # closed or revoked: DEK out, reply stopped
         await audit_rejection(
             request, rejected, route=route, site_id=claims.site, session_id=sid
         )

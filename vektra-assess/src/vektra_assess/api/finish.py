@@ -16,9 +16,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from vektra_assess.api.common import fail
-from vektra_assess.api.deps import dek_cache_of
 from vektra_assess.api.gate import verify_assess_token_session
-from vektra_assess.api.session_gate import LIVE, session_tx
+from vektra_assess.api.session_gate import LIVE, on_session_closed, session_tx
 from vektra_assess.errors import state_conflict
 from vektra_assess.tokens import SessionClaims
 
@@ -48,7 +47,7 @@ async def finish_session(
             reason = "finished"
         else:
             reason = row.close_reason or "finished"
-    dek_cache_of(request).evict(sid)
+    on_session_closed(request.app, sid)  # DEK out, the reply in flight stopped
     return JSONResponse(
         content={"session_id": str(sid), "state": "CLOSED", "close_reason": reason},
         headers={"Cache-Control": "no-store"},

@@ -260,7 +260,10 @@ jobs:
   package-integration:
     name: Package integration tests (all packages)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30 was hit by PR #154: the job already took 28 min on develop, ~21 of them in
+    # vektra-admin/tests/test_integration.py (~30 s per test); the assess lifecycle suite
+    # adds ~8 min. Speeding up the admin suite is tracked separately.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v7

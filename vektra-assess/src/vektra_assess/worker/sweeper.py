@@ -22,6 +22,13 @@ _DUE = text(
     "AND deadline_at + make_interval(secs => reply_grace_s) < now() "
     "ORDER BY deadline_at LIMIT :n"
 )
+#: the timeout re-checked under the row lock (CodeRabbit 4498473601): a session that went into
+#: OUTAGE, or got a later deadline from an outage credit, after the scan is left alone
+_RECHECK = text(
+    "SELECT epoch FROM assess_sessions WHERE id = :sid AND state = 'ACTIVE' "
+    "AND deadline_at IS NOT NULL "
+    "AND deadline_at + make_interval(secs => reply_grace_s) < now() FOR UPDATE"
+)
 _CLOSE = text("SELECT assess_close_session(:sid, :epoch, 'timed_out')")
 
 
@@ -32,9 +39,13 @@ async def sweep_timed_out(acquire: AcquireDb, *, batch: int = 200) -> int:
     for row in due:
         async with acquire() as conn:
             async with conn.begin():
+                epoch = (await conn.execute(_RECHECK, {"sid": row.id})).scalar()
                 ok = (
-                    await conn.execute(_CLOSE, {"sid": row.id, "epoch": row.epoch})
-                ).scalar()
+                    epoch is not None
+                    and (
+                        await conn.execute(_CLOSE, {"sid": row.id, "epoch": epoch})
+                    ).scalar()
+                )
         closed += bool(ok)
     if closed:
         log.info("assess_sessions_timed_out", count=closed)

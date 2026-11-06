@@ -54,3 +54,42 @@ async def test_a_browser_closed_session_is_closed_with_its_transcript_job(pg) ->
             assert rows[inside.session_id][0] == "ACTIVE"
     finally:
         await worker.dispose()
+
+
+async def test_a_session_that_entered_outage_after_selection_is_not_timed_out(  # type: ignore[no-untyped-def]
+    pg, monkeypatch
+) -> None:
+    """CodeRabbit 4498473601: the timeout is re-checked under the row lock; a session that
+    went into OUTAGE (or got a later deadline) after the scan is left alone."""
+    from sqlalchemy import text
+
+    from vektra_assess.worker import sweeper as sweeper_mod
+
+    await _reset(pg)
+    worker = create_async_engine(pg.url("worker"))
+    try:
+        async with world(pg) as w:
+            s = await seed_session(w, worker, "OUTAGE", assignment="simple")
+            await pg.run(
+                "super",
+                "UPDATE assess_sessions SET deadline_at = now() - interval '61 seconds', "
+                "reply_grace_s = 60 WHERE id = :s",
+                {"s": s.session_id},
+            )
+            # the scan saw it ACTIVE a moment ago
+            monkeypatch.setattr(
+                sweeper_mod,
+                "_DUE",
+                text(
+                    "SELECT id, epoch FROM assess_sessions WHERE id = :sid LIMIT :n"
+                ).bindparams(sid=s.session_id),
+            )
+            assert await sweep_timed_out(worker.connect) == 0
+            state = await pg.run(
+                "super",
+                "SELECT state FROM assess_sessions WHERE id = :s",
+                {"s": s.session_id},
+            )
+            assert state[0][0] == "OUTAGE"
+    finally:
+        await worker.dispose()

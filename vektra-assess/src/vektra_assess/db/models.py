@@ -259,6 +259,9 @@ class OutageIncidentOrm(Base):
     started_at: Mapped[datetime] = _ts(default=True)
     ended_at: Mapped[datetime | None] = _ts(nullable=True)
     reason_code: Mapped[str | None] = mapped_column(TEXT)
+    credited_s: Mapped[int] = mapped_column(
+        INTEGER, server_default=text("0")
+    )  # revision 0026
 
 
 class EnrolmentCheckOrm(Base):

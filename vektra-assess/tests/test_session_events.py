@@ -34,7 +34,9 @@ def test_observe_publishes_once_per_change() -> None:
     e = b.observe(sid, "ACTIVE", {"state": "ACTIVE"})
     assert e is not None and e.type == "committed"
     assert b.observe(sid, "ACTIVE", {}) is None  # a second poller sees no change
-    assert b.observe(sid, "OUTAGE", {}).type == "state"  # type: ignore[union-attr]
+    assert b.observe(sid, "OUTAGE", {}).type == "outage_start"  # type: ignore[union-attr]
+    assert b.observe(sid, "ACTIVE", {}).type == "outage_end"  # type: ignore[union-attr]
+    assert b.observe(sid, "OUTAGE", {}).type == "outage_start"  # type: ignore[union-attr]
     assert b.observe(sid, "CLOSED", {"close_reason": "finished"}).type == "closed"  # type: ignore[union-attr]
     other = uuid.uuid4()
     b.observe(other, "STARTING", {})

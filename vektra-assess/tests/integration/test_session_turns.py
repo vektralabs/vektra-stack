@@ -14,7 +14,6 @@ from support.world import err, world
 
 from integration.test_session_events_sse import TIMING, parse
 from integration.test_session_preflight import _reset
-from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
 
 pytestmark = pytest.mark.integration
 
@@ -185,19 +184,16 @@ async def test_the_reply_survives_the_client_going_away(pg, worker) -> None:  # 
     )
 
 
-async def test_an_outage_writes_the_interrupted_turn_and_the_next_turn_is_accepted(  # type: ignore[no-untyped-def]
+async def test_an_internal_error_writes_the_interrupted_turn_and_the_next_turn_is_accepted(  # type: ignore[no-untyped-def]
     pg, worker
 ) -> None:
-    """Review fix 5: an outage (or an internal error) at turn N appends the marked bot turn
-    "[risposta interrotta]" through assess_append_turn, which clears the pending marker, so turn
-    N+1 is accepted instead of a 409 forever. The ACTIVE -> OUTAGE transition is plan M4.1."""
-    from datetime import UTC, datetime
-
+    """Review fix 5: an internal error at turn N appends the marked bot turn "[risposta
+    interrotta]" through assess_append_turn, which clears the pending marker, so turn N+1 is
+    accepted instead of a 409 forever. A provider OUTAGE keeps the turn instead (M4.1,
+    test_session_outage)."""
     from vektra_assess.turn_markers import INTERRUPTED_REPLY
 
-    now = datetime.now(UTC)
-    rec = ProviderCallRecord(now, None, now, "first_token_timeout")
-    runner = FakeStreamRunner(fail=ProviderOutageError(rec))
+    runner = FakeStreamRunner(fail=RuntimeError("boom"))
     async with world(pg, assess_runner=runner) as w:
         s = await seed_session(w, worker, "ACTIVE")
         url = f"/api/v1/assess/sessions/{s.session_id}"
@@ -232,7 +228,7 @@ async def test_an_outage_writes_the_interrupted_turn_and_the_next_turn_is_accept
 
         evs = broker_of(R()).after(s.session_id, 0)  # type: ignore[arg-type]
         assert [e.type for e in evs] == ["turn_accepted", "reply_interrupted"]
-        assert evs[-1].data == {"reason": "provider_unavailable", "turn_no": 4}
+        assert evs[-1].data == {"reason": "internal_error", "turn_no": 4}
         # the provider is back: turn N+1 is accepted and answered
         runner.fail = None
         r = await w.client.post(

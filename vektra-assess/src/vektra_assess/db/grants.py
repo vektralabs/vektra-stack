@@ -278,7 +278,17 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
                 "closed_at",
                 "pending_reply_since",  # revision 0023 (plan 8): the one-reply-at-a-time rule
                 "epoch",  # revision 0025: every close bumps the epoch (revokes session tokens)
+                # revision 0026 (plan 8 M4): the outage functions credit the outage and move the
+                # deadline by the one formula
+                "credited_outage_s",
+                "deadline_at",
             ),
+        },
+        # revision 0026: ACTIVE -> OUTAGE records the interval, its end sets ended_at + credit
+        "assess_outage_incidents": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": ("ended_at", "credited_s"),
         },
         "assess_session_handoff": {"SELECT": _ALL, "DELETE": _ALL},
         "assess_snapshots": {"SELECT": _ALL},
@@ -299,7 +309,11 @@ SEQUENCE_USAGE: Mapping[str, tuple[str, ...]] = {
         "assess_start_attempts_id_seq",
     ),
     WORKER: SEQUENCES,
-    DEFINER: ("assess_audit_events_id_seq", "assess_jobs_id_seq"),
+    DEFINER: (
+        "assess_audit_events_id_seq",
+        "assess_jobs_id_seq",
+        "assess_outage_incidents_id_seq",  # revision 0026
+    ),
 }
 
 #: privileges on tables OUTSIDE ``assess_*`` (every other table: none at all, checked by the
@@ -330,6 +344,10 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     # the worker's reconcile_reply appends the marked interrupted turn (revision 0024)
     "assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)": (API, WORKER),
     "assess_close_session(uuid,integer,text)": (API, WORKER),
+    # REQ-086 (revision 0026): the API's turn drivers move a session into OUTAGE, the worker's
+    # outage probe ends it with the credit
+    "assess_enter_outage(uuid,integer,timestamp with time zone,text)": (API,),
+    "assess_end_outage(uuid,integer)": (WORKER,),
 }
 
 

@@ -13,10 +13,13 @@ marked ``interrupted`` turn when the runner was stopped) with its hash, then pub
 ``reply_done`` / ``reply_interrupted``. Plaintext lives only in memory: nothing is persisted chunk
 by chunk.
 
-Thin path (plan M1.9): a provider outage, an unexpected error or a refused bot append ends the
-attempt with the marked bot turn "[risposta interrotta]" (``turn_markers``), which clears the
-pending marker, then ``reply_interrupted``. The OUTAGE transition, the server-side answer of a
-pending turn and the reconciliation of an abandoned one are plans M4.1, M4.3 and M3.6.
+Provider outage (M4.1, REQ-086): a ``ProviderOutageError`` moves the session ACTIVE -> OUTAGE
+through ``assess_enter_outage`` (the interval starts at the failed call's own start, from its
+``ProviderCallRecord``); the timer is frozen, the input locked, and the pending student turn KEPT:
+the ``PendingTurnDriver`` answers it once the worker's probe ends the outage. The third consecutive
+failed call closes the session ``service_failure`` instead (in the same function). An unexpected
+error or a refused bot append still ends the attempt with the marked bot turn "[risposta
+interrotta]" (``turn_markers``), which clears the pending marker, then ``reply_interrupted``.
 """
 
 from __future__ import annotations
@@ -57,6 +60,7 @@ from vektra_assess.errors import (
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.types import (
     PriorTurn,
+    ProviderCallRecord,
     ProviderOutageError,
     ReleasedSegment,
     StudentTurn,
@@ -75,6 +79,7 @@ CUT_MARGIN_S = 2.0
 _APPEND = text(
     "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
 )
+_ENTER_OUTAGE = text("SELECT assess_enter_outage(:sid, :epoch, :started, :reason)")
 _AUDIT = text(
     "INSERT INTO assess_audit_events (event, reason_code, actor_kind, data) "
     "VALUES (:event, :reason, 'api', CAST(:data AS jsonb))"
@@ -239,6 +244,7 @@ class TurnDriver:
     ) -> None:
         result: TurnResult | None = None
         failure: str | None = None
+        outage: ProviderCallRecord | None = None
         stop = asyncio.Event()
         cut = (
             asyncio.get_running_loop().call_later(max(cut_after_s, 0.0), stop.set)
@@ -253,20 +259,22 @@ class TurnDriver:
                     )
                 elif isinstance(item, TurnResult):
                     result = item
-        except ProviderOutageError:
-            # the ACTIVE -> OUTAGE transition and the server-side answer are plan M4.1 / M4.3;
-            # until then the attempt ends with the marked interrupted turn
-            failure = "provider_unavailable"
+        except ProviderOutageError as exc:
+            outage = (
+                exc.record
+            )  # the server-side record: the interval starts at the call's start
         except Exception as exc:
             log.warning("assess_turn_driver_error", error_type=type(exc).__name__)
             failure = "internal_error"
         finally:
             if cut is not None:
                 cut.cancel()
-        if failure is None and result is None:
+        if outage is None and failure is None and result is None:
             failure = "internal_error"
         try:
-            if failure is not None or result is None:
+            if outage is not None:
+                await self._outage(sid, epoch, outage)
+            elif failure is not None or result is None:
                 await self._interrupted(sid, epoch, failure or "internal_error")
             else:
                 await self._persist(sid, epoch, result)
@@ -275,6 +283,36 @@ class TurnDriver:
             # stream and logged by type only; the task never ends with an unread exception
             log.warning("assess_turn_persist_failed", error_type=type(exc).__name__)
             self.broker.publish(sid, "reply_interrupted", {"reason": "persist_failed"})
+
+    async def _outage(self, sid: UUID, epoch: int, record: ProviderCallRecord) -> None:
+        """ACTIVE -> OUTAGE (M4.1): the pending turn is kept for the ``PendingTurnDriver``. The
+        stream learns it from ``observe`` here (``outage_start``) or from its own poll."""
+        async with self.engine.begin() as conn:
+            got = (
+                await conn.execute(
+                    _ENTER_OUTAGE,
+                    {
+                        "sid": sid,
+                        "epoch": epoch,
+                        "started": record.started_at,
+                        "reason": record.outcome,
+                    },
+                )
+            ).scalar()
+        if got == "outage":
+            self.broker.observe(
+                sid, "OUTAGE", {"state": "OUTAGE", "reason": "provider_unavailable"}
+            )
+        elif got == "closed":
+            # the third consecutive failed call: closed service_failure (M4.5)
+            self.cache.evict(sid)
+            self.broker.observe(
+                sid, "CLOSED", {"state": "CLOSED", "close_reason": "service_failure"}
+            )
+        else:
+            # not ACTIVE at this epoch any more (closed, revoked): nothing is moved; the marked
+            # turn is attempted and refused by the database when the session is gone
+            await self._interrupted(sid, epoch, "provider_unavailable")
 
     async def _append_bot(
         self, sid: UUID, epoch: int, kind: str, text_: str

@@ -251,7 +251,7 @@ version.
 - [x] M3.9 Resume test: reload → same sid, full history, remaining time within 1 s of the server; two tabs → second send refused, 0 duplicate turns; after CLOSED → message, re-mint and new Start rejected unless a reset created #N+1 (plan 11 reset fixture)
 
 ### M4 — Outage
-- [ ] M4.1 ACTIVE → OUTAGE on `ProviderOutageError` (plan-2 function), `assess_outage_intervals` row from `ProviderCallRecord`, `outage_start` audit + event; timer frozen; pending turn kept
+- [x] M4.1 ACTIVE → OUTAGE on `ProviderOutageError` (plan-2 function), `assess_outage_intervals` row from `ProviderCallRecord`, `outage_start` audit + event; timer frozen; pending turn kept
 - [ ] M4.2 Bind the outage probe tick (per provider, 5-10 s, only while ≥ 1 OUTAGE session; `max_tokens=1`; litellm `health_check` NOT used — it makes a full paid completion); success → end intervals, credit (≥ G only, cumulative ≤ C), `outage_end(credited_s)` audit + event, state ACTIVE
 - [ ] M4.3 `PendingTurnDriver` in the API: started from `vektra_app.main` server startup (lifespan is off, BUG-025), claims ACTIVE sessions with a pending turn and no live driver via `pg_try_advisory_xact_lock(sid)`; answers without a client
 - [ ] M4.4 `POST /sessions/{sid}/retry`: rate-limited, only nudges the driver/probe; never changes state by itself (test: retry with provider still down → still OUTAGE, credit unchanged)

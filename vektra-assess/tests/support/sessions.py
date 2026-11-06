@@ -106,11 +106,18 @@ async def seed_session(
         "seeding: the pre-flight did not commit"
     )
     if state == "OUTAGE":
-        async with worker.begin() as conn:
-            await conn.execute(
-                text("UPDATE assess_sessions SET state = 'OUTAGE' WHERE id = :s"),
-                {"s": sid},
+        # through the API's own transition (M4.1): an interval row and its audit event
+        epoch = (
+            await w.pg.run(
+                "super", "SELECT epoch FROM assess_sessions WHERE id = :s", {"s": sid}
             )
+        )[0][0]
+        got = await w.pg.run(
+            "api",
+            "SELECT assess_enter_outage(:s, :e, now(), 'first_token_timeout')",
+            {"s": sid, "e": epoch},
+        )
+        assert got[0][0] == "outage", got
     elif state == "CLOSED":
         async with worker.begin() as conn:
             ok = (

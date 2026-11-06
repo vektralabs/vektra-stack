@@ -78,6 +78,7 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.CAPABILITY_PROBE: _WS,
     JobKind.TRANSCRIPT_GENERATE: KindPolicy("transcript", 30, 60),
     JobKind.TRANSCRIPT_DELIVER: KindPolicy("delivery", 30, 60),
+    JobKind.TEACHER_NOTIFY: KindPolicy("delivery", 30, 60),
     # the setup check makes about twenty live Moodle calls: own pool, 120 s hard timeout
     JobKind.SETUP_CHECK: KindPolicy("setup", 120, 240),
     JobKind.PURGE: _MAINT,

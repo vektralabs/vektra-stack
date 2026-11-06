@@ -153,6 +153,11 @@ class EventBroker:
             return self.publish(sid, "closed", data)
         if prev == "STARTING" and state == "ACTIVE":
             return self.publish(sid, "committed", data)
+        # REQ-086 (M4.1, M4.2): the outage and its end; ``outage_end`` carries the moved deadline
+        if prev == "ACTIVE" and state == "OUTAGE":
+            return self.publish(sid, "outage_start", data)
+        if prev == "OUTAGE" and state == "ACTIVE":
+            return self.publish(sid, "outage_end", data)
         if prev is None:
             return (
                 None  # the first observation: every connection already got a snapshot

@@ -42,16 +42,18 @@ async def flag_turn(
     request: Request,
     claims: SessionClaims = Depends(verify_assess_token_session),
 ) -> JSONResponse:
-    allowed, _headers = limiter_of(request, "flag").check(
-        str(sid), settings_of(request).flag_rpm
-    )
-    if not allowed:
-        raise fail(rate_limited(60, "flag_rate"))
     created = False
     async with session_tx(request, claims, sid, route="flag_turn", allowed=LIVE) as (
         conn,
         row,
     ):
+        # counted only once the gate passed (review fix 3): a foreign or stale token on this
+        # sid never uses up the owner's limit
+        allowed, _headers = limiter_of(request, "flag").check(
+            str(sid), settings_of(request).flag_rpm
+        )
+        if not allowed:
+            raise fail(rate_limited(60, "flag_rate"))
         # the API reads turns only through the material function (no SELECT on assess_turns);
         # no text is decrypted here, only the turn's role is read
         material = await load_material(

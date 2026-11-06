@@ -31,14 +31,16 @@ async def retry(
     request: Request,
     claims: SessionClaims = Depends(verify_assess_token_session),
 ) -> JSONResponse:
-    allowed, _headers = limiter_of(request, "retry").check(
-        str(sid), settings_of(request).retry_rpm
-    )
-    if not allowed:
-        raise fail(rate_limited(60, "retry_rate"))
     async with session_tx(
         request, claims, sid, route="retry", allowed=LIVE, lock=False
     ) as (_conn, row):
+        # counted only once the gate passed (review fix 3): a foreign or stale token on this
+        # sid never uses up the owner's limit
+        allowed, _headers = limiter_of(request, "retry").check(
+            str(sid), settings_of(request).retry_rpm
+        )
+        if not allowed:
+            raise fail(rate_limited(60, "retry_rate"))
         state, pending = row.state, row.pending_reply_since is not None
     driver = pending_driver_of(request.app)
     if driver is not None and pending:

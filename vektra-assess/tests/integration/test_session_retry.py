@@ -100,3 +100,20 @@ async def test_retry_on_a_closed_session_is_refused(pg, worker) -> None:  # type
             headers=bearer(s.session_token),
         )
         assert r.status_code == 409 and err(r)["code"] == "ERR-ASSESS-009", r.text
+
+
+@pytest.mark.parametrize("route", ["retry", "turns/1/flag"])
+async def test_a_foreign_token_does_not_use_up_the_victims_limit(
+    pg, worker, route
+) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 3: the per-session limiters count only requests that passed the gate."""
+    settings = default_settings(VEKTRA_ASSESS_RETRY_RPM=1, VEKTRA_ASSESS_FLAG_RPM=1)
+    async with world(pg, settings) as w:
+        victim = await seed_session(w, worker, "ACTIVE", assignment="rubric_vis")
+        other = await seed_session(w, worker, "ACTIVE", assignment="simple")
+        url = f"/api/v1/assess/sessions/{victim.session_id}/{route}"
+        for _ in range(3):
+            r = await w.client.post(url, headers=bearer(other.session_token))
+            assert r.status_code == 404, r.text
+        r = await w.client.post(url, headers=bearer(victim.session_token))
+        assert r.status_code in (201, 202), r.text

@@ -37,6 +37,7 @@ from sqlalchemy import text
 from vektra_assess.api.common import engine_of
 from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.session_gate import ANY_OPEN, session_tx
+from vektra_assess.errors import close_message_code
 from vektra_assess.timing import due_warnings
 from vektra_assess.tokens import SessionClaims
 
@@ -270,6 +271,7 @@ async def _poll(
         {
             "state": row.state,
             "close_reason": row.close_reason,
+            "message_code": close_message_code(row.close_reason),
             "deadline_at": _iso(row.deadline_at),
             "server_now": _iso(row.server_now),
         },
@@ -311,6 +313,7 @@ async def session_events(
         snapshot = {
             "state": row.state,
             "close_reason": row.close_reason,
+            "message_code": close_message_code(row.close_reason),
             "deadline_at": _iso(row.deadline_at),
             "server_now": _iso(row.server_now),
         }

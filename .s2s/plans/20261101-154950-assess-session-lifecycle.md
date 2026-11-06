@@ -255,7 +255,7 @@ version.
 - [x] M4.2 Bind the outage probe tick (per provider, 5-10 s, only while ≥ 1 OUTAGE session; `max_tokens=1`; litellm `health_check` NOT used — it makes a full paid completion); success → end intervals, credit (≥ G only, cumulative ≤ C), `outage_end(credited_s)` audit + event, state ACTIVE
 - [x] M4.3 `PendingTurnDriver` in the API: started from `vektra_app.main` server startup (lifespan is off, BUG-025), claims ACTIVE sessions with a pending turn and no live driver via `pg_try_advisory_xact_lock(sid)`; answers without a client
 - [x] M4.4 `POST /sessions/{sid}/retry`: rate-limited, only nudges the driver/probe; never changes state by itself (test: retry with provider still down → still OUTAGE, credit unchanged)
-- [ ] M4.5 `service_failure` close: cumulative outage > C, or 3 consecutive failed calls; transcript job + teacher notification job enqueued in the same transaction (delivery by plan 10, within 1 min); service_failure message code
+- [x] M4.5 `service_failure` close: cumulative outage > C, or 3 consecutive failed calls; transcript job + teacher notification job enqueued in the same transaction (delivery by plan 10, within 1 min); service_failure message code
 - [ ] M4.6 Outage test matrix with a fault-injecting fake provider: 3-min outage → +3 min ±5 s; 15 s → +0; slow 40 s success → +0; over-length / rate / content-filter → +0; > C → service_failure + intervals recorded; browser killed at outage start → ACTIVE (answered) or CLOSED(service_failure) within C; recovery with client absent → OUTAGE ends within the probe interval and the session later closes `timed_out`; sweeper never closes OUTAGE; refusal turns never set OUTAGE
 
 ### M5 — Limits, audit, verification, chaos

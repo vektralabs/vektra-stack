@@ -53,6 +53,7 @@ from vektra_assess.crypto import envelope, hashing
 from vektra_assess.errors import (
     assess_unavailable,
     bad_request,
+    close_message_code,
     deadline_passed,
     reply_pending,
     state_conflict,
@@ -307,7 +308,13 @@ class TurnDriver:
             # the third consecutive failed call: closed service_failure (M4.5)
             self.cache.evict(sid)
             self.broker.observe(
-                sid, "CLOSED", {"state": "CLOSED", "close_reason": "service_failure"}
+                sid,
+                "CLOSED",
+                {
+                    "state": "CLOSED",
+                    "close_reason": "service_failure",
+                    "message_code": close_message_code("service_failure"),
+                },
             )
         else:
             # not ACTIVE at this epoch any more (closed, revoked): nothing is moved; the marked

@@ -242,3 +242,23 @@ def plugin_too_old() -> ErrorResponse:
         message="The Moodle plugin version is below the minimum this service accepts.",
         remediation="Upgrade local_vektradiscuss on the Moodle site.",
     )
+
+
+#: close reason -> the content-free message code the plugin renders (in Italian, client side).
+#: ``closed_service_failure`` is REQ-086's "Sessione interrotta per un problema tecnico, non per
+#: causa tua. Il docente è stato avvisato e può abilitarti una nuova sessione."
+CLOSE_MESSAGE_CODES = {
+    reason: f"closed_{reason}"
+    for reason in (
+        "finished",
+        "timed_out",
+        "service_failure",
+        "budget_exhausted",
+        "terminated_by_teacher",
+        "access_revoked",
+    )
+}
+
+
+def close_message_code(reason: str | None) -> str | None:
+    return CLOSE_MESSAGE_CODES.get(reason) if reason else None

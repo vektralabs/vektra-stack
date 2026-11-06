@@ -162,3 +162,25 @@ async def test_failed_calls_add_nothing_to_the_budget(pg, worker) -> None:  # ty
             {"s": s.session_id},
         )
         assert used[0][0] == 0
+
+
+async def test_a_message_refused_as_pending_does_not_use_the_rate(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 4: 409 reply_pending is decided before the messages-per-minute limiter."""
+    release = asyncio.Event()
+    runner = FakeStreamRunner(release=release)
+    async with world(
+        pg, default_settings(VEKTRA_ASSESS_MESSAGES_PER_MIN=2), assess_runner=runner
+    ) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        url = f"/api/v1/assess/sessions/{s.session_id}/turns"
+        auth = bearer(s.session_token)
+        assert (
+            await w.client.post(url, json={"text": "uno"}, headers=auth)
+        ).status_code == 202
+        for _ in range(3):
+            r = await w.client.post(url, json={"text": "ancora"}, headers=auth)
+            assert r.status_code == 409 and err(r)["code"] == "ERR-ASSESS-010", r.text
+        release.set()
+        await wait_idle(w)
+        r = await w.client.post(url, json={"text": "due"}, headers=auth)
+        assert r.status_code == 202, r.text

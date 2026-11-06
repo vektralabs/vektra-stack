@@ -560,6 +560,10 @@ async def post_turn(
         # REQ-070 input lock from the deadline on (the database refuses the append as well)
         if row.deadline_at is not None and row.server_now >= row.deadline_at:
             raise fail(deadline_passed())
+        # one reply at a time, decided on the locked row BEFORE the rate (review fix 4): a
+        # message refused as pending never uses the student's messages-per-minute budget
+        if row.pending_reply_since is not None:
+            raise fail(reply_pending())
         # REQ-083 messages per minute per session: counted only for requests that passed the
         # gate (a stale or foreign token cannot use up the student's rate), before any model call
         allowed, _headers = limiter_of(request, "turns").check(

@@ -318,7 +318,9 @@ class DiscussionTurnRunner:
         )
         if not res.allowed:
             gate._mark(MARK_SAFEGUARD)
+            gate._drop_contest(unit.contest)  # the student never sees that sentence
             return ReleasedSegment(gate.shipped.missing["replaced_by_system"], True)
+        gate.commit(unit)
         if res.modified_content is not None:
             gate._mark(MARK_SAFEGUARD)
             return ReleasedSegment(res.modified_content, True)

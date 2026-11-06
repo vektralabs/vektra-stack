@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -44,6 +44,7 @@ MARK_SAFEGUARD = "safeguard"
 MARK_MARKER = "marker"
 
 CLASS_LATE = "marker_class_late"
+CONTEST_UNRELEASED = "marker_contest_unreleased"
 
 
 class Unit(NamedTuple):
@@ -53,6 +54,8 @@ class Unit(NamedTuple):
     text: str
     marked: bool
     system: bool = False
+    #: contest points proposed in this unit's sentence: recorded only once the unit is released
+    contest: tuple[ContestEntry, ...] = ()
 
 
 @dataclass
@@ -97,7 +100,6 @@ class SentenceGate:
         for code in m.dropped:
             self.audit.append(("assess_marker_dropped", {"reason_code": code}))
             self._mark(MARK_MARKER, 0)
-        self.contest.extend(m.contest)
         if m.behaviour_class is not None:
             if self._first and self.behaviour_class is None:
                 self.behaviour_class = m.behaviour_class
@@ -117,9 +119,13 @@ class SentenceGate:
         self._first = False
         text = m.text
         if not text:
+            self.contest.extend(
+                m.contest
+            )  # a marker on its own line: nothing to release
             return out
         if self._contextual_left is not None:
             if self._contextual_left == 0:
+                self._drop_contest(m.contest)
                 return (
                     out  # past the one contextual sentence of a behaviour-class reply
                 )
@@ -128,6 +134,7 @@ class SentenceGate:
         if category is not None:
             self.audit.append(("grade_claim_replaced", {"reason_code": category}))
             self._mark(MARK_LEXICON)
+            self._drop_contest(m.contest)
             out.append(Unit(self.br009, True, system=True))
             return out
         v = values.check(text, self._values, self.shipped.missing["value_unverified"])
@@ -142,5 +149,20 @@ class SentenceGate:
         if q.replaced:
             self._mark(MARK_QUOTE, q.replaced)
         if q.text.strip():
-            out.append(Unit(q.text, bool(v.replaced or c.removed or q.replaced)))
+            marked = bool(v.replaced or c.removed or q.replaced)
+            out.append(Unit(q.text, marked, contest=tuple(m.contest)))
+        else:
+            self._drop_contest(m.contest)
         return out
+
+    def _drop_contest(self, entries: Sequence[ContestEntry]) -> None:
+        """A contest point whose sentence the student never sees is not recorded."""
+        if entries:
+            self.audit.append(
+                ("assess_marker_dropped", {"reason_code": CONTEST_UNRELEASED})
+            )
+            self._mark(MARK_MARKER, 0)
+
+    def commit(self, unit: Unit) -> None:
+        """Record the unit's contest points: called by the runner once the unit is released."""
+        self.contest.extend(unit.contest)

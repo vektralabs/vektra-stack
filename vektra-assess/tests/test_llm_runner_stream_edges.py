@@ -224,3 +224,46 @@ async def test_a_failing_audit_after_a_failing_trace_still_completes_the_turn() 
     )  # fmt: skip
     result = await r.run(_visible_bundle(), StudentTurn("ciao", 0))
     assert result.text == "Ok."
+
+
+# --- contest points follow the sentence the student actually sees (gate.py review) --------------
+
+_CONTEST = (
+    '[[PUNTO_CONTESTATO label="Domanda 2" status="proposed"]] Lo segno per il docente.'
+)
+
+
+async def _contest_run(
+    reply: str, guard: Guard | None = None
+) -> tuple[TurnResult, _Audit]:
+    audit = _Audit()
+    r = DiscussionTurnRunner(
+        llm=RecordingLLMProvider([reply]), safeguard=guard or Guard(),
+        trace_writer=_Trace(), settings=settings(), audit=audit,
+    )  # fmt: skip
+    return await r.run(_visible_bundle(), StudentTurn("ciao", 1)), audit
+
+
+async def test_a_released_sentence_records_its_contest_point() -> None:
+    result, _ = await _contest_run(_CONTEST)
+    assert [e.label for e in result.contest_entries] == ["Domanda 2"]
+
+
+async def test_a_contest_point_past_the_contextual_sentence_is_not_recorded() -> None:
+    result, audit = await _contest_run("[[CLASS R-SOL]] Capisco. " + _CONTEST)
+    assert result.contest_entries == ()
+    assert ("assess_marker_dropped", {"reason_code": "marker_contest_unreleased"}) in (
+        audit.rows
+    )
+
+
+async def test_a_contest_point_in_a_refused_sentence_is_not_recorded() -> None:
+    class Refuse(Guard):
+        async def pre_response(self, text: str, context: Any) -> SafeguardResult:
+            await super().pre_response(text, context)
+            if "segno" in text and context.metadata.get("partial"):
+                return SafeguardResult(allowed=False)
+            return SafeguardResult()
+
+    result, _ = await _contest_run(_CONTEST, Refuse())
+    assert result.contest_entries == ()

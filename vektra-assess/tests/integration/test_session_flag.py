@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.sessions import seed_session
@@ -56,13 +58,31 @@ async def test_one_flag_is_exactly_one_marker_and_the_hashes_stay_equal(
 
 
 async def test_only_an_assistant_turn_can_be_flagged(pg, worker) -> None:  # type: ignore[no-untyped-def]
-    async with world(pg) as w:
+    from support.preflight import FakeStreamRunner
+
+    release = asyncio.Event()  # the reply never comes: turn 3 stays the student's last
+    async with world(pg, assess_runner=FakeStreamRunner(release=release)) as w:
         s = await seed_session(w, worker, "ACTIVE")
         r = await w.client.post(
             f"/api/v1/assess/sessions/{s.session_id}/turns/99/flag",
             headers=bearer(s.session_token),
         )
         assert r.status_code == 400 and err(r)["details"]["reason"] == "not_a_bot_turn"
+        # the student's own turn exists and is not the assistant's
+        posted = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "la mia risposta"},
+            headers=bearer(s.session_token),
+        )
+        assert posted.status_code == 202 and posted.json()["turn_no"] == 3
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns/3/flag",
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 400 and err(r)["details"]["reason"] == "not_a_bot_turn"
+        release.set()
+        for task in list(w.app.state.assess_turn_driver.tasks.values()):
+            await asyncio.wait_for(task, 15)
 
 
 async def test_a_flag_after_closed_is_rejected(pg, worker) -> None:  # type: ignore[no-untyped-def]

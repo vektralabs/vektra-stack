@@ -76,9 +76,12 @@ _OPEN = text(
     "RETURNING (xmax = 0) AS inserted"
 )
 _STATE = text("SELECT state FROM assess_start_breaker WHERE site_id = :s FOR UPDATE")
+#: only the half-open probe closes the breaker: a Start requested after the cooldown ended
+#: (an older Start admitted before the breaker opened keeps the cooldown when it commits)
 _CLOSE = text(
     "UPDATE assess_start_breaker SET state = 'closed', updated_at = now() "
-    "WHERE site_id = :s AND state = 'open'"
+    "WHERE site_id = :s AND state = 'open' AND half_open_at <= "
+    "(SELECT created_at FROM assess_sessions WHERE id = :sid)"
 )
 
 
@@ -198,9 +201,9 @@ async def after_rollback(
         )
 
 
-async def after_commit(conn: Any, site_id: UUID) -> None:
-    """A committed Start closes the site's breaker (the half-open probe succeeded)."""
-    if (await conn.execute(_CLOSE, {"s": site_id})).rowcount:
+async def after_commit(conn: Any, site_id: UUID, session_id: UUID) -> None:
+    """A committed half-open probe closes the site's breaker (CodeRabbit review 5808100754)."""
+    if (await conn.execute(_CLOSE, {"s": site_id, "sid": session_id})).rowcount:
         await write_event(
             conn, AssessAuditEvent.START_BREAKER_CLOSE, actor="worker", site_id=site_id
         )

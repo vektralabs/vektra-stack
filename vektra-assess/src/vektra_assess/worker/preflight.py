@@ -575,7 +575,8 @@ async def _commit(
                         "sid": sid,
                     },
                 )
-                await after_commit(conn, target.site_id)  # a commit closes the breaker
+                # a committed half-open probe closes the breaker
+                await after_commit(conn, target.site_id, sid)
                 await write_event(
                     conn,
                     AssessAuditEvent.COMMIT,

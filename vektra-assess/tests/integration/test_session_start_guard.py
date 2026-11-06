@@ -341,3 +341,42 @@ async def test_concurrent_rollbacks_at_the_threshold_open_the_breaker(
             )
             == 1
         )
+
+
+async def test_an_older_start_committing_keeps_the_cooldown(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (preflight.py 573): only a Start begun in half-open (the
+    probe) closes the breaker; one admitted before it opened that commits during the cooldown
+    leaves it open."""
+    from assess_moodle_support import Replay, make_client
+    from support.preflight import FakePartB, activate, deps, job_context, kek_ring
+    from test_context_capture import InProcessParser
+
+    from vektra_assess.worker.preflight import make_preflight_handler
+    from vektra_assess.worker.start_source import MoodleStartSource
+
+    async with world(pg) as w:
+        await activate(pg)
+        s = await seed_session(w, worker, "STARTING")
+        await pg.run(
+            "super",
+            "INSERT INTO assess_start_breaker (site_id, state, opened_at, half_open_at) "
+            "VALUES (:s, 'open', now(), now() + interval '10 minutes')",
+            {"s": w.site},
+        )
+        source = MoodleStartSource(
+            make_client(Replay("4.3")), InProcessParser(), worker.connect
+        )
+        handler = make_preflight_handler(
+            deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek_ring())
+        )
+        await handler(job_context(worker, s.session_id))
+        assert (
+            await n(pg, "SELECT count(*) FROM assess_sessions WHERE state = 'ACTIVE'")
+            == 1
+        )
+        assert (
+            await n(
+                pg, "SELECT count(*) FROM assess_start_breaker WHERE state = 'open'"
+            )
+            == 1
+        )

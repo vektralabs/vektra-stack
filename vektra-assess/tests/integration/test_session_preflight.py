@@ -415,3 +415,37 @@ async def test_the_gate_clock_includes_the_time_spent_reading_moodle(  # type: i
         )
         await make_preflight_handler(d)(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "end_date_passed")
+
+
+async def test_a_commit_that_overruns_t_rolls_back(
+    pg, worker_engine, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4493109439: T is checked again at the END of the commit transaction (wall
+    clock), not only when it starts."""
+    import asyncio
+
+    from vektra_assess.worker import preflight as mod
+
+    await _reset(pg)
+    await activate(pg)
+    original = mod.persist_capture
+
+    async def slow_persist(*a, **k):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(7)
+        return await original(*a, **k)
+
+    monkeypatch.setattr(mod, "persist_capture", slow_persist)
+    settings = default_settings(VEKTRA_ASSESS_START_T_S=20)
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        sid = await _start(w)
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET created_at = now() - interval '13 seconds' WHERE id = :s",
+            {"s": sid},
+        )
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, moodle_source(worker_engine))
+        )
+        await handler(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, "start_timeout")

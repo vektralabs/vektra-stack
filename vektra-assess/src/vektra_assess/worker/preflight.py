@@ -226,6 +226,10 @@ _ACTIVITY = text(
     "AND e.cmid = c.cmid AND e.student_userid = :u), 0) AS extra_s "
     "FROM assess_activity_config c WHERE c.site_id = :s AND c.cmid = :c"
 )
+_SPENT = text(
+    "SELECT extract(epoch FROM clock_timestamp() - created_at) FROM assess_sessions "
+    "WHERE id = :sid"
+)
 _DELETE = text(
     "DELETE FROM assess_sessions WHERE id = :sid AND state = 'STARTING' "
     "RETURNING site_id, cmid, student_userid, session_no"
@@ -525,6 +529,11 @@ async def _commit(
                         "sid": sid,
                     },
                 )
+                # T again at the END of the transaction, on the wall clock (clock_timestamp, not
+                # the transaction start of now()): the writes above must not carry a commit past T
+                spent = (await conn.execute(_SPENT, {"sid": sid})).scalar_one()
+                if float(spent) >= deps.settings.start_t_s:
+                    raise _Rollback(Reason.START_TIMEOUT)
                 await write_event(
                     conn,
                     AssessAuditEvent.COMMIT,

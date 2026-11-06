@@ -33,7 +33,7 @@ endif
 # Targets
 # --------------------------------------------------------------------------
 
-.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest eval-retrieval eval-e2e assess-keys
+.PHONY: help up down health ingest query demo logs test lint reindex batch-ingest eval-retrieval eval-e2e eval-assess assess-keys
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { \
@@ -111,3 +111,6 @@ eval-retrieval: ## Run retrieval-only evaluation (no LLM calls)
 
 eval-e2e: ## Run end-to-end RAG evaluation (with LLM calls)
 	uv run python scripts/eval_e2e.py $(EVAL_ARGS)
+
+eval-assess: ## Assess discussion eval (staging tier, real model + judge); exits non-zero unless PASS
+	uv run python tests/eval/eval_assess.py $(EVAL_ARGS)

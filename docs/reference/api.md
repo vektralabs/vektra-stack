@@ -95,6 +95,16 @@ Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Callable by an `admin` key or by
 
 The report is `{"report_id", "site_id", "status": "queued|running|done|failed", "moodle_release", "items": [{"name", "result": "OK|MISSING|UNVERIFIABLE", "reason_code"}], "created_at", "finished_at"}`. It carries no Moodle text, no emails and no ids beyond `site_id`. The feature is available for a site only if its latest finished report for the current Moodle release has every item `OK`.
 
+### Assess model activation (NFR-023)
+
+Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Exact `admin` scope. Without a passing activation for the (model, `prompt_version`) the API still starts (degraded, `assess_llm_unactivated` logged, so this endpoint is reachable) and the session pre-flight refuses every discussion until a passing row exists; any change to a prompt template, a shipped string or the post-check lexicon is a new `prompt_version` and needs a new activation.
+
+| Method | Path | Success | Errors |
+|--------|------|---------|--------|
+| POST | `/api/v1/assess/admin/model-activations` | `201 {"id", "model", "prompt_version", "report_sha256", "activated_at"}` | `401 ERR-AUTH-001`, `403 ERR-AUTH-003`, `422 ERR-ASSESS-004` (the remediation lists the failing check codes), `503 ERR-ASSESS-001` |
+
+The body is the JSON report written by `make eval-assess`. The endpoint never trusts its `status`: it recomputes the SHA-256 over the canonical body, requires every HARD class (deterministic and judge-based) at 0, a judge calibration of `PASS` and a declared data basis. Every attempt, accepted or refused, writes an audit event with codes only; rows are append-only.
+
 ### Assess discussion context: Part A and item references (iframe client)
 
 No endpoint yet: the session routes arrive with the session lifecycle and discussion UI plans. This is the contract the iframe client will rely on.

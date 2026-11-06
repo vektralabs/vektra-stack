@@ -314,3 +314,18 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_SAFEGUARD_MODE",
         description="Safeguard of the discussion runner in the API. 'presidio' fails startup if Presidio cannot load (no silent passthrough); 'none' must be set explicitly.",
     )
+    provider_locality: Literal["onprem", "cloud"] = Field(
+        "cloud",
+        alias="VEKTRA_ASSESS_PROVIDER_LOCALITY",
+        description="Where the discussion model runs. 'cloud' (the safe default) makes the eval adapter refuse any dataset whose data_basis is not 'synthetic' before a single request (NFR-022 data basis); set 'onprem' only for a model on the institution's own hardware.",
+    )
+    llm_allow_unactivated: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED",
+        description=(
+            "Development and CI only: serve discussions while the (provider, model, prompt_version) "
+            "triple has no passing NFR-023 activation (without it the API starts degraded and the "
+            "session pre-flight refuses discussions). Honoured only with VEKTRA_ENV=development; "
+            "in any other environment the API refuses to start with it set."
+        ),
+    )

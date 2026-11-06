@@ -246,6 +246,52 @@ def build_worker_part_b_runner(
 # --- startup ------------------------------------------------------------------------------------
 
 
+async def _check_activation(
+    app: Any, settings: VektraAssessSettings, prompt_version: str
+) -> bool:
+    """NFR-023: is the (model, prompt_version) triple activated? Never refuses startup.
+
+    The activation is recorded through this API (``POST /api/v1/assess/admin/model-activations``),
+    so refusing to start without one would leave a first deployment, and every deployment after a
+    ``prompt_version`` change, with no way to activate. The API therefore starts DEGRADED: the
+    missing activation is logged as an error with its remediation and kept on ``app.state``; no
+    discussion is served, because the session pre-flight (plan 8) checks ``is_activated`` against
+    the table before every start (fail closed), and a new row takes effect without a restart.
+    """
+    import structlog
+
+    from vektra_assess.llm.activation import is_activated
+
+    log = structlog.get_logger(__name__)
+    engine = getattr(app.state, "assess_engine", None)
+    activated = False
+    if engine is not None:
+        async with engine.connect() as conn:
+            activated = await is_activated(
+                conn, str(settings.llm_model), prompt_version
+            )
+    if activated:
+        return True
+    if settings.llm_allow_unactivated:  # development only, checked above
+        log.warning(
+            "assess_llm_unactivated_allowed", step=STEP, prompt_version=prompt_version
+        )
+        return True
+    log.error(
+        "assess_llm_unactivated",
+        step=STEP,
+        model=str(settings.llm_model),
+        prompt_version=prompt_version,
+        detail="no passing NFR-023 activation: discussions are refused until one is recorded",
+        remediation=(
+            "Run make eval-assess against this model and POST the PASS report to "
+            "/api/v1/assess/admin/model-activations. A changed template, shipped string or "
+            "lexicon is a new prompt_version and needs a new activation."
+        ),
+    )
+    return False
+
+
 async def step_13_assess_llm_check(
     app: Any, *, safeguard_factory: Callable[[str], SafeguardHook] | None = None
 ) -> None:
@@ -254,8 +300,9 @@ async def step_13_assess_llm_check(
     Disabled: nothing is built (dormant). Enabled: the safeguard must load in the configured mode
     (Presidio falling open is refused), ``VEKTRA_ASSESS_LLM_MODEL`` must be set, and the parts are
     kept on ``app.state`` for the turn route (plan 8), which adds its own audit sink per request.
-    The NFR-023 activation of the (provider, model, prompt_version) triple is checked here too
-    once the activation table exists (plan task E).
+    A missing NFR-023 activation does NOT stop startup (the activation endpoint lives in this
+    API): it is logged and recorded as ``app.state.assess_llm_activated``, and the session
+    pre-flight refuses every discussion until a passing row exists.
     """
     import structlog
 
@@ -268,6 +315,15 @@ async def step_13_assess_llm_check(
     if not settings.enabled:
         log.info("startup_step", step=STEP, status="disabled")
         return
+    if settings.llm_allow_unactivated and settings.env != "development":
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                "VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED is honoured only with VEKTRA_ENV=development "
+                f"(this process runs with VEKTRA_ENV={settings.env})"
+            ),
+            remediation="Unset it, and activate the model through the NFR-023 endpoint.",
+        )
     app.state.assess_safeguard = build_assess_safeguard(
         settings.safeguard_mode, factory=safeguard_factory
     )
@@ -276,10 +332,13 @@ async def step_13_assess_llm_check(
         PrometheusRunnerMetrics()
     )  # served on /metrics with the rest
     app.state.assess_prompt_version = PromptRenderer(LEXICON_VERSION).prompt_version
+    app.state.assess_llm_activated = await _check_activation(
+        app, settings, app.state.assess_prompt_version
+    )
     log.info(
         "startup_step",
         step=STEP,
-        status="ok",
+        status="ok" if app.state.assess_llm_activated else "degraded",
         safeguard=settings.safeguard_mode,
         prompt_version=app.state.assess_prompt_version,
     )

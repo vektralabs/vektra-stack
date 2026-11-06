@@ -164,6 +164,9 @@ ERR_ASSESS_002 = (
 ERR_ASSESS_003 = (
     "ERR-ASSESS-003"  # Site or setup-check report not found (also cross-site)
 )
+ERR_ASSESS_004 = (
+    "ERR-ASSESS-004"  # Model activation refused: the eval report does not pass NFR-023
+)
 
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
@@ -206,6 +209,7 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_ASSESS_001: 503,
     ERR_ASSESS_002: 429,
     ERR_ASSESS_003: 404,
+    ERR_ASSESS_004: 422,
 }
 
 

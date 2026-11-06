@@ -453,6 +453,16 @@ class VektraAssessSettings(BaseSettings):
             "re-checks every 60 s; a worker stopped longer than this rejects turns (fail closed)."
         ),
     )
+    outage_min_credit_s: int = Field(
+        20,
+        ge=0,
+        le=300,
+        alias="VEKTRA_ASSESS_OUTAGE_MIN_CREDIT_S",
+        description=(
+            "REQ-086 G: an outage shorter than this earns no time back; a longer one is credited "
+            "in full, the cumulative credit capped at C = min(15 min, half the duration)."
+        ),
+    )
     max_message_chars: int = Field(
         2000,
         ge=1,

@@ -392,6 +392,7 @@ def test_development_override_composes_with_only_framework_slots_bound(
     assert not ({"heartbeat", "job_cleanup", "lease_reaper"} & unbound)
     assert {"purge", "setup_check"} <= unbound  # the session ticks are bound (plan 8)
     assert "sweeper" not in unbound
+    assert "outage_probe" not in unbound  # M4.2
 
 
 async def test_unbound_override_is_refused_outside_development(

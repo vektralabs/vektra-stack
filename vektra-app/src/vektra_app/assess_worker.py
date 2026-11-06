@@ -284,6 +284,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.enrolment import queue_rechecks
+    from vektra_assess.worker.outage_probe import make_llm_probe, outage_tick
     from vektra_assess.worker.reaper import reap_starting
     from vektra_assess.worker.render import gate_refresh_tick
     from vektra_assess.worker.reply_reconcile import queue_reconciles
@@ -304,7 +305,33 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
     async def enrolment_recheck() -> None:
         await queue_rechecks(engine.connect)
 
+    # one discussion provider per deployment (OQ-032): one probe for every OUTAGE session. Built
+    # lazily on the first OUTAGE (nothing connects at composition); without a configured model
+    # the tick still closes the sessions whose outage passed C
+    probe_box: list[Any] = []
+
+    async def probe() -> bool:
+        if not probe_box:
+            from vektra_app.assess_llm import build_assess_llm
+
+            probe_box.append(
+                make_llm_probe(
+                    build_assess_llm(settings),
+                    str(settings.llm_model),
+                    timeout_s=min(settings.outage_timeout_s, 8.0),
+                )
+            )
+        return bool(await probe_box[0]())
+
+    async def outage_probe() -> None:
+        await outage_tick(
+            engine.connect,
+            probe if settings.llm_model else None,
+            min_credit_s=settings.outage_min_credit_s,
+        )
+
     return {
+        "outage_probe": outage_probe,
         "starting_reaper": starting_reaper,
         "gate_refresh": gate_refresh,
         "sweeper": sweeper,
@@ -516,7 +543,7 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "enrolment", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_source",
+        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_source",
         "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip

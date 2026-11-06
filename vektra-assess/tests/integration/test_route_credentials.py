@@ -61,6 +61,36 @@ def test_the_inventory_is_not_vacuous() -> None:
     assert EXPECTED <= found, sorted(EXPECTED - found)
 
 
+def test_req102_no_route_regenerates_edits_deletes_or_uploads() -> None:
+    """M5.8 / REQ-102 (API side): the discussion is append-only from the student's side. No
+    route regenerates a reply, edits or deletes a turn, or takes an upload; the only write on a
+    turn is the REQ-103 flag (a marker, never the text)."""
+    import re
+
+    found = set(inventory())
+    forbidden = re.compile(r"regenerat|edit|upload|attach|file|rewrite|undo", re.I)
+    for method, path in found:
+        assert not forbidden.search(path), (method, path)
+        if "/turns" in path:
+            assert method in ("GET", "POST"), (method, path)
+            assert method != "POST" or path.endswith(("/turns", "/flag")), (
+                method,
+                path,
+            )
+    # and no route takes a multipart body
+    app = FastAPI()
+    app.include_router(router)
+    for route in app.routes:
+        entries = [route] if isinstance(route, APIRoute) else []
+        contexts = getattr(route, "effective_route_contexts", None)
+        if contexts is not None:
+            entries += list(contexts())
+        for entry in entries:
+            body = getattr(getattr(entry, "dependant", None), "body_params", None) or []
+            for param in body:
+                assert "UploadFile" not in repr(param), entry.path
+
+
 async def test_no_route_accepts_a_query_string_or_cookie_credential(pg) -> None:  # type: ignore[no-untyped-def]
     await _reset(pg)
     worker = create_async_engine(pg.url("worker"))

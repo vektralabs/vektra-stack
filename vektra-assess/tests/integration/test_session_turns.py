@@ -581,3 +581,40 @@ async def test_the_database_enforces_the_input_lock_and_the_grace(pg, worker) ->
             },
         )
     )[0][0] == 4
+
+
+async def test_each_turn_hash_is_recorded_and_chained_at_persist(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M5.8 / REQ-102: every persisted turn carries hash(prev, turn_no, role, kind, plaintext),
+    chained on the previous turn's hash, so plan 10 can re-hash the transcript and detect any
+    change."""
+    from vektra_assess.crypto import envelope, hashing
+
+    runner = FakeStreamRunner()
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        for text_ in ("primo", "secondo"):
+            r = await w.client.post(
+                f"/api/v1/assess/sessions/{s.session_id}/turns",
+                json={"text": text_},
+                headers=bearer(s.session_token),
+            )
+            assert r.status_code == 202
+            await _wait_idle(w)
+        dek = w.app.state.assess_dek_cache.get(s.session_id, 1)
+        rows = await pg.run(
+            "super",
+            "SELECT turn_no, role, kind, ciphertext, turn_hash, prev_hash FROM assess_turns "
+            "WHERE session_id = :s ORDER BY turn_no",
+            {"s": s.session_id},
+        )
+        assert len(rows) == 6
+        prev = rows[0].prev_hash
+        for row in rows:
+            assert row.prev_hash == prev
+            plain = envelope.decrypt_turn(
+                dek, s.session_id, row.turn_no, bytes(row.ciphertext)
+            )
+            assert row.turn_hash == hashing.turn_hash(
+                prev, row.turn_no, row.role, row.kind, plain
+            )
+            prev = row.turn_hash

@@ -48,6 +48,7 @@ from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
 
 router = APIRouter()
 
+_FLAGGED = text("SELECT turn_no FROM assess_turn_flags WHERE session_id = :s")
 _OUTAGE_START = text(
     "SELECT max(started_at) FROM assess_outage_incidents "
     "WHERE session_id = :s AND ended_at IS NULL"
@@ -59,7 +60,10 @@ def _iso(value: Any) -> str | None:
 
 
 def view(
-    row: SessionRow, material: Material | None, paused_at: Any = None
+    row: SessionRow,
+    material: Material | None,
+    paused_at: Any = None,
+    flagged: frozenset[int] = frozenset(),
 ) -> dict[str, Any]:
     """``paused_at``: the open outage's start while the session is in OUTAGE: the timer is
     paused there, so the time left is measured against it (CodeRabbit 4498473565)."""
@@ -71,6 +75,8 @@ def view(
                 "role": t.role,
                 "kind": t.kind,
                 "text": material.text_of(t),
+                # REQ-103 "segnalato dallo studente": served back on reload and resume
+                "flagged": t.turn_no in flagged,
             }
             for t in material.turns
         ]
@@ -151,7 +157,12 @@ async def get_session(
                 if row.state == "OUTAGE"
                 else None
             )
-            body = view(row, material, paused_at)
+            flagged = (
+                frozenset(int(r[0]) for r in await conn.execute(_FLAGGED, {"s": sid}))
+                if material is not None
+                else frozenset()
+            )
+            body = view(row, material, paused_at, flagged)
             if resume:
                 # minted INSIDE the transaction: a refusal (past deadline + grace) rolls the jti
                 # consumption back, so the pre-session token is not burnt for nothing

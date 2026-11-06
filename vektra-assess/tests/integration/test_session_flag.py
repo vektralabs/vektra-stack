@@ -89,3 +89,21 @@ async def test_flags_are_rate_limited_per_session(pg, worker) -> None:  # type: 
         ).status_code == 201
         r = await w.client.post(url, headers=bearer(s.session_token))
         assert r.status_code == 429 and err(r)["details"] == {"reason": "flag_rate"}
+
+
+async def test_a_flag_survives_a_reload(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (flag.py 66-67): the marker is persisted AND served: a
+    reload or a resume shows which assistant turn the student flagged."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        url = f"/api/v1/assess/sessions/{s.session_id}"
+        assert (
+            await w.client.post(f"{url}/turns/2/flag", headers=bearer(s.session_token))
+        ).status_code == 201
+        turns = (await w.client.get(url, headers=bearer(s.session_token))).json()[
+            "turns"
+        ]
+        assert [(t["turn_no"], t.get("flagged")) for t in turns] == [
+            (1, False),
+            (2, True),
+        ]

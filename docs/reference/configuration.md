@@ -225,6 +225,14 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
 | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request. |
 | `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED` | bool | `false` | Development and CI only: serve discussions while the (model, prompt_version) has no passing NFR-023 activation (without it the API starts degraded and refuses discussions). Honoured only with `VEKTRA_ENV=development`; refused at startup otherwise. |
+| `VEKTRA_ASSESS_TOKEN_ISSUER` | str | `vektra-assess` | `iss` claim of every discussion token; `aud` is always `discussion` (ARCH-067). |
+| `VEKTRA_ASSESS_PRESESSION_TTL_S` | int | `120` | Lifetime of a pre-session token minted by `POST /tokens`, 10-120 s; a value above 120 refuses startup. |
+| `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` | int | `900` | Upper bound of a session-bound token's lifetime; it also never outlives the session deadline plus `VEKTRA_ASSESS_REPLY_GRACE_S`. Resume (`GET /sessions/{sid}` with a fresh pre-session token) re-mints it. |
+| `VEKTRA_ASSESS_REPLY_GRACE_S` | int | `60` | Seconds after the deadline an in-flight reply may still finish (REQ-070); session tokens expire at deadline plus this grace at the latest. |
+| `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` | str | `0.1.0` | Lowest `local_vektradiscuss` release accepted at mint (ARCH-067). A site's own `assess_sites.min_plugin_version` applies when it is higher. |
+| `VEKTRA_ASSESS_START_T_S` | int | `60` | REQ-071 commit window T: a Start not committed within T of the request is rolled back (pre-flight guard and STARTING reaper). |
+| `VEKTRA_ASSESS_ADMISSION_K` | int | `10` | NFR-020 admission limit: live sessions (ACTIVE, OUTAGE, and STARTING sessions already in pre-flight) admitted at once. The API refuses a Start at or over K before writing anything; the worker pre-flight re-checks under a lock and is authoritative. 10 until the burst test sets it with evidence. |
+| `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION` | str | `1` | Version of the privacy notice shown before Start, recorded on the session row and on the `start` audit event. |
 | `VEKTRA_ASSESS_JUDGE_MODEL` / `VEKTRA_ASSESS_JUDGE_API_BASE` | str | - | Judge model of `make eval-assess` only (never read by the API or the worker). |
 | `VEKTRA_ASSESS_JUDGE_LOCALITY` | str | `cloud` | `make eval-assess` only: where the judge runs. A non-synthetic dataset is refused before any request unless it is `onprem`. |
 | `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |

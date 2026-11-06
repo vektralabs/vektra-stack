@@ -319,6 +319,61 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PROVIDER_LOCALITY",
         description="Where the discussion model runs. 'cloud' (the safe default) makes the eval adapter refuse any dataset whose data_basis is not 'synthetic' before a single request (NFR-022 data basis); set 'onprem' only for a model on the institution's own hardware.",
     )
+    # --- student session lifecycle (plan assess-session-lifecycle) ---------------------------
+    token_issuer: str = Field(
+        "vektra-assess",
+        min_length=1,
+        alias="VEKTRA_ASSESS_TOKEN_ISSUER",
+        description="iss claim of every discussion token (aud is always 'discussion', ARCH-067).",
+    )
+    presession_ttl_s: int = Field(
+        120,
+        ge=10,
+        le=120,  # ARCH-067: a pre-session token lives at most 120 s; a larger value refuses startup
+        alias="VEKTRA_ASSESS_PRESESSION_TTL_S",
+        description="Lifetime of a pre-session (mint) token, at most 120 s.",
+    )
+    session_token_ttl_s: int = Field(
+        900,
+        ge=60,
+        le=86_400,
+        alias="VEKTRA_ASSESS_SESSION_TOKEN_TTL_S",
+        description="Upper bound of a session-bound token's lifetime; it also never outlives deadline + reply grace.",
+    )
+    reply_grace_s: int = Field(
+        60,
+        ge=0,
+        le=600,
+        alias="VEKTRA_ASSESS_REPLY_GRACE_S",
+        description="Seconds after the deadline an in-flight reply may still finish (REQ-070).",
+    )
+    min_plugin_version: str = Field(
+        "0.1.0",
+        min_length=1,
+        alias="VEKTRA_ASSESS_MIN_PLUGIN_VERSION",
+        description="Lowest local_vektradiscuss release accepted at mint (ARCH-067); a site's own minimum applies when higher.",
+    )
+    start_t_s: int = Field(
+        60,
+        ge=20,
+        le=300,
+        alias="VEKTRA_ASSESS_START_T_S",
+        description="REQ-071 commit window T: a Start not committed within T of the request is rolled back.",
+    )
+    admission_k: int = Field(
+        10,
+        ge=1,
+        le=1000,
+        alias="VEKTRA_ASSESS_ADMISSION_K",
+        description="NFR-020 admission limit: live sessions (ACTIVE, OUTAGE, STARTING in pre-flight) admitted at once.",
+    )
+    privacy_notice_version: str = Field(
+        "1",
+        min_length=1,
+        max_length=40,
+        alias="VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION",
+        description="Version of the privacy notice shown before Start; recorded on the session and the start audit event.",
+    )
     llm_allow_unactivated: bool = Field(
         False,
         alias="VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED",

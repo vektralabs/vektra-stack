@@ -109,6 +109,7 @@ async def test_no_route_accepts_a_query_string_or_cookie_credential(pg) -> None:
                 "sid": str(s.session_id),
                 "site_id": str(w.site),
                 "report_id": str(uuid.uuid4()),
+                "turn_no": "1",
             }
             before = (
                 await pg.run(

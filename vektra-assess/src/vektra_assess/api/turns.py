@@ -510,12 +510,6 @@ async def post_turn(
         raise fail(bad_request("message_empty"))
     if len(body.text) > settings_of(request).max_message_chars:
         raise fail(bad_request("message_too_long"))
-    # REQ-083 messages per minute per session, before the gate and any model call
-    allowed, _headers = limiter_of(request, "turns").check(
-        str(sid), settings_of(request).messages_per_min
-    )
-    if not allowed:
-        raise fail(rate_limited(60, "message_rate"))
     driver = driver_of(request)
     async with (
         session_tx(
@@ -530,6 +524,13 @@ async def post_turn(
         # REQ-070 input lock from the deadline on (the database refuses the append as well)
         if row.deadline_at is not None and row.server_now >= row.deadline_at:
             raise fail(deadline_passed())
+        # REQ-083 messages per minute per session: counted only for requests that passed the
+        # gate (a stale or foreign token cannot use up the student's rate), before any model call
+        allowed, _headers = limiter_of(request, "turns").check(
+            str(sid), settings_of(request).messages_per_min
+        )
+        if not allowed:
+            raise fail(rate_limited(60, "message_rate"))
         material = await load_material(
             conn, sid, row.epoch, handoff_private_of(request), dek_cache_of(request)
         )

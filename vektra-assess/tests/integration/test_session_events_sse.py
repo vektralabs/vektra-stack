@@ -226,7 +226,9 @@ async def test_the_one_minute_warning_reaches_both_tabs_once(pg, worker) -> None
                 text("SELECT assess_close_session(:s, 1, 'finished')"),
                 {"s": s.session_id},
             )
+        ids = set()
         for body in await asyncio.wait_for(asyncio.gather(*tabs), 10):
             warnings = [e for e in parse(body) if e["event"] == "warning"]
             assert [e["data"]["minutes"] for e in warnings] == [1]
-            assert len({e["id"] for e in warnings}) == 1
+            ids |= {e["id"] for e in warnings}
+        assert len(ids) == 1, ids  # the same event in both tabs, published once

@@ -279,6 +279,7 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.reaper import reap_starting
     from vektra_assess.worker.render import gate_refresh_tick
+    from vektra_assess.worker.sweeper import sweep_timed_out
 
     settings, engine = checked.settings, checked.engine
 
@@ -288,7 +289,14 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
     async def gate_refresh() -> None:
         await gate_refresh_tick(engine.connect, settings.render_fresh_s)
 
-    return {"starting_reaper": starting_reaper, "gate_refresh": gate_refresh}
+    async def sweeper() -> None:
+        await sweep_timed_out(engine.connect)
+
+    return {
+        "starting_reaper": starting_reaper,
+        "gate_refresh": gate_refresh,
+        "sweeper": sweeper,
+    }
 
 
 def _compose(checked: Checked, bindings: Any | None = None) -> Any:
@@ -495,7 +503,7 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "reaper", "render", "runtime", "shutdown", "slots", "start_source", "ticks",
+        "reaper", "render", "runtime", "shutdown", "slots", "start_source", "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip
         importlib.import_module(f"vektra_assess.worker.{name}")

@@ -184,3 +184,33 @@ async def test_a_message_refused_as_pending_does_not_use_the_rate(pg, worker) ->
         await wait_idle(w)
         r = await w.client.post(url, json={"text": "due"}, headers=auth)
         assert r.status_code == 202, r.text
+
+
+async def test_an_exhausted_budget_is_enforced_before_the_next_turn(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4498473586: usage committed at 100% with the close lost (audit failure, a
+    crash) is enforced by the next request: closed budget_exhausted, no model call."""
+    runner = FakeStreamRunner()
+    async with world(
+        pg,
+        default_settings(VEKTRA_ASSESS_SESSION_TOKEN_BUDGET=10_000),
+        assess_runner=runner,
+    ) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET tokens_used = 10000 WHERE id = :s",
+            {"s": s.session_id},
+        )
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "ancora"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 409 and err(r)["code"] == "ERR-ASSESS-009", r.text
+        row = await pg.run(
+            "super",
+            "SELECT state, close_reason FROM assess_sessions WHERE id = :s",
+            {"s": s.session_id},
+        )
+        assert tuple(row[0]) == ("CLOSED", "budget_exhausted")
+        assert runner.turns == []

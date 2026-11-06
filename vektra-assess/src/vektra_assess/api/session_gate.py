@@ -52,7 +52,7 @@ ANY_OPEN = frozenset({"STARTING", "ACTIVE", "OUTAGE"})
 _ROW = (
     "SELECT id, site_id, cmid, student_userid, session_no, epoch, state, close_reason, "
     "deadline_at, committed_at, seq, frozen_policy, duration_s, reply_grace_s, "
-    "pending_reply_since, credited_outage_s, created_at, now() AS server_now "
+    "pending_reply_since, credited_outage_s, created_at, tokens_used, now() AS server_now "
     "FROM assess_sessions WHERE id = :sid"
 )
 _ROW_LOCKED = text(_ROW + " FOR UPDATE")
@@ -78,6 +78,7 @@ class SessionRow:
     pending_reply_since: datetime | None
     credited_outage_s: int
     created_at: datetime
+    tokens_used: int
     server_now: datetime
 
 
@@ -232,7 +233,9 @@ _CLOSE = text("SELECT assess_close_session(:sid, :epoch, :reason)")
 _OVER_CAP = text("SELECT assess_outage_spent(:sid) > assess_outage_cap(:d)")
 
 
-async def due_close(conn: AsyncConnection, row: SessionRow) -> str | None:
+async def due_close(
+    conn: AsyncConnection, row: SessionRow, token_budget: int | None = None
+) -> str | None:
     """The close reason the session's clock calls for now, or None (REQ-070, REQ-086).
 
     - ACTIVE past its deadline: ``timed_out``, unless a reply is still pending inside the grace
@@ -240,6 +243,15 @@ async def due_close(conn: AsyncConnection, row: SessionRow) -> str | None:
     - OUTAGE whose cumulative outage passed C: ``service_failure``. An OUTAGE session is never
       timed out (its clock is frozen; the credit moves the deadline when it ends).
     """
+    # REQ-083: usage already at the budget (the close after the last reply was lost: an
+    # audit failure, a crash) is enforced here, before another turn (CodeRabbit 4498473586)
+    if (
+        row.state in LIVE
+        and token_budget
+        and row.tokens_used >= token_budget
+        and row.pending_reply_since is None
+    ):
+        return "budget_exhausted"
     if row.state == "ACTIVE" and row.deadline_at is not None:
         if row.server_now >= row.deadline_at:
             in_grace = row.pending_reply_since is not None and row.server_now <= (
@@ -265,6 +277,7 @@ async def enforce_clock(
     plan-2 close function (state, reason, epoch bump, hand-off delete, transcript job, audit).
     The route's own gate then sees a CLOSED row. Rejections are left to that gate (it audits
     them once)."""
+    budget = settings_of(request).session_token_budget
     # read without a lock first (review fix 5): only a session whose clock is over is locked,
     # re-read and closed; with nothing due, a lock=False route takes no row lock at all
     async with engine_of(request).connect() as conn:
@@ -280,7 +293,7 @@ async def enforce_clock(
             )
         except GateRejected:
             return None
-        reason = await due_close(conn, row)
+        reason = await due_close(conn, row, budget)
     if reason is None:
         return None
     async with engine_of(request).begin() as conn:
@@ -296,7 +309,7 @@ async def enforce_clock(
             )
         except GateRejected:
             return None
-        reason = await due_close(conn, row)  # re-checked under the lock
+        reason = await due_close(conn, row, budget)  # re-checked under the lock
         if reason is not None:
             await conn.execute(
                 _CLOSE, {"sid": sid, "epoch": row.epoch, "reason": reason}

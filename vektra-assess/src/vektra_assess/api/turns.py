@@ -45,6 +45,8 @@ from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.material import DekCache, Material, load_material
 from vektra_assess.api.models import TurnRequest
 from vektra_assess.api.session_gate import SessionRow, session_tx
+from vektra_assess.api.state import limiter_of
+from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.context.assemble import assemble_context
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.policy import FrozenPolicy
@@ -55,6 +57,7 @@ from vektra_assess.errors import (
     bad_request,
     close_message_code,
     deadline_passed,
+    rate_limited,
     reply_pending,
     state_conflict,
 )
@@ -94,6 +97,11 @@ NOT_AN_OUTAGE = frozenset(
 _APPEND = text(
     "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
 )
+_ADD_TOKENS = text(
+    "UPDATE assess_sessions SET tokens_used = tokens_used + :n WHERE id = :s "
+    "RETURNING tokens_used"
+)
+_CLOSE_BUDGET = text("SELECT assess_close_session(:sid, :epoch, 'budget_exhausted')")
 _ENTER_OUTAGE = text("SELECT assess_enter_outage(:sid, :epoch, :started, :reason)")
 _AUDIT = text(
     "INSERT INTO assess_audit_events (event, reason_code, actor_kind, data) "
@@ -188,6 +196,8 @@ class TurnDriver:
     runner: Any  # DiscussionTurnRunner (or a test double with ``run_stream``)
     handoff_private: AssessKeyring
     cache: DekCache
+    #: REQ-083 session token budget (``VEKTRA_ASSESS_SESSION_TOKEN_BUDGET``); None: unlimited
+    token_budget: int | None = None
     tasks: dict[UUID, asyncio.Task[None]] = field(default_factory=dict)
 
     def start(
@@ -338,10 +348,18 @@ class TurnDriver:
             await self._interrupted(sid, epoch, "provider_unavailable")
 
     async def _append_bot(
-        self, sid: UUID, epoch: int, kind: str, text_: str
+        self,
+        sid: UUID,
+        epoch: int,
+        kind: str,
+        text_: str,
+        tokens: int = 0,
+        used: list[int] | None = None,
     ) -> int | None:
         """Append one bot turn under the row lock; None when the session is not ACTIVE at this
-        epoch or the function refuses (seq or chain moved, state changed)."""
+        epoch or the function refuses (seq or chain moved, state changed). ``tokens`` (the
+        answered turn's TurnUsage) is added to the session budget in the same transaction; the
+        new total is appended to ``used``."""
         async with self.engine.begin() as conn:
             seq = (
                 await conn.execute(
@@ -357,7 +375,7 @@ class TurnDriver:
             material = await load_material(
                 conn, sid, epoch, self.handoff_private, self.cache
             )
-            return await append_turn(
+            turn_no = await append_turn(
                 conn,
                 material,
                 epoch=epoch,
@@ -366,6 +384,13 @@ class TurnDriver:
                 kind=kind,
                 text_=text_,
             )
+            if turn_no is not None and tokens > 0:
+                total = (
+                    await conn.execute(_ADD_TOKENS, {"s": sid, "n": tokens})
+                ).scalar_one()
+                if used is not None:
+                    used.append(int(total))
+            return turn_no
 
     async def _interrupted(self, sid: UUID, epoch: int, reason: str) -> None:
         """The marked "[risposta interrotta]" bot turn: it answers the pending student turn, so
@@ -382,7 +407,9 @@ class TurnDriver:
         if result.interrupted:
             # cut at deadline + grace (REQ-070): what was released, then the fixed marker
             text_ = f"{text_.rstrip()} {INTERRUPTED_REPLY}".strip()
-        turn_no = await self._append_bot(sid, epoch, kind, text_)
+        tokens = result.usage.prompt_tokens + result.usage.completion_tokens
+        used: list[int] = []
+        turn_no = await self._append_bot(sid, epoch, kind, text_, tokens, used)
         if turn_no is None:
             # refused by assess_append_turn (state, epoch, seq or chain moved; from plan M3.3 also
             # past deadline + grace, by the database's own clock, which is left to decide): the
@@ -394,6 +421,41 @@ class TurnDriver:
             "reply_interrupted" if result.interrupted else "reply_done",
             {"turn_no": turn_no, "marked": bool(result.marks)},
         )
+        if used:
+            await self._budget(sid, epoch, used[0] - tokens, used[0])
+
+    async def _budget(self, sid: UUID, epoch: int, before: int, after: int) -> None:
+        """REQ-083: ``budget_warning`` once, when this turn crosses 80%; at 100% the session is
+        closed ``budget_exhausted`` through the plan-2 close function (one transcript job)."""
+        budget = self.token_budget
+        if not budget:
+            return
+        if before < 0.8 * budget <= after:
+            async with self.engine.begin() as conn:
+                await write_event(
+                    conn,
+                    AssessAuditEvent.BUDGET_WARNING,
+                    actor="api",
+                    session_id=sid,
+                    data={"percent": 80},
+                )
+            self.broker.publish(sid, "budget_warning", {"percent": 80})
+        if after >= budget:
+            async with self.engine.begin() as conn:
+                closed = (
+                    await conn.execute(_CLOSE_BUDGET, {"sid": sid, "epoch": epoch})
+                ).scalar()
+            if closed:
+                self.cache.evict(sid)
+                self.broker.observe(
+                    sid,
+                    "CLOSED",
+                    {
+                        "state": "CLOSED",
+                        "close_reason": "budget_exhausted",
+                        "message_code": close_message_code("budget_exhausted"),
+                    },
+                )
 
 
 def driver_of(request: Request) -> TurnDriver:
@@ -409,6 +471,7 @@ def driver_of(request: Request) -> TurnDriver:
         runner=runner,
         handoff_private=handoff_private_of(request),
         cache=dek_cache_of(request),
+        token_budget=settings_of(request).session_token_budget,
     )
     request.app.state.assess_turn_driver = driver
     return driver
@@ -447,6 +510,12 @@ async def post_turn(
         raise fail(bad_request("message_empty"))
     if len(body.text) > settings_of(request).max_message_chars:
         raise fail(bad_request("message_too_long"))
+    # REQ-083 messages per minute per session, before the gate and any model call
+    allowed, _headers = limiter_of(request, "turns").check(
+        str(sid), settings_of(request).messages_per_min
+    )
+    if not allowed:
+        raise fail(rate_limited(60, "message_rate"))
     driver = driver_of(request)
     async with (
         session_tx(

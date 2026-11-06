@@ -124,9 +124,9 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_sessions": {
             "SELECT": _ALL,
             "INSERT": _ALL,
-            "UPDATE": (
-                "epoch",
-            ),  # seq and last_activity_at move only via the functions
+            # seq and last_activity_at move only via the functions; tokens_used is the REQ-083
+            # session budget the TurnDriver adds each answered turn's TurnUsage to (rev 0027)
+            "UPDATE": ("epoch", "tokens_used"),
         },
         # SELECT: the Start cap and the rollback reason of a STARTING session (plan 8)
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL},

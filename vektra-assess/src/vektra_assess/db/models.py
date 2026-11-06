@@ -199,6 +199,9 @@ class SessionOrm(Base):
     starting_expires_at: Mapped[datetime | None] = _ts(nullable=True)
     deadline_at: Mapped[datetime | None] = _ts(nullable=True)
     credited_outage_s: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
+    tokens_used: Mapped[int] = mapped_column(
+        BigInteger, server_default=text("0")
+    )  # revision 0027
     seq: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
     epoch: Mapped[int] = mapped_column(INTEGER, server_default=text("1"))
     notice_version: Mapped[str | None] = mapped_column(TEXT)

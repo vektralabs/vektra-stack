@@ -277,6 +277,11 @@ async def test_allow_unactivated_is_honoured_only_in_development(  # type: ignor
         ("not_configured", "activity_not_configured"),
         ("timeout", "start_timeout"),
         ("capacity", "capacity"),
+        ("provider_stopped", "provider_unavailable"),  # the model provider is down
+        (
+            "ws_unreachable",
+            "unreadable",
+        ),  # every Moodle read fails: nothing is readable
     ],
 )
 async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-def]
@@ -297,6 +302,19 @@ async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-
             source = FakeSource(raises=RuntimeError("CANARY-secret-detail"))
         elif case == "part_b_rejected":
             runner = FakePartB(fail=PartBRejectedError("part_b_value"))
+        elif case == "provider_stopped":
+            from datetime import UTC, datetime
+
+            from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
+
+            now = datetime.now(UTC)
+            runner = FakePartB(
+                fail=ProviderOutageError(ProviderCallRecord(now, None, now, "error"))
+            )
+        elif case == "ws_unreachable":
+            from vektra_assess.worker.preflight import MoodleGateFacts
+
+            source = FakeSource(facts=MoodleGateFacts())
         sid = await _start(w)
         if case == "not_configured":
             await configure_activity(pg, w.site, CMID, enabled=False)

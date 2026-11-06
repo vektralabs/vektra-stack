@@ -1,10 +1,10 @@
 # Implementation Plan: Assess session lifecycle — tokens, async Start, turns, timing, outage, limits and audit
 
 **ID**: 20261101-154950-assess-session-lifecycle
-**Status**: in_progress
-**Branch**: feat/assess-session-lifecycle (PR 8a = M1-M2), then a second branch for PR 8b = M3-M5
+**Status**: completed
+**Branch**: feat/assess-session-lifecycle (PR 8a = M1-M2), then `feat/assess-session-lifecycle-m3-m5` for PR 8b = M3-M5
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-06T00:00:00Z
+**Updated**: 2026-11-06T23:00:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability

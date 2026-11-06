@@ -15,9 +15,12 @@ from uuid import UUID
 from sqlalchemy import (
     ARRAY,
     BIGINT,
+    BOOLEAN,
+    CHAR,
     INTEGER,
     TEXT,
     TIMESTAMP,
+    VARCHAR,
     BigInteger,
     Boolean,
     Computed,
@@ -453,3 +456,18 @@ class SetupCheckReportOrm(Base):
     items: Mapped[list[Any]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     created_at: Mapped[datetime] = _ts(default=True)
     finished_at: Mapped[datetime | None] = _ts(nullable=True)
+
+
+class ModelActivationOrm(Base):
+    """NFR-023 activation record (revision 0021): append-only, one row per accepted report."""
+
+    __tablename__ = "assess_model_activations"
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(TEXT)
+    model: Mapped[str] = mapped_column(TEXT)
+    prompt_version: Mapped[str] = mapped_column(VARCHAR(8))
+    report_sha256: Mapped[str] = mapped_column(CHAR(64))
+    hard_pass: Mapped[bool] = mapped_column(BOOLEAN)
+    activated_at: Mapped[datetime] = _ts(default=True)
+    activated_by_key_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))

@@ -143,3 +143,38 @@ async def test_events_need_a_session_token_in_the_header(pg, worker) -> None:  #
             headers={"Authorization": f"Bearer {pre}"},
         )
         assert r.status_code == 401  # a pre-session token is not a session token
+
+
+async def test_two_streams_both_receive_closed_and_a_reconnect_drains_it(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 1: the stream that delivers ``closed`` must not evict the channel, or the other
+    tab (whose cursor is past the re-created channel's ids) never sees it and polls for an hour."""
+    from vektra_assess.api.events import broker_of
+
+    async with world(pg, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+
+        class R:
+            app = w.app
+
+        broker = broker_of(R())  # type: ignore[arg-type]
+        for i in range(3):
+            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"})
+        tab1 = asyncio.create_task(_stream(w, s.session_id, s.session_token))
+        tab2 = asyncio.create_task(_stream(w, s.session_id, s.session_token))
+        await asyncio.sleep(0.3)
+        async with worker.begin() as conn:
+            await conn.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"),
+                {"s": s.session_id},
+            )
+        bodies = await asyncio.wait_for(asyncio.gather(tab1, tab2), 5)
+        for body in bodies:
+            assert [e["event"] for e in parse(body)][-1] == "closed"
+        # a tab reconnecting after the close with Last-Event-ID still drains ``closed``
+        events = parse(
+            await asyncio.wait_for(_stream(w, s.session_id, s.session_token, last=3), 5)
+        )
+        assert [e["event"] for e in events] == ["state", "closed"]
+        assert int(events[1]["id"]) == 4

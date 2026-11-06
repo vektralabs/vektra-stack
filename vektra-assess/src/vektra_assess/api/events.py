@@ -241,9 +241,17 @@ async def session_events(
     claims: SessionClaims = Depends(verify_assess_token_session),
 ) -> StreamingResponse:
     # the gate runs once, before the stream opens (steps 2-6; no decrypt on this route at all)
-    async with session_tx(
-        request, claims, sid, route="session_events", allowed=ANY_OPEN, lock=False
-    ) as (_conn, row):
+    async with (
+        session_tx(
+            request,
+            claims,
+            sid,
+            route="session_events",
+            allowed=ANY_OPEN | {"CLOSED"},
+            lock=False,
+            allow_closed=True,  # a reconnect may still drain ``closed``; nothing is decrypted here
+        ) as (_conn, row)
+    ):
         snapshot = {
             "state": row.state,
             "close_reason": row.close_reason,
@@ -264,13 +272,21 @@ async def session_events(
         started = time.monotonic()
         next_poll = 0.0
         next_ping = time.monotonic() + keepalive_s
+        if row.state == "CLOSED":
+            # a reconnect after the close: replay what the ring still holds, end with ``closed``
+            replay = broker.after(sid, last)
+            for event in replay:
+                yield event.sse()
+            if not any(e.type in TERMINAL for e in replay):
+                yield f"event: closed\ndata: {payload}\n\n"
+            return
         while time.monotonic() - started < max_s:
+            # the channel is never evicted here: every open tab and every reconnect must read the
+            # terminal event; the opportunistic sweep removes closed channels after their TTL
             for event in broker.after(sid, last):
                 yield event.sse()
                 last = event.id
                 if event.type in TERMINAL:
-                    if event.type == "closed":
-                        broker.evict(sid)
                     return
             now = time.monotonic()
             if now >= next_poll:

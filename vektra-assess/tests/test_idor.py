@@ -148,7 +148,21 @@ async def test_idor_matrix(pg, branch: str) -> None:  # noqa: F811
                     ),
                     await w.client.get(f"{url}/events", headers={"Authorization": f"Bearer {token}"}),
                 ):  # fmt: skip
-                    assert r.status_code in expect, (name, r.status_code, r.text)
+                    if (
+                        r.status_code == 200
+                        and r.url.path.endswith("/events")
+                        and expect == (409,)
+                    ):
+                        # the owner's own token on its CLOSED session: the stream only drains a
+                        # content-free ``closed`` (review fix 1); nothing else is readable
+                        kinds = [
+                            ln.split(": ", 1)[1]
+                            for ln in r.text.splitlines()
+                            if ln.startswith("event: ")
+                        ]
+                        assert kinds == ["state", "closed"], (name, kinds)
+                    else:
+                        assert r.status_code in expect, (name, r.status_code, r.text)
                     _clean(r)
                 assert await n(pg, audited, s=sid) - before >= 2, name
 

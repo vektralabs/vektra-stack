@@ -113,8 +113,12 @@ async def gate(
     *,
     allowed: Collection[str],
     lock: bool = True,
+    allow_closed: bool = False,
 ) -> SessionRow:
-    """Steps 2-6. Raises ``GateRejected``; never touches session material."""
+    """Steps 2-6. Raises ``GateRejected``; never touches session material.
+
+    ``allow_closed``: only the event stream, which never decrypts, lets a CLOSED session through
+    so a reconnecting tab can still drain its ``closed`` event."""
     # 2. binding: a session token is bound to exactly one sid
     if isinstance(claims, SessionClaims) and claims.sid != sid:
         raise GateRejected(
@@ -145,7 +149,7 @@ async def gate(
         if claims.epoch != row.epoch:
             raise GateRejected(token_invalid(), "epoch")
     # 4. state
-    if row.state == "CLOSED":
+    if row.state == "CLOSED" and not allow_closed:
         raise GateRejected(session_closed(), "closed")
     if row.state not in allowed:
         raise GateRejected(state_conflict(row.state), "state")
@@ -163,11 +167,14 @@ async def session_tx(
     route: str,
     allowed: Collection[str],
     lock: bool = True,
+    allow_closed: bool = False,
 ) -> AsyncIterator[tuple[AsyncConnection, SessionRow]]:
     """One transaction: the gate (steps 2-6) and then the route's own work."""
     try:
         async with engine_of(request).begin() as conn:
-            row = await gate(conn, claims, sid, allowed=allowed, lock=lock)
+            row = await gate(
+                conn, claims, sid, allowed=allowed, lock=lock, allow_closed=allow_closed
+            )
             try:
                 yield conn, row
             except MaterialUnavailable:

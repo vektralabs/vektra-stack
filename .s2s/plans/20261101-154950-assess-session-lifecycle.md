@@ -256,7 +256,7 @@ version.
 - [x] M4.3 `PendingTurnDriver` in the API: started from `vektra_app.main` server startup (lifespan is off, BUG-025), claims ACTIVE sessions with a pending turn and no live driver via `pg_try_advisory_xact_lock(sid)`; answers without a client
 - [x] M4.4 `POST /sessions/{sid}/retry`: rate-limited, only nudges the driver/probe; never changes state by itself (test: retry with provider still down → still OUTAGE, credit unchanged)
 - [x] M4.5 `service_failure` close: cumulative outage > C, or 3 consecutive failed calls; transcript job + teacher notification job enqueued in the same transaction (delivery by plan 10, within 1 min); service_failure message code
-- [ ] M4.6 Outage test matrix with a fault-injecting fake provider: 3-min outage → +3 min ±5 s; 15 s → +0; slow 40 s success → +0; over-length / rate / content-filter → +0; > C → service_failure + intervals recorded; browser killed at outage start → ACTIVE (answered) or CLOSED(service_failure) within C; recovery with client absent → OUTAGE ends within the probe interval and the session later closes `timed_out`; sweeper never closes OUTAGE; refusal turns never set OUTAGE
+- [x] M4.6 Outage test matrix with a fault-injecting fake provider: 3-min outage → +3 min ±5 s; 15 s → +0; slow 40 s success → +0; over-length / rate / content-filter → +0; > C → service_failure + intervals recorded; browser killed at outage start → ACTIVE (answered) or CLOSED(service_failure) within C; recovery with client absent → OUTAGE ends within the probe interval and the session later closes `timed_out`; sweeper never closes OUTAGE; refusal turns never set OUTAGE
 
 ### M5 — Limits, audit, verification, chaos
 - [ ] M5.1 Size REQ-083 defaults on a scripted reference 120-min session (turn count/length distribution from the eval set) against the plan-7 `TurnUsage` estimates; document in `docs/reference/configuration.md`; settings `VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, `VEKTRA_ASSESS_MESSAGES_PER_MIN`, `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET`
@@ -424,6 +424,32 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     the next request after the reply closes it); OUTAGE is never timed out and is closed
     `service_failure` once its cumulative outage passes C; a STARTING row past T is reported as
     rolled back (409 `start_timeout`), the reaper deletes it.
+  - **Outage (M4, revision 0026)**: no plan-2 function moved a session into OUTAGE, so 0026 adds
+    two SECURITY DEFINER functions: `assess_enter_outage` (API) and `assess_end_outage` (worker).
+    The interval starts at the failed call's own `ProviderCallRecord.started_at`, clamped to the
+    commit, the previous interval's end and `now()`. "3 consecutive failed calls" = intervals opened
+    since the last answered bot turn (`opening` / `normal`): the third failure closes
+    `service_failure` instead of opening an interval, so the count needs no new column and resets
+    on an answer. `assess_close_session` v3 enqueues `teacher_notify` (new job kind, owned by plan
+    transcript-delivery, handler unbound until then) in the close transaction of every
+    `service_failure`, whatever the path (API lazy close, probe tick, third failure), and ends any
+    open interval. One probe per deployment (one discussion provider, OQ-032). The outage end
+    restarts `pending_reply_since`, so the `PendingTurnDriver` (3 s minimum age, 2 s poll) answers
+    the turn long before `reconcile_reply` (timeout + grace) would mark it. Provider errors that
+    are an answer, not an outage (`RateLimitError`, `ContextWindowExceededError`,
+    `ContentPolicyViolationError`, `BudgetExceededError`, `BadRequestError`, by type name only),
+    never set OUTAGE: the marked turn ends the attempt (`provider_refused`), no credit.
+  - **PendingTurnDriver claim (M4.3)**: a session-level `pg_try_advisory_lock` on the TurnDriver's
+    live-reply key, held on a dedicated connection for the whole reply, instead of the plan's
+    `pg_try_advisory_xact_lock(sid)`: the claim must outlive one transaction (the reply streams).
+  - **Outage matrix (M4.6)**: `tests/integration/test_session_outage_matrix.py` runs the real
+    runner against a fault-injecting provider in the real API and worker bodies. Outage LENGTHS
+    (3 min, 15 s, > C) are simulated on the database clock by moving the open interval's start;
+    the credit is still computed by the database from those timestamps. The slow-success case runs
+    in real time, scaled (outage timeout 0.3 s).
+  - Close message codes: the `closed` event carries `message_code` (`closed_<reason>`;
+    `closed_service_failure` is REQ-086's "Sessione interrotta per un problema tecnico..."). The
+    plugin renders the text.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

@@ -15,3 +15,22 @@ SYSTEM_ROLLBACK_REASONS = (
     "internal_error",
     "commit_failed",
 )
+
+#: the capture step reports ``capture_failed_<reason>`` (the reader that could not be read):
+#: every one of them is a system rollback
+CAPTURE_FAILED_PREFIX = "capture_failed"
+
+
+def is_system_rollback(reason: str | None) -> bool:
+    """The one classification, used by the worker (streak, breaker) and mirrored in SQL by
+    ``SYSTEM_ROLLBACK_SQL`` (the event stream's persistent-problem check)."""
+    return bool(reason) and (
+        reason in SYSTEM_ROLLBACK_REASONS
+        or str(reason).startswith(CAPTURE_FAILED_PREFIX)
+    )
+
+
+#: the same test in SQL over a column ``reason_code`` (binds ``:sys``)
+SYSTEM_ROLLBACK_SQL = (
+    "(reason_code = ANY(:sys) OR reason_code LIKE '" + CAPTURE_FAILED_PREFIX + "%')"
+)

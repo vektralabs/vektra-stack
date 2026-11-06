@@ -275,3 +275,30 @@ async def test_moodle_unreachable_alerts_the_operator_once_per_window(
                 "kind": "moodle_unreachable",
             }
         ]
+
+
+async def test_capture_failures_count_as_system_rollbacks(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4498466290: the capture step's suffixed reasons
+    (capture_failed_<reason>) are system rollbacks for the streak and the breaker."""
+    limits = StartLimits(breaker_rollbacks=3, rollback_notify_after=3)
+    async with world(pg) as w:
+        for _ in range(3):
+            last = await rolled_back(
+                w, worker, "capture_failed_attempt_unreadable", limits
+            )
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_jobs WHERE kind = 'teacher_notify' "
+                "AND args->>'reason' = 'rollback_cap'",
+            )
+            == 1
+        )
+        assert (
+            await n(
+                pg, "SELECT count(*) FROM assess_start_breaker WHERE state = 'open'"
+            )
+            == 1
+        )
+        _state, _e, data = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
+        assert data == {"reason": "technical_problem_persistent"}

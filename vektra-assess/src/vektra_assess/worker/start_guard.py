@@ -30,7 +30,11 @@ from sqlalchemy import text
 
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.jobs import JobKind, enqueue_job
-from vektra_assess.start_rules import SYSTEM_ROLLBACK_REASONS
+from vektra_assess.start_rules import (
+    SYSTEM_ROLLBACK_REASONS,
+    SYSTEM_ROLLBACK_SQL,
+    is_system_rollback,
+)
 
 
 @dataclass(frozen=True)
@@ -57,7 +61,7 @@ _LAST_OUTCOMES = text(
 )
 _SITE_ROLLBACKS = text(
     "SELECT count(*) FROM assess_start_attempts WHERE site_id = :s "
-    "AND outcome = 'rolled_back' AND reason_code = ANY(:sys) "
+    "AND outcome = 'rolled_back' AND " + SYSTEM_ROLLBACK_SQL + " "
     "AND created_at > now() - make_interval(secs => :w)"
 )
 _OPEN = text(
@@ -83,7 +87,7 @@ async def streak(conn: Any, site_id: UUID, cmid: int, userid: int, n: int) -> in
     ).all()
     count = 0
     for outcome, reason in rows:
-        if outcome != "rolled_back" or reason not in SYSTEM_ROLLBACK_REASONS:
+        if outcome != "rolled_back" or not is_system_rollback(reason):
             break
         count += 1
     return count
@@ -137,7 +141,7 @@ async def after_rollback(
 ) -> None:
     if reason in MOODLE_UNREACHABLE_REASONS:
         await alert_moodle_unreachable(conn, site_id, reason)
-    if reason not in SYSTEM_ROLLBACK_REASONS:
+    if not is_system_rollback(reason):
         return
     # the streak, counted over one more than the threshold: notify when it reaches it exactly
     n = limits.rollback_notify_after

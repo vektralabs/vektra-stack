@@ -43,6 +43,8 @@ from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
     assess_unavailable,
     capacity_reached,
+    rate_limited,
+    start_breaker_open,
     start_refused,
     token_invalid,
 )
@@ -59,6 +61,17 @@ _HEARTBEAT = text(
 )
 _ACTIVITY = text(
     "SELECT enabled, cap_minutes FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
+)
+_BREAKER = text(
+    "SELECT b.state, b.half_open_at <= now() AS half_open, "
+    "extract(epoch FROM b.half_open_at - now()) AS wait_s, (SELECT count(*) FROM assess_sessions "
+    "s WHERE s.site_id = b.site_id AND s.state = 'STARTING') AS starting "
+    "FROM assess_start_breaker b WHERE b.site_id = :s"
+)
+_START_CAP = text(
+    "SELECT count(*) AS n, extract(epoch FROM min(created_at) + interval '1 hour' - now()) "
+    "AS wait_s FROM assess_start_attempts WHERE site_id = :s AND student_userid = :u "
+    "AND cmid = :c AND outcome = 'requested' AND created_at > now() - interval '1 hour'"
 )
 _LIVE = text("SELECT count(*) FROM assess_sessions WHERE state <> 'CLOSED'")
 _RENDER = text(
@@ -126,12 +139,13 @@ async def _refuse(
     claims: PreClaims,
     reason: str,
     err: ErrorResponse,
+    event: AssessAuditEvent = AssessAuditEvent.START_REFUSED,
 ) -> None:
     """Audit an advisory refusal (its own transaction: nothing else was written) and raise."""
     async with engine_of(request).begin() as conn:
         await write_event(
             conn,
-            AssessAuditEvent.START_REFUSED,
+            event,
             actor="api",
             site_id=claims.site,
             reason_code=reason,
@@ -151,6 +165,32 @@ async def _advisory(request: Request, conn: AsyncConnection, claims: PreClaims) 
     ):
         await _refuse(
             request, claims, "worker_not_ready", assess_unavailable("worker_heartbeat")
+        )
+    # the per-site Start breaker (M5.4): open -> refused fast, nothing consumed; half-open after
+    # the cooldown -> one Start at a time goes through to the pre-flight
+    breaker = (await conn.execute(_BREAKER, {"s": claims.site})).first()
+    if breaker is not None and breaker.state == "open":
+        if not breaker.half_open or int(breaker.starting):
+            await _refuse(
+                request,
+                claims,
+                "start_breaker_open",
+                start_breaker_open(int(float(breaker.wait_s or 0))),
+            )
+    # REQ-071 abuse cap: Start attempts per (student, activity) per hour
+    cap = (
+        await conn.execute(
+            _START_CAP, {"s": claims.site, "u": claims.sub, "c": claims.cmid}
+        )
+    ).one()
+    if int(cap.n) >= settings.start_rate_per_hour:
+        wait_s = max(int(float(cap.wait_s or 0)), 1)
+        await _refuse(
+            request,
+            claims,
+            "start_rate_cap",
+            rate_limited(wait_s, "start_rate_cap"),
+            AssessAuditEvent.START_RATE_CAP_HIT,
         )
     activity = (
         await conn.execute(_ACTIVITY, {"s": claims.site, "c": claims.cmid})

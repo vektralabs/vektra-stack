@@ -288,12 +288,17 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
     from vektra_assess.worker.reaper import reap_starting
     from vektra_assess.worker.render import gate_refresh_tick
     from vektra_assess.worker.reply_reconcile import queue_reconciles
+    from vektra_assess.worker.start_guard import StartLimits
     from vektra_assess.worker.sweeper import sweep_timed_out
 
     settings, engine = checked.settings, checked.engine
 
     async def starting_reaper() -> None:
-        await reap_starting(engine.connect, settings.start_t_s)
+        await reap_starting(
+            engine.connect,
+            settings.start_t_s,
+            limits=StartLimits.from_settings(settings),
+        )
 
     async def gate_refresh() -> None:
         await gate_refresh_tick(engine.connect, settings.render_fresh_s)
@@ -543,7 +548,7 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_source",
+        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_guard", "start_source",
         "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip

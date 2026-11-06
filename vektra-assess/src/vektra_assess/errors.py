@@ -79,6 +79,19 @@ def assess_unavailable(failing_item: str) -> ErrorResponse:
     )
 
 
+def start_breaker_open(retry_after_s: int) -> ErrorResponse:
+    """503: the site's Start breaker is open (plan 8 M5.4); nothing was consumed."""
+    wait = max(int(retry_after_s), 1)
+    return ErrorResponse(
+        category=ErrorCategory.TRANSIENT,
+        code=ERR_ASSESS_001,
+        message="Servizio momentaneamente non disponibile.",
+        remediation=f"Retry after about {wait} seconds; the session was not used.",
+        retry_after=wait,
+        details={"reason": "start_breaker_open"},
+    )
+
+
 def setup_check_too_soon(retry_after_s: int) -> ErrorResponse:
     return ErrorResponse(
         category=ErrorCategory.TRANSIENT,

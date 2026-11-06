@@ -35,9 +35,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of
+from vektra_assess.api.deps import settings_of
 from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.session_gate import ANY_OPEN, session_tx
 from vektra_assess.errors import close_message_code
+from vektra_assess.start_rules import SYSTEM_ROLLBACK_REASONS
 from vektra_assess.timing import due_warnings
 from vektra_assess.tokens import SessionClaims
 
@@ -244,9 +246,14 @@ _STATUS = text(
     "FROM assess_sessions WHERE id = :s"
 )
 _ROLLBACK_REASON = text(
-    "SELECT reason_code FROM assess_start_attempts WHERE session_id = :s "
-    "AND outcome = 'rolled_back' ORDER BY id DESC LIMIT 1"
-)
+    "WITH rb AS (SELECT site_id, cmid, student_userid, reason_code FROM assess_start_attempts "
+    "WHERE session_id = :s AND outcome = 'rolled_back' ORDER BY id DESC LIMIT 1) "
+    "SELECT rb.reason_code, (SELECT count(*) FROM (SELECT a.outcome, a.reason_code, "
+    "sum(CASE WHEN a.outcome = 'rolled_back' AND a.reason_code = ANY(:sys) THEN 0 ELSE 1 END) "
+    "OVER (ORDER BY a.id DESC) AS broken FROM assess_start_attempts a "
+    "WHERE a.site_id = rb.site_id AND a.cmid = rb.cmid AND a.student_userid = rb.student_userid "
+    "AND a.outcome IN ('committed', 'rolled_back')) h WHERE h.broken = 0) AS streak FROM rb"
+).bindparams(sys=list(SYSTEM_ROLLBACK_REASONS))
 
 
 def _iso(value: Any) -> str | None:
@@ -259,7 +266,14 @@ async def _poll(
     async with engine_of(request).connect() as conn:
         row = (await conn.execute(_STATUS, {"s": sid})).first()
         if row is None:
-            reason = (await conn.execute(_ROLLBACK_REASON, {"s": sid})).scalar()
+            rb = (await conn.execute(_ROLLBACK_REASON, {"s": sid})).first()
+            reason = rb.reason_code if rb is not None else None
+            if rb is not None and int(rb.streak) >= int(
+                getattr(settings_of(request), "rollback_notify_after", 3)
+            ):
+                # REQ-071: "Problema tecnico persistente" while the streak of system rollbacks
+                # of this student and activity lasts (the teacher and operator were notified)
+                reason = "technical_problem_persistent"
             return None, None, {"reason": reason}
     if row.state == "ACTIVE" and row.deadline_at is not None and row.duration_s:
         broker_of(request).warn(

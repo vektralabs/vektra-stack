@@ -453,6 +453,41 @@ class VektraAssessSettings(BaseSettings):
             "re-checks every 60 s; a worker stopped longer than this rejects turns (fail closed)."
         ),
     )
+    start_rate_per_hour: int = Field(
+        5,
+        ge=1,
+        le=100,
+        alias="VEKTRA_ASSESS_START_RATE_PER_HOUR",
+        description="REQ-071: Start attempts per (student, activity) per hour; beyond it 429 'Riprova tra X minuti'.",
+    )
+    rollback_notify_after: int = Field(
+        3,
+        ge=1,
+        le=20,
+        alias="VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER",
+        description="REQ-071: consecutive system rollbacks of one (student, activity) that notify teacher and operator ('Problema tecnico persistente').",
+    )
+    start_breaker_rollbacks: int = Field(
+        10,
+        ge=2,
+        le=1000,
+        alias="VEKTRA_ASSESS_START_BREAKER_ROLLBACKS",
+        description="Per-site Start breaker: system rollbacks within the window that open it.",
+    )
+    start_breaker_window_s: int = Field(
+        300,
+        ge=30,
+        le=86_400,
+        alias="VEKTRA_ASSESS_START_BREAKER_WINDOW_S",
+        description="Per-site Start breaker: the window the rollbacks are counted in.",
+    )
+    start_breaker_cooldown_s: int = Field(
+        120,
+        ge=10,
+        le=86_400,
+        alias="VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S",
+        description="Per-site Start breaker: seconds fully open before one Start at a time is let through (half-open).",
+    )
     retry_rpm: int = Field(
         6,
         ge=1,

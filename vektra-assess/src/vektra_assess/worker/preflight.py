@@ -75,6 +75,7 @@ from vektra_assess.worker.policy import (
     COMMIT_MARGIN_S,
 )  # one value, shared with the policy
 from vektra_assess.worker.runner import AcquireDb, JobContext
+from vektra_assess.worker.start_guard import StartLimits, after_commit, after_rollback
 
 log = structlog.get_logger(__name__)
 
@@ -302,6 +303,7 @@ async def rollback_start(
     *,
     actor: str = "worker",
     extra: AssessAuditEvent | None = None,
+    limits: StartLimits | None = None,
 ) -> bool:
     """Delete a STARTING session and everything under it, in the CALLER's transaction.
 
@@ -326,6 +328,15 @@ async def rollback_start(
             "sid": session_id,
         },
     )
+    # REQ-071 abuse cap and the per-site breaker, in this same transaction (M5.4)
+    await after_rollback(
+        conn,
+        site_id=row.site_id,
+        cmid=int(row.cmid),
+        userid=int(row.student_userid),
+        reason=reason,
+        limits=limits or StartLimits(),
+    )
     for event in (AssessAuditEvent.START_ROLLBACK, extra):
         if event is None:
             continue
@@ -346,10 +357,13 @@ async def _rollback(
     session_id: UUID,
     reason: str,
     extra: AssessAuditEvent | None = None,
+    limits: StartLimits | None = None,
 ) -> None:
     async with acquire() as conn:
         async with conn.begin():
-            done = await rollback_start(conn, session_id, reason, extra=extra)
+            done = await rollback_start(
+                conn, session_id, reason, extra=extra, limits=limits
+            )
     log.info(
         "assess_preflight_rolled_back",
         session_id=str(session_id),
@@ -556,6 +570,7 @@ async def _commit(
                         "sid": sid,
                     },
                 )
+                await after_commit(conn, target.site_id)  # a commit closes the breaker
                 await write_event(
                     conn,
                     AssessAuditEvent.COMMIT,
@@ -596,7 +611,9 @@ async def _commit(
     return True
 
 
-async def _resolve_ambiguous(acquire: AcquireDb, sid: UUID) -> None:
+async def _resolve_ambiguous(
+    acquire: AcquireDb, sid: UUID, limits: StartLimits | None = None
+) -> None:
     """After an unknown COMMIT outcome, re-read the row on a NEW connection before any rollback:
 
     - ACTIVE with ``committed_at``: it committed; nothing to undo, no rollback event;
@@ -619,7 +636,7 @@ async def _resolve_ambiguous(acquire: AcquireDb, sid: UUID) -> None:
         log.info("assess_preflight_ambiguous_gone", session_id=str(sid))
         return
     if row.state == "STARTING":
-        await _rollback(acquire, sid, Reason.COMMIT_FAILED)
+        await _rollback(acquire, sid, Reason.COMMIT_FAILED, limits=limits)
         return
     log.info("assess_preflight_ambiguous_committed", session_id=str(sid))
 
@@ -627,6 +644,8 @@ async def _resolve_ambiguous(acquire: AcquireDb, sid: UUID) -> None:
 def make_preflight_handler(
     deps: PreflightDeps,
 ) -> Callable[[JobContext], Awaitable[None]]:
+    limits = StartLimits.from_settings(deps.settings)
+
     async def handle(ctx: JobContext) -> None:
         raw = ctx.args.get("session_id")
         try:
@@ -636,13 +655,15 @@ def make_preflight_handler(
         try:
             await _run(deps, ctx.acquire, sid)
         except _Rollback as rb:
-            await _rollback(ctx.acquire, sid, rb.reason, rb.extra)
+            await _rollback(ctx.acquire, sid, rb.reason, rb.extra, limits)
         except _AmbiguousCommit:
-            await _resolve_ambiguous(ctx.acquire, sid)
+            await _resolve_ambiguous(ctx.acquire, sid, limits)
         except asyncio.CancelledError:
             # the runtime's budget (T - margin) or a shutdown cancelled the pre-flight mid-way:
             # roll it back now, shielded from the cancellation, instead of leaving it to the reaper
-            await asyncio.shield(_rollback(ctx.acquire, sid, Reason.START_TIMEOUT))
+            await asyncio.shield(
+                _rollback(ctx.acquire, sid, Reason.START_TIMEOUT, limits=limits)
+            )
             raise
 
     return handle

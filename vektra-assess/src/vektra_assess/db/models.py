@@ -234,6 +234,20 @@ class StartAttemptOrm(Base):
     session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
 
 
+class StartBreakerOrm(Base):
+    """Per-site Start breaker (revision 0028, plan 8 M5.4): worker-written, API-read."""
+
+    __tablename__ = "assess_start_breaker"
+
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(TEXT)
+    opened_at: Mapped[datetime | None] = _ts(nullable=True)
+    half_open_at: Mapped[datetime | None] = _ts(nullable=True)
+    updated_at: Mapped[datetime] = _ts(default=True)
+
+
 class TokenJtiOrm(Base):
     """A minted pre-session token: single-use store and mint-to-Start correlation (0022)."""
 

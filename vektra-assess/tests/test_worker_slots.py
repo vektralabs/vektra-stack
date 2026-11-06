@@ -24,7 +24,7 @@ from vektra_assess.worker.slots import (
 PRODUCTION_KINDS = {
     "capability_probe", "enrolment_recheck", "erasure", "gate_refresh", "preflight", "purge",
     "reconcile_reply", "render_check",
-    "rotate_keys", "session_deadline", "setup_check", "teacher_notify", "transcript_deliver",
+    "rotate_keys", "session_deadline", "setup_check", "teacher_notify", "operator_notify", "transcript_deliver",
     "transcript_generate",
 }  # fmt: skip
 PRODUCTION_TICKS = [

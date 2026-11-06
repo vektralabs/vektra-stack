@@ -49,6 +49,7 @@ TABLES: tuple[str, ...] = (
     "assess_site_capabilities",
     "assess_site_keys",
     "assess_sites",
+    "assess_start_breaker",
     "assess_snapshots",
     "assess_start_attempts",
     "assess_token_jti",
@@ -130,6 +131,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         },
         # SELECT: the Start cap and the rollback reason of a STARTING session (plan 8)
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL},
+        # the per-site Start breaker: written by the worker only, read for the fast refusal
+        "assess_start_breaker": {"SELECT": _ALL},
         # mint inserts, Start / resume consume (plan 8); identity columns never change
         "assess_token_jti": {
             "SELECT": _ALL,
@@ -197,6 +200,12 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "DELETE": _ALL,
         },
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
+        "assess_start_breaker": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": _ALL,
+            "DELETE": _ALL,
+        },
         "assess_consumed_jtis": {"SELECT": _ALL, "DELETE": _ALL},
         # the done-job cleanup tick deletes expired mint rows (plan 8)
         "assess_token_jti": {"SELECT": _ALL, "DELETE": _ALL},

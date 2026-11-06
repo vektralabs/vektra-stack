@@ -116,10 +116,19 @@ def pg() -> Iterator[Pg]:
         handle = Pg(url, c.get_wrapped_container().id)
         asyncio.run(_prepare(handle))
         yield handle
-        # REQ-067 (plan 8 acceptance): after every test of the module, on every session row,
-        # "consumed" (committed: ACTIVE, OUTAGE or CLOSED) == "has a persisted opening bot turn"
-        bad = asyncio.run(handle.run("super", CONSUMED_INVARIANT))
-        assert bad == [], f"consumed != exists(opening bot turn) for {bad}"
+
+
+@pytest.fixture(autouse=True)
+def consumed_invariant(request: pytest.FixtureRequest) -> Iterator[None]:
+    """REQ-067 (plan 8 acceptance): after EVERY test that uses ``pg``, before a later test can
+    clean its rows up, on every session row: "consumed" (committed: ACTIVE, OUTAGE or CLOSED)
+    == "has a persisted opening bot turn" (CodeRabbit 4498473609)."""
+    yield
+    if "pg" not in request.fixturenames:
+        return
+    handle = request.getfixturevalue("pg")
+    bad = asyncio.run(handle.run("super", CONSUMED_INVARIANT))
+    assert bad == [], f"consumed != exists(opening bot turn) for {bad}"
 
 
 #: the rows that break consumed == exists(persisted opening bot turn); must be none

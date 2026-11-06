@@ -1,6 +1,6 @@
 """REQ-067: consumed == exists(persisted opening bot turn), checked on every session row.
 
-The ``pg`` fixture runs ``CONSUMED_INVARIANT`` after the last test of EVERY integration module, so
+The ``consumed_invariant`` fixture runs ``CONSUMED_INVARIANT`` after EVERY integration test that uses ``pg``, so
 the check covers the rows the whole suite leaves behind. This module drives every lifecycle exit
 on one database (commit, rollback, close, outage, a Start never picked up) and runs the same
 check, then shows the check bites on a row it must reject.

@@ -167,7 +167,7 @@ async def step_12_assess_check(
     # (app.state.rate_limiter) stays unset
     from vektra_admin.rate_limit import RateLimiter
 
-    app.state.assess_limiters = {"state": RateLimiter()}
+    app.state.assess_limiters = {"state": RateLimiter(), "retry": RateLimiter()}
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
 
 

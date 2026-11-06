@@ -453,6 +453,13 @@ class VektraAssessSettings(BaseSettings):
             "re-checks every 60 s; a worker stopped longer than this rejects turns (fail closed)."
         ),
     )
+    retry_rpm: int = Field(
+        6,
+        ge=1,
+        le=600,
+        alias="VEKTRA_ASSESS_RETRY_RPM",
+        description="POST /sessions/{sid}/retry calls per minute per session (REQ-086).",
+    )
     outage_min_credit_s: int = Field(
         20,
         ge=0,

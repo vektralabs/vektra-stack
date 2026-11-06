@@ -32,6 +32,7 @@ EXPECTED = {
     ("POST", "/api/v1/assess/sessions/{sid}/turns"),
     ("GET", "/api/v1/assess/state"),
     ("POST", "/api/v1/assess/sessions/{sid}/finish"),
+    ("POST", "/api/v1/assess/sessions/{sid}/retry"),
 }
 
 

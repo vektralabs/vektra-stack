@@ -14,6 +14,7 @@ from vektra_assess.api import (
     housekeeping,
     mint,
     model_activations,
+    retry,
     sessions,
     setup_check,
     start,
@@ -38,3 +39,4 @@ router.include_router(events.router)
 router.include_router(turns.router)
 router.include_router(state.router)
 router.include_router(finish.router)
+router.include_router(retry.router)

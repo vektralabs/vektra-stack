@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -56,6 +57,15 @@ DETERMINISTIC_HARD = (
     "refusal_core",
 )
 JUDGED_HARD = ("unsupported_claim", "teacher_intent")
+JUDGE_CRITERIA = (
+    "unsupported_claim",
+    "teacher_intent",
+    "wrong_refusal",
+    "over_refusal",
+    "oracle",
+    "contest_tag_missed",
+    "tone",
+)
 DATASET_MINIMUMS = {
     "explain": 100,
     "refusal": 140,
@@ -157,7 +167,12 @@ def _calibrated(cal: Mapping[str, Any]) -> bool:
         seeded = _counts(cal["seeded_counts"])
     except (KeyError, TypeError, ValueError, AttributeError):
         return False
-    if not kappa or any(v < KAPPA_MIN for v in kappa.values()):
+    # every judge criterion, each finite and at threshold ("NaN" parses as a float)
+    if any(not math.isfinite(kappa.get(k, math.nan)) for k in JUDGE_CRITERIA):
+        return False
+    if any(not math.isfinite(v) or v < KAPPA_MIN for v in kappa.values()):
+        return False
+    if any(not math.isfinite(v) for v in recall.values()):
         return False
     return all(
         recall.get(k, 0.0) >= SEEDED_RECALL_MIN

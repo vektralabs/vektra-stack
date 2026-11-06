@@ -166,7 +166,7 @@ def passing_report_body(**over: Any) -> dict[str, Any]:
         "judged_hard": dict.fromkeys(A.JUDGED_HARD, 0),
         "calibration": {
             "status": "PASS",
-            "kappa": {"unsupported_claim": 0.8, "teacher_intent": 0.75},
+            "kappa": dict.fromkeys(A.JUDGE_CRITERIA, 0.8),
             "seeded_recall": dict.fromkeys(A.JUDGED_HARD, 1.0),
             "seeded_counts": dict.fromkeys(A.JUDGED_HARD, A.SEEDED_MIN_PER_CLASS),
         },

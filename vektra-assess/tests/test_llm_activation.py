@@ -120,6 +120,9 @@ def test_an_empty_judge_section_is_not_a_pass() -> None:
     "cal",
     [
         {"kappa": {"unsupported_claim": 0.6, "teacher_intent": 0.8}},
+        {"kappa": {"unsupported_claim": 0.9}},  # six criteria missing
+        {"kappa": {**dict.fromkeys(A.JUDGE_CRITERIA, 0.9), "tone": "NaN"}},
+        {"seeded_recall": {"unsupported_claim": "NaN", "teacher_intent": 1.0}},
         {"seeded_recall": {"unsupported_claim": 0.9, "teacher_intent": 1.0}},
         {"seeded_counts": {"unsupported_claim": 5, "teacher_intent": 20}},
         {"seeded_recall": {"teacher_intent": 1.0}},
@@ -142,6 +145,7 @@ def test_the_gate_and_the_eval_suite_share_one_contract() -> None:
 
     assert tuple(S.HARD) == A.DETERMINISTIC_HARD
     assert tuple(J.JUDGED_HARD) == A.JUDGED_HARD
+    assert tuple(J.CRITERIA) == A.JUDGE_CRITERIA
     assert E.MINIMUMS == A.DATASET_MINIMUMS
     assert (J.KAPPA_MIN, J.SEEDED_RECALL_MIN, J.SEEDED_MIN_PER_CLASS) == (
         A.KAPPA_MIN,

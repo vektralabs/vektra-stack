@@ -383,3 +383,27 @@ async def test_step_12_runs_the_guard_even_when_disabled(
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "false")
     with pytest.raises(StartupValidationError, match="parser socket is reachable"):
         await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
+
+
+async def test_the_pending_turn_driver_starts_with_the_server_and_stops_with_it() -> (
+    None
+):
+    """Plan 8 M4.3: started at the end of the shared startup (so also under ``main()`` with
+    uvicorn's lifespan off, BUG-025), only with a discussion runner; stopped at shutdown."""
+    import inspect
+
+    from vektra_app import main as app_main
+
+    bare = FastAPI()
+    assert assess_wiring.start_assess_background(bare) is False  # assess off: no runner
+
+    app = FastAPI()
+    app.state.assess_runner = object()
+    assert assess_wiring.start_assess_background(app) is True
+    driver = app.state.assess_pending_driver
+    assert driver._task is not None and not driver._task.done()
+    await assess_wiring.stop_assess_background(app)
+    assert driver._task is None and app.state.assess_pending_driver is None
+    # both serving paths run the same startup and shutdown, which call these two
+    assert "start_assess_background(app)" in inspect.getsource(app_main._run_startup)
+    assert "stop_assess_background(app)" in inspect.getsource(app_main._run_shutdown)

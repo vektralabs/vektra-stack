@@ -391,6 +391,26 @@ def driver_of(request: Request) -> TurnDriver:
     return driver
 
 
+class _AppRequest:
+    """The app-level state accessors take a request; a background task has only the app."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+
+def driver_for_app(app: Any) -> TurnDriver:
+    return driver_of(_AppRequest(app))  # type: ignore[arg-type]
+
+
+def cut_after_s(row: SessionRow) -> float | None:
+    """Seconds until deadline + grace, minus the persist margin (REQ-070)."""
+    if row.deadline_at is None:
+        return None
+    grace = row.reply_grace_s
+    until = (row.deadline_at - row.server_now).total_seconds() + grace
+    return until - min(CUT_MARGIN_S, grace / 2)
+
+
 @router.post("/sessions/{sid}/turns", status_code=202)
 async def post_turn(
     sid: UUID,
@@ -442,13 +462,8 @@ async def post_turn(
         )
     # committed: the reply runs detached from this request from here on
     driver.broker.publish(sid, "turn_accepted", {"turn_no": turn_no})
-    cut_after = None
-    if row.deadline_at is not None:
-        grace = row.reply_grace_s
-        until = (row.deadline_at - row.server_now).total_seconds() + grace
-        # stop early enough to persist the cut turn before the database's own limit
-        cut_after = until - min(CUT_MARGIN_S, grace / 2)
-    driver.start(sid, row.epoch, bundle, turn, cut_after)
+    # stop early enough to persist the cut turn before the database's own limit
+    driver.start(sid, row.epoch, bundle, turn, cut_after_s(row))
     return JSONResponse(
         status_code=202,
         content={"session_id": str(sid), "turn_no": turn_no},

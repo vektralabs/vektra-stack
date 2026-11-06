@@ -169,3 +169,28 @@ async def step_12_assess_check(
 
     app.state.assess_limiters = {"state": RateLimiter()}
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
+
+
+def start_assess_background(app: FastAPI) -> bool:
+    """Start the API's own background work once the startup sequence passed (plan 8 M4.3).
+
+    Called at the end of the shared startup, so it runs both under ``main()`` (uvicorn with
+    ``lifespan="off"``, BUG-025) and under the ASGI lifespan (tests, local uvicorn). Only with a
+    discussion runner on ``app.state`` (assess enabled and step 13 passed). Returns whether the
+    ``PendingTurnDriver`` was started."""
+    if getattr(app.state, "assess_runner", None) is None:
+        return False
+    from vektra_assess.api.pending import PendingTurnDriver
+
+    driver = PendingTurnDriver(app)
+    app.state.assess_pending_driver = driver
+    driver.start()
+    log.info("assess_pending_driver_started")
+    return True
+
+
+async def stop_assess_background(app: FastAPI) -> None:
+    driver = getattr(app.state, "assess_pending_driver", None)
+    if driver is not None:
+        await driver.stop()
+        app.state.assess_pending_driver = None

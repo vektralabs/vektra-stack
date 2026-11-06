@@ -81,6 +81,17 @@ class SessionRow:
     server_now: datetime
 
 
+async def load_row(
+    conn: AsyncConnection, sid: UUID, *, lock: bool = True
+) -> SessionRow | None:
+    """The session row as the gate reads it, for server-side work with no token (the
+    ``PendingTurnDriver``): no owner check is possible or needed there."""
+    raw = (
+        await conn.execute(_ROW_LOCKED if lock else _ROW_PLAIN, {"sid": sid})
+    ).first()
+    return SessionRow(**raw._mapping) if raw is not None else None
+
+
 class GateRejected(Exception):
     def __init__(
         self,

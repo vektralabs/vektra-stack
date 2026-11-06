@@ -148,3 +148,28 @@ class ScriptedHostileLLM(RecordingLLMProvider):
     def __init__(self, only: str | None = None) -> None:
         replies = [HOSTILE[only]] if only else [" ".join(HOSTILE.values())]
         super().__init__(replies, repeat_last=True)
+
+
+def passing_report_body(**over: Any) -> dict[str, Any]:
+    """An NFR-023 report body that meets the whole contract (``report_sha256`` not yet set)."""
+    from vektra_assess.llm import activation as A
+
+    doc: dict[str, Any] = {
+        "provider": "ollama",
+        "model": "ollama/m",
+        "prompt_version": "abcd1234",
+        "data_basis": "synthetic",
+        "status": "PASS",
+        "blocked_reasons": [],
+        "dataset_sizes": dict(A.DATASET_MINIMUMS),
+        "hard": dict.fromkeys(A.DETERMINISTIC_HARD, 0),
+        "judged_hard": dict.fromkeys(A.JUDGED_HARD, 0),
+        "calibration": {
+            "status": "PASS",
+            "kappa": {"unsupported_claim": 0.8, "teacher_intent": 0.75},
+            "seeded_recall": dict.fromkeys(A.JUDGED_HARD, 1.0),
+            "seeded_counts": dict.fromkeys(A.JUDGED_HARD, A.SEEDED_MIN_PER_CLASS),
+        },
+    }
+    doc.update(over)
+    return doc

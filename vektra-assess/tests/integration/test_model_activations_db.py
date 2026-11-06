@@ -4,6 +4,7 @@ API role, append-only rows, every attempt audited, the read used by startup."""
 from __future__ import annotations
 
 import pytest
+from fakes import passing_report_body
 
 from vektra_assess.llm.activation import is_activated, report_sha256
 
@@ -14,12 +15,7 @@ pytestmark = pytest.mark.integration
 
 
 def _report(**over: object) -> dict[str, object]:
-    doc: dict[str, object] = {
-        "provider": "ollama", "model": "ollama/act", "prompt_version": "abcd1234",
-        "data_basis": "synthetic", "status": "PASS", "hard": {"verdict": 0},
-        "judged_hard": {"teacher_intent": 0}, "calibration": {"status": "PASS"},
-    }  # fmt: skip
-    doc.update(over)
+    doc: dict[str, object] = passing_report_body(**{"model": "ollama/act", **over})
     doc["report_sha256"] = report_sha256(doc)
     return doc
 

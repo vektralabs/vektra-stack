@@ -162,3 +162,49 @@ async def test_a_non_positive_n_is_blocked_not_a_breach(tmp_path: Path, n: int) 
     doc = json.loads(path.read_text())
     assert code == 2 and doc["status"] == "BLOCKED"
     assert any("must be positive" in b for b in doc["blockers"])
+
+
+def _fake_api(get_status: int):  # type: ignore[no-untyped-def]
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/tokens"):
+            return httpx.Response(201, json={"token": "pre", "expires_in": 120})
+        if request.method == "POST":
+            return httpx.Response(202, json={"session_id": "s-1", "token": "ses"})
+        return httpx.Response(get_status, json={"error": {"code": "X"}})
+
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://t"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome"),
+    [(401, "error:get_401"), (409, "error:get_409"), (404, "not_found")],
+)
+async def test_a_terminal_poll_status_ends_the_start_without_waiting(
+    status: int, outcome: str
+) -> None:
+    """CodeRabbit 4493109328: a rejected token or a closed session is terminal, and a 404 is
+    not a rollback until the database confirms it (``db_counts``)."""
+    import asyncio
+    import time
+
+    o = burst.Outcome(0, 1)
+    gate = asyncio.Event()
+    gate.set()
+    t0 = time.monotonic()
+    async with _fake_api(status) as client:
+        await burst.one_start(
+            client,
+            o,
+            cmid=1,
+            courseid=None,
+            mint_key="k",
+            gate=gate,
+            timeout_s=5,
+            poll_s=0.05,
+        )
+    assert o.outcome == outcome
+    assert time.monotonic() - t0 < 2

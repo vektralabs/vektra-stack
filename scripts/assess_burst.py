@@ -262,8 +262,13 @@ async def one_start(
                 o.outcome = "commit"
                 return
             if g.status_code == 404:
+                # not yet a rollback: ``db_counts`` confirms it (and its reason) from the
+                # rolled_back start attempt, otherwise the outcome stays ``not_found``
+                o.outcome = "not_found"
+                return
+            if g.status_code != 200:
                 o.outcome = (
-                    "rolled_back"  # the reason is read from the database afterwards
+                    f"error:get_{g.status_code}"  # a rejected token, a closed session
                 )
                 return
             await asyncio.sleep(poll_s)
@@ -409,7 +414,7 @@ async def db_counts(dsn: str) -> CountsFn:
             for o in outcomes:
                 if o.session_id in by_sid:
                     o.start_to_commit_ms = by_sid[o.session_id]
-                if o.outcome == "rolled_back" and o.session_id in why:
+                if o.outcome == "not_found" and o.session_id in why:
                     o.outcome = f"rolled_back:{why[o.session_id]}"
             out: dict[str, Any] = {
                 "sessions_by_state": {

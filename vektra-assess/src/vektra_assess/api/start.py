@@ -58,7 +58,7 @@ _ACTIVITY = text(
     "SELECT enabled, cap_minutes FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
 )
 _LIVE = text("SELECT count(*) FROM assess_sessions WHERE state <> 'CLOSED'")
-_CONSUME = text(
+CONSUME_JTI = text(
     "UPDATE assess_token_jti t SET consumed_at = now() "
     "WHERE t.jti = :jti AND t.consumed_at IS NULL AND t.expires_at > now() "
     "AND t.site_id = :site AND t.student_userid = :sub AND t.cmid = :cmid "
@@ -153,7 +153,7 @@ async def start_session(
         async with engine.begin() as conn:
             consumed = (
                 await conn.execute(
-                    _CONSUME,
+                    CONSUME_JTI,
                     {
                         "jti": claims.jti,
                         "site": claims.site,

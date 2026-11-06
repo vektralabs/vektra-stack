@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from vektra_assess.api.common import fail
+from vektra_assess.api.material import DekCache
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.errors import assess_unavailable, token_invalid
 from vektra_assess.keys import AssessKeyring
@@ -35,6 +36,25 @@ def tokens_of(request: Request) -> AssessTokens:
     tokens = AssessTokens.from_settings(signing, settings_of(request))
     request.app.state.assess_tokens = tokens
     return tokens
+
+
+HANDOFF_PRIVATE = "assess_handoff_private"
+
+
+def handoff_private_of(request: Request) -> AssessKeyring:
+    keys = getattr(request.app.state, "assess_keys", None) or {}
+    ring = keys.get(HANDOFF_PRIVATE)
+    if not isinstance(ring, AssessKeyring):
+        raise fail(assess_unavailable("handoff_private_key"))
+    return ring
+
+
+def dek_cache_of(request: Request) -> DekCache:
+    cache = getattr(request.app.state, "assess_dek_cache", None)
+    if cache is None:
+        cache = DekCache()
+        request.app.state.assess_dek_cache = cache
+    return cache
 
 
 def bearer_token(request: Request) -> str:

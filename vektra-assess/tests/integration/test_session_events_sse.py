@@ -178,3 +178,30 @@ async def test_two_streams_both_receive_closed_and_a_reconnect_drains_it(
         )
         assert [e["event"] for e in events] == ["state", "closed"]
         assert int(events[1]["id"]) == 4
+
+
+async def test_a_reconnect_after_close_never_replays_reply_text(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4493120886: a CLOSED session's stream returns content-free events only."""
+    from vektra_assess.api.events import broker_of
+
+    async with world(pg, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+
+        class R:
+            app = w.app
+
+        broker = broker_of(R())  # type: ignore[arg-type]
+        broker.publish(
+            s.session_id, "reply_delta", {"text": "CANARY-reply-after-close"}
+        )
+        broker.publish(s.session_id, "reply_done", {"turn_no": 4})
+        async with worker.begin() as conn:
+            await conn.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"),
+                {"s": s.session_id},
+            )
+        body = await asyncio.wait_for(
+            _stream(w, s.session_id, s.session_token, last=0), 5
+        )
+        assert "CANARY-reply-after-close" not in body
+        assert [e["event"] for e in parse(body)] == ["state", "reply_done", "closed"]

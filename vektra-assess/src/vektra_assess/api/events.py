@@ -289,7 +289,10 @@ async def session_events(
         next_ping = time.monotonic() + keepalive_s
         if row.state == "CLOSED":
             # a reconnect after the close: replay what the ring still holds, end with ``closed``
-            replay = broker.after(sid, last)
+            # content-free events only: after the close no reply text is served (GET is 409 too)
+            replay = [
+                e for e in broker.after(sid, last) if e.type not in CONTENT_EVENTS
+            ]
             for event in replay:
                 yield event.sse()
             if not any(e.type in TERMINAL for e in replay):

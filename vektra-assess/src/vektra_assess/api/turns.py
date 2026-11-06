@@ -194,7 +194,13 @@ class TurnDriver:
         if result is None:
             self.broker.publish(sid, "reply_interrupted", {"reason": "internal_error"})
             return
-        await self._persist(sid, epoch, result)
+        try:
+            await self._persist(sid, epoch, result)
+        except Exception as exc:
+            # a lost hand-off, an unseal or a database failure while persisting: reported to the
+            # stream and logged by type only; the task never ends with an unread exception
+            log.warning("assess_turn_persist_failed", error_type=type(exc).__name__)
+            self.broker.publish(sid, "reply_interrupted", {"reason": "persist_failed"})
 
     async def _persist(self, sid: UUID, epoch: int, result: TurnResult) -> None:
         kind = "interrupted" if result.interrupted else "normal"

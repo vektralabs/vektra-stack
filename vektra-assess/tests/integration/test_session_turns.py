@@ -272,3 +272,42 @@ async def test_no_plaintext_reaches_the_database(pg, worker) -> None:  # type: i
             )
         ]
     )
+
+
+@pytest.mark.parametrize("failure", ["material", "db"])
+async def test_a_failing_persist_is_reported_and_never_kills_the_task(  # type: ignore[no-untyped-def]
+    pg, worker, monkeypatch, failure: str
+) -> None:
+    """Review fix 2: an error while persisting the bot turn publishes ``reply_interrupted``, logs
+    content-free, and the driver task ends without an unread exception."""
+    from vektra_assess.api import turns as turns_mod
+    from vektra_assess.api.events import broker_of
+    from vektra_assess.api.material import MaterialUnavailable
+
+    release = asyncio.Event()
+    runner = FakeStreamRunner(release=release)
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "ciao"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202
+        exc = MaterialUnavailable() if failure == "material" else OSError("db gone")
+
+        async def broken(*_a, **_k):  # type: ignore[no-untyped-def]
+            raise exc
+
+        monkeypatch.setattr(turns_mod, "load_material", broken)
+        driver = w.app.state.assess_turn_driver
+        task = driver.tasks[s.session_id]
+        release.set()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
+        assert task.exception() is None
+
+        class R:
+            app = w.app
+
+        evs = [e.type for e in broker_of(R()).after(s.session_id, 0)]  # type: ignore[arg-type]
+        assert evs[-1] == "reply_interrupted", evs

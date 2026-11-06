@@ -302,3 +302,42 @@ async def test_capture_failures_count_as_system_rollbacks(pg, worker) -> None:  
         )
         _state, _e, data = await _poll(_Req(w.app), last.session_id)  # type: ignore[arg-type]
         assert data == {"reason": "technical_problem_persistent"}
+
+
+async def test_concurrent_rollbacks_at_the_threshold_open_the_breaker(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4498466324: two system rollbacks reaching the threshold together must not
+    each miss the other's attempt row; the per-site count is serialised through commit."""
+    import asyncio
+
+    limits = StartLimits(breaker_rollbacks=2, rollback_notify_after=10)
+    async with world(pg) as w:
+        a = await seed_session(w, worker, "STARTING", assignment="rubric_vis")
+        b = await seed_session(w, worker, "STARTING", assignment="simple")
+        first = await worker.connect()
+        second = await worker.connect()
+        try:
+            await first.begin()
+            assert await rollback_start(
+                first, a.session_id, "internal_error", limits=limits
+            )
+            await second.begin()
+            other = asyncio.create_task(
+                rollback_start(second, b.session_id, "internal_error", limits=limits)
+            )
+            await asyncio.sleep(
+                0.5
+            )  # the second one runs while the first is uncommitted
+            await first.commit()
+            assert await asyncio.wait_for(other, 10)
+            await second.commit()
+        finally:
+            await first.close()
+            await second.close()
+        assert (
+            await n(
+                pg, "SELECT count(*) FROM assess_start_breaker WHERE state = 'open'"
+            )
+            == 1
+        )

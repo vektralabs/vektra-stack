@@ -64,6 +64,10 @@ _SITE_ROLLBACKS = text(
     "AND outcome = 'rolled_back' AND " + SYSTEM_ROLLBACK_SQL + " "
     "AND created_at > now() - make_interval(secs => :w)"
 )
+_SITE_LOCK = text(
+    "SELECT pg_advisory_xact_lock(hashtextextended('assess_start_breaker:' || "
+    "CAST(:s AS text), 0))"
+)
 _OPEN = text(
     "INSERT INTO assess_start_breaker (site_id, state, opened_at, half_open_at, updated_at) "
     "VALUES (:s, 'open', now(), now() + make_interval(secs => :cd), now()) "
@@ -162,6 +166,11 @@ async def after_rollback(
             reason_code=reason,
             data={"cmid": cmid, "streak": n},
         )
+    # serialise the per-site count through commit (CodeRabbit 4498466324): two rollbacks
+    # reaching the threshold together would otherwise each miss the other's uncommitted row.
+    # The same per-site key as the API's half-open Start check; held until this commit, and
+    # the count below is a new statement (a new snapshot) taken after the lock
+    await conn.execute(_SITE_LOCK, {"s": str(site_id)})
     recent = int(
         (
             await conn.execute(

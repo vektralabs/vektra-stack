@@ -195,3 +195,39 @@ async def test_half_open_lets_one_start_at_a_time(pg, worker) -> None:  # type: 
         assert (
             r.status_code == 503 and err(r)["details"]["reason"] == "start_breaker_open"
         )
+
+
+async def test_concurrent_starts_on_a_half_open_breaker_let_one_through(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 8: "one Start at a time" while half-open is decided atomically."""
+    import asyncio
+
+    limits = StartLimits(breaker_rollbacks=1, rollback_notify_after=10)
+    async with world(pg) as w:
+        await rolled_back(
+            w, worker, "provider_unavailable", limits, assignment="rubric_vis"
+        )
+        await pg.run(
+            "super",
+            "UPDATE assess_start_breaker SET half_open_at = now() - interval '1 second'",
+        )
+        tokens = []
+        for name in ("simple", "scale", "files", "guide"):
+            await seed_session(w, worker, "ELIGIBLE", assignment=name)
+            tokens.append(await w.presession(*fixture_target(name=name)))
+        replies = await asyncio.gather(
+            *(
+                w.client.post(
+                    "/api/v1/assess/sessions",
+                    headers={"Authorization": f"Bearer {t}"},
+                )
+                for t in tokens
+            )
+        )
+        codes = sorted(r.status_code for r in replies)
+        assert codes.count(202) <= 1, codes
+        assert (
+            await n(pg, "SELECT count(*) FROM assess_sessions WHERE state = 'STARTING'")
+            <= 1
+        )

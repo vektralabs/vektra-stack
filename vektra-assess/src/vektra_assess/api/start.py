@@ -68,6 +68,11 @@ _BREAKER = text(
     "s WHERE s.site_id = b.site_id AND s.state = 'STARTING') AS starting "
     "FROM assess_start_breaker b WHERE b.site_id = :s"
 )
+_BREAKER_LOCK = text(
+    "SELECT pg_advisory_xact_lock(hashtextextended('assess_start_breaker:' || "
+    "CAST(:s AS text), 0)) FROM assess_start_breaker WHERE site_id = CAST(:s AS uuid) "
+    "AND state = 'open'"
+)
 _START_CAP = text(
     "SELECT count(*) AS n, extract(epoch FROM min(created_at) + interval '1 hour' - now()) "
     "AS wait_s FROM assess_start_attempts WHERE site_id = :s AND student_userid = :u "
@@ -251,6 +256,18 @@ async def start_session(
                     },
                 )
             ).first()
+            # per-site breaker, half-open (review fix 8): "one Start at a time" decided under a
+            # per-site transaction lock, held until this Start's STARTING row is committed, so
+            # two concurrent Starts cannot both see no probe in flight
+            # (two statements: the count must be read AFTER the lock, in a new snapshot)
+            await conn.execute(_BREAKER_LOCK, {"s": str(claims.site)})
+            breaker = (await conn.execute(_BREAKER, {"s": claims.site})).first()
+            if breaker is not None and breaker.state == "open":
+                if not breaker.half_open or int(breaker.starting):
+                    raise _Refused(
+                        start_breaker_open(int(float(breaker.wait_s or 0))),
+                        "start_breaker_open",
+                    )
             if consumed is None:
                 # mint-to-Start correlation (M5.5): a correctly signed token whose jti was never
                 # minted through /tokens for this (site, sub, cmid) by the site's CURRENT mint

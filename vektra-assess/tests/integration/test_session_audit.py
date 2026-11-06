@@ -267,12 +267,16 @@ async def test_an_audit_store_failure_aborts_the_action(pg, worker) -> None:  # 
         )
         try:
             before = tuple((await pg.run("super", counts, {"u": sub, "c": cmid}))[0])
-            with pytest.raises((DBAPIError, Exception)):
+            # the failing insert either surfaces as a database error through the in-process
+            # client, or as a 5xx response; anything else (a 2xx, a 4xx) fails the test
+            try:
                 r = await w.client.post(
                     "/api/v1/assess/sessions", headers=bearer(token)
                 )
-                assert r.status_code >= 500
-                raise RuntimeError("refused as a server error")
+            except DBAPIError:
+                r = None
+            if r is not None:
+                assert r.status_code >= 500, r.text
             after = tuple((await pg.run("super", counts, {"u": sub, "c": cmid}))[0])
             assert after == before
         finally:

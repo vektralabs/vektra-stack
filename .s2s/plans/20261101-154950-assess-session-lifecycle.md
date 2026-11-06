@@ -221,7 +221,7 @@ version.
 - [x] M1.2 `vektra_assess/tokens.py`: `mint_presession()`, `mint_session()`, `verify(stage=…)` on top of `vektra_shared.tokens`; settings `VEKTRA_ASSESS_PRESESSION_TTL_S` (max 120, startup refuses larger), `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S`, `VEKTRA_ASSESS_TOKEN_ISSUER`; signing key from the plan-1 keyring (kid rotation: verify accepts current + previous kid)
 - [x] M1.3 `POST /tokens` (`require_exact_scope("assess:mint")`, site binding, positive login-as assertion, `plugin_version` minimum, `assess_token_jti` insert, `token_mint` audit); verify `assess_token_jti` exists in the plan-2 schema, else add it in the next revision in the chain
 - [x] M1.4 `POST /sessions` Start transaction (jti consume, STARTING insert under the partial unique index, `assess_start_attempts`, `enqueue_job('preflight')`, `start` audit with notice version) → 202 + sid + session token; concurrent-Start test (20 parallel requests, same sub/cmid) → exactly 1 non-CLOSED row
-- [ ] M1.5 Bind the `preflight` handler (`vektra_assess/worker/preflight.py`) — thin version: activation check, admission check, snapshot (plan 6), DEK + `kek_wrapped` + hand-off, Part A, `run_part_b`, commit transaction with `now()-start_requested_at < T`; rollback transaction deleting session/snapshot/keys/turns + `start_rollback(reason)`; handler budget = T − margin, lease from plan 3 (≈ 90 s)
+- [x] M1.5 Bind the `preflight` handler (`vektra_assess/worker/preflight.py`) — thin version: activation check, admission check, snapshot (plan 6), DEK + `kek_wrapped` + hand-off, Part A, `run_part_b`, commit transaction with `now()-start_requested_at < T`; rollback transaction deleting session/snapshot/keys/turns + `start_rollback(reason)`; handler budget = T − margin, lease from plan 3 (≈ 90 s)
 - [ ] M1.5a Assess model reaches the production vLLM (OQ-026): `build_assess_llm` (`vektra-app/src/vektra_app/assess_llm.py`) takes the API key from `VEKTRA_LLM_API_KEY`, the same key the RAG pipeline uses today (user decision 2026-11-06: no new secret), instead of forcing None; new setting `VEKTRA_ASSESS_LLM_EXTRA_BODY` (JSON, default none) passed as `extra_body` (Qwen3.6 needs `chat_template_kwargs.enable_thinking=false`); the worker container gets both through its environment (it runs Part B and the outage probe); the RAG fallback model still never leaks in; tests + docs (`configuration.md`, `.env.example`)
 - [ ] M1.6 Bind the STARTING reaper tick: STARTING rows with `start_requested_at + T` passed and no live lease → rollback path (`reason=start_timeout`); test with a stalled fake LLM
 - [ ] M1.7 `GET /sessions/{sid}` (owner only): state, deadline, server_now, turns (decrypted via `get_session_material`, gate order enforced); with a pre-session token → resume path that consumes jti and re-mints the session token; CLOSED → 409
@@ -401,3 +401,28 @@ Every acceptance check reads rows, bytes or real responses, never a status field
 - **OQ-026 (user answers 2026-11-06)**: production model on-prem, Qwen 3.5 or larger served by vLLM. Today's vLLM (source: the vektralabs session, notes of 2-4 Nov, not re-verified): Unical HPC cluster, `qwen3.6` = Qwen3.6-35B-A3B-FP8 on one H200 (MIG 7g.141gb), context 262144, `enable_thinking: false` via extra_body, HTTP without TLS, key required (the same `VEKTRA_LLM_API_KEY` the RAG uses). The job is not reserved (preemptable, shared node; hung on 2 Nov); a reserved H200 is promised, not yet assigned: the pilot cannot rely on it until then. No throughput or concurrency measurement exists: M1.11 is the first. Local tests run on the cloud API with `openai/gpt-6-luna`.
 - **OQ-020**: the burst and e2e fixtures are synthetic only.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
+- **Implementation choices, PR 8a (2026-11-06)**:
+  - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,
+    which stays for the transcript download path (plan 10). Mint derives the site from the key's
+    `assess_site_keys` binding (purpose `mint`); the body carries `sub`, `cmid`, `courseid` (hint),
+    `loginas`, `realuser_id`, `plugin_version`, as the discuss-student plan sends it.
+  - The Start window T is measured from `assess_sessions.created_at` (no separate
+    `start_requested_at` column); `starting_expires_at` = created_at + T.
+  - `assess_start_attempts` gets outcome `requested` (API, at Start) and `session_id`; the worker
+    appends `committed` / `rolled_back` rows, so no role needs UPDATE there. The API reads the table
+    (Start cap, rollback reason).
+  - `assess_activity_config.cap_minutes` (5-120, NULL = not configured) is added here because the
+    pre-flight needs the cap; plan 11 owns the form that writes it and should reuse the column.
+    Until plan 11, `flags.show_solution` / `flags.rubric_source` give the teacher view (defaults:
+    solution OFF, rubric source `moodle` for assignments, `none` for quizzes).
+  - The session freezes `duration_s` (cap + extra time) and `frozen_policy` (content-free BR-011
+    decision, needed by the API to assemble the bundle per turn) at commit.
+  - The cmid is resolved to (course, instance) by a new reader `resolve_activity`, inside the
+    student's own courses (hinted course first), with the recorded functions the capture readers
+    already use; an unresolvable module rolls the Start back.
+  - Opening message: Part A and Part B are two `opening` bot turns (1 and 2), chained on the
+    snapshot hash; `seq` is 2 after commit. The `seq` claim of a session token is the session
+    number N, matched against `session_no`.
+  - The import contract "`_assembly` is private to `vektra_assess.context`" now allows indirect
+    imports: `assemble_context` (the public wrapper) is how the pre-flight and the turn route build
+    bundles; a direct import of `_assembly` still breaks the contract (canary test unchanged).

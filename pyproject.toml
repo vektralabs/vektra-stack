@@ -236,10 +236,14 @@ source_modules = ["vektra_assess.api", "vektra_assess.context.*", "vektra_assess
 forbidden_modules = ["vektra_assess.context.capture"]
 
 # (d) the only constructor of ContextBundle is private to vektra_assess.context (plan assess-context):
-# nothing outside the package may import vektra_assess.context._assembly
+# nothing outside the package may import vektra_assess.context._assembly. Reaching it through the
+# public ``vektra_assess.context.assemble.assemble_context`` is the designed path (the worker
+# pre-flight and the API turn route assemble bundles, plan assess-session-lifecycle), hence
+# indirect imports are allowed and only a direct import breaks the contract.
 [[tool.importlinter.contracts]]
 name = "vektra_assess.context._assembly is private to vektra_assess.context"
 type = "forbidden"
+allow_indirect_imports = true
 source_modules = ["vektra_assess.api", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle", "vektra_assess.worker", "vektra_app"]
 forbidden_modules = ["vektra_assess.context._assembly"]
 

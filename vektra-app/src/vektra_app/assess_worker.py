@@ -31,9 +31,9 @@ import os
 import socket
 import sys
 import uuid
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import metadata
 from typing import Any
 
@@ -116,6 +116,7 @@ class Checked:
     engine: Any  # AsyncEngine
     settings: Any  # VektraAssessSettings
     worker_url: str
+    keys: Mapping[str, Any] = field(default_factory=dict)  # the loaded worker secrets
 
 
 async def run_checks() -> object:
@@ -192,7 +193,7 @@ async def _checks() -> Checked:
     except BaseException:
         await engine.dispose()
         raise
-    return Checked(engine, settings, worker_url)
+    return Checked(engine, settings, worker_url, loaded)
 
 
 def _asyncpg_dsn(sqlalchemy_url: str) -> str:
@@ -205,6 +206,55 @@ def _version() -> str:
         return metadata.version("vektra-app")
     except metadata.PackageNotFoundError:
         return "unknown"
+
+
+#: worker secrets the session-lifecycle handlers need (all REQUIRED for the worker role)
+SESSION_KEYS = ("assess_kek", "assess_handoff_public", "assess_teacher_config_private")
+
+
+def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
+    """The plan assess-session-lifecycle bodies: the ``preflight`` handler.
+
+    Built only from a key set that passed the key matrix (``_checks``): without it (a composition
+    test with a lazy engine and no secrets) nothing is bound, and ``assert_all_bound`` refuses to
+    start unless the development override is set. Nothing connects here: the Moodle client, the
+    parser client and the LLM provider open their connections on first use.
+    """
+    if not all(k in checked.keys for k in SESSION_KEYS):
+        return {}
+    from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.moodle.client import MoodleWsClient
+    from vektra_assess.moodle.tokens import secret_token_provider
+    from vektra_assess.worker.parser_client import ParserClient
+    from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
+    from vektra_assess.worker.start_source import MoodleStartSource
+
+    settings, engine = checked.settings, checked.engine
+    runner = build_worker_part_b_runner(
+        settings,
+        acquire_db=engine.connect,
+        audit=audit,
+        llm=build_assess_llm(settings),
+    )
+    source = MoodleStartSource(
+        MoodleWsClient(
+            settings, token_provider=secret_token_provider(settings.secrets_dir)
+        ),
+        ParserClient.from_settings(settings),
+        engine.connect,
+        teacher_private=checked.keys["assess_teacher_config_private"],
+    )
+    preflight = make_preflight_handler(
+        PreflightDeps(
+            settings=settings,
+            kek=checked.keys["assess_kek"],
+            handoff_public=checked.keys["assess_handoff_public"],
+            source=source,
+            runner=runner,
+        )
+    )
+    return {JobKind.PREFLIGHT: preflight}
 
 
 def _compose(checked: Checked, bindings: Any | None = None) -> Any:
@@ -278,7 +328,8 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     async def lease_reaper() -> None:
         await reap_exhausted(acquire_raw, audit)
 
-    extra = bindings or Bindings(handlers={}, ticks={})
+    # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
+    extra = bindings or Bindings(handlers=_session_handlers(checked, audit), ticks={})
     slots = build_slots(
         policy,
         settings,
@@ -407,8 +458,8 @@ def check_imports() -> None:
         "vektra_core.providers.litellm_provider"
     )  # the LLM provider's cost
     for name in (
-        "audit", "cleanup", "heartbeat", "listener", "policy", "reconcile",
-        "runtime", "shutdown", "slots", "ticks", "watchdog",
+        "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
+        "runtime", "shutdown", "slots", "start_source", "ticks", "watchdog",
     ):  # fmt: skip
         importlib.import_module(f"vektra_assess.worker.{name}")
     assert_import_ceiling()

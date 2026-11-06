@@ -29,6 +29,7 @@ from vektra_assess.moodle.readers.quiz import (
     read_user_attempts,
     read_user_review_options,
 )
+from vektra_assess.moodle.readers.resolve import ActivityRef, resolve_activity
 from vektra_assess.moodle.readers.site import (
     read_own_auth,
     read_site_info,
@@ -40,6 +41,7 @@ from vektra_assess.moodle.readers.unreadable import (
 )
 
 __all__ = [
+    "ActivityRef",
     "fetch_submission_file",
     "read_assign_close_inputs",
     "read_assign_release",
@@ -64,5 +66,6 @@ __all__ = [
     "read_user_courses",
     "read_user_flags",
     "read_user_review_options",
+    "resolve_activity",
     "with_release",
 ]

@@ -1,10 +1,10 @@
 # Implementation Plan: Assess session lifecycle — tokens, async Start, turns, timing, outage, limits and audit
 
 **ID**: 20261101-154950-assess-session-lifecycle
-**Status**: active
-**Branch**: N/A
+**Status**: in_progress
+**Branch**: feat/assess-session-lifecycle (PR 8a = M1-M2), then a second branch for PR 8b = M3-M5
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-01T20:58:19Z
+**Updated**: 2026-11-06T00:00:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -217,26 +217,27 @@ version.
 ## Tasks
 
 ### M1 — Walking skeleton (thin Start path → burst test)
-- [ ] M1.1 `vektra_assess/api/router.py` mounted at `/api/v1/assess` by `create_app` (only when `VEKTRA_ASSESS_ENABLED`); Pydantic request/response models in `api/models.py`; error codes ERR_ASSESS_002..0NN with `_CODE_STATUS_OVERRIDE` entries (401 token, 403 loginas/scope/site, 404 unknown or not-owned sid, 409 closed/pending/state, 429 rate/cap with `retry_after`, 503 capacity/unavailable/breaker); 400 envelopes for over-length (avoid the 422 bypass, DEBT-035)
-- [ ] M1.2 `vektra_assess/tokens.py`: `mint_presession()`, `mint_session()`, `verify(stage=…)` on top of `vektra_shared.tokens`; settings `VEKTRA_ASSESS_PRESESSION_TTL_S` (max 120, startup refuses larger), `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S`, `VEKTRA_ASSESS_TOKEN_ISSUER`; signing key from the plan-1 keyring (kid rotation: verify accepts current + previous kid)
-- [ ] M1.3 `POST /tokens` (`require_exact_scope("assess:mint")`, site binding, positive login-as assertion, `plugin_version` minimum, `assess_token_jti` insert, `token_mint` audit); verify `assess_token_jti` exists in the plan-2 schema, else add it in the next revision in the chain
-- [ ] M1.4 `POST /sessions` Start transaction (jti consume, STARTING insert under the partial unique index, `assess_start_attempts`, `enqueue_job('preflight')`, `start` audit with notice version) → 202 + sid + session token; concurrent-Start test (20 parallel requests, same sub/cmid) → exactly 1 non-CLOSED row
-- [ ] M1.5 Bind the `preflight` handler (`vektra_assess/worker/preflight.py`) — thin version: activation check, admission check, snapshot (plan 6), DEK + `kek_wrapped` + hand-off, Part A, `run_part_b`, commit transaction with `now()-start_requested_at < T`; rollback transaction deleting session/snapshot/keys/turns + `start_rollback(reason)`; handler budget = T − margin, lease from plan 3 (≈ 90 s)
-- [ ] M1.6 Bind the STARTING reaper tick: STARTING rows with `start_requested_at + T` passed and no live lease → rollback path (`reason=start_timeout`); test with a stalled fake LLM
-- [ ] M1.7 `GET /sessions/{sid}` (owner only): state, deadline, server_now, turns (decrypted via `get_session_material`, gate order enforced); with a pre-session token → resume path that consumes jti and re-mints the session token; CLOSED → 409
-- [ ] M1.8 `vektra_assess/api/events.py`: `EventBroker` (per-sid bounded ring, monotonic ids, evict on CLOSED), `GET /sessions/{sid}/events` SSE with `Last-Event-ID`, keep-alive comments, state polling of the session row via the plan-2 status function (1 s), `committed` / `start_rolled_back` / `closed` events
-- [ ] M1.9 `POST /sessions/{sid}/turns` thin path + `TurnDriver` (student append → `run_stream` → `reply_delta`/`reply_done` → bot append with hash; `pending_reply_since` serialization; second send → 409); DEK cache per (sid, epoch), evicted on epoch bump/CLOSED/TTL
-- [ ] M1.10 Test-only seeding helper `vektra-assess/tests/support/sessions.py` (seed ELIGIBLE/ACTIVE/OUTAGE/CLOSED sessions with a fake LLM) for this plan and plan 9's e2e
-- [ ] M1.11 **Early burst test** `tests/nfr/test_assess_burst.py` + `scripts/assess_burst.py` (httpx async): 40 concurrent Starts, each with a 10-file assignment submission seeded by plan 4's fixture tooling on the dev Moodle, parser sidecar (plan 5) and the target LLM (OQ-026 candidate); record per-Start mint→202→commit latency from audit timestamps, outcomes (commit / capacity refusal / rollback reason), worker RSS, and row counts (sessions, snapshots, keys, hand-off) after the run; result file under `tests/nfr/results/`; run as soon as M1.5 works, re-run at the end of M5
+- [x] M1.1 `vektra_assess/api/router.py` mounted at `/api/v1/assess` by `create_app` (only when `VEKTRA_ASSESS_ENABLED`); Pydantic request/response models in `api/models.py`; error codes ERR_ASSESS_002..0NN with `_CODE_STATUS_OVERRIDE` entries (401 token, 403 loginas/scope/site, 404 unknown or not-owned sid, 409 closed/pending/state, 429 rate/cap with `retry_after`, 503 capacity/unavailable/breaker); 400 envelopes for over-length (avoid the 422 bypass, DEBT-035)
+- [x] M1.2 `vektra_assess/tokens.py`: `mint_presession()`, `mint_session()`, `verify(stage=…)` on top of `vektra_shared.tokens`; settings `VEKTRA_ASSESS_PRESESSION_TTL_S` (max 120, startup refuses larger), `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S`, `VEKTRA_ASSESS_TOKEN_ISSUER`; signing key from the plan-1 keyring (kid rotation: verify accepts current + previous kid)
+- [x] M1.3 `POST /tokens` (`require_exact_scope("assess:mint")`, site binding, positive login-as assertion, `plugin_version` minimum, `assess_token_jti` insert, `token_mint` audit); verify `assess_token_jti` exists in the plan-2 schema, else add it in the next revision in the chain
+- [x] M1.4 `POST /sessions` Start transaction (jti consume, STARTING insert under the partial unique index, `assess_start_attempts`, `enqueue_job('preflight')`, `start` audit with notice version) → 202 + sid + session token; concurrent-Start test (20 parallel requests, same sub/cmid) → exactly 1 non-CLOSED row
+- [x] M1.5 Bind the `preflight` handler (`vektra_assess/worker/preflight.py`) — thin version: activation check, admission check, snapshot (plan 6), DEK + `kek_wrapped` + hand-off, Part A, `run_part_b`, commit transaction with `now()-start_requested_at < T`; rollback transaction deleting session/snapshot/keys/turns + `start_rollback(reason)`; handler budget = T − margin, lease from plan 3 (≈ 90 s)
+- [x] M1.5a Assess model reaches the production vLLM (OQ-026): `build_assess_llm` (`vektra-app/src/vektra_app/assess_llm.py`) takes the API key from `VEKTRA_LLM_API_KEY`, the same key the RAG pipeline uses today (user decision 2026-11-06: no new secret), instead of forcing None; new setting `VEKTRA_ASSESS_LLM_EXTRA_BODY` (JSON, default none) passed as `extra_body` (Qwen3.6 needs `chat_template_kwargs.enable_thinking=false`); the worker container gets both through its environment (it runs Part B and the outage probe); the RAG fallback model still never leaks in; tests + docs (`configuration.md`, `.env.example`)
+- [x] M1.6 Bind the STARTING reaper tick: STARTING rows with `start_requested_at + T` passed and no live lease → rollback path (`reason=start_timeout`); test with a stalled fake LLM
+- [x] M1.7 `GET /sessions/{sid}` (owner only): state, deadline, server_now, turns (decrypted via `get_session_material`, gate order enforced); with a pre-session token → resume path that consumes jti and re-mints the session token; CLOSED → 409
+- [x] M1.8 `vektra_assess/api/events.py`: `EventBroker` (per-sid bounded ring, monotonic ids, evict on CLOSED), `GET /sessions/{sid}/events` SSE with `Last-Event-ID`, keep-alive comments, state polling of the session row via the plan-2 status function (1 s), `committed` / `start_rolled_back` / `closed` events
+- [x] M1.9 `POST /sessions/{sid}/turns` thin path + `TurnDriver` (student append → `run_stream` → `reply_delta`/`reply_done` → bot append with hash; `pending_reply_since` serialization; second send → 409); DEK cache per (sid, epoch), evicted on epoch bump/CLOSED/TTL
+- [x] M1.10 Test-only seeding helper `vektra-assess/tests/support/sessions.py` (seed ELIGIBLE/ACTIVE/OUTAGE/CLOSED sessions with a fake LLM) for this plan and plan 9's e2e
+- [x] M1.11 **Early burst test** `tests/nfr/test_assess_burst.py` + `scripts/assess_burst.py` (httpx async): 40 concurrent Starts, each with a 10-file assignment submission seeded by plan 4's fixture tooling on the dev Moodle, parser sidecar (plan 5) and the target LLM (OQ-026 candidate); record per-Start mint→202→commit latency from audit timestamps, outcomes (commit / capacity refusal / rollback reason), worker RSS, and row counts (sessions, snapshots, keys, hand-off) after the run; result file under `tests/nfr/results/`; run as soon as M1.5 works, re-run at the end of M5
 
 ### M2 — Gates and isolation
-- [ ] M2.1 `vektra_assess/gates.py`: pure `evaluate_start_gates(inputs) -> GateDecision(code)` for BR-006 (a)-(i), BR-007 (quiz close + grace; assignment cut-off required), BR-010, BR-014 (quiz requires-grading = 0 incl. regrade-in-progress; rubric every criterion has a level; scale; marking guide refused), REQ-091 (any Unreadable input → fallback: NOT_AVAILABLE without a teacher date; gate = max(automatic, teacher date) when readable again; never the activity close alone); fixture table test with every gate negated individually
-- [ ] M2.2 Pre-flight calls the plan-4 readers fresh and `evaluate_start_gates`; a failed gate → rollback with the gate code; team submission → `team_submission_refused` audit
-- [ ] M2.3 Bind the gate-input refresh tick and `render_check` job (worker writes `render_state` / `gate_inputs`); `GET /state` returns the advisory enum + reason code for (token sub, cmid), dedupes `render_check` per (user, cmid), per-token rate-limited; another student's override never leaks a date, name or count (response and HTML fixture grep)
-- [ ] M2.4 Enforce the fixed gate order in one dependency `session_gate(stage)` used by every session route; a test per step asserting that `get_session_material` is called 0 times when an earlier step fails (spy on the DB function)
-- [ ] M2.5 REQ-084: login-as rejection on mint and on any token lacking `loginas:false`; `loginas_rejected` audit; test that 0 session rows are created and the record is unchanged; record OQ-031(2) cross-check capability (default Unreadable) as residual risk
-- [ ] M2.6 IDOR / NFR-014 negative matrix `vektra-assess/tests/test_idor.py`: token for A with B's sid; other site; other cmid; other course; expired; replay after CLOSED; unenrolled; forged Moodle attempt id in body (ignored); each → rejected, audited, 0 cross-student bytes (response body grep for B's canary); run against 4.3 and 5.2 fixtures in the integration job
-- [ ] M2.7 No query-string tokens: route-inventory test that every assess route rejects `?token=`/`?access_token=` without header (401) and that no handler reads `request.query_params`/cookies for credentials (shared with plan 9's inventory test; whichever lands first owns it)
+- [x] M2.1 `vektra_assess/gates.py`: pure `evaluate_start_gates(inputs) -> GateDecision(code)` for BR-006 (a)-(i), BR-007 (quiz close + grace; assignment cut-off required), BR-010, BR-014 (quiz requires-grading = 0 incl. regrade-in-progress; rubric every criterion has a level; scale; marking guide refused), REQ-091 (any Unreadable input → fallback: NOT_AVAILABLE without a teacher date; gate = max(automatic, teacher date) when readable again; never the activity close alone); fixture table test with every gate negated individually
+- [x] M2.2 Pre-flight calls the plan-4 readers fresh and `evaluate_start_gates`; a failed gate → rollback with the gate code; team submission → `team_submission_refused` audit
+- [x] M2.3 Bind the gate-input refresh tick and `render_check` job (worker writes `render_state` / `gate_inputs`); `GET /state` returns the advisory enum + reason code for (token sub, cmid), dedupes `render_check` per (user, cmid), per-token rate-limited; another student's override never leaks a date, name or count (response and HTML fixture grep)
+- [x] M2.4 Enforce the fixed gate order in one dependency `session_gate(stage)` used by every session route; a test per step asserting that `get_session_material` is called 0 times when an earlier step fails (spy on the DB function)
+- [x] M2.5 REQ-084: login-as rejection on mint and on any token lacking `loginas:false`; `loginas_rejected` audit; test that 0 session rows are created and the record is unchanged; record OQ-031(2) cross-check capability (default Unreadable) as residual risk
+- [x] M2.6 IDOR / NFR-014 negative matrix `vektra-assess/tests/test_idor.py`: token for A with B's sid; other site; other cmid; other course; expired; replay after CLOSED; unenrolled; forged Moodle attempt id in body (ignored); each → rejected, audited, 0 cross-student bytes (response body grep for B's canary); run against 4.3 and 5.2 fixtures in the integration job
+- [x] M2.7 No query-string tokens: route-inventory test that every assess route rejects `?token=`/`?access_token=` without header (401) and that no handler reads `request.query_params`/cookies for credentials (shared with plan 9's inventory test; whichever lands first owns it)
 
 ### M3 — Timing, resume, finish, abandon
 - [ ] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
@@ -397,5 +398,107 @@ Every acceptance check reads rows, bytes or real responses, never a status field
   recorded. A CPU-only co-located LLM is not expected to meet NFR-018.
 - **OQ-025 / OQ-031**: gate inputs default to Unreadable, which means REQ-091 fallback or
   NOT_AVAILABLE. The login-as cross-check is a residual risk until the spike reads it.
+- **OQ-026 (user answers 2026-11-06)**: production model on-prem, Qwen 3.5 or larger served by vLLM. Today's vLLM (source: the vektralabs session, notes of 2-4 Nov, not re-verified): Unical HPC cluster, `qwen3.6` = Qwen3.6-35B-A3B-FP8 on one H200 (MIG 7g.141gb), context 262144, `enable_thinking: false` via extra_body, HTTP without TLS, key required (the same `VEKTRA_LLM_API_KEY` the RAG uses). The job is not reserved (preemptable, shared node; hung on 2 Nov); a reserved H200 is promised, not yet assigned: the pilot cannot rely on it until then. No throughput or concurrency measurement exists: M1.11 is the first. Local tests run on the cloud API with `openai/gpt-6-luna`.
+- **For PR 8b (found reviewing 8a, 2026-11-06)**: the plan-2 `assess_close_session` (revision 0014) closes without bumping `epoch`, while this plan's Design Notes and M5.11 require every close to bump it so the old session token is rejected. 8b must add the bump in a new revision (same grants) and then settle how a tab reconnecting after the close drains `closed`: review fix 1 lets the events route through for a CLOSED row only because the epoch still matches. With the bump, either the stream returns a content-free `closed` on an epoch mismatch for a CLOSED row, or the client learns the close from the 409 of GET. Decide it there, with a test.
+- **CodeRabbit on PR #153, deferred to PR 8b (2026-11-06)**: (a) deadline and C-cap check in the session gate (comment 4493109378) -> M3.3/M3.4; (b) enrolment freshness step (4493120917) -> M3.7; (c) recovery of a bot turn whose persist failed, which today leaves `pending_reply_since` set -> M3.6 `reconcile_reply`, with a test that the session accepts the next message afterwards; (d) epoch-checked delivery of reply deltas on the event stream (4493120906) -> with the epoch bump on close above. Not reachable in production before 8b: assess is disabled by default and every production Start rolls back with `privacy_not_configured` until plan 12. Not applied by design: validating a Start body (4493120925) contradicts M2.6, the route reads no body.
 - **OQ-020**: the burst and e2e fixtures are synthetic only.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
+- **Implementation choices, PR 8a (2026-11-06)**:
+  - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,
+    which stays for the transcript download path (plan 10). Mint derives the site from the key's
+    `assess_site_keys` binding (purpose `mint`); the body carries `sub`, `cmid`, `courseid` (hint),
+    `loginas`, `realuser_id`, `plugin_version`, as the discuss-student plan sends it.
+  - The Start window T is measured from `assess_sessions.created_at` (no separate
+    `start_requested_at` column); `starting_expires_at` = created_at + T.
+  - `assess_start_attempts` gets outcome `requested` (API, at Start) and `session_id`; the worker
+    appends `committed` / `rolled_back` rows, so no role needs UPDATE there. The API reads the table
+    (Start cap, rollback reason).
+  - `assess_activity_config.cap_minutes` (5-120, NULL = not configured) is added here because the
+    pre-flight needs the cap; plan 11 owns the form that writes it and should reuse the column.
+    Until plan 11, `flags.show_solution` / `flags.rubric_source` give the teacher view (defaults:
+    solution OFF, rubric source `moodle` for assignments, `none` for quizzes).
+  - The session freezes `duration_s` (cap + extra time) and `frozen_policy` (content-free BR-011
+    decision, needed by the API to assemble the bundle per turn) at commit.
+  - The cmid is resolved to (course, instance) by a new reader `resolve_activity`, inside the
+    student's own courses (hinted course first), with the recorded functions the capture readers
+    already use; an unresolvable module rolls the Start back.
+  - Opening message: Part A and Part B are two `opening` bot turns (1 and 2), chained on the
+    snapshot hash; `seq` is 2 after commit. The `seq` claim of a session token is the session
+    number N, matched against `session_no`.
+  - **BR-006 (h) privacy gate (M2.2), for review**: its store (`assess_privacy_config`, REQ-089)
+    belongs to plan 12 and does not exist yet. The pre-flight evaluates (h) through a
+    `PreflightDeps.privacy` port whose default returns "not configured", so in production every
+    Start is rolled back with `privacy_not_configured` until plan 12 binds the real check (REQ-089
+    says fail closed). Development and CI pass it with `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET`
+    (development only; the worker refuses it elsewhere; the dev overlay sets it), the same pattern
+    as the LLM activation bypass. **Plan 12 must bind `PreflightDeps.privacy`.**
+  - **Gate inputs (M2.2)**: assignments always take the REQ-091 fallback today (the extensions and
+    user overrides of ALL participants are not listable with the minimal role, OQ-025), so a Start
+    needs the teacher-attested `attested_opening_at` (plan 11's form). A quiz regrade in progress is
+    detected by the capture's per-item BR-014 check, not as a separate gate input. The gate order
+    puts enrolment right after `enabled`.
+  - **Render state at Start (M2.3)**: the Design Notes list "stale or negative `render_state`" among
+    the advisory Start refusals. Implemented: a FRESH (`VEKTRA_ASSESS_RENDER_FRESH_S`, 300 s)
+    negative state of a Moodle-side gate refuses with that gate's code and writes nothing; a stale
+    or missing state does not refuse (the pre-flight re-reads and is authoritative), so a Start
+    right after a grade is released, or with no `/state` call before it, is never refused on old
+    data. Codes the Start transaction re-checks itself (`session_open`, `already_discussed`,
+    `not_enabled`) never refuse from a render row.
+  - `GET /state` uses the pre-session token's own cmid (the `?cmid=` the plugin adds is not read)
+    and does not consume its jti. Before the first render it answers `unavailable` / `checking`.
+  - **Gate order (M2.4)**: step 1 is the token dependency (`verify_assess_token_*`, the names the
+    structural route test accepts); steps 2-6 are ONE function, `api.session_gate.gate`, used by
+    every session route either through `session_tx` (turns, events) or directly (`GET
+    /sessions/{sid}`, whose resume path consumes the jti in the same transaction). Steps 5 and 6
+    are placeholders bound by M3.4 and M3.7; their spy rows are added with them.
+  - **REQ-084 residual risk (M2.5, OQ-031(2))**: the login-as refusal rests on the plugin's
+    positive assertion at mint (`loginas: false`, `realuser_id: null`, both present) and on every
+    token carrying `loginas: false` (a signed token without it is refused with 403 and audited
+    `assess_loginas_rejected` on every route, nothing written). Vektra cannot cross-check it against
+    Moodle: the `loginas_crosscheck` capability is Unreadable by default (`read_loginas_events`
+    returns Unreadable; the OQ-025 spike found no WS read of the login-as log). A compromised or
+    buggy plugin that asserts `false` during a login-as session is not detected by the backend.
+    Residual risk, accepted until the spike reads it.
+  - **IDOR matrix (M2.6)**: `vektra-assess/tests/test_idor.py` runs the matrix on the recorded 4.3
+    and 5.2 responses (B's snapshot is a real capture of each branch) in the package integration job.
+    The live variant against the seeded dev sites is `tests/integration/test_idor_live.py`
+    (`-m moodle`, SKIPPED with BLOCKED here: the dev envs are not running; the integration job's
+    skip guard lists it with the other live modules). "Other course" is covered as a client course
+    hint: it is never trusted (the cmid is resolved inside the student's own courses).
+  - **Review fix 5 (turns)**: a provider outage, an internal error or a refused bot append now
+    ends the attempt with the marked bot turn `[risposta interrotta]` (`vektra_assess.turn_markers`,
+    kind `interrupted`) through `assess_append_turn`, which clears `pending_reply_since`, so the next
+    student turn is accepted. This is the thin form: the real ACTIVE -> OUTAGE transition (credit,
+    probe, server-side answer of the pending turn) is M4.1-M4.3, and M3.3 / M3.6 write the same
+    marker. A bot append refused by the database is left to the database (from M3.3 that includes
+    deadline + grace by the DB clock); the marked turn is then attempted once and may be refused too.
+  - **Review fix 9**: `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` exists now with a PROVISIONAL default of
+    2000; a longer or blank message is a 400 before any model call. M5.1 sizes the value (and the
+    other REQ-083 limits) on the reference session.
+  - **Review fix 10**: the pre-flight's budget and lease follow T: budget = T − 15 s, lease =
+    max(2 × budget, budget + 30 s); overrides with budget > T − 5 s or lease < budget + 30 s refuse
+    worker startup. A cancellation at the budget (or at shutdown) runs the rollback (shielded,
+    reason `start_timeout`) instead of waiting for the reaper. The worker's environment in
+    `docker-compose.assess.yml` passes `VEKTRA_ASSESS_START_T_S` (and admission K, render freshness
+    and the model parameters) from `.env`, so both processes use the same values.
+  - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
+    `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
+    API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base
+    and worker container). With anything missing or unreachable they write a BLOCKED result under
+    `tests/nfr/results/` and pytest reports SKIPPED; a result missing any of the N outcomes, its
+    model or its row counts is rejected by `validate_result`. The first run on this machine
+    (2026-11-06) is BLOCKED: no target configured (result file committed). The real run is the
+    user's (it reaches the dev Moodle and the candidate model). The logic is verified in-process
+    against fakes (`vektra-assess/tests/integration/test_session_burst_inprocess.py`: 40 Starts, K=10,
+    exactly 10 commits, 30 refused or rolled back with `capacity`, 0 rows left by the refused ones);
+    that test writes no NFR evidence.
+  - **Request for vektra-moodle (owned by the other session)**: the burst needs a seeded fixture of
+    40 students enrolled in one course, each with a graded and released 10-file submission on one
+    assignment (cut-off set, rubric or simple grading, not a team submission), added to
+    `MOODLE/docker/fixtures/fixtures.json` and written to the seed manifest as
+    `"burst": {"cmid": <cmid>, "courseid": <id>, "students": [<40 userids>], "files_per_submission": 10}`.
+    Synthetic content only (OQ-020). Until it exists the burst reports BLOCKED
+    (`burst fixture ... not seeded`).
+  - The import contract "`_assembly` is private to `vektra_assess.context`" now allows indirect
+    imports: `assemble_context` (the public wrapper) is how the pre-flight and the turn route build
+    bundles; a direct import of `_assembly` still breaks the contract (canary test unchanged).

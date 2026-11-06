@@ -232,6 +232,20 @@ async def cleanup_done(conn: Conn, retention_h: int, batch: int = 1000) -> int:
     return _rowcount(await conn.execute(CLEANUP_DONE, retention_h, batch))
 
 
+CLEANUP_EXPIRED_JTIS = """
+DELETE FROM assess_token_jti WHERE jti IN (
+    SELECT jti FROM assess_token_jti
+    WHERE expires_at < now() - interval '1 day'
+    ORDER BY expires_at LIMIT $1
+)
+"""
+
+
+async def cleanup_expired_jtis(conn: Conn, batch: int = 1000) -> int:
+    """Delete mint rows a day past their expiry, one batch (plan 8)."""
+    return _rowcount(await conn.execute(CLEANUP_EXPIRED_JTIS, batch))
+
+
 async def oldest_ready_age_s(conn: Conn) -> float:
     return float(await conn.fetchval(OLDEST_READY_AGE_S))
 

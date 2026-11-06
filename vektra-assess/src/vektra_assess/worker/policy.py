@@ -36,9 +36,9 @@ class KindPolicy:
     max_attempts: int = 5
 
 
-# pool -> default concurrency. ``preflight`` has no kind yet: its kind arrives with the
-# session-lifecycle plan together with the handler, and the pool is declared here so K is
-# configured in one place (NFR-020, placeholder 10 until OQ-026 sets the hardware).
+# pool -> default concurrency. The ``preflight`` pool runs the ``preflight`` kind (plan
+# session-lifecycle); K is configured in one place (NFR-020, placeholder 10 until OQ-026 sets the
+# hardware).
 POOL_DEFAULTS: dict[str, int] = {
     "preflight": 10,
     "ws": 2,
@@ -51,7 +51,27 @@ POOL_DEFAULTS: dict[str, int] = {
 _WS = KindPolicy("ws", 20, 40)
 _MAINT = KindPolicy("maintenance", 60, 120)
 
+#: pre-flight timing is derived from the REQ-071 commit window T (``VEKTRA_ASSESS_START_T_S``):
+#: budget = T - PREFLIGHT_BUDGET_MARGIN_S, so the runtime cancels a stuck pre-flight while there is
+#: still time to roll it back inside T; lease >= max(2 x budget, budget + PREFLIGHT_LEASE_MARGIN_S),
+#: so no second worker reclaims a pre-flight still inside its budget, and the STARTING reaper
+#: (which waits for T AND no live lease) never races a live handler. The handler itself keeps
+#: COMMIT_MARGIN_S of T for its commit transaction: a budget past T - COMMIT_MARGIN_S is refused.
+PREFLIGHT_BUDGET_MARGIN_S = 15.0
+PREFLIGHT_LEASE_MARGIN_S = 30.0
+COMMIT_MARGIN_S = 5.0
+
+
+def preflight_defaults(start_t_s: float) -> KindPolicy:
+    budget = max(start_t_s - PREFLIGHT_BUDGET_MARGIN_S, 1.0)
+    return KindPolicy(
+        "preflight", budget, max(2 * budget, budget + PREFLIGHT_LEASE_MARGIN_S), 2
+    )
+
+
 KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
+    # the default T (60 s); ``load_policy`` re-derives it from the configured T
+    JobKind.PREFLIGHT: preflight_defaults(60),
     JobKind.ENROLMENT_RECHECK: _WS,
     JobKind.GATE_REFRESH: _WS,
     JobKind.RENDER_CHECK: _WS,
@@ -101,6 +121,25 @@ def _number(
     return float(value)
 
 
+def _start_t(env: Mapping[str, str]) -> float:
+    """``VEKTRA_ASSESS_START_T_S`` validated by the settings class itself (its range included)."""
+    from pydantic import ValidationError
+
+    raw = env.get("VEKTRA_ASSESS_START_T_S")
+    if raw is None:
+        return float(VektraAssessSettings.model_fields["start_t_s"].default)
+    try:
+        return float(
+            VektraAssessSettings.model_validate(
+                {"VEKTRA_ASSESS_START_T_S": raw}
+            ).start_t_s
+        )
+    except ValidationError:
+        raise WorkerPolicyError(
+            f"VEKTRA_ASSESS_START_T_S={raw!r} is not a valid T"
+        ) from None
+
+
 def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
     pools = dict(POOL_DEFAULTS)
     kinds = dict(KIND_DEFAULTS)
@@ -123,7 +162,10 @@ def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
         if raw is not None:
             pools[pool] = int(_number(name, raw, int, MAX_COUNT))
 
+    start_t = _start_t(env)
     for kind, base in KIND_DEFAULTS.items():
+        if kind is JobKind.PREFLIGHT:
+            base = preflight_defaults(start_t)
         names = {f: f"{_JOB_PREFIX}{kind.value.upper()}_{f}" for f in _KIND_FIELDS}
         known.update(names.values())
         budget, lease, attempts = base.budget_s, base.lease_s, base.max_attempts
@@ -154,6 +196,17 @@ def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
             raise WorkerPolicyError(
                 f"{kind.value}: lease_s ({lease:g}) must be at least 2 x budget_s ({budget:g})"
             )
+        if kind is JobKind.PREFLIGHT:
+            if budget > start_t - COMMIT_MARGIN_S:
+                raise WorkerPolicyError(
+                    f"preflight: budget_s ({budget:g}) must leave {COMMIT_MARGIN_S:g} s of "
+                    f"VEKTRA_ASSESS_START_T_S ({start_t:g}) for the commit or the rollback"
+                )
+            if lease < budget + PREFLIGHT_LEASE_MARGIN_S:
+                raise WorkerPolicyError(
+                    f"preflight: lease_s ({lease:g}) must be at least budget_s + "
+                    f"{PREFLIGHT_LEASE_MARGIN_S:g} ({budget + PREFLIGHT_LEASE_MARGIN_S:g})"
+                )
         kinds[kind] = KindPolicy(base.pool, budget, lease, attempts)
 
     for key in env:

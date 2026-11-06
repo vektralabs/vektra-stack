@@ -71,6 +71,9 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
         "VEKTRA_ASSESS_SECRETS_DIR": str(secrets),
         "VEKTRA_ASSESS_WORKER_DATABASE_URL": worker_url,
         "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": "true",
+        # a fully keyed worker binds the pre-flight, which builds the Part B model at startup
+        # (plan assess-session-lifecycle): it needs a model id, never called by this test
+        "VEKTRA_ASSESS_LLM_MODEL": "ollama/dev-unactivated",
         "VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE": str(hb_file),
         "VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S": "1",
         "VEKTRA_ASSESS_JOB_POLL_INTERVAL_S": "0.2",

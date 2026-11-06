@@ -407,6 +407,51 @@ async def test_unbound_override_is_refused_outside_development(
         await assess_worker.run_checks()
 
 
+def test_the_worker_keys_bind_the_preflight_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan assess-session-lifecycle M1.5: with the worker's keys the preflight slot is bound;
+    without them (no key matrix passed) it stays unbound and startup refuses."""
+    import os
+
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.keys import AssessKeyring
+
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keyed = assess_worker.Checked(
+        checked.engine,
+        checked.settings,
+        checked.worker_url,
+        {name: ring for name in assess_worker.SESSION_KEYS},
+    )
+    runtime, *_ = assess_worker._compose(keyed)
+    bound = {k for k, spec in runtime._handlers.items() if spec.bound}
+    assert JobKind.PREFLIGHT in bound
+    runtime, *_ = assess_worker._compose(checked)
+    assert JobKind.PREFLIGHT not in {
+        k for k, spec in runtime._handlers.items() if spec.bound
+    }
+
+
+async def test_privacy_override_is_refused_outside_development(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.setenv("VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET", "true")
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    with pytest.raises(
+        StartupValidationError, match="PRIVACY_ALLOW_UNSET=true is only"
+    ):
+        await assess_worker.run_checks()
+
+
 def test_invalid_job_policy_refuses_to_compose(monkeypatch: pytest.MonkeyPatch) -> None:
     checked = _checked(
         monkeypatch,

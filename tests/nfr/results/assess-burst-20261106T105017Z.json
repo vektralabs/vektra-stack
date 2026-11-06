@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-06T10:50:17.933745+00:00",
+  "blockers": [
+    "API (VEKTRA_ASSESS_BURST_API) not configured",
+    "mint key (VEKTRA_ASSESS_BURST_MINT_KEY) not configured",
+    "DSN (VEKTRA_ASSESS_BURST_DSN) not configured",
+    "dev Moodle (VEKTRA_ASSESS_BURST_MOODLE) not configured",
+    "model label (VEKTRA_ASSESS_BURST_MODEL) not configured",
+    "manifest not configured (VEKTRA_ASSESS_BURST_MANIFEST)"
+  ],
+  "model": null,
+  "n": 40,
+  "status": "BLOCKED"
+}

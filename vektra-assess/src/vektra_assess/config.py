@@ -10,11 +10,12 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class VektraAssessSettings(BaseSettings):
@@ -307,8 +308,58 @@ class VektraAssessSettings(BaseSettings):
     llm_api_base: str | None = Field(
         None,
         alias="VEKTRA_ASSESS_LLM_API_BASE",
-        description="API base of the discussion model (OpenAI-compatible or Ollama endpoint). A cloud key is read by litellm from its provider variable, never from this file.",
+        description="API base of the discussion model (OpenAI-compatible, vLLM or Ollama endpoint). Its key is VEKTRA_LLM_API_KEY (shared with the RAG); a cloud key may also come from litellm's own provider variable.",
     )
+    llm_api_key: SecretStr | None = Field(
+        None,
+        alias="VEKTRA_LLM_API_KEY",
+        description=(
+            "API key of the discussion model's endpoint. Deliberately the SAME variable the RAG "
+            "pipeline uses (decision of 2026-11-06, OQ-026: one key for the on-prem vLLM, no new "
+            "secret). Read by the API and by the worker (Part B); an empty value means no key."
+        ),
+    )
+    llm_extra_body: Annotated[dict[str, Any] | None, NoDecode] = Field(
+        None,
+        alias="VEKTRA_ASSESS_LLM_EXTRA_BODY",
+        description=(
+            "JSON object passed as extra_body on every discussion-model call, e.g. "
+            '{"chat_template_kwargs": {"enable_thinking": false}} for Qwen3 on vLLM. Empty or '
+            "unset: none. Never the RAG's VEKTRA_LLM_EXTRA_BODY."
+        ),
+    )
+
+    @field_validator("llm_api_key", mode="before")
+    @classmethod
+    def _empty_key_is_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("llm_extra_body", mode="before")
+    @classmethod
+    def _parse_extra_body(cls, value: Any) -> Any:
+        """Compose passes ``${VAR:-}`` as an empty string: that is "none", not a JSON error."""
+        if isinstance(value, str):
+            if not value.strip():
+                return None
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise ValueError(
+                    "VEKTRA_ASSESS_LLM_EXTRA_BODY is not valid JSON"
+                ) from None
+        if value is not None and not isinstance(value, dict):
+            raise ValueError("VEKTRA_ASSESS_LLM_EXTRA_BODY must be a JSON object")
+        return value
+
+    @field_validator("llm_api_base", mode="before")
+    @classmethod
+    def _empty_base_is_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     safeguard_mode: Literal["presidio", "none"] = Field(
         "presidio",
         alias="VEKTRA_ASSESS_SAFEGUARD_MODE",
@@ -318,6 +369,99 @@ class VektraAssessSettings(BaseSettings):
         "cloud",
         alias="VEKTRA_ASSESS_PROVIDER_LOCALITY",
         description="Where the discussion model runs. 'cloud' (the safe default) makes the eval adapter refuse any dataset whose data_basis is not 'synthetic' before a single request (NFR-022 data basis); set 'onprem' only for a model on the institution's own hardware.",
+    )
+    # --- student session lifecycle (plan assess-session-lifecycle) ---------------------------
+    token_issuer: str = Field(
+        "vektra-assess",
+        min_length=1,
+        alias="VEKTRA_ASSESS_TOKEN_ISSUER",
+        description="iss claim of every discussion token (aud is always 'discussion', ARCH-067).",
+    )
+    presession_ttl_s: int = Field(
+        120,
+        ge=10,
+        le=120,  # ARCH-067: a pre-session token lives at most 120 s; a larger value refuses startup
+        alias="VEKTRA_ASSESS_PRESESSION_TTL_S",
+        description="Lifetime of a pre-session (mint) token, at most 120 s.",
+    )
+    session_token_ttl_s: int = Field(
+        900,
+        ge=60,
+        le=86_400,
+        alias="VEKTRA_ASSESS_SESSION_TOKEN_TTL_S",
+        description="Upper bound of a session-bound token's lifetime; it also never outlives deadline + reply grace.",
+    )
+    reply_grace_s: int = Field(
+        60,
+        ge=0,
+        le=600,
+        alias="VEKTRA_ASSESS_REPLY_GRACE_S",
+        description="Seconds after the deadline an in-flight reply may still finish (REQ-070).",
+    )
+    min_plugin_version: str = Field(
+        "0.1.0",
+        min_length=1,
+        alias="VEKTRA_ASSESS_MIN_PLUGIN_VERSION",
+        description="Lowest local_vektradiscuss release accepted at mint (ARCH-067); a site's own minimum applies when higher.",
+    )
+    start_t_s: int = Field(
+        60,
+        ge=20,
+        le=300,
+        alias="VEKTRA_ASSESS_START_T_S",
+        description="REQ-071 commit window T: a Start not committed within T of the request is rolled back.",
+    )
+    admission_k: int = Field(
+        10,
+        ge=1,
+        le=1000,
+        alias="VEKTRA_ASSESS_ADMISSION_K",
+        description="NFR-020 admission limit: live sessions (ACTIVE, OUTAGE, STARTING in pre-flight) admitted at once.",
+    )
+    privacy_notice_version: str = Field(
+        "1",
+        min_length=1,
+        max_length=40,
+        alias="VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION",
+        description="Version of the privacy notice shown before Start; recorded on the session and the start audit event.",
+    )
+    render_fresh_s: int = Field(
+        300,
+        ge=10,
+        le=86_400,
+        alias="VEKTRA_ASSESS_RENDER_FRESH_S",
+        description=(
+            "Age under which a worker-computed button state (GET /state) is fresh. Older or "
+            "missing: /state answers 'unavailable' / 'checking' and queues a render check; a Start "
+            "is refused only on a FRESH negative state (the pre-flight is authoritative)."
+        ),
+    )
+    state_rpm: int = Field(
+        30,
+        ge=1,
+        le=6000,
+        alias="VEKTRA_ASSESS_STATE_RPM",
+        description="GET /state calls per minute per (site, student, activity).",
+    )
+    max_message_chars: int = Field(
+        2000,
+        ge=1,
+        le=20_000,
+        alias="VEKTRA_ASSESS_MAX_MESSAGE_CHARS",
+        description=(
+            "Longest student message accepted (REQ-083); longer or blank is a 400 before any model "
+            "call. PROVISIONAL default: plan M5.1 sizes it on the reference session."
+        ),
+    )
+    privacy_allow_unset: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET",
+        description=(
+            "Development and CI only: let the Start gate BR-006 (h) pass while the REQ-089 privacy "
+            "configuration does not exist yet (its store arrives with plan assess-privacy-retention; "
+            "until then the gate fails closed and every Start is rolled back with "
+            "privacy_not_configured). Honoured only with VEKTRA_ENV=development."
+        ),
     )
     llm_allow_unactivated: bool = Field(
         False,

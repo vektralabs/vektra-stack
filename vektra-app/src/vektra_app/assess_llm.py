@@ -8,7 +8,8 @@ writer and the audit sink are built here and injected.
   honoured only when ``VEKTRA_ASSESS_SAFEGUARD_MODE=none`` says so explicitly.
 - ``build_assess_llm``: a dedicated LitellmProvider for ``VEKTRA_ASSESS_LLM_MODEL`` with NO
   fallback model, whatever ``VEKTRA_LLM_FALLBACK_MODEL`` says: a fallback would answer students
-  with a (provider, model) that never passed the NFR-023 activation gate.
+  with a (provider, model) that never passed the NFR-023 activation gate. Its key is the shared
+  ``VEKTRA_LLM_API_KEY``; its extra body is ``VEKTRA_ASSESS_LLM_EXTRA_BODY``, never the RAG's.
 - ``AnalyticsTraceWriter``: adapts the runner's ``TraceWriter`` to ``AnalyticsService.store_trace``
   in its own session and transaction.
 """
@@ -74,14 +75,21 @@ def build_assess_llm(settings: VektraAssessSettings) -> LLMProvider:
             detail="VEKTRA_ASSESS_ENABLED=true but VEKTRA_ASSESS_LLM_MODEL is unset",
             remediation="Set the dedicated discussion model (litellm id).",
         )
-    # init values beat the environment: the RAG fallback model must not leak in
+    # Init values beat the environment: the RAG fallback model and the RAG extra body must not leak
+    # in. The API key IS the RAG's VEKTRA_LLM_API_KEY (one key for the on-prem vLLM, decision of
+    # 2026-11-06), read through the assess settings so the worker, which has no .env, gets it from
+    # its own environment.
+    key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
     config = LLMConfig(
         VEKTRA_LLM_PROVIDER=settings.llm_model,
         VEKTRA_LLM_API_BASE=settings.llm_api_base,
-        VEKTRA_LLM_API_KEY=None,
+        VEKTRA_LLM_API_KEY=key,
         VEKTRA_LLM_EXTRA_BODY=None,
         VEKTRA_LLM_FALLBACK_MODEL=None,
     )
+    # Set AFTER construction: pydantic-settings deep-merges a dict init value with the environment,
+    # so passing it above would add the RAG's VEKTRA_LLM_EXTRA_BODY keys to the assess body.
+    config = config.model_copy(update={"extra_body": settings.llm_extra_body})
     return LitellmProvider(config)
 
 
@@ -332,6 +340,20 @@ async def step_13_assess_llm_check(
         PrometheusRunnerMetrics()
     )  # served on /metrics with the rest
     app.state.assess_prompt_version = PromptRenderer(LEXICON_VERSION).prompt_version
+    # the turn route's runner (plan assess-session-lifecycle M1.9): its audit sink writes through
+    # the assess API engine (step 12), its traces through analytics, in their own transactions
+    from vektra_assess.api.turns import ApiAuditSink
+    from vektra_shared.db import get_session_factory
+
+    app.state.assess_runner = build_assess_runner(
+        settings,
+        safeguard=app.state.assess_safeguard,
+        # resolved per write: the main database is initialised by an earlier startup step
+        trace_writer=AnalyticsTraceWriter(lambda: get_session_factory()()),
+        audit=ApiAuditSink(lambda: app.state.assess_engine),
+        llm=app.state.assess_llm,
+        metrics=app.state.assess_metrics,
+    )
     app.state.assess_llm_activated = await _check_activation(
         app, settings, app.state.assess_prompt_version
     )

@@ -33,6 +33,7 @@ HARDENING = "20261101-154950-assess-hardening-release"
 
 # job kind -> plan that binds its handler
 HANDLER_OWNERS: dict[JobKind, str] = {
+    JobKind.PREFLIGHT: SESSION,
     JobKind.SESSION_DEADLINE: SESSION,
     JobKind.ENROLMENT_RECHECK: SESSION,
     JobKind.GATE_REFRESH: SESSION,

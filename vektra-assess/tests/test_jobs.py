@@ -103,7 +103,7 @@ async def test_arguments_must_be_string_or_integer_ids(args: dict[str, Any]) -> 
 
 async def test_unknown_kind_and_bad_attempts_are_rejected() -> None:
     with pytest.raises(ValueError):
-        await enqueue_job(_FakeConn(), "preflight")  # type: ignore[arg-type]
+        await enqueue_job(_FakeConn(), "no_such_kind")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="at least 1"):
         await enqueue_job(_FakeConn(), JobKind.PURGE, max_attempts=0)  # type: ignore[arg-type]
 

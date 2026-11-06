@@ -31,9 +31,9 @@ import os
 import socket
 import sys
 import uuid
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import metadata
 from typing import Any
 
@@ -116,6 +116,7 @@ class Checked:
     engine: Any  # AsyncEngine
     settings: Any  # VektraAssessSettings
     worker_url: str
+    keys: Mapping[str, Any] = field(default_factory=dict)  # the loaded worker secrets
 
 
 async def run_checks() -> object:
@@ -161,6 +162,18 @@ async def _checks() -> Checked:
                 "every handler bound."
             ),
         )
+    if settings.privacy_allow_unset and settings.env != "development":
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET=true is only honoured with "
+                f"VEKTRA_ENV=development (this process runs with VEKTRA_ENV={settings.env})"
+            ),
+            remediation=(
+                "Unset it: a deployment configures the REQ-089 privacy settings (plan "
+                "assess-privacy-retention) and the Start gate checks them."
+            ),
+        )
     run_crypto_selftest()
     if not settings.worker_database_url:
         raise StartupValidationError(
@@ -192,7 +205,7 @@ async def _checks() -> Checked:
     except BaseException:
         await engine.dispose()
         raise
-    return Checked(engine, settings, worker_url)
+    return Checked(engine, settings, worker_url, loaded)
 
 
 def _asyncpg_dsn(sqlalchemy_url: str) -> str:
@@ -207,10 +220,81 @@ def _version() -> str:
         return "unknown"
 
 
+#: worker secrets the session-lifecycle handlers need (all REQUIRED for the worker role)
+SESSION_KEYS = ("assess_kek", "assess_handoff_public", "assess_teacher_config_private")
+
+
+def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
+    """The plan assess-session-lifecycle bodies: the ``preflight`` handler.
+
+    Built only from a key set that passed the key matrix (``_checks``): without it (a composition
+    test with a lazy engine and no secrets) nothing is bound, and ``assert_all_bound`` refuses to
+    start unless the development override is set. Nothing connects here: the Moodle client, the
+    parser client and the LLM provider open their connections on first use.
+    """
+    if not all(k in checked.keys for k in SESSION_KEYS):
+        return {}
+    from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.moodle.client import MoodleWsClient
+    from vektra_assess.moodle.tokens import secret_token_provider
+    from vektra_assess.worker.parser_client import ParserClient
+    from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
+    from vektra_assess.worker.render import RenderDeps, make_render_handler
+    from vektra_assess.worker.start_source import MoodleStartSource
+
+    settings, engine = checked.settings, checked.engine
+    runner = build_worker_part_b_runner(
+        settings,
+        acquire_db=engine.connect,
+        audit=audit,
+        llm=build_assess_llm(settings),
+    )
+    source = MoodleStartSource(
+        MoodleWsClient(
+            settings, token_provider=secret_token_provider(settings.secrets_dir)
+        ),
+        ParserClient.from_settings(settings),
+        engine.connect,
+        teacher_private=checked.keys["assess_teacher_config_private"],
+    )
+    preflight = make_preflight_handler(
+        PreflightDeps(
+            settings=settings,
+            kek=checked.keys["assess_kek"],
+            handoff_public=checked.keys["assess_handoff_public"],
+            source=source,
+            runner=runner,
+        )
+    )
+    render = make_render_handler(RenderDeps(settings=settings, source=source))
+    return {
+        JobKind.PREFLIGHT: preflight,
+        JobKind.RENDER_CHECK: render,
+        JobKind.GATE_REFRESH: render,
+    }
+
+
+def _session_ticks(checked: Checked) -> dict[str, Any]:
+    """The plan assess-session-lifecycle tick bodies (they need no key)."""
+    from vektra_assess.worker.reaper import reap_starting
+    from vektra_assess.worker.render import gate_refresh_tick
+
+    settings, engine = checked.settings, checked.engine
+
+    async def starting_reaper() -> None:
+        await reap_starting(engine.connect, settings.start_t_s)
+
+    async def gate_refresh() -> None:
+        await gate_refresh_tick(engine.connect, settings.render_fresh_s)
+
+    return {"starting_reaper": starting_reaper, "gate_refresh": gate_refresh}
+
+
 def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     """Build runtime, scheduler, heartbeat and control; nothing is started or connected yet."""
     from vektra_assess.worker.audit import make_audit
-    from vektra_assess.worker.cleanup import cleanup_done_jobs
+    from vektra_assess.worker.cleanup import cleanup_done_jobs, cleanup_expired_jtis
     from vektra_assess.worker.heartbeat import Heartbeat
     from vektra_assess.worker.listener import ControlConnection
     from vektra_assess.worker.policy import WorkerPolicyError, load_policy
@@ -273,11 +357,15 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
     async def cleanup() -> None:
         await cleanup_done_jobs(acquire_raw, settings.job_done_retention_h)
+        await cleanup_expired_jtis(acquire_raw)
 
     async def lease_reaper() -> None:
         await reap_exhausted(acquire_raw, audit)
 
-    extra = bindings or Bindings(handlers={}, ticks={})
+    # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
+    extra = bindings or Bindings(
+        handlers=_session_handlers(checked, audit), ticks=_session_ticks(checked)
+    )
     slots = build_slots(
         policy,
         settings,
@@ -406,8 +494,9 @@ def check_imports() -> None:
         "vektra_core.providers.litellm_provider"
     )  # the LLM provider's cost
     for name in (
-        "audit", "cleanup", "heartbeat", "listener", "policy", "reconcile",
-        "runtime", "shutdown", "slots", "ticks", "watchdog",
+        "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
+        "reaper", "render", "runtime", "shutdown", "slots", "start_source", "ticks",
+        "watchdog",
     ):  # fmt: skip
         importlib.import_module(f"vektra_assess.worker.{name}")
     assert_import_ceiling()

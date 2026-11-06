@@ -57,12 +57,46 @@ async def test_append_turn_happy_path_and_chain(pg):
         await pg.run("super", "SELECT seq FROM assess_sessions WHERE id=:s", {"s": sid})
     )[0][0]
     assert seq == 1
+    # revision 0023: the answer to a student turn is a bot turn (one reply at a time)
     n = (
         await pg.run(
-            "api", APPEND, {"s": sid, "e": 1, "seq": 1, "h": "h3", "prev": "h2"}
+            "api",
+            APPEND.replace("'student'", "'bot'"),
+            {"s": sid, "e": 1, "seq": 1, "h": "h3", "prev": "h2"},
         )
     )[0][0]
     assert n == 3
+
+
+async def test_append_turn_refuses_a_second_student_turn_while_a_reply_is_pending(pg):
+    """Revision 0023: a student turn sets pending_reply_since, the bot turn clears it, and a
+    second student turn in between is refused by the function itself (no row, seq unchanged)."""
+    sid = await make_session(pg)
+    pending = (
+        "SELECT pending_reply_since IS NOT NULL, seq FROM assess_sessions WHERE id=:s"
+    )
+    assert (
+        await pg.run(
+            "api", APPEND, {"s": sid, "e": 1, "seq": 0, "h": "h2", "prev": "h1"}
+        )
+    )[0][0] == 2
+    assert tuple((await pg.run("super", pending, {"s": sid}))[0]) == (True, 1)
+    assert (
+        await pg.run(
+            "api", APPEND, {"s": sid, "e": 1, "seq": 1, "h": "h3", "prev": "h2"}
+        )
+    )[0][0] is None
+    assert await _turns(pg, sid) == 2
+    bot = APPEND.replace("'student', 'normal'", "'bot', 'interrupted'")
+    assert (
+        await pg.run("api", bot, {"s": sid, "e": 1, "seq": 1, "h": "h3", "prev": "h2"})
+    )[0][0] == 3
+    assert tuple((await pg.run("super", pending, {"s": sid}))[0]) == (False, 2)
+    assert (
+        await pg.run(
+            "api", APPEND, {"s": sid, "e": 1, "seq": 2, "h": "h4", "prev": "h3"}
+        )
+    )[0][0] == 4
 
 
 async def test_append_turn_refuses_stale_seq_wrong_hash_wrong_epoch_and_non_active(pg):

@@ -301,3 +301,19 @@ async def test_a_closed_session_without_reset_is_closed_whatever_the_render_says
         )
         r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))
         assert r.json()["state"] == render_status
+
+
+async def test_an_open_session_stays_active_when_the_activity_is_disabled(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4493120939: disabling an activity never hides a started session (BR-006:
+    started sessions are not revoked); with no open session it is not_enabled."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await configure_activity(pg, w.site, s.cmid, enabled=False)
+        r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))
+        assert r.json() == {
+            "state": "active",
+            "reason": "session_open",
+            "session_id": str(s.session_id),
+        }

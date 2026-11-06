@@ -111,8 +111,10 @@ def _iso(epoch: Any) -> str | None:
 
 
 def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
-    if row is None or not row.enabled or row.cap_minutes is None:
+    if row is None:
         return {"state": "not_enabled", "reason": "not_enabled"}
+    # the student's own sessions decide before the configuration: disabling an activity never
+    # hides a started session (BR-006) nor the transcript links of a closed one (state 6)
     if row.open_sid is not None:
         return {
             "state": "starting" if row.open_state == "STARTING" else "active",
@@ -123,6 +125,8 @@ def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
         # the student's own CLOSED session with no reset granted since: decided here, before any
         # (possibly stale) render row (REQ-068 state 6)
         return {"state": "closed", "reason": "already_discussed"}
+    if not row.enabled or row.cap_minutes is None:
+        return {"state": "not_enabled", "reason": "not_enabled"}
     if row.status is None or row.age_s is None or float(row.age_s) > fresh_s:
         return {"state": "unavailable", "reason": "checking"}
     view: dict[str, Any] = {

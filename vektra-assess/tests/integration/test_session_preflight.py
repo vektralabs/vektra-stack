@@ -487,6 +487,50 @@ async def test_an_audit_write_that_overruns_t_rolls_back(
         await _rolled_back(pg, sid, "start_timeout")
 
 
+async def test_the_session_clock_starts_at_the_end_of_the_commit_transaction(
+    pg, worker_engine, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit on PR #153: committed_at and the deadline come from the wall clock at the end
+    of the commit transaction, not from now() (its start), so a slow commit transaction does not
+    shorten the student's time."""
+    import asyncio
+
+    from vektra_assess.audit import AssessAuditEvent
+    from vektra_assess.worker import preflight as mod
+
+    await _reset(pg)
+    await activate(pg)
+    original = mod.write_event
+
+    async def slow_commit_audit(conn, event, **kw):  # type: ignore[no-untyped-def]
+        if event is AssessAuditEvent.COMMIT:
+            await asyncio.sleep(3)
+        return await original(conn, event, **kw)
+
+    monkeypatch.setattr(mod, "write_event", slow_commit_audit)
+    settings = default_settings()
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        sid = await _start(w)
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, moodle_source(worker_engine))
+        )
+        await handler(job_context(worker_engine, sid))
+        state, waited, span, duration = (
+            await pg.run(
+                "super",
+                "SELECT state, extract(epoch FROM committed_at - created_at), "
+                "extract(epoch FROM deadline_at - committed_at), duration_s "
+                "FROM assess_sessions WHERE id = :s",
+                {"s": sid},
+            )
+        )[0]
+        assert state == "ACTIVE"
+        # stamped after the 3 s audit write, not at the transaction start before it
+        assert float(waited) >= 3.0
+        assert float(span) == float(duration)
+
+
 def _ambiguous_acquire(engine, armed: dict, mode: str):  # type: ignore[no-untyped-def]
     """``acquire`` whose next transaction, once armed, fails at COMMIT: ``after`` commits for
     real and then raises (the outcome is lost on the wire), ``before`` rolls back and raises."""

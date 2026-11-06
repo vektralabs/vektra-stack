@@ -234,8 +234,14 @@ _ACTIVITY = text(
     "FROM assess_activity_config c WHERE c.site_id = :s AND c.cmid = :c"
 )
 _WITHIN_T = text(
-    "UPDATE assess_sessions SET last_activity_at = clock_timestamp() WHERE id = :sid "
-    "AND state = 'ACTIVE' AND clock_timestamp() - created_at < make_interval(secs => :t)"
+    # committed_at and the deadline are stamped here, on the wall clock at the end of the
+    # transaction: now() is the transaction start, so stamping them earlier would charge the
+    # student for the time the commit transaction itself took (CodeRabbit, PR #153)
+    # (one clock reading for all three: clock_timestamp() changes on every call)
+    "UPDATE assess_sessions SET last_activity_at = c.t, committed_at = c.t, "
+    "deadline_at = c.t + make_interval(secs => duration_s) "
+    "FROM (SELECT clock_timestamp() AS t) AS c WHERE id = :sid "
+    "AND state = 'ACTIVE' AND c.t - created_at < make_interval(secs => :t)"
 )
 _REREAD = text("SELECT state, committed_at FROM assess_sessions WHERE id = :sid")
 _DELETE = text(

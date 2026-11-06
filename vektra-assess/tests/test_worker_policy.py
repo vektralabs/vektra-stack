@@ -115,3 +115,41 @@ def test_the_typo_check_accepts_every_real_setting_that_shares_the_prefix() -> N
         and "VEKTRA_ASSESS_JOB_DONE_RETENTION_H" in own
     )
     assert load_policy(own).pools
+
+
+def test_preflight_budget_and_lease_follow_start_t() -> None:
+    """Review fix 10: budget = T - margin, lease above budget + margin (and >= 2 x budget)."""
+    from vektra_assess.worker.policy import (
+        PREFLIGHT_BUDGET_MARGIN_S,
+        PREFLIGHT_LEASE_MARGIN_S,
+    )
+
+    for t in (60, 120, 20):
+        p = load_policy({"VEKTRA_ASSESS_START_T_S": str(t)}).kinds[JobKind.PREFLIGHT]
+        assert p.budget_s == t - PREFLIGHT_BUDGET_MARGIN_S
+        assert p.lease_s >= p.budget_s + PREFLIGHT_LEASE_MARGIN_S
+        assert p.lease_s >= 2 * p.budget_s
+    p = load_policy({"VEKTRA_ASSESS_START_T_S": "120"}).kinds[JobKind.PREFLIGHT]
+    assert (p.budget_s, p.lease_s) == (105, 210)
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        # a budget the commit could not fit inside T
+        {
+            "VEKTRA_ASSESS_START_T_S": "120",
+            "VEKTRA_ASSESS_JOB_PREFLIGHT_BUDGET_S": "118",
+        },
+        {"VEKTRA_ASSESS_START_T_S": "60", "VEKTRA_ASSESS_JOB_PREFLIGHT_BUDGET_S": "60"},
+        # a lease without its margin over the budget
+        {
+            "VEKTRA_ASSESS_START_T_S": "120",
+            "VEKTRA_ASSESS_JOB_PREFLIGHT_BUDGET_S": "50",
+            "VEKTRA_ASSESS_JOB_PREFLIGHT_LEASE_S": "70",
+        },
+    ],
+)
+def test_incoherent_preflight_settings_refuse_to_start(env: dict[str, str]) -> None:
+    with pytest.raises(WorkerPolicyError):
+        load_policy(env)

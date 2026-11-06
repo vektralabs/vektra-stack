@@ -71,12 +71,13 @@ from vektra_assess.llm.types import (
     TurnResult,
 )
 from vektra_assess.worker import locks
+from vektra_assess.worker.policy import (
+    COMMIT_MARGIN_S,
+)  # one value, shared with the policy
 from vektra_assess.worker.runner import AcquireDb, JobContext
 
 log = structlog.get_logger(__name__)
 
-#: seconds kept free at the end of T for the commit transaction itself
-COMMIT_MARGIN_S = 5.0
 #: the ``previous_context`` line of Part A for session #N > 1 (REQ-094; plan 8 owns the wording)
 PREVIOUS_CONTEXT = "Le sessioni precedenti non sono riprese in questa discussione."
 
@@ -558,6 +559,11 @@ def make_preflight_handler(
             await _run(deps, ctx.acquire, sid)
         except _Rollback as rb:
             await _rollback(ctx.acquire, sid, rb.reason, rb.extra)
+        except asyncio.CancelledError:
+            # the runtime's budget (T - margin) or a shutdown cancelled the pre-flight mid-way:
+            # roll it back now, shielded from the cancellation, instead of leaving it to the reaper
+            await asyncio.shield(_rollback(ctx.acquire, sid, Reason.START_TIMEOUT))
+            raise
 
     return handle
 

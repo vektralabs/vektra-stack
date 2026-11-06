@@ -473,6 +473,12 @@ Every acceptance check reads rows, bytes or real responses, never a status field
   - **Review fix 9**: `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` exists now with a PROVISIONAL default of
     2000; a longer or blank message is a 400 before any model call. M5.1 sizes the value (and the
     other REQ-083 limits) on the reference session.
+  - **Review fix 10**: the pre-flight's budget and lease follow T: budget = T − 15 s, lease =
+    max(2 × budget, budget + 30 s); overrides with budget > T − 5 s or lease < budget + 30 s refuse
+    worker startup. A cancellation at the budget (or at shutdown) runs the rollback (shielded,
+    reason `start_timeout`) instead of waiting for the reaper. The worker's environment in
+    `docker-compose.assess.yml` does not set `VEKTRA_ASSESS_START_T_S`: a deployment that changes T
+    sets it on both processes.
   - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
     `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
     API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base

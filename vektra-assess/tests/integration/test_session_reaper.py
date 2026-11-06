@@ -18,6 +18,7 @@ from integration.test_session_preflight import (
     _start,
     moodle_source,
 )
+from vektra_assess.jobs import JobKind
 from vektra_assess.worker.preflight import make_preflight_handler
 from vektra_assess.worker.reaper import reap_starting
 
@@ -100,6 +101,35 @@ async def test_a_never_claimed_start_is_reaped_after_t(pg) -> None:  # type: ign
             sid = await _start(w)  # the job stays 'ready': no worker ever claimed it
             await _age(pg, sid, 61)
             assert await reap_starting(worker.connect, 60) == 1
+            await _rolled_back(pg, sid, "start_timeout")
+    finally:
+        await worker.dispose()
+
+
+async def test_a_budget_cancellation_rolls_back_at_once(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 10: with T = 120 the runtime's budget cancels a pre-flight stalled in Part B;
+    the cancellation goes through the rollback path (start_timeout), no reaper needed."""
+    from vektra_assess.worker.policy import load_policy
+
+    await _reset(pg)
+    await activate(pg)
+    pol = load_policy({"VEKTRA_ASSESS_START_T_S": "120"}).kinds[JobKind.PREFLIGHT]
+    assert (pol.budget_s, pol.lease_s) == (105, 210)
+    worker = create_async_engine(pg.url("worker"))
+    settings = default_settings(VEKTRA_ASSESS_START_T_S=120)
+    try:
+        async with world(pg, settings) as w:
+            await configure_activity(pg, w.site, CMID)
+            sid = await _start(w)
+            runner = FakePartB(release=asyncio.Event())  # never answers
+            handler = make_preflight_handler(
+                deps(settings, w.handoff_public, moodle_source(worker), runner)
+            )
+            # the runtime wraps every handler in asyncio.timeout(budget); a short one here
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(1.0):
+                    await handler(job_context(worker, sid))
+            assert runner.calls, "the pre-flight reached Part B before the cancellation"
             await _rolled_back(pg, sid, "start_timeout")
     finally:
         await worker.dispose()

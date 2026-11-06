@@ -275,3 +275,29 @@ async def test_the_refresh_tick_requeues_stale_pairs_and_deletes_week_old_rows(
             )
             == 1
         )
+
+
+@pytest.mark.parametrize("render_status", ["eligible", "active"])
+async def test_a_closed_session_without_reset_is_closed_whatever_the_render_says(  # type: ignore[no-untyped-def]
+    pg, worker, render_status: str
+) -> None:
+    """Review fix 4: the student's own CLOSED session decides before any render row."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "CLOSED")
+        await pg.run(
+            "super",
+            "INSERT INTO assess_render_state (site_id, student_userid, cmid, status, reason_code) "
+            "VALUES (:s, :u, :c, :st, 'ok') ON CONFLICT (site_id, student_userid, cmid) "
+            "DO UPDATE SET status = EXCLUDED.status, computed_at = now()",
+            {"s": w.site, "u": s.sub, "c": s.cmid, "st": render_status},
+        )
+        r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))
+        assert r.json() == {"state": "closed", "reason": "already_discussed"}
+        # a reset grant reopens the decision to the render state
+        await pg.run(
+            "super",
+            "INSERT INTO assess_reset_grants (site_id, cmid, student_userid) VALUES (:s, :c, :u)",
+            {"s": w.site, "c": s.cmid, "u": s.sub},
+        )
+        r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))
+        assert r.json()["state"] == render_status

@@ -4,8 +4,8 @@ The plugin calls it on every results-page view with a pre-session token; the jti
 (those tokens are discarded and expire). The answer is built only from rows the API may read:
 
 - the activity configuration (not enabled / not configured);
-- the student's own sessions (an open one: ``active`` / ``starting``; closed ones: ``closed``
-  unless a reset was granted);
+- the student's own sessions (an open one: ``active`` / ``starting``; more closed ones than reset
+  grants: ``closed``, before any render state);
 - otherwise the worker-computed render state (``assess_render_state`` and the showable date in
   ``assess_gate_inputs``), when fresh. Missing or stale: ``unavailable`` with reason ``checking``.
 
@@ -119,6 +119,10 @@ def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
             "reason": "session_open",
             "session_id": str(row.open_sid),
         }
+    if int(row.closed) > int(row.grants):
+        # the student's own CLOSED session with no reset granted since: decided here, before any
+        # (possibly stale) render row (REQ-068 state 6)
+        return {"state": "closed", "reason": "already_discussed"}
     if row.status is None or row.age_s is None or float(row.age_s) > fresh_s:
         return {"state": "unavailable", "reason": "checking"}
     view: dict[str, Any] = {
@@ -154,7 +158,7 @@ async def get_state(
     async with engine_of(request).begin() as conn:
         row = (await conn.execute(_FACTS, params)).first()
         view = state_view(row, settings.render_fresh_s)
-        if view["reason"] not in ("not_enabled", "session_open"):
+        if view["reason"] not in ("not_enabled", "session_open", "already_discussed"):
             hint = (await conn.execute(_HINT, {"j": claims.jti})).scalar()
             await queue_render_check(conn, claims.site, claims.sub, claims.cmid, hint)
     return JSONResponse(content=view, headers={"Cache-Control": "no-store"})

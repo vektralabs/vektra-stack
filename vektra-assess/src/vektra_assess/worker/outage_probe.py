@@ -27,18 +27,16 @@ from typing import Any
 import structlog
 from sqlalchemy import text
 
-from vektra_assess.timing import OUTAGE_CAP_MAX_S
 from vektra_assess.worker.runner import AcquireDb
 
 log = structlog.get_logger(__name__)
 
 Probe = Callable[[], Awaitable[bool]]
 
+#: C and the spent outage from their one SQL definition (revision 0032)
 _OVER_CAP = text(
-    "SELECT s.id, s.epoch FROM assess_sessions s WHERE s.state = 'OUTAGE' AND ("
-    " SELECT coalesce(sum(extract(epoch FROM coalesce(i.ended_at, now()) - i.started_at)), 0)"
-    " FROM assess_outage_incidents i WHERE i.session_id = s.id"
-    ") > least(:cap_max, coalesce(s.duration_s, 0) / 2) LIMIT :n"
+    "SELECT s.id, s.epoch FROM assess_sessions s WHERE s.state = 'OUTAGE' "
+    "AND assess_outage_spent(s.id) > assess_outage_cap(s.duration_s) LIMIT :n"
 )
 _IN_OUTAGE = text(
     "SELECT id FROM assess_sessions WHERE state = 'OUTAGE' ORDER BY id LIMIT :n"
@@ -57,9 +55,7 @@ class ProbeResult:
 
 async def close_over_cap(acquire: AcquireDb, *, batch: int = 200) -> int:
     async with acquire() as conn:
-        due = (
-            await conn.execute(_OVER_CAP, {"cap_max": OUTAGE_CAP_MAX_S, "n": batch})
-        ).all()
+        due = (await conn.execute(_OVER_CAP, {"n": batch})).all()
     closed = 0
     for row in due:
         async with acquire() as conn:

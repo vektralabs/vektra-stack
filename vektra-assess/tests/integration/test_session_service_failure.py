@@ -207,3 +207,41 @@ async def test_other_closes_notify_nobody(pg, worker) -> None:  # type: ignore[n
             1,
             0,
         )
+
+
+@pytest.mark.parametrize("duration", [None, 1, 59, 600, 1799, 1800, 1801, 7200])
+async def test_the_sql_cap_is_the_python_cap(pg, duration) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 10: C has one SQL definition; timing.outage_cap_s mirrors it exactly."""
+    from vektra_assess.timing import outage_cap_s
+
+    got = await pg.run("api", "SELECT assess_outage_cap(:d)", {"d": duration})
+    assert got[0][0] == outage_cap_s(duration)
+
+
+@pytest.mark.parametrize("path", ["probe", "lazy"])
+async def test_an_outage_without_a_duration_closes_on_every_path(
+    pg, worker, path
+) -> None:  # type: ignore[no-untyped-def]
+    """A NULL duration (inconsistent data) is read the same way everywhere: C = 0, so the
+    session is closed service_failure rather than left in OUTAGE with no bound."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "OUTAGE")
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET duration_s = NULL WHERE id = :s; ",
+            {"s": s.session_id},
+        )
+        await pg.run(
+            "super",
+            "UPDATE assess_outage_incidents SET started_at = now() - interval '2 seconds' "
+            "WHERE session_id = :s",
+            {"s": s.session_id},
+        )
+        if path == "probe":
+            await outage_tick(worker.connect, down, min_credit_s=20)
+        else:
+            await w.client.get(
+                f"/api/v1/assess/sessions/{s.session_id}",
+                headers=bearer(s.session_token),
+            )
+        assert (await closed_row(pg, s.session_id))[:2] == ("CLOSED", "service_failure")

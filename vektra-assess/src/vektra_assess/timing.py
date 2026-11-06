@@ -34,9 +34,12 @@ def deadline(committed_at: datetime, duration_s: int, credited_s: int = 0) -> da
     return committed_at + timedelta(seconds=duration_s + credited_s)
 
 
-def outage_cap_s(duration_s: int, cap_max_s: int = OUTAGE_CAP_MAX_S) -> int:
-    """C = min(cap_max_s, 50% of the session duration)."""
-    return min(cap_max_s, duration_s // 2)
+def outage_cap_s(duration_s: int | None, cap_max_s: int = OUTAGE_CAP_MAX_S) -> int:
+    """C = min(cap_max_s, 50% of the session duration); a missing duration gives 0.
+
+    The Python mirror of the SQL ``assess_outage_cap`` (revision 0032), which is the definition
+    the database, the probe and the lazy close use; a test checks the two agree."""
+    return min(cap_max_s, (duration_s or 0) // 2)
 
 
 def remaining_s(deadline_at: datetime, now: datetime) -> int:

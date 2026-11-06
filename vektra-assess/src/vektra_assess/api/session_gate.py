@@ -43,7 +43,6 @@ from vektra_assess.errors import (
     state_conflict,
     token_invalid,
 )
-from vektra_assess.timing import outage_cap_s
 from vektra_assess.tokens import PreClaims, SessionClaims
 from vektra_shared.errors import ErrorResponse
 
@@ -229,10 +228,8 @@ _ENROLMENT = text(
 
 
 _CLOSE = text("SELECT assess_close_session(:sid, :epoch, :reason)")
-_OUTAGE_SPENT = text(
-    "SELECT coalesce(sum(extract(epoch FROM coalesce(ended_at, now()) - started_at)), 0) "
-    "FROM assess_outage_incidents WHERE session_id = :sid"
-)
+#: the one definition of C and of the spent outage (revision 0032)
+_OVER_CAP = text("SELECT assess_outage_spent(:sid) > assess_outage_cap(:d)")
 
 
 async def due_close(conn: AsyncConnection, row: SessionRow) -> str | None:
@@ -250,9 +247,12 @@ async def due_close(conn: AsyncConnection, row: SessionRow) -> str | None:
             )
             if not in_grace:
                 return "timed_out"
-    if row.state == "OUTAGE" and row.duration_s:
-        spent = float((await conn.execute(_OUTAGE_SPENT, {"sid": row.id})).scalar_one())
-        if spent > outage_cap_s(int(row.duration_s)):
+    if row.state == "OUTAGE":
+        # a NULL duration means C = 0 (assess_outage_cap): closed, never left unbounded
+        over = (
+            await conn.execute(_OVER_CAP, {"sid": row.id, "d": row.duration_s})
+        ).scalar_one()
+        if over:
             return "service_failure"
     return None
 

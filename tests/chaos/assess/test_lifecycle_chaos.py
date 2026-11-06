@@ -154,16 +154,27 @@ async def test_each_close_reason_by_row_count(pg, reason: str) -> None:  # type:
         == 1
     )
     assert await one(pg, "SELECT epoch FROM assess_sessions WHERE id = :s", s=sid) == 2
+    session_no = await one(
+        pg, "SELECT session_no FROM assess_sessions WHERE id = :s", s=sid
+    )
     # the old session token (epoch 1) is refused by the gate as CLOSED, before any decrypt
     engine = create_async_engine(pg.url("api"))
     try:
         async with engine.connect() as conn:
             claims = SessionClaims(
-                sub=1, site=site, cmid=1, sid=sid, seq=1, epoch=1, jti="x", iat=0, exp=0
+                sub=1,
+                site=site,
+                cmid=1,
+                sid=sid,
+                seq=int(session_no),
+                epoch=1,
+                jti="x",
+                iat=0,
+                exp=0,
             )
             with pytest.raises(GateRejected) as exc:
                 await gate(conn, claims, sid, allowed=LIVE)
-            assert exc.value.step in ("closed", "session_no")
+            assert exc.value.step == "closed"  # the old token reaches the closed check
     finally:
         await engine.dispose()
 

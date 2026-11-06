@@ -232,7 +232,7 @@ version.
 
 ### M2 — Gates and isolation
 - [x] M2.1 `vektra_assess/gates.py`: pure `evaluate_start_gates(inputs) -> GateDecision(code)` for BR-006 (a)-(i), BR-007 (quiz close + grace; assignment cut-off required), BR-010, BR-014 (quiz requires-grading = 0 incl. regrade-in-progress; rubric every criterion has a level; scale; marking guide refused), REQ-091 (any Unreadable input → fallback: NOT_AVAILABLE without a teacher date; gate = max(automatic, teacher date) when readable again; never the activity close alone); fixture table test with every gate negated individually
-- [ ] M2.2 Pre-flight calls the plan-4 readers fresh and `evaluate_start_gates`; a failed gate → rollback with the gate code; team submission → `team_submission_refused` audit
+- [x] M2.2 Pre-flight calls the plan-4 readers fresh and `evaluate_start_gates`; a failed gate → rollback with the gate code; team submission → `team_submission_refused` audit
 - [ ] M2.3 Bind the gate-input refresh tick and `render_check` job (worker writes `render_state` / `gate_inputs`); `GET /state` returns the advisory enum + reason code for (token sub, cmid), dedupes `render_check` per (user, cmid), per-token rate-limited; another student's override never leaks a date, name or count (response and HTML fixture grep)
 - [ ] M2.4 Enforce the fixed gate order in one dependency `session_gate(stage)` used by every session route; a test per step asserting that `get_session_material` is called 0 times when an earlier step fails (spy on the DB function)
 - [ ] M2.5 REQ-084: login-as rejection on mint and on any token lacking `loginas:false`; `loginas_rejected` audit; test that 0 session rows are created and the record is unchanged; record OQ-031(2) cross-check capability (default Unreadable) as residual risk
@@ -423,6 +423,18 @@ Every acceptance check reads rows, bytes or real responses, never a status field
   - Opening message: Part A and Part B are two `opening` bot turns (1 and 2), chained on the
     snapshot hash; `seq` is 2 after commit. The `seq` claim of a session token is the session
     number N, matched against `session_no`.
+  - **BR-006 (h) privacy gate (M2.2), for review**: its store (`assess_privacy_config`, REQ-089)
+    belongs to plan 12 and does not exist yet. The pre-flight evaluates (h) through a
+    `PreflightDeps.privacy` port whose default returns "not configured", so in production every
+    Start is rolled back with `privacy_not_configured` until plan 12 binds the real check (REQ-089
+    says fail closed). Development and CI pass it with `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET`
+    (development only; the worker refuses it elsewhere; the dev overlay sets it), the same pattern
+    as the LLM activation bypass. **Plan 12 must bind `PreflightDeps.privacy`.**
+  - **Gate inputs (M2.2)**: assignments always take the REQ-091 fallback today (the extensions and
+    user overrides of ALL participants are not listable with the minimal role, OQ-025), so a Start
+    needs the teacher-attested `attested_opening_at` (plan 11's form). A quiz regrade in progress is
+    detected by the capture's per-item BR-014 check, not as a separate gate input. The gate order
+    puts enrolment right after `enabled`.
   - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
     `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
     API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base

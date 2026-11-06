@@ -162,6 +162,18 @@ async def _checks() -> Checked:
                 "every handler bound."
             ),
         )
+    if settings.privacy_allow_unset and settings.env != "development":
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET=true is only honoured with "
+                f"VEKTRA_ENV=development (this process runs with VEKTRA_ENV={settings.env})"
+            ),
+            remediation=(
+                "Unset it: a deployment configures the REQ-089 privacy settings (plan "
+                "assess-privacy-retention) and the Start gate checks them."
+            ),
+        )
     run_crypto_selftest()
     if not settings.worker_database_url:
         raise StartupValidationError(

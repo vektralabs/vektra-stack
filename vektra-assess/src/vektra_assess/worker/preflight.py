@@ -10,7 +10,11 @@ window T (``VEKTRA_ASSESS_START_T_S``), measured on the DATABASE clock.
 3. Model activation (NFR-023): ``is_activated`` on every Start, so a new activation row takes
    effect without a restart. ``VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED`` is honoured only with
    ``VEKTRA_ENV=development``.
-4. Gate inputs and snapshot through the ``StartSource`` port (plan 4 readers, plan 6 capture).
+4. The START gates (BR-006 (a)-(i), BR-007, BR-010, BR-014, REQ-091): the Moodle half read fresh
+   through the ``StartSource`` port (plan-4 readers), the database half here, evaluated by the pure
+   ``evaluate_start_gates``; a failed gate rolls back with its code (a team submission is also
+   audited ``assess_team_submission_refused``). Then the snapshot (plan 6 capture), whose own
+   NotEligible reasons map to the same gate codes.
 5. Part A (``render_part_a``) and Part B (``run_part_b``) inside the remaining budget.
 6. ONE commit transaction, guarded by ``now() - created_at < T``: snapshot (+ its exclusion audit),
    the KEK-wrapped DEK, the two opening turns (hash chain anchored on the snapshot hash), state
@@ -52,10 +56,12 @@ from vektra_assess.context.capture.capture import (
     Failed,
     persist_capture,
 )
+from vektra_assess.context.capture.selection import NotEligibleReason
 from vektra_assess.context.part_a import SessionFacts, render_part_a
 from vektra_assess.crypto import envelope, hashing
 from vektra_assess.crypto.kek import wrap_dek
 from vektra_assess.crypto.seal import seal
+from vektra_assess.gates import Code, GateInputs, evaluate_start_gates
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.activation import is_activated
 from vektra_assess.llm.types import (
@@ -99,12 +105,51 @@ class StartTarget:
     flags: dict[str, Any]
 
 
-class StartSource(Protocol):
-    """Where a pre-flight gets its snapshot: the Moodle readers in production, fakes in tests.
+@dataclass(frozen=True)
+class DbGateFacts:
+    """The START-gate inputs the pre-flight reads from its own database, in the admission tx."""
 
-    ``capture`` returns ``Built`` (with the frozen policy), ``CaptureNotEligible`` or ``Failed``;
-    an exception is an internal error and rolls the Start back as well.
+    now: int
+    end_at: int | None
+    teacher_opening_at: int | None
+    closed_sessions: int
+    reset_grants: int
+    privacy_configured: bool
+
+
+@dataclass(frozen=True)
+class MoodleGateFacts:
+    """The START-gate inputs that come from Moodle, read fresh at pre-flight (plan-4 readers).
+
+    ``None`` = unreadable (fails closed). The database-side inputs (enabled, sessions, resets,
+    teacher date, end date, privacy) are added by the pre-flight itself.
     """
+
+    team_submission: bool | None = None
+    grading_method: str | None = None
+    attempt_in_progress: bool | None = None
+    has_submitted_attempt: bool | None = None
+    regrade_in_progress: bool | None = None
+    fully_graded: bool | None = None
+    released: bool | None = None
+    activity_close_at: int | None = None
+    grace_s: int | None = None
+    participant_closes: tuple[int, ...] | None = None
+    own_close_at: int | None = None
+    owner_verified: bool | None = None
+    enrolled: bool | None = None
+
+
+class StartSource(Protocol):
+    """Where a pre-flight gets its gate inputs and its snapshot: the Moodle readers in production,
+    fakes in tests.
+
+    ``gate_facts`` reads the Moodle half of the START gates; ``capture`` returns ``Built`` (with
+    the frozen policy), ``CaptureNotEligible`` or ``Failed``. An exception from either is an
+    internal error and rolls the Start back as well.
+    """
+
+    async def gate_facts(self, target: StartTarget) -> MoodleGateFacts: ...
 
     async def capture(self, target: StartTarget) -> CaptureResult: ...
 
@@ -125,6 +170,18 @@ class PartBRunner(Protocol):
     ) -> TurnResult: ...
 
 
+PrivacyCheck = Callable[[AsyncConnection, UUID], Awaitable[bool]]
+
+
+async def privacy_not_configured(_conn: AsyncConnection, _site: UUID) -> bool:
+    """BR-006 (h) until plan assess-privacy-retention binds the REQ-089 store: not configured.
+
+    Fail closed: every Start is rolled back with ``privacy_not_configured``. Development only,
+    ``VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET`` lets the gate pass (the worker refuses it elsewhere).
+    """
+    return False
+
+
 @dataclass(frozen=True)
 class PreflightDeps:
     settings: VektraAssessSettings
@@ -133,12 +190,14 @@ class PreflightDeps:
     source: StartSource
     runner: PartBRunner
     clock: Callable[[], float] = time.monotonic
+    privacy: PrivacyCheck = privacy_not_configured
 
 
 class _Rollback(Exception):
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, extra: AssessAuditEvent | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.extra = extra
 
 
 # --- SQL -------------------------------------------------------------------------------------
@@ -155,6 +214,13 @@ _LIVE = text(
 _ADMIT = text("UPDATE assess_sessions SET preflight_started_at = now() WHERE id = :sid")
 _ACTIVITY = text(
     "SELECT c.activity_type, c.enabled, c.cap_minutes, c.flags, "
+    "extract(epoch FROM c.end_at)::bigint AS end_at, "
+    "extract(epoch FROM c.attested_opening_at)::bigint AS attested_at, "
+    "extract(epoch FROM now())::bigint AS db_now, "
+    "(SELECT count(*) FROM assess_sessions h WHERE h.site_id = c.site_id AND h.cmid = c.cmid "
+    "AND h.student_userid = :u AND h.state = 'CLOSED') AS closed_sessions, "
+    "(SELECT count(*) FROM assess_reset_grants g WHERE g.site_id = c.site_id AND g.cmid = c.cmid "
+    "AND g.student_userid = :u) AS reset_grants, "
     "coalesce((SELECT e.extra_seconds FROM assess_extra_time e WHERE e.site_id = c.site_id "
     "AND e.cmid = c.cmid AND e.student_userid = :u), 0) AS extra_s "
     "FROM assess_activity_config c WHERE c.site_id = :s AND c.cmid = :c"
@@ -202,7 +268,12 @@ class RollbackLeftovers(RuntimeError):
 
 
 async def rollback_start(
-    conn: AsyncConnection, session_id: UUID, reason: str, *, actor: str = "worker"
+    conn: AsyncConnection,
+    session_id: UUID,
+    reason: str,
+    *,
+    actor: str = "worker",
+    extra: AssessAuditEvent | None = None,
 ) -> bool:
     """Delete a STARTING session and everything under it, in the CALLER's transaction.
 
@@ -227,27 +298,75 @@ async def rollback_start(
             "sid": session_id,
         },
     )
-    await write_event(
-        conn,
-        AssessAuditEvent.START_ROLLBACK,
-        actor="worker" if actor == "worker" else "api",
-        site_id=row.site_id,
-        session_id=session_id,
-        reason_code=reason,
-        data={"cmid": int(row.cmid), "session_no": int(row.session_no)},
-    )
+    for event in (AssessAuditEvent.START_ROLLBACK, extra):
+        if event is None:
+            continue
+        await write_event(
+            conn,
+            event,
+            actor="worker" if actor == "worker" else "api",
+            site_id=row.site_id,
+            session_id=session_id,
+            reason_code=reason,
+            data={"cmid": int(row.cmid), "session_no": int(row.session_no)},
+        )
     return True
 
 
-async def _rollback(acquire: AcquireDb, session_id: UUID, reason: str) -> None:
+async def _rollback(
+    acquire: AcquireDb,
+    session_id: UUID,
+    reason: str,
+    extra: AssessAuditEvent | None = None,
+) -> None:
     async with acquire() as conn:
         async with conn.begin():
-            done = await rollback_start(conn, session_id, reason)
+            done = await rollback_start(conn, session_id, reason, extra=extra)
     log.info(
         "assess_preflight_rolled_back",
         session_id=str(session_id),
         reason=reason,
         deleted=done,
+    )
+
+
+# --- gates -----------------------------------------------------------------------------------
+
+#: the capture step's own BR-012 / BR-014 / BR-010 refusals, as START-gate codes
+NOT_ELIGIBLE_CODE: dict[NotEligibleReason, Code] = {
+    NotEligibleReason.UNREADABLE: Code.UNREADABLE,
+    NotEligibleReason.IN_PROGRESS: Code.ATTEMPT_IN_PROGRESS,
+    NotEligibleReason.NO_SUBMISSION: Code.NO_SUBMITTED_ATTEMPT,
+    NotEligibleReason.NOT_GRADED: Code.NOT_FULLY_GRADED,
+    NotEligibleReason.NOT_RELEASED: Code.NOT_RELEASED,
+    NotEligibleReason.UNSUPPORTED: Code.UNSUPPORTED_GRADING,
+}
+
+
+def gate_inputs(target: StartTarget, db: DbGateFacts, m: MoodleGateFacts) -> GateInputs:
+    return GateInputs(
+        now=db.now,
+        activity_kind="quiz" if target.activity_type == "quiz" else "assign",
+        enabled=True,  # checked in the admission transaction (activity_not_configured)
+        team_submission=m.team_submission,
+        grading_method=m.grading_method,
+        attempt_in_progress=m.attempt_in_progress,
+        has_submitted_attempt=m.has_submitted_attempt,
+        regrade_in_progress=m.regrade_in_progress,
+        fully_graded=m.fully_graded,
+        released=m.released,
+        activity_close_at=m.activity_close_at,
+        grace_s=m.grace_s,
+        participant_closes=m.participant_closes,
+        own_close_at=m.own_close_at,
+        teacher_opening_at=db.teacher_opening_at,
+        owner_verified=m.owner_verified,
+        enrolled=m.enrolled,
+        open_session=False,  # this STARTING row is the only open one (partial unique index)
+        closed_sessions=db.closed_sessions,
+        reset_grants=db.reset_grants,
+        privacy_configured=db.privacy_configured,
+        end_at=db.end_at,
     )
 
 
@@ -261,8 +380,8 @@ def _remaining(deps: PreflightDeps, elapsed_at_load: float, t_load: float) -> fl
 
 async def _admit(
     deps: PreflightDeps, acquire: AcquireDb, session_id: UUID
-) -> tuple[StartTarget, int, float] | None:
-    """Steps 1-3. Returns (target, duration_s, elapsed_s) or None for a stale job."""
+) -> tuple[StartTarget, int, float, DbGateFacts] | None:
+    """Steps 1-3. Returns (target, duration_s, elapsed_s, db facts) or None for a stale job."""
     settings = deps.settings
     async with acquire() as conn:
         async with conn.begin():
@@ -293,6 +412,17 @@ async def _admit(
                 settings.llm_allow_unactivated and settings.env == "development"
             ):
                 raise _Rollback(Reason.MODEL_NOT_ACTIVATED)
+            privacy = await deps.privacy(conn, row.site_id) or (
+                settings.privacy_allow_unset and settings.env == "development"
+            )
+            db = DbGateFacts(
+                now=int(act.db_now),
+                end_at=act.end_at,
+                teacher_opening_at=act.attested_at,
+                closed_sessions=int(act.closed_sessions),
+                reset_grants=int(act.reset_grants),
+                privacy_configured=bool(privacy),
+            )
             await conn.execute(_ADMIT, {"sid": session_id})
     target = StartTarget(
         session_id=session_id,
@@ -305,7 +435,7 @@ async def _admit(
         flags=dict(act.flags or {}),
     )
     duration = int(act.cap_minutes) * 60 + int(act.extra_s)
-    return target, duration, elapsed
+    return target, duration, elapsed, db
 
 
 async def _within(
@@ -427,7 +557,7 @@ def make_preflight_handler(
         try:
             await _run(deps, ctx.acquire, sid)
         except _Rollback as rb:
-            await _rollback(ctx.acquire, sid, rb.reason)
+            await _rollback(ctx.acquire, sid, rb.reason, rb.extra)
 
     return handle
 
@@ -437,22 +567,33 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     admitted = await _admit(deps, acquire, sid)
     if admitted is None:
         return
-    target, duration_s, elapsed = admitted
+    target, duration_s, elapsed, db = admitted
     try:
+        facts: MoodleGateFacts = await _within(
+            deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)
+        )
+        decision = evaluate_start_gates(gate_inputs(target, db, facts))
+        if not decision.open:
+            extra = (
+                AssessAuditEvent.TEAM_SUBMISSION_REFUSED
+                if decision.code is Code.TEAM_SUBMISSION
+                else None
+            )
+            raise _Rollback(decision.code.value, extra)
         captured: CaptureResult = await _within(
             deps.source.capture(target), _remaining(deps, elapsed, t_load)
         )
         if isinstance(captured, CaptureNotEligible):
-            raise _Rollback(f"not_eligible_{captured.reason.value}")
+            raise _Rollback(NOT_ELIGIBLE_CODE[captured.reason].value)
         if isinstance(captured, Failed):
             raise _Rollback(f"{Reason.CAPTURE_FAILED}_{captured.reason.value}"[:64])
         bundle = assemble_context(captured.snapshot, captured.frozen_policy)
-        facts = SessionFacts(
+        session_facts = SessionFacts(
             session_number=target.session_no,
             duration_minutes=duration_s // 60,
             previous_context=PREVIOUS_CONTEXT if target.session_no > 1 else None,
         )
-        part_a = render_part_a(bundle, facts).text
+        part_a = render_part_a(bundle, session_facts).text
         remaining = _remaining(deps, elapsed, t_load)
         part_b: TurnResult = await _within(
             deps.runner.run_part_b(bundle, remaining_s=remaining), remaining

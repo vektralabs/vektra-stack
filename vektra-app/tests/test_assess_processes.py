@@ -438,6 +438,20 @@ def test_the_worker_keys_bind_the_preflight_handler(
     }
 
 
+async def test_privacy_override_is_refused_outside_development(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.setenv("VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET", "true")
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    with pytest.raises(
+        StartupValidationError, match="PRIVACY_ALLOW_UNSET=true is only"
+    ):
+        await assess_worker.run_checks()
+
+
 def test_invalid_job_policy_refuses_to_compose(monkeypatch: pytest.MonkeyPatch) -> None:
     checked = _checked(
         monkeypatch,

@@ -425,6 +425,16 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION",
         description="Version of the privacy notice shown before Start; recorded on the session and the start audit event.",
     )
+    privacy_allow_unset: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET",
+        description=(
+            "Development and CI only: let the Start gate BR-006 (h) pass while the REQ-089 privacy "
+            "configuration does not exist yet (its store arrives with plan assess-privacy-retention; "
+            "until then the gate fails closed and every Start is rolled back with "
+            "privacy_not_configured). Honoured only with VEKTRA_ENV=development."
+        ),
+    )
     llm_allow_unactivated: bool = Field(
         False,
         alias="VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED",

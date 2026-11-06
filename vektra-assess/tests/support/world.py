@@ -75,12 +75,19 @@ async def configure_activity(
     kind: str = "assign",
     cap_minutes: int | None = 30,
     enabled: bool = True,
+    attested: bool = True,
+    end_at_sql: str = "NULL",
 ) -> None:
+    """``attested``: a REQ-091 teacher opening date a day ago (the recorded assignments cannot
+    list every participant's extension, so without it the gate is NOT_AVAILABLE)."""
+    opening = "now() - interval '1 day'" if attested else "NULL"
     await pg.run(
         "super",
-        "INSERT INTO assess_activity_config (site_id, cmid, activity_type, enabled, cap_minutes) "
-        "VALUES (:s, :c, :k, :e, :cap) ON CONFLICT (site_id, cmid) DO UPDATE SET "
-        "enabled = EXCLUDED.enabled, cap_minutes = EXCLUDED.cap_minutes",
+        "INSERT INTO assess_activity_config (site_id, cmid, activity_type, enabled, cap_minutes, "
+        f"attested_opening_at, end_at) VALUES (:s, :c, :k, :e, :cap, {opening}, {end_at_sql}) "
+        "ON CONFLICT (site_id, cmid) DO UPDATE SET enabled = EXCLUDED.enabled, "
+        "cap_minutes = EXCLUDED.cap_minutes, attested_opening_at = EXCLUDED.attested_opening_at, "
+        "end_at = EXCLUDED.end_at, activity_type = EXCLUDED.activity_type",
         {"s": site, "c": cmid, "k": kind, "e": enabled, "cap": cap_minutes},
     )
 
@@ -162,7 +169,12 @@ def err(r: httpx.Response) -> dict[str, Any]:
 
 
 def default_settings(**over: Any) -> VektraAssessSettings:
-    base = {"VEKTRA_ASSESS_ENABLED": True, "VEKTRA_ENV": "development"}
+    # development: the REQ-089 privacy store arrives with plan 12, BR-006 (h) needs the dev override
+    base = {
+        "VEKTRA_ASSESS_ENABLED": True,
+        "VEKTRA_ENV": "development",
+        "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET": True,
+    }
     return VektraAssessSettings.model_validate({**base, **over})
 
 

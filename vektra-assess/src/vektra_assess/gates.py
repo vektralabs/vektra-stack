@@ -5,7 +5,8 @@ client: the caller reads the inputs (the worker, from the plan-4 readers and the
 passes ``now``. Every input that could not be read is ``None`` and fails closed. The gates are
 checked in a FIXED order and the first one that fails gives the content-free reason ``code``; the
 same function serves the advisory ``/state`` (render) and the authoritative pre-flight (Start),
-so the button and a crafted Start can never disagree.
+so the button and a crafted Start can never disagree. Order: enabled, enrolment, team / grading
+method, end date, sessions, privacy, attempts and BR-014, release, close, ownership.
 
 The effective close of BR-006 (d) is computed here:
 
@@ -189,9 +190,15 @@ def evaluate_start_gates(i: GateInputs) -> GateDecision:
     failures: list[Code] = []
     gate_at = shown = None
 
-    # (a) enabled; no team submission, no marking guide (EX-023)
+    # (a) enabled
     if not i.enabled:
         failures.append(Code.NOT_ENABLED)
+    # (f) enrolment, early: for a requester who is not a participant every other read is moot
+    if i.enrolled is None:
+        failures.append(Code.UNREADABLE)
+    elif not i.enrolled:
+        failures.append(Code.NOT_ENROLLED)
+    # (a) no team submission, no marking guide (EX-023)
     if i.activity_kind == "assign":
         if i.team_submission is None or i.grading_method is None:
             failures.append(Code.UNREADABLE)
@@ -209,11 +216,6 @@ def evaluate_start_gates(i: GateInputs) -> GateDecision:
         failures.append(Code.SESSION_OPEN)
     elif i.closed_sessions > i.reset_grants:
         failures.append(Code.ALREADY_DISCUSSED)
-    # (f) enrolment
-    if i.enrolled is None:
-        failures.append(Code.UNREADABLE)
-    elif not i.enrolled:
-        failures.append(Code.NOT_ENROLLED)
     # (h) privacy settings
     if not i.privacy_configured:
         failures.append(Code.PRIVACY_NOT_CONFIGURED)

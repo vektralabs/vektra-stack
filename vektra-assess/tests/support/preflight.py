@@ -18,7 +18,12 @@ from vektra_assess.context.capture.capture import CaptureResult
 from vektra_assess.jobs import JobKind
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.types import ProviderCallRecord, TurnResult, TurnUsage
-from vektra_assess.worker.preflight import PreflightDeps, StartSource, StartTarget
+from vektra_assess.worker.preflight import (
+    MoodleGateFacts,
+    PreflightDeps,
+    StartSource,
+    StartTarget,
+)
 from vektra_assess.worker.runner import JobContext
 
 PART_B_TEXT = "Partiamo dal criterio C1: come hai scelto la struttura della relazione?"
@@ -83,6 +88,24 @@ class FakePartB:
         )
 
 
+#: Moodle gate facts that pass every gate (a closed, graded, released, enrolled activity)
+PASSING_FACTS = MoodleGateFacts(
+    team_submission=False,
+    grading_method="rubric",
+    attempt_in_progress=False,
+    has_submitted_attempt=True,
+    regrade_in_progress=False,
+    fully_graded=True,
+    released=True,
+    activity_close_at=1_700_000_000,
+    grace_s=0,
+    participant_closes=(),
+    own_close_at=None,
+    owner_verified=True,
+    enrolled=True,
+)
+
+
 class FakeSource:
     """A ``StartSource`` that returns a fixed result, raises, or waits forever."""
 
@@ -93,12 +116,19 @@ class FakeSource:
         raises: BaseException | None = None,
         stall: bool = False,
         inner: StartSource | None = None,
+        facts: MoodleGateFacts = PASSING_FACTS,
     ) -> None:
         self.result = result
         self.raises = raises
         self.stall = stall
         self.inner = inner
+        self.facts = facts
         self.targets: list[StartTarget] = []
+
+    async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
+        if self.inner is not None:
+            return await self.inner.gate_facts(target)
+        return self.facts
 
     async def capture(self, target: StartTarget) -> CaptureResult:
         self.targets.append(target)

@@ -88,13 +88,13 @@ async def test_a_stopped_worker_rejects_turns_without_closing(pg, worker) -> Non
             )
             == 1
         )
-        # reading the session is still allowed (only turns need the fresh check)
-        assert (
-            await w.client.get(
-                f"/api/v1/assess/sessions/{s.session_id}",
-                headers=bearer(s.session_token),
-            )
-        ).status_code == 200
+        # reading the session needs it too (CodeRabbit 4498473572): no decrypted history and
+        # no resume token for a student whose enrolment is not freshly confirmed
+        r = await w.client.get(
+            f"/api/v1/assess/sessions/{s.session_id}", headers=bearer(s.session_token)
+        )
+        assert r.status_code == 503 and "enrolment_freshness" in err(r)["remediation"]
+        assert "turns" not in r.text
 
 
 async def test_the_recheck_against_the_recordings_keeps_an_enrolled_student(

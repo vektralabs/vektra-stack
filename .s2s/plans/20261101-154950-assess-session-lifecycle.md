@@ -533,6 +533,17 @@ Every acceptance check reads rows, bytes or real responses, never a status field
   (`start_guard.MOODLE_ALERT_WINDOW_S`, in the `dedupe_key`), also when the first alert was
   already delivered (the unique dedupe index covers pending jobs only, so the key is looked up
   first). A rollback for a negated gate queues nothing.
+- **CodeRabbit round 1 on PR #154 (2026-11-07), design decisions taken here**:
+  - gate step 6 (enrolment freshness) also guards `GET /sessions/{sid}` (read and resume), not
+    only turns: no decrypted history and no resume token without a fresh `enrolled` check. A
+    worker stopped longer than the freshness window now also blocks reading (503), the
+    fail-closed side of NFR-014 (comment 4498473572);
+  - the per-route limiters stay process-local (`RateLimiter` per API process, plan M5.3): the
+    shipped deployment runs one API process, the one-reply-at-a-time rule and the database
+    guard bound model calls per session whatever the process count, and a shared limiter
+    needs a shared store the plan does not have (comment 4498473536, not applied);
+  - the event stream's revocation bound stays "at most `poll_s` of reply text" (review fix 6,
+    coordinator decision; comment 4498473544, not applied).
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

@@ -130,6 +130,9 @@ async def get_session(
                 lock=resume,
                 start_t_s=start_t_s,
                 token_budget=settings_of(request).session_token_budget,
+                # gate step 6 here too (CodeRabbit 4498473572): the history is decrypted and a
+                # resume token minted only for a freshly confirmed enrolment (fail closed)
+                enrolment_fresh_s=settings_of(request).enrolment_freshness_s,
             )
             material = None
             if row.state in LIVE:

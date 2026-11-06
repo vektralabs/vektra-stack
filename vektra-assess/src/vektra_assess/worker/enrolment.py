@@ -33,7 +33,12 @@ log = structlog.get_logger(__name__)
 _LIVE = text(
     "SELECT s.id FROM assess_sessions s LEFT JOIN LATERAL (SELECT max(c.checked_at) AS last "
     "FROM assess_enrolment_checks c WHERE c.session_id = s.id) c ON true "
-    "WHERE s.state IN ('ACTIVE', 'OUTAGE') ORDER BY c.last ASC NULLS FIRST, s.id LIMIT :n"
+    "WHERE s.state IN ('ACTIVE', 'OUTAGE') "
+    # a session whose re-check is still queued or running does not take a place in the batch
+    # (CodeRabbit 4498466303): the batch reaches the others instead of re-selecting it
+    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.dedupe_key = "
+    "'enrolment_recheck:' || s.id::text AND j.state IN ('ready', 'leased')) "
+    "ORDER BY c.last ASC NULLS FIRST, s.id LIMIT :n"
 )
 _SESSION = text(
     "SELECT s.id, s.site_id, s.cmid, s.student_userid, s.courseid_hint, s.session_no, s.epoch, "

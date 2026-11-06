@@ -186,3 +186,32 @@ async def test_every_live_session_is_rechecked_within_a_few_ticks(pg) -> None:  
         assert checked[0][0] == 5
     finally:
         await engine.dispose()
+
+
+async def test_sessions_with_a_pending_recheck_do_not_take_the_batch(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4498466303: when the oldest sessions' jobs are still pending, the next tick
+    queues the other sessions instead of selecting (and deduplicating) the same ones."""
+    from sqlalchemy.ext.asyncio import create_async_engine as _engine
+
+    from integration.conftest import make_session
+    from integration.test_session_preflight import _reset as _clean
+    from vektra_assess.worker.enrolment import queue_rechecks
+
+    await _clean(pg)
+    await pg.run("super", "DELETE FROM assess_jobs")
+    for _ in range(4):
+        await make_session(pg)
+    engine = _engine(pg.url("worker"))
+    try:
+        assert await queue_rechecks(engine.connect, batch=2) == 2
+        assert (
+            await queue_rechecks(engine.connect, batch=2) == 2
+        )  # the jobs are not run
+        queued = await pg.run(
+            "super",
+            "SELECT count(DISTINCT args->>'session_id') FROM assess_jobs "
+            "WHERE kind = 'enrolment_recheck'",
+        )
+        assert queued[0][0] == 4
+    finally:
+        await engine.dispose()

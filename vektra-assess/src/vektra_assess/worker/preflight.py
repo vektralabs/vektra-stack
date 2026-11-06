@@ -613,7 +613,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     committed = await _commit(
         deps, acquire, target, captured, part_a, part_b, duration_s
     )
-    log.info(
-        "assess_preflight_committed" if committed else "assess_preflight_stale",
-        session_id=str(sid),
-    )
+    if committed:
+        log.info("assess_preflight_committed", session_id=str(sid))
+    else:
+        log.info("assess_preflight_stale", session_id=str(sid))

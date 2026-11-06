@@ -195,3 +195,26 @@ async def test_claimed_turns_do_not_fill_the_pending_batch(pg, worker) -> None: 
                 await conn.execute(text("SELECT pg_advisory_unlock_all()"))
         finally:
             await holder.dispose()
+
+
+async def test_stop_waits_for_the_answers_in_flight(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (pending.py 66-71): shutdown does not dispose the engine
+    under a recovered reply still streaming; stop() cancels it and waits for its cleanup."""
+    runner = FakeStreamRunner(
+        segments=tuple(f"Frase {i}. " for i in range(20)), segment_delay_s=0.3
+    )
+    async with world(pg, assess_runner=runner) as w:
+        s = await into_outage_with_a_pending_turn(pg, w, worker, runner)
+        runner.fail = None
+        await outage_tick(worker.connect, ok_probe, min_credit_s=20)
+        pending = PendingTurnDriver(w.app, min_age_s=0)
+        pending.start()
+        pending.nudge()
+        for _ in range(100):
+            if s.session_id in w.app.state.assess_turn_driver.tasks:
+                break
+            await asyncio.sleep(0.05)
+        task = w.app.state.assess_turn_driver.tasks[s.session_id]
+        await asyncio.sleep(0.5)  # the recovered reply is streaming
+        await pending.stop()
+        assert task.done(), "stop() returned with the reply still running"

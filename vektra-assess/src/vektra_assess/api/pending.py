@@ -60,6 +60,7 @@ class PendingTurnDriver:
     batch: int = 50
     _wake: asyncio.Event = field(default_factory=asyncio.Event)
     _task: asyncio.Task[None] | None = None
+    _answers: set[asyncio.Task[None]] = field(default_factory=set)
 
     # --- lifecycle --------------------------------------------------------------------------
 
@@ -68,11 +69,20 @@ class PendingTurnDriver:
             self._task = asyncio.create_task(self._loop(), name="assess-pending-turns")
 
     async def stop(self) -> None:
+        """Stop polling, then cancel the answers this driver started and WAIT for them to
+        release their provider stream, slot and connections, so shutdown never disposes the
+        engine under a recovered reply (CodeRabbit review 5808100754)."""
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        answers = [t for t in self._answers if not t.done()]
+        for t in answers:
+            t.cancel()
+        if answers:
+            await asyncio.gather(*answers, return_exceptions=True)
+        self._answers.clear()
 
     def nudge(self) -> None:
         self._wake.set()
@@ -105,6 +115,8 @@ class PendingTurnDriver:
                 continue  # this process is already answering it
             task = asyncio.create_task(self._answer(sid))
             driver.tasks[sid] = task
+            self._answers.add(task)
+            task.add_done_callback(self._answers.discard)
             task.add_done_callback(_forget(driver.tasks, sid))
             taken.append(sid)
         return taken

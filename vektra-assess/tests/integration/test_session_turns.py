@@ -547,10 +547,11 @@ async def test_the_database_enforces_the_input_lock_and_the_grace(pg, worker) ->
             },
         )
     )[0][0] == 3
-    # past deadline + grace: an ordinary reply is refused, the marked turn is not
+    # past deadline + grace: an ordinary reply is refused, the marked turn is not (a second
+    # student turn, written before the deadline, is pending: revision 0031 needs one)
     await pg.run(
         "super",
-        "UPDATE assess_sessions SET pending_reply_since = now(), deadline_at = now() - interval '61 seconds' WHERE id = :s",
+        "UPDATE assess_sessions SET deadline_at = now() + interval '1 hour' WHERE id = :s",
         {"s": sid},
     )
     assert (
@@ -560,10 +561,29 @@ async def test_the_database_enforces_the_input_lock_and_the_grace(pg, worker) ->
             {
                 "s": sid,
                 "seq": 2,
-                "role": "bot",
+                "role": "student",
                 "kind": "normal",
                 "h": "h4",
                 "prev": "h3",
+            },
+        )
+    )[0][0] == 4
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() - interval '61 seconds' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 3,
+                "role": "bot",
+                "kind": "normal",
+                "h": "h5",
+                "prev": "h4",
             },
         )
     )[0][0] is None
@@ -573,14 +593,14 @@ async def test_the_database_enforces_the_input_lock_and_the_grace(pg, worker) ->
             append,
             {
                 "s": sid,
-                "seq": 2,
+                "seq": 3,
                 "role": "bot",
                 "kind": "interrupted",
-                "h": "h4",
-                "prev": "h3",
+                "h": "h5",
+                "prev": "h4",
             },
         )
-    )[0][0] == 4
+    )[0][0] == 5
 
 
 async def test_each_turn_hash_is_recorded_and_chained_at_persist(pg, worker) -> None:  # type: ignore[no-untyped-def]

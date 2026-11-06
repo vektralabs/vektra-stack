@@ -218,31 +218,43 @@ class TurnDriver:
         return task
 
     @asynccontextmanager
-    async def _claim(self, sid: UUID) -> AsyncIterator[None]:
-        """Hold the live-reply claim for the reply's lifetime (session-level advisory lock on a
-        dedicated connection). The worker's reconcile_reply never touches a claimed turn. A claim
-        that cannot be taken (database unreachable) does not stop the reply: its own appends fail
-        then, and the reconciliation answers the turn later."""
+    async def _claim(self, sid: UUID) -> AsyncIterator[bool]:
+        """The live-reply claim for the reply's lifetime: a session-level advisory lock taken
+        with ``pg_try_advisory_lock`` on a dedicated connection. Yields whether it was taken.
+
+        Never blocking and never optional: a driver that does not get the claim (another driver,
+        here or in another API process, is answering this turn) or cannot take it (database
+        unreachable) does not reply. The holder answers; a turn nobody holds is answered by the
+        ``PendingTurnDriver`` or marked by the worker's ``reconcile_reply``. Together with the
+        database guard (revision 0031: a bot turn needs a pending student turn) a student turn
+        gets exactly one bot turn."""
         conn = None
+        claimed = False
         try:
             conn = await self.engine.connect()
-            await conn.execute(
-                text(f"SELECT pg_advisory_lock({REPLY_CLAIM_KEY_SQL})"),
-                {"sid": str(sid)},
+            claimed = bool(
+                (
+                    await conn.execute(
+                        text(f"SELECT pg_try_advisory_lock({REPLY_CLAIM_KEY_SQL})"),
+                        {"sid": str(sid)},
+                    )
+                ).scalar()
             )
             await conn.commit()
         except Exception as exc:
             log.warning("assess_reply_claim_failed", error_type=type(exc).__name__)
+            claimed = False
         try:
-            yield
+            yield claimed
         finally:
             if conn is not None:
                 try:
-                    await conn.execute(
-                        text(f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"),
-                        {"sid": str(sid)},
-                    )
-                    await conn.commit()
+                    if claimed:
+                        await conn.execute(
+                            text(f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"),
+                            {"sid": str(sid)},
+                        )
+                        await conn.commit()
                 except Exception:
                     pass  # closing the connection releases the lock anyway
                 finally:
@@ -256,7 +268,10 @@ class TurnDriver:
         turn: StudentTurn,
         cut_after_s: float | None = None,
     ) -> None:
-        async with self._claim(sid):
+        async with self._claim(sid) as claimed:
+            if not claimed:
+                log.info("assess_reply_not_claimed")  # another driver answers this turn
+                return
             await self._reply(sid, epoch, bundle, turn, cut_after_s)
 
     async def _reply(

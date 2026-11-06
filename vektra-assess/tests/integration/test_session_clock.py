@@ -249,3 +249,30 @@ async def test_reply_text_is_never_delivered_past_a_revocation(pg, worker) -> No
         assert (
             "CANARY-after-revocation" not in body and "CANARY-other-epoch" not in body
         )
+
+
+async def test_the_lazy_close_check_takes_no_row_lock_when_nothing_is_due(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 5: a lock=False route is not blocked by another transaction holding the
+    session row: the clock is read without a lock, and locked only when a close is due."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        holder = create_async_engine(pg.url("super"))
+        try:
+            async with holder.connect() as conn:
+                await conn.execute(
+                    text("SELECT 1 FROM assess_sessions WHERE id = :s FOR UPDATE"),
+                    {"s": s.session_id},
+                )
+                r = await asyncio.wait_for(
+                    w.client.post(
+                        f"/api/v1/assess/sessions/{s.session_id}/retry",
+                        headers=bearer(s.session_token),
+                    ),
+                    timeout=5,
+                )
+                assert r.status_code == 202, r.text
+                await conn.rollback()
+        finally:
+            await holder.dispose()

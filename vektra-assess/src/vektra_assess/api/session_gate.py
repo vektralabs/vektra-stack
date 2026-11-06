@@ -247,6 +247,24 @@ async def enforce_clock(
     plan-2 close function (state, reason, epoch bump, hand-off delete, transcript job, audit).
     The route's own gate then sees a CLOSED row. Rejections are left to that gate (it audits
     them once)."""
+    # read without a lock first (review fix 5): only a session whose clock is over is locked,
+    # re-read and closed; with nothing due, a lock=False route takes no row lock at all
+    async with engine_of(request).connect() as conn:
+        try:
+            row = await gate(
+                conn,
+                claims,
+                sid,
+                allowed=ANY_OPEN | {"CLOSED"},
+                allow_closed=True,
+                lock=False,
+                start_t_s=start_t_s,
+            )
+        except GateRejected:
+            return None
+        reason = await due_close(conn, row)
+    if reason is None:
+        return None
     async with engine_of(request).begin() as conn:
         try:
             row = await gate(
@@ -260,7 +278,7 @@ async def enforce_clock(
             )
         except GateRejected:
             return None
-        reason = await due_close(conn, row)
+        reason = await due_close(conn, row)  # re-checked under the lock
         if reason is not None:
             await conn.execute(
                 _CLOSE, {"sid": sid, "epoch": row.epoch, "reason": reason}

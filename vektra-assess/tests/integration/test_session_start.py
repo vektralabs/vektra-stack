@@ -273,3 +273,40 @@ async def test_query_string_token_is_not_read(pg) -> None:  # type: ignore[no-un
             await n(pg, "SELECT count(*) FROM assess_sessions WHERE student_userid=666")
             == 0
         )
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "refused"),
+    [
+        ("not_graded", "not_released", True),
+        ("not_open", "close_not_passed", True),
+        ("unavailable", "unreadable", False),
+        ("unavailable", None, False),
+        ("not_open", "close_unreadable", False),
+        ("unavailable", "some_future_code", False),
+    ],
+)
+async def test_only_a_definitive_negative_render_refuses_a_start(  # type: ignore[no-untyped-def]
+    pg, status: str, reason: str | None, refused: bool
+) -> None:
+    """Review fix 8: unreadable, NULL and unknown codes go on to the pre-flight; 'None' never
+    reaches the error details."""
+    await _clean(pg)
+    async with world(pg) as w:
+        cmid = CMID + 40
+        await configure_activity(pg, w.site, cmid)
+        await pg.run(
+            "super",
+            "INSERT INTO assess_render_state (site_id, student_userid, cmid, status, reason_code) "
+            "VALUES (:s, 777, :c, :st, :r)",
+            {"s": w.site, "c": cmid, "st": status, "r": reason},
+        )
+        r = await start(w, await w.presession(sub=777, cmid=cmid))
+        if refused:
+            assert r.status_code == 409 and err(r)["details"]["reason"] == reason
+        else:
+            assert r.status_code == 202, r.text
+        assert "None" not in r.text
+        await pg.run(
+            "super", "DELETE FROM assess_render_state WHERE student_userid = 777"
+        )

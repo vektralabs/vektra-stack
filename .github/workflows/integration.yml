@@ -298,7 +298,7 @@ jobs:
           # assess-moodle-contract.yml: here they SKIP by design and do not count
           LIVE = (
               "test_moodle_live", "test_moodle_setup_live", "test_context_live",
-              "test_idor_live",
+              "test_idor_live", "test_req073_live",
           )
           cases = [
               c for c in root.iter("testcase")

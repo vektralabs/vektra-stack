@@ -268,7 +268,7 @@ version.
 - [x] M5.7 Canary grep: after the full lifecycle suite, grep audit rows, structlog output (all levels, not only WARNING+), Prometheus `/metrics` and `assess_jobs` args for every snapshot/turn canary → 0 hits
 - [x] M5.8 REQ-102 API side: route inventory has no regenerate/edit/delete-turn/upload endpoint; each turn's hash recorded at persist (consumed by plan 10 re-hash)
 - [x] M5.9 REQ-103 (could; last in order, skip and record if time-boxed out): `POST /sessions/{sid}/turns/{tid}/flag` on bot turns, ACTIVE/OUTAGE only, exactly one marker (unique constraint, idempotent), `flag_added` audit; after CLOSED → 409
-- [ ] M5.10 REQ-073 end-to-end on the dev Moodle (4.3 and 5.2): Moodle grade, rubric and feedback byte-identical before/after a full session (plan-4 reader dump hash); the adversarial suite verdict counts come from the plan-7 eval report; service-account grade-write absence from the plan-4 setup check
+- [x] M5.10 REQ-073 end-to-end on the dev Moodle (4.3 and 5.2): Moodle grade, rubric and feedback byte-identical before/after a full session (plan-4 reader dump hash); the adversarial suite verdict counts come from the plan-7 eval report; service-account grade-write absence from the plan-4 setup check
 - [ ] M5.11 Chaos suite `tests/chaos/assess/test_lifecycle_chaos.py` (on plan 3's harness): each of the six close reasons end-to-end (finished, timed_out, service_failure, budget_exhausted, terminated_by_teacher via the plan-2 close function stub until plan 11, access_revoked) asserting by row count: hand-off rows 0, exactly 1 `transcript_generate` job, epoch bumped, old session token rejected; kill -9 worker mid-pre-flight → ELIGIBLE with snapshot/key/turn rows 0; kill -9 API mid-reply → one interrupted turn; Postgres restart mid-turn → no duplicate turn, state consistent
 - [ ] M5.12 Re-run the M1.11 burst test with all gates, limits and audit enabled; record NFR-018 commit percentiles and NFR-020 capacity refusals; set the documented K with evidence
 - [ ] M5.13 CI wiring: assess job in `ci-unit.yml` runs unit tests; integration tests (`@pytest.mark.integration`, testcontainers pg16) picked up by the package-integration glob; chaos and burst as manual/nightly workflow jobs with explicit SKIPPED/BLOCKED output; `make test` includes the unit suite (structural guard `test_suite_execution_coverage.py`)
@@ -464,6 +464,14 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     copies stay equal. The route reads the turn's role through the material function (the API
     has no SELECT on `assess_turns`). Plan 10 reads the flags for the transcript marker
     ("segnalato dallo studente"); the worker may SELECT and DELETE them.
+  - **M5.10 status: BLOCKED (environment), the test is written.**
+    `tests/integration/test_req073_live.py` (`-m moodle`) runs a full session against the live
+    4.3 and 5.2 dev sites and compares the plan-4 capture's canonical bytes before and after
+    (grade, rubric, feedback), and asserts `no_grade_write` OK for the service account. On this
+    machine (2026-11-06) it SKIPS: `BLOCKED: VEKTRA_ASSESS_MOODLE43_URL / 52_URL unset`; the
+    integration job lists it among the live modules allowed to skip. Never run against a site
+    yet: its first real run is the user's (assess-moodle-contract workflow or local dev envs).
+    The adversarial verdict counts are the plan-7 eval report's, not re-measured here.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

@@ -228,7 +228,7 @@ version.
 - [x] M1.8 `vektra_assess/api/events.py`: `EventBroker` (per-sid bounded ring, monotonic ids, evict on CLOSED), `GET /sessions/{sid}/events` SSE with `Last-Event-ID`, keep-alive comments, state polling of the session row via the plan-2 status function (1 s), `committed` / `start_rolled_back` / `closed` events
 - [x] M1.9 `POST /sessions/{sid}/turns` thin path + `TurnDriver` (student append → `run_stream` → `reply_delta`/`reply_done` → bot append with hash; `pending_reply_since` serialization; second send → 409); DEK cache per (sid, epoch), evicted on epoch bump/CLOSED/TTL
 - [x] M1.10 Test-only seeding helper `vektra-assess/tests/support/sessions.py` (seed ELIGIBLE/ACTIVE/OUTAGE/CLOSED sessions with a fake LLM) for this plan and plan 9's e2e
-- [ ] M1.11 **Early burst test** `tests/nfr/test_assess_burst.py` + `scripts/assess_burst.py` (httpx async): 40 concurrent Starts, each with a 10-file assignment submission seeded by plan 4's fixture tooling on the dev Moodle, parser sidecar (plan 5) and the target LLM (OQ-026 candidate); record per-Start mint→202→commit latency from audit timestamps, outcomes (commit / capacity refusal / rollback reason), worker RSS, and row counts (sessions, snapshots, keys, hand-off) after the run; result file under `tests/nfr/results/`; run as soon as M1.5 works, re-run at the end of M5
+- [x] M1.11 **Early burst test** `tests/nfr/test_assess_burst.py` + `scripts/assess_burst.py` (httpx async): 40 concurrent Starts, each with a 10-file assignment submission seeded by plan 4's fixture tooling on the dev Moodle, parser sidecar (plan 5) and the target LLM (OQ-026 candidate); record per-Start mint→202→commit latency from audit timestamps, outcomes (commit / capacity refusal / rollback reason), worker RSS, and row counts (sessions, snapshots, keys, hand-off) after the run; result file under `tests/nfr/results/`; run as soon as M1.5 works, re-run at the end of M5
 
 ### M2 — Gates and isolation
 - [ ] M2.1 `vektra_assess/gates.py`: pure `evaluate_start_gates(inputs) -> GateDecision(code)` for BR-006 (a)-(i), BR-007 (quiz close + grace; assignment cut-off required), BR-010, BR-014 (quiz requires-grading = 0 incl. regrade-in-progress; rubric every criterion has a level; scale; marking guide refused), REQ-091 (any Unreadable input → fallback: NOT_AVAILABLE without a teacher date; gate = max(automatic, teacher date) when readable again; never the activity close alone); fixture table test with every gate negated individually
@@ -423,6 +423,24 @@ Every acceptance check reads rows, bytes or real responses, never a status field
   - Opening message: Part A and Part B are two `opening` bot turns (1 and 2), chained on the
     snapshot hash; `seq` is 2 after commit. The `seq` claim of a session token is the session
     number N, matched against `session_no`.
+  - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
+    `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
+    API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base
+    and worker container). With anything missing or unreachable they write a BLOCKED result under
+    `tests/nfr/results/` and pytest reports SKIPPED; a result missing any of the N outcomes, its
+    model or its row counts is rejected by `validate_result`. The first run on this machine
+    (2026-11-06) is BLOCKED: no target configured (result file committed). The real run is the
+    user's (it reaches the dev Moodle and the candidate model). The logic is verified in-process
+    against fakes (`vektra-assess/tests/integration/test_session_burst_inprocess.py`: 40 Starts, K=10,
+    exactly 10 commits, 30 refused or rolled back with `capacity`, 0 rows left by the refused ones);
+    that test writes no NFR evidence.
+  - **Request for vektra-moodle (owned by the other session)**: the burst needs a seeded fixture of
+    40 students enrolled in one course, each with a graded and released 10-file submission on one
+    assignment (cut-off set, rubric or simple grading, not a team submission), added to
+    `MOODLE/docker/fixtures/fixtures.json` and written to the seed manifest as
+    `"burst": {"cmid": <cmid>, "courseid": <id>, "students": [<40 userids>], "files_per_submission": 10}`.
+    Synthetic content only (OQ-020). Until it exists the burst reports BLOCKED
+    (`burst fixture ... not seeded`).
   - The import contract "`_assembly` is private to `vektra_assess.context`" now allows indirect
     imports: `assemble_context` (the public wrapper) is how the pre-flight and the turn route build
     bundles; a direct import of `_assembly` still breaks the contract (canary test unchanged).

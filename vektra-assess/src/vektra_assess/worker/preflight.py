@@ -280,8 +280,12 @@ _ACTIVATE = text(
     "frozen_policy = CAST(:fp AS jsonb), starting_expires_at = NULL, last_activity_at = now() "
     "WHERE id = :s"
 )
+#: dated at the pre-flight's admission (database clock, before Moodle was read), never at the
+#: commit: the enrolment was observed then, and a slow capture must not make it look fresher
+#: than it is (CodeRabbit 4498466313)
 _ENROLLED = text(
-    "INSERT INTO assess_enrolment_checks (session_id, result) VALUES (:s, 'enrolled')"
+    "INSERT INTO assess_enrolment_checks (session_id, result, checked_at) "
+    "VALUES (:s, 'enrolled', to_timestamp(:observed))"
 )
 _HANDOFF = text(
     "INSERT INTO assess_session_handoff (session_id, session_state, epoch, sealed_dek, "
@@ -500,6 +504,7 @@ async def _commit(
     part_a: str,
     part_b: TurnResult,
     duration_s: int,
+    observed_at: int,
 ) -> bool:
     sid = target.session_id
     dek = envelope.new_dek()
@@ -558,7 +563,7 @@ async def _commit(
                     _HANDOFF, {"s": sid, "e": int(row.epoch), "d": sealed, "k": hkid}
                 )
                 # gate (f) has just verified the enrolment: the first freshness record (M3.7)
-                await conn.execute(_ENROLLED, {"s": sid})
+                await conn.execute(_ENROLLED, {"s": sid, "observed": observed_at})
                 await conn.execute(
                     _ATTEMPT,
                     {
@@ -675,6 +680,9 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     if admitted is None:
         return
     target, duration_s, elapsed, db = admitted
+    observed_at = (
+        db.now
+    )  # the admission's database time: no later than the enrolment read
     try:
         facts: MoodleGateFacts = await _within(
             deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)
@@ -721,7 +729,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         log.warning("assess_preflight_error", error_type=type(exc).__name__)
         raise _Rollback(Reason.INTERNAL_ERROR) from None
     committed = await _commit(
-        deps, acquire, target, captured, part_a, part_b, duration_s
+        deps, acquire, target, captured, part_a, part_b, duration_s, observed_at
     )
     if committed:
         log.info("assess_preflight_committed", session_id=str(sid))

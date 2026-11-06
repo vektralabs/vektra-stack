@@ -8,6 +8,7 @@ is opened back through ``get_session_material`` as the API role.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -648,3 +649,34 @@ async def test_an_ambiguous_commit_is_resolved_by_rereading_the_row(  # type: ig
             assert rollbacks[0][0] == 0
         else:
             await _rolled_back(pg, sid, "commit_failed")
+
+
+async def test_the_first_enrolment_check_keeps_its_observation_time(  # type: ignore[no-untyped-def]
+    pg, worker_engine
+) -> None:
+    """CodeRabbit 4498466313: the 'enrolled' row the commit writes is dated no later than the
+    pre-flight's admission (before Moodle was read), never at the commit: a slow capture
+    cannot make an old enrolment observation look fresh."""
+    await _reset(pg)
+    await activate(pg)
+    settings = default_settings()
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        inner = moodle_source(worker_engine)
+
+        class SlowGate(FakeSource):
+            async def gate_facts(self, target):  # type: ignore[no-untyped-def]
+                await asyncio.sleep(2.0)
+                return await inner.gate_facts(target)
+
+        source = SlowGate(inner=inner)
+        sid = await _start(w)
+        handler = make_preflight_handler(deps(settings, w.handoff_public, source, None))
+        await handler(job_context(worker_engine, sid))
+        age = await pg.run(
+            "super",
+            "SELECT extract(epoch FROM s.committed_at - c.checked_at) FROM assess_sessions s "
+            "JOIN assess_enrolment_checks c ON c.session_id = s.id WHERE s.id = :s",
+            {"s": sid},
+        )
+        assert float(age[0][0]) >= 1.5, age

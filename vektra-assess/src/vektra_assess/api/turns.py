@@ -13,9 +13,10 @@ marked ``interrupted`` turn when the runner was stopped) with its hash, then pub
 ``reply_done`` / ``reply_interrupted``. Plaintext lives only in memory: nothing is persisted chunk
 by chunk.
 
-Thin path (plan M1.9): a provider outage or an unexpected error ends the attempt with
-``reply_interrupted`` and leaves the student turn pending; the OUTAGE transition, the server-side
-answer of a pending turn and the reconciliation of an abandoned one are plans M4.1, M4.3 and M3.6.
+Thin path (plan M1.9): a provider outage, an unexpected error or a refused bot append ends the
+attempt with the marked bot turn "[risposta interrotta]" (``turn_markers``), which clears the
+pending marker, then ``reply_interrupted``. The OUTAGE transition, the server-side answer of a
+pending turn and the reconciliation of an abandoned one are plans M4.1, M4.3 and M3.6.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ from vektra_assess.llm.types import (
     TurnResult,
 )
 from vektra_assess.tokens import SessionClaims
+from vektra_assess.turn_markers import INTERRUPTED_REPLY
 
 log = structlog.get_logger(__name__)
 
@@ -176,6 +178,7 @@ class TurnDriver:
         self, sid: UUID, epoch: int, bundle: ContextBundle, turn: StudentTurn
     ) -> None:
         result: TurnResult | None = None
+        failure: str | None = None
         try:
             async for item in self.runner.run_stream(bundle, turn):
                 if isinstance(item, ReleasedSegment):
@@ -183,27 +186,30 @@ class TurnDriver:
                 elif isinstance(item, TurnResult):
                     result = item
         except ProviderOutageError:
-            self.broker.publish(
-                sid, "reply_interrupted", {"reason": "provider_unavailable"}
-            )
-            return
+            # the ACTIVE -> OUTAGE transition and the server-side answer are plan M4.1 / M4.3;
+            # until then the attempt ends with the marked interrupted turn
+            failure = "provider_unavailable"
         except Exception as exc:
             log.warning("assess_turn_driver_error", error_type=type(exc).__name__)
-            self.broker.publish(sid, "reply_interrupted", {"reason": "internal_error"})
-            return
-        if result is None:
-            self.broker.publish(sid, "reply_interrupted", {"reason": "internal_error"})
-            return
+            failure = "internal_error"
+        if failure is None and result is None:
+            failure = "internal_error"
         try:
-            await self._persist(sid, epoch, result)
+            if failure is not None or result is None:
+                await self._interrupted(sid, epoch, failure or "internal_error")
+            else:
+                await self._persist(sid, epoch, result)
         except Exception as exc:
             # a lost hand-off, an unseal or a database failure while persisting: reported to the
             # stream and logged by type only; the task never ends with an unread exception
             log.warning("assess_turn_persist_failed", error_type=type(exc).__name__)
             self.broker.publish(sid, "reply_interrupted", {"reason": "persist_failed"})
 
-    async def _persist(self, sid: UUID, epoch: int, result: TurnResult) -> None:
-        kind = "interrupted" if result.interrupted else "normal"
+    async def _append_bot(
+        self, sid: UUID, epoch: int, kind: str, text_: str
+    ) -> int | None:
+        """Append one bot turn under the row lock; None when the session is not ACTIVE at this
+        epoch or the function refuses (seq or chain moved, state changed)."""
         async with self.engine.begin() as conn:
             seq = (
                 await conn.execute(
@@ -215,24 +221,37 @@ class TurnDriver:
                 )
             ).scalar()
             if seq is None:
-                self.broker.publish(
-                    sid, "reply_interrupted", {"reason": "session_not_active"}
-                )
-                return
+                return None
             material = await load_material(
                 conn, sid, epoch, self.handoff_private, self.cache
             )
-            turn_no = await append_turn(
+            return await append_turn(
                 conn,
                 material,
                 epoch=epoch,
                 seq=int(seq),
                 role="bot",
                 kind=kind,
-                text_=result.text,
+                text_=text_,
             )
+
+    async def _interrupted(self, sid: UUID, epoch: int, reason: str) -> None:
+        """The marked "[risposta interrotta]" bot turn: it answers the pending student turn, so
+        ``pending_reply_since`` is cleared and the student can write again (REQ-070)."""
+        turn_no = await self._append_bot(sid, epoch, "interrupted", INTERRUPTED_REPLY)
+        data: dict[str, Any] = {"reason": reason}
+        if turn_no is not None:
+            data["turn_no"] = turn_no
+        self.broker.publish(sid, "reply_interrupted", data)
+
+    async def _persist(self, sid: UUID, epoch: int, result: TurnResult) -> None:
+        kind = "interrupted" if result.interrupted else "normal"
+        turn_no = await self._append_bot(sid, epoch, kind, result.text)
         if turn_no is None:
-            self.broker.publish(sid, "reply_interrupted", {"reason": "append_refused"})
+            # refused by assess_append_turn (state, epoch, seq or chain moved; from plan M3.3 also
+            # past deadline + grace, by the database's own clock, which is left to decide): the
+            # marked turn is attempted once, and is refused too when the database says no
+            await self._interrupted(sid, epoch, "append_refused")
             return
         self.broker.publish(
             sid,

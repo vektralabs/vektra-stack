@@ -185,46 +185,69 @@ async def test_the_reply_survives_the_client_going_away(pg, worker) -> None:  # 
     )
 
 
-async def test_outage_on_the_thin_path_interrupts_and_keeps_the_student_turn(
+async def test_an_outage_writes_the_interrupted_turn_and_the_next_turn_is_accepted(  # type: ignore[no-untyped-def]
     pg, worker
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
+    """Review fix 5: an outage (or an internal error) at turn N appends the marked bot turn
+    "[risposta interrotta]" through assess_append_turn, which clears the pending marker, so turn
+    N+1 is accepted instead of a 409 forever. The ACTIVE -> OUTAGE transition is plan M4.1."""
     from datetime import UTC, datetime
+
+    from vektra_assess.turn_markers import INTERRUPTED_REPLY
 
     now = datetime.now(UTC)
     rec = ProviderCallRecord(now, None, now, "first_token_timeout")
     runner = FakeStreamRunner(fail=ProviderOutageError(rec))
     async with world(pg, assess_runner=runner) as w:
         s = await seed_session(w, worker, "ACTIVE")
+        url = f"/api/v1/assess/sessions/{s.session_id}"
         r = await w.client.post(
-            f"/api/v1/assess/sessions/{s.session_id}/turns",
-            json={"text": "ciao"},
-            headers=bearer(s.session_token),
+            f"{url}/turns", json={"text": "ciao"}, headers=bearer(s.session_token)
         )
         assert r.status_code == 202
         await _wait_idle(w)
-        assert (
-            await n(
-                pg,
-                "SELECT count(*) FROM assess_turns WHERE session_id=:s",
-                s=s.session_id,
-            )
-            == 3
+        rows = await pg.run(
+            "super",
+            "SELECT turn_no, role, kind FROM assess_turns WHERE session_id=:s ORDER BY turn_no",
+            {"s": s.session_id},
         )
+        assert [tuple(x) for x in rows][2:] == [
+            (3, "student", "normal"),
+            (4, "bot", "interrupted"),
+        ]
         assert (
             await n(
                 pg,
-                "SELECT count(*) FROM assess_sessions WHERE id=:s AND pending_reply_since IS NOT NULL",
+                "SELECT count(*) FROM assess_sessions WHERE id=:s AND pending_reply_since IS NULL",
                 s=s.session_id,
             )
             == 1
         )
+        got = (await w.client.get(url, headers=bearer(s.session_token))).json()
+        assert got["turns"][3]["text"] == INTERRUPTED_REPLY and not got["reply_pending"]
         from vektra_assess.api.events import broker_of
 
         class R:
             app = w.app
 
-        evs = [e.type for e in broker_of(R()).after(s.session_id, 0)]  # type: ignore[arg-type]
-        assert evs == ["turn_accepted", "reply_interrupted"]
+        evs = broker_of(R()).after(s.session_id, 0)  # type: ignore[arg-type]
+        assert [e.type for e in evs] == ["turn_accepted", "reply_interrupted"]
+        assert evs[-1].data == {"reason": "provider_unavailable", "turn_no": 4}
+        # the provider is back: turn N+1 is accepted and answered
+        runner.fail = None
+        r = await w.client.post(
+            f"{url}/turns", json={"text": "riprovo"}, headers=bearer(s.session_token)
+        )
+        assert r.status_code == 202 and r.json()["turn_no"] == 5
+        await _wait_idle(w)
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_turns WHERE session_id=:s AND role='bot' AND kind='normal'",
+                s=s.session_id,
+            )
+            == 1
+        )
 
 
 @pytest.mark.parametrize("state", ["STARTING", "OUTAGE"])

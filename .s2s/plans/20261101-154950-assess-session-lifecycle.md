@@ -463,6 +463,13 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     (`-m moodle`, SKIPPED with BLOCKED here: the dev envs are not running; the integration job's
     skip guard lists it with the other live modules). "Other course" is covered as a client course
     hint: it is never trusted (the cmid is resolved inside the student's own courses).
+  - **Review fix 5 (turns)**: a provider outage, an internal error or a refused bot append now
+    ends the attempt with the marked bot turn `[risposta interrotta]` (`vektra_assess.turn_markers`,
+    kind `interrupted`) through `assess_append_turn`, which clears `pending_reply_since`, so the next
+    student turn is accepted. This is the thin form: the real ACTIVE -> OUTAGE transition (credit,
+    probe, server-side answer of the pending turn) is M4.1-M4.3, and M3.3 / M3.6 write the same
+    marker. A bot append refused by the database is left to the database (from M3.3 that includes
+    deadline + grace by the DB clock); the marked turn is then attempted once and may be refused too.
   - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
     `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
     API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base

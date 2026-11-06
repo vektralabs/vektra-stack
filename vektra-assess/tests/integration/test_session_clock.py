@@ -347,3 +347,43 @@ async def test_a_deadline_passing_after_the_lazy_close_check_serves_no_material(
         )
         assert r.status_code == 409 and err(r)["code"] == "ERR-ASSESS-009", r.text
         assert "turns" not in r.text
+
+
+async def test_a_live_stream_filters_reply_text_of_another_epoch(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (nitpick, test_session_clock.py 236-237): with the stream
+    open and the row live at the token's epoch, a delta produced under another epoch is not
+    delivered, while a same-epoch control after it is."""
+    from vektra_assess.api.events import broker_of
+
+    async with world(pg, assess_sse_timing={**TIMING, "poll_s": 0.2}) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+
+        class R:
+            app = w.app
+
+        broker = broker_of(R())  # type: ignore[arg-type]
+        stream = asyncio.create_task(
+            w.client.get(
+                f"/api/v1/assess/sessions/{s.session_id}/events",
+                headers=bearer(s.session_token),
+            )
+        )
+        await asyncio.sleep(0.3)
+        broker.publish(
+            s.session_id, "reply_delta", {"text": "CANARY-other-epoch"}, epoch=9
+        )
+        broker.publish(
+            s.session_id, "reply_delta", {"text": "CONTROL-same-epoch"}, epoch=1
+        )
+        await asyncio.sleep(
+            0.5
+        )  # the stream stays live (no close) while both are handled
+        assert not stream.done()
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET state = 'CLOSED', close_reason = 'finished' WHERE id = :s",
+            {"s": s.session_id},
+        )
+        body = (await asyncio.wait_for(stream, 10)).text
+        assert "CANARY-other-epoch" not in body
+        assert "CONTROL-same-epoch" in body

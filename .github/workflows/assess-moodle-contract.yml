@@ -111,6 +111,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # the repository carries committed results (BLOCKED runs): drop them, so the summary and
+      # the artifact can only show what THIS run wrote (a run that fails early writes nothing)
+      - name: Clear historical burst results
+        run: rm -f tests/nfr/results/assess-burst-*.json
+
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true

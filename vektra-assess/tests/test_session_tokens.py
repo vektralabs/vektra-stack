@@ -60,12 +60,11 @@ def test_session_roundtrip_and_deadline_cap() -> None:
         seq=1,
         epoch=3,
         deadline=now + timedelta(seconds=30),
-        now=now,
     )
     c = t.verify(m.token, stage="session")
     assert isinstance(c, SessionClaims)
     assert (c.sid, c.seq, c.epoch) == (SID, 1, 3)
-    assert m.ttl_s == 30 + 60  # deadline + grace, below the 900 s TTL
+    assert 30 + 60 - 1 <= m.ttl_s <= 30 + 60  # deadline + grace, below the 900 s TTL
     with pytest.raises(TokenError):
         t.mint_session(
             sub=42,
@@ -75,7 +74,6 @@ def test_session_roundtrip_and_deadline_cap() -> None:
             seq=1,
             epoch=3,
             deadline=now - timedelta(seconds=61),
-            now=now,
         )
 
 
@@ -178,3 +176,46 @@ def test_presession_ttl_over_120_refuses_startup() -> None:
         ).presession_ttl_s
         == 120
     )
+
+
+def test_session_exp_never_passes_deadline_plus_grace() -> None:
+    """CodeRabbit 4493109426: the expiry is bounded on the clock that encodes it, for any
+    sub-second deadline, so exp <= deadline + grace always holds."""
+    t = tokens(**{"VEKTRA_ASSESS_SESSION_TOKEN_TTL_S": 900})
+    for frac in (0.0, 0.1, 0.5, 0.9, 0.999):
+        deadline = datetime.now(UTC) + timedelta(seconds=20 + frac)
+        m = t.mint_session(
+            sub=1, site=SITE, cmid=2, sid=SID, seq=1, epoch=1, deadline=deadline
+        )
+        exp = jwt.decode(m.token, options={"verify_signature": False})["exp"]
+        assert exp <= deadline.timestamp() + 60, frac
+        assert m.expires_at.timestamp() <= deadline.timestamp() + 60
+
+
+def test_an_encoder_clock_ahead_of_the_minting_clock_cannot_stretch_exp(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """The encoder reads its own clock a moment later than the TTL was computed: truncation of
+    both must still keep exp <= deadline + grace (frozen clocks, deterministic)."""
+    import vektra_shared.tokens as shared_tokens
+    from vektra_assess import tokens as mod
+
+    def clock(epoch: float) -> type[datetime]:
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[no-untyped-def, override]
+                return datetime.fromtimestamp(epoch, tz=tz)
+
+        return Frozen
+
+    monkeypatch.setattr(mod, "datetime", clock(1_000_000_000.90))
+    monkeypatch.setattr(shared_tokens, "datetime", clock(1_000_000_001.05))
+    deadline = datetime.fromtimestamp(1_000_000_010.95, tz=UTC)
+    m = tokens(**{"VEKTRA_ASSESS_SESSION_TOKEN_TTL_S": 900}).mint_session(
+        sub=1, site=SITE, cmid=2, sid=SID, seq=1, epoch=1, deadline=deadline
+    )
+    exp = jwt.decode(m.token, options={"verify_signature": False, "verify_exp": False})[
+        "exp"
+    ]
+    assert exp <= deadline.timestamp() + 60
+    assert m.expires_at.timestamp() == exp

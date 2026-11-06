@@ -149,17 +149,28 @@ class AssessTokens:
             grace_s=settings.reply_grace_s,
         )
 
-    def _mint(self, claims: dict[str, object], ttl_s: int) -> Minted:
+    def _mint(
+        self, claims: dict[str, object], ttl_s: int, not_after: float | None = None
+    ) -> Minted:
+        """Encode with ``ttl_s``; with ``not_after`` (epoch seconds) the ENCODED ``exp`` is
+        checked against it and the token re-encoded one second shorter until it fits: the TTL is
+        computed on one clock reading and ``encode_jwt`` reads its own, so truncation of both
+        could otherwise push ``exp`` past the bound."""
         jti = new_jti()
-        token = encode_jwt(
-            {**claims, "jti": jti, "loginas": False},
-            key=self._ring.signing_key,
-            audience=AUDIENCE,
-            issuer=self._iss,
-            ttl=timedelta(seconds=ttl_s),
-        )
-        exp = datetime.fromtimestamp(int(datetime.now(UTC).timestamp()) + ttl_s, tz=UTC)
-        return Minted(token, jti, exp, ttl_s)
+        while True:
+            if ttl_s <= 0:
+                raise TokenError("past_deadline")
+            token = encode_jwt(
+                {**claims, "jti": jti, "loginas": False},
+                key=self._ring.signing_key,
+                audience=AUDIENCE,
+                issuer=self._iss,
+                ttl=timedelta(seconds=ttl_s),
+            )
+            exp = int(jwt.decode(token, options={"verify_signature": False})["exp"])
+            if not_after is None or exp <= not_after:
+                return Minted(token, jti, datetime.fromtimestamp(exp, tz=UTC), ttl_s)
+            ttl_s -= 1
 
     def mint_presession(self, *, sub: int, site: UUID, cmid: int) -> Minted:
         return self._mint(
@@ -177,14 +188,15 @@ class AssessTokens:
         seq: int,
         epoch: int,
         deadline: datetime | None,
-        now: datetime | None = None,
     ) -> Minted:
-        """A session-bound token. With a deadline, it never outlives deadline + grace; a session
-        already past that has nothing left to authorize and gets no token (``TokenError``)."""
+        """A session-bound token. With a deadline, ``exp`` never passes deadline + grace (on the
+        encoding clock); a session already past that has nothing left to authorize and gets no
+        token (``TokenError``)."""
         ttl = self._session_ttl
+        not_after: float | None = None
         if deadline is not None:
-            current = now or datetime.now(UTC)
-            left = int((deadline - current).total_seconds()) + self._grace
+            not_after = deadline.timestamp() + self._grace
+            left = int(not_after - datetime.now(UTC).timestamp())
             if left <= 0:
                 raise TokenError("past_deadline")
             ttl = min(ttl, left)
@@ -199,6 +211,7 @@ class AssessTokens:
                 "stage": "session",
             },
             ttl,
+            not_after,
         )
 
     @overload

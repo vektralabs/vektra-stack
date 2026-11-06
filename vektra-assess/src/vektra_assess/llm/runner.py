@@ -422,6 +422,8 @@ class DiscussionTurnRunner:
                         buf += chunk.content
                         done, buf = split(buf)
                         for sentence in done:
+                            if stop is not None and stop.is_set():
+                                break  # no sentence after the stop touches the gate
                             for unit in gate.feed(sentence):
                                 if stop is not None and stop.is_set():
                                     break

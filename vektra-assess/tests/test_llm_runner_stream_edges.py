@@ -267,3 +267,43 @@ async def test_a_contest_point_in_a_refused_sentence_is_not_recorded() -> None:
 
     result, _ = await _contest_run(_CONTEST, Refuse())
     assert result.contest_entries == ()
+
+
+async def test_a_marker_line_on_its_own_is_recorded() -> None:
+    result, _ = await _contest_run(
+        'Capisco la tua obiezione. [[PUNTO_CONTESTATO label="Domanda 2" status="proposed"]]'
+    )
+    assert [e.label for e in result.contest_entries] == ["Domanda 2"]
+
+
+async def test_a_marker_line_past_the_contextual_sentence_is_not_recorded() -> None:
+    result, _ = await _contest_run(
+        '[[CLASS R-SOL]] Capisco. Altro. [[PUNTO_CONTESTATO label="Domanda 2" status="proposed"]]'
+    )
+    assert result.contest_entries == ()
+
+
+async def test_stop_keeps_later_sentences_out_of_the_gate() -> None:
+    llm = TimedLLM([(0, "Uno. [[CLASS R-SOL]] Due. Tre. "), (5.0, "mai")])
+    r, audit = _timed_runner(llm, timeout=10)
+    stop = asyncio.Event()
+    items = []
+    async for item in r.run_stream(_visible_bundle(), StudentTurn("ciao", 0), stop):
+        items.append(item)
+        if isinstance(item, ReleasedSegment):
+            stop.set()
+    result = items[-1]
+    assert isinstance(result, TurnResult) and result.text == "Uno."
+    assert not audit.rows  # the late class marker was never fed, so never audited
+
+
+def test_spelled_out_values_are_replaced_in_a_turn() -> None:
+    from vektra_assess.llm.postcheck import values
+
+    for sentence in (
+        "Nella [Domanda 2] hai preso quattro punti.",
+        "Your grade is seven.",
+    ):
+        out = values.check(sentence, {})
+        assert out.replaced == 1 and values.REPLACEMENT in out.text, sentence
+    assert values.check("Hai un punto di vista valido.", {}).replaced == 0

@@ -61,7 +61,8 @@ _LABEL = re.compile(
     r"\b(?:Domanda\s+(\w+)|Criterio\s+(\d+)|(Valutazione complessiva))\b", re.IGNORECASE
 )
 
-# spelled-out values, for Part B only ("quattro punti", "Your grade is seven"). Articles that are
+# spelled-out values ("quattro punti", "Your grade is seven"): never compared with the snapshot,
+# always replaced in a turn and a violation in Part B. Articles that are
 # also numbers ("un punto", "a point", "one point") are not counted before a key
 _WORDS_IT = (
     "zero due tre quattro cinque sei sette otto nove dieci undici dodici tredici quattordici "
@@ -76,11 +77,11 @@ _SPELLED = "|".join(
     sorted((_WORDS_IT + " " + _WORDS_EN).split(), key=len, reverse=True)
 )
 _SPELLED_AFTER = re.compile(
-    rf"\b(?:{_KEY})\s+(?:{_CONNECT})\s*:?\s*(?:{_SPELLED}|uno|one)\b"
+    rf"\b(?:{_KEY})\s+(?:{_CONNECT})\s*:?\s*(?P<num>{_SPELLED}|uno|one)\b"
     r"(?!\s+(?:of|dei|degli|delle|di|del|della)\b)",
     re.IGNORECASE,
 )
-_SPELLED_BEFORE = re.compile(rf"\b(?:{_SPELLED})\s+(?:{_KEY})\b", re.IGNORECASE)
+_SPELLED_BEFORE = re.compile(rf"\b(?P<num>{_SPELLED})\s+(?:{_KEY})\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,8 @@ def check(
             continue
         if bad_single(s, m.group(1), m.group("key"), sentence[:s]):
             spans.append((s, e))
+    for rx in (_SPELLED_AFTER, _SPELLED_BEFORE):
+        spans.extend(m.span("num") for m in rx.finditer(sentence))
     if not spans:
         return ValueCheck(sentence, 0)
     merged: list[tuple[int, int]] = []

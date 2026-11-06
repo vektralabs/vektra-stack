@@ -118,23 +118,23 @@ class SentenceGate:
                 self._mark(MARK_MARKER, 0)
         self._first = False
         text = m.text
+        contest = list(m.contest)
+        if self._contextual_left == 0:
+            # past the one contextual sentence of a behaviour-class reply: never released
+            self._drop_contest(contest)
+            return out
         if not text:
-            self.contest.extend(
-                m.contest
-            )  # a marker on its own line: nothing to release
+            # a marker on its own line is the prompt's way to record a point (system.j2): there is
+            # no sentence to release, the marker itself is never shown
+            self.contest.extend(contest)
             return out
         if self._contextual_left is not None:
-            if self._contextual_left == 0:
-                self._drop_contest(m.contest)
-                return (
-                    out  # past the one contextual sentence of a behaviour-class reply
-                )
             self._contextual_left -= 1
         category = lexicon.scan(text)
         if category is not None:
             self.audit.append(("grade_claim_replaced", {"reason_code": category}))
             self._mark(MARK_LEXICON)
-            self._drop_contest(m.contest)
+            self._drop_contest(contest)
             out.append(Unit(self.br009, True, system=True))
             return out
         v = values.check(text, self._values, self.shipped.missing["value_unverified"])
@@ -150,9 +150,9 @@ class SentenceGate:
             self._mark(MARK_QUOTE, q.replaced)
         if q.text.strip():
             marked = bool(v.replaced or c.removed or q.replaced)
-            out.append(Unit(q.text, marked, contest=tuple(m.contest)))
+            out.append(Unit(q.text, marked, contest=tuple(contest)))
         else:
-            self._drop_contest(m.contest)
+            self._drop_contest(contest)
         return out
 
     def _drop_contest(self, entries: Sequence[ContestEntry]) -> None:

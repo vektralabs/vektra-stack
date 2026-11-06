@@ -478,8 +478,8 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     max(2 × budget, budget + 30 s); overrides with budget > T − 5 s or lease < budget + 30 s refuse
     worker startup. A cancellation at the budget (or at shutdown) runs the rollback (shielded,
     reason `start_timeout`) instead of waiting for the reaper. The worker's environment in
-    `docker-compose.assess.yml` does not set `VEKTRA_ASSESS_START_T_S`: a deployment that changes T
-    sets it on both processes.
+    `docker-compose.assess.yml` passes `VEKTRA_ASSESS_START_T_S` (and admission K, render freshness
+    and the model parameters) from `.env`, so both processes use the same values.
   - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
     `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
     API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base

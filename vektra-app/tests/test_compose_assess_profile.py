@@ -242,6 +242,24 @@ def test_the_worker_gets_the_discussion_model_settings_and_nothing_of_the_rag(
         assert key not in env, key
 
 
+def test_the_worker_gets_the_lifecycle_settings_the_api_reads(
+    rendered: dict,  # type: ignore[type-arg]
+) -> None:
+    """CodeRabbit 4493109287: the pre-flight must use the same T, admission K, render freshness
+    and model parameters as the API's Start (the worker has no env_file)."""
+    env = rendered["services"]["vektra-assess-worker"]["environment"]
+    for key in (
+        "VEKTRA_ASSESS_START_T_S",
+        "VEKTRA_ASSESS_ADMISSION_K",
+        "VEKTRA_ASSESS_RENDER_FRESH_S",
+        "VEKTRA_ASSESS_LLM_TEMPERATURE",
+        "VEKTRA_ASSESS_LLM_MAX_TOKENS",
+        "VEKTRA_ASSESS_LLM_CONTEXT_WINDOW",
+        "VEKTRA_ASSESS_OUTAGE_TIMEOUT_S",
+    ):
+        assert env.get(key), key
+
+
 def test_the_dev_file_only_opts_the_worker_in_and_pins_the_environment() -> None:
     dev = _render(
         "docker-compose.yml",

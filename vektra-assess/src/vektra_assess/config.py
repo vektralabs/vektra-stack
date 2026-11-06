@@ -460,14 +460,36 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_RETRY_RPM",
         description="POST /sessions/{sid}/retry calls per minute per session (REQ-086).",
     )
-    outage_min_credit_s: int = Field(
+    outage_g_s: int = Field(
         20,
         ge=0,
         le=300,
-        alias="VEKTRA_ASSESS_OUTAGE_MIN_CREDIT_S",
+        alias="VEKTRA_ASSESS_OUTAGE_G_S",
         description=(
             "REQ-086 G: an outage shorter than this earns no time back; a longer one is credited "
             "in full, the cumulative credit capped at C = min(15 min, half the duration)."
+        ),
+    )
+    messages_per_min: int = Field(
+        4,
+        ge=1,
+        le=60,
+        alias="VEKTRA_ASSESS_MESSAGES_PER_MIN",
+        description=(
+            "Student messages per minute per session (REQ-083, M5.1); above it 429 'Attendi "
+            "qualche secondo', before any model call. One reply at a time already holds a real "
+            "student well under it."
+        ),
+    )
+    session_token_budget: int = Field(
+        500_000,
+        ge=10_000,
+        le=10_000_000,
+        alias="VEKTRA_ASSESS_SESSION_TOKEN_BUDGET",
+        description=(
+            "Estimated tokens (prompt + completion, TurnUsage) one session may use (REQ-083, "
+            "M5.1): budget_warning at 80%, the session closes budget_exhausted at 100%. Outage "
+            "retries and earlier sessions do not count."
         ),
     )
     max_message_chars: int = Field(
@@ -477,7 +499,8 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_MAX_MESSAGE_CHARS",
         description=(
             "Longest student message accepted (REQ-083); longer or blank is a 400 before any model "
-            "call. PROVISIONAL default: plan M5.1 sizes it on the reference session."
+            "call. Sized in M5.1: about 25x the longest eval-set question (76 chars), room for a "
+            "multi-paragraph argument, about 570 tokens (well inside the prompt budget)."
         ),
     )
     privacy_allow_unset: bool = Field(

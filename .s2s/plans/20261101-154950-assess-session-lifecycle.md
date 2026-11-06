@@ -259,7 +259,7 @@ version.
 - [x] M4.6 Outage test matrix with a fault-injecting fake provider: 3-min outage → +3 min ±5 s; 15 s → +0; slow 40 s success → +0; over-length / rate / content-filter → +0; > C → service_failure + intervals recorded; browser killed at outage start → ACTIVE (answered) or CLOSED(service_failure) within C; recovery with client absent → OUTAGE ends within the probe interval and the session later closes `timed_out`; sweeper never closes OUTAGE; refusal turns never set OUTAGE
 
 ### M5 — Limits, audit, verification, chaos
-- [ ] M5.1 Size REQ-083 defaults on a scripted reference 120-min session (turn count/length distribution from the eval set) against the plan-7 `TurnUsage` estimates; document in `docs/reference/configuration.md`; settings `VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, `VEKTRA_ASSESS_MESSAGES_PER_MIN`, `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET`
+- [x] M5.1 Size REQ-083 defaults on a scripted reference 120-min session (turn count/length distribution from the eval set) against the plan-7 `TurnUsage` estimates; document in `docs/reference/configuration.md`; settings `VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, `VEKTRA_ASSESS_MESSAGES_PER_MIN`, `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET`
 - [ ] M5.2 Pre-LLM rejections (over-length → 0 LLM calls on the recording provider; rate-limited → "Attendi qualche secondo"; deadline +0 asserted); budget warning at 80%, `budget_exhausted` close + exactly one transcript job
 - [ ] M5.3 Per-token rate limiters for `/state`, `/turns`, `/retry`, `/flag` (assess-local `RateLimiter` instances, Hashable keys from plan 1); assert `app.state.rate_limiter` still unset (dormant global per-key RPM not armed)
 - [ ] M5.4 Start cap (5/h per student × activity) and 3-consecutive-rollback rule ("Problema tecnico persistente" code; teacher + operator notification jobs); per-site Start breaker (worker-written state, API fast refusal, half-open after cooldown, audited `start_breaker_open/close`)
@@ -450,6 +450,12 @@ Every acceptance check reads rows, bytes or real responses, never a status field
   - Close message codes: the `closed` event carries `message_code` (`closed_<reason>`;
     `closed_service_failure` is REQ-086's "Sessione interrotta per un problema tecnico..."). The
     plugin renders the text.
+  - **Limits (M5.1)**: sized on a scripted reference session (`tests/test_limits_sizing.py`,
+    rationale in `docs/reference/configuration.md`): `MAX_MESSAGE_CHARS` 2000 (no longer
+    provisional), `MESSAGES_PER_MIN` 4, `SESSION_TOKEN_BUDGET` 500,000 (reference 120-min session
+    ~373k tokens). G is `VEKTRA_ASSESS_OUTAGE_G_S` (the M5.14 name). C's 15-minute maximum stays a
+    constant (`timing.OUTAGE_CAP_MAX_S`, mirrored in revision 0026's functions), not a setting:
+    REQ-086 fixes it and an uncapped variant is not allowed.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

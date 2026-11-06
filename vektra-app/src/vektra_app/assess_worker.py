@@ -327,7 +327,7 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
         await outage_tick(
             engine.connect,
             probe if settings.llm_model else None,
-            min_credit_s=settings.outage_min_credit_s,
+            min_credit_s=settings.outage_g_s,
         )
 
     return {

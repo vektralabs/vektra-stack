@@ -9,7 +9,7 @@ Every 5-10 s (the ``outage_probe`` tick), and only while at least one session is
    deployment (OQ-032), so one probe answers for every OUTAGE session. litellm's ``health_check``
    is NOT used: it makes a full, paid completion;
 3. on success every OUTAGE session ends through ``assess_end_outage``: the interval ends now, the
-   credit is its length when at least G (``VEKTRA_ASSESS_OUTAGE_MIN_CREDIT_S``), capped so the
+   credit is its length when at least G (``VEKTRA_ASSESS_OUTAGE_G_S``), capped so the
    cumulative credit stays within C, the deadline moves by the one formula, ``assess_outage_end``
    is audited, and the session is ACTIVE again. The API's ``PendingTurnDriver`` then answers the
    pending turn without a client.

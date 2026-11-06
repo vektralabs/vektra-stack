@@ -7,7 +7,9 @@ FAIL exit non-zero, so a missing model, judge, calibration or dataset is never r
 
 Environment: the ``VEKTRA_ASSESS_LLM_*`` settings of the discussion model,
 ``VEKTRA_ASSESS_PROVIDER_LOCALITY``, and ``VEKTRA_ASSESS_JUDGE_MODEL`` (+ optional
-``VEKTRA_ASSESS_JUDGE_API_BASE``) for the judge.
+``VEKTRA_ASSESS_JUDGE_API_BASE`` and ``VEKTRA_ASSESS_JUDGE_LOCALITY``, ``cloud`` by default) for
+the judge. A non-synthetic dataset is refused before any request unless BOTH the discussion model
+and the judge are on-prem: the judge reads every delivered reply with its context.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import argparse
 import asyncio
 import os
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -51,60 +54,141 @@ async def _reachable(llm: LLMProvider) -> bool:
         return False
 
 
+def _label_rows(
+    labels: dict[str, dict[str, Any]] | None,
+    seeded: Sequence[dict[str, Any]],
+    fixtures: dict[str, A.Fixture],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Well-formed human labels as judge inputs, plus why any other label blocks the run."""
+    seeded_reply = {r["id"]: r["reply"] for r in seeded}
+    rows, blocks = [], []
+    for i, row in sorted((labels or {}).items()):
+        if J.label_problems({i: row}):
+            continue  # J.calibrate blocks on these
+        if row["fixture"] not in fixtures:
+            blocks.append(f"human_label[{i}] names unknown fixture {row['fixture']!r}")
+        elif i in seeded_reply and seeded_reply[i] != row["reply"]:
+            blocks.append(
+                f"human_label[{i}] describes a different reply than seeded[{i}]"
+            )
+        else:
+            rows.append({"id": i, **row})
+    return rows, blocks
+
+
+def _context(fixtures: dict[str, A.Fixture], fixture_id: str) -> str:
+    return bundle_to_model_payload(fixtures[fixture_id].bundle)[0].content
+
+
+def _shortfall(counts: dict[str, int]) -> list[str]:
+    return [
+        f"dataset {name} under the NFR-022 minimum ({minimum}): {counts.get(name, 0)} cases"
+        for name, minimum in MINIMUMS.items()
+        if counts.get(name, 0) < minimum
+    ]
+
+
+def check_judge_locality(manifest: dict[str, Any], judge_locality: str) -> None:
+    """The judge reads every delivered reply: real records need an on-prem judge too (NFR-022)."""
+    basis = manifest.get("data_basis")
+    if basis != "synthetic" and judge_locality != "onprem":
+        raise A.DataBasisRefused(
+            f"data_basis={basis!r} with judge locality {judge_locality!r}: refused before any "
+            "request; real records may only reach an on-prem judge (NFR-022)"
+        )
+
+
+def determinism_sample(items: Sequence[A.Item], n: int) -> list[A.Item]:
+    """Turns round-robin across every probe category (each category at least once)."""
+    by_cat: dict[str, list[A.Item]] = {}
+    for i in items:
+        if i.kind == "turn":
+            by_cat.setdefault(i.category, []).append(i)
+    out: list[A.Item] = []
+    queues = [list(v) for _, v in sorted(by_cat.items())]
+    while queues and (len(out) < n or len(out) < len(by_cat)):
+        for q in queues:
+            if q and (len(out) < n or len(out) < len(by_cat)):
+                out.append(q.pop(0))
+        queues = [q for q in queues if q]
+    return out
+
+
 async def evaluate(
     settings: VektraAssessSettings,
     *,
     llm: LLMProvider | None = None,
     judge_llm: LLMProvider | None = None,
     judge_model: str | None = None,
+    judge_locality: str = "cloud",
     root: Path = A.ROOT,
     determinism_items: int = 30,
 ) -> tuple[R.Report, list[str]]:
     manifest = A.load_manifest(root)
     A.check_data_basis(manifest, settings)  # raises before any request
+    if judge_llm is not None:
+        check_judge_locality(manifest, judge_locality)  # raises before any request
     blocked: list[str] = []
-    for name, minimum in MINIMUMS.items():
-        if manifest.get("sizes", {}).get(name, 0) < minimum:
-            blocked.append(f"dataset {name} under the NFR-022 minimum ({minimum})")
+    set_of: dict[str, str] = {}
+    items: list[A.Item] = []
+    for p in sorted((root / "probes").glob("*.jsonl")):
+        for i in A.load_items(p):
+            set_of[i.id] = p.stem
+            items.append(i)
+    loaded = dict(Counter(set_of[i.id] for i in items))
     runner = A.build_runner(settings, **({"llm": llm} if llm else {}))
     if not await _reachable(runner._llm):
+        blocked += _shortfall(loaded)
         blocked.append(f"discussion model {settings.llm_model} unreachable")
-        report = _empty(settings, runner.prompt_version, manifest, blocked)
+        report = _empty(settings, runner.prompt_version, loaded, manifest, blocked)
         return report.finalize(), []
     fixtures = A.load_fixtures(root)
-    items = [
-        i for p in sorted((root / "probes").glob("*.jsonl")) for i in A.load_items(p)
-    ]
     delivered = [await A.run_item(runner, fixtures[i.fixture], i) for i in items]
     scored = [S.score(d, fixtures[d.item.fixture]) for d in delivered]
+    sizes = dict(Counter(set_of[s.id] for s in scored))  # what was actually scored
+    blocked += _shortfall(sizes)
 
     judged: dict[str, dict[str, bool]] = {}
+    cal_judged: dict[str, dict[str, bool]] = {}
+    labels = J.load_human_labels(root / "calibration" / "human_labels.jsonl")
+    seeded = J.load_seeded(root / "calibration" / "seeded.jsonl")
     if judge_llm is not None and judge_model and await _reachable(judge_llm):
-        for d in delivered:
-            ctx = bundle_to_model_payload(fixtures[d.item.fixture].bundle)[0].content
-            v = await J.judge(
-                judge_llm, judge_model, d.item.id, ctx, d.item.text, d.text
-            )
-            judged[d.item.id] = dict(v.violations)
-        for row in J.load_seeded(root / "calibration" / "seeded.jsonl"):
-            ctx = bundle_to_model_payload(fixtures[row["fixture"]].bundle)[0].content
-            v = await J.judge(
-                judge_llm, judge_model, row["id"], ctx, row["question"], row["reply"]
-            )
-            judged[row["id"]] = dict(v.violations)
+        try:
+            for d in delivered:
+                ctx = _context(fixtures, d.item.fixture)
+                v = await J.judge(
+                    judge_llm, judge_model, d.item.id, ctx, d.item.text, d.text
+                )
+                judged[d.item.id] = dict(v.violations)
+            # calibration: the judge on the FIXED replies the seeded rows and the human labels
+            # describe, never on this run's outputs (a label is bound to its own reply)
+            label_rows, label_blocks = _label_rows(labels, seeded, fixtures)
+            blocked += label_blocks
+            for row in [*seeded, *label_rows]:
+                ctx = _context(fixtures, row["fixture"])
+                v = await J.judge(
+                    judge_llm,
+                    judge_model,
+                    row["id"],
+                    ctx,
+                    row["question"],
+                    row["reply"],
+                )
+                cal_judged[row["id"]] = dict(v.violations)
+        except Exception as e:  # a judge failure is a verdict on the run, not an abort
+            blocked.append(f"judge failed: {type(e).__name__}")
+            judged, cal_judged = {}, {}
     else:
         blocked.append("judge model unset or unreachable")
-    cal = J.calibrate(
-        judged,
-        J.load_human_labels(root / "calibration" / "human_labels.jsonl"),
-        J.load_seeded(root / "calibration" / "seeded.jsonl"),
-    )
+    cal = J.calibrate(cal_judged, labels, seeded)
     judged_hard = {
         k: sum(bool(judged.get(d.item.id, {}).get(k)) for d in delivered)
         for k in J.JUDGED_HARD
     }
-    det_items = [i for i in items if i.kind == "turn"][:determinism_items]
+    det_items = determinism_sample(items, determinism_items)
     det = D.measure(await D.rerun(runner, fixtures, det_items, n=3), fixtures)
+    part_b_items = [i for i in items if i.kind == "part_b"][:determinism_items]
+    det_b = D.measure(await D.rerun(runner, fixtures, part_b_items, n=3), fixtures)
     rates = _rates(delivered, judged)
     report = R.Report(
         provider=(settings.llm_model or "").split("/")[0],
@@ -113,7 +197,7 @@ async def evaluate(
         judge_model=judge_model,
         judge_prompt_version=J.JUDGE_PROMPT_VERSION,
         data_basis=manifest.get("data_basis", ""),
-        dataset_sizes=manifest.get("sizes", {}),
+        dataset_sizes=sizes,
         hard=S.tally(scored),
         judged_hard=judged_hard,
         rates=rates,
@@ -122,8 +206,14 @@ async def evaluate(
             "reasons": cal.reasons,
             "kappa": cal.kappa,
             "seeded_recall": cal.seeded_recall,
+            "seeded_counts": cal.seeded_counts,
         },
-        determinism={**asdict(det), "passed": det.passed},
+        determinism={
+            **asdict(det),
+            "passed": det.passed,
+            "categories": sorted({i.category for i in det_items}),
+            "part_b": {**asdict(det_b), "passed": det_b.passed},
+        },
         blocked_reasons=blocked,
     ).finalize()
     flagged = [
@@ -153,13 +243,14 @@ def _rates(
 def _empty(
     settings: VektraAssessSettings,
     pv: str,
+    sizes: dict[str, int],
     manifest: dict[str, Any],
     blocked: list[str],
 ) -> R.Report:
     return R.Report(
         provider=(settings.llm_model or "").split("/")[0], model=settings.llm_model or "",
         prompt_version=pv, judge_model=None, judge_prompt_version=J.JUDGE_PROMPT_VERSION,
-        data_basis=manifest.get("data_basis", ""), dataset_sizes=manifest.get("sizes", {}),
+        data_basis=manifest.get("data_basis", ""), dataset_sizes=sizes,
         hard={k: 0 for k in S.HARD}, judged_hard={}, rates={},
         calibration={"status": "BLOCKED", "reasons": ["not run"]}, determinism=None,
         blocked_reasons=blocked,
@@ -188,7 +279,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = VektraAssessSettings()
     judge_llm, judge_model = _judge_llm()
     report, review = asyncio.run(
-        evaluate(settings, judge_llm=judge_llm, judge_model=judge_model)
+        evaluate(
+            settings,
+            judge_llm=judge_llm,
+            judge_model=judge_model,
+            judge_locality=os.environ.get("VEKTRA_ASSESS_JUDGE_LOCALITY", "cloud"),
+        )
     )
     path = R.write(report, review, args.out)
     print(f"{report.status}: {path} sha256={report.report_sha256}")

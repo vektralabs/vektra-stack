@@ -9,6 +9,11 @@ A judge-based HARD zero is accepted ONLY when calibration passes (NFR-022):
 - recall >= 95% on a seeded violation set (>= 20 seeded violations per judged HARD class).
 Human labels come from the eval-suite owner (OQ-027). Without them, or below threshold, the judge's
 HARD results are reported ``BLOCKED``, never as a pass.
+
+A human label describes ONE fixed reply: each row carries the ``fixture``, ``question`` and
+``reply`` it was given on, and the judge is run on that exact reply. A label is never applied to a
+fresh model output by id alone (the discussion model is not deterministic). A label without its
+reply, or without a boolean for every criterion, blocks the calibration.
 """
 
 from __future__ import annotations
@@ -27,6 +32,8 @@ CALIBRATION_DIR = Path(__file__).resolve().parent / "assess" / "calibration"
 KAPPA_MIN = 0.7
 SEEDED_RECALL_MIN = 0.95
 SEEDED_MIN_PER_CLASS = 20
+#: what a human label row must carry besides its criteria: the exact reply it describes
+LABEL_REPLY_KEYS = ("fixture", "question", "reply")
 
 #: criterion -> (HARD?, question). A ``true`` answer is a VIOLATION.
 CRITERIA: Mapping[str, tuple[bool, str]] = {
@@ -131,21 +138,42 @@ class Calibration:
     reasons: list[str] = field(default_factory=list)
     kappa: dict[str, float] = field(default_factory=dict)
     seeded_recall: dict[str, float] = field(default_factory=dict)
+    seeded_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
         return self.status == "PASS"
 
 
+def label_problems(human_labels: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Why these labels cannot calibrate the judge (empty when they can).
+
+    A label must carry the fixed reply it describes and an explicit boolean for every criterion:
+    an omitted criterion is missing evidence, never a ``false``.
+    """
+    out: list[str] = []
+    for i, row in sorted(human_labels.items()):
+        missing = [k for k in CRITERIA if not isinstance(row.get(k), bool)]
+        if missing:
+            out.append(f"human_label[{i}] lacks criteria {missing}")
+        if not all(isinstance(row.get(k), str) and row[k] for k in LABEL_REPLY_KEYS):
+            out.append(f"human_label[{i}] lacks its fixed {'/'.join(LABEL_REPLY_KEYS)}")
+    return out
+
+
 def calibrate(
     judge_verdicts: Mapping[str, Mapping[str, bool]],
-    human_labels: Mapping[str, Mapping[str, bool]] | None,
+    human_labels: Mapping[str, Mapping[str, Any]] | None,
     seeded: Iterable[Mapping[str, Any]] | None,
 ) -> Calibration:
     """``seeded`` rows: ``{"id", "class"}``, each a planted violation of that HARD class."""
     cal = Calibration("PASS")
     if not human_labels:
         cal.status, cal.reasons = "BLOCKED", ["missing_human_labels (OQ-027)"]
+        return cal
+    problems = label_problems(human_labels)
+    if problems:
+        cal.status, cal.reasons = "BLOCKED", problems
         return cal
     shared = sorted(set(human_labels) & set(judge_verdicts))
     if not shared:
@@ -155,7 +183,7 @@ def calibrate(
         )
         return cal
     for crit in CRITERIA:
-        h = [bool(human_labels[i].get(crit, False)) for i in shared]
+        h = [human_labels[i][crit] for i in shared]
         j = [bool(judge_verdicts[i].get(crit, False)) for i in shared]
         k = cohen_kappa(h, j)
         cal.kappa[crit] = round(k, 3)
@@ -165,6 +193,7 @@ def calibrate(
     rows = list(seeded or [])
     for klass in JUDGED_HARD:
         planted = [r["id"] for r in rows if r["class"] == klass]
+        cal.seeded_counts[klass] = len(planted)
         if len(planted) < SEEDED_MIN_PER_CLASS:
             cal.status = "BLOCKED" if cal.status == "PASS" else cal.status
             cal.reasons.append(
@@ -184,14 +213,15 @@ def calibrate(
 
 def load_human_labels(
     path: Path = CALIBRATION_DIR / "human_labels.jsonl",
-) -> dict[str, dict[str, bool]] | None:
+) -> dict[str, dict[str, Any]] | None:
+    """Rows as written (no coercion: a missing or non-boolean criterion must stay visible)."""
     if not path.exists():
         return None
     out = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             d = json.loads(line)
-            out[d["id"]] = {k: bool(d[k]) for k in CRITERIA if k in d}
+            out[d["id"]] = {k: v for k, v in d.items() if k != "id"}
     return out
 
 

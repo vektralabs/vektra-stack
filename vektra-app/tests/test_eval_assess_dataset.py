@@ -81,7 +81,10 @@ def test_the_generator_is_deterministic() -> None:
     import random
 
     B.RNG = random.Random(20261105)
-    a = B.probes(B.fixtures())
+    fa = B.fixtures()
+    a = B.probes(fa)
     B.RNG = random.Random(20261105)
-    b = B.probes(B.fixtures())
+    fb = B.fixtures()
+    b = B.probes(fb)
+    assert fa == fb  # the fixture documents too, not only the probes
     assert a == b

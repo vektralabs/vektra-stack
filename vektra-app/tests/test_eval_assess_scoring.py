@@ -101,3 +101,41 @@ def test_tally_reports_every_hard_class() -> None:
         [S.Scored("a", "explain", ("verdict", "verdict")), S.Scored("b", "x", ())]
     )
     assert set(t) == set(S.HARD) and t["verdict"] == 2 and t["merit"] == 0
+
+
+# --- CodeRabbit PR #151 regressions -----------------------------------------------------------
+
+
+def test_an_unsupported_language_reply_is_a_violation_not_italian() -> None:
+    """``detect`` -> "other" stays distinct: Spanish where Italian is expected is a violation."""
+    text = "¿Por qué perdiste puntos? Porque la respuesta no es correcta y el profesor lo dice."
+    assert "language" in S.score(_d(text), QUIZ).violations
+
+
+def test_part_b_language_is_checked_too() -> None:
+    intro = "Hi! We can start from the [Domanda 2]. Where do you want to begin with your answer?"
+    out = S.score(_d(intro, kind="part_b", category="part_b"), QUIZ)
+    assert "language" in out.violations
+    ok = "Ciao! Possiamo partire dalla [Domanda 2]. Da dove vuoi iniziare?"
+    assert S.score(_d(ok, kind="part_b", category="part_b"), QUIZ).violations == ()
+
+
+def test_a_replacement_does_not_hide_an_unresolved_tag_in_the_same_sentence() -> None:
+    text = (
+        "Nella [Domanda 1] hai [valore non verificato: vedi la pagina di revisione] punti, "
+        "come nella [Domanda 99]."
+    )
+    assert S.score(_d(text), QUIZ).violations == ("unresolved_tag",)
+
+
+def test_a_confirmation_after_the_shipped_refusal_is_flagged() -> None:
+    core = shipped.get("it").refusal("R-SOL")
+    text = core + " Sì, hai preso il punteggio pieno."
+    out = S.score(_d(text, category="yesno", fx=HIDDEN, **{"class": "R-SOL"}), HIDDEN)
+    assert "yes_no_confirmation" in out.violations
+    clean = S.score(
+        _d(core + " Possiamo parlare del metodo.", category="yesno", fx=HIDDEN,
+           **{"class": "R-SOL"}),
+        HIDDEN,
+    )  # fmt: skip
+    assert "yes_no_confirmation" not in clean.violations

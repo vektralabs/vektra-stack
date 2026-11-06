@@ -16,6 +16,12 @@ import assess_judge as J  # noqa: E402
 from vektra_shared.testing_recorders import RecordingLLMProvider  # noqa: E402
 
 CLEAN = {k: False for k in J.CRITERIA}
+#: the fixed reply a human label describes (J.LABEL_REPLY_KEYS)
+REPLY = {"fixture": "quiz-math-4.3-0", "question": "q", "reply": "r"}
+
+
+def _human(n: int = 20) -> dict[str, dict]:
+    return {f"h{i}": {**REPLY, **CLEAN, "tone": i % 2 == 0} for i in range(n)}
 
 
 def test_kappa_values() -> None:
@@ -53,8 +59,8 @@ def test_calibration_is_blocked_without_human_labels() -> None:
 
 
 def test_calibration_passes_on_agreement_and_full_seeded_recall() -> None:
-    human = {f"h{i}": {**CLEAN, "tone": i % 2 == 0} for i in range(20)}
-    verdicts = dict(human)
+    human = _human()
+    verdicts = {k: {c: v[c] for c in J.CRITERIA} for k, v in human.items()}
     for r in _seeded():
         verdicts[r["id"]] = {**CLEAN, r["class"]: True}
     cal = J.calibrate(verdicts, human, _seeded())
@@ -63,14 +69,14 @@ def test_calibration_passes_on_agreement_and_full_seeded_recall() -> None:
 
 
 def test_calibration_fails_below_kappa_or_recall() -> None:
-    human = {f"h{i}": {**CLEAN, "tone": i % 2 == 0} for i in range(20)}
-    disagree = {k: {**v, "tone": not v["tone"]} for k, v in human.items()}
+    human = _human()
+    disagree = {k: {**CLEAN, "tone": not v["tone"]} for k, v in human.items()}
     seeded = _seeded()
     for r in seeded:
         disagree[r["id"]] = {**CLEAN, r["class"]: True}
     cal = J.calibrate(disagree, human, seeded)
     assert cal.status == "FAIL" and any("kappa[tone]" in r for r in cal.reasons)
-    missed = dict(human)
+    missed = {k: {c: v[c] for c in J.CRITERIA} for k, v in human.items()}
     for r in seeded:
         missed[r["id"]] = CLEAN  # the judge catches none of the planted violations
     cal = J.calibrate(missed, human, seeded)
@@ -78,7 +84,7 @@ def test_calibration_fails_below_kappa_or_recall() -> None:
 
 
 def test_too_few_seeded_violations_block_the_calibration() -> None:
-    human = {"h": CLEAN}
+    human = {"h": {**REPLY, **CLEAN}}
     cal = J.calibrate({"h": CLEAN}, human, _seeded(5))
     assert cal.status == "BLOCKED"
 
@@ -87,6 +93,38 @@ def test_the_committed_seeded_set_meets_the_minimum() -> None:
     rows = J.load_seeded()
     for k in J.JUDGED_HARD:
         assert sum(r["class"] == k for r in rows) >= J.SEEDED_MIN_PER_CLASS
-    assert (
-        J.load_human_labels() is None
-    )  # human labels are the owner's (OQ-027): none yet
+
+
+def test_a_label_missing_a_criterion_blocks_instead_of_reading_false() -> None:
+    """CodeRabbit PR #151: an omitted criterion is missing evidence, never a ``false``."""
+    human = _human()
+    del human["h3"]["teacher_intent"]
+    verdicts = {k: dict(CLEAN) for k in human}
+    for r in _seeded():
+        verdicts[r["id"]] = {**CLEAN, r["class"]: True}
+    cal = J.calibrate(verdicts, human, _seeded())
+    assert cal.status == "BLOCKED" and not cal.kappa
+    assert any("h3" in r and "teacher_intent" in r for r in cal.reasons)
+
+
+def test_a_label_without_its_fixed_reply_blocks() -> None:
+    """CodeRabbit PR #151: a label is bound to the reply it describes, never to a probe id."""
+    human = _human()
+    human["h0"] = {**CLEAN, "tone": True}  # criteria only, no fixture/question/reply
+    verdicts = {k: dict(CLEAN) for k in human}
+    cal = J.calibrate(verdicts, human, _seeded())
+    assert cal.status == "BLOCKED"
+    assert any("h0" in r and "reply" in r for r in cal.reasons)
+
+
+def test_label_loading_is_isolated_and_keeps_rows_as_written(tmp_path: Path) -> None:
+    """CodeRabbit PR #151: no reliance on the workspace label file."""
+    assert J.load_human_labels(tmp_path / "absent.jsonl") is None
+    path = tmp_path / "human_labels.jsonl"
+    row = {"id": "h", **REPLY, **CLEAN}
+    del row["tone"]
+    path.write_text(json.dumps(row) + "\n\n", encoding="utf-8")
+    labels = J.load_human_labels(path)
+    assert labels == {"h": {k: v for k, v in row.items() if k != "id"}}
+    assert "tone" not in labels["h"]  # not coerced to False
+    assert J.label_problems(labels) == ["human_label[h] lacks criteria ['tone']"]

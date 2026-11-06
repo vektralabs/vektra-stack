@@ -497,6 +497,24 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     setting. `VEKTRA_ASSESS_OUTAGE_CAP_MAX_S` and `VEKTRA_ASSESS_OUTAGE_PROBE_S` are NOT settings:
     C's 15-minute maximum and the 5-10 s probe interval are fixed (documented as such). The
     CHANGELOG `[Unreleased]` entry covers PR 8a and PR 8b together.
+- **Code review of PR 8b (high, 10 findings, 2026-11-06)**, one commit each:
+  1. one bot turn per student turn: the claim is a non-blocking try-lock and a driver without it
+     does not reply; revision 0031 makes `assess_append_turn` refuse a bot turn unless a student
+     turn is pending;
+  2. replies take a slot (at most half the API pool after a quarter margin) before their claim
+     connection, shared by `TurnDriver` and `PendingTurnDriver`;
+  3. `/retry` and `/flag` limiters run after the gate; 4. `409 reply_pending` before the message
+     rate;
+  5. `enforce_clock` reads without a lock and locks only when a close is due;
+  6. the event stream reuses a row read younger than `poll_s` for the delivery check (a
+     revocation lets through at most `poll_s` of reply text);
+  7. `session_gate.on_session_closed` is the one API-side close hook: DEK out and the reply task
+     cancelled; closes made by the worker still reach a running reply only through its refused
+     append (open point: a worker-side close does not stop the model at once);
+  8. the half-open breaker is decided under a per-site transaction lock in the Start transaction;
+  9. enrolment re-checks are queued oldest check first;
+  10. revision 0032: `assess_outage_cap` / `assess_outage_spent` are the one definition of C and
+     of the spent outage; a NULL duration means C = 0 everywhere (closed `service_failure`).
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

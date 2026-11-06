@@ -112,6 +112,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_render_state": {"SELECT": _ALL},
         "assess_gate_inputs": {"SELECT": _ALL},
         "assess_enrolment_checks": {"SELECT": _ALL},
+        # the outage cap C of the lazy close (plan 8 M3.4): read only
+        "assess_outage_incidents": {"SELECT": _ALL},
         "assess_heartbeat": {"SELECT": _ALL},
         # not probe_manifest: the fixture expectations are the worker's
         "assess_sites": {"SELECT": _SITES_API_READ},
@@ -275,6 +277,7 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
                 "close_reason",
                 "closed_at",
                 "pending_reply_since",  # revision 0023 (plan 8): the one-reply-at-a-time rule
+                "epoch",  # revision 0025: every close bumps the epoch (revokes session tokens)
             ),
         },
         "assess_session_handoff": {"SELECT": _ALL, "DELETE": _ALL},

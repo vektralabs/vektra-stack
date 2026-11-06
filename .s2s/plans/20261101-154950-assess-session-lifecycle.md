@@ -243,7 +243,7 @@ version.
 - [x] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
 - [x] M3.2 Warnings 10/5/1 from `TurnDriver` timer per live session (emitted once per (sid, threshold, deadline)); tests with outage credit X: fire at new deadline − 10/5/1 min ±5 s, none at the old deadline
 - [x] M3.3 Input lock at the deadline; grace window `VEKTRA_ASSESS_REPLY_GRACE_S` (60): in-flight reply finishes or is cut → marked "risposta interrotta"; slowed fake-provider tests for both branches; `assess_append_turn` refuses bot turns after deadline + grace (DB test)
-- [ ] M3.4 Lazy enforcement on every API request: past deadline (not OUTAGE) → close `timed_out`; C exceeded → `service_failure`; STARTING past T → reported as rolled back (the reaper does the deletion)
+- [x] M3.4 Lazy enforcement on every API request: past deadline (not OUTAGE) → close `timed_out`; C exceeded → `service_failure`; STARTING past T → reported as rolled back (the reaper does the deletion)
 - [ ] M3.5 Bind the sweeper tick: close `timed_out` (deadline + grace passed, not OUTAGE), never OUTAGE; browser-closed test: CLOSED(timed_out) and a `transcript_generate` job exist within 5 min of the deadline
 - [ ] M3.6 Bind `reconcile_reply` (worker, KEK path): pending student turn with no bot turn after outage timeout + grace and no live driver claim → append marked interrupted turn; kill -9 API mid-reply test → exactly one marked turn
 - [ ] M3.7 Per-turn enrolment freshness (150 s) gate step; bind the enrolment re-check tick (60 s, plan-4 reader) writing `enrolment_checks`; unenrolled or lost student role → close `access_revoked` + transcript job; worker stopped > 150 s → turns rejected (fail closed, state unchanged, audited)
@@ -408,6 +408,22 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     matter to a connected client, the deadline read is the DB's, and the broker dedupes them per
     (session, threshold, deadline) across tabs. A threshold is due only inside a 5 s window, so a
     tab connecting late does not replay a past warning.
+  - **Epoch on every close (M3.4, revision 0025)**: `assess_close_session` bumps `epoch` in the
+    statement that closes. Decision for a tab that reconnects after the close: an older-epoch token
+    of the OWNER (owner, site, activity and session number already verified) on a CLOSED row is
+    reported as closed, never as revoked: `GET` is 409 `ERR-ASSESS-009`, the event stream answers
+    200 with a content-free `state` + `closed` and no reply text; on a live row any epoch mismatch
+    is a revocation (401). Tested in `test_session_clock.py`.
+  - **Epoch-checked delivery (M3.4, CodeRabbit 4493120906)**: every `reply_delta` carries the epoch
+    it was produced under (not serialized). Before delivering a batch that contains reply text the
+    stream re-reads the row: text goes out only if the event's epoch is the token's and the row is
+    live at that epoch; a live row at another epoch ends the stream.
+  - **Lazy close (M3.4)**: gate step 5 runs as `enforce_clock`, its own committed transaction
+    after the owner checks and before the route's gate: ACTIVE past the deadline is closed
+    `timed_out` unless a reply is still pending inside the grace (the input is locked meanwhile and
+    the next request after the reply closes it); OUTAGE is never timed out and is closed
+    `service_failure` once its cumulative outage passes C; a STARTING row past T is reported as
+    rolled back (409 `start_timeout`), the reaper deletes it.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

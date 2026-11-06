@@ -13,7 +13,7 @@ from vektra_assess.api.events import EVENT_TYPES, EventBroker
 def test_ids_are_monotonic_per_session_and_the_ring_is_bounded() -> None:
     b = EventBroker(ring_size=3)
     a, c = uuid.uuid4(), uuid.uuid4()
-    ids = [b.publish(a, "reply_delta", {"text": str(i)}).id for i in range(5)]
+    ids = [b.publish(a, "reply_delta", {"text": str(i)}, epoch=1).id for i in range(5)]
     assert ids == [1, 2, 3, 4, 5]
     assert b.publish(c, "turn_accepted").id == 1  # per session
     assert [e.id for e in b.after(a, 0)] == [3, 4, 5]  # the ring keeps the last 3

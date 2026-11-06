@@ -398,8 +398,18 @@ async def test_input_is_locked_from_the_deadline(pg, worker) -> None:  # type: i
             json={"text": "troppo tardi"},
             headers=bearer(s.session_token),
         )
-        assert r.status_code == 409 and err(r)["details"]["reason"] == "deadline_passed"
+        # gate step 5 (M3.4): past the deadline with no reply pending the session is closed
+        # lazily, timed_out, before the route runs; the turn is refused
+        assert r.status_code == 409 and err(r)["code"] == "ERR-ASSESS-009"
         assert runner.turns == []
+        row = (
+            await pg.run(
+                "super",
+                "SELECT state, close_reason FROM assess_sessions WHERE id = :s",
+                {"s": s.session_id},
+            )
+        )[0]
+        assert tuple(row) == ("CLOSED", "timed_out")
         assert (
             await n(
                 pg,
@@ -448,16 +458,31 @@ async def test_a_reply_past_the_grace_is_cut_and_marked(pg, worker) -> None:  # 
         )
         assert r.status_code == 202
         await _wait_idle(w)
-        got = (
-            await w.client.get(
-                f"/api/v1/assess/sessions/{s.session_id}",
-                headers=bearer(s.session_token),
+        # read before any further request: past the deadline the next one closes the session
+        from vektra_assess.crypto import envelope
+
+        dek = w.app.state.assess_dek_cache.get(s.session_id, 1)
+        last = (
+            await pg.run(
+                "super",
+                "SELECT turn_no, role, kind, ciphertext FROM assess_turns WHERE session_id = :s "
+                "ORDER BY turn_no DESC LIMIT 1",
+                {"s": s.session_id},
             )
-        ).json()
-        last = got["turns"][-1]
-        assert (last["role"], last["kind"]) == ("bot", "interrupted")
-        assert last["text"] == f"Uno. {INTERRUPTED_REPLY}"
-        assert not got["reply_pending"]
+        )[0]
+        assert (last.role, last.kind) == ("bot", "interrupted")
+        text_ = envelope.decrypt_turn(
+            dek, s.session_id, last.turn_no, bytes(last.ciphertext)
+        )
+        assert text_.decode() == f"Uno. {INTERRUPTED_REPLY}"
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_sessions WHERE id=:s AND pending_reply_since IS NULL",
+                s=s.session_id,
+            )
+            == 1
+        )
 
 
 async def test_the_database_enforces_the_input_lock_and_the_grace(pg, worker) -> None:  # type: ignore[no-untyped-def]

@@ -177,7 +177,8 @@ async def test_a_refused_resume_mint_leaves_the_jti_unconsumed(pg, worker) -> No
         r = await w.client.get(
             f"/api/v1/assess/sessions/{s.session_id}", headers=bearer(pre)
         )
-        assert r.status_code == 401 and "token" not in r.json()
+        # M3.4: past its deadline the session is closed lazily (timed_out): 409, no token
+        assert r.status_code == 409 and "token" not in r.json()
         jti = jwt.decode(pre, options={"verify_signature": False})["jti"]
         assert (
             await n(

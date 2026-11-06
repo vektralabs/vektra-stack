@@ -25,6 +25,7 @@ from vektra_assess.api.common import engine_of, fail
 from vektra_assess.api.deps import (
     dek_cache_of,
     handoff_private_of,
+    settings_of,
     tokens_of,
 )
 from vektra_assess.api.gate import verify_assess_token_any
@@ -35,6 +36,7 @@ from vektra_assess.api.session_gate import (
     GateRejected,
     SessionRow,
     audit_rejection,
+    enforce_clock,
     gate,
 )
 from vektra_assess.api.start import CONSUME_JTI
@@ -91,6 +93,8 @@ async def get_session(
 ) -> JSONResponse:
     resume = isinstance(claims, PreClaims)
     route = "resume_session" if resume else "get_session"
+    start_t_s = settings_of(request).start_t_s
+    await enforce_clock(request, claims, sid, start_t_s)  # gate step 5: the lazy close
     try:
         async with engine_of(request).begin() as conn:
             if resume:
@@ -107,7 +111,9 @@ async def get_session(
                 ).first()
                 if consumed is None:
                     raise GateRejected(token_invalid(), "jti")
-            row = await gate(conn, claims, sid, allowed=ANY_OPEN, lock=resume)
+            row = await gate(
+                conn, claims, sid, allowed=ANY_OPEN, lock=resume, start_t_s=start_t_s
+            )
             material = None
             if row.state in LIVE:
                 try:

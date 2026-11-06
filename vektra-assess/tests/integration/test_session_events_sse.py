@@ -111,7 +111,7 @@ async def test_reconnect_replays_after_last_event_id(pg, worker) -> None:  # typ
 
         broker = broker_of(R())  # type: ignore[arg-type]
         for i in range(3):
-            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"})
+            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"}, epoch=1)
         broker.publish(s.session_id, "reply_done", {"turn_no": 4})
         stream = asyncio.create_task(_stream(w, s.session_id, s.session_token, last=2))
         await asyncio.sleep(0.2)
@@ -160,7 +160,7 @@ async def test_two_streams_both_receive_closed_and_a_reconnect_drains_it(
 
         broker = broker_of(R())  # type: ignore[arg-type]
         for i in range(3):
-            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"})
+            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"}, epoch=1)
         tab1 = asyncio.create_task(_stream(w, s.session_id, s.session_token))
         tab2 = asyncio.create_task(_stream(w, s.session_id, s.session_token))
         await asyncio.sleep(0.3)
@@ -192,7 +192,7 @@ async def test_a_reconnect_after_close_never_replays_reply_text(pg, worker) -> N
 
         broker = broker_of(R())  # type: ignore[arg-type]
         broker.publish(
-            s.session_id, "reply_delta", {"text": "CANARY-reply-after-close"}
+            s.session_id, "reply_delta", {"text": "CANARY-reply-after-close"}, epoch=1
         )
         broker.publish(s.session_id, "reply_done", {"turn_no": 4})
         async with worker.begin() as conn:

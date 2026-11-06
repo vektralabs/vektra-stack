@@ -67,6 +67,9 @@ class Event:
     id: int
     type: str
     data: dict[str, Any]
+    #: the session epoch a content event was produced under (never serialized): a stream
+    #: delivers it only to a token of the same epoch, re-checked against the row (M3.4)
+    epoch: int | None = None
 
     def sse(self) -> str:
         payload = json.dumps(self.data, separators=(",", ":"), ensure_ascii=False)
@@ -111,12 +114,19 @@ class EventBroker:
         return ch
 
     def publish(
-        self, sid: UUID, type_: str, data: dict[str, Any] | None = None
+        self,
+        sid: UUID,
+        type_: str,
+        data: dict[str, Any] | None = None,
+        *,
+        epoch: int | None = None,
     ) -> Event:
         if type_ not in EVENT_TYPES:
             raise ValueError(f"unknown event type {type_!r} (the catalogue is closed)")
         ch = self._channel(sid)
-        event = Event(ch.next_id, type_, dict(data or {}))
+        if type_ in CONTENT_EVENTS and epoch is None:
+            raise ValueError("a content event carries the epoch it was produced under")
+        event = Event(ch.next_id, type_, dict(data or {}), epoch)
         ch.next_id += 1
         ch.ring.append(event)
         if type_ in TERMINAL and ch.ended_at is None:
@@ -327,9 +337,25 @@ async def session_events(
         while time.monotonic() - started < max_s:
             # the channel is never evicted here: every open tab and every reconnect must read the
             # terminal event; the opportunistic sweep removes closed channels after their TTL
-            for event in broker.after(sid, last):
-                yield event.sse()
+            batch = broker.after(sid, last)
+            live = True
+            if any(e.type in CONTENT_EVENTS for e in batch):
+                # reply text is delivered only while the row is live AT THIS TOKEN's epoch, read
+                # just before the delivery: a close or a revocation (both bump the epoch) stops
+                # it, and an event produced under another epoch is never sent (review 4493120906)
+                state, epoch, data = await _poll(request, sid)
+                broker.observe(sid, state, data)
+                live = state in ("ACTIVE", "OUTAGE") and epoch == claims.epoch
+                if state in ("ACTIVE", "OUTAGE") and epoch != claims.epoch:
+                    return  # revoked under this connection: nothing more for this token
+                batch = broker.after(sid, last)
+            for event in batch:
                 last = event.id
+                if event.type in CONTENT_EVENTS and (
+                    not live or event.epoch != claims.epoch
+                ):
+                    continue
+                yield event.sse()
                 if event.type in TERMINAL:
                     return
             now = time.monotonic()

@@ -205,7 +205,9 @@ class TurnDriver:
         try:
             async for item in self.runner.run_stream(bundle, turn, stop):
                 if isinstance(item, ReleasedSegment):
-                    self.broker.publish(sid, "reply_delta", {"text": item.text})
+                    self.broker.publish(
+                        sid, "reply_delta", {"text": item.text}, epoch=epoch
+                    )
                 elif isinstance(item, TurnResult):
                     result = item
         except ProviderOutageError:

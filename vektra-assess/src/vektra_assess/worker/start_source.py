@@ -16,6 +16,8 @@ this path at all.
 
 from __future__ import annotations
 
+import time
+from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any
@@ -56,6 +58,45 @@ _SEALED = text(
 SOLUTION_FIELD = "solution"
 
 
+class _BoundedCache:
+    """key -> ActivityRef with a size bound (oldest out) and a TTL (review fix 6)."""
+
+    def __init__(self, max_size: int, ttl_s: float, clock: Callable[[], float]) -> None:
+        self._max = max_size
+        self._ttl = ttl_s
+        self._clock = clock
+        self._items: OrderedDict[object, tuple[ActivityRef, float]] = OrderedDict()
+
+    def get(self, key: object) -> ActivityRef | None:
+        item = self._items.get(key)
+        if item is None:
+            return None
+        if self._clock() >= item[1]:
+            del self._items[key]
+            return None
+        return item[0]
+
+    def put(self, key: object, value: ActivityRef) -> None:
+        self.sweep()
+        self._items[key] = (value, self._clock() + self._ttl)
+        self._items.move_to_end(key)
+        while len(self._items) > self._max:
+            self._items.popitem(last=False)
+
+    def pop(self, key: object) -> None:
+        self._items.pop(key, None)
+
+    def sweep(self) -> int:
+        now = self._clock()
+        expired = [k for k, (_v, exp) in self._items.items() if now >= exp]
+        for k in expired:
+            del self._items[k]
+        return len(expired)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
 def teacher_view(
     flags: dict[str, Any], kind: str, solution_text: str | None
 ) -> TeacherConfigView:
@@ -78,13 +119,17 @@ class MoodleStartSource:
         acquire: Callable[[], AbstractAsyncContextManager[AsyncConnection]],
         *,
         teacher_private: AssessKeyring | None = None,
+        resolved_max: int = 256,
+        resolved_ttl_s: float = 300.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client = client
         self._parser = parser
         self._acquire = acquire
         self._teacher_private = teacher_private
-        # the course and instance resolved by ``gate_facts``, reused by ``capture`` (same Start)
-        self._resolved: dict[object, ActivityRef] = {}
+        # the course and instance resolved by ``gate_facts``, reused by ``capture`` (same Start).
+        # Bounded: a render check, or a Start a gate refused, never reaches ``capture``.
+        self._resolved = _BoundedCache(resolved_max, resolved_ttl_s, clock)
 
     async def _site(self, target: StartTarget) -> SiteRef | None:
         async with self._acquire() as conn:
@@ -113,7 +158,7 @@ class MoodleStartSource:
         )
         if isinstance(res, Unreadable):
             return None, res.detail_code == "activity_not_in_student_courses"
-        self._resolved[target.session_id] = res.value
+        self._resolved.put(target.session_id, res.value)
         return res.value, False
 
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
@@ -275,7 +320,7 @@ class MoodleStartSource:
         site, caps, solution = ctx
         kind = "quiz" if target.activity_type == "quiz" else "assign"
         ref, _not_found = await self._resolve(site, target)
-        self._resolved.pop(target.session_id, None)
+        self._resolved.pop(target.session_id)
         if ref is None:
             return Failed(FailReason.POLICY_INPUT_UNREADABLE, "activity_unresolved")
         readers = MoodleCaptureReaders(self._client, site)

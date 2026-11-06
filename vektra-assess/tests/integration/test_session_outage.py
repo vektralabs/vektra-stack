@@ -176,3 +176,31 @@ async def test_enter_outage_is_idempotent_and_refuses_another_epoch(pg, worker) 
             {"s": sid},
         )
         assert count[0][0] == 1, "one open interval at a time"
+
+
+async def test_remaining_time_is_frozen_while_in_outage(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4498473565: GET reports the time left at the outage start while the outage
+    is open (the timer is paused), not against the advancing clock."""
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "OUTAGE")
+        await pg.run(
+            "super",
+            "UPDATE assess_outage_incidents SET started_at = now() - interval '60 seconds' "
+            "WHERE session_id = :s",
+            {"s": s.session_id},
+        )
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET deadline_at = now() + interval '10 seconds' "
+            "WHERE id = :s",
+            {"s": s.session_id},
+        )
+        got = (
+            await w.client.get(
+                f"/api/v1/assess/sessions/{s.session_id}",
+                headers=bearer(s.session_token),
+            )
+        ).json()
+        assert got["state"] == "OUTAGE" and 65 <= got["remaining_s"] <= 71, got[
+            "remaining_s"
+        ]

@@ -20,6 +20,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of, fail
 from vektra_assess.api.deps import (
@@ -47,12 +48,21 @@ from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
 
 router = APIRouter()
 
+_OUTAGE_START = text(
+    "SELECT max(started_at) FROM assess_outage_incidents "
+    "WHERE session_id = :s AND ended_at IS NULL"
+)
+
 
 def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def view(row: SessionRow, material: Material | None) -> dict[str, Any]:
+def view(
+    row: SessionRow, material: Material | None, paused_at: Any = None
+) -> dict[str, Any]:
+    """``paused_at``: the open outage's start while the session is in OUTAGE: the timer is
+    paused there, so the time left is measured against it (CodeRabbit 4498473565)."""
     turns = []
     if material is not None:
         turns = [
@@ -76,7 +86,7 @@ def view(row: SessionRow, material: Material | None) -> dict[str, Any]:
         "server_now": _iso(row.server_now),
         # on the server's clock only (REQ-069): the client never sends a time
         "remaining_s": (
-            remaining_s(row.deadline_at, row.server_now)
+            remaining_s(row.deadline_at, paused_at or row.server_now)
             if row.deadline_at is not None
             else None
         ),
@@ -133,7 +143,12 @@ async def get_session(
                     )
                 except MaterialUnavailable:
                     raise GateRejected(state_conflict(row.state), "material") from None
-            body = view(row, material)
+            paused_at = (
+                (await conn.execute(_OUTAGE_START, {"s": sid})).scalar()
+                if row.state == "OUTAGE"
+                else None
+            )
+            body = view(row, material, paused_at)
             if resume:
                 # minted INSIDE the transaction: a refusal (past deadline + grace) rolls the jti
                 # consumption back, so the pre-session token is not burnt for nothing

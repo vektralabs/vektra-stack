@@ -75,3 +75,20 @@ def test_the_sweep_runs_at_most_once_per_interval() -> None:
     clock.t += 30
     assess_housekeeping(request)  # type: ignore[arg-type]
     assert hk.runs == 2 and len(cache) == 0
+
+
+def test_the_sweep_drops_rate_limiter_keys_with_an_empty_window(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 7: the assess-local limiters lose their stale keys in the same sweep."""
+    import vektra_admin.rate_limit as rl
+
+    t = [5000.0]
+    monkeypatch.setattr(rl.time, "monotonic", lambda: t[0])
+    limiter = rl.RateLimiter()
+    limiter.check(("site", 1, 2), 30)
+    limiter.check(("site", 3, 4), 30)
+    t[0] += 61
+    clock = Clock()
+    hk = Housekeeper(interval_s=30, clock=clock)
+    state = SimpleNamespace(assess_limiters={"state": limiter}, assess_housekeeper=hk)
+    assess_housekeeping(SimpleNamespace(app=SimpleNamespace(state=state)))  # type: ignore[arg-type]
+    assert limiter._windows == {}

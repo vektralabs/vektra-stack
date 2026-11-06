@@ -14,8 +14,9 @@ job), so the next view is fresh. The response is ids, a state, a code and at mos
 that date is only ever the activity's own close or the student's own override: no other student's
 date, name or count can appear (the worker never stores one where this route reads).
 
-Per-token rate limit (``VEKTRA_ASSESS_STATE_RPM`` per jti, assess-local limiter): 429 with
-``retry_after`` beyond it.
+Rate limit (``VEKTRA_ASSESS_STATE_RPM`` per site, student and activity, assess-local limiter whose
+empty windows the housekeeping sweep removes): 429 with ``retry_after`` beyond it. The global
+per-key limiter (``app.state.rate_limiter``) stays unset.
 """
 
 from __future__ import annotations
@@ -142,8 +143,10 @@ async def get_state(
     request: Request, claims: PreClaims = Depends(verify_assess_token_pre)
 ) -> JSONResponse:
     settings = settings_of(request)
+    # keyed by (site, student, activity): a jti changes on every page view, so it would never
+    # limit anything; stale keys are dropped by the opportunistic housekeeping sweep
     allowed, _headers = limiter_of(request, "state").check(
-        claims.jti, settings.state_rpm
+        (str(claims.site), claims.sub, claims.cmid), settings.state_rpm
     )
     if not allowed:
         raise fail(rate_limited(60, "state_rate"))

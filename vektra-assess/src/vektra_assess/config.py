@@ -441,7 +441,7 @@ class VektraAssessSettings(BaseSettings):
         ge=1,
         le=6000,
         alias="VEKTRA_ASSESS_STATE_RPM",
-        description="GET /state calls per minute per pre-session token (jti).",
+        description="GET /state calls per minute per (site, student, activity).",
     )
     privacy_allow_unset: bool = Field(
         False,

@@ -204,20 +204,33 @@ async def test_an_open_session_is_active_with_its_id(pg, worker) -> None:  # typ
         }
 
 
-async def test_state_is_rate_limited_per_token(pg, worker) -> None:  # type: ignore[no-untyped-def]
+async def test_state_is_rate_limited_per_student_and_activity(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 7: the window is keyed by (site, sub, cmid), not by the jti that changes on every
+    page view; the global per-key limiter stays dormant."""
     settings = default_settings(VEKTRA_ASSESS_STATE_RPM=3)
     async with world(pg, settings) as w:
         cm = cmid("rubric_vis")
         await configure_activity(pg, w.site, cm)
-        tok = await w.presession(sub=STU1, cmid=cm)
-        codes = [(await state(w, tok)).status_code for _ in range(4)]
-        assert codes == [200, 200, 200, 429]
-        r = await state(w, tok)
+        codes = [
+            (await state(w, await w.presession(sub=STU1, cmid=cm))).status_code
+            for _ in range(4)
+        ]
+        assert codes == [
+            200,
+            200,
+            200,
+            429,
+        ]  # a fresh token per page view does not reset it
+        r = await state(w, await w.presession(sub=STU1, cmid=cm))
         assert err(r)["code"] == "ERR-ASSESS-012" and r.headers["retry-after"]
-        # another token of the same student has its own window
+        # another student, or another activity of the same student, has its own window
         assert (
-            await state(w, await w.presession(sub=STU1, cmid=cm))
+            await state(w, await w.presession(sub=STU1 + 1, cmid=cm))
         ).status_code == 200
+        assert (
+            await state(w, await w.presession(sub=STU1, cmid=cm + 1))
+        ).status_code == 200
+        assert not hasattr(w.app.state, "rate_limiter")
 
 
 async def test_the_refresh_tick_requeues_stale_pairs_and_deletes_week_old_rows(

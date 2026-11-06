@@ -92,6 +92,9 @@ class Reason(StrEnum):
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     RAG_NOT_AVAILABLE = "rag_not_available"
     INTERNAL_ERROR = "internal_error"
+    COMMIT_FAILED = (
+        "commit_failed"  # COMMIT outcome unknown, the row re-read as STARTING
+    )
 
 
 @dataclass(frozen=True)
@@ -194,6 +197,10 @@ class PreflightDeps:
     privacy: PrivacyCheck = privacy_not_configured
 
 
+class _AmbiguousCommit(Exception):
+    """The connection failed during or after COMMIT: whether it committed is unknown."""
+
+
 class _Rollback(Exception):
     def __init__(self, reason: str, extra: AssessAuditEvent | None = None) -> None:
         super().__init__(reason)
@@ -226,10 +233,11 @@ _ACTIVITY = text(
     "AND e.cmid = c.cmid AND e.student_userid = :u), 0) AS extra_s "
     "FROM assess_activity_config c WHERE c.site_id = :s AND c.cmid = :c"
 )
-_SPENT = text(
-    "SELECT extract(epoch FROM clock_timestamp() - created_at) FROM assess_sessions "
-    "WHERE id = :sid"
+_WITHIN_T = text(
+    "UPDATE assess_sessions SET last_activity_at = clock_timestamp() WHERE id = :sid "
+    "AND state = 'ACTIVE' AND clock_timestamp() - created_at < make_interval(secs => :t)"
 )
+_REREAD = text("SELECT state, committed_at FROM assess_sessions WHERE id = :sid")
 _DELETE = text(
     "DELETE FROM assess_sessions WHERE id = :sid AND state = 'STARTING' "
     "RETURNING site_id, cmid, student_userid, session_no"
@@ -466,6 +474,7 @@ async def _commit(
 ) -> bool:
     sid = target.session_id
     dek = envelope.new_dek()
+    reached_commit = False
     try:
         async with acquire() as conn:
             async with conn.begin():
@@ -529,11 +538,6 @@ async def _commit(
                         "sid": sid,
                     },
                 )
-                # T again at the END of the transaction, on the wall clock (clock_timestamp, not
-                # the transaction start of now()): the writes above must not carry a commit past T
-                spent = (await conn.execute(_SPENT, {"sid": sid})).scalar_one()
-                if float(spent) >= deps.settings.start_t_s:
-                    raise _Rollback(Reason.START_TIMEOUT)
                 await write_event(
                     conn,
                     AssessAuditEvent.COMMIT,
@@ -550,9 +554,56 @@ async def _commit(
                         "part_b_completion_tokens": part_b.usage.completion_tokens,
                     },
                 )
+                # The LAST statement before COMMIT: T on the wall clock (clock_timestamp(), not
+                # now(), which is the transaction start), after every write including the audit.
+                # The guarded update touches no row past T, and the transaction rolls back. What
+                # is left after it is the COMMIT itself (a few milliseconds): that is the only
+                # margin by which a commit can land past T.
+                guarded = await conn.execute(
+                    _WITHIN_T, {"sid": sid, "t": deps.settings.start_t_s}
+                )
+                if guarded.rowcount != 1:
+                    raise _Rollback(Reason.START_TIMEOUT)
+                reached_commit = True
+    except _Rollback:
+        raise
+    except Exception as exc:
+        if not reached_commit:
+            raise  # failed before COMMIT was sent: the transaction is rolled back for sure
+        # an error during or after COMMIT: it may or may not have committed
+        log.warning("assess_preflight_commit_ambiguous", error_type=type(exc).__name__)
+        raise _AmbiguousCommit() from None
     finally:
         del dek
     return True
+
+
+async def _resolve_ambiguous(acquire: AcquireDb, sid: UUID) -> None:
+    """After an unknown COMMIT outcome, re-read the row on a NEW connection before any rollback:
+
+    - ACTIVE with ``committed_at``: it committed; nothing to undo, no rollback event;
+    - still STARTING: it did not; the normal rollback (``commit_failed``);
+    - no row: already rolled back (the reaper); nothing to do;
+    - the re-read fails too: leave the row to the STARTING reaper (T and no live lease), never
+      a blind delete.
+    """
+    try:
+        async with acquire() as conn:
+            row = (await conn.execute(_REREAD, {"sid": sid})).first()
+    except Exception as exc:
+        log.warning(
+            "assess_preflight_reread_failed",
+            session_id=str(sid),
+            error_type=type(exc).__name__,
+        )
+        return
+    if row is None:
+        log.info("assess_preflight_ambiguous_gone", session_id=str(sid))
+        return
+    if row.state == "STARTING":
+        await _rollback(acquire, sid, Reason.COMMIT_FAILED)
+        return
+    log.info("assess_preflight_ambiguous_committed", session_id=str(sid))
 
 
 def make_preflight_handler(
@@ -568,6 +619,8 @@ def make_preflight_handler(
             await _run(deps, ctx.acquire, sid)
         except _Rollback as rb:
             await _rollback(ctx.acquire, sid, rb.reason, rb.extra)
+        except _AmbiguousCommit:
+            await _resolve_ambiguous(ctx.acquire, sid)
         except asyncio.CancelledError:
             # the runtime's budget (T - margin) or a shutdown cancelled the pre-flight mid-way:
             # roll it back now, shielded from the cancellation, instead of leaving it to the reaper

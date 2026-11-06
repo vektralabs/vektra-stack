@@ -449,3 +449,140 @@ async def test_a_commit_that_overruns_t_rolls_back(
         )
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "start_timeout")
+
+
+async def test_an_audit_write_that_overruns_t_rolls_back(
+    pg, worker_engine, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4493109439 (round 2): the T guard is the LAST statement before COMMIT, after
+    the commit audit event, so a slow audit write cannot carry the commit past T."""
+    import asyncio
+
+    from vektra_assess.audit import AssessAuditEvent
+    from vektra_assess.worker import preflight as mod
+
+    await _reset(pg)
+    await activate(pg)
+    original = mod.write_event
+
+    async def slow_commit_audit(conn, event, **kw):  # type: ignore[no-untyped-def]
+        if event is AssessAuditEvent.COMMIT:
+            await asyncio.sleep(7)
+        return await original(conn, event, **kw)
+
+    monkeypatch.setattr(mod, "write_event", slow_commit_audit)
+    settings = default_settings(VEKTRA_ASSESS_START_T_S=20)
+    async with world(pg, settings) as w:
+        await configure_activity(pg, w.site, CMID)
+        sid = await _start(w)
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET created_at = now() - interval '13 seconds' WHERE id = :s",
+            {"s": sid},
+        )
+        handler = make_preflight_handler(
+            deps(settings, w.handoff_public, moodle_source(worker_engine))
+        )
+        await handler(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, "start_timeout")
+
+
+def _ambiguous_acquire(engine, armed: dict, mode: str):  # type: ignore[no-untyped-def]
+    """``acquire`` whose next transaction, once armed, fails at COMMIT: ``after`` commits for
+    real and then raises (the outcome is lost on the wire), ``before`` rolls back and raises."""
+    from contextlib import asynccontextmanager
+
+    class Tx:
+        def __init__(self, tx):  # type: ignore[no-untyped-def]
+            self._tx = tx
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            await self._tx.__aenter__()
+            return self
+
+        async def __aexit__(self, et, e, tb):  # type: ignore[no-untyped-def]
+            if et is None and armed.get("on"):
+                armed["on"] = False
+                if mode == "after":
+                    await self._tx.__aexit__(None, None, None)  # COMMIT happens
+                else:
+                    await self._tx.__aexit__(
+                        ConnectionResetError, ConnectionResetError(), None
+                    )  # rolled back
+                raise ConnectionResetError("connection lost at COMMIT")
+            return await self._tx.__aexit__(et, e, tb)
+
+    class Conn:
+        def __init__(self, conn):  # type: ignore[no-untyped-def]
+            self._c = conn
+
+        def __getattr__(self, name):  # type: ignore[no-untyped-def]
+            return getattr(self._c, name)
+
+        def begin(self):  # type: ignore[no-untyped-def]
+            return Tx(self._c.begin())
+
+    @asynccontextmanager
+    async def acquire():  # type: ignore[no-untyped-def]
+        async with engine.connect() as c:
+            yield Conn(c)
+
+    return acquire
+
+
+@pytest.mark.parametrize(("mode", "committed"), [("after", True), ("before", False)])
+async def test_an_ambiguous_commit_is_resolved_by_rereading_the_row(  # type: ignore[no-untyped-def]
+    pg, worker_engine, monkeypatch, mode: str, committed: bool
+) -> None:
+    """CodeRabbit 4493109439 (round 2): an error during or after COMMIT re-reads the row on a
+    new connection: ACTIVE (committed) is left alone with no rollback event; STARTING is rolled
+    back (commit_failed)."""
+    import logging
+
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.worker import preflight as mod
+    from vektra_assess.worker.runner import JobContext
+
+    await _reset(pg)
+    await activate(pg)
+    armed: dict[str, bool] = {}
+    original = mod.persist_capture
+
+    async def arming(*a, **k):  # type: ignore[no-untyped-def]
+        armed["on"] = True  # the commit transaction is the one in progress
+        return await original(*a, **k)
+
+    monkeypatch.setattr(mod, "persist_capture", arming)
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, CMID)
+        sid = await _start(w)
+        handler = make_preflight_handler(
+            deps(w.settings, w.handoff_public, moodle_source(worker_engine))
+        )
+        ctx = JobContext(
+            1,
+            JobKind.PREFLIGHT,
+            {"session_id": str(sid)},
+            1,
+            _ambiguous_acquire(worker_engine, armed, mode),
+            logging.getLogger("t"),
+        )
+        await handler(ctx)  # never raises: the outcome is resolved
+        if committed:
+            assert await _counts(pg, sid) == {
+                "assess_sessions": 1,
+                "assess_snapshots": 1,
+                "assess_session_keys": 1,
+                "assess_turns": 2,
+                "assess_session_handoff": 1,
+            }
+            rollbacks = await pg.run(
+                "super",
+                "SELECT (SELECT count(*) FROM assess_audit_events WHERE session_id = :s "
+                "AND event = 'assess_start_rollback') + (SELECT count(*) FROM "
+                "assess_start_attempts WHERE session_id = :s AND outcome = 'rolled_back')",
+                {"s": sid},
+            )
+            assert rollbacks[0][0] == 0
+        else:
+            await _rolled_back(pg, sid, "commit_failed")

@@ -310,3 +310,28 @@ async def test_only_a_definitive_negative_render_refuses_a_start(  # type: ignor
         await pg.run(
             "super", "DELETE FROM assess_render_state WHERE student_userid = 777"
         )
+
+
+async def test_a_heartbeat_without_a_ready_state_refuses_the_start(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4493109404: a fresh heartbeat row that does not say ``ready`` (missing state)
+    refuses before the jti is consumed or a pre-flight queued."""
+    await _clean(pg)
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, CMID)
+        await pg.run("super", "DELETE FROM assess_heartbeat")
+        await pg.run(
+            "worker",
+            "INSERT INTO assess_heartbeat (component, beat_at, details) "
+            "VALUES ('worker', now(), '{}'::jsonb)",
+        )
+        r = await start(w, await w.presession(sub=889, cmid=CMID))
+        assert r.status_code == 503
+        assert await n(pg, "SELECT count(*) FROM assess_jobs") == 0
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_token_jti WHERE consumed_at IS NOT NULL",
+            )
+            == 0
+        )
+        await beat(pg)

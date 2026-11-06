@@ -147,7 +147,7 @@ async def _advisory(request: Request, conn: AsyncConnection, claims: PreClaims) 
         beat is None
         or beat[0] is None
         or float(beat[0]) > settings.heartbeat_max_age_s
-        or (beat[1] is not None and beat[1] != "ready")
+        or beat[1] != "ready"  # a missing state is not readiness (fail closed)
     ):
         await _refuse(
             request, claims, "worker_not_ready", assess_unavailable("worker_heartbeat")

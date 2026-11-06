@@ -372,6 +372,8 @@ Every acceptance check reads rows, bytes or real responses, never a status field
 
 ## Notes
 
+- **From plan 7 (2026-11-06, coordinator decision on PR #151)**: the API no longer refuses to start without an NFR-023 activation; it starts degraded (`app.state.assess_llm_activated`). The pre-flight activation check of M1.5 is therefore the ONLY gate that keeps an unactivated (model, prompt_version) from serving: it must query `vektra_assess.llm.activation.is_activated` (worker role has SELECT on `assess_model_activations`) before every start, honour `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED` only in development, and refuse with a content-free reason. A test must show a start refused for an unactivated triple and accepted after a row is inserted, without a restart.
+
 - **Drift: worker vs server-answered pending turns.** COMP-003 says the worker "runs no
   student-turn LLM calls", while REQ-086 requires the server to answer a pending call with no
   client present. Resolution: the worker probe ends OUTAGE, and an API-side `PendingTurnDriver`

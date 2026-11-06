@@ -323,8 +323,9 @@ class VektraAssessSettings(BaseSettings):
         False,
         alias="VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED",
         description=(
-            "Development and CI only: let the API start while the (provider, model, prompt_version) "
-            "triple has no passing NFR-023 activation. Honoured only with VEKTRA_ENV=development; "
+            "Development and CI only: serve discussions while the (provider, model, prompt_version) "
+            "triple has no passing NFR-023 activation (without it the API starts degraded and the "
+            "session pre-flight refuses discussions). Honoured only with VEKTRA_ENV=development; "
             "in any other environment the API refuses to start with it set."
         ),
     )

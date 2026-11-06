@@ -16,10 +16,11 @@ services:
     environment:
       VEKTRA_ENV: development
       VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND: "true"
-  # The discussion runner (plan assess-llm-runner): the API refuses to start without a model, with a
-  # safeguard that fell open, or with a model that has no NFR-023 activation. In development and CI
-  # there is neither an activated model nor Presidio in the image: the explicit dev settings below
-  # let the stack start, and VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED is refused outside development.
+  # The discussion runner (plan assess-llm-runner): the API refuses to start without a model or with
+  # a safeguard that fell open, and without an NFR-023 activation it starts degraded (no
+  # discussion served). Dev and CI have neither Presidio nor an activated model: the explicit dev
+  # settings below let discussions run, and VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED is refused outside
+  # development.
   vektra:
     environment:
       VEKTRA_ENV: development

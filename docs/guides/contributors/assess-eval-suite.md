@@ -58,15 +58,28 @@ sign-off belongs to the eval-suite owner (OQ-027).
 
 ## Calibration labels
 
-Human labels go in `tests/eval/assess/calibration/human_labels.jsonl`, one JSON object per line:
-`{"id": "<probe or seeded id>", "unsupported_claim": false, "teacher_intent": true, ...}` with one
-boolean per judge criterion (`assess_judge.CRITERIA`). Until the eval-suite owner (OQ-027) provides
-them, every staging run is `BLOCKED`.
+Human labels go in `tests/eval/assess/calibration/human_labels.jsonl`, one JSON object per line,
+each bound to the exact reply it describes:
+`{"id": "...", "fixture": "<fixture id>", "question": "...", "reply": "<the labelled reply>",
+"unsupported_claim": false, "teacher_intent": true, ...}` with a boolean for every judge criterion
+(`assess_judge.CRITERIA`). The judge is run on that fixed reply, never on this run's output by id.
+A row without `fixture` / `question` / `reply`, with an omitted criterion, naming an unknown
+fixture, or reusing a seeded id with a different reply makes the calibration `BLOCKED`. Until the
+eval-suite owner (OQ-027) provides the labels, every staging run is `BLOCKED`.
+
+A non-synthetic dataset needs both models on-prem: `VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem` for the
+discussion model and `VEKTRA_ASSESS_JUDGE_LOCALITY=onprem` for the judge (default `cloud`, which
+refuses the run before any request).
 
 ## Activating a model
 
 POST the PASS report to `/api/v1/assess/admin/model-activations` with an `admin` key (see
 `docs/reference/api.md`). The endpoint recomputes the verdict; it never trusts the report's
-`status`. Any change to a template, a shipped string or the lexicon changes `prompt_version`, and
-startup then refuses until the new triple is activated. In development and CI only,
-`VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED=true` with `VEKTRA_ENV=development` lets the stack start.
+`status`: the run must carry no blocked reason, every HARD class of the inventory must be present and
+0, the calibration must be PASS with its kappa, seeded recall and seeded sizes at threshold, and
+every dataset must meet its NFR-022 minimum. Any change to a template, a shipped string or the
+lexicon changes `prompt_version`. An unactivated triple does not stop the API (the activation
+endpoint lives in it): the API starts degraded, logs `assess_llm_unactivated`, and the session
+pre-flight refuses every discussion until a passing row exists; no restart is needed after the
+POST. In development and CI only, `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED=true` with
+`VEKTRA_ENV=development` lets discussions run unactivated.

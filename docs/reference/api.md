@@ -97,7 +97,7 @@ The report is `{"report_id", "site_id", "status": "queued|running|done|failed", 
 
 ### Assess model activation (NFR-023)
 
-Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Exact `admin` scope. The API refuses to start, and the Part B pre-flight refuses to run, for a (model, `prompt_version`) with no passing activation; any change to a prompt template, a shipped string or the post-check lexicon is a new `prompt_version` and needs a new activation.
+Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Exact `admin` scope. Without a passing activation for the (model, `prompt_version`) the API still starts (degraded, `assess_llm_unactivated` logged, so this endpoint is reachable) and the session pre-flight refuses every discussion until a passing row exists; any change to a prompt template, a shipped string or the post-check lexicon is a new `prompt_version` and needs a new activation.
 
 | Method | Path | Success | Errors |
 |--------|------|---------|--------|

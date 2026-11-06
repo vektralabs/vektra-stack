@@ -273,16 +273,18 @@ def _enabled(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
         monkeypatch.setenv(k, v)
 
 
-async def test_step_13_refuses_an_unactivated_triple(
+async def test_step_13_starts_degraded_on_an_unactivated_triple(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The activation endpoint lives in this API: an unactivated triple must not stop startup
+    (nothing could ever activate it), it is recorded so no discussion is served."""
     from vektra_app.assess_llm import step_13_assess_llm_check
 
     _enabled(monkeypatch)
     app = _App()
     app.state.assess_engine = _Engine(active=False)
-    with pytest.raises(StartupValidationError, match="no passing NFR-023 activation"):
-        await step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
+    await step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
+    assert app.state.assess_llm_activated is False
     assert "assess_model_activations" in app.state.assess_engine.conn.sql[0]
 
 
@@ -295,10 +297,10 @@ async def test_step_13_accepts_an_activated_triple(
     app = _App()
     app.state.assess_engine = _Engine(active=True)
     await step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
-    assert app.state.assess_prompt_version
+    assert app.state.assess_prompt_version and app.state.assess_llm_activated is True
 
 
-async def test_changing_a_template_changes_prompt_version_and_startup_refuses(
+async def test_changing_a_template_changes_prompt_version_and_deactivates(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     """The activation is keyed by prompt_version: a template edit makes a new, unactivated triple."""
@@ -339,10 +341,9 @@ async def test_changing_a_template_changes_prompt_version_and_startup_refuses(
     _enabled(monkeypatch)
     app = _App()
     app.state.assess_engine = _Only()
-    with pytest.raises(StartupValidationError, match=edited):
-        await assess_llm.step_13_assess_llm_check(
-            app, safeguard_factory=lambda _m: _Real()
-        )
+    await assess_llm.step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
+    assert app.state.assess_prompt_version == edited
+    assert app.state.assess_llm_activated is False
 
 
 async def test_the_dev_bypass_is_refused_outside_development(
@@ -363,6 +364,7 @@ async def test_the_dev_bypass_is_refused_outside_development(
     await step_13_assess_llm_check(
         app, safeguard_factory=lambda _m: _Real()
     )  # allowed in dev
+    assert app.state.assess_llm_activated is True
 
 
 def test_prometheus_metrics_count_with_code_labels() -> None:

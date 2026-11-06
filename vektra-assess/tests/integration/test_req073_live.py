@@ -18,14 +18,21 @@ import pytest
 from assess_moodle_support import BRANCHES, Replay, make_client, use_live
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
-from support.preflight import FakeStreamRunner
+from support.preflight import (
+    FakePartB,
+    FakeStreamRunner,
+    activate,
+    deps,
+    job_context,
+    kek_ring,
+)
 from support.sessions import seed_session
 from support.world import world
 from test_context_capture import InProcessParser
 
 from integration.test_session_preflight import _reset
 from vektra_assess.context.snapshot import canonical_bytes
-from vektra_assess.worker.preflight import StartTarget
+from vektra_assess.worker.preflight import StartTarget, make_preflight_handler
 from vektra_assess.worker.start_source import MoodleStartSource
 
 from .test_moodle_live import _load
@@ -81,8 +88,18 @@ async def test_a_full_session_leaves_moodle_byte_identical(pg, branch: str) -> N
     worker = create_async_engine(pg.url("worker"))
     try:
         async with world(pg, assess_runner=FakeStreamRunner()) as w:
-            s = await seed_session(w, worker, "ACTIVE", branch=branch)
+            # the baseline is read BEFORE Start's pre-flight touches anything: the session
+            # is requested (STARTING), Moodle is read, then the pre-flight runs
+            s = await seed_session(w, worker, "STARTING", branch=branch)
             before = await moodle_dump_hash(worker, branch, s.session_id)
+            await activate(pg)
+            source = MoodleStartSource(
+                make_client(Replay(branch)), InProcessParser(), worker.connect
+            )
+            handler = make_preflight_handler(
+                deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek_ring())
+            )
+            await handler(job_context(worker, s.session_id))
             url = f"/api/v1/assess/sessions/{s.session_id}"
             auth = {"Authorization": f"Bearer {s.session_token}"}
             r = await w.client.post(

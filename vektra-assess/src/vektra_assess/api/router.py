@@ -6,10 +6,11 @@ Every route must depend on ``require_exact_scope`` or the assess token verifier
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from vektra_assess.api import (
     events,
+    housekeeping,
     mint,
     model_activations,
     sessions,
@@ -21,7 +22,12 @@ from vektra_assess.api import (
 
 PREFIX = "/api/v1/assess"
 
-router = APIRouter(prefix=PREFIX, tags=["assess"])
+router = APIRouter(
+    prefix=PREFIX,
+    tags=["assess"],
+    # in-memory sweeps on request (no lifespan, BUG-025): DEKs, event channels, limiter keys
+    dependencies=[Depends(housekeeping.assess_housekeeping)],
+)
 router.include_router(setup_check.router)
 router.include_router(model_activations.router)
 router.include_router(mint.router)

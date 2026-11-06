@@ -89,6 +89,14 @@ class DekCache:
         self.evict(sid)
         self._items[(sid, epoch)] = (dek, self._clock() + self._ttl)
 
+    def sweep(self) -> int:
+        """Drop every expired entry (the opportunistic housekeeping); returns how many."""
+        now = self._clock()
+        expired = [k for k, (_dek, expires) in self._items.items() if now >= expires]
+        for key in expired:
+            del self._items[key]
+        return len(expired)
+
     def evict(self, sid: UUID) -> None:
         for key in [k for k in self._items if k[0] == sid]:
             del self._items[key]

@@ -77,6 +77,7 @@ class _Channel:
     next_id: int = 1
     last_state: str | None = None
     touched: float = 0.0
+    ended_at: float | None = None  # when a terminal event was published
     signal: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -86,10 +87,15 @@ class EventBroker:
         *,
         ring_size: int = 512,
         idle_ttl_s: float = 3 * 3600.0,
+        closed_ttl_s: float = 600.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        """A channel ended by ``closed`` / ``start_rolled_back`` stays readable for
+        ``closed_ttl_s`` (every open tab and every reconnect drains it); ``sweep_idle`` then drops
+        it, and drops any channel idle for ``idle_ttl_s``."""
         self._ring = ring_size
         self._ttl = idle_ttl_s
+        self._closed_ttl = closed_ttl_s
         self._clock = clock
         self._channels: dict[UUID, _Channel] = {}
 
@@ -110,6 +116,8 @@ class EventBroker:
         event = Event(ch.next_id, type_, dict(data or {}))
         ch.next_id += 1
         ch.ring.append(event)
+        if type_ in TERMINAL and ch.ended_at is None:
+            ch.ended_at = self._clock()
         ch.signal.set()
         ch.signal = asyncio.Event()
         return event
@@ -158,13 +166,20 @@ class EventBroker:
         self._channels.pop(sid, None)
 
     def sweep_idle(self) -> int:
+        """Drop channels ended more than ``closed_ttl_s`` ago or idle over ``idle_ttl_s``."""
         now = self._clock()
-        idle = [
-            sid for sid, ch in self._channels.items() if now - ch.touched > self._ttl
+        gone = [
+            sid
+            for sid, ch in self._channels.items()
+            if now - ch.touched > self._ttl
+            or (ch.ended_at is not None and now - ch.ended_at > self._closed_ttl)
         ]
-        for sid in idle:
+        for sid in gone:
             del self._channels[sid]
-        return len(idle)
+        return len(gone)
+
+    def channels(self) -> list[UUID]:
+        return list(self._channels)
 
     def __contains__(self, sid: object) -> bool:
         return sid in self._channels

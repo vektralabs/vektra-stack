@@ -36,6 +36,7 @@ from vektra_assess.api.turns import (
     history_of,
 )
 from vektra_assess.llm.types import StudentTurn
+from vektra_assess.turn_markers import reply_claimed_sql
 
 log = structlog.get_logger(__name__)
 
@@ -44,6 +45,9 @@ _PENDING = text(
     "AND pending_reply_since IS NOT NULL "
     "AND pending_reply_since <= now() - make_interval(secs => :age) "
     "AND deadline_at + make_interval(secs => reply_grace_s) > now() "
+    # a turn another driver is answering (any API process) does not take a place in the
+    # batch (CodeRabbit 4498473548): the poll reaches the unclaimed ones
+    "AND NOT " + reply_claimed_sql("id") + " "
     "ORDER BY pending_reply_since LIMIT :n"
 )
 

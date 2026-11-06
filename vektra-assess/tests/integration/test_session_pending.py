@@ -129,7 +129,8 @@ async def test_a_claimed_or_fresh_turn_is_not_answered_twice(pg, worker) -> None
                 )
                 await conn.commit()
                 pending = PendingTurnDriver(w.app, min_age_s=0)
-                assert await pending.run_once() == [sid]
+                # a claimed turn is not even taken (CodeRabbit 4498473548)
+                assert await pending.run_once() == []
                 await wait_idle(w)
                 assert (await turns(pg, sid))[-1] == ("student", "normal")
                 calls = len(runner.turns)
@@ -164,3 +165,33 @@ async def test_the_loop_runs_until_stopped(pg, worker) -> None:  # type: ignore[
         finally:
             await pending.stop()
         await wait_idle(w)
+
+
+async def test_claimed_turns_do_not_fill_the_pending_batch(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4498473548: the poll skips turns another process is answering, so a full
+    batch of claimed turns never hides an abandoned one."""
+    runner = FakeStreamRunner()
+    async with world(pg, assess_runner=runner) as w:
+        old = await seed_session(w, worker, "ACTIVE", assignment="rubric_vis")
+        new = await seed_session(w, worker, "ACTIVE", assignment="simple")
+        for sid, age in ((old.session_id, 60), (new.session_id, 30)):
+            await pg.run(
+                "super",
+                "UPDATE assess_sessions SET pending_reply_since = now() - make_interval(secs => :a) "
+                "WHERE id = :s",
+                {"s": sid, "a": age},
+            )
+        holder = create_async_engine(pg.url("api"))
+        try:
+            async with holder.connect() as conn:
+                await conn.execute(
+                    text(f"SELECT pg_advisory_lock({REPLY_CLAIM_KEY_SQL})"),
+                    {"sid": str(old.session_id)},
+                )
+                await conn.commit()
+                pending = PendingTurnDriver(w.app, min_age_s=0, batch=1)
+                assert await pending.run_once() == [new.session_id]
+                await wait_idle(w)
+                await conn.execute(text("SELECT pg_advisory_unlock_all()"))
+        finally:
+            await holder.dispose()

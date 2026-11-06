@@ -129,9 +129,12 @@ _ONE_OPEN = "uq_assess_sessions_one_open"
 class _Refused(Exception):
     """Raised inside the Start transaction so that it rolls back (the jti stays unconsumed)."""
 
-    def __init__(self, err: ErrorResponse) -> None:
+    def __init__(self, err: ErrorResponse, audit_reason: str | None = None) -> None:
         super().__init__(err.code)
         self.err = err
+        self.audit_reason = (
+            audit_reason  # audited after the rollback, in its own transaction
+        )
 
 
 async def _refuse(
@@ -249,7 +252,10 @@ async def start_session(
                 )
             ).first()
             if consumed is None:
-                raise _Refused(token_invalid())
+                # mint-to-Start correlation (M5.5): a correctly signed token whose jti was never
+                # minted through /tokens for this (site, sub, cmid) by the site's CURRENT mint
+                # key, or was already used or expired
+                raise _Refused(token_invalid(), "mint_correlation")
             hist = (
                 await conn.execute(
                     _HISTORY, {"s": claims.site, "u": claims.sub, "c": claims.cmid}
@@ -296,6 +302,16 @@ async def start_session(
             )
     except _Refused as exc:
         refused = exc.err
+        if exc.audit_reason is not None:
+            async with engine.begin() as conn:
+                await write_event(
+                    conn,
+                    AssessAuditEvent.START_REFUSED,
+                    actor="api",
+                    site_id=claims.site,
+                    reason_code=exc.audit_reason,
+                    data={"cmid": claims.cmid},
+                )
     except IntegrityError as exc:
         if _ONE_OPEN not in str(exc.orig):
             raise

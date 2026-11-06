@@ -241,7 +241,7 @@ version.
 
 ### M3 — Timing, resume, finish, abandon
 - [x] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
-- [ ] M3.2 Warnings 10/5/1 from `TurnDriver` timer per live session (emitted once per (sid, threshold, deadline)); tests with outage credit X: fire at new deadline − 10/5/1 min ±5 s, none at the old deadline
+- [x] M3.2 Warnings 10/5/1 from `TurnDriver` timer per live session (emitted once per (sid, threshold, deadline)); tests with outage credit X: fire at new deadline − 10/5/1 min ±5 s, none at the old deadline
 - [ ] M3.3 Input lock at the deadline; grace window `VEKTRA_ASSESS_REPLY_GRACE_S` (60): in-flight reply finishes or is cut → marked "risposta interrotta"; slowed fake-provider tests for both branches; `assess_append_turn` refuses bot turns after deadline + grace (DB test)
 - [ ] M3.4 Lazy enforcement on every API request: past deadline (not OUTAGE) → close `timed_out`; C exceeded → `service_failure`; STARTING past T → reported as rolled back (the reaper does the deletion)
 - [ ] M3.5 Bind the sweeper tick: close `timed_out` (deadline + grace passed, not OUTAGE), never OUTAGE; browser-closed test: CLOSED(timed_out) and a `transcript_generate` job exist within 5 min of the deadline
@@ -402,6 +402,12 @@ Every acceptance check reads rows, bytes or real responses, never a status field
 - **For PR 8b (found reviewing 8a, 2026-11-06)**: the plan-2 `assess_close_session` (revision 0014) closes without bumping `epoch`, while this plan's Design Notes and M5.11 require every close to bump it so the old session token is rejected. 8b must add the bump in a new revision (same grants) and then settle how a tab reconnecting after the close drains `closed`: review fix 1 lets the events route through for a CLOSED row only because the epoch still matches. With the bump, either the stream returns a content-free `closed` on an epoch mismatch for a CLOSED row, or the client learns the close from the 409 of GET. Decide it there, with a test.
 - **CodeRabbit on PR #153, deferred to PR 8b (2026-11-06)**: (a) deadline and C-cap check in the session gate (comment 4493109378) -> M3.3/M3.4; (b) enrolment freshness step (4493120917) -> M3.7; (c) recovery of a bot turn whose persist failed, which today leaves `pending_reply_since` set -> M3.6 `reconcile_reply`, with a test that the session accepts the next message afterwards; (d) epoch-checked delivery of reply deltas on the event stream (4493120906) -> with the epoch bump on close above. Not reachable in production before 8b: assess is disabled by default and every production Start rolls back with `privacy_not_configured` until plan 12. Not applied by design: validating a Start body (4493120925) contradicts M2.6, the route reads no body.
 - **OQ-020**: the burst and e2e fixtures are synthetic only.
+- **PR 8b implementation choices (2026-11-06)**:
+  - Warnings (M3.2) are published by the event stream's 1 s poll of the authoritative
+    `deadline_at` (credit included), not by a per-session timer in the TurnDriver: they only
+    matter to a connected client, the deadline read is the DB's, and the broker dedupes them per
+    (session, threshold, deadline) across tabs. A threshold is due only inside a 5 s window, so a
+    tab connecting late does not replay a past warning.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

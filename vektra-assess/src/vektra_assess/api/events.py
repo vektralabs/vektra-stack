@@ -26,6 +26,7 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -36,6 +37,7 @@ from sqlalchemy import text
 from vektra_assess.api.common import engine_of
 from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.session_gate import ANY_OPEN, session_tx
+from vektra_assess.timing import due_warnings
 from vektra_assess.tokens import SessionClaims
 
 EVENT_TYPES = frozenset(
@@ -78,6 +80,7 @@ class _Channel:
     last_state: str | None = None
     touched: float = 0.0
     ended_at: float | None = None  # when a terminal event was published
+    warned: set[tuple[int, str]] = field(default_factory=set)  # (minutes, deadline ISO)
     signal: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -146,6 +149,25 @@ class EventBroker:
             )
         return self.publish(sid, "state", data)
 
+    def warn(
+        self, sid: UUID, deadline_at: datetime, now: datetime, duration_s: int
+    ) -> list[Event]:
+        """Publish the 10 / 5 / 1 minute warnings due now, once per (session, threshold,
+        deadline) however many connections poll (REQ-069). The deadline is the polled one, so
+        an outage credit moves the warnings with it."""
+        ch = self._channel(sid)
+        out = []
+        for minutes in due_warnings(deadline_at, now, duration_s, ch.warned):
+            ch.warned.add((minutes, deadline_at.isoformat()))
+            out.append(
+                self.publish(
+                    sid,
+                    "warning",
+                    {"minutes": minutes, "deadline_at": deadline_at.isoformat()},
+                )
+            )
+        return out
+
     def after(self, sid: UUID, last_id: int) -> list[Event]:
         ch = self._channels.get(sid)
         if ch is None:
@@ -202,7 +224,7 @@ KEEPALIVE_S = 15.0
 MAX_STREAM_S = 3600.0  # the client reconnects with Last-Event-ID
 
 _STATUS = text(
-    "SELECT state, close_reason, epoch, deadline_at, now() AS server_now "
+    "SELECT state, close_reason, epoch, deadline_at, duration_s, now() AS server_now "
     "FROM assess_sessions WHERE id = :s"
 )
 _ROLLBACK_REASON = text(
@@ -223,6 +245,10 @@ async def _poll(
         if row is None:
             reason = (await conn.execute(_ROLLBACK_REASON, {"s": sid})).scalar()
             return None, None, {"reason": reason}
+    if row.state == "ACTIVE" and row.deadline_at is not None and row.duration_s:
+        broker_of(request).warn(
+            sid, row.deadline_at, row.server_now, int(row.duration_s)
+        )
     return (
         str(row.state),
         int(row.epoch),

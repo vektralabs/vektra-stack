@@ -64,3 +64,22 @@ def test_evict_and_idle_sweep() -> None:
     assert a not in b and c in b
     t[0] = 11
     assert b.sweep_idle() == 1 and c not in b
+
+
+def test_warnings_are_published_once_per_threshold_and_deadline() -> None:
+    """M3.2: two pollers, one warning; a credited deadline warns again, never at the old one."""
+    from datetime import UTC, datetime, timedelta
+
+    b = EventBroker()
+    sid = uuid.uuid4()
+    t0 = datetime(2026, 11, 6, 9, 0, tzinfo=UTC)
+    d = t0 + timedelta(minutes=30)
+    at5 = d - timedelta(minutes=5)
+    assert [e.data["minutes"] for e in b.warn(sid, d, at5, 1800)] == [5]
+    assert b.warn(sid, d, at5 + timedelta(seconds=1), 1800) == []  # a second tab polls
+    credited = d + timedelta(minutes=3)
+    # the old 5-minute moment against the new deadline: nothing
+    assert b.warn(sid, credited, at5 + timedelta(seconds=2), 1800) == []
+    new5 = credited - timedelta(minutes=5)
+    assert [e.data["minutes"] for e in b.warn(sid, credited, new5, 1800)] == [5]
+    assert [e.type for e in b.after(sid, 0)] == ["warning", "warning"]

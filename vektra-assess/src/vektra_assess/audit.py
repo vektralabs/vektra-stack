@@ -48,6 +48,9 @@ class AssessAuditEvent(enum.StrEnum):
     TEAM_SUBMISSION_REFUSED = "assess_team_submission_refused"
     BUDGET_WARNING = "assess_budget_warning"
     FLAG_ADDED = "assess_flag_added"
+    REPLY_RECONCILED = (
+        "assess_reply_reconciled"  # a lost reply answered with the marked turn
+    )
     START_REFUSED = (
         "assess_start_refused"  # advisory refusal at the API, nothing consumed
     )

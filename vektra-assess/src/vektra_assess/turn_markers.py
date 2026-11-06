@@ -12,3 +12,8 @@ as an instruction.
 from __future__ import annotations
 
 INTERRUPTED_REPLY = "[risposta interrotta]"
+
+#: the live-reply claim (M3.6): the API's TurnDriver holds this SESSION-level advisory lock while a
+#: reply is in flight; the worker's ``reconcile_reply`` takes it with ``pg_try_advisory_xact_lock``
+#: and leaves the turn alone while it is held. One expression for both sides.
+REPLY_CLAIM_KEY_SQL = "hashtextextended('assess_reply:' || CAST(:sid AS text), 0)"

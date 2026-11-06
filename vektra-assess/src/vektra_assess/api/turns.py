@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -62,7 +63,7 @@ from vektra_assess.llm.types import (
     TurnResult,
 )
 from vektra_assess.tokens import SessionClaims
-from vektra_assess.turn_markers import INTERRUPTED_REPLY
+from vektra_assess.turn_markers import INTERRUPTED_REPLY, REPLY_CLAIM_KEY_SQL
 
 log = structlog.get_logger(__name__)
 
@@ -186,7 +187,49 @@ class TurnDriver:
         )
         return task
 
+    @asynccontextmanager
+    async def _claim(self, sid: UUID) -> AsyncIterator[None]:
+        """Hold the live-reply claim for the reply's lifetime (session-level advisory lock on a
+        dedicated connection). The worker's reconcile_reply never touches a claimed turn. A claim
+        that cannot be taken (database unreachable) does not stop the reply: its own appends fail
+        then, and the reconciliation answers the turn later."""
+        conn = None
+        try:
+            conn = await self.engine.connect()
+            await conn.execute(
+                text(f"SELECT pg_advisory_lock({REPLY_CLAIM_KEY_SQL})"),
+                {"sid": str(sid)},
+            )
+            await conn.commit()
+        except Exception as exc:
+            log.warning("assess_reply_claim_failed", error_type=type(exc).__name__)
+        try:
+            yield
+        finally:
+            if conn is not None:
+                try:
+                    await conn.execute(
+                        text(f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"),
+                        {"sid": str(sid)},
+                    )
+                    await conn.commit()
+                except Exception:
+                    pass  # closing the connection releases the lock anyway
+                finally:
+                    await conn.close()
+
     async def _drive(
+        self,
+        sid: UUID,
+        epoch: int,
+        bundle: ContextBundle,
+        turn: StudentTurn,
+        cut_after_s: float | None = None,
+    ) -> None:
+        async with self._claim(sid):
+            await self._reply(sid, epoch, bundle, turn, cut_after_s)
+
+    async def _reply(
         self,
         sid: UUID,
         epoch: int,

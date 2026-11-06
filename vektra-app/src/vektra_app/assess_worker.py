@@ -241,6 +241,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     from vektra_assess.worker.parser_client import ParserClient
     from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
     from vektra_assess.worker.render import RenderDeps, make_render_handler
+    from vektra_assess.worker.reply_reconcile import make_reconcile_handler
     from vektra_assess.worker.start_source import MoodleStartSource
 
     settings, engine = checked.settings, checked.engine
@@ -272,6 +273,9 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
         JobKind.PREFLIGHT: preflight,
         JobKind.RENDER_CHECK: render,
         JobKind.GATE_REFRESH: render,
+        JobKind.RECONCILE_REPLY: make_reconcile_handler(
+            checked.keys["assess_kek"], settings.outage_timeout_s
+        ),
     }
 
 
@@ -279,6 +283,7 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.reaper import reap_starting
     from vektra_assess.worker.render import gate_refresh_tick
+    from vektra_assess.worker.reply_reconcile import queue_reconciles
     from vektra_assess.worker.sweeper import sweep_timed_out
 
     settings, engine = checked.settings, checked.engine
@@ -291,6 +296,7 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
 
     async def sweeper() -> None:
         await sweep_timed_out(engine.connect)
+        await queue_reconciles(engine.connect, settings.outage_timeout_s)
 
     return {
         "starting_reaper": starting_reaper,
@@ -503,7 +509,8 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "reaper", "render", "runtime", "shutdown", "slots", "start_source", "sweeper", "ticks",
+        "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_source",
+        "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip
         importlib.import_module(f"vektra_assess.worker.{name}")

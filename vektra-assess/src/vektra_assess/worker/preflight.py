@@ -157,6 +157,10 @@ class StartSource(Protocol):
 
     async def capture(self, target: StartTarget) -> CaptureResult: ...
 
+    async def enrolled(self, target: StartTarget) -> bool | None:
+        """Still an ACTIVE student of the activity's course? None when unreadable (M3.7)."""
+        ...
+
 
 class PartBRunner(Protocol):
     @property
@@ -274,6 +278,9 @@ _ACTIVATE = text(
     "reply_grace_s = :g, "
     "frozen_policy = CAST(:fp AS jsonb), starting_expires_at = NULL, last_activity_at = now() "
     "WHERE id = :s"
+)
+_ENROLLED = text(
+    "INSERT INTO assess_enrolment_checks (session_id, result) VALUES (:s, 'enrolled')"
 )
 _HANDOFF = text(
     "INSERT INTO assess_session_handoff (session_id, session_state, epoch, sealed_dek, "
@@ -536,6 +543,8 @@ async def _commit(
                 await conn.execute(
                     _HANDOFF, {"s": sid, "e": int(row.epoch), "d": sealed, "k": hkid}
                 )
+                # gate (f) has just verified the enrolment: the first freshness record (M3.7)
+                await conn.execute(_ENROLLED, {"s": sid})
                 await conn.execute(
                     _ATTEMPT,
                     {

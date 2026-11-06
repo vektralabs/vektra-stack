@@ -443,6 +443,16 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_STATE_RPM",
         description="GET /state calls per minute per (site, student, activity).",
     )
+    enrolment_freshness_s: int = Field(
+        150,
+        ge=60,
+        le=3600,
+        alias="VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S",
+        description=(
+            "A turn needs an 'enrolled' re-check no older than this (gate step 6). The worker "
+            "re-checks every 60 s; a worker stopped longer than this rejects turns (fail closed)."
+        ),
+    )
     max_message_chars: int = Field(
         2000,
         ge=1,

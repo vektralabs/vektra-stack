@@ -117,13 +117,20 @@ class FakeSource:
         stall: bool = False,
         inner: StartSource | None = None,
         facts: MoodleGateFacts = PASSING_FACTS,
+        enrolled: bool | None = True,
     ) -> None:
+        self.enrolled_value = enrolled
         self.result = result
         self.raises = raises
         self.stall = stall
         self.inner = inner
         self.facts = facts
         self.targets: list[StartTarget] = []
+
+    async def enrolled(self, target: StartTarget) -> bool | None:
+        if self.inner is not None:
+            return await self.inner.enrolled(target)
+        return self.enrolled_value
 
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
         if self.inner is not None:

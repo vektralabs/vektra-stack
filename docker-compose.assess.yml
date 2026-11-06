@@ -87,6 +87,7 @@ services:
       VEKTRA_ASSESS_START_T_S: ${VEKTRA_ASSESS_START_T_S:-60}
       VEKTRA_ASSESS_ADMISSION_K: ${VEKTRA_ASSESS_ADMISSION_K:-10}
       VEKTRA_ASSESS_RENDER_FRESH_S: ${VEKTRA_ASSESS_RENDER_FRESH_S:-300}
+      VEKTRA_ASSESS_REPLY_GRACE_S: ${VEKTRA_ASSESS_REPLY_GRACE_S:-60}
     secrets:
       - { source: assess_handoff_public, <<: *secret }
       - { source: assess_transcript_kek, <<: *secret }

@@ -161,6 +161,21 @@ class MoodleStartSource:
         self._resolved.put(target.session_id, res.value)
         return res.value, False
 
+    async def enrolled(self, target: StartTarget) -> bool | None:
+        """The enrolment re-check (M3.7): the activity inside the student's ACTIVE courses and the
+        student role there. Not found in those courses is False; unreadable is None."""
+        site = await self._site(target)
+        if site is None:
+            return None
+        ref, not_found = await self._resolve(site, target)
+        self._resolved.pop(target.session_id)
+        if ref is None:
+            return False if not_found else None
+        enrol = await r.read_enrolment(
+            self._client, site, ref.courseid, target.student_userid
+        )
+        return enrol.value.is_student if isinstance(enrol, Readable) else None
+
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
         """The Moodle half of the START gates, read fresh; anything unreadable stays None."""
         site = await self._site(target)

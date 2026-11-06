@@ -367,9 +367,16 @@ async def post_turn(
     if len(body.text) > settings_of(request).max_message_chars:
         raise fail(bad_request("message_too_long"))
     driver = driver_of(request)
-    async with session_tx(
-        request, claims, sid, route="post_turn", allowed={"ACTIVE"}
-    ) as (conn, row):
+    async with (
+        session_tx(
+            request,
+            claims,
+            sid,
+            route="post_turn",
+            allowed={"ACTIVE"},
+            require_enrolment=True,  # gate step 6 (M3.7): a turn needs a fresh 'enrolled' check
+        ) as (conn, row)
+    ):
         # REQ-070 input lock from the deadline on (the database refuses the append as well)
         if row.deadline_at is not None and row.server_now >= row.deadline_at:
             raise fail(deadline_passed())

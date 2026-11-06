@@ -35,6 +35,7 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.material import MaterialUnavailable
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
+    assess_unavailable,
     session_closed,
     session_not_found,
     start_refused,
@@ -123,6 +124,7 @@ async def gate(
     lock: bool = True,
     allow_closed: bool = False,
     start_t_s: int = 60,
+    enrolment_fresh_s: int | None = None,
 ) -> SessionRow:
     """Steps 2-6. Raises ``GateRejected``; never touches session material.
 
@@ -177,8 +179,24 @@ async def gate(
         and (row.server_now - row.created_at).total_seconds() >= start_t_s
     ):
         raise GateRejected(start_refused("start_timeout"), "start_timeout")
-    # 6. enrolment freshness: the 150 s re-check gate (plan M3.7) is bound here
+    # 6. enrolment freshness (M3.7, NFR-014): the last worker re-check must say 'enrolled' and be
+    #    at most ``enrolment_fresh_s`` old (database clock). A stopped worker or an unreadable
+    #    enrolment fails closed: refused, state unchanged, audited.
+    if enrolment_fresh_s is not None and row.state in LIVE:
+        check = (await conn.execute(_ENROLMENT, {"sid": sid})).first()
+        if (
+            check is None
+            or check.result != "enrolled"
+            or float(check.age_s) > enrolment_fresh_s
+        ):
+            raise GateRejected(assess_unavailable("enrolment_freshness"), "enrolment")
     return row
+
+
+_ENROLMENT = text(
+    "SELECT result, extract(epoch FROM now() - checked_at) AS age_s "
+    "FROM assess_enrolment_checks WHERE session_id = :sid ORDER BY checked_at DESC LIMIT 1"
+)
 
 
 _CLOSE = text("SELECT assess_close_session(:sid, :epoch, :reason)")
@@ -253,10 +271,12 @@ async def session_tx(
     allowed: Collection[str],
     lock: bool = True,
     allow_closed: bool = False,
+    require_enrolment: bool = False,
 ) -> AsyncIterator[tuple[AsyncConnection, SessionRow]]:
     """One transaction: the gate (steps 2-6) and then the route's own work (after the lazy
     close of step 5, which commits on its own)."""
-    start_t_s = settings_of(request).start_t_s
+    settings = settings_of(request)
+    start_t_s = settings.start_t_s
     await enforce_clock(request, claims, sid, start_t_s)
     try:
         async with engine_of(request).begin() as conn:
@@ -268,6 +288,9 @@ async def session_tx(
                 lock=lock,
                 allow_closed=allow_closed,
                 start_t_s=start_t_s,
+                enrolment_fresh_s=(
+                    settings.enrolment_freshness_s if require_enrolment else None
+                ),
             )
             try:
                 yield conn, row

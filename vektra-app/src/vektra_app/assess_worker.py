@@ -238,6 +238,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     from vektra_assess.jobs import JobKind
     from vektra_assess.moodle.client import MoodleWsClient
     from vektra_assess.moodle.tokens import secret_token_provider
+    from vektra_assess.worker.enrolment import make_recheck_handler
     from vektra_assess.worker.parser_client import ParserClient
     from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
     from vektra_assess.worker.render import RenderDeps, make_render_handler
@@ -273,6 +274,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
         JobKind.PREFLIGHT: preflight,
         JobKind.RENDER_CHECK: render,
         JobKind.GATE_REFRESH: render,
+        JobKind.ENROLMENT_RECHECK: make_recheck_handler(source),
         JobKind.RECONCILE_REPLY: make_reconcile_handler(
             checked.keys["assess_kek"], settings.outage_timeout_s
         ),
@@ -281,6 +283,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
 
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
+    from vektra_assess.worker.enrolment import queue_rechecks
     from vektra_assess.worker.reaper import reap_starting
     from vektra_assess.worker.render import gate_refresh_tick
     from vektra_assess.worker.reply_reconcile import queue_reconciles
@@ -298,10 +301,14 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
         await sweep_timed_out(engine.connect)
         await queue_reconciles(engine.connect, settings.outage_timeout_s)
 
+    async def enrolment_recheck() -> None:
+        await queue_rechecks(engine.connect)
+
     return {
         "starting_reaper": starting_reaper,
         "gate_refresh": gate_refresh,
         "sweeper": sweeper,
+        "enrolment_recheck": enrolment_recheck,
     }
 
 
@@ -509,7 +516,7 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_source",
+        "enrolment", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_source",
         "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip

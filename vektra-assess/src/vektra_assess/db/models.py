@@ -212,6 +212,8 @@ class SessionOrm(Base):
     duration_s: Mapped[int | None] = mapped_column(INTEGER)
     frozen_policy: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     preflight_started_at: Mapped[datetime | None] = _ts(nullable=True)
+    # revision 0023: set by a student turn, cleared by the bot turn (assess_append_turn)
+    pending_reply_since: Mapped[datetime | None] = _ts(nullable=True)
 
 
 class StartAttemptOrm(Base):

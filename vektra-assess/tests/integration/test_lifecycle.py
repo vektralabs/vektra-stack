@@ -433,13 +433,16 @@ async def test_session_material_read_and_decrypt_p95_under_50ms(pg):
     prev = row.turn_hashes[-1]
     for n in range(2, 42):
         msg = os.urandom(512).hex().encode()
-        h = hashing.turn_hash(prev, n, "student", "normal", msg)
+        # student and bot alternate: one reply at a time (revision 0023)
+        role = "student" if n % 2 == 0 else "bot"
+        h = hashing.turn_hash(prev, n, role, "normal", msg)
         got = (
             await pg.run(
                 "api",
-                "SELECT assess_append_turn(:s, 1, :q, 'student', 'normal', :c, :h, :p)",
+                "SELECT assess_append_turn(:s, 1, :q, :r, 'normal', :c, :h, :p)",
                 {
                     "s": sid,
+                    "r": role,
                     "q": n - 2,
                     "c": envelope.encrypt_turn(dek, sid, n, msg),
                     "h": h,

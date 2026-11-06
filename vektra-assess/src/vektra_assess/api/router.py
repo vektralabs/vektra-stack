@@ -15,6 +15,7 @@ from vektra_assess.api import (
     sessions,
     setup_check,
     start,
+    turns,
 )
 
 PREFIX = "/api/v1/assess"
@@ -26,3 +27,4 @@ router.include_router(mint.router)
 router.include_router(start.router)
 router.include_router(sessions.router)
 router.include_router(events.router)
+router.include_router(turns.router)

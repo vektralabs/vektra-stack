@@ -153,3 +153,54 @@ async def activate(pg: Any, model: str = MODEL, pv: str = PROMPT_VERSION) -> Non
 
 
 Runner = Callable[[JobContext], Awaitable[None]]
+
+
+class FakeStreamRunner:
+    """``run_stream`` without a model: scripted released segments, then one ``TurnResult``.
+
+    ``release`` stalls the stream before its first segment until the test sets it; ``fail`` raises
+    (for example a ``ProviderOutageError``) instead of answering.
+    """
+
+    def __init__(
+        self,
+        segments: tuple[str, ...] = (
+            "Bene. ",
+            "Quale scelta del criterio C1 vuoi spiegare?",
+        ),
+        *,
+        release: asyncio.Event | None = None,
+        fail: BaseException | None = None,
+    ) -> None:
+        self.segments = segments
+        self.release = release
+        self.fail = fail
+        self.turns: list[Any] = []
+
+    async def run_stream(
+        self, bundle: ContextBundle, turn: Any, stop: Any = None
+    ) -> Any:
+        from datetime import UTC, datetime
+
+        from vektra_assess.llm.types import ReleasedSegment
+
+        self.turns.append(turn)
+        if self.release is not None:
+            await self.release.wait()
+        if self.fail is not None:
+            raise self.fail
+        for seg in self.segments:
+            yield ReleasedSegment(seg)
+        text = "".join(self.segments)
+        now = datetime.now(UTC)
+        yield TurnResult(
+            text=text,
+            marks=(),
+            behaviour_class=None,
+            contest_entries=(),
+            language="it",
+            usage=TurnUsage(200, 20),
+            call_records=(ProviderCallRecord(now, now, now, "ok"),),
+            replaced_count=0,
+            content_hash=hashlib.sha256(text.encode()).hexdigest(),
+        )

@@ -1,0 +1,296 @@
+"""``POST /api/v1/assess/sessions/{sid}/turns`` and the ``TurnDriver`` (CONF-007: turns run in the API).
+
+The request runs the gate (steps 1-6, ACTIVE only), loads the session material, refuses a second
+message while a reply is pending (409 "attendi la risposta"), and appends the student turn through
+``assess_append_turn`` (ciphertext under the session DEK, hash chained on the last turn), which
+sets ``pending_reply_since`` and refuses a second student turn itself under the row lock. The
+request returns 202 at once.
+
+The reply runs in a detached task (``TurnDriver``), independent of the HTTP connection: a client
+that disconnects does not stop it. It streams the runner's released segments to the session's
+``EventBroker`` as ``reply_delta`` events and, at the end, appends the bot turn (normal, or the
+marked ``interrupted`` turn when the runner was stopped) with its hash, then publishes
+``reply_done`` / ``reply_interrupted``. Plaintext lives only in memory: nothing is persisted chunk
+by chunk.
+
+Thin path (plan M1.9): a provider outage or an unexpected error ends the attempt with
+``reply_interrupted`` and leaves the student turn pending; the OUTAGE transition, the server-side
+answer of a pending turn and the reconciliation of an abandoned one are plans M4.1, M4.3 and M3.6.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any
+from uuid import UUID
+
+import structlog
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from vektra_assess.api.common import engine_of, fail, parse_body
+from vektra_assess.api.deps import dek_cache_of, handoff_private_of
+from vektra_assess.api.events import EventBroker, broker_of
+from vektra_assess.api.gate import verify_assess_token_session
+from vektra_assess.api.material import DekCache, Material, load_material
+from vektra_assess.api.models import TurnRequest
+from vektra_assess.api.session_gate import SessionRow, session_tx
+from vektra_assess.context.assemble import assemble_context
+from vektra_assess.context.bundle import ContextBundle
+from vektra_assess.context.policy import FrozenPolicy
+from vektra_assess.context.snapshot import from_canonical_bytes
+from vektra_assess.crypto import envelope, hashing
+from vektra_assess.errors import assess_unavailable, reply_pending, state_conflict
+from vektra_assess.keys import AssessKeyring
+from vektra_assess.llm.types import (
+    PriorTurn,
+    ProviderOutageError,
+    ReleasedSegment,
+    StudentTurn,
+    TurnResult,
+)
+from vektra_assess.tokens import SessionClaims
+
+log = structlog.get_logger(__name__)
+
+router = APIRouter()
+
+_APPEND = text(
+    "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
+)
+_AUDIT = text(
+    "INSERT INTO assess_audit_events (event, reason_code, actor_kind, data) "
+    "VALUES (:event, :reason, 'api', CAST(:data AS jsonb))"
+)
+
+
+class ApiAuditSink:
+    """The runner's ``AuditSink`` in the API: one content-free row per call, own transaction."""
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = (
+            engine  # an AsyncEngine, or a zero-argument callable returning one
+        )
+
+    async def __call__(self, event: str, data: Mapping[str, Any]) -> None:
+        engine = self._engine() if callable(self._engine) else self._engine
+        reason = data.get("reason_code")
+        async with engine.begin() as conn:
+            await conn.execute(
+                _AUDIT,
+                {
+                    "event": event,
+                    "reason": reason if isinstance(reason, str) else None,
+                    "data": json.dumps(dict(data), sort_keys=True, default=str),
+                },
+            )
+
+
+def bundle_of(material: Material, row: SessionRow) -> ContextBundle:
+    """The frozen bundle of a live session: snapshot decrypted, projected by its frozen policy."""
+    if row.frozen_policy is None:
+        raise ValueError("a committed session always has a frozen policy")
+    plaintext = envelope.decrypt_snapshot(
+        material.dek, material.session_id, material.snapshot_ciphertext
+    )
+    return assemble_context(
+        from_canonical_bytes(plaintext), FrozenPolicy.model_validate(row.frozen_policy)
+    )
+
+
+def history_of(material: Material) -> tuple[PriorTurn, ...]:
+    return tuple(
+        PriorTurn(
+            "student" if t.role == "student" else "assistant", material.text_of(t)
+        )
+        for t in material.turns
+    )
+
+
+async def append_turn(
+    conn: Any,
+    material: Material,
+    *,
+    epoch: int,
+    seq: int,
+    role: str,
+    kind: str,
+    text_: str,
+) -> int | None:
+    """Encrypt and append one turn after the material's last; None when the function refuses."""
+    turn_no = material.next_turn_no
+    plaintext = text_.encode("utf-8")
+    prev = material.last_hash
+    digest = hashing.turn_hash(prev, turn_no, role, kind, plaintext)
+    got = (
+        await conn.execute(
+            _APPEND,
+            {
+                "sid": material.session_id,
+                "epoch": epoch,
+                "seq": seq,
+                "role": role,
+                "kind": kind,
+                "ct": envelope.encrypt_turn(
+                    material.dek, material.session_id, turn_no, plaintext
+                ),
+                "h": digest,
+                "prev": prev,
+            },
+        )
+    ).scalar()
+    return int(got) if got is not None else None
+
+
+@dataclass
+class TurnDriver:
+    """Detached reply tasks, one per session at most (the pending-reply rule guarantees it)."""
+
+    engine: AsyncEngine
+    broker: EventBroker
+    runner: Any  # DiscussionTurnRunner (or a test double with ``run_stream``)
+    handoff_private: AssessKeyring
+    cache: DekCache
+    tasks: dict[UUID, asyncio.Task[None]] = field(default_factory=dict)
+
+    def start(
+        self,
+        sid: UUID,
+        epoch: int,
+        bundle: ContextBundle,
+        turn: StudentTurn,
+    ) -> asyncio.Task[None]:
+        task = asyncio.create_task(self._drive(sid, epoch, bundle, turn))
+        self.tasks[sid] = task
+        task.add_done_callback(
+            lambda t: self.tasks.pop(sid, None) if self.tasks.get(sid) is t else None
+        )
+        return task
+
+    async def _drive(
+        self, sid: UUID, epoch: int, bundle: ContextBundle, turn: StudentTurn
+    ) -> None:
+        result: TurnResult | None = None
+        try:
+            async for item in self.runner.run_stream(bundle, turn):
+                if isinstance(item, ReleasedSegment):
+                    self.broker.publish(sid, "reply_delta", {"text": item.text})
+                elif isinstance(item, TurnResult):
+                    result = item
+        except ProviderOutageError:
+            self.broker.publish(
+                sid, "reply_interrupted", {"reason": "provider_unavailable"}
+            )
+            return
+        except Exception as exc:
+            log.warning("assess_turn_driver_error", error_type=type(exc).__name__)
+            self.broker.publish(sid, "reply_interrupted", {"reason": "internal_error"})
+            return
+        if result is None:
+            self.broker.publish(sid, "reply_interrupted", {"reason": "internal_error"})
+            return
+        await self._persist(sid, epoch, result)
+
+    async def _persist(self, sid: UUID, epoch: int, result: TurnResult) -> None:
+        kind = "interrupted" if result.interrupted else "normal"
+        async with self.engine.begin() as conn:
+            seq = (
+                await conn.execute(
+                    text(
+                        "SELECT seq FROM assess_sessions WHERE id = :s AND state = 'ACTIVE' "
+                        "AND epoch = :e FOR UPDATE"
+                    ),
+                    {"s": sid, "e": epoch},
+                )
+            ).scalar()
+            if seq is None:
+                self.broker.publish(
+                    sid, "reply_interrupted", {"reason": "session_not_active"}
+                )
+                return
+            material = await load_material(
+                conn, sid, epoch, self.handoff_private, self.cache
+            )
+            turn_no = await append_turn(
+                conn,
+                material,
+                epoch=epoch,
+                seq=int(seq),
+                role="bot",
+                kind=kind,
+                text_=result.text,
+            )
+        if turn_no is None:
+            self.broker.publish(sid, "reply_interrupted", {"reason": "append_refused"})
+            return
+        self.broker.publish(
+            sid,
+            "reply_interrupted" if result.interrupted else "reply_done",
+            {"turn_no": turn_no, "marked": bool(result.marks)},
+        )
+
+
+def driver_of(request: Request) -> TurnDriver:
+    driver = getattr(request.app.state, "assess_turn_driver", None)
+    if driver is not None:
+        return driver  # type: ignore[no-any-return]
+    runner = getattr(request.app.state, "assess_runner", None)
+    if runner is None:
+        raise fail(assess_unavailable("discussion_runner"))
+    driver = TurnDriver(
+        engine=engine_of(request),
+        broker=broker_of(request),
+        runner=runner,
+        handoff_private=handoff_private_of(request),
+        cache=dek_cache_of(request),
+    )
+    request.app.state.assess_turn_driver = driver
+    return driver
+
+
+@router.post("/sessions/{sid}/turns", status_code=202)
+async def post_turn(
+    sid: UUID,
+    request: Request,
+    claims: SessionClaims = Depends(verify_assess_token_session),
+) -> JSONResponse:
+    body = await parse_body(request, TurnRequest)
+    driver = driver_of(request)
+    async with session_tx(
+        request, claims, sid, route="post_turn", allowed={"ACTIVE"}
+    ) as (conn, row):
+        material = await load_material(
+            conn, sid, row.epoch, handoff_private_of(request), dek_cache_of(request)
+        )
+        if material.turns and material.turns[-1].role == "student":
+            raise fail(reply_pending())
+        turn_no = await append_turn(
+            conn,
+            material,
+            epoch=row.epoch,
+            seq=row.seq,
+            role="student",
+            kind="normal",
+            text_=body.text,
+        )
+        if turn_no is None:
+            raise fail(state_conflict(row.state))
+        bundle = bundle_of(material, row)
+        turn = StudentTurn(
+            text=body.text,
+            turn_index=sum(1 for t in material.turns if t.role == "student") + 1,
+            history=history_of(material),
+        )
+    # committed: the reply runs detached from this request from here on
+    driver.broker.publish(sid, "turn_accepted", {"turn_no": turn_no})
+    driver.start(sid, row.epoch, bundle, turn)
+    return JSONResponse(
+        status_code=202,
+        content={"session_id": str(sid), "turn_no": turn_no},
+        headers={"Cache-Control": "no-store"},
+    )

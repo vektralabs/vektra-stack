@@ -31,6 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from vektra_assess.api.common import engine_of, fail
+from vektra_assess.api.material import MaterialUnavailable
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
     session_closed,
@@ -167,8 +168,19 @@ async def session_tx(
     try:
         async with engine_of(request).begin() as conn:
             row = await gate(conn, claims, sid, allowed=allowed, lock=lock)
-            yield conn, row
+            try:
+                yield conn, row
+            except MaterialUnavailable:
+                # live by its row but no material at this epoch (a hand-off being re-sealed, a
+                # close racing this request): refused like a state conflict, nothing decrypted
+                raise GateRejected(state_conflict(row.state), "material") from None
     except GateRejected as rejected:
+        if rejected.step in ("closed", "epoch", "material"):
+            cache = getattr(request.app.state, "assess_dek_cache", None)
+            if cache is not None:
+                cache.evict(
+                    sid
+                )  # a closed or revoked session's DEK leaves the process now
         await audit_rejection(
             request, rejected, route=route, site_id=claims.site, session_id=sid
         )

@@ -28,7 +28,7 @@ from vektra_assess.api.deps import (
     tokens_of,
 )
 from vektra_assess.api.gate import verify_assess_token_any
-from vektra_assess.api.material import Material, load_material
+from vektra_assess.api.material import Material, MaterialUnavailable, load_material
 from vektra_assess.api.session_gate import (
     ANY_OPEN,
     LIVE,
@@ -38,7 +38,7 @@ from vektra_assess.api.session_gate import (
     gate,
 )
 from vektra_assess.api.start import CONSUME_JTI
-from vektra_assess.errors import token_invalid
+from vektra_assess.errors import state_conflict, token_invalid
 from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
 
 router = APIRouter()
@@ -103,15 +103,20 @@ async def get_session(
             row = await gate(conn, claims, sid, allowed=ANY_OPEN, lock=resume)
             material = None
             if row.state in LIVE:
-                material = await load_material(
-                    conn,
-                    sid,
-                    row.epoch,
-                    handoff_private_of(request),
-                    dek_cache_of(request),
-                )
+                try:
+                    material = await load_material(
+                        conn,
+                        sid,
+                        row.epoch,
+                        handoff_private_of(request),
+                        dek_cache_of(request),
+                    )
+                except MaterialUnavailable:
+                    raise GateRejected(state_conflict(row.state), "material") from None
             body = view(row, material)
     except GateRejected as rejected:
+        if rejected.step in ("closed", "epoch", "material"):
+            dek_cache_of(request).evict(sid)
         await audit_rejection(
             request, rejected, route=route, site_id=claims.site, session_id=sid
         )

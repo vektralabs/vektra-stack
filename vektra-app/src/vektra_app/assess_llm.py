@@ -340,6 +340,20 @@ async def step_13_assess_llm_check(
         PrometheusRunnerMetrics()
     )  # served on /metrics with the rest
     app.state.assess_prompt_version = PromptRenderer(LEXICON_VERSION).prompt_version
+    # the turn route's runner (plan assess-session-lifecycle M1.9): its audit sink writes through
+    # the assess API engine (step 12), its traces through analytics, in their own transactions
+    from vektra_assess.api.turns import ApiAuditSink
+    from vektra_shared.db import get_session_factory
+
+    app.state.assess_runner = build_assess_runner(
+        settings,
+        safeguard=app.state.assess_safeguard,
+        # resolved per write: the main database is initialised by an earlier startup step
+        trace_writer=AnalyticsTraceWriter(lambda: get_session_factory()()),
+        audit=ApiAuditSink(lambda: app.state.assess_engine),
+        llm=app.state.assess_llm,
+        metrics=app.state.assess_metrics,
+    )
     app.state.assess_llm_activated = await _check_activation(
         app, settings, app.state.assess_prompt_version
     )

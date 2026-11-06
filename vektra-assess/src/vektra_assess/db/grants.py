@@ -268,7 +268,14 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
     DEFINER: {
         "assess_sessions": {
             "SELECT": _ALL,
-            "UPDATE": ("seq", "last_activity_at", "state", "close_reason", "closed_at"),
+            "UPDATE": (
+                "seq",
+                "last_activity_at",
+                "state",
+                "close_reason",
+                "closed_at",
+                "pending_reply_since",  # revision 0023 (plan 8): the one-reply-at-a-time rule
+            ),
         },
         "assess_session_handoff": {"SELECT": _ALL, "DELETE": _ALL},
         "assess_snapshots": {"SELECT": _ALL},

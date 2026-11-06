@@ -321,3 +321,29 @@ async def test_reply_deltas_reuse_a_fresh_poll(pg, worker, monkeypatch) -> None:
         body = (await asyncio.wait_for(stream, 10)).text
         assert "d19" in body
         assert during <= 2, during
+
+
+async def test_a_deadline_passing_after_the_lazy_close_check_serves_no_material(
+    pg, worker, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4498473554: the route's own transaction re-checks the clock; a deadline that
+    passes between the lazy close and the read is refused, never answered with material."""
+    from vektra_assess.api import sessions as sessions_mod
+
+    async def too_early(*_a, **_k):  # type: ignore[no-untyped-def]
+        return None  # the lazy close ran just before the deadline
+
+    monkeypatch.setattr(sessions_mod, "enforce_clock", too_early)
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET deadline_at = now() - interval '61 seconds', "
+            "reply_grace_s = 60 WHERE id = :s",
+            {"s": s.session_id},
+        )
+        r = await w.client.get(
+            f"/api/v1/assess/sessions/{s.session_id}", headers=bearer(s.session_token)
+        )
+        assert r.status_code == 409 and err(r)["code"] == "ERR-ASSESS-009", r.text
+        assert "turns" not in r.text

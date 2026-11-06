@@ -113,7 +113,13 @@ async def get_session(
                 if consumed is None:
                     raise GateRejected(token_invalid(), "jti")
             row = await gate(
-                conn, claims, sid, allowed=ANY_OPEN, lock=resume, start_t_s=start_t_s
+                conn,
+                claims,
+                sid,
+                allowed=ANY_OPEN,
+                lock=resume,
+                start_t_s=start_t_s,
+                token_budget=settings_of(request).session_token_budget,
             )
             material = None
             if row.state in LIVE:

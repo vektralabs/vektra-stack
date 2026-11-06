@@ -154,6 +154,8 @@ async def gate(
     allow_closed: bool = False,
     start_t_s: int = 60,
     enrolment_fresh_s: int | None = None,
+    check_clock: bool = True,
+    token_budget: int | None = None,
 ) -> SessionRow:
     """Steps 2-6. Raises ``GateRejected``; never touches session material.
 
@@ -208,6 +210,15 @@ async def gate(
         and (row.server_now - row.created_at).total_seconds() >= start_t_s
     ):
         raise GateRejected(start_refused("start_timeout"), "start_timeout")
+    # the clock again, in THIS transaction (CodeRabbit 4498473554): a close that fell due
+    # after the lazy close ran is refused as closed here, never answered with material (the
+    # next request closes it). ``enforce_clock`` itself reads with check_clock=False.
+    if (
+        check_clock
+        and row.state in LIVE
+        and await due_close(conn, row, token_budget) is not None
+    ):
+        raise GateRejected(session_closed(), "closed")
     # 6. enrolment freshness (M3.7, NFR-014): the last worker re-check must say 'enrolled' and be
     #    at most ``enrolment_fresh_s`` old (database clock). A stopped worker or an unreadable
     #    enrolment fails closed: refused, state unchanged, audited.
@@ -290,6 +301,7 @@ async def enforce_clock(
                 allow_closed=True,
                 lock=False,
                 start_t_s=start_t_s,
+                check_clock=False,
             )
         except GateRejected:
             return None
@@ -306,6 +318,7 @@ async def enforce_clock(
                 allow_closed=True,
                 lock=True,
                 start_t_s=start_t_s,
+                check_clock=False,
             )
         except GateRejected:
             return None
@@ -349,6 +362,7 @@ async def session_tx(
                 enrolment_fresh_s=(
                     settings.enrolment_freshness_s if require_enrolment else None
                 ),
+                token_budget=settings.session_token_budget,
             )
             try:
                 yield conn, row

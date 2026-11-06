@@ -237,7 +237,7 @@ version.
 - [x] M2.4 Enforce the fixed gate order in one dependency `session_gate(stage)` used by every session route; a test per step asserting that `get_session_material` is called 0 times when an earlier step fails (spy on the DB function)
 - [x] M2.5 REQ-084: login-as rejection on mint and on any token lacking `loginas:false`; `loginas_rejected` audit; test that 0 session rows are created and the record is unchanged; record OQ-031(2) cross-check capability (default Unreadable) as residual risk
 - [x] M2.6 IDOR / NFR-014 negative matrix `vektra-assess/tests/test_idor.py`: token for A with B's sid; other site; other cmid; other course; expired; replay after CLOSED; unenrolled; forged Moodle attempt id in body (ignored); each → rejected, audited, 0 cross-student bytes (response body grep for B's canary); run against 4.3 and 5.2 fixtures in the integration job
-- [ ] M2.7 No query-string tokens: route-inventory test that every assess route rejects `?token=`/`?access_token=` without header (401) and that no handler reads `request.query_params`/cookies for credentials (shared with plan 9's inventory test; whichever lands first owns it)
+- [x] M2.7 No query-string tokens: route-inventory test that every assess route rejects `?token=`/`?access_token=` without header (401) and that no handler reads `request.query_params`/cookies for credentials (shared with plan 9's inventory test; whichever lands first owns it)
 
 ### M3 — Timing, resume, finish, abandon
 - [ ] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)

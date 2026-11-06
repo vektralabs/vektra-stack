@@ -386,8 +386,10 @@ window.
 - `VEKTRA_ASSESS_MESSAGES_PER_MIN` = 4: twice the pace of the reference session; one reply at a
   time already bounds a real student below it.
 - `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET` = 500,000: 1.34 times the reference session, and above
-  60 full windows (491,520), so a normal 120-minute session never reaches it; a scripted
-  client hammering at the rate limit would reach it in about an hour.
+  60 full windows (491,520), so a normal 120-minute session never reaches it. A scripted
+  client sending at the rate limit (4 messages a minute, which needs replies faster than 15 s)
+  with a full window per turn (about 8,200 tokens) uses about 33,000 tokens a minute and reaches
+  it in roughly 15-20 minutes; slower replies or shorter prompts stretch that.
 
 The test fails if a default drifts below these margins. A different model window changes the
 reference: re-run the test with the deployment's `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` before

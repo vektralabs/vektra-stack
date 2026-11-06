@@ -23,7 +23,11 @@ from vektra_assess.context.capture.capture import Failed, FailReason
 from vektra_assess.crypto import envelope, hashing
 from vektra_assess.crypto.seal import open_sealed
 from vektra_assess.llm.types import PartBRejectedError
-from vektra_assess.worker.preflight import make_preflight_handler, rollback_start
+from vektra_assess.worker.preflight import (
+    StartTarget,
+    make_preflight_handler,
+    rollback_start,
+)
 from vektra_assess.worker.start_source import MoodleStartSource
 
 pytestmark = pytest.mark.integration
@@ -378,3 +382,36 @@ async def test_rollback_deletes_snapshot_keys_and_turns_and_verifies(  # type: i
         await _rolled_back(pg, sid, "start_timeout")
         async with worker_engine.begin() as conn:
             assert await rollback_start(conn, sid, "start_timeout") is False
+
+
+async def test_the_gate_clock_includes_the_time_spent_reading_moodle(  # type: ignore[no-untyped-def]
+    pg, worker_engine
+) -> None:
+    """CodeRabbit 4493120961: an end date that passes while the Moodle facts are read closes
+    the gate (the gate's now is the database's now plus the time spent since)."""
+    from dataclasses import replace as dc_replace
+
+    from support.preflight import FakeSource
+
+    await _reset(pg)
+    await activate(pg)
+    t = [0.0]
+
+    class SlowFacts(FakeSource):
+        async def gate_facts(self, target):  # type: ignore[no-untyped-def]
+            t[0] += 120  # two minutes of Moodle reads, on the handler's clock
+            return await super().gate_facts(target)
+
+    async with world(pg, default_settings(VEKTRA_ASSESS_START_T_S=300)) as w:
+        await configure_activity(
+            pg, w.site, CMID, end_at_sql="now() + interval '60 seconds'"
+        )
+        sid = await _start(w)
+        built = await moodle_source(worker_engine).capture(
+            StartTarget(uuid.uuid4(), w.site, CMID, STU, None, "assign", 1, {})
+        )
+        d = dc_replace(
+            deps(w.settings, w.handoff_public, SlowFacts(built)), clock=lambda: t[0]
+        )
+        await make_preflight_handler(d)(job_context(worker_engine, sid))
+        await _rolled_back(pg, sid, "end_date_passed")

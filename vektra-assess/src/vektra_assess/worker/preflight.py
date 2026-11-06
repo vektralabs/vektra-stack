@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -578,6 +578,9 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         facts: MoodleGateFacts = await _within(
             deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)
         )
+        # the gate's "now" is the database's, read at admission, plus the time spent since (the
+        # Moodle reads): an end date that passed meanwhile closes the gate
+        db = replace(db, now=db.now + int(deps.clock() - t_load))
         decision = evaluate_start_gates(gate_inputs(target, db, facts))
         if not decision.open:
             extra = (

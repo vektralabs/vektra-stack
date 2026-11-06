@@ -226,7 +226,7 @@ async def test_concurrent_starts_on_a_half_open_breaker_let_one_through(
             )
         )
         codes = sorted(r.status_code for r in replies)
-        assert codes.count(202) <= 1, codes
+        assert codes.count(202) == 1, codes  # exactly one probe goes through
         assert (
             await n(pg, "SELECT count(*) FROM assess_sessions WHERE state = 'STARTING'")
             <= 1

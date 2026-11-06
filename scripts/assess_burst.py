@@ -129,13 +129,24 @@ def load_burst(manifest: str | None, n: int) -> tuple[Burst | None, str | None]:
             "manifest has no 'burst' section: the 40 x 10-file assignment fixture is not seeded "
             "(vektra-moodle seeder request, plan Notes)"
         )
-    students = [int(s) for s in b["students"]]
+    try:
+        cmid = int(b["cmid"])
+        students = [int(s) for s in b["students"]]
+        files = b.get("files_per_submission")
+        files = int(files) if files is not None else None
+        courseid = b.get("courseid")
+        courseid = int(courseid) if courseid is not None else None
+    except (KeyError, TypeError, ValueError):
+        # a malformed section is a blocker like a missing one, never a crash
+        return (
+            None,
+            "manifest 'burst' section is malformed (cmid, students, files, courseid)",
+        )
     if len(students) < n:
         return None, f"burst fixture has {len(students)} students, {n} needed"
-    files = b.get("files_per_submission")
-    if files is not None and int(files) < 10:
+    if files is not None and files < 10:
         return None, f"burst fixture has {files} files per submission, 10 needed"
-    return Burst(int(b["cmid"]), b.get("courseid"), students[:n], files), None
+    return Burst(cmid, courseid, students[:n], files), None
 
 
 async def _reachable(client: httpx.AsyncClient, url: str) -> bool:

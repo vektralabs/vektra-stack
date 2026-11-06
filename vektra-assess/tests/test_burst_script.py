@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "assess_burst.py"
 
 
@@ -131,3 +133,23 @@ def test_a_manifest_without_the_burst_fixture_is_a_blocker(tmp_path: Path) -> No
     )
     b, problem = burst.load_burst(str(m), 40)
     assert problem is None and b is not None and len(b.students) == 40
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"students": list(range(40))},  # no cmid
+        {"cmid": "abc", "students": list(range(40))},
+        {"cmid": 5, "students": [None] * 40},
+        {"cmid": 5, "students": ["x"] * 40},
+        {"cmid": 5, "students": list(range(40)), "files_per_submission": "ten"},
+    ],
+)
+def test_a_malformed_burst_section_is_a_blocker_not_a_crash(
+    tmp_path: Path, section
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4493109299."""
+    m = tmp_path / "manifest.json"
+    m.write_text(json.dumps({"burst": section}))
+    b, problem = burst.load_burst(str(m), 40)
+    assert b is None and problem and "burst" in problem

@@ -208,3 +208,29 @@ async def test_a_terminal_poll_status_ends_the_start_without_waiting(
         )
     assert o.outcome == outcome
     assert time.monotonic() - t0 < 2
+
+
+def test_one_fast_commit_and_failed_starts_is_not_a_pass() -> None:
+    """CodeRabbit 4493109338: PASS needs every Start to end in a commit or a capacity refusal
+    (NFR-020: the excess refused without consumption); timeouts, errors, unconfirmed 404s and
+    rollbacks for other reasons are breaches whatever the commit latency."""
+    out = burst.Outcome
+    ok = [out(0, 0, outcome="commit", start_to_commit_ms=900)]
+    for i, kind in enumerate(
+        [
+            "timeout",
+            "error:get_401",
+            "not_found",
+            "rolled_back:part_b_rejected",
+            "refused:x:y",
+        ],
+        start=1,
+    ):
+        s = burst.summarize([*ok, out(i, i, outcome=kind)])
+        assert s["breaches"], kind
+    good = [
+        *ok,
+        out(1, 1, outcome="capacity_refused"),
+        out(2, 2, outcome="rolled_back:capacity"),
+    ]
+    assert burst.summarize(good)["breaches"] == []

@@ -58,6 +58,8 @@ RESULTS = ROOT / "tests" / "nfr" / "results"
 #: NFR-018 commit latency targets (seconds), NFR-020 is the refusal-without-consumption check
 P50_S, P95_S, MAX_S = 10.0, 30.0, 60.0
 STATUSES = ("PASS", "BREACH", "BLOCKED")
+#: the outcomes a passing burst may contain besides ``commit``
+DECISIVE = frozenset({"commit", "capacity_refused", "rolled_back:capacity"})
 
 
 @dataclass
@@ -331,6 +333,14 @@ def summarize(outcomes: Sequence[Outcome]) -> dict[str, Any]:
         breaches.append(f"commit max {mx:.1f}s >= {MAX_S:.0f}s")
     if not commits:
         breaches.append("no Start committed")
+    # NFR-020: every Start ends in a commit or a capacity refusal (nothing consumed); anything
+    # else (timeout, error, unconfirmed 404, rollback for another reason) is not evidence of it
+    undecided = [o.outcome for o in outcomes if o.outcome not in DECISIVE]
+    if undecided:
+        kinds = sorted(set(undecided))
+        breaches.append(
+            f"{len(undecided)} Start(s) without a commit or a capacity refusal: {kinds[:5]}"
+        )
     return {
         "outcomes_by_kind": by,
         "commit_latency_s": {"p50": p50, "p95": p95, "max": mx, "n": len(commits)},

@@ -248,7 +248,7 @@ version.
 - [x] M3.6 Bind `reconcile_reply` (worker, KEK path): pending student turn with no bot turn after outage timeout + grace and no live driver claim → append marked interrupted turn; kill -9 API mid-reply test → exactly one marked turn
 - [x] M3.7 Per-turn enrolment freshness (150 s) gate step; bind the enrolment re-check tick (60 s, plan-4 reader) writing `enrolment_checks`; unenrolled or lost student role → close `access_revoked` + transcript job; worker stopped > 150 s → turns rejected (fail closed, state unchanged, audited)
 - [x] M3.8 `POST /sessions/{sid}/finish` → close `finished`; idempotent (Fine twice → one close, one transcript job; row count); no "cancel" endpoint needed (confirmation is UI-only, deadline unchanged)
-- [ ] M3.9 Resume test: reload → same sid, full history, remaining time within 1 s of the server; two tabs → second send refused, 0 duplicate turns; after CLOSED → message, re-mint and new Start rejected unless a reset created #N+1 (plan 11 reset fixture)
+- [x] M3.9 Resume test: reload → same sid, full history, remaining time within 1 s of the server; two tabs → second send refused, 0 duplicate turns; after CLOSED → message, re-mint and new Start rejected unless a reset created #N+1 (plan 11 reset fixture)
 
 ### M4 — Outage
 - [ ] M4.1 ACTIVE → OUTAGE on `ProviderOutageError` (plan-2 function), `assess_outage_intervals` row from `ProviderCallRecord`, `outage_start` audit + event; timer frozen; pending turn kept

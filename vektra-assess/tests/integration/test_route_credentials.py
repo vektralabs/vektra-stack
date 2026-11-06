@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Iterator
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, params
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.sessions import seed_session
@@ -90,6 +90,10 @@ def test_req102_no_route_regenerates_edits_deletes_or_uploads() -> None:
             body = getattr(getattr(entry, "dependant", None), "body_params", None) or []
             for param in body:
                 assert "UploadFile" not in repr(param), entry.path
+                # bytes declared with File() too: any multipart file field (CodeRabbit review
+                # 5808100754)
+                info = getattr(param, "field_info", None)
+                assert not isinstance(info, params.File), (entry.path, param)
 
 
 async def test_no_route_accepts_a_query_string_or_cookie_credential(pg) -> None:  # type: ignore[no-untyped-def]

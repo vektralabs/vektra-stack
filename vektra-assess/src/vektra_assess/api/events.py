@@ -356,17 +356,26 @@ async def session_events(
             if not any(e.type in TERMINAL for e in replay):
                 yield f"event: closed\ndata: {payload}\n\n"
             return
+        # the last row read (state, epoch, data) and when it was taken (monotonic)
+        polled: tuple[str | None, int | None, dict[str, Any]] = (None, None, {})
+        polled_at = float("-inf")
         while time.monotonic() - started < max_s:
             # the channel is never evicted here: every open tab and every reconnect must read the
             # terminal event; the opportunistic sweep removes closed channels after their TTL
             batch = broker.after(sid, last)
             live = True
             if any(e.type in CONTENT_EVENTS for e in batch):
-                # reply text is delivered only while the row is live AT THIS TOKEN's epoch, read
-                # just before the delivery: a close or a revocation (both bump the epoch) stops
-                # it, and an event produced under another epoch is never sent (review 4493120906)
-                state, epoch, data = await _poll(request, sid)
-                broker.observe(sid, state, data)
+                # reply text is delivered only while the row is live AT THIS TOKEN's epoch: a
+                # close or a revocation (both bump the epoch) stops it, and an event produced
+                # under another epoch is never sent (review 4493120906). The row read used for
+                # that check is at most poll_s old (review fix 6): a burst of deltas reuses the
+                # last read instead of one read per batch, so a revocation can let through at
+                # most poll_s of reply text, never more
+                if time.monotonic() - polled_at >= poll_s:
+                    polled = await _poll(request, sid)
+                    polled_at = time.monotonic()
+                    broker.observe(sid, polled[0], polled[2])
+                state, epoch, _data = polled
                 live = state in ("ACTIVE", "OUTAGE") and epoch == claims.epoch
                 if state in ("ACTIVE", "OUTAGE") and epoch != claims.epoch:
                     return  # revoked under this connection: nothing more for this token
@@ -382,7 +391,9 @@ async def session_events(
                     return
             now = time.monotonic()
             if now >= next_poll:
-                state, epoch, data = await _poll(request, sid)
+                polled = await _poll(request, sid)
+                polled_at = time.monotonic()
+                state, epoch, data = polled
                 broker.observe(sid, state, data)
                 next_poll = now + poll_s
                 if state is not None and state != "CLOSED" and epoch != claims.epoch:

@@ -213,7 +213,7 @@ async def test_reply_text_is_never_delivered_past_a_revocation(pg, worker) -> No
     row, read just before the delivery, is still live at that epoch."""
     from vektra_assess.api.events import broker_of
 
-    async with world(pg, assess_sse_timing={**TIMING, "poll_s": 30}) as w:
+    async with world(pg, assess_sse_timing={**TIMING, "poll_s": 0.2}) as w:
         s = await seed_session(w, worker, "ACTIVE")
 
         class R:
@@ -233,6 +233,8 @@ async def test_reply_text_is_never_delivered_past_a_revocation(pg, worker) -> No
             "UPDATE assess_sessions SET epoch = 2 WHERE id = :s",
             {"s": s.session_id},
         )
+        # the delivery check may reuse a row read up to poll_s old (review fix 6), never older
+        await asyncio.sleep(0.3)
         broker.publish(
             s.session_id, "reply_delta", {"text": "CANARY-after-revocation"}, epoch=1
         )
@@ -276,3 +278,46 @@ async def test_the_lazy_close_check_takes_no_row_lock_when_nothing_is_due(
                 await conn.rollback()
         finally:
             await holder.dispose()
+
+
+async def test_reply_deltas_reuse_a_fresh_poll(pg, worker, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Review fix 6: a burst of reply deltas does not re-read the row once per batch; the
+    delivery check reuses a read younger than poll_s."""
+    from vektra_assess.api import events
+
+    calls = []
+    real = events._poll
+
+    async def counted(request, sid):  # type: ignore[no-untyped-def]
+        calls.append(sid)
+        return await real(request, sid)
+
+    monkeypatch.setattr(events, "_poll", counted)
+    async with world(pg, assess_sse_timing={**TIMING, "poll_s": 2.0}) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+
+        class R:
+            app = w.app
+
+        broker = events.broker_of(R())  # type: ignore[arg-type]
+        stream = asyncio.create_task(
+            w.client.get(
+                f"/api/v1/assess/sessions/{s.session_id}/events",
+                headers=bearer(s.session_token),
+            )
+        )
+        await asyncio.sleep(0.3)
+        before = len(calls)
+        for i in range(20):
+            broker.publish(s.session_id, "reply_delta", {"text": f"d{i} "}, epoch=1)
+            await asyncio.sleep(0.02)
+        during = len(calls) - before
+        broker.publish(s.session_id, "reply_done", {"turn_no": 3})
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET state = 'CLOSED', close_reason = 'finished' WHERE id = :s",
+            {"s": s.session_id},
+        )
+        body = (await asyncio.wait_for(stream, 10)).text
+        assert "d19" in body
+        assert during <= 2, during

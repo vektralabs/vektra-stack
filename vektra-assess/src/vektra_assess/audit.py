@@ -5,6 +5,10 @@ through ``write_event``. If the insert fails, the exception propagates and the c
 transaction rolls back, so the action does not happen without its audit row (fail closed),
 unlike ``vektra_admin.audit.log_event``, which swallows errors.
 
+``created_at`` is the wall-clock time of the write (``clock_timestamp()``), not the start of the
+transaction (``now()``): latencies measured between two events (the burst's Start-to-commit) are
+real elapsed time.
+
 Rows are content-free by construction: ``data`` accepts only short strings, integers, booleans
 and ``None`` (ids, counts, timestamps as epoch seconds, reason codes). A value that is not one of
 those, or a string longer than ``MAX_VALUE_CHARS``, raises before anything is written: a caller
@@ -54,8 +58,9 @@ class Conn(Protocol):
 
 
 _INSERT = text(
-    "INSERT INTO assess_audit_events (site_id, session_id, event, reason_code, actor_kind, data) "
-    "VALUES (:site, :session, :event, :reason, :actor, CAST(:data AS jsonb))"
+    "INSERT INTO assess_audit_events (site_id, session_id, event, reason_code, actor_kind, data, "
+    "created_at) VALUES (:site, :session, :event, :reason, :actor, CAST(:data AS jsonb), "
+    "clock_timestamp())"
 )
 
 

@@ -270,7 +270,7 @@ version.
 - [x] M5.9 REQ-103 (could; last in order, skip and record if time-boxed out): `POST /sessions/{sid}/turns/{tid}/flag` on bot turns, ACTIVE/OUTAGE only, exactly one marker (unique constraint, idempotent), `flag_added` audit; after CLOSED → 409
 - [x] M5.10 REQ-073 end-to-end on the dev Moodle (4.3 and 5.2): Moodle grade, rubric and feedback byte-identical before/after a full session (plan-4 reader dump hash); the adversarial suite verdict counts come from the plan-7 eval report; service-account grade-write absence from the plan-4 setup check
 - [x] M5.11 Chaos suite `tests/chaos/assess/test_lifecycle_chaos.py` (on plan 3's harness): each of the six close reasons end-to-end (finished, timed_out, service_failure, budget_exhausted, terminated_by_teacher via the plan-2 close function stub until plan 11, access_revoked) asserting by row count: hand-off rows 0, exactly 1 `transcript_generate` job, epoch bumped, old session token rejected; kill -9 worker mid-pre-flight → ELIGIBLE with snapshot/key/turn rows 0; kill -9 API mid-reply → one interrupted turn; Postgres restart mid-turn → no duplicate turn, state consistent
-- [ ] M5.12 Re-run the M1.11 burst test with all gates, limits and audit enabled; record NFR-018 commit percentiles and NFR-020 capacity refusals; set the documented K with evidence
+- [x] M5.12 Re-run the M1.11 burst test with all gates, limits and audit enabled; record NFR-018 commit percentiles and NFR-020 capacity refusals; set the documented K with evidence
 - [ ] M5.13 CI wiring: assess job in `ci-unit.yml` runs unit tests; integration tests (`@pytest.mark.integration`, testcontainers pg16) picked up by the package-integration glob; chaos and burst as manual/nightly workflow jobs with explicit SKIPPED/BLOCKED output; `make test` includes the unit suite (structural guard `test_suite_execution_coverage.py`)
 - [ ] M5.14 Docs: `docs/reference/api.md` assess student endpoints, token claims, SSE event catalogue and error codes; `.env.example` (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION`, `VEKTRA_ASSESS_START_T_S`=60, `VEKTRA_ASSESS_REPLY_GRACE_S`=60, `VEKTRA_ASSESS_OUTAGE_G_S`=20, `VEKTRA_ASSESS_OUTAGE_CAP_MAX_S`=900, `VEKTRA_ASSESS_OUTAGE_PROBE_S`, `VEKTRA_ASSESS_ADMISSION_K`=10, `VEKTRA_ASSESS_START_RATE_PER_HOUR`=5, `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER`=3, `VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`=150, `VEKTRA_ASSESS_START_BREAKER_*`, limits from M5.1); CHANGELOG [Unreleased]
 
@@ -478,6 +478,14 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     transaction (worker role) or the live-reply claim (API role); Postgres is restarted under an
     open append. The real pre-flight under kill -9 against Moodle is not reproduced (it needs the
     dev Moodle): its DB-level effect, an aborted commit transaction, is.
+  - **M5.12 status: BLOCKED (environment).** Re-run on 2026-11-06 with every M3-M5 gate, limit
+    and audit in the code: `tests/nfr/results/assess-burst-20261106T201527Z.json` is BLOCKED (no
+    API, mint key, DSN, dev Moodle, model or manifest configured), so no NFR-018 percentiles and
+    no NFR-020 refusal counts are recorded and K stays the documented placeholder 10 (OQ-026).
+    The in-process run against fakes (`test_session_burst_inprocess.py`: 40 Starts, K=10, 10
+    commits, 30 `capacity`, 0 rows left) still passes with the Start cap, the rollback streak and
+    the per-site breaker active (capacity refusals are not system rollbacks, so the breaker stays
+    closed). The real run, and setting K from it, is the user's.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

@@ -153,3 +153,12 @@ def test_a_malformed_burst_section_is_a_blocker_not_a_crash(
     m.write_text(json.dumps({"burst": section}))
     b, problem = burst.load_burst(str(m), 40)
     assert b is None and problem and "burst" in problem
+
+
+@pytest.mark.parametrize("n", [0, -3])
+async def test_a_non_positive_n_is_blocked_not_a_breach(tmp_path: Path, n: int) -> None:
+    """CodeRabbit 4493109308."""
+    code, path = await burst.amain(burst.Config(n=n), tmp_path)
+    doc = json.loads(path.read_text())
+    assert code == 2 and doc["status"] == "BLOCKED"
+    assert any("must be positive" in b for b in doc["blockers"])

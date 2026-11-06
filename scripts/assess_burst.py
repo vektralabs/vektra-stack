@@ -169,9 +169,12 @@ async def blockers(cfg: Config) -> list[str]:
     ):
         if not value:
             out.append(f"{name} not configured")
-    _burst, problem = load_burst(cfg.manifest, cfg.n)
-    if problem:
-        out.append(problem)
+    if cfg.n <= 0:
+        out.append(f"n = {cfg.n}: the number of concurrent Starts must be positive")
+    else:
+        _burst, problem = load_burst(cfg.manifest, cfg.n)
+        if problem:
+            out.append(problem)
     async with httpx.AsyncClient(follow_redirects=False) as client:
         if cfg.api:
             try:

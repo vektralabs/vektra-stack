@@ -53,6 +53,7 @@ __all__ = [
     "assess_unavailable",
     "bad_request",
     "capacity_reached",
+    "deadline_passed",
     "key_not_bound",
     "loginas_refused",
     "plugin_too_old",
@@ -177,6 +178,17 @@ def state_conflict(state: str) -> ErrorResponse:
         message="The discussion's state does not allow this action now.",
         remediation="Wait for the session to become active, or reload the page.",
         details={"state": state},
+    )
+
+
+def deadline_passed() -> ErrorResponse:
+    """409: the session's time is over; input is locked (REQ-070)."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_011,
+        message="Il tempo della discussione è scaduto.",
+        remediation="No further messages can be sent in this session.",
+        details={"reason": "deadline_passed"},
     )
 
 

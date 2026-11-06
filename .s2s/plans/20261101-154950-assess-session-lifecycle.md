@@ -242,7 +242,7 @@ version.
 ### M3 — Timing, resume, finish, abandon
 - [x] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
 - [x] M3.2 Warnings 10/5/1 from `TurnDriver` timer per live session (emitted once per (sid, threshold, deadline)); tests with outage credit X: fire at new deadline − 10/5/1 min ±5 s, none at the old deadline
-- [ ] M3.3 Input lock at the deadline; grace window `VEKTRA_ASSESS_REPLY_GRACE_S` (60): in-flight reply finishes or is cut → marked "risposta interrotta"; slowed fake-provider tests for both branches; `assess_append_turn` refuses bot turns after deadline + grace (DB test)
+- [x] M3.3 Input lock at the deadline; grace window `VEKTRA_ASSESS_REPLY_GRACE_S` (60): in-flight reply finishes or is cut → marked "risposta interrotta"; slowed fake-provider tests for both branches; `assess_append_turn` refuses bot turns after deadline + grace (DB test)
 - [ ] M3.4 Lazy enforcement on every API request: past deadline (not OUTAGE) → close `timed_out`; C exceeded → `service_failure`; STARTING past T → reported as rolled back (the reaper does the deletion)
 - [ ] M3.5 Bind the sweeper tick: close `timed_out` (deadline + grace passed, not OUTAGE), never OUTAGE; browser-closed test: CLOSED(timed_out) and a `transcript_generate` job exist within 5 min of the deadline
 - [ ] M3.6 Bind `reconcile_reply` (worker, KEK path): pending student turn with no bot turn after outage timeout + grace and no live driver claim → append marked interrupted turn; kill -9 API mid-reply test → exactly one marked turn

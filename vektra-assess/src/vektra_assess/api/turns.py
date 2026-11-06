@@ -49,6 +49,7 @@ from vektra_assess.crypto import envelope, hashing
 from vektra_assess.errors import (
     assess_unavailable,
     bad_request,
+    deadline_passed,
     reply_pending,
     state_conflict,
 )
@@ -66,6 +67,9 @@ from vektra_assess.turn_markers import INTERRUPTED_REPLY
 log = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+#: seconds kept before deadline + grace to persist a cut reply
+CUT_MARGIN_S = 2.0
 
 _APPEND = text(
     "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
@@ -171,8 +175,11 @@ class TurnDriver:
         epoch: int,
         bundle: ContextBundle,
         turn: StudentTurn,
+        cut_after_s: float | None = None,
     ) -> asyncio.Task[None]:
-        task = asyncio.create_task(self._drive(sid, epoch, bundle, turn))
+        """``cut_after_s``: seconds until deadline + grace (minus the persist margin): the reply
+        is stopped then and the released part is persisted as a marked interrupted turn."""
+        task = asyncio.create_task(self._drive(sid, epoch, bundle, turn, cut_after_s))
         self.tasks[sid] = task
         task.add_done_callback(
             lambda t: self.tasks.pop(sid, None) if self.tasks.get(sid) is t else None
@@ -180,12 +187,23 @@ class TurnDriver:
         return task
 
     async def _drive(
-        self, sid: UUID, epoch: int, bundle: ContextBundle, turn: StudentTurn
+        self,
+        sid: UUID,
+        epoch: int,
+        bundle: ContextBundle,
+        turn: StudentTurn,
+        cut_after_s: float | None = None,
     ) -> None:
         result: TurnResult | None = None
         failure: str | None = None
+        stop = asyncio.Event()
+        cut = (
+            asyncio.get_running_loop().call_later(max(cut_after_s, 0.0), stop.set)
+            if cut_after_s is not None
+            else None
+        )
         try:
-            async for item in self.runner.run_stream(bundle, turn):
+            async for item in self.runner.run_stream(bundle, turn, stop):
                 if isinstance(item, ReleasedSegment):
                     self.broker.publish(sid, "reply_delta", {"text": item.text})
                 elif isinstance(item, TurnResult):
@@ -197,6 +215,9 @@ class TurnDriver:
         except Exception as exc:
             log.warning("assess_turn_driver_error", error_type=type(exc).__name__)
             failure = "internal_error"
+        finally:
+            if cut is not None:
+                cut.cancel()
         if failure is None and result is None:
             failure = "internal_error"
         try:
@@ -251,7 +272,11 @@ class TurnDriver:
 
     async def _persist(self, sid: UUID, epoch: int, result: TurnResult) -> None:
         kind = "interrupted" if result.interrupted else "normal"
-        turn_no = await self._append_bot(sid, epoch, kind, result.text)
+        text_ = result.text
+        if result.interrupted:
+            # cut at deadline + grace (REQ-070): what was released, then the fixed marker
+            text_ = f"{text_.rstrip()} {INTERRUPTED_REPLY}".strip()
+        turn_no = await self._append_bot(sid, epoch, kind, text_)
         if turn_no is None:
             # refused by assess_append_turn (state, epoch, seq or chain moved; from plan M3.3 also
             # past deadline + grace, by the database's own clock, which is left to decide): the
@@ -300,6 +325,9 @@ async def post_turn(
     async with session_tx(
         request, claims, sid, route="post_turn", allowed={"ACTIVE"}
     ) as (conn, row):
+        # REQ-070 input lock from the deadline on (the database refuses the append as well)
+        if row.deadline_at is not None and row.server_now >= row.deadline_at:
+            raise fail(deadline_passed())
         material = await load_material(
             conn, sid, row.epoch, handoff_private_of(request), dek_cache_of(request)
         )
@@ -324,7 +352,13 @@ async def post_turn(
         )
     # committed: the reply runs detached from this request from here on
     driver.broker.publish(sid, "turn_accepted", {"turn_no": turn_no})
-    driver.start(sid, row.epoch, bundle, turn)
+    cut_after = None
+    if row.deadline_at is not None:
+        grace = row.reply_grace_s
+        until = (row.deadline_at - row.server_now).total_seconds() + grace
+        # stop early enough to persist the cut turn before the database's own limit
+        cut_after = until - min(CUT_MARGIN_S, grace / 2)
+    driver.start(sid, row.epoch, bundle, turn, cut_after)
     return JSONResponse(
         status_code=202,
         content={"session_id": str(sid), "turn_no": turn_no},

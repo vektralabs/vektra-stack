@@ -214,6 +214,8 @@ class SessionOrm(Base):
     preflight_started_at: Mapped[datetime | None] = _ts(nullable=True)
     # revision 0023: set by a student turn, cleared by the bot turn (assess_append_turn)
     pending_reply_since: Mapped[datetime | None] = _ts(nullable=True)
+    # revision 0024: the reply grace frozen at commit, read by assess_append_turn
+    reply_grace_s: Mapped[int] = mapped_column(INTEGER, server_default=text("60"))
 
 
 class StartAttemptOrm(Base):

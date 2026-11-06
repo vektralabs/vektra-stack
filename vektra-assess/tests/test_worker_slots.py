@@ -23,7 +23,7 @@ from vektra_assess.worker.slots import (
 # the same commit: an unreviewed (or test-only) slot in the production composition fails here.
 PRODUCTION_KINDS = {
     "capability_probe", "enrolment_recheck", "erasure", "gate_refresh", "preflight", "purge",
-    "render_check",
+    "reconcile_reply", "render_check",
     "rotate_keys", "session_deadline", "setup_check", "transcript_deliver", "transcript_generate",
 }  # fmt: skip
 PRODUCTION_TICKS = [

@@ -376,3 +376,187 @@ async def test_an_over_length_or_blank_message_is_a_400_before_any_llm_call(  # 
         )
         assert ok.status_code == 202
         await _wait_idle(w)
+
+
+async def _deadline_in(pg, sid, seconds: float, grace: int | None = None) -> None:  # type: ignore[no-untyped-def]
+    sets = f"deadline_at = now() + make_interval(secs => {seconds})"
+    if grace is not None:
+        sets += f", reply_grace_s = {grace}"
+    await pg.run(
+        "super", f"UPDATE assess_sessions SET {sets} WHERE id = :s", {"s": sid}
+    )
+
+
+async def test_input_is_locked_from_the_deadline(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M3.3: no student message is accepted from the deadline on (API and database)."""
+    runner = FakeStreamRunner()
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await _deadline_in(pg, s.session_id, -1)
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "troppo tardi"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 409 and err(r)["details"]["reason"] == "deadline_passed"
+        assert runner.turns == []
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_turns WHERE session_id=:s AND role='student'",
+                s=s.session_id,
+            )
+            == 0
+        )
+
+
+async def test_a_reply_in_flight_at_the_deadline_finishes_within_the_grace(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    runner = FakeStreamRunner(segments=("Uno. ", "Due. ", "Tre."), segment_delay_s=1.0)
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await _deadline_in(pg, s.session_id, 1.5, grace=60)
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "ultima domanda"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202
+        await _wait_idle(w)  # finishes ~1.5 s after the deadline, inside the grace
+        rows = await pg.run(
+            "super",
+            "SELECT role, kind FROM assess_turns WHERE session_id=:s ORDER BY turn_no DESC LIMIT 1",
+            {"s": s.session_id},
+        )
+        assert tuple(rows[0]) == ("bot", "normal")
+
+
+async def test_a_reply_past_the_grace_is_cut_and_marked(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    from vektra_assess.turn_markers import INTERRUPTED_REPLY
+
+    runner = FakeStreamRunner(segments=("Uno. ", "Due. ", "Tre."), segment_delay_s=2.0)
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await _deadline_in(
+            pg, s.session_id, 1.0, grace=4
+        )  # cut at deadline + 4 - 2 = ~3 s
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "ultima domanda"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202
+        await _wait_idle(w)
+        got = (
+            await w.client.get(
+                f"/api/v1/assess/sessions/{s.session_id}",
+                headers=bearer(s.session_token),
+            )
+        ).json()
+        last = got["turns"][-1]
+        assert (last["role"], last["kind"]) == ("bot", "interrupted")
+        assert last["text"] == f"Uno. {INTERRUPTED_REPLY}"
+        assert not got["reply_pending"]
+
+
+async def test_the_database_enforces_the_input_lock_and_the_grace(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M3.3 (DB test): student turns from the deadline on, and ordinary bot replies after
+    deadline + grace, are refused by assess_append_turn itself; the marked interrupted turn is
+    still accepted."""
+    from integration.conftest import make_session
+
+    sid = await make_session(pg)
+    append = "SELECT assess_append_turn(:s, 1, :seq, :role, :kind, '\\x04', :h, :prev)"
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() - interval '1 second', reply_grace_s = 60 WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 0,
+                "role": "student",
+                "kind": "normal",
+                "h": "h2",
+                "prev": "h1",
+            },
+        )
+    )[0][0] is None
+    # a pending student turn written before the deadline: a bot reply inside the grace is accepted
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() + interval '1 hour' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 0,
+                "role": "student",
+                "kind": "normal",
+                "h": "h2",
+                "prev": "h1",
+            },
+        )
+    )[0][0] == 2
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() - interval '30 seconds' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 1,
+                "role": "bot",
+                "kind": "normal",
+                "h": "h3",
+                "prev": "h2",
+            },
+        )
+    )[0][0] == 3
+    # past deadline + grace: an ordinary reply is refused, the marked turn is not
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET pending_reply_since = now(), deadline_at = now() - interval '61 seconds' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 2,
+                "role": "bot",
+                "kind": "normal",
+                "h": "h4",
+                "prev": "h3",
+            },
+        )
+    )[0][0] is None
+    assert (
+        await pg.run(
+            "worker",
+            append,
+            {
+                "s": sid,
+                "seq": 2,
+                "role": "bot",
+                "kind": "interrupted",
+                "h": "h4",
+                "prev": "h3",
+            },
+        )
+    )[0][0] == 4

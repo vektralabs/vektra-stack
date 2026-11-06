@@ -84,6 +84,8 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.ROTATE_KEYS: _MAINT,
     JobKind.ERASURE: _MAINT,
     JobKind.SESSION_DEADLINE: _MAINT,
+    # unwrap the DEK, append one marked turn: short, its own budget in the maintenance pool
+    JobKind.RECONCILE_REPLY: KindPolicy("maintenance", 20, 40, 3),
 }
 
 _POOL_PREFIX = "VEKTRA_ASSESS_POOL_"

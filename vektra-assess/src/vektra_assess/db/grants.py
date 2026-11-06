@@ -324,13 +324,15 @@ EXTERNAL_TABLES: tuple[str, ...] = ("query_traces",)
 #: SECURITY DEFINER functions (signature -> roles with EXECUTE). Never PUBLIC.
 FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     "get_session_material(uuid,integer)": (API,),
-    "assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)": (API,),
+    # the worker's reconcile_reply appends the marked interrupted turn (revision 0024)
+    "assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)": (API, WORKER),
     "assess_close_session(uuid,integer,text)": (API, WORKER),
 }
 
 
 def render_statements() -> list[str]:
-    """The SQL of revision 0015, in order: revoke everything, then grant the matrix."""
+    """The SQL of the latest grants revision, in order: revoke everything, then grant the
+    matrix, then the SECURITY DEFINER functions' EXECUTE (rendered from revision 0024 on)."""
     out: list[str] = []
     tables = ", ".join(TABLES)
     roles = ", ".join(ROLES)
@@ -350,4 +352,10 @@ def render_statements() -> list[str]:
         seqs = SEQUENCE_USAGE.get(role, ())
         if seqs:
             out.append(f"GRANT USAGE ON SEQUENCE {', '.join(seqs)} TO {role}")
+    # SECURITY DEFINER functions (rendered since revision 0024): never PUBLIC, exactly FUNCTIONS
+    for sig, allowed in sorted(FUNCTIONS.items()):
+        # never from the definer: it OWNS the functions, revoking would strip its own EXECUTE
+        out.append(f"REVOKE ALL ON FUNCTION public.{sig} FROM PUBLIC, {API}, {WORKER}")
+        for role in allowed:
+            out.append(f"GRANT EXECUTE ON FUNCTION public.{sig} TO {role}")
     return out

@@ -55,6 +55,7 @@ class JobKind(enum.StrEnum):
     ROTATE_KEYS = "rotate_keys"
     ERASURE = "erasure"
     PREFLIGHT = "preflight"  # plan assess-session-lifecycle (revision 0022)
+    RECONCILE_REPLY = "reconcile_reply"  # plan assess-session-lifecycle (revision 0024)
 
 
 def render_dedupe_key(site_id: object, userid: int, cmid: int) -> str:

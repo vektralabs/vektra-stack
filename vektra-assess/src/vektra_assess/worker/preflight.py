@@ -271,6 +271,7 @@ _INSERT_TURN = text(
 _ACTIVATE = text(
     "UPDATE assess_sessions SET state = 'ACTIVE', committed_at = now(), "
     "deadline_at = now() + make_interval(secs => :d), duration_s = :d, seq = :seq, "
+    "reply_grace_s = :g, "
     "frozen_policy = CAST(:fp AS jsonb), starting_expires_at = NULL, last_activity_at = now() "
     "WHERE id = :s"
 )
@@ -520,6 +521,7 @@ async def _commit(
                         "s": sid,
                         "d": duration_s,
                         "seq": 2,
+                        "g": deps.settings.reply_grace_s,
                         "fp": built.frozen_policy.model_dump_json(),
                     },
                 )

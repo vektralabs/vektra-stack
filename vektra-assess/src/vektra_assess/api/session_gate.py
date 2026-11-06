@@ -47,7 +47,8 @@ ANY_OPEN = frozenset({"STARTING", "ACTIVE", "OUTAGE"})
 
 _ROW = (
     "SELECT id, site_id, cmid, student_userid, session_no, epoch, state, close_reason, "
-    "deadline_at, committed_at, seq, frozen_policy, duration_s, now() AS server_now "
+    "deadline_at, committed_at, seq, frozen_policy, duration_s, reply_grace_s, "
+    "now() AS server_now "
     "FROM assess_sessions WHERE id = :sid"
 )
 _ROW_LOCKED = text(_ROW + " FOR UPDATE")
@@ -69,6 +70,7 @@ class SessionRow:
     seq: int
     frozen_policy: dict[str, Any] | None
     duration_s: int | None
+    reply_grace_s: int
     server_now: datetime
 
 

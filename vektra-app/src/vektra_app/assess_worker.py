@@ -210,7 +210,7 @@ def _version() -> str:
 def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     """Build runtime, scheduler, heartbeat and control; nothing is started or connected yet."""
     from vektra_assess.worker.audit import make_audit
-    from vektra_assess.worker.cleanup import cleanup_done_jobs
+    from vektra_assess.worker.cleanup import cleanup_done_jobs, cleanup_expired_jtis
     from vektra_assess.worker.heartbeat import Heartbeat
     from vektra_assess.worker.listener import ControlConnection
     from vektra_assess.worker.policy import WorkerPolicyError, load_policy
@@ -273,6 +273,7 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
     async def cleanup() -> None:
         await cleanup_done_jobs(acquire_raw, settings.job_done_retention_h)
+        await cleanup_expired_jtis(acquire_raw)
 
     async def lease_reaper() -> None:
         await reap_exhausted(acquire_raw, audit)

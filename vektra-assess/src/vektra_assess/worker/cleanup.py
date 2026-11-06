@@ -35,3 +35,26 @@ async def cleanup_done_jobs(
             "assess_jobs_cleaned", extra={"deleted": total, "retention_h": retention_h}
         )
     return total
+
+
+async def cleanup_expired_jtis(
+    acquire: Callable[[], AbstractAsyncContextManager[sql.Conn]],
+    *,
+    batch: int = 1000,
+    max_batches: int = 50,
+) -> int:
+    """Delete ``assess_token_jti`` rows more than a day past ``expires_at`` (plan 8).
+
+    A day of slack keeps every row a Start could still race against, and the mint-to-Start
+    correlation of recent audits; older rows prove nothing more.
+    """
+    total = 0
+    for _ in range(max_batches):
+        async with acquire() as conn:
+            deleted = await sql.cleanup_expired_jtis(conn, batch)
+        total += deleted
+        if deleted < batch:
+            break
+    if total:
+        log.info("assess_jtis_cleaned", extra={"deleted": total})
+    return total

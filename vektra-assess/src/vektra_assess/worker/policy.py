@@ -36,9 +36,9 @@ class KindPolicy:
     max_attempts: int = 5
 
 
-# pool -> default concurrency. ``preflight`` has no kind yet: its kind arrives with the
-# session-lifecycle plan together with the handler, and the pool is declared here so K is
-# configured in one place (NFR-020, placeholder 10 until OQ-026 sets the hardware).
+# pool -> default concurrency. The ``preflight`` pool runs the ``preflight`` kind (plan
+# session-lifecycle); K is configured in one place (NFR-020, placeholder 10 until OQ-026 sets the
+# hardware).
 POOL_DEFAULTS: dict[str, int] = {
     "preflight": 10,
     "ws": 2,
@@ -52,6 +52,9 @@ _WS = KindPolicy("ws", 20, 40)
 _MAINT = KindPolicy("maintenance", 60, 120)
 
 KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
+    # budget < T (60 s) so a commit can still land inside the window; lease 2 x budget, so the
+    # STARTING reaper (which waits for T and for no live lease) never races a live handler
+    JobKind.PREFLIGHT: KindPolicy("preflight", 45, 90, 2),
     JobKind.ENROLMENT_RECHECK: _WS,
     JobKind.GATE_REFRESH: _WS,
     JobKind.RENDER_CHECK: _WS,

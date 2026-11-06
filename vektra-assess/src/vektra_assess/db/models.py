@@ -136,6 +136,8 @@ class ActivityConfigOrm(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=_NOW
     )
+    # revision 0022: the session cap BR-013 (5-120 min); NULL = activity not configured yet
+    cap_minutes: Mapped[int | None] = mapped_column(INTEGER)
 
 
 class ExtraTimeOrm(Base):
@@ -205,6 +207,11 @@ class SessionOrm(Base):
     closed_at: Mapped[datetime | None] = _ts(nullable=True)
     last_activity_at: Mapped[datetime | None] = _ts(nullable=True)
     created_at: Mapped[datetime] = _ts(default=True)
+    # revision 0022 (plan assess-session-lifecycle)
+    courseid_hint: Mapped[int | None] = mapped_column(BIGINT)
+    duration_s: Mapped[int | None] = mapped_column(INTEGER)
+    frozen_policy: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    preflight_started_at: Mapped[datetime | None] = _ts(nullable=True)
 
 
 class StartAttemptOrm(Base):
@@ -217,6 +224,25 @@ class StartAttemptOrm(Base):
     outcome: Mapped[str] = mapped_column(TEXT)
     reason_code: Mapped[str | None] = mapped_column(TEXT)
     created_at: Mapped[datetime] = _ts(default=True)
+    session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+
+
+class TokenJtiOrm(Base):
+    """A minted pre-session token: single-use store and mint-to-Start correlation (0022)."""
+
+    __tablename__ = "assess_token_jti"
+
+    jti: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE")
+    )
+    student_userid: Mapped[int] = mapped_column(BIGINT)
+    cmid: Mapped[int] = mapped_column(BIGINT)
+    courseid_hint: Mapped[int | None] = mapped_column(BIGINT)
+    mint_key_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    minted_at: Mapped[datetime] = _ts(default=True)
+    expires_at: Mapped[datetime] = _ts()
+    consumed_at: Mapped[datetime | None] = _ts(nullable=True)
 
 
 class OutageIncidentOrm(Base):

@@ -162,4 +162,5 @@ async def step_12_assess_check(
         raise
     app.state.assess_engine = engine
     app.state.assess_keys = loaded
+    app.state.assess_settings = settings
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))

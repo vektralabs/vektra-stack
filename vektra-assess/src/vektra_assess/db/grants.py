@@ -51,6 +51,7 @@ TABLES: tuple[str, ...] = (
     "assess_sites",
     "assess_snapshots",
     "assess_start_attempts",
+    "assess_token_jti",
     "assess_transcript_download_tokens",
     "assess_transcripts",
     "assess_turns",
@@ -85,6 +86,7 @@ _CONFIG_READ = (
     "teacher_config_kid",
     "teacher_config_set",
     "updated_at",
+    "cap_minutes",
 )
 #: columns the API may write: it may SEAL teacher config, never read it back (OQ-034).
 _CONFIG_WRITE = (
@@ -124,7 +126,14 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
                 "epoch",
             ),  # seq and last_activity_at move only via the functions
         },
-        "assess_start_attempts": {"INSERT": _ALL},
+        # SELECT: the Start cap and the rollback reason of a STARTING session (plan 8)
+        "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL},
+        # mint inserts, Start / resume consume (plan 8); identity columns never change
+        "assess_token_jti": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": ("consumed_at",),
+        },
         "assess_audit_events": {"INSERT": _ALL},
         "assess_erasure_records": {"INSERT": _ALL},
         "assess_activity_config": {
@@ -187,6 +196,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         },
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
         "assess_consumed_jtis": {"SELECT": _ALL, "DELETE": _ALL},
+        # the done-job cleanup tick deletes expired mint rows (plan 8)
+        "assess_token_jti": {"SELECT": _ALL, "DELETE": _ALL},
         "assess_transcript_download_tokens": {"SELECT": _ALL, "DELETE": _ALL},
         # registry and configuration (the worker reads the sealed teacher config)
         "assess_sites": {

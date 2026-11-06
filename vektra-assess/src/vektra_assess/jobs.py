@@ -54,6 +54,7 @@ class JobKind(enum.StrEnum):
     PURGE = "purge"
     ROTATE_KEYS = "rotate_keys"
     ERASURE = "erasure"
+    PREFLIGHT = "preflight"  # plan assess-session-lifecycle (revision 0022)
 
 
 _ARG_TYPES = (str, int)

@@ -448,7 +448,7 @@ jobs:
           cases = list(root.iter("testcase"))
           skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
           print(f"assess chaos: {len(cases)} collected, {len(skipped)} skipped")
-          if len(cases) < 14 or skipped:
+          if len(cases) < 23 or skipped:  # 23 with the lifecycle chaos (plan 8 M5.11)
               sys.exit(f"assess chaos did not fully run: collected={len(cases)} skipped={skipped}")
           PY
 

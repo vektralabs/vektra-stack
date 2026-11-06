@@ -59,12 +59,6 @@ _SELECTS_INTEGRATION = {
 # stay true: a stale one fails below. Adding to this list is how you *knowingly* stop
 # running a suite, which is a thing a reviewer should see you do.
 EXPECTED_UNRUN: dict[str, str] = {
-    "tests/nfr/test_assess_burst.py": (
-        "the 40-Start assess burst against the dev Moodle and the candidate model (OQ-026), an "
-        "operator run that reports SKIPPED / BLOCKED without them; the nightly job is plan "
-        "assess-session-lifecycle M5.13. Its logic is unit-tested in "
-        "vektra-assess/tests/test_burst_script.py"
-    ),
     "tests/nfr/test_performance.py": (
         "measures query latency against a live LLM, which GitHub Actions does not "
         "have; run manually on Kalypso (see the note in integration.yml)"

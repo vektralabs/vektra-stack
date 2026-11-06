@@ -271,7 +271,7 @@ version.
 - [x] M5.10 REQ-073 end-to-end on the dev Moodle (4.3 and 5.2): Moodle grade, rubric and feedback byte-identical before/after a full session (plan-4 reader dump hash); the adversarial suite verdict counts come from the plan-7 eval report; service-account grade-write absence from the plan-4 setup check
 - [x] M5.11 Chaos suite `tests/chaos/assess/test_lifecycle_chaos.py` (on plan 3's harness): each of the six close reasons end-to-end (finished, timed_out, service_failure, budget_exhausted, terminated_by_teacher via the plan-2 close function stub until plan 11, access_revoked) asserting by row count: hand-off rows 0, exactly 1 `transcript_generate` job, epoch bumped, old session token rejected; kill -9 worker mid-pre-flight → ELIGIBLE with snapshot/key/turn rows 0; kill -9 API mid-reply → one interrupted turn; Postgres restart mid-turn → no duplicate turn, state consistent
 - [x] M5.12 Re-run the M1.11 burst test with all gates, limits and audit enabled; record NFR-018 commit percentiles and NFR-020 capacity refusals; set the documented K with evidence
-- [ ] M5.13 CI wiring: assess job in `ci-unit.yml` runs unit tests; integration tests (`@pytest.mark.integration`, testcontainers pg16) picked up by the package-integration glob; chaos and burst as manual/nightly workflow jobs with explicit SKIPPED/BLOCKED output; `make test` includes the unit suite (structural guard `test_suite_execution_coverage.py`)
+- [x] M5.13 CI wiring: assess job in `ci-unit.yml` runs unit tests; integration tests (`@pytest.mark.integration`, testcontainers pg16) picked up by the package-integration glob; chaos and burst as manual/nightly workflow jobs with explicit SKIPPED/BLOCKED output; `make test` includes the unit suite (structural guard `test_suite_execution_coverage.py`)
 - [ ] M5.14 Docs: `docs/reference/api.md` assess student endpoints, token claims, SSE event catalogue and error codes; `.env.example` (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION`, `VEKTRA_ASSESS_START_T_S`=60, `VEKTRA_ASSESS_REPLY_GRACE_S`=60, `VEKTRA_ASSESS_OUTAGE_G_S`=20, `VEKTRA_ASSESS_OUTAGE_CAP_MAX_S`=900, `VEKTRA_ASSESS_OUTAGE_PROBE_S`, `VEKTRA_ASSESS_ADMISSION_K`=10, `VEKTRA_ASSESS_START_RATE_PER_HOUR`=5, `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER`=3, `VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`=150, `VEKTRA_ASSESS_START_BREAKER_*`, limits from M5.1); CHANGELOG [Unreleased]
 
 ## State & Data Lifecycle
@@ -486,6 +486,12 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     commits, 30 `capacity`, 0 rows left) still passes with the Start cap, the rollback streak and
     the per-site breaker active (capacity refusals are not system rollbacks, so the breaker stays
     closed). The real run, and setting K from it, is the user's.
+  - **CI (M5.13)**: unit tests run in `ci-unit.yml` (`test-assess`, `-m "not integration"`) and in
+    `make test`; the assess integration tests run in the package-integration job (live-Moodle
+    modules, `test_req073_live` included, may skip there by design); the chaos suite runs on
+    every push and PR in `assess-chaos` and now must collect at least 23 cases with none skipped;
+    the burst runs manual and weekly in `assess-moodle-contract.yml` (`assess-burst`), printing
+    PASS / FAIL / BLOCKED to the job summary, so it left `EXPECTED_UNRUN` of the suite guard.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

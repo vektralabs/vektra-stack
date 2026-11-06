@@ -128,3 +128,31 @@ def test_label_loading_is_isolated_and_keeps_rows_as_written(tmp_path: Path) -> 
     assert labels == {"h": {k: v for k, v in row.items() if k != "id"}}
     assert "tone" not in labels["h"]  # not coerced to False
     assert J.label_problems(labels) == ["human_label[h] lacks criteria ['tone']"]
+
+
+def test_bad_label_lines_block_the_calibration_instead_of_vanishing(
+    tmp_path: Path,
+) -> None:
+    """CodeRabbit PR #151 round 2: a bad line, a row without id or a duplicate id is a problem."""
+    path = tmp_path / "human_labels.jsonl"
+    good = {"id": "h", **REPLY, **CLEAN}
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps(good),
+                "{not json",
+                json.dumps({**REPLY, **CLEAN}),
+                json.dumps(good),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    labels = J.load_human_labels(path)
+    assert labels is not None and labels["h"] == {
+        k: v for k, v in good.items() if k != "id"
+    }
+    problems = J.label_problems(labels)
+    assert "human_label[line 2] not valid JSON" in problems
+    assert "human_label[line 3] no id" in problems
+    assert "human_label[line 4] duplicate id 'h'" in problems
+    assert J.calibrate({"h": {}}, labels, _seeded()).status == "BLOCKED"

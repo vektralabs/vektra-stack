@@ -153,6 +153,9 @@ def label_problems(human_labels: Mapping[str, Mapping[str, Any]]) -> list[str]:
     """
     out: list[str] = []
     for i, row in sorted(human_labels.items()):
+        if "_problem" in row:
+            out.append(f"human_label[{i}] {row['_problem']}")
+            continue
         missing = [k for k in CRITERIA if not isinstance(row.get(k), bool)]
         if missing:
             out.append(f"human_label[{i}] lacks criteria {missing}")
@@ -214,14 +217,30 @@ def calibrate(
 def load_human_labels(
     path: Path = CALIBRATION_DIR / "human_labels.jsonl",
 ) -> dict[str, dict[str, Any]] | None:
-    """Rows as written (no coercion: a missing or non-boolean criterion must stay visible)."""
+    """Rows as written (no coercion: a missing or non-boolean criterion must stay visible).
+
+    A line that is not JSON, has no ``id`` or repeats an earlier ``id`` is kept as a problem row
+    (``_problem``) instead of being dropped or overwriting the first one: ``label_problems`` then
+    blocks the calibration, and the run still writes its report.
+    """
     if not path.exists():
         return None
-    out = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
+    out: dict[str, dict[str, Any]] = {}
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
             d = json.loads(line)
-            out[d["id"]] = {k: v for k, v in d.items() if k != "id"}
+        except json.JSONDecodeError:
+            out[f"line {n}"] = {"_problem": "not valid JSON"}
+            continue
+        if not isinstance(d, dict) or not isinstance(d.get("id"), str) or not d["id"]:
+            out[f"line {n}"] = {"_problem": "no id"}
+            continue
+        if d["id"] in out:
+            out[f"line {n}"] = {"_problem": f"duplicate id {d['id']!r}"}
+            continue
+        out[d["id"]] = {k: v for k, v in d.items() if k != "id"}
     return out
 
 

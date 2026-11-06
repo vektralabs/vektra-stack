@@ -681,9 +681,11 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     if admitted is None:
         return
     target, duration_s, elapsed, db = admitted
-    observed_at = (
-        db.now
-    )  # the admission's database time: no later than the enrolment read
+    # the admission's database time, no later than the enrolment read. db.now is
+    # extract(epoch FROM now())::bigint, ROUNDED to the nearest second (up to 0.5 s in the
+    # future): one second less keeps the record never newer than the observation, and never
+    # newer than a re-check written right after the commit
+    observed_at = db.now - 1
     try:
         facts: MoodleGateFacts = await _within(
             deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)

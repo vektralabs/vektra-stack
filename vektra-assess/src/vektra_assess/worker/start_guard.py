@@ -68,6 +68,11 @@ _SITE_LOCK = text(
     "SELECT pg_advisory_xact_lock(hashtextextended('assess_start_breaker:' || "
     "CAST(:s AS text), 0))"
 )
+_PROBE_FAILED = text(
+    "UPDATE assess_start_breaker SET opened_at = now(), "
+    "half_open_at = now() + make_interval(secs => :cd), updated_at = now() "
+    "WHERE site_id = :s AND state = 'open' AND half_open_at <= now()"
+)
 _OPEN = text(
     "INSERT INTO assess_start_breaker (site_id, state, opened_at, half_open_at, updated_at) "
     "VALUES (:s, 'open', now(), now() + make_interval(secs => :cd), now()) "
@@ -174,6 +179,10 @@ async def after_rollback(
     # The same per-site key as the API's half-open Start check; held until this commit, and
     # the count below is a new statement (a new snapshot) taken after the lock
     await conn.execute(_SITE_LOCK, {"s": str(site_id)})
+    # half-open (the cooldown is over): only one Start at a time goes through, so a system
+    # rollback now is the probe failing; the cooldown restarts whatever the window count
+    # says (CodeRabbit review 5808100754)
+    await conn.execute(_PROBE_FAILED, {"s": site_id, "cd": limits.breaker_cooldown_s})
     recent = int(
         (
             await conn.execute(

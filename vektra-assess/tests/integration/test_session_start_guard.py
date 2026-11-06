@@ -380,3 +380,28 @@ async def test_an_older_start_committing_keeps_the_cooldown(pg, worker) -> None:
             )
             == 1
         )
+
+
+async def test_a_failed_half_open_probe_restarts_the_cooldown(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (start_guard.py 173-174): a system rollback while the
+    breaker is half-open is the probe failing: the cooldown restarts, whatever the window
+    count says."""
+    limits = StartLimits(breaker_rollbacks=1000, rollback_notify_after=10)
+    async with world(pg) as w:
+        await pg.run(
+            "super",
+            "INSERT INTO assess_start_breaker (site_id, state, opened_at, half_open_at) "
+            "VALUES (:s, 'open', now() - interval '1 hour', now() - interval '1 second')",
+            {"s": w.site},
+        )
+        await rolled_back(
+            w, worker, "provider_unavailable", limits, assignment="simple"
+        )
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_start_breaker WHERE state = 'open' "
+                "AND half_open_at > now() + interval '60 seconds'",
+            )
+            == 1
+        )

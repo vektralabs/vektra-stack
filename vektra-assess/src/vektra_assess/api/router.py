@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from vektra_assess.api import mint, model_activations, sessions, setup_check, start
+from vektra_assess.api import (
+    events,
+    mint,
+    model_activations,
+    sessions,
+    setup_check,
+    start,
+)
 
 PREFIX = "/api/v1/assess"
 
@@ -18,3 +25,4 @@ router.include_router(model_activations.router)
 router.include_router(mint.router)
 router.include_router(start.router)
 router.include_router(sessions.router)
+router.include_router(events.router)

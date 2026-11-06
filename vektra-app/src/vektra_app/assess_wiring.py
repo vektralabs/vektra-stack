@@ -165,14 +165,17 @@ async def step_12_assess_check(
     app.state.assess_settings = settings
     # assess-local limiters (plan assess-session-lifecycle): the dormant global per-key limiter
     # (app.state.rate_limiter) stays unset
-    from vektra_admin.rate_limit import RateLimiter
-
-    app.state.assess_limiters = {
-        "state": RateLimiter(),
-        "retry": RateLimiter(),
-        "turns": RateLimiter(),
-    }
+    app.state.assess_limiters = build_assess_limiters()
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
+
+
+def build_assess_limiters() -> dict[str, Any]:
+    """One assess-local ``RateLimiter`` per route family (plan 8 M5.3). The global per-key
+    limiter (``app.state.rate_limiter``) stays unset: the assess routes never arm it."""
+    from vektra_admin.rate_limit import RateLimiter
+    from vektra_assess.api.state import LIMITER_NAMES
+
+    return {name: RateLimiter() for name in LIMITER_NAMES}
 
 
 def start_assess_background(app: FastAPI) -> bool:

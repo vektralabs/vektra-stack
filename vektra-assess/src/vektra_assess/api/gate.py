@@ -20,7 +20,7 @@ from fastapi import Request
 from vektra_assess.api.common import engine_of, fail
 from vektra_assess.api.deps import bearer_token, tokens_of
 from vektra_assess.audit import AssessAuditEvent, write_event
-from vektra_assess.errors import token_invalid
+from vektra_assess.errors import loginas_refused, token_invalid
 from vektra_assess.tokens import PreClaims, SessionClaims, TokenError
 
 
@@ -41,17 +41,36 @@ async def _audit_token_failure(request: Request) -> None:
         )
 
 
+async def _refuse_loginas(request: Request, exc: TokenError) -> None:
+    """REQ-084: a signed token that does not assert ``loginas: false`` is a login-as refusal,
+    audited as such (``assess_loginas_rejected``), 403, nothing written."""
+    async with engine_of(request).begin() as conn:
+        await write_event(
+            conn,
+            AssessAuditEvent.LOGINAS_REJECTED,
+            actor="api",
+            site_id=exc.site,
+            reason_code="token_assertion_missing_or_false",
+            data={"route": str(getattr(request.scope.get("route"), "name", ""))[:64]},
+        )
+    raise fail(loginas_refused())
+
+
 async def verify_assess_token_pre(request: Request) -> PreClaims:
     try:
         return tokens_of(request).verify(bearer_token(request), stage="pre")
-    except TokenError:
+    except TokenError as exc:
+        if exc.code == "loginas":
+            await _refuse_loginas(request, exc)
         raise fail(token_invalid()) from None
 
 
 async def verify_assess_token_session(request: Request) -> SessionClaims:
     try:
         return tokens_of(request).verify(_bearer(request), stage="session")
-    except TokenError:
+    except TokenError as exc:
+        if exc.code == "loginas":
+            await _refuse_loginas(request, exc)
         await _audit_token_failure(request)
         raise fail(token_invalid()) from None
 
@@ -65,7 +84,12 @@ async def verify_assess_token_any(request: Request) -> SessionClaims | PreClaims
         if stage == "pre":
             return tokens.verify(token, stage="pre")
         return tokens.verify(token, stage="session")
-    except (TokenError, jwt.InvalidTokenError):
+    except TokenError as exc:
+        if exc.code == "loginas":
+            await _refuse_loginas(request, exc)
+        await _audit_token_failure(request)
+        raise fail(token_invalid()) from None
+    except jwt.InvalidTokenError:
         await _audit_token_failure(request)
         raise fail(token_invalid()) from None
 

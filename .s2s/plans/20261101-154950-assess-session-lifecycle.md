@@ -235,7 +235,7 @@ version.
 - [x] M2.2 Pre-flight calls the plan-4 readers fresh and `evaluate_start_gates`; a failed gate → rollback with the gate code; team submission → `team_submission_refused` audit
 - [x] M2.3 Bind the gate-input refresh tick and `render_check` job (worker writes `render_state` / `gate_inputs`); `GET /state` returns the advisory enum + reason code for (token sub, cmid), dedupes `render_check` per (user, cmid), per-token rate-limited; another student's override never leaks a date, name or count (response and HTML fixture grep)
 - [x] M2.4 Enforce the fixed gate order in one dependency `session_gate(stage)` used by every session route; a test per step asserting that `get_session_material` is called 0 times when an earlier step fails (spy on the DB function)
-- [ ] M2.5 REQ-084: login-as rejection on mint and on any token lacking `loginas:false`; `loginas_rejected` audit; test that 0 session rows are created and the record is unchanged; record OQ-031(2) cross-check capability (default Unreadable) as residual risk
+- [x] M2.5 REQ-084: login-as rejection on mint and on any token lacking `loginas:false`; `loginas_rejected` audit; test that 0 session rows are created and the record is unchanged; record OQ-031(2) cross-check capability (default Unreadable) as residual risk
 - [ ] M2.6 IDOR / NFR-014 negative matrix `vektra-assess/tests/test_idor.py`: token for A with B's sid; other site; other cmid; other course; expired; replay after CLOSED; unenrolled; forged Moodle attempt id in body (ignored); each → rejected, audited, 0 cross-student bytes (response body grep for B's canary); run against 4.3 and 5.2 fixtures in the integration job
 - [ ] M2.7 No query-string tokens: route-inventory test that every assess route rejects `?token=`/`?access_token=` without header (401) and that no handler reads `request.query_params`/cookies for credentials (shared with plan 9's inventory test; whichever lands first owns it)
 
@@ -449,6 +449,14 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     every session route either through `session_tx` (turns, events) or directly (`GET
     /sessions/{sid}`, whose resume path consumes the jti in the same transaction). Steps 5 and 6
     are placeholders bound by M3.4 and M3.7; their spy rows are added with them.
+  - **REQ-084 residual risk (M2.5, OQ-031(2))**: the login-as refusal rests on the plugin's
+    positive assertion at mint (`loginas: false`, `realuser_id: null`, both present) and on every
+    token carrying `loginas: false` (a signed token without it is refused with 403 and audited
+    `assess_loginas_rejected` on every route, nothing written). Vektra cannot cross-check it against
+    Moodle: the `loginas_crosscheck` capability is Unreadable by default (`read_loginas_events`
+    returns Unreadable; the OQ-025 spike found no WS read of the login-as log). A compromised or
+    buggy plugin that asserts `false` during a login-as session is not detected by the backend.
+    Residual risk, accepted until the spike reads it.
   - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
     `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
     API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base

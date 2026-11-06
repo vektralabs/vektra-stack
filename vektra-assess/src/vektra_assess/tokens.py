@@ -37,7 +37,9 @@ AUDIENCE = "discussion"
 SIGNING_SECRET = "assess_token_signing"
 Stage = Literal["pre", "session"]
 
-_COMMON = ("sub", "site", "cmid", "jti", "stage", "loginas")
+# ``loginas`` is NOT in the decoder's required list: its absence must be reported as a login-as
+# refusal (REQ-084), not as a generic malformed token, so ``verify`` checks it itself
+_COMMON = ("sub", "site", "cmid", "jti", "stage")
 _REQUIRE: dict[str, tuple[str, ...]] = {
     "pre": _COMMON,
     "session": (*_COMMON, "sid", "seq", "epoch"),
@@ -45,7 +47,16 @@ _REQUIRE: dict[str, tuple[str, ...]] = {
 
 
 class TokenError(Exception):
-    """Any token failure. The message is a content-free code, never the token or a claim."""
+    """Any token failure. The message is a content-free code, never the token or a claim.
+
+    ``site`` is set only for a ``loginas`` refusal of a token whose SIGNATURE verified (the site
+    claim is then the issuer's own statement), so the route can audit it against its site.
+    """
+
+    def __init__(self, code: str, *, site: UUID | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.site = site
 
 
 @dataclass(frozen=True)
@@ -212,7 +223,11 @@ class AssessTokens:
         if claims.get("stage") != stage:
             raise TokenError("stage")
         if claims.get("loginas") is not False:
-            raise TokenError("loginas")
+            try:
+                site_claim: UUID | None = _uuid(claims, "site")
+            except TokenError:
+                site_claim = None
+            raise TokenError("loginas", site=site_claim)
         sub_raw = claims.get("sub")
         if not isinstance(sub_raw, str) or not sub_raw.isdigit():
             raise TokenError("claim_sub")

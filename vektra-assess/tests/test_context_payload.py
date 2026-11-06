@@ -101,3 +101,44 @@ def test_an_online_text_cut_to_nothing_is_still_announced() -> None:
     )
     text = bundle_to_model_payload(assemble_context(s, _frozen(s)))[0].content
     assert "Testo consegnato: omesso (troncato)" in text
+
+
+def test_a_truncated_item_is_flagged_in_part_a_and_the_payload() -> None:
+    from vektra_assess.context.part_a import SessionFacts, render_part_a
+
+    s = make()
+    q1 = s.quiz_items[0].model_copy(update={"truncated": True})
+    s = s.model_copy(update={"quiz_items": (q1, s.quiz_items[1])})
+    b = assemble_context(s, _frozen(s))
+    assert "troncato" in bundle_to_model_payload(b)[0].content
+    part_a = render_part_a(b, SessionFacts(1, 30)).text
+    line = next(ln for ln in part_a.splitlines() if "Domanda 1" in ln)
+    assert "troncato" in line
+
+
+def test_a_degraded_item_with_a_cut_response_reports_both() -> None:
+    """The question could not be isolated, a long response was: degraded AND truncated, and the
+    response is announced as available but cut, never as unavailable."""
+    from vektra_assess.context.part_a import SessionFacts, render_part_a
+
+    s = make()
+    for truncated in (True, False):
+        q1 = s.quiz_items[0].model_copy(
+            update={
+                "question_text": None,
+                "response_text": "inizio della risposta",
+                "degraded": True,
+                "truncated": truncated,
+            }
+        )
+        t = s.model_copy(update={"quiz_items": (q1, s.quiz_items[1])})
+        b = assemble_context(t, _frozen(t))
+        text = bundle_to_model_payload(b)[0].content
+        assert "testo della domanda e risposta non disponibili" not in text
+        assert "risposta dello studente disponibile" in text
+        assert ("ma troncata; non trattarla come completa." in text) is truncated
+        part_a = render_part_a(b, SessionFacts(1, 30)).text
+        line = next(ln for ln in part_a.splitlines() if "Domanda 1" in ln)
+        assert "vede solo la tua risposta" in line
+        assert ("risposta troncata" in line) is truncated
+        assert "non vede il testo della domanda né la tua risposta" not in part_a

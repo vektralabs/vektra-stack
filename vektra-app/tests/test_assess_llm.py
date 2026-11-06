@@ -1,0 +1,271 @@
+"""Composition of the discussion runner (plan assess-llm-runner, task C)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from vektra_app.assess_llm import (
+    AnalyticsTraceWriter,
+    build_assess_llm,
+    build_assess_runner,
+    build_assess_safeguard,
+)
+from vektra_assess.config import VektraAssessSettings
+from vektra_shared.safeguards import PassthroughSafeguard
+from vektra_shared.startup import StartupValidationError
+from vektra_shared.testing_recorders import RecordingLLMProvider
+
+
+class _Real:
+    async def pre_query(self, *a: Any) -> Any: ...
+    async def post_retrieval(self, *a: Any) -> Any: ...
+    async def pre_response(self, *a: Any) -> Any: ...
+
+
+def _settings(**kw: Any) -> VektraAssessSettings:
+    return VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_LLM_MODEL": "ollama/x", **kw}
+    )
+
+
+def test_presidio_falling_open_is_a_startup_error() -> None:
+    with pytest.raises(StartupValidationError, match="fell back to passthrough"):
+        build_assess_safeguard("presidio", factory=lambda _m: PassthroughSafeguard())
+
+
+def test_a_loaded_presidio_is_returned() -> None:
+    real = _Real()
+    assert build_assess_safeguard("presidio", factory=lambda _m: real) is real
+
+
+def test_none_only_when_explicit() -> None:
+    assert isinstance(build_assess_safeguard("none"), PassthroughSafeguard)
+    assert _settings().safeguard_mode == "presidio"  # the default is the safe one
+
+
+def test_the_assess_llm_has_its_own_model_and_no_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VEKTRA_LLM_PROVIDER", "openai/gpt-rag")
+    monkeypatch.setenv("VEKTRA_LLM_FALLBACK_MODEL", "openai/gpt-fallback")
+    monkeypatch.setenv("VEKTRA_LLM_API_BASE", "http://rag-endpoint")
+    llm = build_assess_llm(_settings(VEKTRA_ASSESS_LLM_API_BASE="http://assess:11434"))
+    cfg = llm._config  # type: ignore[attr-defined]
+    assert cfg.provider == "ollama/x" and cfg.fallback_model is None
+    assert cfg.api_base == "http://assess:11434" and cfg.api_key is None
+
+
+def test_no_model_is_a_startup_error() -> None:
+    with pytest.raises(StartupValidationError, match="VEKTRA_ASSESS_LLM_MODEL"):
+        build_assess_llm(VektraAssessSettings())
+
+
+async def test_the_trace_writer_stores_through_analytics_and_commits() -> None:
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from vektra_shared.types import QueryTrace
+
+    session = AsyncMock()
+
+    class _Factory:
+        async def __aenter__(self) -> Any:
+            return session
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+    trace = QueryTrace(
+        uuid4(), [], 1, [], "m", "abcd1234", datetime.now(UTC), "assess-discussion"
+    )
+    await AnalyticsTraceWriter(lambda: _Factory()).write(trace, "assess-discussion")
+    orm = session.add.call_args[0][0]
+    assert (
+        orm.namespace_id == "assess-discussion" and orm.pipeline == "assess-discussion"
+    )
+    session.commit.assert_awaited_once()
+
+
+def test_build_runner_wires_the_injected_parts() -> None:
+    llm = RecordingLLMProvider([])
+    r = build_assess_runner(
+        _settings(), safeguard=_Real(), trace_writer=AnalyticsTraceWriter(lambda: None),
+        audit=_audit(), llm=llm,
+    )  # fmt: skip
+    assert r.model == "ollama/x" and r._llm is llm  # type: ignore[attr-defined]
+
+
+def _audit() -> Any:
+    async def audit(event: str, data: Any) -> None:
+        return None
+
+    return audit
+
+
+def test_the_worker_part_b_runner_uses_an_explicit_passthrough() -> None:
+    from vektra_app.assess_llm import WorkerTraceWriter, build_worker_part_b_runner
+
+    r = build_worker_part_b_runner(
+        _settings(),
+        acquire_db=lambda: None,
+        audit=_audit(),
+        llm=RecordingLLMProvider([]),
+    )
+    assert isinstance(r._safeguard, PassthroughSafeguard)  # type: ignore[attr-defined]
+    assert isinstance(r._trace_writer, WorkerTraceWriter)  # type: ignore[attr-defined]
+
+
+def test_the_worker_module_does_not_pull_presidio() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, vektra_app.assess_llm as m; "
+        "m.build_worker_part_b_runner; "
+        "print([x for x in sys.modules if x.startswith(('presidio', 'spacy', 'vektra_analytics'))])"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "[]"
+
+
+# --- startup step 13 ----------------------------------------------------------------------------
+
+
+class _App:
+    def __init__(self) -> None:
+        from types import SimpleNamespace
+
+        self.state = SimpleNamespace()
+
+
+async def test_step_13_is_dormant_when_assess_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.delenv("VEKTRA_ASSESS_ENABLED", raising=False)
+    app = _App()
+    await step_13_assess_llm_check(
+        app, safeguard_factory=lambda _m: PassthroughSafeguard()
+    )
+    assert vars(app.state) == {}
+
+
+async def test_step_13_refuses_a_safeguard_that_fell_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    with pytest.raises(StartupValidationError) as e:
+        await step_13_assess_llm_check(
+            _App(), safeguard_factory=lambda _m: PassthroughSafeguard()
+        )
+    assert e.value.step == "assess_llm_check"
+
+
+async def test_step_13_refuses_a_missing_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.delenv("VEKTRA_ASSESS_LLM_MODEL", raising=False)
+    with pytest.raises(StartupValidationError, match="VEKTRA_ASSESS_LLM_MODEL"):
+        await step_13_assess_llm_check(_App(), safeguard_factory=lambda _m: _Real())
+
+
+async def test_step_13_keeps_the_parts_for_the_turn_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    app = _App()
+    real = _Real()
+    await step_13_assess_llm_check(app, safeguard_factory=lambda _m: real)
+    assert app.state.assess_safeguard is real
+    assert app.state.assess_llm._config.provider == "ollama/x"
+    assert len(app.state.assess_prompt_version) == 8
+
+
+def test_step_13_runs_after_step_12_in_the_api_startup() -> None:
+    import inspect
+
+    import vektra_app.main as main
+
+    src = inspect.getsource(main)
+    assert src.index('"assess_check"') < src.index('"assess_llm_check"')
+
+
+def test_a_real_presidio_load_failure_refuses_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not a stub factory: vektra_core's own create_safeguard, with Presidio failing to import."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def failing(name: str, *a: Any, **k: Any) -> Any:
+        if name.startswith("vektra_core.safeguards.presidio") or name.startswith(
+            "presidio"
+        ):
+            raise ImportError("presidio not installed")
+        return real_import(name, *a, **k)
+
+    import sys
+
+    monkeypatch.delitem(sys.modules, "vektra_core.safeguards.presidio", raising=False)
+    monkeypatch.setattr(builtins, "__import__", failing)
+    with pytest.raises(StartupValidationError, match="fell back to passthrough"):
+        build_assess_safeguard("presidio")
+
+
+def test_prometheus_metrics_count_with_code_labels() -> None:
+    from prometheus_client import REGISTRY
+
+    from vektra_app.assess_llm import PrometheusRunnerMetrics
+
+    m = PrometheusRunnerMetrics()
+    PrometheusRunnerMetrics()  # a second instance reuses the registered counters
+
+    def val(name: str, **labels: str) -> float:
+        return REGISTRY.get_sample_value(name, labels) or 0.0
+
+    before = val("vektra_assess_postcheck_replacements_total", stage="lexicon")
+    m.replacement("lexicon", 2)
+    m.behaviour_class("R-SOL")
+    m.call_outcome("first_token_timeout")
+    m.part_b_rejected("part_b_value")
+    assert (
+        val("vektra_assess_postcheck_replacements_total", stage="lexicon") == before + 2
+    )
+    assert val("vektra_assess_behaviour_class_total", behaviour_class="R-SOL") >= 1
+    assert val("vektra_assess_provider_calls_total", outcome="first_token_timeout") >= 1
+    assert val("vektra_assess_part_b_rejections_total", code="part_b_value") >= 1
+
+
+def test_a_lazily_failing_presidio_is_caught_at_startup() -> None:
+    """vektra_core's Presidio loads its engines on first use and falls open there: the build
+    loads them now, so a missing spaCy model stops startup instead of passing every turn."""
+
+    class LazyPresidio(_Real):
+        def _ensure_engines(self) -> bool:
+            return False  # no spaCy model installed
+
+    with pytest.raises(StartupValidationError, match="engines failed to load"):
+        build_assess_safeguard("presidio", factory=lambda _m: LazyPresidio())
+
+    class LoadedPresidio(_Real):
+        def _ensure_engines(self) -> bool:
+            return True
+
+    assert isinstance(
+        build_assess_safeguard("presidio", factory=lambda _m: LoadedPresidio()),
+        LoadedPresidio,
+    )

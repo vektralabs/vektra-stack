@@ -55,3 +55,41 @@ async def test_readiness_disabled_and_never_healthy_without_source() -> None:
     assert off.status == "disabled"
     on = await make_readiness_check(enabled=True)()
     assert on.status == "degraded" and on.message == "heartbeat_source_missing"
+
+
+def test_llm_defaults_and_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    s = VektraAssessSettings()
+    assert s.llm_model is None and s.llm_temperature == 0.2
+    assert s.outage_timeout_s == 45.0 and s.llm_price_per_1k_in is None
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MODEL", "ollama/x")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_CONTEXT_WINDOW", "16384")
+    monkeypatch.setenv("VEKTRA_ASSESS_OUTAGE_TIMEOUT_S", "30")
+    s = VektraAssessSettings()
+    assert (s.llm_model, s.llm_context_window, s.outage_timeout_s) == (
+        "ollama/x",
+        16384,
+        30.0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("max_tokens", "window"), [("4096", "4096"), ("8192", "4096"), ("2048", "2048")]
+)
+def test_a_completion_reserve_that_fills_the_window_is_refused(
+    monkeypatch: pytest.MonkeyPatch, max_tokens: str, window: str
+) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MAX_TOKENS", max_tokens)
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_CONTEXT_WINDOW", window)
+    with pytest.raises(ValidationError, match="LLM_MAX_TOKENS must be lower"):
+        VektraAssessSettings()
+
+
+def test_a_completion_reserve_below_the_window_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_MAX_TOKENS", "2047")
+    monkeypatch.setenv("VEKTRA_ASSESS_LLM_CONTEXT_WINDOW", "2048")
+    s = VektraAssessSettings()
+    assert s.llm_context_window - s.llm_max_tokens == 1

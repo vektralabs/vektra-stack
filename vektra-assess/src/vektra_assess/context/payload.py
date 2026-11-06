@@ -57,8 +57,18 @@ def _lines(bundle: ContextBundle) -> list[str]:
             out += ["Risposta dello studente:", i.response_text]
         if i.review_text:
             out += ["Revisione visibile allo studente:", i.review_text]
-        if i.degraded:
+        if i.degraded and i.response_text:
+            # the question could not be isolated, the response was: say exactly that
+            out.append(
+                "Nota: testo della domanda non disponibile; risposta dello studente disponibile"
+                + (" ma troncata; non trattarla come completa." if i.truncated else ".")
+            )
+        elif i.degraded:
             out.append("Nota: testo della domanda e risposta non disponibili.")
+        elif i.truncated:
+            out.append(
+                "Nota: testo della domanda o della risposta troncato; non trattarlo come completo."
+            )
     for n, c in enumerate(bundle.criteria, start=1):
         out.append(f"## {S.CRITERION_LABEL.format(n=n)}")
         out.append(

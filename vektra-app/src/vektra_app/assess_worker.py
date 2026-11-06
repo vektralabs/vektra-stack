@@ -177,7 +177,9 @@ async def _checks() -> Checked:
     if main_url:
         assert_distinct_dsn(worker_url, main_url, step=STEP)
 
-    # Imported for its cost: the worker's LLM provider is injected from here later.
+    # Imported for their cost, so the idle footprint and the import ceiling include them: the
+    # LLM provider and the discussion runner the worker composes for Part B (plan 8 pre-flight).
+    import vektra_app.assess_llm  # noqa: F401
     from vektra_core.providers.litellm_provider import LitellmProvider  # noqa: F401
 
     assert_import_ceiling()

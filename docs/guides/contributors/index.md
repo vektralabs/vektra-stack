@@ -94,4 +94,3 @@ See `CONTRIBUTING.md` at the repository root for the full contribution process, 
 ## Assess: the canary matrix
 
 Changing what the assessment bot may show the model (a snapshot field, a reader, the review-HTML extraction) needs a canary cell first. See [assess-canary-matrix.md](assess-canary-matrix.md).
-

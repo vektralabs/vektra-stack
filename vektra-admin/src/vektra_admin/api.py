@@ -55,6 +55,7 @@ from vektra_shared.errors import (
     provider_registry_unavailable,
     service_initializing,
 )
+from vektra_shared.namespace import refuse_reserved_namespace
 
 # ---------------------------------------------------------------------------
 # Namespace config whitelist (WI-3)
@@ -718,6 +719,7 @@ async def patch_namespace_config(
       - Unknown keys are rejected with 400 (not silently ignored) to surface
         typos from upstream clients (e.g. Moodle plugin) during development.
     """
+    refuse_reserved_namespace(namespace_id)
     from vektra_admin.models import NamespaceOrm  # late import
 
     # --- Validate body: unknown keys rejected (ERR-ADMIN-006) ---

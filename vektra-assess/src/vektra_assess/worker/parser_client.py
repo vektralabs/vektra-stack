@@ -159,23 +159,30 @@ class ParserClient:
 
     async def extract_review_item(
         self, html: bytes, limits: Limits | None = None
-    ) -> tuple[str | None, str | None]:
-        """Question text and student response of one question's review HTML, from one sidecar
-        call (allowlist extraction). ``(None, None)`` for anything that is not the expected reply:
-        the item then degrades, it is never read as text."""
+    ) -> tuple[str | None, str | None, bool]:
+        """Question text, student response and whether either was cut, from one sidecar call
+        (allowlist extraction). ``(None, None, False)`` for anything that is not the expected
+        reply: the item then degrades, it is never read as text."""
         import json
 
         res = await self._call("review_item", html, "html", limits or self.limits)
         if res.status is not FileStatus.READ:
-            return None, None
+            return None, None, False
         try:
             doc = json.loads(res.text)
         except ValueError:
-            return None, None
-        if not isinstance(doc, dict) or set(doc) != {"qtext", "response"}:
-            return None, None
-        q, r = doc["qtext"], doc["response"]
-        return (q if isinstance(q, str) else None), (r if isinstance(r, str) else None)
+            return None, None, False
+        if not isinstance(doc, dict) or set(doc) != {"qtext", "response", "truncated"}:
+            return None, None, False
+        q, r, t = doc["qtext"], doc["response"], doc["truncated"]
+        if not isinstance(t, bool):
+            # an unreadable cut flag: the item degrades, its text is never presented as complete
+            return None, None, False
+        return (
+            q if isinstance(q, str) else None,
+            r if isinstance(r, str) else None,
+            t,
+        )
 
     async def ping(self, deep: bool = False) -> float:
         """Round-trip in seconds. ``ParserUnavailableError`` unless the sidecar answers

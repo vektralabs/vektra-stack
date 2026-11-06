@@ -138,6 +138,10 @@ jobs:
               # the worker-only capture must import on the production CPU too.
               "vektra_assess.context.assemble", "vektra_assess.context.part_a",
               "vektra_assess.context.capture.capture", "jinja2",
+              # The discussion runner (plan assess-llm-runner): prompts, post-check, shipped
+              # strings (PyYAML) and the composition used by the API and by the worker.
+              "vektra_assess.llm", "vektra_assess.llm.runner", "vektra_assess.llm.shipped",
+              "yaml", "vektra_app.assess_llm",
           ):
               importlib.import_module(name)
               print("imported", name, flush=True)

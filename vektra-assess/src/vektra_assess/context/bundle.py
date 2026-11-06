@@ -55,6 +55,9 @@ class ContextBundle(BaseModel):
     pasted_rubric: str | None
     solution_shown: bool
     html_structured_only: bool
+    # RAG for the discussion, frozen at Start. Locked OFF in v1: the runner refuses a bundle with it
+    # set (RagNotAvailableError) instead of answering without the material it was promised
+    course_material: bool = False
     content_hash: str  # of the snapshot it was assembled from
 
     def __init__(self, *, _sentinel: object = None, **data: Any) -> None:

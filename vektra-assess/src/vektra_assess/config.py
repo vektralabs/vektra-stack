@@ -11,8 +11,9 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -246,4 +247,70 @@ class VektraAssessSettings(BaseSettings):
         None,
         alias="VEKTRA_ASSESS_API_PUBLIC_ORIGIN",
         description="Public origin of the assess API, compared with the UI origin by the setup check.",
+    )
+    # --- discussion runner (plan assess-llm-runner) -----------------------------------------
+    llm_model: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_LLM_MODEL",
+        description="Dedicated model of the discussion runner (litellm id). No fallback list: a fallback model would bypass the NFR-023 activation gate.",
+    )
+    llm_temperature: float = Field(
+        0.2, ge=0, le=2, alias="VEKTRA_ASSESS_LLM_TEMPERATURE"
+    )
+    llm_max_tokens: int = Field(
+        600,
+        ge=64,
+        le=8192,
+        alias="VEKTRA_ASSESS_LLM_MAX_TOKENS",
+        description="Completion tokens per reply; reserved out of the context window before history is kept.",
+    )
+    llm_context_window: int = Field(
+        8192,
+        ge=2048,
+        alias="VEKTRA_ASSESS_LLM_CONTEXT_WINDOW",
+        description="Context window of the model in tokens. History is trimmed oldest first to fit; the context bundle is never trimmed (a bundle that does not fit is an error).",
+    )
+
+    @model_validator(mode="after")
+    def _completion_fits_the_window(self) -> Self:
+        """The completion reserve must leave a positive prompt budget in the context window."""
+        if self.llm_max_tokens >= self.llm_context_window:
+            raise ValueError(
+                "VEKTRA_ASSESS_LLM_MAX_TOKENS must be lower than VEKTRA_ASSESS_LLM_CONTEXT_WINDOW: "
+                "the completion is reserved out of the window and the prompt needs the rest"
+            )
+        return self
+
+    llm_seed: int | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_LLM_SEED",
+        description="Passed to the provider where it supports a seed (REQ-100 determinism).",
+    )
+    outage_timeout_s: float = Field(
+        45.0,
+        gt=0,
+        le=300,
+        alias="VEKTRA_ASSESS_OUTAGE_TIMEOUT_S",
+        description="No first token within this many seconds is a provider outage (REQ-086); a slow stream that keeps producing is not.",
+    )
+    llm_price_per_1k_in: float | None = Field(
+        None, ge=0, alias="VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN"
+    )
+    llm_price_per_1k_out: float | None = Field(
+        None, ge=0, alias="VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT"
+    )
+    store_traces: bool = Field(
+        True,
+        alias="VEKTRA_ASSESS_STORE_TRACES",
+        description="Store the runner's content-free QueryTrace per turn and per Part B (pipeline 'assess-discussion'), independent of VEKTRA_ANALYTICS store settings.",
+    )
+    llm_api_base: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_LLM_API_BASE",
+        description="API base of the discussion model (OpenAI-compatible or Ollama endpoint). A cloud key is read by litellm from its provider variable, never from this file.",
+    )
+    safeguard_mode: Literal["presidio", "none"] = Field(
+        "presidio",
+        alias="VEKTRA_ASSESS_SAFEGUARD_MODE",
+        description="Safeguard of the discussion runner in the API. 'presidio' fails startup if Presidio cannot load (no silent passthrough); 'none' must be set explicitly.",
     )

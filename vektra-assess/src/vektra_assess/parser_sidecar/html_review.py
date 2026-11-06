@@ -342,18 +342,22 @@ def extract_review_block(data: bytes, block: str, max_chars: int) -> Extracted:
 
 
 def extract_review_item(data: bytes, max_chars: int) -> Extracted:
-    """Both allowlisted blocks of one question from ONE parse, as JSON ``{"qtext", "response"}``.
+    """Both allowlisted blocks of one question from ONE parse, as JSON
+    ``{"qtext", "response", "truncated"}``.
 
     Each value is the block's plain text, or ``null`` when the block is missing, ambiguous or
     empty. Each is first capped at half of ``max_chars``. JSON escaping (quotes, backslashes,
     newlines) can still push the serialized text past the cap, and the child would then cut it
     into unreadable JSON and the item would degrade: in that case the values are shortened to the
-    longest common length whose JSON fits, and serialized again.
+    longest common length whose JSON fits, and serialized again. ``truncated`` is true when either
+    block was cut, at its own cap or by that shortening, so the item is flagged instead of reaching
+    the model as if it were complete.
     """
     import json
 
     half = max(1, max_chars // 2 - 32)
     out: dict[str, str | None] = {}
+    cut = False
     for block in ("qtext", "response"):
         res = extract_review_block(data, block, half)
         out[block] = (
@@ -361,22 +365,25 @@ def extract_review_item(data: bytes, max_chars: int) -> Extracted:
             if res.status in (FileStatus.READ, FileStatus.READ_PARTIAL)
             else None
         )
+        cut = cut or res.status is FileStatus.READ_PARTIAL
 
-    def dump(cap: int) -> str:
-        return json.dumps(
-            {k: v[:cap] if v is not None else None for k, v in out.items()},
-            ensure_ascii=False,
-        )
+    def dump(cap: int, truncated: bool) -> str:
+        doc: dict[str, object] = {
+            k: v[:cap] if v is not None else None for k, v in out.items()
+        }
+        doc["truncated"] = truncated
+        return json.dumps(doc, ensure_ascii=False)
 
-    text = dump(half)
+    text = dump(half, cut)
     if len(text) > max_chars:
         # the JSON length grows with the cap, so the largest fitting cap is a binary search
         low, high = 0, half
         while low < high:
             mid = (low + high + 1) // 2
-            if len(dump(mid)) <= max_chars:
+            if len(dump(mid, True)) <= max_chars:
                 low = mid
             else:
                 high = mid - 1
-        text = dump(low)
+        shortened = any(v is not None and len(v) > low for v in out.values())
+        text = dump(low, cut or shortened)
     return Extracted(FileStatus.READ, text, code="review_item")

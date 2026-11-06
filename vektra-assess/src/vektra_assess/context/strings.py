@@ -46,6 +46,13 @@ SUBMISSION_LABEL = "Consegna"
 DEGRADED = (
     " [contenuto non disponibile all'assistente: si discute solo esito e punteggio]"
 )
+TRUNCATED = " [testo della domanda o della risposta troncato: l'assistente ne vede solo l'inizio]"
+#: the question text could not be isolated but the response was: the item is degraded, yet the
+#: assistant does see the response (and, when RESPONSE_TRUNCATED follows, only its beginning)
+DEGRADED_RESPONSE_ONLY = (
+    " [testo della domanda non disponibile all'assistente: vede solo la tua risposta]"
+)
+RESPONSE_TRUNCATED = " [risposta troncata: l'assistente ne vede solo l'inizio]"
 HIDDEN_MARKS_NOTE = "Alcuni punteggi non sono mostrati perché le opzioni di revisione del quiz li nascondono."
 DEGRADED_NOTE = "Per gli elementi segnalati l'assistente non vede il testo della domanda né la tua risposta."
 

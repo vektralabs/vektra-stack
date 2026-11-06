@@ -104,6 +104,9 @@ class QuizItem(_Frozen):
     #: the structured-only path: the html never left the capture frame.
     review_text: str | None = None
     degraded: bool = False  # flagged in Part A: the item could not be fully read
+    #: the question text or the response was cut at the parser's per-block cap (or by the review
+    #: item's JSON cap): flagged in Part A and in the model payload, never presented as complete
+    truncated: bool = False
 
 
 class AssignCriterion(_Frozen):
@@ -255,8 +258,18 @@ def _nfc(value: Any) -> Any:
     return value
 
 
+#: fields added to an item after snapshots were already being stored: a snapshot that omits one
+#: keeps omitting it, so its canonical bytes (and its committed hash) are unchanged (BR-015)
+_ADDED_QUIZ_ITEM_FIELDS = ("truncated",)
+
+
 def canonical_bytes(snapshot: Snapshot) -> bytes:
-    data = _nfc(snapshot.model_dump(mode="json"))
+    data = snapshot.model_dump(mode="json")
+    for item, dumped in zip(snapshot.quiz_items, data["quiz_items"], strict=True):
+        for name in _ADDED_QUIZ_ITEM_FIELDS:
+            if name not in item.model_fields_set:
+                del dumped[name]
+    data = _nfc(data)
     return json.dumps(
         data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")

@@ -15,6 +15,26 @@ log = structlog.get_logger(__name__)
 
 _VALID_GROUNDING_MODES = {"strict", "hybrid"}
 
+#: Namespaces seeded by migrations for internal use, never for RAG content. ``assess-discussion``
+#: (revision 0019) only anchors the assess runner's content-free traces: a chunk there would be a
+#: retrieval source no RAG path is meant to see, so every content or config write refuses it.
+RESERVED_NAMESPACES = frozenset({"assess-discussion"})
+
+
+def is_reserved(namespace: str) -> bool:
+    return namespace.strip().lower() in RESERVED_NAMESPACES
+
+
+def refuse_reserved_namespace(namespace: str) -> None:
+    """Raise the ERR-NAMESPACE-001 envelope (403) when a write targets a reserved namespace."""
+    if is_reserved(namespace):
+        from fastapi import HTTPException
+
+        from vektra_shared.errors import http_status_for, namespace_reserved
+
+        err = namespace_reserved(namespace)
+        raise HTTPException(status_code=http_status_for(err), detail=err.to_envelope())
+
 
 async def resolve_grounding_mode(
     namespace: str,

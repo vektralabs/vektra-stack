@@ -34,6 +34,7 @@ from vektra_admin import health as _health
 from vektra_admin.models import ApiKeyOrm, AuditLogOrm, NamespaceOrm
 from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider, scope_set_error
 from vektra_shared.db import get_session
+from vektra_shared.namespace import is_reserved
 
 log = structlog.get_logger(__name__)
 
@@ -461,6 +462,8 @@ async def namespaces_create(
 
     if not name:
         raise HTTPException(status_code=422, detail="Namespace name is required")
+    if is_reserved(name):
+        raise HTTPException(status_code=403, detail="Namespace name is reserved")
 
     ns = NamespaceOrm(id=name, display_name=display_name)
     session.add(ns)
@@ -504,6 +507,10 @@ async def namespaces_delete(
 ) -> HTMLResponse:
     """Delete a namespace, return updated table partial."""
 
+    if is_reserved(ns_id):
+        # assess-discussion anchors the assess traces' FK: deleting it would make every later
+        # trace insert fail (plan assess-llm-runner, revision 0019)
+        raise HTTPException(status_code=403, detail="Namespace name is reserved")
     result = await session.execute(select(NamespaceOrm).where(NamespaceOrm.id == ns_id))
     ns = result.scalar_one_or_none()
     if ns is None:

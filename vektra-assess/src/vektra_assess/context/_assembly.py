@@ -91,5 +91,6 @@ def assemble(snapshot: Snapshot, frozen: FrozenPolicy) -> ContextBundle:
         pasted_rubric=snapshot.pasted_rubric if p.pasted_rubric else None,
         solution_shown=p.solution and snapshot.solution_text is not None,
         html_structured_only=snapshot.exclusion.html_structured_only,
+        course_material=h.flags.course_material,
         content_hash=content_hash(snapshot),
     )

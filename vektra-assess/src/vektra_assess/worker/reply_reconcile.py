@@ -30,7 +30,11 @@ from vektra_assess.crypto import envelope, hashing
 from vektra_assess.crypto.kek import unwrap_dek
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.turn_markers import INTERRUPTED_REPLY, REPLY_CLAIM_KEY_SQL
+from vektra_assess.turn_markers import (
+    INTERRUPTED_REPLY,
+    REPLY_CLAIM_KEY_SQL,
+    reply_claimed_sql,
+)
 from vektra_assess.worker.runner import AcquireDb, JobContext
 
 log = structlog.get_logger(__name__)
@@ -39,7 +43,10 @@ _ABANDONED = text(
     "SELECT id, extract(epoch FROM pending_reply_since)::bigint AS since FROM assess_sessions "
     "WHERE state = 'ACTIVE' AND pending_reply_since IS NOT NULL "
     "AND pending_reply_since < now() - make_interval(secs => :timeout + reply_grace_s) "
-    "LIMIT :n"
+    # a live claim (a reply in flight in some API process) is skipped here, not at the job:
+    # the batch then reaches the later abandoned turns
+    "AND NOT " + reply_claimed_sql("id") + " "
+    "ORDER BY pending_reply_since LIMIT :n"
 )
 _ROW = text(
     "SELECT state, epoch, seq, site_id, pending_reply_since, "

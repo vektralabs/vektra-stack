@@ -170,3 +170,42 @@ async def test_a_live_driver_keeps_the_turn_and_reconcile_leaves_it(pg) -> None:
             )
     finally:
         await worker.dispose()
+
+
+async def test_a_claimed_turn_does_not_hide_the_next_abandoned_one(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (reply_reconcile.py 38-42): a live claim excludes the turn
+    from the scan, so the batch reaches the later abandoned turns."""
+    from sqlalchemy import text
+
+    from integration.conftest import make_session
+    from vektra_assess.turn_markers import REPLY_CLAIM_KEY_SQL
+
+    await _reset(pg)
+    await pg.run("super", "DELETE FROM assess_jobs")
+    claimed, free = await make_session(pg), await make_session(pg)
+    for sid, age in ((claimed, 600), (free, 300)):  # the claimed one is the oldest
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET pending_reply_since = now() - make_interval(secs => :a) "
+            "WHERE id = :s",
+            {"s": sid, "a": age},
+        )
+    holder = create_async_engine(pg.url("api"))
+    worker = create_async_engine(pg.url("worker"))
+    try:
+        async with holder.connect() as conn:
+            await conn.execute(
+                text(f"SELECT pg_advisory_lock({REPLY_CLAIM_KEY_SQL})"),
+                {"sid": str(claimed)},
+            )
+            await conn.commit()
+            assert await queue_reconciles(worker.connect, 45, batch=1) == 1
+            queued = await pg.run(
+                "super",
+                "SELECT args->>'session_id' FROM assess_jobs WHERE kind = 'reconcile_reply'",
+            )
+            assert [q[0] for q in queued] == [str(free)]
+            await conn.execute(text("SELECT pg_advisory_unlock_all()"))
+    finally:
+        await holder.dispose()
+        await worker.dispose()

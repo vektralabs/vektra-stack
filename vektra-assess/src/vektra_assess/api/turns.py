@@ -35,7 +35,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from vektra_assess.api.common import engine_of, fail, parse_body
-from vektra_assess.api.deps import dek_cache_of, handoff_private_of
+from vektra_assess.api.deps import dek_cache_of, handoff_private_of, settings_of
 from vektra_assess.api.events import EventBroker, broker_of
 from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.material import DekCache, Material, load_material
@@ -46,7 +46,12 @@ from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.policy import FrozenPolicy
 from vektra_assess.context.snapshot import from_canonical_bytes
 from vektra_assess.crypto import envelope, hashing
-from vektra_assess.errors import assess_unavailable, reply_pending, state_conflict
+from vektra_assess.errors import (
+    assess_unavailable,
+    bad_request,
+    reply_pending,
+    state_conflict,
+)
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.types import (
     PriorTurn,
@@ -285,6 +290,12 @@ async def post_turn(
     claims: SessionClaims = Depends(verify_assess_token_session),
 ) -> JSONResponse:
     body = await parse_body(request, TurnRequest)
+    # REQ-083 pre-LLM checks: a blank or over-length message is a 400 envelope (never the 422 of
+    # DEBT-035), before the gate, the material and any model call
+    if not body.text.strip():
+        raise fail(bad_request("message_empty"))
+    if len(body.text) > settings_of(request).max_message_chars:
+        raise fail(bad_request("message_too_long"))
     driver = driver_of(request)
     async with session_tx(
         request, claims, sid, route="post_turn", allowed={"ACTIVE"}

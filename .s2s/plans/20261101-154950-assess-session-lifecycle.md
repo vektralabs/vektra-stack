@@ -470,6 +470,9 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     probe, server-side answer of the pending turn) is M4.1-M4.3, and M3.3 / M3.6 write the same
     marker. A bot append refused by the database is left to the database (from M3.3 that includes
     deadline + grace by the DB clock); the marked turn is then attempted once and may be refused too.
+  - **Review fix 9**: `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` exists now with a PROVISIONAL default of
+    2000; a longer or blank message is a 400 before any model call. M5.1 sizes the value (and the
+    other REQ-083 limits) on the reference session.
   - **M1.11 status: BLOCKED (environment), the tooling is done.** `scripts/assess_burst.py` and
     `tests/nfr/test_assess_burst.py` run against a configured target only (`VEKTRA_ASSESS_BURST_*`:
     API, mint key, DSN, dev Moodle, model label, manifest with a `burst` section; optional LLM base

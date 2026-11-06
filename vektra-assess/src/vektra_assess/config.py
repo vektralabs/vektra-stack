@@ -443,6 +443,16 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_STATE_RPM",
         description="GET /state calls per minute per (site, student, activity).",
     )
+    max_message_chars: int = Field(
+        2000,
+        ge=1,
+        le=20_000,
+        alias="VEKTRA_ASSESS_MAX_MESSAGE_CHARS",
+        description=(
+            "Longest student message accepted (REQ-083); longer or blank is a 400 before any model "
+            "call. PROVISIONAL default: plan M5.1 sizes it on the reference session."
+        ),
+    )
     privacy_allow_unset: bool = Field(
         False,
         alias="VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET",

@@ -334,3 +334,45 @@ async def test_a_failing_persist_is_reported_and_never_kills_the_task(  # type: 
 
         evs = [e.type for e in broker_of(R()).after(s.session_id, 0)]  # type: ignore[arg-type]
         assert evs[-1] == "reply_interrupted", evs
+
+
+@pytest.mark.parametrize(
+    ("text_", "reason"),
+    [
+        ("x" * 2001, "message_too_long"),
+        ("   \n\t ", "message_empty"),
+        ("", "string_too_short:text"),
+    ],
+)
+async def test_an_over_length_or_blank_message_is_a_400_before_any_llm_call(  # type: ignore[no-untyped-def]
+    pg, worker, text_: str, reason: str
+) -> None:
+    """Review fix 9: VEKTRA_ASSESS_MAX_MESSAGE_CHARS (provisional 2000, sized by M5.1)."""
+    runner = FakeStreamRunner()
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": text_},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 400, r.text
+        assert (
+            err(r)["code"] == "ERR-ASSESS-014" and err(r)["details"]["reason"] == reason
+        )
+        assert runner.turns == []
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_turns WHERE session_id=:s AND role='student'",
+                s=s.session_id,
+            )
+            == 0
+        )
+        ok = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "x" * 2000},
+            headers=bearer(s.session_token),
+        )
+        assert ok.status_code == 202
+        await _wait_idle(w)

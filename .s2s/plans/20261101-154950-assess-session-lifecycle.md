@@ -267,7 +267,7 @@ version.
 - [x] M5.6 `vektra_assess/audit.py` event enum + in-transaction writer (fail closed); events owned here: token_mint, start (+notice version), start_rollback(+reason), start_rate_cap_hit, rollback_cap_hit, commit, outage_start/outage_end(+credited s), close(+reason), in_session_gate_rejected, loginas_rejected, ownership_mismatch_rejected, attempt_mismatch_rejected, team_submission_refused, budget_warning, flag_added; a test drives each and asserts exactly one row; audit-store failure → action aborted (row counts unchanged)
 - [x] M5.7 Canary grep: after the full lifecycle suite, grep audit rows, structlog output (all levels, not only WARNING+), Prometheus `/metrics` and `assess_jobs` args for every snapshot/turn canary → 0 hits
 - [x] M5.8 REQ-102 API side: route inventory has no regenerate/edit/delete-turn/upload endpoint; each turn's hash recorded at persist (consumed by plan 10 re-hash)
-- [ ] M5.9 REQ-103 (could; last in order, skip and record if time-boxed out): `POST /sessions/{sid}/turns/{tid}/flag` on bot turns, ACTIVE/OUTAGE only, exactly one marker (unique constraint, idempotent), `flag_added` audit; after CLOSED → 409
+- [x] M5.9 REQ-103 (could; last in order, skip and record if time-boxed out): `POST /sessions/{sid}/turns/{tid}/flag` on bot turns, ACTIVE/OUTAGE only, exactly one marker (unique constraint, idempotent), `flag_added` audit; after CLOSED → 409
 - [ ] M5.10 REQ-073 end-to-end on the dev Moodle (4.3 and 5.2): Moodle grade, rubric and feedback byte-identical before/after a full session (plan-4 reader dump hash); the adversarial suite verdict counts come from the plan-7 eval report; service-account grade-write absence from the plan-4 setup check
 - [ ] M5.11 Chaos suite `tests/chaos/assess/test_lifecycle_chaos.py` (on plan 3's harness): each of the six close reasons end-to-end (finished, timed_out, service_failure, budget_exhausted, terminated_by_teacher via the plan-2 close function stub until plan 11, access_revoked) asserting by row count: hand-off rows 0, exactly 1 `transcript_generate` job, epoch bumped, old session token rejected; kill -9 worker mid-pre-flight → ELIGIBLE with snapshot/key/turn rows 0; kill -9 API mid-reply → one interrupted turn; Postgres restart mid-turn → no duplicate turn, state consistent
 - [ ] M5.12 Re-run the M1.11 burst test with all gates, limits and audit enabled; record NFR-018 commit percentiles and NFR-020 capacity refusals; set the documented K with evidence
@@ -456,6 +456,14 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     ~373k tokens). G is `VEKTRA_ASSESS_OUTAGE_G_S` (the M5.14 name). C's 15-minute maximum stays a
     constant (`timing.OUTAGE_CAP_MAX_S`, mirrored in revision 0026's functions), not a setting:
     REQ-086 fixes it and an uncapped variant is not allowed.
+  - **Audit (M5.6, revision 0029)**: the close function now writes `assess_close` (the enum's
+    name) instead of the plan-2 `session_closed`. `assess_attempt_mismatch_rejected` cannot be
+    driven: no route takes a Moodle or attempt id (M2.6); it stays in the enum for plan 9.
+  - **REQ-103 flag (M5.9, revision 0030)**: done, not time-boxed out. `assess_turn_flags` (PK =
+    the turn, FK to it), API INSERT/SELECT only; the turn row is never updated, so hashes and
+    copies stay equal. The route reads the turn's role through the material function (the API
+    has no SELECT on `assess_turns`). Plan 10 reads the flags for the transcript marker
+    ("segnalato dallo studente"); the worker may SELECT and DELETE them.
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

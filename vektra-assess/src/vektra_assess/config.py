@@ -488,6 +488,13 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S",
         description="Per-site Start breaker: seconds fully open before one Start at a time is let through (half-open).",
     )
+    flag_rpm: int = Field(
+        10,
+        ge=1,
+        le=600,
+        alias="VEKTRA_ASSESS_FLAG_RPM",
+        description="POST /sessions/{sid}/turns/{turn_no}/flag calls per minute per session (REQ-103).",
+    )
     retry_rpm: int = Field(
         6,
         ge=1,

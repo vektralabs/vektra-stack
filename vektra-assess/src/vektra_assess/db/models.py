@@ -234,6 +234,18 @@ class StartAttemptOrm(Base):
     session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
 
 
+class TurnFlagOrm(Base):
+    """REQ-103 'segnalato dallo studente' marker (revision 0030): one per bot turn."""
+
+    __tablename__ = "assess_turn_flags"
+
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    turn_no: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    created_at: Mapped[datetime] = _ts(default=True)
+
+
 class StartBreakerOrm(Base):
     """Per-site Start breaker (revision 0028, plan 8 M5.4): worker-written, API-read."""
 

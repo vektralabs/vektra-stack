@@ -55,6 +55,7 @@ TABLES: tuple[str, ...] = (
     "assess_token_jti",
     "assess_transcript_download_tokens",
     "assess_transcripts",
+    "assess_turn_flags",
     "assess_turns",
 )
 
@@ -133,6 +134,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL},
         # the per-site Start breaker: written by the worker only, read for the fast refusal
         "assess_start_breaker": {"SELECT": _ALL},
+        # REQ-103 flags (revision 0030): one marker per bot turn, never updated or deleted here
+        "assess_turn_flags": {"SELECT": _ALL, "INSERT": _ALL},
         # mint inserts, Start / resume consume (plan 8); identity columns never change
         "assess_token_jti": {
             "SELECT": _ALL,
@@ -249,6 +252,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         },
         "assess_snapshots": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
         "assess_turns": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
+        "assess_turn_flags": {
+            "SELECT": _ALL,
+            "DELETE": _ALL,
+        },  # transcript reads, purge deletes
         "assess_session_keys": {
             "SELECT": _ALL,
             "INSERT": _ALL,

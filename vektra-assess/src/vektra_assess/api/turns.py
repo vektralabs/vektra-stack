@@ -199,6 +199,27 @@ class TurnDriver:
     #: REQ-083 session token budget (``VEKTRA_ASSESS_SESSION_TOKEN_BUDGET``); None: unlimited
     token_budget: int | None = None
     tasks: dict[UUID, asyncio.Task[None]] = field(default_factory=dict)
+    _slots: asyncio.Semaphore | None = None
+
+    def reply_slots(self) -> int:
+        """How many replies may run at once (review fix 2). A reply holds its claim connection
+        for its whole life and needs a second one to persist, so at most half of the pool goes
+        to replies, after a margin (a quarter of the pool, at least one connection) kept for
+        every other request. The extra replies wait for a slot; they never wait holding one
+        connection for another."""
+        pool = self.engine.pool
+        size = getattr(pool, "size", None)
+        total = (size() if callable(size) else 5) + max(
+            int(getattr(pool, "_max_overflow", 0) or 0), 0
+        )
+        margin = max(1, total // 4)
+        return max(1, (total - margin) // 2)
+
+    @property
+    def slots(self) -> asyncio.Semaphore:
+        if self._slots is None:
+            self._slots = asyncio.Semaphore(self.reply_slots())
+        return self._slots
 
     def start(
         self,
@@ -268,7 +289,7 @@ class TurnDriver:
         turn: StudentTurn,
         cut_after_s: float | None = None,
     ) -> None:
-        async with self._claim(sid) as claimed:
+        async with self.slots, self._claim(sid) as claimed:
             if not claimed:
                 log.info("assess_reply_not_claimed")  # another driver answers this turn
                 return

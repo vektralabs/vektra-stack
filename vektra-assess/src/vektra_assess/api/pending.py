@@ -36,7 +36,6 @@ from vektra_assess.api.turns import (
     history_of,
 )
 from vektra_assess.llm.types import StudentTurn
-from vektra_assess.turn_markers import REPLY_CLAIM_KEY_SQL
 
 log = structlog.get_logger(__name__)
 
@@ -47,8 +46,6 @@ _PENDING = text(
     "AND deadline_at + make_interval(secs => reply_grace_s) > now() "
     "ORDER BY pending_reply_since LIMIT :n"
 )
-_TRY = text(f"SELECT pg_try_advisory_lock({REPLY_CLAIM_KEY_SQL})")
-_UNLOCK = text(f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})")
 
 
 @dataclass
@@ -109,27 +106,20 @@ class PendingTurnDriver:
         return taken
 
     async def _answer(self, sid: UUID) -> None:
+        """Answer one pending turn through the TurnDriver's own reply slot and claim: the slot
+        first, then the claim connection (never a connection while waiting for a slot)."""
         driver = driver_for_app(self.app)
-        conn = await driver.engine.connect()
         try:
-            claimed = bool((await conn.execute(_TRY, {"sid": str(sid)})).scalar())
-            await conn.commit()
-            if not claimed:
-                return  # a live reply (here or in another API process) owns it
-            try:
+            async with driver.slots, driver._claim(sid) as claimed:
+                if not claimed:
+                    return  # a live reply (here or in another API process) owns it
                 prepared = await self._prepare(sid)
                 if prepared is not None:
                     epoch, bundle, turn, cut = prepared
                     log.info("assess_pending_turn_answered_server_side")
                     await driver._reply(sid, epoch, bundle, turn, cut)
-            finally:
-                with contextlib.suppress(Exception):
-                    await conn.execute(_UNLOCK, {"sid": str(sid)})
-                    await conn.commit()
         except Exception as exc:
             log.warning("assess_pending_turn_failed", error_type=type(exc).__name__)
-        finally:
-            await conn.close()
 
     async def _prepare(
         self, sid: UUID

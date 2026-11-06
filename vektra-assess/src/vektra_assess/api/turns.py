@@ -25,6 +25,7 @@ interrotta]" (``turn_markers``), which clears the pending marker, then ``reply_i
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -267,6 +268,10 @@ class TurnDriver:
         gets exactly one bot turn."""
         conn = None
         claimed = False
+        # whether the session may still hold the lock in a way we could not undo: such a
+        # connection is invalidated (closed for good), never returned to the pool, where the
+        # session-level lock would survive and block the turn (CodeRabbit review 5808100754)
+        uncertain = False
         try:
             conn = await self.engine.connect()
             claimed = bool(
@@ -280,6 +285,7 @@ class TurnDriver:
             await conn.commit()
         except Exception as exc:
             log.warning("assess_reply_claim_failed", error_type=type(exc).__name__)
+            uncertain = conn is not None
             claimed = False
         try:
             yield claimed
@@ -287,14 +293,22 @@ class TurnDriver:
             if conn is not None:
                 try:
                     if claimed:
-                        await conn.execute(
-                            text(f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"),
-                            {"sid": str(sid)},
-                        )
+                        unlocked = (
+                            await conn.execute(
+                                text(
+                                    f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"
+                                ),
+                                {"sid": str(sid)},
+                            )
+                        ).scalar()
                         await conn.commit()
+                        uncertain = uncertain or not unlocked
                 except Exception:
-                    pass  # closing the connection releases the lock anyway
+                    uncertain = True
                 finally:
+                    if uncertain:
+                        with contextlib.suppress(Exception):
+                            await conn.invalidate()
                     await conn.close()
 
     async def _drive(

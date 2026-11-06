@@ -135,3 +135,54 @@ async def test_a_late_driver_never_generates_for_an_answered_turn(pg, worker) ->
         task = late.start(s.session_id, 1, None, runner.turns[0], expected_seq=3)  # type: ignore[arg-type]
         await asyncio.wait_for(task, 10)
         assert len(runner.turns) == 1, "the late driver called the model"
+
+
+async def test_an_uncertain_claim_never_returns_a_locked_connection_to_the_pool(
+    pg,
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5808100754 (turn_markers.py 16-19): when the claim's commit fails
+    after the lock was taken, the connection is invalidated, never returned to the pool still
+    holding the session-level lock."""
+    import uuid
+
+    engine = create_async_engine(pg.url("api"), pool_size=1, max_overflow=0)
+
+    class FlakyConn:
+        def __init__(self, conn) -> None:  # type: ignore[no-untyped-def]
+            self._c = conn
+            self.failed = False
+
+        def __getattr__(self, name):  # type: ignore[no-untyped-def]
+            return getattr(self._c, name)
+
+        async def commit(self) -> None:
+            if not self.failed:
+                self.failed = True
+                raise ConnectionError("commit lost")
+            await self._c.commit()
+
+    class FlakyEngine:
+        pool = engine.pool
+
+        async def connect(self):  # type: ignore[no-untyped-def]
+            return FlakyConn(await engine.connect())
+
+    sid = uuid.uuid4()
+    driver = TurnDriver(
+        engine=FlakyEngine(),  # type: ignore[arg-type]
+        broker=None,  # type: ignore[arg-type]
+        runner=None,
+        handoff_private=None,  # type: ignore[arg-type]
+        cache=None,  # type: ignore[arg-type]
+    )
+    try:
+        async with driver._claim(sid) as claimed:
+            assert claimed is False  # uncertain: treated as not claimed
+        # no session anywhere still holds the claim (the pooled connection would have)
+        held = await pg.run(
+            "super",
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted",
+        )
+        assert held[0][0] == 0, held
+    finally:
+        await engine.dispose()

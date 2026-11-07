@@ -428,3 +428,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     it): a sibling like `/api/v1/assess/ui-other` keeps `X-Frame-Options: DENY`.
   - 4501067224 `minutes_left` divides the real seconds and rounds up (`math.ceil`): 0.5 s is
     1 minute, 60.5 s is 2; the shared vectors gain both cases on both sides.
+  - 4501067228 The page re-applies `ui_origin_problem` to the site's current origin on every
+    request (after the cache): a site re-pointed at the UI origin, or at a non-https origin
+    outside development, after startup is 503 with `frame-ancestors 'none'`.

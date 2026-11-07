@@ -30,7 +30,7 @@ from vektra_assess.api.common import engine_of
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.state import limiter_of
 from vektra_assess.ui.headers import asset_headers, page_headers
-from vektra_assess.ui.origins import site_origin, url_origin
+from vektra_assess.ui.origins import site_origin, ui_origin_problem, url_origin
 
 PREFIX = "/api/v1/assess/ui"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -180,6 +180,13 @@ async def ui_page(request: Request, site: str = "") -> Response:
     origin = await _site_origin(request, site)
     if origin is None:
         return Response(status_code=404, headers=page_headers(None))
+    # the startup check, again for THIS site now: an origin changed after startup that is the
+    # UI origin (or not https outside development) is never framed (CodeRabbit 4501067228)
+    settings = settings_of(request)
+    if ui_origin_problem(
+        settings.ui_origin, [origin], development=settings.env == "development"
+    ):
+        return Response(status_code=503, headers=page_headers(None))
     manifest = manifest_of(static_dir(request))
     if manifest is None:
         return Response(status_code=503, headers=page_headers(None))

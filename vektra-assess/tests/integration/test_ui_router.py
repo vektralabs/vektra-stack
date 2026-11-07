@@ -323,3 +323,17 @@ async def test_a_flood_of_random_sites_is_rate_limited(pg, bundle) -> None:  # t
             "'none'"
         )
         assert w.engine.pool.checkedout() == 0
+
+
+async def test_a_site_whose_origin_is_the_ui_origin_is_not_served(pg, bundle) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4501067228: a site re-pointed at the UI origin after startup would let the
+    parent and the iframe share an origin (allow-same-origin): the page refuses it."""
+    async with world(pg, assess_ui_static_dir=str(bundle)) as w:  # UI origin http://t
+        await pg.run(
+            "super",
+            "UPDATE assess_sites SET moodle_origin = 'http://t' WHERE id = :s",
+            {"s": w.site},
+        )
+        r = await w.client.get(PAGE, params={"site": str(w.site)})
+        assert r.status_code == 503
+        assert r.headers["content-security-policy"] == EXPECTED_CSP.format("'none'")

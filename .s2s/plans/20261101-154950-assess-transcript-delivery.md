@@ -162,7 +162,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [x] `transcript/naming.py`: BR-016 file name + RFC 6266 header builder; unit tests for unicode/space/slash shortnames
 - [x] `transcript/store.py`: per-transcript DEK generate/wrap/unwrap with the transcript key (kid), encrypt/decrypt, sha256 verification
 - [ ] `transcript/handler.py`: `generate_transcript(session_id)` job handler (idempotent, turn-hash re-verification, allowlist, one-transaction insert of transcript + deliveries + audit + NOTIFY); register with plan 3's JobRunner under the generation pool
-- [ ] (added) Persist what the transcript must mark but no row held: `assess_turn_notes` (revision 0034) written by the API TurnDriver in the bot turn's own transaction (post-check mark codes + contest entries label/status); the transcript renders the markers and "Punti contestati" from it
+- [x] (added) Persist what the transcript must mark but no row held: `assess_turn_notes` (revision 0034) written by the API TurnDriver in the bot turn's own transaction (post-check mark codes + contest entries label/status + reply language); the transcript renders the markers and "Punti contestati" from it
 - [ ] (added) Recipient selection `delivery/recipients.py` (one function, used by generation and by `/state`): ≤ 3 current course graders; render worker writes `graders` (user ids) and `recipients` (`{role, name}`) into the student's `assess_gate_inputs`
 
 ### Delivery

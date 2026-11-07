@@ -9,8 +9,8 @@
   (REQ-082). ``SENT`` iff ``sent_at``; a due-rows index on ``(status, not_before)``.
 - ``assess_transcript_download_tokens`` gains ``audience_role`` (``owner`` / ``grader``) and the
   site; the raw jti is never stored (``jti_hash``).
-- ``assess_turn_notes``: the post-check mark codes and the contest entries (label + status) of a
-  bot turn, written by the API turn driver in the turn's own transaction (the turn row is never
+- ``assess_turn_notes``: the post-check mark codes, the contest entries (label + status) and the
+  reply language of a bot turn, written by the API turn driver in the turn's own transaction (the turn row is never
   updated, BR-015); the transcript renders the markers and "Punti contestati" from it.
 - ``assess_enqueue_resend(tid, actor)``: SECURITY DEFINER, round n+1 for the recipients of the
   last round (never a REPLACED one); the caller cannot name a recipient (REQ-082). Serialised per
@@ -319,6 +319,7 @@ def upgrade() -> None:
             turn_no     INTEGER NOT NULL,
             marks       TEXT[] NOT NULL DEFAULT '{}',
             contests    JSONB NOT NULL DEFAULT '[]'::jsonb,
+            lang        TEXT NULL CHECK (lang IN ('it', 'en', 'other')),
             PRIMARY KEY (session_id, turn_no),
             FOREIGN KEY (session_id, turn_no)
                 REFERENCES assess_turns(session_id, turn_no) ON DELETE CASCADE,

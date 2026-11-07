@@ -414,6 +414,7 @@ class TurnNoteOrm(Base):
     contests: Mapped[list[Any]] = mapped_column(
         JSONB, server_default=text("'[]'::jsonb")
     )
+    lang: Mapped[str | None] = mapped_column(TEXT)
 
 
 class JobOrm(Base):

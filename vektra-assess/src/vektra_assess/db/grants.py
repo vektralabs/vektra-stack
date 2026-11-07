@@ -105,6 +105,12 @@ _SITES_API_READ = (
     "disabled_at", "last_seen_release",
     "moodle_origin",  # revision 0033 (plan 9): the one origin allowed to frame the UI
 )  # fmt: skip
+#: columns of assess_deliveries the API may read: the status, never the recipient ref (0035)
+_DELIVERY_API_READ = (
+    "id", "transcript_id", "kind", "round", "recipient_kind", "recipient_userid", "status",
+    "attempts", "not_before", "attempt_started_at", "last_error_class", "smtp_code",
+    "message_id", "sent_at", "created_at",
+)  # fmt: skip
 _ALL: None = None
 
 MATRIX: Mapping[str, Mapping[str, Privs]] = {
@@ -164,8 +170,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "UPDATE": ("consumed_at",),
         },
         "assess_transcripts": {"SELECT": _ALL},
-        # read for the delivery status; resend rounds go through assess_enqueue_resend (0034)
-        "assess_deliveries": {"SELECT": _ALL},
+        # read for the delivery status; resend rounds go through assess_enqueue_resend (0034).
+        # Revision 0035: never ``recipient_ref`` (a hash of an address the API must not be able
+        # to confirm by guessing, REQ-082 as amended)
+        "assess_deliveries": {"SELECT": _DELIVERY_API_READ},
         # revision 0034 (plan 10): the post-check marks and contest entries of a bot turn,
         # written in the turn's own transaction, never updated
         "assess_turn_notes": {"INSERT": _ALL},

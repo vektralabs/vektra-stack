@@ -33,6 +33,7 @@ export function renderMarkdown(text) {
   const lines = html.split("\n");
   const output = [];
   let inList = null; // "ul" | "ol" | null
+  let listNext = 1; // number the next <li> of the current <ol> would get
   let inPre = false;
 
   let paraLines = []; // accumulate consecutive text lines into one <p>
@@ -92,15 +93,29 @@ export function renderMarkdown(text) {
     }
 
     // Ordered list items
-    const olMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
+    const olMatch = line.match(/^[\s]*(\d+)\.\s+(.+)$/);
     if (olMatch) {
       flushParagraph();
+      const number = Number(olMatch[1]);
       if (inList !== "ol") {
         if (inList) output.push(`</${inList}>`);
-        output.push("<ol>");
+        listNext = number;
+        // The first marker sets where the list starts; subsequent markers only
+        // need <li value> when they skip a number.
+        output.push(number === 1 ? "<ol>" : `<ol start="${number}">`);
         inList = "ol";
       }
-      output.push(`<li>${renderInline(olMatch[1])}</li>`);
+      const value = number === listNext ? "" : ` value="${number}"`;
+      output.push(`<li${value}>${renderInline(olMatch[2])}</li>`);
+      listNext = number + 1;
+      continue;
+    }
+
+    // Empty line: a paragraph break, but a list stays open so that items
+    // separated by blank lines keep one list and one numbering sequence.
+    if (line.trim() === "") {
+      flushParagraph();
+      if (!inList) output.push("");
       continue;
     }
 
@@ -108,13 +123,6 @@ export function renderMarkdown(text) {
     if (inList) {
       output.push(`</${inList}>`);
       inList = null;
-    }
-
-    // Empty line -> paragraph break
-    if (line.trim() === "") {
-      flushParagraph();
-      output.push("");
-      continue;
     }
 
     // Regular text line: accumulate for paragraph grouping

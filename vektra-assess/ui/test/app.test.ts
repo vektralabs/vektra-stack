@@ -55,6 +55,19 @@ describe("warnings and outage", () => {
   });
 });
 
+// jsdom has no <dialog> behaviour (same minimal polyfill as controls.test.ts)
+function dialogPolyfill() {
+  const proto = HTMLDialogElement.prototype as unknown as Record<string, unknown>;
+  proto.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute("open", "");
+  };
+  proto.close = function (this: HTMLDialogElement, rv?: string) {
+    this.removeAttribute("open");
+    (this as unknown as { returnValue: string }).returnValue = rv ?? "";
+    this.dispatchEvent(new Event("close"));
+  };
+}
+
 describe("REQ-103 flag", () => {
   it("one confirmation, one POST, the marker replaces the control; none after closed", async () => {
     const calls: string[] = [];
@@ -80,11 +93,24 @@ describe("REQ-103 flag", () => {
       { turn_no: 2, role: "student", kind: "normal", text: "ciao" },
     ]);
     expect(a.chat.list.querySelectorAll("button.flag").length).toBe(1); // bot turns only
-    let asked = 0;
-    window.confirm = () => (asked++, true);
-    (a.chat.list.querySelector("button.flag") as HTMLButtonElement).click();
+    root.append(a.chat.root);
+    dialogPolyfill();
+    const flag = a.chat.list.querySelector("button.flag") as HTMLButtonElement;
+    window.confirm = () => {
+      throw new Error("window.confirm is blocked in the plugin's sandbox");
+    };
+    // Annulla: nothing is sent, the focus goes back to the control
+    flag.click();
+    expect(a.flagDialog.dialog.hasAttribute("open")).toBe(true);
+    expect(document.activeElement).toBe(a.flagDialog.no);
+    a.flagDialog.no.click();
     await new Promise((r) => setTimeout(r, 0));
-    expect(asked).toBe(1);
+    expect(calls).toEqual([]);
+    expect(document.activeElement).toBe(flag);
+    // one confirmation, one POST
+    flag.click();
+    a.flagDialog.yes.click();
+    await new Promise((r) => setTimeout(r, 0));
     expect(calls).toEqual(["POST /api/sessions/S/turns/1/flag"]);
     expect(a.chat.list.querySelector(".flag-marker")!.textContent).toBe("segnalato dallo studente");
     a.chat.render([{ turn_no: 3, role: "bot", kind: "normal", text: "x" }]);

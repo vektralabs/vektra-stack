@@ -7,7 +7,7 @@ import { consume, type SseEvent } from "./sse";
 import { INITIAL, reduce, type Action, type UiState } from "./state";
 import { ChatView, type Turn } from "./views/chat";
 import { ClosingView, saveBlob } from "./views/closing";
-import { ControlsView, copyText, minutesLeft } from "./views/controls";
+import { ConfirmDialog, ControlsView, copyText, minutesLeft } from "./views/controls";
 import { h, LiveRegion } from "./views/dom";
 
 /** How long the closing screen waits for the parent's download token. */
@@ -38,6 +38,13 @@ export class App {
   readonly banner = h("div", { class: "banner", role: "region", "aria-label": M.outage, hidden: true });
   readonly chat: ChatView;
   readonly controls: ControlsView;
+  readonly flagDialog = new ConfirmDialog(
+    "flag-confirm",
+    M.flagConfirm,
+    M.flagConfirmText,
+    M.flagYes,
+    M.confirmNo,
+  );
   private readonly main: HTMLElement;
 
   constructor(
@@ -72,6 +79,7 @@ export class App {
       this.status,
       this.banner,
       this.live.el,
+      this.flagDialog.dialog,
     );
     this.setStatus(M.waiting);
     setInterval(() => this.tick(), 15_000);
@@ -320,13 +328,17 @@ export class App {
 
   private async flagTurn(turn: Turn, article: HTMLElement): Promise<void> {
     if (this.state.name !== "active" && this.state.name !== "outage") return;
-    if (!window.confirm(M.flagConfirm)) return;
+    const button = article.querySelector("button.flag") as HTMLButtonElement | null;
+    if (!button || !(await this.flagDialog.ask(button))) return;
+    if (this.state.name !== "active" && this.state.name !== "outage") return;
     const r = await this.fetchImpl(
       `${this.cfg.apiBase}/sessions/${this.sid}/turns/${turn.turn_no}/flag`,
       { method: "POST", headers: this.headers() },
     );
     if (r.ok) {
-      article.querySelector("button.flag")?.replaceWith(h("span", { class: "flag-marker", text: M.flagged }));
+      const marker = h("span", { class: "flag-marker", tabindex: "-1", text: M.flagged });
+      button.replaceWith(marker);
+      marker.focus();
     }
   }
 
@@ -368,7 +380,13 @@ export class App {
 
   private render(before: UiState): void {
     const s = this.state;
-    const keep = [this.main.querySelector("h1"), this.status, this.banner, this.live.el];
+    const keep = [
+      this.main.querySelector("h1"),
+      this.status,
+      this.banner,
+      this.live.el,
+      this.flagDialog.dialog,
+    ];
     switch (s.name) {
       case "preparing":
         this.setStatus(M.preparing);

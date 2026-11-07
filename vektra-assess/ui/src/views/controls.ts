@@ -24,6 +24,47 @@ export function minutesLeft(deadlineMs: number, nowMs: number): number {
   return Math.max(0, Math.ceil((deadlineMs - nowMs) / 60000));
 }
 
+/** A modal confirmation inside the page (<dialog>): the plugin's iframe sandbox has no
+ *  allow-modals, so window.confirm() would answer false without asking. Annulla and Escape
+ *  return the focus to the control that opened it. */
+export class ConfirmDialog {
+  readonly dialog: HTMLDialogElement;
+  readonly yes: HTMLButtonElement;
+  readonly no: HTMLButtonElement;
+  private resolve: ((ok: boolean) => void) | null = null;
+  private opener: HTMLElement | null = null;
+
+  constructor(id: string, title: string, text: string, yesText: string, noText: string) {
+    this.yes = h("button", { type: "button", class: "primary", text: yesText });
+    this.no = h("button", { type: "button", text: noText });
+    this.dialog = h(
+      "dialog",
+      { "aria-labelledby": `${id}-title`, "aria-describedby": `${id}-text` },
+      h("h2", { id: `${id}-title`, text: title }),
+      h("p", { id: `${id}-text`, text }),
+      h("div", { class: "dialog-actions" }, this.no, this.yes),
+    );
+    this.no.addEventListener("click", () => this.dialog.close("cancel"));
+    this.yes.addEventListener("click", () => this.dialog.close("confirm"));
+    this.dialog.addEventListener("close", () => {
+      const ok = this.dialog.returnValue === "confirm";
+      const done = this.resolve;
+      this.resolve = null;
+      if (!ok) this.opener?.focus();
+      done?.(ok);
+    });
+  }
+
+  ask(opener: HTMLElement): Promise<boolean> {
+    if (this.resolve) return Promise.resolve(false); // one question at a time
+    this.opener = opener;
+    this.dialog.returnValue = "";
+    this.dialog.showModal();
+    this.no.focus();
+    return new Promise((r) => (this.resolve = r));
+  }
+}
+
 export class ControlsView {
   readonly root: HTMLElement;
   readonly timer: HTMLElement;

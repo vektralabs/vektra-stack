@@ -49,6 +49,8 @@ export const M = {
   downloadFailed: "Non è stato possibile scaricare la trascrizione. Riprova più tardi.",
   flag: "Segnala un errore dell'assistente",
   flagConfirm: "Segnalare questo messaggio come errore dell'assistente?",
+  flagConfirmText: "La segnalazione resta nella trascrizione che riceve il docente.",
+  flagYes: "Segnala",
   flagged: "segnalato dallo studente",
   pickerLabel: "Elementi della prova",
   pickerPrefix: "Spiegami: ",

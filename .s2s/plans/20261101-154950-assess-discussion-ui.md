@@ -259,8 +259,11 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - Item picker (SHOULD): NOT built. `GET /sessions/{sid}` carries no item labels (plan 8's
     payload has turns only), and this plan must not add payload fields to plan 8's routes; the
     task and its acceptance criterion stay open (a follow-up with a server-provided label list).
-  - The flag confirmation is the browser's native `confirm()` (one confirmation, keyboard and
-    screen-reader operable); Fine has its own modal `<dialog>`.
+  - The flag confirmation is an in-page modal `<dialog>` (`ConfirmDialog`, like Fine's), not the
+    native `confirm()`: the plugin's iframe sandbox (`allow-scripts allow-same-origin
+    allow-downloads`, no `allow-modals`) makes `window.confirm()` return false without asking,
+    so the flag would never have been sent inside Moodle. Annulla/Escape return the focus to the
+    control; after the flag the focus moves to the marker.
   - Traefik example checked (2026-11-07): it defines no headers middleware (no frameDeny, no
     customResponseHeaders), so there is nothing to exempt; the API's own FrameDenyMiddleware
     gives every non-UI route `X-Frame-Options: DENY` behind Traefik too.

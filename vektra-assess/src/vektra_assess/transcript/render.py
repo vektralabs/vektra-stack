@@ -225,6 +225,15 @@ def _minutes(seconds: int) -> str:
     return f"{seconds // 60} min" + (f" {seconds % 60} s" if seconds % 60 else "")
 
 
+def _lang_tag(lang: str | None) -> str:
+    """The BCP 47 tag of a turn: ``it`` / ``en``; a passage the detector classed ``other`` is
+    ``und`` (undetermined), never Italian, so a screen reader does not read it with Italian
+    pronunciation (CodeRabbit 4503025958); no recorded language (older turns) is ``it``."""
+    if lang in ("it", "en"):
+        return lang
+    return "und" if lang == "other" else "it"
+
+
 def _markers(t: TurnRecord) -> tuple[str, ...]:
     out: list[str] = []
     if t.kind == "interrupted" or INTERRUPTED in t.text:
@@ -354,7 +363,7 @@ def build_doc(inp: TranscriptInput) -> TranscriptDoc:
             + (" (messaggio iniziale)" if t.kind == "opening" else ""),
             at_iso=_iso(t.at),
             at_label=_when(t.at, tz),
-            lang=t.lang if t.lang in ("it", "en") else "it",
+            lang=_lang_tag(t.lang),
             segments=tuple(segments(t.text)),
             markers=_markers(t),
         )

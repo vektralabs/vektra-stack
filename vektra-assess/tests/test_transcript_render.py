@@ -383,3 +383,17 @@ def test_contest_entries_carry_the_criterion_remark_by_canonical_label() -> None
     )
     out = render.render(render.build_doc(_input(snapshot=snap, turns=turns))).decode()
     assert "REMARK-ONE" in out
+
+
+def test_a_turn_in_another_language_is_not_tagged_italian() -> None:
+    """CodeRabbit 4503025958: ``other`` renders as ``lang="und"``."""
+    turns = (
+        render.TurnRecord(1, "bot", "opening", "Ciao", T0, lang="it"),
+        render.TurnRecord(
+            2, "student", "normal", "Bonjour, pourquoi?", T0, lang="other"
+        ),
+    )
+    out = render.render(render.build_doc(_input(turns=turns))).decode()
+    allowlist.check(out.encode())
+    assert '<li class="turn student" lang="und">' in out
+    assert '<li class="turn bot" lang="it">' in out

@@ -87,7 +87,7 @@ def _docs() -> dict[str, bytes]:
                 flagged=i == 2,
                 marks=("values",) if i == 2 else (),
                 contests=(("C1", "confirmed"),) if i == 2 else (),
-                lang="en" if i == 3 else "it",
+                lang="en" if i == 3 else ("other" if i == 1 else "it"),
             )
             for i, (role, kind, text) in enumerate(TURNS)
         )

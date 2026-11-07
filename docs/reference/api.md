@@ -139,9 +139,12 @@ plugin owns every text.
 | `pre_session` | `eligible`, `reset_granted` | `{duration_min, course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url?, notice_version}, previous_sessions, recipients?[{role, name}], files?[{name, predicted: readable\|partial\|unreadable}]}` |
 | `closed_at` | `closed` (state 6) | the last close of the student's session, ISO 8601 |
 | `ended_at` | `ended` (state 11) | the activity's end date, ISO 8601 |
+| `transcripts` | any state, once the student has a CLOSED session (plan 10) | `[{tid, n, available, purged}]`, one per CLOSED session in session order: `tid` the transcript id (equal to the session id, so the discussion UI, which knows only its session, can ask for it), `n` the session number, `available` generated and downloadable, `purged` removed by the retention purge (always `false` until the purge ships) |
 
 `recipients`, `files` and `selected_attempt` come from the render worker's record and are
-omitted while it has not recorded them. `transcripts` belong to plan 10.
+omitted while it has not recorded them. `recipients` (REQ-082) are the transcript recipients the
+render check derived from the course's graders (at most 3, `role` is `grader`), by role and name
+only: `/state` never carries an email address or another user's id.
 
 **Tokens** (HS256, `aud=discussion`). Pre-session: `sub`, `site`, `cmid`, `stage: "pre"`, `jti`,
 `loginas: false`, `iat`, `exp` (at most 120 s, single use at Start). Session-bound: `sub`, `site`,

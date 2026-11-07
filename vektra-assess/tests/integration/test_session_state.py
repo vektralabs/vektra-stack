@@ -53,9 +53,13 @@ async def state(w, token: str):  # type: ignore[no-untyped-def]
     )
 
 
-async def render(w, worker, sub: int, cm: int, source=None) -> None:  # type: ignore[no-untyped-def]
+async def render(w, worker, sub: int, cm: int, source=None, graders=None) -> None:  # type: ignore[no-untyped-def]
     handler = make_render_handler(
-        RenderDeps(settings=w.settings, source=source or moodle_source(worker))
+        RenderDeps(
+            settings=w.settings,
+            source=source or moodle_source(worker),
+            graders=graders,
+        )
     )
     await handler(
         JobContext(
@@ -69,7 +73,14 @@ async def render(w, worker, sub: int, cm: int, source=None) -> None:  # type: ig
     )
 
 
-EXTENDED = ("active", "selected_attempt", "pre_session", "closed_at", "ended_at")
+EXTENDED = (
+    "active",
+    "selected_attempt",
+    "pre_session",
+    "closed_at",
+    "ended_at",
+    "transcripts",
+)
 
 
 def core(view: dict) -> dict:  # type: ignore[type-arg]
@@ -363,6 +374,68 @@ async def test_closed_carries_closed_at_only(pg, worker) -> None:  # type: ignor
         assert view["state"] == "closed"
         assert datetime.fromisoformat(view["closed_at"]).tzinfo is not None
         assert not {"active", "pre_session", "ended_at", "selected_attempt"} & set(view)
+        # plan 10: one entry per CLOSED session; not generated yet -> not available
+        assert view["transcripts"] == [
+            {"tid": str(s.session_id), "n": 1, "available": False, "purged": False}
+        ]
+
+
+async def test_transcripts_list_generated_and_shredded_ones(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "CLOSED")
+        await pg.run(
+            "worker",
+            "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, "
+            "transcript_kid, content_hash, turns_digest, filename, byte_size) "
+            "VALUES (:t, :t, '\\x00', '\\x00', 'k', 'h', 'd', 'f.html', 1)",
+            {"t": s.session_id},
+        )
+        view = (await state(w, await w.presession(sub=s.sub, cmid=s.cmid))).json()
+        assert view["transcripts"] == [
+            {"tid": str(s.session_id), "n": 1, "available": True, "purged": False}
+        ]
+        await pg.run(
+            "super",
+            "UPDATE assess_transcripts SET ciphertext = NULL, dek_wrapped = NULL, "
+            "shredded_at = now() WHERE id = :t",
+            {"t": s.session_id},
+        )
+        view = (await state(w, await w.presession(sub=s.sub, cmid=s.cmid))).json()
+        assert view["transcripts"][0]["available"] is False
+        assert view["transcripts"][0]["purged"] is True
+
+
+async def test_eligible_names_the_recipients_from_the_course_graders(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """REQ-082: the render check reads the course's graders; /state names the recipients by
+    role and name and never carries an address or another user's id."""
+    async with world(pg) as w:
+        cm = cmid("rubric_vis")
+        await configure_activity(pg, w.site, cm, cap_minutes=30)
+        await pg.run(
+            "super",
+            "UPDATE assess_sites SET release = :r, base_url = :b WHERE id = :s",
+            {"r": M["release"], "b": "https://moodle.example.org", "s": w.site},
+        )
+        src = moodle_source(worker)
+        await render(w, worker, STU1, cm, FakeSource(facts=PASSING_FACTS), graders=src)
+        inputs = (
+            await pg.run(
+                "super",
+                "SELECT inputs FROM assess_gate_inputs WHERE site_id = :s AND cmid = :c "
+                "AND student_userid = :u",
+                {"s": w.site, "c": cm, "u": STU1},
+            )
+        )[0][0]
+        graders = [uid("4.3", g) for g in ("grader1", "grader2")]
+        assert inputs["graders"] == sorted(graders)
+        view = (await state(w, await w.presession(sub=STU1, cmid=cm))).json()
+        recipients = view["pre_session"]["recipients"]
+        assert recipients and len(recipients) <= 3
+        assert {r["role"] for r in recipients} == {"grader"}
+        assert all(set(r) == {"role", "name"} for r in recipients)
+        assert "@" not in json.dumps(view)
 
 
 async def test_eligible_carries_the_pre_session_data(pg, worker) -> None:  # type: ignore[no-untyped-def]

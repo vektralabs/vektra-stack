@@ -21,7 +21,6 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from vektra_assess.context.regrade import RegradeFlag, RegradeKind
 from vektra_assess.context.snapshot import GradeKind, Snapshot
-from vektra_assess.llm import shipped
 from vektra_assess.parser_protocol import FileStatus
 from vektra_assess.transcript.mathml import Segment, segments
 
@@ -69,7 +68,13 @@ MARK_LABELS = {
     "marker": "[marcatore rimosso dal sistema]",
 }
 MARK_OTHER = "[testo modificato dal sistema]"
-REPLACED = shipped.get("it").missing["replaced_by_system"]
+#: shipped strings (``vektra_assess.llm.shipped``, Italian), handed in by the composition root:
+#: this package may not import ``vektra_assess.llm`` (import-linter). A test pins them equal.
+REPLACED = "[risposta sostituita dal sistema]"
+BR009_TEMPLATE = (
+    "Voto registrato: {grade} (letto il {date}). Il voto NON è stato modificato da questa "
+    "discussione; decide l'orale"
+)
 INTERRUPTED = "[risposta interrotta]"
 FLAGGED = "segnalato dallo studente"
 NOT_AVAILABLE = "non disponibile"
@@ -176,6 +181,7 @@ class TranscriptInput:
     digest: str
     generated_at: datetime
     tz: str = "Europe/Rome"
+    br009_template: str = BR009_TEMPLATE
     extra: dict[str, str] = field(default_factory=dict)
 
 
@@ -328,7 +334,7 @@ def build_doc(inp: TranscriptInput) -> TranscriptDoc:
         ),
         ListBlock("Configurazione", config, ""),
     )
-    statement = shipped.get("it").br009.format(
+    statement = inp.br009_template.format(
         grade=grade_text(snap),
         date=datetime.fromtimestamp(snap.overall.grade_read_at, UTC)
         .astimezone(tz)

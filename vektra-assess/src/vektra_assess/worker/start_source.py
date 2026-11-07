@@ -38,13 +38,16 @@ from vektra_assess.context.capture.capture import (
     capture_quiz,
 )
 from vektra_assess.context.capture.readers import MoodleCaptureReaders
+from vektra_assess.context.regrade import GradeReading
+from vektra_assess.context.snapshot import mark_str
 from vektra_assess.crypto.teacher_config import open_teacher_config
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.moodle import readers as r
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import AttemptState
+from vektra_assess.moodle.domain import AttemptState, GraderView
 from vektra_assess.moodle.readers.resolve import ActivityRef, resolve_activity
 from vektra_assess.moodle.result import Readable, Unreadable
+from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.preflight import MoodleGateFacts, StartTarget
 
 _SITE = text("SELECT base_url, release FROM assess_sites WHERE id = :s")
@@ -175,6 +178,70 @@ class MoodleStartSource:
             self._client, site, ref.courseid, target.student_userid
         )
         return enrol.value.is_student if isinstance(enrol, Readable) else None
+
+    async def graders(self, target: StartTarget) -> tuple[GraderView, ...] | None:
+        """The course's current graders (REQ-082); None when unreadable (never a guess)."""
+        site = await self._site(target)
+        if site is None:
+            return None
+        ref, _ = await self._resolve(site, target)
+        if ref is None:
+            return None
+        res = await r.read_graders(self._client, site, ref.courseid)
+        return res.value.graders if isinstance(res, Readable) else None
+
+    async def close_facts(self, target: StartTarget) -> CloseFacts:
+        """What the transcript header needs from Moodle at close (plan 10): the course short
+        name, the grade as the student sees it NOW (release-gated: an unreleased grade never
+        leaves the reader) and the course's graders. Each part is None when unreadable."""
+        site = await self._site(target)
+        if site is None:
+            return CloseFacts()
+        ref, _ = await self._resolve(site, target)
+        self._resolved.pop(target.session_id)
+        if ref is None:
+            return CloseFacts()
+        c, uid = self._client, target.student_userid
+        courses = await r.read_user_courses(c, site, uid)
+        shortname = None
+        if isinstance(courses, Readable):
+            shortname = next(
+                (x.shortname for x in courses.value if x.courseid == ref.courseid), None
+            )
+        grade = await self._grade_now(site, ref, target)
+        graders = await r.read_graders(c, site, ref.courseid)
+        return CloseFacts(
+            course_shortname=shortname,
+            grade=grade,
+            graders=graders.value.graders if isinstance(graders, Readable) else None,
+        )
+
+    async def _grade_now(
+        self, site: SiteRef, ref: ActivityRef, target: StartTarget
+    ) -> Readable[GradeReading] | Unreadable:
+        """BR-010 at close: an assignment's grade counts as released only when the grade item is
+        visible AND the marking workflow (if any) says released; a quiz's when its item is."""
+        c, uid = self._client, target.student_userid
+        item = await r.read_grade_release(c, site, ref.courseid, uid, target.cmid)
+        if isinstance(item, Unreadable):
+            return item
+        released = not item.value.hidden
+        if released and target.activity_type != "quiz":
+            rel = await r.read_assign_release(
+                c, site, ref.courseid, ref.instanceid, uid
+            )
+            if isinstance(rel, Unreadable):
+                return rel
+            released = rel.value.released
+        v = item.value
+        return Readable(
+            GradeReading(
+                released=released,
+                grade=mark_str(v.grade) if released and v.grade is not None else None,
+                scale_label=v.grade_formatted if released else None,
+            ),
+            item.evidence,
+        )
 
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
         """The Moodle half of the START gates, read fresh; anything unreadable stays None."""

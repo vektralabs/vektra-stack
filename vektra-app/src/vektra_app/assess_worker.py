@@ -269,7 +269,9 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
             runner=runner,
         )
     )
-    render = make_render_handler(RenderDeps(settings=settings, source=source))
+    render = make_render_handler(
+        RenderDeps(settings=settings, source=source, graders=source)
+    )
     return {
         JobKind.PREFLIGHT: preflight,
         JobKind.RENDER_CHECK: render,

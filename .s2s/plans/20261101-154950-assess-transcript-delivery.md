@@ -163,7 +163,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [x] `transcript/store.py`: per-transcript DEK generate/wrap/unwrap with the transcript key (kid), encrypt/decrypt, sha256 verification
 - [ ] `transcript/handler.py`: `generate_transcript(session_id)` job handler (idempotent, turn-hash re-verification, allowlist, one-transaction insert of transcript + deliveries + audit + NOTIFY); register with plan 3's JobRunner under the generation pool
 - [x] (added) Persist what the transcript must mark but no row held: `assess_turn_notes` (revision 0034) written by the API TurnDriver in the bot turn's own transaction (post-check mark codes + contest entries label/status + reply language); the transcript renders the markers and "Punti contestati" from it
-- [ ] (added) Recipient selection `delivery/recipients.py` (one function, used by generation and by `/state`): ≤ 3 current course graders; render worker writes `graders` (user ids) and `recipients` (`{role, name}`) into the student's `assess_gate_inputs`
+- [x] (added) Recipient selection `delivery/recipients.py` (one function, used by generation and by `/state`): ≤ 3 current course graders; render worker writes `graders` (user ids) and `recipients` (`{role, name}`) into the student's `assess_gate_inputs`
 
 ### Delivery
 - [ ] `delivery/message.py`: EmailMessage builder, header sanitiser (CR/LF/C0 strip), deterministic Message-ID, plain-text body template (Italian, content-free)
@@ -177,7 +177,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [ ] `vektra_assess/api/transcripts.py`: download-token mint (owner via `assess:mint`, grader via `assess:teacher` with `require_exact_scope` + site binding + fresh grader check helper `authz/graders.py` reused by plan 11)
 - [ ] `GET /transcripts/{tid}`: single-use consumption, ownership re-check, decrypt + hash verify, headers, audit; per-token rate limit using plan 1's generalised `RateLimiter`
 - [ ] `POST /transcripts/{tid}/resend` with recipient-parameter rejection and audit
-- [ ] (added) `/state` gains `transcripts: [{tid, n, available, purged}]` (n = session number, `purged` false until plan 12, absent when none) and `pre_session.recipients: [{role, name}]` from the worker-written gate_inputs; documented in `docs/reference/api.md` next to the other `/state` fields; never an email address
+- [x] (added) `/state` gains `transcripts: [{tid, n, available, purged}]` (n = session number, `purged` false until plan 12, absent when none) and `pre_session.recipients: [{role, name}]` from the worker-written gate_inputs; documented in `docs/reference/api.md` next to the other `/state` fields; never an email address
 - [ ] (added) Plan 9 UI download wired end to end: postMessage token request → `GET /transcripts/{tid}` with the bearer header, file name from `Content-Disposition`; UI unit tests and the Playwright e2e download scenario
 - [ ] Add `ERR_ASSESS_TRANSCRIPT_NOT_FOUND`, `ERR_ASSESS_DOWNLOAD_TOKEN_INVALID`, `ERR_ASSESS_RESEND_RECIPIENT_FORBIDDEN`, `ERR_ASSESS_TRANSCRIPT_INTEGRITY` to `vektra_shared/errors.py` with `_CODE_STATUS_OVERRIDE` entries and `docs/reference/error-codes.md`
 

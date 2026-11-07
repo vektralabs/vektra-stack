@@ -347,3 +347,11 @@ def test_seal_open_round_trip_and_tamper_detection() -> None:
 def test_render_module_never_imports_smtp() -> None:
     src = Path(render.__file__).read_text() + Path(store.__file__).read_text()
     assert "aiosmtplib" not in src
+
+
+def test_the_inlined_shipped_strings_match_the_shipped_files() -> None:
+    from vektra_assess.llm import shipped
+
+    sh = shipped.get("it")
+    assert render.REPLACED == sh.missing["replaced_by_system"]
+    assert render.BR009_TEMPLATE == sh.br009

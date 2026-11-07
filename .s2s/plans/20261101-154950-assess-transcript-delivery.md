@@ -300,6 +300,18 @@ real-time run guards against clock-injection bugs.
   `moodle/user:viewalldetails` gives 0/2 on both; `moodle/site:viewuseridentity` gives 2/2 on both but
   exposes every identity field, so it is broader. 10b uses `moodle/course:useremail` and resolves the
   address through `core_enrol_get_enrolled_users_with_capability` only.
+- **10b must also (agreed with vektra-moodle-cf, 2026-11-07):** with `moodle/course:useremail` Moodle
+  returns `email` for EVERY enrolled user, in both `core_enrol_get_enrolled_users_with_capability` and
+  `core_enrol_get_enrolled_users` (4.3 and 5.2). The strict (`extra="forbid"`) enrol models in
+  `moodle/models/v4_3|v5_2/enrol.py` would then fail every enrolment read with `unknown_shape`. 10b
+  (a) adds `email: str | None` to those models and (b) passes `userfields` on every enrol call, asking
+  only the fields read, with `email` only on the graders call. vektra-moodle#44 (the dev-role change) stays
+  draft until the 10b PR is merged; dev 43/52 run without the capability until 10b's live test, when
+  vektra-moodle-cf re-provisions them from the #44 branch.
+- **Open for the user with 10b (REQ-079 scope):** the capability lets the service account READ every
+  enrolled user's hidden email, not only graders'; `userfields` limits what is returned, not what the
+  account may read. Options: accept and document it in the REQ-079 amendment, or assign the service
+  role per course instead of at system level.
 
 ### Design decisions taken in 10a (one line each, with the reason)
 

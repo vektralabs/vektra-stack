@@ -686,6 +686,35 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class FrameDenyMiddleware:
+    """``X-Frame-Options: DENY`` on every response except the assess discussion UI page and its
+    assets (plan 9, ARCH-076), which may be framed by exactly the site's Moodle origin through
+    their own CSP ``frame-ancestors``. Pure ASGI, so streamed responses (SSE) pass through
+    unbuffered; a response that already sets the header keeps its own value."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        from vektra_assess.ui.router import framable
+
+        if scope.get("type") != "http" or framable(
+            scope.get("app"), str(scope.get("path", ""))
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        async def deny(message: Any) -> None:
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers", []))
+                if not any(k.lower() == b"x-frame-options" for k, _ in headers):
+                    headers.append((b"x-frame-options", b"DENY"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, deny)
+
+
 class RateLimitHeaderMiddleware(BaseHTTPMiddleware):
     """Copy X-RateLimit-* headers from request.state to the response.
 
@@ -791,6 +820,9 @@ def create_app() -> FastAPI:
 
     # 3. Rate limit response headers (copies X-RateLimit-* from request.state)
     app.add_middleware(RateLimitHeaderMiddleware)
+
+    # 3b. X-Frame-Options: DENY everywhere but the assess discussion UI (plan 9, ARCH-076)
+    app.add_middleware(FrameDenyMiddleware)
 
     # 4. Audit middleware (after auth so key_id is in request.state)
     from vektra_admin.middleware import AuditMiddleware

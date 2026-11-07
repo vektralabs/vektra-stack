@@ -327,3 +327,127 @@ def test_no_forbidden_file_can_reach_the_image() -> None:
         + "\n\nAdd a `**`-prefixed rule to .dockerignore: an entry without a slash "
         "matches the context root only."
     )
+
+
+# --- plan 9: the assess discussion UI bundle -----------------------------------------------
+
+
+def test_the_assess_ui_bundle_is_built_in_its_own_stage_and_only_its_output_ships() -> (
+    None
+):
+    """The node stage builds vektra-assess/ui; the builder takes only the built static dir
+    (hashed assets + manifest) into the package before the non-editable install; the UI
+    sources and node_modules are never copied into the builder or runtime stages, and the
+    build emits no source map."""
+    text = DOCKERFILE.read_text()
+    assert "FROM node:22-slim AS assess-ui-builder" in text
+    copies = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("COPY")]
+    stage_ui = [c for c in copies if "--from=assess-ui-builder" in c]
+    assert stage_ui == [
+        "COPY --from=assess-ui-builder /assess/src/vektra_assess/ui/static "
+        "vektra-assess/src/vektra_assess/ui/static"
+    ]
+    # outside the node stage, nothing of vektra-assess/ui is copied
+    builder_part = text.split("AS builder", 1)[1]
+    assert "vektra-assess/ui" not in builder_part.replace("vektra_assess/ui/static", "")
+    ignore = DOCKERIGNORE.read_text()
+    assert "**/node_modules" in ignore
+    assert "vektra-assess/src/vektra_assess/ui/static" in ignore
+    esbuild = (REPO_ROOT / "vektra-assess/ui/esbuild.config.mjs").read_text()
+    assert "sourcemap: false" in esbuild and "manifest.json" in esbuild
+    pyproject = (REPO_ROOT / "vektra-assess/pyproject.toml").read_text()
+    assert 'artifacts = ["src/vektra_assess/ui/static/*"]' in pyproject
+
+
+def _nginx_servers(conf: str) -> dict[tuple[str, str], str]:
+    """``(server_name, listen) -> block text`` of the example's server blocks."""
+    import re
+
+    out: dict[tuple[str, str], str] = {}
+    for block in conf.split("\nserver {")[1:]:
+        name = re.search(r"server_name\s+([^;]+);", block)
+        listen = re.search(r"listen\s+([^;]+);", block)
+        assert name and listen
+        out[(name.group(1).strip(), listen.group(1).split()[0])] = block
+    return out
+
+
+def _locations(block: str) -> dict[str, str]:
+    import re
+
+    return {
+        m.group(1).strip(): m.group(2)
+        for m in re.finditer(r"location\s+([^{]+)\{([^}]*)\}", block)
+    }
+
+
+def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
+    """Plan 9 review #6 (ARCH-076): the discussion UI has its own server block (its own origin,
+    the one in VEKTRA_ASSESS_UI_ORIGIN): the page, its assets and only the student API routes the
+    page calls on its own origin (CSP connect-src 'self'), never X-Frame-Options; everything else
+    there is 404. The API server keeps X-Frame-Options DENY and does not serve the page."""
+    conf = (REPO_ROOT / "deploy/nginx/vektra.conf.example").read_text()
+    servers = _nginx_servers(conf)
+    api, ui = servers[("YOUR_DOMAIN", "443")], servers[("YOUR_UI_DOMAIN", "443")]
+
+    api_server_level = api.split("location ", 1)[0]
+    assert "add_header X-Frame-Options DENY always;" in api_server_level
+    api_locations = _locations(api)
+    assert "return 404;" in api_locations["^~ /api/v1/assess/ui"]
+    assert "proxy_buffering off;" in api_locations["/"]
+
+    assert "X-Frame-Options" not in ui
+    ui_server_level = ui.split("location ", 1)[0]
+    assert (
+        'add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'
+        in ui_server_level
+    )
+    assert "add_header X-Content-Type-Options nosniff always;" in ui_server_level
+    ui_locations = _locations(ui)
+    for body in ui_locations.values():
+        assert (
+            "add_header" not in body
+        )  # nginx would drop the server-level headers there
+    assert set(ui_locations) == {
+        "^~ /api/v1/assess/ui",
+        "= /api/v1/assess/state",
+        "^~ /api/v1/assess/sessions",
+        "^~ /api/v1/assess/transcripts/",
+        "/",
+    }
+    assert (
+        ui_locations["/"].strip() == "return 404;"
+    )  # no mint, teacher or admin route here
+    assert (
+        "proxy_buffering off;" in ui_locations["^~ /api/v1/assess/sessions"]
+    )  # the events
+    for name, body in ui_locations.items():
+        if name != "/":
+            # the client's Host with its port: the page compares scheme+Host with
+            # VEKTRA_ASSESS_UI_ORIGIN, and $host drops a non-default port (CodeRabbit review
+            # 5811279241, nginx example)
+            assert "proxy_set_header Host $http_host;" in body
+            assert "proxy_set_header X-Forwarded-Proto $scheme;" in body
+
+
+def test_the_shared_tests_import_no_other_vektra_package() -> None:
+    """CodeRabbit 4501067261: the shared foundation's tests run without the other packages
+    installed, so they import ``vektra_shared`` only (checks that need ``vektra_assess`` live
+    in the assess tests)."""
+    import ast
+
+    offenders = []
+    for path in sorted((REPO_ROOT / "vektra-shared" / "tests").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            names = (
+                [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            for name in names:
+                top = name.split(".")[0]
+                if top.startswith("vektra_") and top != "vektra_shared":
+                    offenders.append(f"{path.name}:{node.lineno} {name}")
+    assert offenders == []

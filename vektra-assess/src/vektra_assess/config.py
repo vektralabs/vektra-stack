@@ -11,6 +11,7 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -425,6 +426,11 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION",
         description="Version of the privacy notice shown before Start; recorded on the session and the start audit event.",
     )
+    privacy_notice_url: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_PRIVACY_NOTICE_URL",
+        description="URL of the privacy notice the plugin links on the pre-session screen (GET /state pre_session.privacy).",
+    )
     render_fresh_s: int = Field(
         300,
         ge=10,
@@ -488,6 +494,13 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S",
         description="Per-site Start breaker: seconds fully open before one Start at a time is let through (half-open).",
     )
+    ui_page_rpm: int = Field(
+        60,
+        ge=1,
+        le=6000,
+        alias="VEKTRA_ASSESS_UI_PAGE_RPM",
+        description="GET /api/v1/assess/ui (the public discussion page) per minute per client address (plan 9). Over it: 429 before any database read.",
+    )
     flag_rpm: int = Field(
         10,
         ge=1,
@@ -495,6 +508,37 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_FLAG_RPM",
         description="POST /sessions/{sid}/turns/{turn_no}/flag calls per minute per session (REQ-103).",
     )
+
+    @field_validator("ui_origin", mode="before")
+    @classmethod
+    def _ui_origin_blank_is_unset(cls, value: Any) -> Any:
+        return None if value in (None, "") else str(value).strip()
+
+    @model_validator(mode="after")
+    def _ui_origin_is_bare(self) -> Self:
+        """The UI origin, normalised (``ui.origins.bare_origin``). Malformed: refused while
+        assess is enabled; while it is disabled only a warning, the value kept as given and
+        never used (a dormant feature's setting never stops the API from starting)."""
+        if not self.ui_origin:
+            return self
+        from vektra_assess.ui.origins import bare_origin
+
+        try:
+            # the settings are frozen: the normalised value replaces the raw one at load only
+            object.__setattr__(self, "ui_origin", bare_origin(self.ui_origin))
+        except ValueError as exc:
+            if self.enabled:
+                raise ValueError(
+                    f"VEKTRA_ASSESS_UI_ORIGIN is not a bare http(s) origin: {exc}"
+                ) from exc
+            warnings.warn(
+                "VEKTRA_ASSESS_UI_ORIGIN is not a bare http(s) origin; ignored while "
+                "VEKTRA_ASSESS_ENABLED=false, refused once it is enabled",
+                UserWarning,
+                stacklevel=2,
+            )
+        return self
+
     retry_rpm: int = Field(
         6,
         ge=1,

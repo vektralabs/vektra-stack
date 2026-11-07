@@ -128,6 +128,21 @@ selected server-side at Start.
 | POST | `/api/v1/assess/sessions/{sid}/turns/{turn_no}/flag` | session | `201` (or `200`: already flagged) `{"session_id", "turn_no", "flagged": true}` | `400 ERR-ASSESS-014` (`not_a_bot_turn`), `409 ERR-ASSESS-009` after the close, `429 ERR-ASSESS-012` (`flag_rate`) |
 | POST | `/api/v1/assess/sessions/{sid}/finish` | session | `200 {"session_id", "state": "CLOSED", "close_reason"}`, idempotent | `401`, `404`, `409` |
 
+**`GET /state`, extended fields** (plan 9, agreed with the plugin). Every field is optional and
+ABSENT when the state does not call for it; Vektra sends data, URLs and versions only, the
+plugin owns every text.
+
+| Field | Present in | Content |
+|-------|-----------|---------|
+| `active` | `active`, `starting` | `{session_no, minutes_left?, deadline_at?}`: `deadline_at` once committed; `minutes_left` whole minutes rounded UP (1 until the very end, 0 only once the time is over; the UI's timer rounds the same way), frozen at the outage start while in OUTAGE, the frozen duration while starting |
+| `selected_attempt` | when the render worker recorded the selected attempt | `{attempt_no}`: the plugin compares it with the attempt its page shows (REQ-068 state 9) |
+| `pre_session` | `eligible`, `reset_granted` | `{duration_min, course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url?, notice_version}, previous_sessions, recipients?[{role, name}], files?[{name, predicted: readable\|partial\|unreadable}]}` |
+| `closed_at` | `closed` (state 6) | the last close of the student's session, ISO 8601 |
+| `ended_at` | `ended` (state 11) | the activity's end date, ISO 8601 |
+
+`recipients`, `files` and `selected_attempt` come from the render worker's record and are
+omitted while it has not recorded them. `transcripts` belong to plan 10.
+
 **Tokens** (HS256, `aud=discussion`). Pre-session: `sub`, `site`, `cmid`, `stage: "pre"`, `jti`,
 `loginas: false`, `iat`, `exp` (at most 120 s, single use at Start). Session-bound: `sub`, `site`,
 `cmid`, `sid`, `seq` (the session number), `epoch`, `jti`, `loginas: false`, `exp` (never past
@@ -156,6 +171,66 @@ interval when at least G seconds, the cumulative credit capped at C = min(15 min
 duration); beyond C, or after 3 consecutive failed calls, the session closes `service_failure` and
 the close queues a `teacher_notify` job in the same transaction (delivery is plan
 transcript-delivery's). Limits and their sizing: `docs/reference/configuration.md`.
+
+### Assess UI: the discussion page and the postMessage contract (plugin <-> UI)
+
+`GET /api/v1/assess/ui?site=<site id>` is the student discussion page, on
+`VEKTRA_ASSESS_UI_ORIGIN`, framed by the site's Moodle origin only (`frame-ancestors`, the
+site's `moodle_origin`). It is public: it carries no data and no credential, and never reads a
+token from its URL (no route does). Response headers: the strict CSP (`default-src 'none'`,
+`'self'` for scripts, styles, connections, images and fonts, `frame-ancestors <moodle origin>`,
+trusted types with no policy), `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`,
+`Cache-Control: no-store`, `Permissions-Policy: clipboard-write=(self), camera=(), microphone=(),
+geolocation=()`, `Cross-Origin-Resource-Policy: same-origin`, and no `X-Frame-Options` (every
+other API response has `X-Frame-Options: DENY`). An unknown or disabled site is 404 with
+`frame-ancestors 'none'`. Every refusal carries the standard error envelope with the page or asset headers:
+`404 ERR-ASSESS-003` (unknown site or asset), `429 ERR-ASSESS-012` (`ui_page_rate`, `Retry-After`),
+`503 ERR-ASSESS-001` (remediation names `ui_origin`, `site_origin` or `ui_bundle`). Assets: `GET /api/v1/assess/ui/assets/{name}`, content-hashed names
+from the build manifest only.
+The page carries a JSON data block (never executed) with `site`, `moodleOrigin`, `apiBase` and
+`maxMessageChars` (`VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, the composer's limit).
+
+The page works inside the plugin's iframe sandbox `allow-scripts allow-same-origin
+allow-downloads` (plus `allow="clipboard-write"`): it never submits a form (no `allow-forms`:
+Invia is a plain button) and never calls `alert`/`confirm`/`prompt` (no `allow-modals`: the
+Fine and flag confirmations are in-page `<dialog>`s). The browser e2e
+(`vektra-assess/tests/integration/test_ui_e2e.py`, `make test-assess-e2e`) frames it with
+exactly that sandbox.
+
+**postMessage contract, version 1 (stable; the plugin P2 and the UI both test against it).**
+Every message is a plain object `{v: 1, type: "vektra-assess-<name>", ...}`. A receiver acts on
+a message only when ALL hold: `event.origin` is exactly the configured peer origin (the UI:
+the site's Moodle origin from its page config; the plugin: `VEKTRA_ASSESS_UI_ORIGIN`),
+`event.source` is the expected window (the UI: `window.parent`; the plugin: the iframe's
+`contentWindow`), `v === 1` and `type` is known. Anything else is ignored silently. Senders
+always pass the explicit peer origin as `targetOrigin`; `"*"` is never used. Tokens never
+appear in a URL, in storage or in a log, on either side.
+
+| Direction | `type` | Fields | Meaning |
+|-----------|--------|--------|---------|
+| UI -> plugin | `vektra-assess-ready` | none | the page is loaded and listening; the handshake starts here |
+| plugin -> UI | `vektra-assess-token` | `token`, `mode: "start" \| "resume"`, `sid?` (optional, the plugin does not send it) | the freshly minted pre-session token (server-side mint, single use, TTL <= 2 min); the UI Starts or resumes with it |
+| plugin -> UI | `vektra-assess-unavailable` | none | the mint failed; the UI shows a generic, non-technical text and makes no request |
+| UI -> plugin | `vektra-assess-resize` | `height` (CSS px) | the content height, so the parent can size the iframe |
+| UI -> plugin | `vektra-assess-download-token-request` | `tid` | the closing screen asks for a transcript download token |
+| plugin -> UI | `vektra-assess-download-token` | `tid`, `token` | the single-use download token (`aud=transcript`, plan 10) |
+| UI -> plugin | `vektra-assess-closed` | `reason` (a close reason) | the session is closed; the plugin may refresh its button state |
+
+Handshake: the UI posts `vektra-assess-ready` once it listens; the parent answers with either
+`vektra-assess-token` or `vektra-assess-unavailable`. The UI holds the token in memory only; a
+reload loses it and the parent mints a new pre-session token for a resume (`GET
+/sessions/{sid}` re-mints the session token).
+
+Resume without `sid`: the plugin sends `mode: "resume"` and no `sid`. The UI then reads the
+open session's `session_id` from `GET /state` with the same pre-session token and resumes with
+`GET /sessions/{sid}`; when `/state` has no `session_id` (or fails) the UI shows the generic
+unavailable text. A `sid` that is present but not a string makes the message invalid (ignored).
+
+Download-token timeout: the UI sends one `vektra-assess-download-token-request` at a time and
+disables the download button while it waits. If no `vektra-assess-download-token` for that `tid`
+arrives within 10 s (a plugin that does not implement the download part yet), the UI shows a
+generic text ("Non è stato possibile scaricare la trascrizione. Riprova più tardi."), enables the
+button again and does not retry by itself; a token arriving after the timeout is ignored.
 
 ### Assess discussion context: Part A and item references (iframe client)
 

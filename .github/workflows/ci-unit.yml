@@ -26,6 +26,7 @@ jobs:
       analytics: ${{ steps.filter.outputs.analytics }}
       learn:     ${{ steps.filter.outputs.learn }}
       assess:    ${{ steps.filter.outputs.assess }}
+      assess-ui: ${{ steps.filter.outputs.assess-ui }}
       app:       ${{ steps.filter.outputs.app }}
     steps:
       - uses: actions/checkout@v7
@@ -56,6 +57,8 @@ jobs:
             assess:
               - 'vektra-assess/**'
               - 'vektra-shared/**'
+            assess-ui:
+              - 'vektra-assess/ui/**'
             app:
               - 'vektra-app/**'
               - 'vektra-*/**'
@@ -197,6 +200,30 @@ jobs:
         working-directory: vektra-learn/widget
         run: npm test
 
+  # The assess discussion UI bundle (plan 9): the no-HTML-sink rule, the type check, the
+  # build (hashed assets + manifest) and the vitest suite (SSE parser fuzz, postMessage bridge,
+  # state machine, views).
+  test-assess-ui:
+    name: Test vektra-assess UI
+    needs: detect-changes
+    if: needs.detect-changes.outputs.assess-ui == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install, lint, type check, build and test
+        working-directory: vektra-assess/ui
+        run: |
+          npm ci --ignore-scripts
+          npm run lint
+          npm run typecheck
+          npm run build
+          npm test
+
   test-assess:
     name: Test vektra-assess
     needs: detect-changes
@@ -287,7 +314,7 @@ jobs:
   # Passes if no upstream job failed (skipped jobs are treated as passing).
   ci-gate:
     name: CI gate
-    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess, test-app, test-structure]
+    needs: [detect-changes, test-shared, test-core, test-ingest, test-index, test-admin, test-analytics, test-learn, test-learn-widget, test-assess-ui, test-assess, test-app, test-structure]
     runs-on: ubuntu-latest
     if: always()
     steps:

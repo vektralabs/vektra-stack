@@ -31,6 +31,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vektra_assess"]
+# the discussion UI bundle is git-ignored (built, never committed) but must ship (plan 9)
+artifacts = ["src/vektra_assess/ui/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

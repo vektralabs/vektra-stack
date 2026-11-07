@@ -73,3 +73,32 @@ def test_an_outage_credit_moves_the_warnings_and_none_fire_at_the_old_deadline()
         hit = new - timedelta(minutes=m)
         assert due_warnings(new, hit + timedelta(seconds=4), 1800, set()) == [m]
         assert due_warnings(new, hit + timedelta(seconds=5), 1800, set()) == []
+
+
+#: review #10: the SAME vectors as vektra-assess/ui/test/controls.test.ts (minutesLeft): /state's
+#: ``active.minutes_left`` and the UI timer round the same way (up: "1 minute" until the end,
+#: 0 only once the time is over)
+MINUTES_LEFT_VECTORS = [
+    (0, 0),
+    (0.5, 1),  # CodeRabbit 4501067224: a fraction of a second still counts as a minute
+    (1, 1),
+    (59, 1),
+    (60, 1),
+    (60.5, 2),
+    (61, 2),
+    (1799, 30),
+    (1800, 30),
+]
+
+
+@pytest.mark.parametrize(("seconds", "minutes"), MINUTES_LEFT_VECTORS)
+def test_minutes_left_rounds_up_like_the_ui(seconds: float, minutes: int) -> None:
+    from vektra_assess.timing import minutes_left
+
+    assert minutes_left(seconds) == minutes
+
+
+def test_minutes_left_is_never_negative() -> None:
+    from vektra_assess.timing import minutes_left
+
+    assert minutes_left(-5) == 0

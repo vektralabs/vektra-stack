@@ -59,3 +59,9 @@ docs/
 # OS files
 .DS_Store
 Thumbs.db
+
+# The assess discussion UI (plan 9): dependencies and any locally built bundle stay out; the
+# image gets the bundle from the assess-ui-builder stage only
+**/node_modules
+vektra-assess/src/vektra_assess/ui/static
+

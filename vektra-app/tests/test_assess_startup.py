@@ -90,7 +90,12 @@ def test_enabled_mounts_the_router(
     from vektra_app.main import create_app
 
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
-    assert _assess_paths(create_app()) == ["/api/v1/assess/probe"]
+    # the assess router, and the discussion UI page and assets mounted with it (plan 9)
+    assert _assess_paths(create_app()) == [
+        "/api/v1/assess/probe",
+        "/api/v1/assess/ui",
+        "/api/v1/assess/ui/assets/{name}",
+    ]
 
 
 def test_broken_assess_config_mounts_nothing(
@@ -423,10 +428,267 @@ def test_assess_limiters_are_local_keyed_by_session_or_student() -> None:
     from vektra_assess.api.state import LIMITER_NAMES
 
     limiters = assess_wiring.build_assess_limiters()
-    assert tuple(limiters) == LIMITER_NAMES == ("state", "turns", "retry", "flag")
-    assert len({id(v) for v in limiters.values()}) == 4  # no shared instance
+    assert (
+        tuple(limiters)
+        == LIMITER_NAMES
+        == ("state", "turns", "retry", "flag", "ui_page")
+    )
+    assert len({id(v) for v in limiters.values()}) == 5  # no shared instance
     sid = str(uuid.uuid4())
     assert limiters["turns"].check(sid, 1)[0] is True
     assert limiters["turns"].check(sid, 1)[0] is False
     assert limiters["retry"].check(sid, 1)[0] is True  # another family, its own count
     assert limiters["state"].check((str(uuid.uuid4()), 7, 42), 1)[0] is True
+
+
+def test_every_route_but_the_discussion_ui_denies_framing(tmp_path: Path) -> None:
+    """Plan 9 (ARCH-076): X-Frame-Options: DENY on every response of the API; the assess UI
+    page and assets are framed through their own CSP and carry no X-Frame-Options."""
+    from vektra_app.main import create_app
+
+    app = create_app()
+
+    import json
+
+    bundle = tmp_path  # removed by pytest (CodeRabbit review 5812178787)
+    (bundle / "manifest.json").write_text(
+        json.dumps({"js": "assess-ui.abc.js", "css": "assess-ui.abc.css"})
+    )
+    app.state.assess_ui_static_dir = str(bundle)
+
+    # stand-ins for the UI routes (assess is not mounted here): only the middleware is tested
+    @app.get("/api/v1/assess/ui")
+    @app.get("/api/v1/assess/ui/probe")
+    @app.get("/api/v1/assess/ui/assets/{name}")
+    @app.get("/api/v1/assess/ui-other")
+    @app.get("/api/v1/assess/uix/probe")
+    async def ui_probe() -> dict[str, str]:
+        return {"ok": "ui"}
+
+    client = TestClient(app)  # no lifespan: only the middleware stack is exercised
+    other = client.get("/openapi.json")
+    assert other.headers["x-frame-options"] == "DENY"
+    # CodeRabbit 4501067221: only the page and the assets the manifest names are exempt; any
+    # other path, under /ui/ or a sibling, keeps DENY
+    for denied in (
+        "/api/v1/assess/ui/probe",
+        "/api/v1/assess/ui-other",
+        "/api/v1/assess/uix/probe",
+        "/api/v1/assess/ui/assets/not-in-the-manifest.js",
+    ):
+        assert client.get(denied).headers["x-frame-options"] == "DENY", denied
+    for framable in ("/api/v1/assess/ui", "/api/v1/assess/ui/assets/assess-ui.abc.js"):
+        r = client.get(framable)
+        assert r.status_code == 200 and "x-frame-options" not in r.headers, framable
+
+
+class _Rows:
+    def __init__(self, origins: list[str]) -> None:
+        self.origins = origins
+
+    def connect(self):  # type: ignore[no-untyped-def]
+        # (id, moodle_origin, base_url) per enabled site: the column set, base_url irrelevant
+        rows = [
+            (f"site-{i}", o, "https://ignored.example/moodle")
+            for i, o in enumerate(self.origins)
+        ]
+
+        class _Result(list):  # type: ignore[type-arg]
+            def all(self):  # type: ignore[no-untyped-def]
+                return list(self)
+
+        class _Conn:
+            async def __aenter__(self):  # type: ignore[no-untyped-def]
+                return self
+
+            async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                return False
+
+            async def execute(self, _stmt):  # type: ignore[no-untyped-def]
+                return _Result(rows)
+
+        return _Conn()
+
+
+@pytest.mark.parametrize(
+    ("env", "ui", "moodle", "problem"),
+    [
+        ("production", "https://ui.example", ["https://moodle.example"], None),
+        (
+            "production",
+            "http://ui.example",
+            ["https://moodle.example"],
+            "ui_origin_not_https",
+        ),
+        (
+            "production",
+            "https://m.example",
+            ["https://m.example"],
+            "ui_origin_equals_moodle_origin",
+        ),
+        # case and the default port are one origin (review #2: one normalisation)
+        (
+            "production",
+            "HTTPS://M.Example:443",
+            ["https://m.example"],
+            "ui_origin_equals_moodle_origin",
+        ),
+        (
+            "production",
+            "https://m.example",
+            ["HTTPS://M.EXAMPLE:443"],
+            "ui_origin_equals_moodle_origin",
+        ),
+        # CodeRabbit 4501070007: an unusable stored origin refuses startup, never skipped
+        (
+            "production",
+            "https://ui.example",
+            ["https://m.example/path"],
+            "moodle_origin_invalid",
+        ),
+        ("development", "http://localhost:8000", ["http://127.0.0.1:8080"], None),
+        (
+            "development",
+            "http://localhost:8000",
+            ["http://localhost:8000"],
+            "ui_origin_equals_moodle_origin",
+        ),
+    ],
+)
+async def test_startup_refuses_a_ui_origin_not_distinct_or_not_https(
+    env: str,
+    ui: str,
+    moodle: list[str],
+    problem: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan 9 (ARCH-076): the API refuses a UI origin that is not https outside development
+    or equals a registered site's Moodle origin."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", env)
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", ui)
+    settings = VektraAssessSettings()
+    if problem is None:
+        await assess_wiring.check_ui_origin(_Rows(moodle), settings)
+    else:
+        with pytest.raises(StartupValidationError, match=problem):
+            await assess_wiring.check_ui_origin(_Rows(moodle), settings)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "https://ui.example/path",
+        "https://*.example",
+        "ftp://ui.example",
+        "https://u:p@ui.example",
+        "ui.example",
+    ],
+)
+def test_the_ui_origin_setting_is_a_bare_origin(
+    bad: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pydantic import ValidationError
+
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", bad)
+    with pytest.raises(ValidationError):
+        VektraAssessSettings()
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "HTTPS://UI.Example:8443/")
+    assert VektraAssessSettings().ui_origin == "https://ui.example:8443"
+
+
+def test_a_malformed_ui_origin_only_warns_while_assess_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review #7: a dormant feature's setting never stops the API from starting."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "false")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://ui.example/path")
+    with pytest.warns(UserWarning, match="VEKTRA_ASSESS_UI_ORIGIN"):
+        loaded = VektraAssessSettings()
+    assert loaded.ui_origin == "https://ui.example/path"  # kept as given, never used
+
+
+@pytest.mark.parametrize(
+    ("env", "refused"), [("production", True), ("development", False)]
+)
+async def test_an_unset_ui_origin_is_refused_outside_development(
+    env: str, refused: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review #1: with assess enabled the UI origin is the precondition of the iframe's
+    allow-same-origin sandbox; unset is refused outside development (development: the page
+    answers 503 until it is set)."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", env)
+    monkeypatch.delenv("VEKTRA_ASSESS_UI_ORIGIN", raising=False)
+    settings = VektraAssessSettings()
+    if refused:
+        with pytest.raises(StartupValidationError, match="ui_origin_unset"):
+            await assess_wiring.check_ui_origin(_Rows([]), settings)
+    else:
+        await assess_wiring.check_ui_origin(_Rows([]), settings)
+
+
+async def test_a_site_without_a_usable_origin_is_named_with_its_own_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CodeRabbit 4501246170: the site's problem names the site and points at
+    assess_sites.moodle_origin (or disabling the site), not at the UI origin."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://ui.example")
+    with pytest.raises(StartupValidationError) as refused:
+        await assess_wiring.check_ui_origin(
+            _Rows(["https://moodle.example", "https://m.example/path"]),
+            VektraAssessSettings(),
+        )
+    err = refused.value
+    assert "site-1" in err.detail and "moodle_origin_invalid" in err.detail
+    assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.detail
+    assert "assess_sites.moodle_origin" in err.remediation
+    assert "disable" in err.remediation
+
+
+async def test_a_ui_origin_problem_keeps_the_ui_origin_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://m.example")
+    with pytest.raises(StartupValidationError) as refused:
+        await assess_wiring.check_ui_origin(
+            _Rows(["https://m.example"]), VektraAssessSettings()
+        )
+    err = refused.value
+    assert (
+        err.detail == "VEKTRA_ASSESS_UI_ORIGIN refused: ui_origin_equals_moodle_origin"
+    )
+    assert "own https origin" in err.remediation
+
+
+async def test_a_site_on_http_is_named_with_its_own_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CodeRabbit review 5812478913 (assess_wiring.py 209-220): outside development a site whose
+    Moodle origin is http is the SITE's problem, reported with its id and its own remedy."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://ui.example")
+    with pytest.raises(StartupValidationError) as refused:
+        await assess_wiring.check_ui_origin(
+            _Rows(["https://moodle.example", "http://m.example"]),
+            VektraAssessSettings(),
+        )
+    err = refused.value
+    assert err.detail == "assess site site-1 refused: moodle_origin_not_https"
+    assert "https" in err.remediation and "disable" in err.remediation
+    assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.remediation

@@ -125,6 +125,8 @@ class CheckContext:
     settings: VektraAssessSettings
     manifest: Mapping[str, Any] | None  # the probe manifest of the site
     info: Reading[SiteInfo]  # site_info, read once for the whole run
+    # the site's ``moodle_origin`` column (revision 0033): the origin that frames the UI
+    moodle_origin: str | None = None
 
 
 ItemCheck = Callable[[CheckContext], Awaitable[Outcome]]
@@ -448,6 +450,33 @@ async def ui_not_same_origin(ctx: CheckContext) -> Outcome:
     return ok()
 
 
+async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
+    """Plan 9 (ARCH-076): the discussion UI origin is https (outside development) and is not
+    this site's Moodle origin, the precondition of the iframe's ``allow-same-origin``
+    sandbox. Same decision as the API's startup refusal (``ui.origins``)."""
+    from vektra_assess.ui.origins import site_origin_or_problem, ui_origin_problem
+
+    # the same origin the UI router puts in frame-ancestors: the column, else base_url's
+    moodle, invalid = site_origin_or_problem(ctx.moodle_origin, ctx.site.base_url)
+    if invalid:
+        return missing(invalid)
+    problem = ui_origin_problem(
+        ctx.settings.ui_origin,
+        [moodle] if moodle else [],
+        development=ctx.settings.env == "development",
+    )
+    if problem is not None:
+        return missing(problem)
+    # another SITE, not only another origin, than both the framing origin (the column) and
+    # base_url: either one same-site fails the item (CodeRabbit review 5812478913)
+    ui = str(ctx.settings.ui_origin)
+    if moodle and same_site(ui, moodle):
+        return missing("same_site_as_moodle_origin")
+    if same_site(ui, ctx.site.base_url):
+        return missing("same_site_as_moodle")
+    return ok()
+
+
 # --- registry -------------------------------------------------------------------------------------
 
 
@@ -468,6 +497,7 @@ def builtin_registry() -> ItemRegistry:
         ("no_grade_write", no_grade_write),
         ("ws_tls_ok", ws_tls_ok),
         ("ui_not_same_origin", ui_not_same_origin),
+        ("ui_origin_distinct", ui_origin_distinct),  # plan 9
     ):
         reg.register(name, check)
     return reg
@@ -531,6 +561,7 @@ async def evaluate(
     registry: ItemRegistry | None = None,
     now: int | None = None,
     probe: bool = True,
+    moodle_origin: str | None = None,
 ) -> CheckOutcome:
     """Network only: no database. Reads site_info once, runs the items, then the probes."""
     info = await read_site_info(client, site)
@@ -539,7 +570,7 @@ async def evaluate(
     if isinstance(info, Readable):
         release = info.value.release
         ref = with_release(site, info.value)
-    ctx = CheckContext(client, ref, settings, manifest, info)
+    ctx = CheckContext(client, ref, settings, manifest, info, moodle_origin)
     items = await run_items(ctx, registry)
     flags: tuple[FlagResult, ...] = ()
     if probe and release is not None:
@@ -580,7 +611,8 @@ async def run_setup_check(
         site_row = (
             await conn.execute(
                 text(
-                    "SELECT base_url, probe_manifest, last_seen_release FROM assess_sites "
+                    "SELECT base_url, probe_manifest, last_seen_release, moodle_origin "
+                    "FROM assess_sites "
                     "WHERE id = :s"
                 ),
                 {"s": site_id},
@@ -610,7 +642,7 @@ async def run_setup_check(
             ).rowcount
             if claimed != 1:
                 raise LookupError("setup-check report is not runnable")
-    base_url, manifest, last_seen = site_row
+    base_url, manifest, last_seen, moodle_origin = site_row
 
     try:
         outcome = await evaluate(
@@ -620,6 +652,7 @@ async def run_setup_check(
             manifest,
             registry=registry,
             now=now,
+            moodle_origin=moodle_origin,
         )
         async with engine.begin() as conn:
             release = outcome.release or last_seen

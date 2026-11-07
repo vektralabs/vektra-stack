@@ -83,6 +83,7 @@ verified is never assumed fine.
 | `no_grade_write` | no grade-write function appears in the service's function list |
 | `ws_tls_ok` | the connection is https verified against the configured CA |
 | `ui_not_same_origin` | the discussion UI origin is not same-site with Moodle or the API |
+| `ui_origin_distinct` | the discussion UI origin is https (outside development) and is not this site's Moodle origin: the precondition of the iframe's `allow-same-origin` sandbox (ARCH-076); the API also refuses to start otherwise |
 | `parser_sidecar_running`, `smtp_probe`, `db_log_statement_none` | registered by other components; an unregistered item is `MISSING` (fail closed) |
 
 ## Capability flags and their fail-closed fallbacks
@@ -102,3 +103,33 @@ every row at once and queues a new check; Starts are blocked until it passes.
 | `rubric_display_settings` | always unreadable: rubric descriptors are excluded from the model context |
 | `module_visibility_per_student`, `loginas_crosscheck` | unreadable: the retrieval of course material stays off, and login-as is trusted to the plugin |
 | `release_state`, `grading_state`, `graders_resolvable`, `enrolment_readable`, `per_student_timelimit` | the matching gate stays closed |
+
+## The discussion UI origin and framing (plan 9)
+
+The student discussion runs in an iframe on the Moodle results page, but the page inside it is
+served by Vektra (`GET /api/v1/assess/ui?site=<site id>`) on its own origin,
+`VEKTRA_ASSESS_UI_ORIGIN`. Three settings must agree:
+
+- `VEKTRA_ASSESS_UI_ORIGIN` is an `https` origin (scheme, host, port; no path), different from
+  every Moodle origin. The API refuses to start otherwise, and the setup check reports
+  `ui_origin_distinct`. The plugin's iframe sandbox includes `allow-same-origin`, which is safe
+  only because the two origins differ.
+- Each site's `moodle_origin` (on `assess_sites`, a bare origin) is the one origin allowed to
+  frame the page (CSP `frame-ancestors`) and to exchange postMessage with it. A site without it
+  falls back to the origin of its `base_url`.
+- The UI origin has its own server on the reverse proxy. The origin model: ONE backend, TWO
+  public origins. The API origin (`VEKTRA_ASSESS_API_PUBLIC_ORIGIN`) serves Moodle's
+  server-side calls (token mint), admin and every other route, with `X-Frame-Options: DENY`.
+  The UI origin (`VEKTRA_ASSESS_UI_ORIGIN`) serves the page, its assets and only the student
+  routes the page calls on its own origin (CSP `connect-src 'self'`): `GET /state`,
+  `/sessions...` (Start, resume, turns, retry, flag, Fine, the event stream) and, with plan 10,
+  `/transcripts/...`; everything else there is 404, and it never sends `X-Frame-Options`. "The
+  UI calls the API on its own origin" and "the UI origin is distinct from the API origin" do
+  not conflict: the rule is about the browser-visible origin (another site than the API and
+  than Moodle, so `ui_not_same_origin` and `ui_origin_distinct` pass), not about the backend
+  behind it. The shipped nginx example (`deploy/nginx/vektra.conf.example`) has both servers;
+  the UI page answers only when the request's scheme and `Host` are the UI origin, so the
+  proxy must forward `Host` (and, from another container, be in uvicorn's
+  `FORWARDED_ALLOW_IPS`). A deployment that copied an older example serves the page on the API
+  origin, where it is now 503.
+

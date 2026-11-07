@@ -174,6 +174,8 @@ def default_settings(**over: Any) -> VektraAssessSettings:
         "VEKTRA_ASSESS_ENABLED": True,
         "VEKTRA_ENV": "development",
         "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET": True,
+        # the origin of the test client (base_url http://t): the UI page answers there only
+        "VEKTRA_ASSESS_UI_ORIGIN": "http://t",
     }
     return VektraAssessSettings.model_validate({**base, **over})
 
@@ -212,6 +214,9 @@ async def world(
     for name, value in app_state.items():
         setattr(app.state, name, value)
     app.include_router(router)
+    from vektra_assess.ui.router import router as ui_router
+
+    app.include_router(ui_router)
     await beat(pg)
     try:
         async with httpx.AsyncClient(

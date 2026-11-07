@@ -17,6 +17,7 @@ times and never at the old ones.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Collection
 from datetime import datetime, timedelta
 
@@ -46,7 +47,7 @@ def minutes_left(seconds: float) -> int:
     """Whole minutes left, rounded UP (``/state``'s ``active.minutes_left``): "1 minute" until
     the very end, 0 only once the time is over. The discussion UI's timer rounds the same way
     (``ui/src/views/controls.ts`` ``minutesLeft``; shared test vectors)."""
-    return max(0, -(-int(seconds) // 60))
+    return max(0, math.ceil(seconds / 60))
 
 
 def remaining_s(deadline_at: datetime, now: datetime) -> int:

@@ -24,7 +24,7 @@ describe("controls", () => {
   });
 
   it("rounds like /state's active.minutes_left (same vectors as tests/test_timing.py)", () => {
-    const vectors: [number, number][] = [[0, 0], [1, 1], [59, 1], [60, 1], [61, 2], [1799, 30], [1800, 30]];
+    const vectors: [number, number][] = [[0, 0], [0.5, 1], [1, 1], [59, 1], [60, 1], [60.5, 2], [61, 2], [1799, 30], [1800, 30]];
     for (const [seconds, minutes] of vectors) expect(minutesLeft(seconds * 1000, 0)).toBe(minutes);
   });
 

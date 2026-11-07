@@ -426,3 +426,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
 - **CodeRabbit round 1 on PR #157 (2026-11-07)**:
   - 4501067221 The frame-deny exemption is `headers.is_ui_path` (the prefix itself or below
     it): a sibling like `/api/v1/assess/ui-other` keeps `X-Frame-Options: DENY`.
+  - 4501067224 `minutes_left` divides the real seconds and rounds up (`math.ceil`): 0.5 s is
+    1 minute, 60.5 s is 2; the shared vectors gain both cases on both sides.

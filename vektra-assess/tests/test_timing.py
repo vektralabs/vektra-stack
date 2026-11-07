@@ -80,9 +80,11 @@ def test_an_outage_credit_moves_the_warnings_and_none_fire_at_the_old_deadline()
 #: 0 only once the time is over)
 MINUTES_LEFT_VECTORS = [
     (0, 0),
+    (0.5, 1),  # CodeRabbit 4501067224: a fraction of a second still counts as a minute
     (1, 1),
     (59, 1),
     (60, 1),
+    (60.5, 2),
     (61, 2),
     (1799, 30),
     (1800, 30),
@@ -90,7 +92,7 @@ MINUTES_LEFT_VECTORS = [
 
 
 @pytest.mark.parametrize(("seconds", "minutes"), MINUTES_LEFT_VECTORS)
-def test_minutes_left_rounds_up_like_the_ui(seconds: int, minutes: int) -> None:
+def test_minutes_left_rounds_up_like_the_ui(seconds: float, minutes: int) -> None:
     from vektra_assess.timing import minutes_left
 
     assert minutes_left(seconds) == minutes

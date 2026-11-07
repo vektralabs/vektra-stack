@@ -136,7 +136,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 
 ### Deployment
 - [x] Fix `deploy/nginx/vektra.conf.example`: keep `X-Frame-Options DENY` at server level, add `location /api/v1/assess/ui` (and its `/assets/`) that proxies identically and re-declares HSTS + nosniff WITHOUT `X-Frame-Options` (nginx drops inherited `add_header` when a location declares its own — comment this); events location keeps `proxy_buffering off`
-- [ ] Check `deploy/traefik/docker-compose.traefik.yml.example` for an equivalent frame-deny middleware and exempt the UI route the same way
+- [x] Check `deploy/traefik/docker-compose.traefik.yml.example` for an equivalent frame-deny middleware and exempt the UI route the same way
 - [ ] Dockerfile node stage: build `vektra-assess/ui` alongside the widget; copy only the built assets; extend `test_image_content_boundary.py` to assert the manifest assets are present and `ui/src`, `node_modules`, `*.map` are absent
 
 ### Tests, CI, docs
@@ -261,4 +261,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     task and its acceptance criterion stay open (a follow-up with a server-provided label list).
   - The flag confirmation is the browser's native `confirm()` (one confirmation, keyboard and
     screen-reader operable); Fine has its own modal `<dialog>`.
+  - Traefik example checked (2026-11-07): it defines no headers middleware (no frameDeny, no
+    customResponseHeaders), so there is nothing to exempt; the API's own FrameDenyMiddleware
+    gives every non-UI route `X-Frame-Options: DENY` behind Traefik too.
 

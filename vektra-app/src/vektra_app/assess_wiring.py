@@ -56,8 +56,12 @@ def include_assess_router(app: FastAPI) -> bool:
     if not enabled:
         return False
     from vektra_assess.api.router import router
+    from vektra_assess.ui.router import router as ui_router
 
     app.include_router(router)
+    app.include_router(
+        ui_router
+    )  # the discussion UI page (plan 9), dormant with assess
     return True
 
 
@@ -157,6 +161,7 @@ async def step_12_assess_check(
     )
     try:
         await assert_session_role(engine, API_ROLE, step=STEP)
+        await check_ui_origin(engine, settings)
     except BaseException:
         await engine.dispose()
         raise
@@ -167,6 +172,66 @@ async def step_12_assess_check(
     # (app.state.rate_limiter) stays unset
     app.state.assess_limiters = build_assess_limiters()
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
+
+
+async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
+    """Plan 9 (ARCH-076): refuse to start when ``VEKTRA_ASSESS_UI_ORIGIN`` is unset outside
+    development, not https outside development, or equal to a registered site's Moodle origin
+    (the iframe's ``allow-same-origin`` sandbox is safe only across distinct origins). In
+    development an unset origin starts; the UI page then answers 503 until it is set."""
+    if not settings.ui_origin and settings.env == "development":
+        return
+    from sqlalchemy import text
+
+    from vektra_assess.ui.origins import (
+        SITE_ORIGINS_SQL,
+        site_origin_or_problem,
+        ui_origin_problem,
+    )
+
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text(SITE_ORIGINS_SQL))).all()
+    origins: list[str] = []
+    for site_id, moodle_origin, base_url in rows:
+        origin, site_problem = site_origin_or_problem(moodle_origin, base_url)
+        if site_problem is not None:
+            # the SITE is misconfigured, not the UI origin (CodeRabbit 4501246170)
+            raise StartupValidationError(
+                step=STEP,
+                detail=f"assess site {site_id} refused: {site_problem}",
+                remediation=(
+                    "Set assess_sites.moodle_origin of that site to its bare Moodle origin "
+                    "(https://host[:port]), or disable the site (assess_sites.disabled_at)."
+                ),
+            )
+        if (
+            origin
+            and settings.env != "development"
+            and not origin.startswith("https://")
+        ):
+            # also the SITE's problem: its Moodle origin is not https (review 5812478913)
+            raise StartupValidationError(
+                step=STEP,
+                detail=f"assess site {site_id} refused: moodle_origin_not_https",
+                remediation=(
+                    "Serve that Moodle site over https and set assess_sites.moodle_origin to "
+                    "its https origin, or disable the site (assess_sites.disabled_at)."
+                ),
+            )
+        if origin:
+            origins.append(origin)
+    problem = ui_origin_problem(
+        settings.ui_origin, origins, development=settings.env == "development"
+    )
+    if problem is not None:
+        raise StartupValidationError(
+            step=STEP,
+            detail=f"VEKTRA_ASSESS_UI_ORIGIN refused: {problem}",
+            remediation=(
+                "Serve the discussion UI on its own https origin, distinct from every Moodle "
+                "site's origin (docs/reference/configuration.md)."
+            ),
+        )
 
 
 def build_assess_limiters() -> dict[str, Any]:

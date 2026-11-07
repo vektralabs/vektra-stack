@@ -17,6 +17,7 @@ times and never at the old ones.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Collection
 from datetime import datetime, timedelta
 
@@ -40,6 +41,13 @@ def outage_cap_s(duration_s: int | None, cap_max_s: int = OUTAGE_CAP_MAX_S) -> i
     The Python mirror of the SQL ``assess_outage_cap`` (revision 0032), which is the definition
     the database, the probe and the lazy close use; a test checks the two agree."""
     return min(cap_max_s, (duration_s or 0) // 2)
+
+
+def minutes_left(seconds: float) -> int:
+    """Whole minutes left, rounded UP (``/state``'s ``active.minutes_left``): "1 minute" until
+    the very end, 0 only once the time is over. The discussion UI's timer rounds the same way
+    (``ui/src/views/controls.ts`` ``minutesLeft``; shared test vectors)."""
+    return max(0, math.ceil(seconds / 60))
 
 
 def remaining_s(deadline_at: datetime, now: datetime) -> int:

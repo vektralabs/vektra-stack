@@ -29,6 +29,10 @@ ORIGIN_RE = r"^https?://([a-z0-9.\-]+|\[[0-9a-f:.]+\])(:[0-9]{1,5})?$"
 
 
 def _host(host: str) -> str:
+    # an IPv6 zone id (fe80::1%eth0, %25 in a URL) names an interface of one machine: no
+    # browser origin carries it and ORIGIN_RE excludes it (CodeRabbit 4501694787)
+    if "%" in host:
+        raise ValueError("an origin's host has no IPv6 zone id")
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:

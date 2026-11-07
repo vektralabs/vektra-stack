@@ -508,3 +508,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     "assess site <id> refused: moodle_origin_invalid", remedied by setting
     `assess_sites.moodle_origin` or disabling the site; a UI-origin problem keeps the
     `VEKTRA_ASSESS_UI_ORIGIN refused: ...` text. The startup query selects the site id.
+- **CodeRabbit review 5812178787 (2026-11-07)**:
+  - 4501694787 `bare_origin` refuses an IPv6 zone id (`fe80::1%eth0`, `%25` in a URL), which
+    `ORIGIN_RE` excludes: the 0033 backfill now writes NULL for it instead of failing the CHECK.

@@ -32,6 +32,7 @@ CASES = {
     "https://moodle_x.example/": None,  # underscore: not a host name
     "https://user:secret@moodle.example/": None,  # credentials
     "https://user@moodle.example/": None,
+    "http://[fe80::1%25eth0]/moodle": None,  # an IPv6 zone id (CodeRabbit 4501694787)
 }
 
 

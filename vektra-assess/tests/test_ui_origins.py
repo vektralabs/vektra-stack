@@ -42,6 +42,9 @@ def test_bare_origin_normalises(raw: str, want: str) -> None:
         "https://*.example",
         "ftp://m.example",
         "https://m_x.example",  # not a hostname: the CHECK of revision 0033 refuses it too
+        # an IPv6 zone id is local to one host and outside ORIGIN_RE (CodeRabbit 4501694787)
+        "http://[fe80::1%25eth0]",
+        "https://[fe80::1%eth0]:8443",
         "https://m.example:99999",
         "https://m.example?x=1",
         "https://",

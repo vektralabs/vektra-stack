@@ -371,22 +371,49 @@ class TranscriptOrm(Base):
     content_hash: Mapped[str] = mapped_column(TEXT)
     generated_at: Mapped[datetime] = _ts(default=True)
     shredded_at: Mapped[datetime | None] = _ts(nullable=True)
+    # revision 0034 (plan transcript-delivery)
+    turns_digest: Mapped[str | None] = mapped_column(TEXT)
+    filename: Mapped[str | None] = mapped_column(TEXT)
+    byte_size: Mapped[int | None] = mapped_column(INTEGER)
 
 
 class DeliveryOrm(Base):
+    """The delivery outbox (revision 0034): one row per (transcript, round, recipient)."""
+
     __tablename__ = "assess_deliveries"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
     )
-    transcript_id: Mapped[UUID] = mapped_column(ForeignKey("assess_transcripts.id"))
-    recipient_hash: Mapped[str] = mapped_column(TEXT)
-    recipient_sealed: Mapped[bytes | None] = mapped_column(LargeBinary)
-    state: Mapped[str] = mapped_column(TEXT, server_default=text("'pending'"))
-    message_id: Mapped[str | None] = mapped_column(TEXT)
+    transcript_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("assess_transcripts.id")
+    )
+    kind: Mapped[str] = mapped_column(TEXT, server_default=text("'transcript'"))
+    round: Mapped[int] = mapped_column(INTEGER, server_default=text("1"))
+    recipient_kind: Mapped[str] = mapped_column(TEXT)
+    recipient_userid: Mapped[int] = mapped_column(BIGINT)
+    status: Mapped[str] = mapped_column(TEXT, server_default=text("'PENDING'"))
     attempts: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
-    not_before: Mapped[datetime | None] = _ts(nullable=True)
-    last_error_code: Mapped[str | None] = mapped_column(TEXT)
+    not_before: Mapped[datetime] = _ts(default=True)
+    attempt_started_at: Mapped[datetime | None] = _ts(nullable=True)
+    last_error_class: Mapped[str | None] = mapped_column(TEXT)
+    smtp_code: Mapped[int | None] = mapped_column(INTEGER)
+    message_id: Mapped[str | None] = mapped_column(TEXT)
+    sent_at: Mapped[datetime | None] = _ts(nullable=True)
+    created_at: Mapped[datetime] = _ts(default=True)
+
+
+class TurnNoteOrm(Base):
+    """Post-check marks and contest entries of a bot turn (revision 0034)."""
+
+    __tablename__ = "assess_turn_notes"
+
+    session_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    turn_no: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    marks: Mapped[list[str]] = mapped_column(ARRAY(TEXT), server_default=text("'{}'"))
+    contests: Mapped[list[Any]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
 
 
 class JobOrm(Base):
@@ -464,6 +491,8 @@ class TranscriptDownloadTokenOrm(Base):
     subject_userid: Mapped[int] = mapped_column(BIGINT)
     expires_at: Mapped[datetime] = _ts()
     consumed_at: Mapped[datetime | None] = _ts(nullable=True)
+    audience_role: Mapped[str] = mapped_column(TEXT)  # revision 0034: owner | grader
+    site_id: Mapped[UUID | None] = mapped_column(ForeignKey("assess_sites.id"))
 
 
 class AuditEventOrm(Base):

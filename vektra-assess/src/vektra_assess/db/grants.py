@@ -56,6 +56,7 @@ TABLES: tuple[str, ...] = (
     "assess_transcript_download_tokens",
     "assess_transcripts",
     "assess_turn_flags",
+    "assess_turn_notes",
     "assess_turns",
 )
 
@@ -163,7 +164,11 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "UPDATE": ("consumed_at",),
         },
         "assess_transcripts": {"SELECT": _ALL},
+        # read for the delivery status; resend rounds go through assess_enqueue_resend (0034)
         "assess_deliveries": {"SELECT": _ALL},
+        # revision 0034 (plan 10): the post-check marks and contest entries of a bot turn,
+        # written in the turn's own transaction, never updated
+        "assess_turn_notes": {"INSERT": _ALL},
         # snapshots, turns, session_keys, session_handoff: no privilege at all
     },
     WORKER: {
@@ -257,6 +262,7 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "SELECT": _ALL,
             "DELETE": _ALL,
         },  # transcript reads, purge deletes
+        "assess_turn_notes": {"SELECT": _ALL, "DELETE": _ALL},  # revision 0034, same rule
         "assess_session_keys": {
             "SELECT": _ALL,
             "INSERT": _ALL,
@@ -312,6 +318,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_turns": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_jobs": {"INSERT": _ALL},
         "assess_audit_events": {"INSERT": _ALL},
+        # revision 0034 (plan 10): assess_enqueue_resend reads the transcript and the last
+        # round, and inserts round n+1; it never updates or deletes a delivery
+        "assess_transcripts": {"SELECT": _ALL},
+        "assess_deliveries": {"SELECT": _ALL, "INSERT": _ALL},
     },
 }
 
@@ -365,6 +375,9 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     # outage probe ends it with the credit
     "assess_enter_outage(uuid,integer,timestamp with time zone,text)": (API,),
     "assess_end_outage(uuid,integer)": (WORKER,),
+    # REQ-082 resend (revision 0034): a new round for the transcript's current recipients; the
+    # caller can never name a recipient
+    "assess_enqueue_resend(uuid,text)": (API,),
 }
 
 

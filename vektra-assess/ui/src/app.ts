@@ -325,9 +325,18 @@ export class App {
         const body = (await r.json()) as { close_reason: string };
         this.closedAt = new Date(Date.now() + this.clockOffset);
         this.dispatch({ type: "closed", reason: body.close_reason });
+        return;
       }
     } catch {
-      this.chat.setEnabled(true, M.sendFailed);
+      // the network lost it: the server may or may not have closed, so ask it below
+    }
+    // not concluded (or unknown): re-read the session so the screen shows the server's state
+    // (still active, or closed meanwhile), then say so
+    const view = await this.fetchSession();
+    if (view) this.apply(view);
+    if (this.state.name !== "closed") {
+      this.setStatus(M.finishFailed);
+      this.live.say(M.finishFailed);
     }
   }
 
@@ -336,15 +345,24 @@ export class App {
     const button = article.querySelector("button.flag") as HTMLButtonElement | null;
     if (!button || !(await this.flagDialog.ask(button))) return;
     if (this.state.name !== "active" && this.state.name !== "outage") return;
-    const r = await this.fetchImpl(
-      `${this.cfg.apiBase}/sessions/${this.sid}/turns/${turn.turn_no}/flag`,
-      { method: "POST", headers: this.headers() },
-    );
-    if (r.ok) {
-      const marker = h("span", { class: "flag-marker", tabindex: "-1", text: M.flagged });
-      button.replaceWith(marker);
-      marker.focus();
+    article.querySelector(".flag-error")?.remove();
+    let r: Response | null = null;
+    try {
+      r = await this.fetchImpl(
+        `${this.cfg.apiBase}/sessions/${this.sid}/turns/${turn.turn_no}/flag`,
+        { method: "POST", headers: this.headers() },
+      );
+    } catch {
+      r = null;
     }
+    if (!r || !r.ok) {
+      // the control stays: the student may try again; the text is announced once
+      button.after(h("p", { class: "flag-error", role: "status", text: M.flagFailed }));
+      return;
+    }
+    const marker = h("span", { class: "flag-marker", tabindex: "-1", text: M.flagged });
+    button.replaceWith(marker);
+    marker.focus();
   }
 
   /** Ask the parent for a download token; one request at a time, no automatic retry. If the

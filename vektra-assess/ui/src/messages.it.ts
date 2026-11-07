@@ -51,6 +51,8 @@ export const M = {
   flagConfirm: "Segnalare questo messaggio come errore dell'assistente?",
   flagConfirmText: "La segnalazione resta nella trascrizione che riceve il docente.",
   flagYes: "Segnala",
+  flagFailed: "Segnalazione non inviata. Riprova.",
+  finishFailed: "La discussione non è stata conclusa. Riprova.",
   flagged: "segnalato dallo studente",
   pickerLabel: "Elementi della prova",
   pickerPrefix: "Spiegami: ",

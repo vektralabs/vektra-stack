@@ -261,3 +261,85 @@ describe("review #5: outage_end and a pending reply", () => {
     expect(a.chat.composer.disabled).toBe(false);
   });
 });
+
+describe("review #10: Fine and flag failures", () => {
+  function make(fetchImpl: typeof fetch) {
+    const root = document.createElement("main");
+    document.body.replaceChildren(root);
+    const a = new App(
+      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
+      root,
+      fetchImpl,
+    );
+    const priv = a as unknown as { state: { name: string }; sid: string; finish: () => Promise<void> };
+    priv.state = { name: "active" };
+    priv.sid = "S";
+    root.append(a.chat.root);
+    return { a, root, priv };
+  }
+  const active = {
+    session_id: "S",
+    state: "ACTIVE",
+    close_reason: null,
+    deadline_at: new Date(Date.now() + 600000).toISOString(),
+    server_now: new Date().toISOString(),
+    reply_pending: false,
+    turns: [{ turn_no: 1, role: "bot", kind: "opening", text: "Benvenuto" }],
+  };
+
+  it("a refused Fine says so and re-reads the session", async () => {
+    const calls: string[] = [];
+    const { a, root, priv } = make((async (url: string, init: RequestInit) => {
+      calls.push(`${init.method ?? "GET"} ${url}`);
+      if (url.endsWith("/finish")) return new Response("", { status: 503 });
+      return Response.json(active);
+    }) as unknown as typeof fetch);
+    await priv.finish.call(a);
+    expect(calls).toEqual(["POST /api/sessions/S/finish", "GET /api/sessions/S"]);
+    expect(priv.state.name).toBe("active"); // nothing closed on the server: still active
+    expect(root.querySelector("#status")!.textContent).toBe(
+      "La discussione non è stata conclusa. Riprova.",
+    );
+    expect(a.controls.finish.disabled).toBe(false);
+  });
+
+  it("a Fine the network loses re-reads too, and a session closed meanwhile shows closed", async () => {
+    const { a, priv } = make((async (url: string) => {
+      if (url.endsWith("/finish")) throw new TypeError("network");
+      return Response.json({ ...active, state: "CLOSED", close_reason: "finished" });
+    }) as unknown as typeof fetch);
+    await priv.finish.call(a);
+    expect(priv.state.name).toBe("closed");
+  });
+
+  it("a flag that fails shows a message and keeps the control", async () => {
+    dialogPolyfill();
+    const { a } = make((async () => {
+      throw new TypeError("network");
+    }) as unknown as typeof fetch);
+    a.chat.render(active.turns as never);
+    const flag = a.chat.list.querySelector("button.flag") as HTMLButtonElement;
+    flag.click();
+    a.flagDialog.yes.click();
+    await new Promise((r) => setTimeout(r, 0));
+    const article = a.chat.list.querySelector("article")!;
+    expect(article.querySelector(".flag-error")!.textContent).toBe(
+      "Segnalazione non inviata. Riprova.",
+    );
+    expect(article.querySelector("button.flag")).not.toBeNull();
+    expect(article.querySelector(".flag-marker")).toBeNull();
+  });
+
+  it("a flag the server refuses shows the same message", async () => {
+    dialogPolyfill();
+    const { a } = make((async () => new Response("", { status: 429 })) as unknown as typeof fetch);
+    a.chat.render(active.turns as never);
+    (a.chat.list.querySelector("button.flag") as HTMLButtonElement).click();
+    a.flagDialog.yes.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(a.chat.list.querySelector(".flag-error")!.textContent).toBe(
+      "Segnalazione non inviata. Riprova.",
+    );
+  });
+});

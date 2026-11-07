@@ -393,3 +393,12 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     1-minute warning; a student never reads "0 minuti" while still able to write. The same
     test vectors are in `tests/test_timing.py` and `ui/test/controls.test.ts`; documented in
     the `/state` table of api.md.
+  - #10a A Fine that is not confirmed (an error status, or a lost request) re-reads
+    `GET /sessions/{sid}` and applies it, so the screen shows the server's state (still ACTIVE,
+    or CLOSED if the close did happen), then shows and announces "La discussione non è stata
+    conclusa. Riprova." when it is still open. Re-reading `/sessions` rather than `/state`:
+    the UI holds a session token, and `/sessions/{sid}` is the route that carries the state,
+    the deadline and the turns the screen is built from.
+  - #10b The flag call is in a try/catch: an error status or a lost request leaves the control
+    in place and adds "Segnalazione non inviata. Riprova." (`role="status"`) next to it; a
+    retry removes the old text first.

@@ -4,7 +4,7 @@ import { ClosingView, closingText } from "../src/views/closing";
 
 describe("closing", () => {
   it("has a text for every close reason", () => {
-    const d = new Date(Date.UTC(2026, 10, 7, 12));
+    const d = new Date(2026, 10, 7, 12); // local time, like the formatter (CodeRabbit 4501067257)
     expect(closingText("finished", d)).toBe(
       "Sessione conclusa il 7 novembre 2026; trascrizione inviata al docente.",
     );

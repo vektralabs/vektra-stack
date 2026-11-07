@@ -485,3 +485,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     reply is owed from the moment a turn is sent (its events can precede the 202), and a send
     that is not accepted clears it. No stream cursor is added to `GET /sessions/{sid}` (a
     plan-8 route).
+  - 4501067257 The closing-text test builds its date in local time (it failed under
+    `TZ=Pacific/Kiritimati`).

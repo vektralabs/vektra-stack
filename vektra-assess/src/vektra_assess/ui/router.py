@@ -38,6 +38,15 @@ _SITE = text(
 )
 
 
+def site_origin_sql() -> str:
+    """The origins of the enabled sites, one per row (the Moodle origins that may frame the
+    page; plan 9 task 4 moves them to their own column)."""
+    return (
+        "SELECT substring(base_url from '^(https?://[^/?#]+)') FROM assess_sites "
+        "WHERE disabled_at IS NULL"
+    )
+
+
 def public_assess_ui() -> None:
     """Marker dependency: this route is unauthenticated by design (ARCH-076). The route-scope
     structural test accepts it on the UI paths only."""

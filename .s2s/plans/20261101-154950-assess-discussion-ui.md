@@ -113,7 +113,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 ### Server side
 - [x] Add `vektra-assess/src/vektra_assess/ui/router.py`: `GET /api/v1/assess/ui` (unauthenticated, `site` query param = public site key only), page template `ui/templates/page.html.j2` (autoescape) with the JSON config block, asset route `/api/v1/assess/ui/assets/{name}` resolving only names in `manifest.json`; include the router in `vektra_app/main.py create_app()`
 - [x] Implement the header builder `ui/headers.py` producing the CSP and companion headers listed in Design Notes; per-site `frame-ancestors` read from the site record on every request (no cache); unknown/disabled site → 404 with `frame-ancestors 'none'`
-- [ ] Add settings `VEKTRA_ASSESS_UI_ORIGIN` (alias-style in the assess settings class); startup step in `_run_startup()` refuses a non-https origin outside development and an origin equal to any registered site's `moodle_origin`
+- [x] Add settings `VEKTRA_ASSESS_UI_ORIGIN` (alias-style in the assess settings class); startup step in `_run_startup()` refuses a non-https origin outside development and an origin equal to any registered site's `moodle_origin`
 - [ ] Add `moodle_origin` to the site record if absent (next revision in the chain) and to the site registration/update path, validated as a bare origin (no path, no wildcard)
 - [ ] Add setup-check item `ui_origin_distinct` to the REQ-079 check (plan 4's check runner), reported by name as OK/MISSING
 - [ ] Extended `GET /api/v1/assess/state` contract (agreed with P2, session vektra-moodle-cf), every field optional and ABSENT when the state does not call for it: `active{session_no, minutes_left, deadline_at}` (states active and starting); `selected_attempt{attempt_no}` (the attempt shown on the page is not the selected one, state 9); `pre_session{duration_min, recipients[{role,name}], course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url, notice_version}, previous_sessions, files[{name, predicted: readable|partial|unreadable}]}` (states eligible and reset_granted); `closed_at` (state 6); `ended_at` (state 11). Data, URLs and versions only, the texts stay in the plugin; `transcripts[...]` is plan 10's. A test per field and per absence; documented in `docs/reference/api.md`
@@ -235,4 +235,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     assets (`FrameDenyMiddleware`, pure ASGI so SSE is not buffered), not only by the nginx
     example: a deployment without the proxy keeps the protection. One middleware is added to
     `create_app()`; the existing order is unchanged.
+  - `VEKTRA_ASSESS_UI_ORIGIN` already existed (plan 4, setup-check item `ui_not_same_origin`):
+    plan 9 reuses it, now validated as a bare origin at load (a malformed value no longer
+    reaches the setup check as UNVERIFIABLE: settings refuse it), and adds the startup refusal.
 

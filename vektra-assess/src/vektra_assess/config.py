@@ -495,6 +495,16 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_FLAG_RPM",
         description="POST /sessions/{sid}/turns/{turn_no}/flag calls per minute per session (REQ-103).",
     )
+
+    @field_validator("ui_origin", mode="before")
+    @classmethod
+    def _ui_origin_is_bare(cls, value: Any) -> Any:
+        if value in (None, ""):
+            return None
+        from vektra_assess.ui.origins import bare_origin
+
+        return bare_origin(str(value))
+
     retry_rpm: int = Field(
         6,
         ge=1,

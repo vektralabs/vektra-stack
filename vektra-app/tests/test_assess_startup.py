@@ -90,7 +90,12 @@ def test_enabled_mounts_the_router(
     from vektra_app.main import create_app
 
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
-    assert _assess_paths(create_app()) == ["/api/v1/assess/probe"]
+    # the assess router, and the discussion UI page and assets mounted with it (plan 9)
+    assert _assess_paths(create_app()) == [
+        "/api/v1/assess/probe",
+        "/api/v1/assess/ui",
+        "/api/v1/assess/ui/assets/{name}",
+    ]
 
 
 def test_broken_assess_config_mounts_nothing(
@@ -448,3 +453,93 @@ def test_every_route_but_the_discussion_ui_denies_framing() -> None:
     assert other.headers["x-frame-options"] == "DENY"
     ui = client.get("/api/v1/assess/ui/probe")
     assert ui.status_code == 200 and "x-frame-options" not in ui.headers
+
+
+class _Rows:
+    def __init__(self, origins: list[str]) -> None:
+        self.origins = origins
+
+    def connect(self):  # type: ignore[no-untyped-def]
+        rows = [(o,) for o in self.origins]
+
+        class _Conn:
+            async def __aenter__(self):  # type: ignore[no-untyped-def]
+                return self
+
+            async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                return False
+
+            async def execute(self, _stmt):  # type: ignore[no-untyped-def]
+                return rows
+
+        return _Conn()
+
+
+@pytest.mark.parametrize(
+    ("env", "ui", "moodle", "problem"),
+    [
+        ("production", "https://ui.example", ["https://moodle.example"], None),
+        (
+            "production",
+            "http://ui.example",
+            ["https://moodle.example"],
+            "ui_origin_not_https",
+        ),
+        (
+            "production",
+            "https://m.example",
+            ["https://m.example"],
+            "ui_origin_equals_moodle_origin",
+        ),
+        ("development", "http://localhost:8000", ["http://127.0.0.1:8080"], None),
+        (
+            "development",
+            "http://localhost:8000",
+            ["http://localhost:8000"],
+            "ui_origin_equals_moodle_origin",
+        ),
+    ],
+)
+async def test_startup_refuses_a_ui_origin_not_distinct_or_not_https(
+    env: str,
+    ui: str,
+    moodle: list[str],
+    problem: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan 9 (ARCH-076): the API refuses a UI origin that is not https outside development
+    or equals a registered site's Moodle origin."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", env)
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", ui)
+    settings = VektraAssessSettings()
+    if problem is None:
+        await assess_wiring.check_ui_origin(_Rows(moodle), settings)
+    else:
+        with pytest.raises(StartupValidationError, match=problem):
+            await assess_wiring.check_ui_origin(_Rows(moodle), settings)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "https://ui.example/path",
+        "https://*.example",
+        "ftp://ui.example",
+        "https://u:p@ui.example",
+        "ui.example",
+    ],
+)
+def test_the_ui_origin_setting_is_a_bare_origin(
+    bad: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pydantic import ValidationError
+
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", bad)
+    with pytest.raises(ValidationError):
+        VektraAssessSettings()
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "HTTPS://UI.Example:8443/")
+    assert VektraAssessSettings().ui_origin == "https://ui.example:8443"

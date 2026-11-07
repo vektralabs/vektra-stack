@@ -405,11 +405,10 @@ async def test_ui_origin_item(branch: str) -> None:
             "same_site_as_api",
         ),
         ("https://chat.vektra-ui.test", "https://chat2.other.test"): ("OK", None),
-        ("not-a-url", "https://api.vektra-api.test"): (
-            "UNVERIFIABLE",
-            "origin_invalid",
-        ),
     }
+    # a malformed UI origin never reaches the item: the settings refuse it at load (plan 9)
+    with pytest.raises(ValueError):
+        settings(VEKTRA_ASSESS_UI_ORIGIN="not-a-url")
     # the API origin that makes the second case is the UI's own site
     for (ui, api), want in cases.items():
         env = {"VEKTRA_ASSESS_UI_ORIGIN": ui, "VEKTRA_ASSESS_API_PUBLIC_ORIGIN": api}

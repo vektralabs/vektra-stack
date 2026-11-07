@@ -161,6 +161,7 @@ async def step_12_assess_check(
     )
     try:
         await assert_session_role(engine, API_ROLE, step=STEP)
+        await check_ui_origin(engine, settings)
     except BaseException:
         await engine.dispose()
         raise
@@ -171,6 +172,36 @@ async def step_12_assess_check(
     # (app.state.rate_limiter) stays unset
     app.state.assess_limiters = build_assess_limiters()
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
+
+
+async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
+    """Plan 9 (ARCH-076): with ``VEKTRA_ASSESS_UI_ORIGIN`` set, refuse to start when it is not
+    https outside development, or equals a registered site's Moodle origin (the iframe's
+    ``allow-same-origin`` sandbox is safe only across distinct origins). Unset: nothing to
+    check here; the setup check reports ``ui_origin_distinct`` MISSING."""
+    if not settings.ui_origin:
+        return
+    from sqlalchemy import text
+
+    from vektra_assess.ui.origins import ui_origin_problem
+    from vektra_assess.ui.router import site_origin_sql
+
+    async with engine.connect() as conn:
+        origins = [
+            str(r[0]) for r in await conn.execute(text(site_origin_sql())) if r[0]
+        ]
+    problem = ui_origin_problem(
+        settings.ui_origin, origins, development=settings.env == "development"
+    )
+    if problem is not None:
+        raise StartupValidationError(
+            step=STEP,
+            detail=f"VEKTRA_ASSESS_UI_ORIGIN refused: {problem}",
+            remediation=(
+                "Serve the discussion UI on its own https origin, distinct from every Moodle "
+                "site's origin (docs/reference/configuration.md)."
+            ),
+        )
 
 
 def build_assess_limiters() -> dict[str, Any]:

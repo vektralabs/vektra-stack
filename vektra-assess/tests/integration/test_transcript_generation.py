@@ -359,3 +359,38 @@ async def test_slow_moodle_facts_fall_back_inside_the_job_budget(pg, worker) -> 
         assert got is not None and got.created
         html = (await _open(pg, ring, s.session_id)).decode()
         assert "non disponibile" in html and "NEVER" not in html
+
+
+async def test_a_missing_kek_kid_is_retryable_not_an_integrity_failure(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #8: a KEK kid the worker does not hold is a configuration or rotation problem:
+    a normal, retried job failure, with no integrity audit row and no transcript."""
+    from vektra_assess.worker.runtime import PermanentJobError
+    from vektra_assess.worker.transcript_gen import TranscriptKeyUnavailable
+
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        other = AssessKeyring("assess_kek", "other", {"other": os.urandom(32)})
+        deps = GenerationDeps(
+            kek=other, transcript_kek=ring, facts=Facts(facts=CloseFacts())
+        )
+        with pytest.raises(TranscriptKeyUnavailable) as exc:
+            await generate_transcript(deps, worker.connect, s.session_id)
+        assert not isinstance(exc.value, PermanentJobError)
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_audit_events WHERE session_id = :s "
+                "AND event = 'assess_transcript_integrity_failed'",
+                s=s.session_id,
+            )
+            == 0
+        )
+        # with the right keyring the retry succeeds
+        deps = GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Facts(facts=CloseFacts())
+        )
+        got = await generate_transcript(deps, worker.connect, s.session_id, attempt=2)
+        assert got is not None and got.created

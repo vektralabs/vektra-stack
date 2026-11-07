@@ -71,6 +71,10 @@ class IntegrityFailure(PermanentJobError):
         self.turn_no = turn_no
 
 
+class TranscriptKeyUnavailable(RuntimeError):
+    """The session's DEK is wrapped under a KEK kid this worker does not hold: retryable."""
+
+
 @dataclass(frozen=True)
 class GenerationDeps:
     kek: AssessKeyring  # assess_kek: unwraps the session DEK (worker only)
@@ -156,7 +160,12 @@ async def _integrity_failed(
 
 
 async def generate_transcript(
-    deps: GenerationDeps, acquire: AcquireDb, sid: UUID, *, now: datetime | None = None
+    deps: GenerationDeps,
+    acquire: AcquireDb,
+    sid: UUID,
+    *,
+    now: datetime | None = None,
+    attempt: int = 1,
 ) -> Generated | None:
     """Generate the transcript of ``sid``; None for a stale job (not CLOSED, already done)."""
     async with acquire() as conn:
@@ -183,7 +192,13 @@ async def generate_transcript(
         raise IntegrityFailure("missing_material")
     try:
         dek = unwrap_dek(deps.kek, bytes(key.kek_wrapped), sid, int(key.key_version))
-    except (InvalidTag, envelope.EnvelopeError, KeyNotAvailable):
+    except KeyNotAvailable:
+        # a configuration or rotation problem, not tampering (review #8): the job is retried
+        # with the normal backoff, the operator is alerted once, nothing is audited as integrity
+        if attempt == 1:
+            _alert("kek_not_available", session_id=str(sid))
+        raise TranscriptKeyUnavailable("kek_not_available") from None
+    except (InvalidTag, envelope.EnvelopeError):
         await _integrity_failed(acquire, row, "dek_unwrap_failed", None)
         raise IntegrityFailure("dek_unwrap_failed") from None
     genesis = str(turn_rows[0].prev_hash)
@@ -384,6 +399,6 @@ def make_generate_handler(
             sid = UUID(str(ctx.args["session_id"]))
         except (KeyError, ValueError):
             return  # a malformed job is a stale no-op
-        await generate_transcript(deps, ctx.acquire, sid)
+        await generate_transcript(deps, ctx.acquire, sid, attempt=ctx.attempt)
 
     return handle

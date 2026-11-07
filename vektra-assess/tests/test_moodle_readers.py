@@ -669,6 +669,29 @@ def test_every_reader_function_has_a_recording(branch: str) -> None:
     assert needed <= have, needed - have
 
 
+def test_the_recorded_manifest_is_read_once_and_handed_out_as_a_copy(
+    branch: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodeRabbit 4500701652: site_for()/manifest() run on async paths; no per-call file read."""
+    import assess_moodle_support as support
+
+    support._recorded_manifest.cache_clear()
+    reads: list[Path] = []
+    real = Path.read_text
+
+    def spy(self: Path, *a: Any, **k: Any) -> str:
+        reads.append(self)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", spy)
+    first = manifest(branch)
+    site_for(branch)
+    uid(branch, "stu1")
+    assert [p.name for p in reads] == ["manifest.json"]
+    first["users"].clear()  # a caller's mutation does not reach the next caller
+    assert manifest(branch)["users"]
+
+
 def test_recordings_are_scrubbed(branch: str) -> None:
     blob = "".join(f.read_text() for f in (FIXTURES / branch).glob("*.json"))
     assert "localhost" not in blob and "127.0.0.1" not in blob

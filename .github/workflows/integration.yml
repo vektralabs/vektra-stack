@@ -142,6 +142,11 @@ jobs:
               # strings (PyYAML) and the composition used by the API and by the worker.
               "vektra_assess.llm", "vektra_assess.llm.runner", "vektra_assess.llm.shipped",
               "yaml", "vektra_app.assess_llm",
+              # Transcripts (plan assess-transcript-delivery): rendering, the allowlist, the
+              # TeX-to-MathML converter (pure Python) and the sealed store, in both processes.
+              "vektra_assess.transcript.render", "vektra_assess.transcript.allowlist",
+              "vektra_assess.transcript.mathml", "vektra_assess.transcript.store",
+              "latex2mathml.converter",
           ):
               importlib.import_module(name)
               print("imported", name, flush=True)

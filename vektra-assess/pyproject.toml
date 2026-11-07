@@ -23,6 +23,7 @@ dependencies = [
     "jinja2>=3.1",
     # Vektra-shipped discussion strings (llm/strings/*.yaml), safe_load only.
     "pyyaml>=6.0",
+    "latex2mathml>=3.77",
 ]
 
 [build-system]

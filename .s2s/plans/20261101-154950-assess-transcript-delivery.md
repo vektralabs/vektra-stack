@@ -156,11 +156,11 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 ### Transcript
 - [x] Migration (next revision): `assess_transcripts`, `assess_deliveries`, `assess_transcript_download_tokens`, enums, indexes `(status, not_before)`; add grants + SECURITY DEFINER `assess_enqueue_resend`; extend plan 2's grant-matrix CI assertion
 - [x] `transcript/hashing.py`: canonical turn serialisation shared with plan 8's turn-time hash (single function, imported by both), `turns_digest`
-- [ ] `transcript/templates/transcript.html.j2` + `render.py`: header/body/footer per Design Notes with semantic headings, lists, `lang`, a single static `<style>`; `StrictUndefined`; template grep test for `safe|Markup`
-- [ ] `transcript/allowlist.py`: post-render validator + rejection test corpus (one test per listed vector) + html5lib differential test
-- [ ] `transcript/mathml.py`: latex2mathml + presentation allowlist + escaped-TeX fallback; add dependency to `vektra-assess/pyproject.toml` and the BUG-027 module list (drop and record if it fails)
-- [ ] `transcript/naming.py`: BR-016 file name + RFC 6266 header builder; unit tests for unicode/space/slash shortnames
-- [ ] `transcript/store.py`: per-transcript DEK generate/wrap/unwrap with the transcript key (kid), encrypt/decrypt, sha256 verification
+- [x] `transcript/templates/transcript.html.j2` + `render.py`: header/body/footer per Design Notes with semantic headings, lists, `lang`, a single static `<style>`; `StrictUndefined`; template grep test for `safe|Markup`
+- [x] `transcript/allowlist.py`: post-render validator + rejection test corpus (one test per listed vector) + html5lib differential test
+- [x] `transcript/mathml.py`: latex2mathml + presentation allowlist + escaped-TeX fallback; add dependency to `vektra-assess/pyproject.toml` and the BUG-027 module list (drop and record if it fails)
+- [x] `transcript/naming.py`: BR-016 file name + RFC 6266 header builder; unit tests for unicode/space/slash shortnames
+- [x] `transcript/store.py`: per-transcript DEK generate/wrap/unwrap with the transcript key (kid), encrypt/decrypt, sha256 verification
 - [ ] `transcript/handler.py`: `generate_transcript(session_id)` job handler (idempotent, turn-hash re-verification, allowlist, one-transaction insert of transcript + deliveries + audit + NOTIFY); register with plan 3's JobRunner under the generation pool
 - [ ] (added) Persist what the transcript must mark but no row held: `assess_turn_notes` (revision 0034) written by the API TurnDriver in the bot turn's own transaction (post-check mark codes + contest entries label/status); the transcript renders the markers and "Punti contestati" from it
 - [ ] (added) Recipient selection `delivery/recipients.py` (one function, used by generation and by `/state`): ≤ 3 current course graders; render worker writes `graders` (user ids) and `recipients` (`{role, name}`) into the student's `assess_gate_inputs`

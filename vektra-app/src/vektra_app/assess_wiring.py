@@ -183,13 +183,15 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
         return
     from sqlalchemy import text
 
-    from vektra_assess.ui.origins import ui_origin_problem
-    from vektra_assess.ui.router import site_origin_sql
+    from vektra_assess.ui.origins import (
+        SITE_ORIGINS_SQL,
+        site_origin,
+        ui_origin_problem,
+    )
 
     async with engine.connect() as conn:
-        origins = [
-            str(r[0]) for r in await conn.execute(text(site_origin_sql())) if r[0]
-        ]
+        rows = (await conn.execute(text(SITE_ORIGINS_SQL))).all()
+    origins = [o for o in (site_origin(r[0], r[1]) for r in rows) if o]
     problem = ui_origin_problem(
         settings.ui_origin, origins, development=settings.env == "development"
     )

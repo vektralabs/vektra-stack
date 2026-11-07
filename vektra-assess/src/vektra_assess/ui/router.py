@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of
 from vektra_assess.ui.headers import asset_headers, page_headers
-from vektra_assess.ui.origins import origin_of
+from vektra_assess.ui.origins import site_origin
 
 PREFIX = "/api/v1/assess/ui"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -38,15 +38,6 @@ _SITE = text(
     "SELECT id, base_url, moodle_origin, disabled_at FROM assess_sites "
     "WHERE id = CAST(:s AS uuid)"
 )
-
-
-def site_origin_sql() -> str:
-    """The Moodle origins of the enabled sites, one per row (the origins that may frame the
-    page): ``moodle_origin`` (revision 0033), or the origin of ``base_url`` when unset."""
-    return (
-        "SELECT coalesce(moodle_origin, lower(substring(base_url from "
-        "'^(https?://[^/?#@]+)'))) FROM assess_sites WHERE disabled_at IS NULL"
-    )
 
 
 def public_assess_ui() -> None:
@@ -89,8 +80,8 @@ async def _site_origin(request: Request, site: str) -> str | None:
     if row is None or row.disabled_at is not None:
         return None
     # the site's own Moodle origin (revision 0033); a row registered without one falls back to
-    # the origin of its base_url
-    return str(row.moodle_origin) if row.moodle_origin else origin_of(str(row.base_url))
+    # the origin of its base_url; both through the one normalisation (ui.origins)
+    return site_origin(row.moodle_origin, row.base_url)
 
 
 @router.get("", response_class=HTMLResponse)

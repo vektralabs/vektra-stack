@@ -483,7 +483,7 @@ async def test_a_site_admin_answer_carries_a_secret_that_is_dropped(
 async def test_ui_origin_distinct_item(branch: str) -> None:
     """Plan 9 (ARCH-076): OK for a UI origin distinct from the site's Moodle origin (https
     outside development); MISSING when unset, equal to the Moodle origin, or not https."""
-    from vektra_assess.ui.origins import origin_of
+    from vektra_assess.ui.origins import url_origin
 
     _r, items, _o = await good(
         branch
@@ -494,7 +494,7 @@ async def test_ui_origin_distinct_item(branch: str) -> None:
     )  # type: ignore[arg-type]
     _r, items, _o = await good(branch, cfg=unset)
     assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_unset")
-    moodle = origin_of(site_for(branch).base_url)
+    moodle = url_origin(site_for(branch).base_url)
     _r, items, _o = await good(branch, cfg=settings(VEKTRA_ASSESS_UI_ORIGIN=moodle))
     assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_equals_moodle_origin")
     _r, items, _o = await good(

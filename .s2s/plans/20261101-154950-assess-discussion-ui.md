@@ -329,3 +329,11 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     pytest harness (collected by `package-integration`, where it is listed with the live-Moodle
     tests as an expected skip, and by `assess-ui-e2e`); the vitest suite is not pytest and is
     covered by the `test-assess-ui` job, which is the documented exemption.
+- **Code review fixes (2026-11-07, `/code-review` high on develop...feat/assess-discussion-ui)**:
+  - #2 One origin normalisation: `ui.origins.bare_origin` (lower-case scheme and host, default
+    port dropped, IPv6 compressed in brackets, trailing dot/slash dropped; credentials, paths,
+    wildcards, underscores and bad ports refused) is the only one. `url_origin(base_url)` and
+    `site_origin(moodle_origin, base_url)` are built on it and replace the router's `origin_of`
+    and the SQL `site_origin_sql()` (the column choice is made in Python, not with a regex in
+    SQL); `ui_origin_problem` normalises both sides, so `HTTPS://M.Example:443` equals
+    `https://m.example`.

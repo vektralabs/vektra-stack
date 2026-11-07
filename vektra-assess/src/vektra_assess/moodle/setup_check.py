@@ -452,9 +452,9 @@ async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
     """Plan 9 (ARCH-076): the discussion UI origin is https (outside development) and is not
     this site's Moodle origin, the precondition of the iframe's ``allow-same-origin``
     sandbox. Same decision as the API's startup refusal (``ui.origins``)."""
-    from vektra_assess.ui.origins import origin_of, ui_origin_problem
+    from vektra_assess.ui.origins import ui_origin_problem, url_origin
 
-    moodle = origin_of(ctx.site.base_url)
+    moodle = url_origin(ctx.site.base_url)
     problem = ui_origin_problem(
         ctx.settings.ui_origin,
         [moodle] if moodle else [],

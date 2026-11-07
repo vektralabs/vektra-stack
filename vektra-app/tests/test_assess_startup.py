@@ -460,7 +460,12 @@ class _Rows:
         self.origins = origins
 
     def connect(self):  # type: ignore[no-untyped-def]
-        rows = [(o,) for o in self.origins]
+        # (moodle_origin, base_url) per enabled site: the column set, base_url irrelevant
+        rows = [(o, "https://ignored.example/moodle") for o in self.origins]
+
+        class _Result(list):  # type: ignore[type-arg]
+            def all(self):  # type: ignore[no-untyped-def]
+                return list(self)
 
         class _Conn:
             async def __aenter__(self):  # type: ignore[no-untyped-def]
@@ -470,7 +475,7 @@ class _Rows:
                 return False
 
             async def execute(self, _stmt):  # type: ignore[no-untyped-def]
-                return rows
+                return _Result(rows)
 
         return _Conn()
 
@@ -489,6 +494,19 @@ class _Rows:
             "production",
             "https://m.example",
             ["https://m.example"],
+            "ui_origin_equals_moodle_origin",
+        ),
+        # case and the default port are one origin (review #2: one normalisation)
+        (
+            "production",
+            "HTTPS://M.Example:443",
+            ["https://m.example"],
+            "ui_origin_equals_moodle_origin",
+        ),
+        (
+            "production",
+            "https://m.example",
+            ["HTTPS://M.EXAMPLE:443"],
             "ui_origin_equals_moodle_origin",
         ),
         ("development", "http://localhost:8000", ["http://127.0.0.1:8080"], None),

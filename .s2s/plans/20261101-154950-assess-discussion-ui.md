@@ -471,3 +471,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     close); another conflict (ERR-ASSESS-011) leaves it open. A close learnt without its reason
     takes the reason of the closed event that follows (reducer), and the parent is told again
     with it.
+  - 4501070014 A 202 whose body cannot be read leaves the preparing state with "La
+    discussione è stata avviata: ricarica la pagina per riprenderla." (the server is preparing
+    it; a reload resumes it).

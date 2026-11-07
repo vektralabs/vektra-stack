@@ -148,7 +148,16 @@ export class App {
       this.token = null;
       return this.dispatch({ type: r.status === 503 ? await this.capacityOr(r) : "unavailable" });
     }
-    const body = (await r.json()) as { session_id: string; token: string };
+    let body: { session_id: string; token: string };
+    try {
+      body = (await r.json()) as { session_id: string; token: string };
+    } catch {
+      // accepted, but its answer was lost: the server is preparing the session, so the
+      // student resumes it by reloading (the plugin then mints for a resume, 4501070014)
+      this.token = null;
+      this.dispatch({ type: "unavailable" });
+      return this.setStatus(M.reloadToResume);
+    }
     this.sid = body.session_id;
     this.token = body.token;
     this.dispatch({ type: "start_accepted" });

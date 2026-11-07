@@ -634,3 +634,18 @@ describe("409 on a session read (4501070018, 4501067255)", () => {
     ]);
   });
 });
+
+describe("an accepted Start whose body cannot be read (4501070014)", () => {
+  it("never stays preparing: it tells the student to reload and resume", async () => {
+    const { a, priv, pending, flush, root } = harness();
+    priv.state = { name: "preparing", announced: false } as never;
+    const start = (a as unknown as { startSession: () => Promise<void> }).startSession.call(a);
+    await flush();
+    pending[0].resolve(new Response("{not json", { status: 202 }));
+    await start;
+    expect(priv.state.name).toBe("unavailable");
+    expect(root.querySelector("#status")!.textContent).toBe(
+      "La discussione è stata avviata: ricarica la pagina per riprenderla.",
+    );
+  });
+});

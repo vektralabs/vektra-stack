@@ -10,7 +10,8 @@ the WS functions the reader uses against a seeded dev site and writes
 
 Safety rules (the recorder REFUSES, it does not warn):
 - the base URL must be ``http://localhost:<port>`` or ``http://127.0.0.1:<port>``;
-- the site's own ``release`` must be a 4.3.x / 5.2.x *dev build* (``4.3.11+ (Build: ...)``);
+- the site's own ``release`` must be a 4.3.x / 5.2.x *dev build*: a weekly build
+  (``4.3.11+ (Build: ...)``) or a pinned point release (``5.2.4 (Build: ...)``);
 - redirects are never followed;
 - the token, the host and ``userprivateaccesskey`` must not survive scrubbing: the run aborts
   and writes nothing if they do.
@@ -39,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 SCRUBBED_ROOT = "https://moodle.example.org"
-DEV_RELEASE = re.compile(r"^(4\.3|5\.2)\.\d+\+ \(Build: \d+\)$")
+DEV_RELEASE = re.compile(r"^(4\.3|5\.2)\.\d+\+? \(Build: \d+\)$")
 #: the hosts a dev site may live on; the base-URL rule and the downloaded-file scan both use them
 DEV_HOSTS = ("localhost", "127.0.0.1")
 #: the ports of the two dev sites (vektra-moodle docker/env.43, env.52)

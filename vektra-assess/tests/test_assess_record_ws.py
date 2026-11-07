@@ -47,10 +47,14 @@ def test_accepts_local_dev_urls(url: str) -> None:
 @pytest.mark.parametrize(
     "release",
     [
-        "4.3.11 (Build: 20250411)",
         "4.4.1+ (Build: 20250101)",
         "5.1.2+ (Build: 1)",
+        "5.3.0 (Build: 20261005)",
         "5.2.4+",
+        "5.2.4",
+        "5.2.4++ (Build: 20261005)",
+        "5.2.4 (Build: 20261005) ",
+        "5.2.4  (Build: 20261005)",
         None,
         5,
     ],
@@ -60,9 +64,19 @@ def test_refuses_a_release_that_is_not_a_43_or_52_dev_build(release: Any) -> Non
         rec.check_release(release)
 
 
-def test_accepts_the_dev_builds() -> None:
-    assert rec.check_release("4.3.11+ (Build: 20250411)") == "4.3"
-    assert rec.check_release("5.2.4+ (Build: 20261030)") == "5.2"
+@pytest.mark.parametrize(
+    ("release", "branch"),
+    [
+        # a weekly build carries the "+"
+        ("4.3.11+ (Build: 20250411)", "4.3"),
+        ("5.2.4+ (Build: 20261030)", "5.2"),
+        # a site pinned to a release tag (vektra-moodle#43: 5.2 is on 5.2.4) has no "+"
+        ("5.2.4 (Build: 20261005)", "5.2"),
+        ("4.3.11 (Build: 20250411)", "4.3"),
+    ],
+)
+def test_accepts_the_dev_builds(release: str, branch: str) -> None:
+    assert rec.check_release(release) == branch
 
 
 def test_scrub_removes_host_token_key_and_token_urls() -> None:

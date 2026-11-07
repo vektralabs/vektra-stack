@@ -337,3 +337,15 @@ async def test_a_site_whose_origin_is_the_ui_origin_is_not_served(pg, bundle) ->
         r = await w.client.get(PAGE, params={"site": str(w.site)})
         assert r.status_code == 503
         assert r.headers["content-security-policy"] == EXPECTED_CSP.format("'none'")
+
+
+async def test_page_requests_run_the_assess_housekeeping(pg, bundle) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5811279241 (assess_wiring): with only page traffic the ``ui_page``
+    limiter windows of past clients must still be swept, so the UI routes run the same
+    housekeeping dependency as the assess API."""
+    async with world(pg, assess_ui_static_dir=str(bundle)) as w:
+        r = await w.client.get(PAGE, params={"site": str(w.site)})
+        assert r.status_code == 200
+        assert w.app.state.assess_housekeeper.runs == 1
+        limiter = w.app.state.assess_limiters["ui_page"]
+        assert limiter._windows  # this client's window, swept once empty

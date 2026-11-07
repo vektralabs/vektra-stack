@@ -440,3 +440,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - review 5811279241 (nginx example, outside diff) The UI server forwards `$http_host`, the
     client's Host with its port: `$host` drops a non-default port, and the page compares
     scheme+Host with `VEKTRA_ASSESS_UI_ORIGIN`.
+  - review 5811279241 (assess_wiring, outside diff) The UI router runs `assess_housekeeping`
+    like the assess API, so page-only traffic still sweeps empty `ui_page` limiter windows.

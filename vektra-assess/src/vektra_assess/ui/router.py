@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of
 from vektra_assess.api.deps import settings_of
+from vektra_assess.api.housekeeping import assess_housekeeping
 from vektra_assess.api.state import limiter_of
 from vektra_assess.ui.headers import asset_headers, page_headers
 from vektra_assess.ui.origins import site_origin, ui_origin_problem, url_origin
@@ -50,7 +51,12 @@ def public_assess_ui() -> None:
     structural test accepts it on the UI paths only."""
 
 
-router = APIRouter(prefix=PREFIX, dependencies=[Depends(public_assess_ui)])
+router = APIRouter(
+    prefix=PREFIX,
+    # the in-process sweeps of the assess API (DEK cache, broker, limiters: the ui_page
+    # windows of past clients) also run on page-only traffic (CodeRabbit review 5811279241)
+    dependencies=[Depends(public_assess_ui), Depends(assess_housekeeping)],
+)
 
 
 def static_dir(request: Request) -> Path:

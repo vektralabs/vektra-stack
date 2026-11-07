@@ -159,5 +159,9 @@ def test_turn_notes_fit_the_check_with_multibyte_labels() -> None:
         ensure_ascii=False,
     ).encode("utf-8")
     assert notes.contests and len(encoded) <= MAX_NOTE_CONTESTS_BYTES < 4096
+    # the latest 16 distinct labels survive, in order, each cut to 64 UTF-8 bytes
+    assert notes.contests == tuple(
+        ContestEntry(f"{i:02d}" + "\U0001d510" * 15, "corrected") for i in range(24, 40)
+    )
     assert all(len(c.label.encode()) <= 64 for c in notes.contests)
     assert len(notes.marks) == 16  # 40 distinct marks after the byte cut, capped

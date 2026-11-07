@@ -517,3 +517,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     this tab before its 202 is read) marks a reply owed, closes the composer and reads
     `/sessions/{sid}` for the turn's text (the event has none; plan 8's payload unchanged). A
     replayed one is ignored; the replayed-reply filter is unchanged. Two-tab test.
+  - setup_check.py 453-470 `ui_origin_distinct` also requires another SITE than both the
+    framing origin (`same_site_as_moodle_origin`) and `base_url` (`same_site_as_moodle`);
+    either one fails the item.

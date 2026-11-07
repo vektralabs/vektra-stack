@@ -525,14 +525,26 @@ async def test_ui_origin_distinct_uses_the_sites_moodle_origin_column(
     # the column names the UI origin itself, spelled differently: refused
     _r, items, _o = await good(branch, moodle_origin="HTTPS://Chat.Vektra-UI.test:443")
     assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_equals_moodle_origin")
-    # the column wins over base_url: a UI on the base_url's origin is judged against the column
+    # review 5812478913: separate SITES from both the framing origin (the column) and base_url;
+    # either one failing fails the item
     moodle = url_origin(site_for(branch).base_url)
     _r, items, _o = await good(
         branch,
         cfg=settings(VEKTRA_ASSESS_UI_ORIGIN=moodle),
         moodle_origin="https://moodle-frame.example",
     )
-    assert items["ui_origin_distinct"] == ("OK", None)
+    assert items["ui_origin_distinct"] == ("MISSING", "same_site_as_moodle")
+    _r, items, _o = await good(
+        branch,
+        cfg=settings(VEKTRA_ASSESS_UI_ORIGIN="https://chat.moodle-frame.example"),
+        moodle_origin="https://moodle-frame.example",
+    )
+    assert items["ui_origin_distinct"] == ("MISSING", "same_site_as_moodle_origin")
+    _r, items, _o = await good(branch, moodle_origin="https://moodle-frame.example")
+    assert items["ui_origin_distinct"] == (
+        "OK",
+        None,
+    )  # chat.vektra-ui.test: another site
     # CodeRabbit 4501070007: a stored origin that cannot be used is reported, not skipped
     _r, items, _o = await good(branch, moodle_origin="https://u:p@moodle.example")
     assert items["ui_origin_distinct"] == ("MISSING", "moodle_origin_invalid")

@@ -465,7 +465,16 @@ async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
         [moodle] if moodle else [],
         development=ctx.settings.env == "development",
     )
-    return ok() if problem is None else missing(problem)
+    if problem is not None:
+        return missing(problem)
+    # another SITE, not only another origin, than both the framing origin (the column) and
+    # base_url: either one same-site fails the item (CodeRabbit review 5812478913)
+    ui = str(ctx.settings.ui_origin)
+    if moodle and same_site(ui, moodle):
+        return missing("same_site_as_moodle_origin")
+    if same_site(ui, ctx.site.base_url):
+        return missing("same_site_as_moodle")
+    return ok()
 
 
 # --- registry -------------------------------------------------------------------------------------

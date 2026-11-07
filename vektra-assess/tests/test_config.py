@@ -93,3 +93,27 @@ def test_a_completion_reserve_below_the_window_is_accepted(
     monkeypatch.setenv("VEKTRA_ASSESS_LLM_CONTEXT_WINDOW", "2048")
     s = VektraAssessSettings()
     assert s.llm_context_window - s.llm_max_tokens == 1
+
+
+def test_an_unknown_site_timezone_blocks_only_an_enabled_assess() -> None:
+    """CodeRabbit 4503025935: dormant assess never stops the API over its own settings."""
+    import pytest
+    from pydantic import ValidationError
+
+    from vektra_assess.config import VektraAssessSettings
+
+    off = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_ENABLED": False, "VEKTRA_ASSESS_SITE_TIMEZONE": "Mars/Olympus"}
+    )
+    assert off.site_timezone == "Mars/Olympus"
+    with pytest.raises(ValidationError, match="IANA"):
+        VektraAssessSettings.model_validate(
+            {
+                "VEKTRA_ASSESS_ENABLED": True,
+                "VEKTRA_ASSESS_SITE_TIMEZONE": "Mars/Olympus",
+            }
+        )
+    ok = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_ENABLED": True, "VEKTRA_ASSESS_SITE_TIMEZONE": "Europe/Rome"}
+    )
+    assert ok.site_timezone == "Europe/Rome"

@@ -17,6 +17,10 @@ Convention (Keep a Changelog 1.1.0):
 
 ## [Unreleased]
 
+### Added
+
+- **assess**: transcripts (plan assess-transcript-delivery, part a). When a session closes, the worker generates one transcript (REQ-074): a system header from session and snapshot rows only, the escaped turns with every safeguard, post-check, interruption and "segnalato dallo studente" marker, the "PUNTI CONTESTATI" summary and the SHA-256 digest of the turn chain. Every turn hash is re-verified first: a tampered turn yields no transcript, an audit event and an operator alert (REQ-102). The HTML is inert by construction (BR-016): autoescaped template, TeX converted to presentation-only MathML from an allowlisted tree, and a post-render allowlist check that fails closed. It is sealed under its own key and served as the exact stored bytes through a single-use download token (`aud=transcript`, at most 120 s) minted server-side by the plugin for the owner or a freshly verified grader: `POST /api/v1/assess/transcripts/{tid}/download-token`, `GET /api/v1/assess/transcripts/{tid}` (attachment, `CSP: sandbox`), `POST .../resend` (refuses any recipient field, REQ-082). `GET /state` lists the student's transcripts and names the recipients by role and name; the discussion UI's download button now works. Errors `ERR-ASSESS-017`..`021`. Email delivery over SMTP is part b.
+
 ## [0.8.0] - 2026-11-07
 
 ### Added

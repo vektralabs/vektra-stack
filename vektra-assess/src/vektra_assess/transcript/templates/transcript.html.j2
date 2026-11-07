@@ -1,0 +1,47 @@
+{#- Transcript (REQ-074, BR-016). Autoescaped, StrictUndefined. Every value is plain text:
+    the only element built from data is MathML, from an allowlisted node tree (mathml.py).
+    Never add an escaping bypass filter or a markup object here (a test greps for them). -#}
+{%- macro mnode(n) -%}
+<{{ n.tag }}{% for k, v in n.attrs %} {{ k }}="{{ v }}"{% endfor %}>{% for c in n.children %}{% if c is string %}{{ c }}{% else %}{{ mnode(c) }}{% endif %}{% endfor %}</{{ n.tag }}>
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="{{ doc.lang }}">
+<head>
+<meta charset="utf-8">
+<title>{{ doc.title }}</title>
+<style>{% include "transcript.css" %}</style>
+</head>
+<body>
+<header>
+<h1 id="h-title">{{ doc.heading }}</h1>
+<dl>
+{% for e in doc.entries %}<dt>{{ e.label }}</dt><dd>{{ e.value }}</dd>
+{% endfor %}</dl>
+{% for b in doc.lists %}<section aria-labelledby="h-l{{ loop.index }}">
+<h2 id="h-l{{ loop.index }}">{{ b.heading }}</h2>
+{% if b.items %}<ul>
+{% for i in b.items %}<li>{{ i }}</li>
+{% endfor %}</ul>{% else %}<p>{{ b.empty }}</p>{% endif %}
+</section>
+{% endfor %}<p class="statement">{{ doc.statement }}</p>
+</header>
+<main>
+<section aria-labelledby="h-turns">
+<h2 id="h-turns">{{ doc.turns_heading }}</h2>
+<ol>
+{% for t in doc.turns %}<li class="turn {{ t.role }}" lang="{{ t.lang }}"><p class="meta"><strong>{{ t.role_label }}</strong> <time datetime="{{ t.at_iso }}">{{ t.at_label }}</time>{% for m in t.markers %} <span class="marker">{{ m }}</span>{% endfor %}</p><p class="text">{% for s in t.segments %}{% if s.kind == "math" %}{{ mnode(s.node) }}{% elif s.kind == "tex" %}<code aria-label="{{ doc.tex_label }}">{{ s.tex }}</code>{% else %}{{ s.text }}{% endif %}{% endfor %}</p></li>
+{% endfor %}</ol>
+</section>
+<section aria-labelledby="h-contests">
+<h2 id="h-contests">{{ doc.contests_heading }}</h2>
+<p class="notice">{{ doc.contests_label }}</p>
+{% if doc.contests %}<ol>
+{% for c in doc.contests %}<li><strong>{{ c.label }}</strong>: {{ c.status }} ({{ c.where }}){% if c.feedback %}<p>{{ c.feedback }}</p>{% endif %}</li>
+{% endfor %}</ol>{% else %}<p>{{ doc.contests_empty }}</p>{% endif %}
+</section>
+</main>
+<footer>
+<p>{{ doc.footer }}</p>
+</footer>
+</body>
+</html>

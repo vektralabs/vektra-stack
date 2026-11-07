@@ -126,6 +126,11 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ASSESS-014 | vektra-assess | 400 | Malformed or over-length request body; the explicit envelope, never the framework 422 (DEBT-035) |
 | ERR-ASSESS-015 | vektra-assess | 409 | Start refused: the discussion is not available for this student and activity now (`details.reason` carries the content-free reason code) |
 | ERR-ASSESS-016 | vektra-assess | 403 | The plugin version sent at mint is below the required minimum (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION` or the site's own minimum) |
+| ERR-ASSESS-017 | vektra-assess | 404 | Transcript not found: unknown, of another site, or not generated yet (generation follows the close within a minute) |
+| ERR-ASSESS-018 | vektra-assess | 401 | Download token missing, invalid, expired, already used or minted for another transcript (one envelope for every case) |
+| ERR-ASSESS-019 | vektra-assess | 400 | Resend refused: the body or the query names a recipient; recipients are the course's graders only (REQ-082). Explicit envelope, never the framework 422 |
+| ERR-ASSESS-020 | vektra-assess | 500 | The stored transcript does not decrypt or does not re-hash to its stored SHA-256: it is not served and the operator is alerted |
+| ERR-ASSESS-021 | vektra-assess | 403 | The teacher is not a grader of the activity according to a fresh worker check (absent or stale: a refresh is queued, retry) |
 
 ### Deliberately not listed
 

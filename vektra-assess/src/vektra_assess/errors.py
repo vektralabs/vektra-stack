@@ -2,8 +2,9 @@
 
 Codes are defined in ``vektra_shared.errors`` (the single registry, REQ-011); this module
 only re-exports them and builds the assess envelopes. Owning plans:
-.s2s/plans/20261101-154950-assess-foundations (001-004) and
-.s2s/plans/20261101-154950-assess-session-lifecycle (005-016).
+.s2s/plans/20261101-154950-assess-foundations (001-004),
+.s2s/plans/20261101-154950-assess-session-lifecycle (005-016) and
+.s2s/plans/20261101-154950-assess-transcript-delivery (017-021).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
 carries a student's text, a Moodle value or a row of another student.
@@ -28,6 +29,11 @@ from vektra_shared.errors import (
     ERR_ASSESS_014,
     ERR_ASSESS_015,
     ERR_ASSESS_016,
+    ERR_ASSESS_017,
+    ERR_ASSESS_018,
+    ERR_ASSESS_019,
+    ERR_ASSESS_020,
+    ERR_ASSESS_021,
     ErrorCategory,
     ErrorResponse,
 )
@@ -49,23 +55,33 @@ __all__ = [
     "ERR_ASSESS_014",
     "ERR_ASSESS_015",
     "ERR_ASSESS_016",
+    "ERR_ASSESS_017",
+    "ERR_ASSESS_018",
+    "ERR_ASSESS_019",
+    "ERR_ASSESS_020",
+    "ERR_ASSESS_021",
     "activation_refused",
     "assess_unavailable",
     "bad_request",
     "capacity_reached",
     "deadline_passed",
+    "download_token_invalid",
     "key_not_bound",
     "loginas_refused",
     "plugin_too_old",
     "rate_limited",
     "reply_pending",
+    "resend_recipient_forbidden",
     "session_closed",
     "session_not_found",
     "setup_check_not_found",
     "setup_check_too_soon",
     "start_refused",
     "state_conflict",
+    "teacher_unverified",
     "token_invalid",
+    "transcript_integrity",
+    "transcript_not_found",
 ]
 
 
@@ -275,3 +291,65 @@ CLOSE_MESSAGE_CODES = {
 
 def close_message_code(reason: str | None) -> str | None:
     return CLOSE_MESSAGE_CODES.get(reason) if reason else None
+
+
+# --- transcripts (plan assess-transcript-delivery) -------------------------------------------
+
+
+def transcript_not_found() -> ErrorResponse:
+    """404 for an unknown transcript, one of another site, or one not generated yet."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_017,
+        message="Transcript not found.",
+        remediation="The transcript may still be generating: retry in a minute.",
+    )
+
+
+def download_token_invalid() -> ErrorResponse:
+    """401: one envelope for every download-token failure (signature, audience, expiry, replay,
+    wrong transcript), so a caller learns nothing about which check refused it."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_018,
+        message="The download token is missing, invalid, expired or already used.",
+        remediation="Request a new download from Moodle.",
+    )
+
+
+def resend_recipient_forbidden() -> ErrorResponse:
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_019,
+        message="A resend cannot name a recipient.",
+        remediation=(
+            "Recipients are the course's graders, re-resolved from Moodle (REQ-082): send "
+            "the request without any recipient field."
+        ),
+    )
+
+
+def transcript_integrity() -> ErrorResponse:
+    return ErrorResponse(
+        category=ErrorCategory.CONFIGURATION,
+        code=ERR_ASSESS_020,
+        message="The stored transcript failed its integrity check and is not served.",
+        remediation="The operator has been alerted; see the assess.transcript.alert log.",
+    )
+
+
+def teacher_unverified(*, stale: bool) -> ErrorResponse:
+    """403. ``stale``: the grader list was absent or too old and a refresh WAS queued (retry);
+    otherwise the fresh list does not name the teacher (no refresh, no point retrying)."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_021,
+        message="The teacher could not be verified as a grader of this activity.",
+        remediation=(
+            "A fresh check has been queued: retry in a few seconds."
+            if stale
+            else "Moodle does not list this user as a grader of the activity's course; "
+            "a retry will not succeed until that changes in Moodle."
+        ),
+        details={"reason": "grader_check_stale" if stale else "not_a_grader"},
+    )

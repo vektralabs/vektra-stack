@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -133,8 +134,25 @@ def backoff_s(
     return step * (rng if rng is not None else _RNG).uniform(0.5, 1.0)
 
 
+class PermanentJobError(Exception):
+    """A handler's verdict that retrying cannot help (a tampered turn chain, a document that
+    fails the allowlist): the job goes ``dead`` at once, audited, with ``code`` as its error code.
+
+    ``code`` is a fixed word (``[a-z_]``, at most 40 characters), never content: anything else
+    is stored as ``handler_error``."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+_CODE = re.compile(r"^[a-z_]{1,40}$")
+
+
 def _error_code(exc: BaseException) -> str:
     """A fixed word per failure class: exception text can carry content and is never stored."""
+    if isinstance(exc, PermanentJobError):
+        return exc.code if _CODE.match(exc.code) else "handler_error"
     if isinstance(exc, TimeoutError):
         return "timeout"
     if isinstance(exc, HandlerNotBound):
@@ -426,7 +444,7 @@ class WorkerRuntime:
                 "error_type": type(exc).__name__,
             },
         )
-        if job.attempt >= job.max_attempts:
+        if job.attempt >= job.max_attempts or isinstance(exc, PermanentJobError):
             await self._audit(
                 "assess_job_dead",
                 {

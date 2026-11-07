@@ -43,8 +43,8 @@ router = APIRouter()
 #: the assess-local limiters the composition root must inject (REQ-083, plan 8 M5.3), each keyed
 #: by a hashable of the session or the student, never the API key: ``state`` by (site, student,
 #: activity), ``turns`` / ``retry`` / ``flag`` by session id, ``ui_page`` (the public discussion
-#: UI page, plan 9) by client address
-LIMITER_NAMES = ("state", "turns", "retry", "flag", "ui_page")
+#: UI page, plan 9) by client address, ``download`` (plan 10) by transcript and requester, ``resend`` by API key
+LIMITER_NAMES = ("state", "turns", "retry", "flag", "ui_page", "download", "resend")
 
 
 class Limiter(Protocol):
@@ -169,6 +169,33 @@ _PRE = text(
     "AND x.cmid = c.cmid AND x.student_userid = :u WHERE c.site_id = :s AND c.cmid = :c"
 )
 _PREDICTED = ("readable", "partial", "unreadable")
+_TRANSCRIPTS = text(
+    "SELECT s.id, s.session_no, t.id AS tid, t.ciphertext IS NOT NULL AS live "
+    "FROM assess_sessions s LEFT JOIN assess_transcripts t ON t.session_id = s.id "
+    "WHERE s.site_id = :s AND s.cmid = :c AND s.student_userid = :u AND s.state = 'CLOSED' "
+    "ORDER BY s.session_no"
+)
+
+
+async def transcripts_of(conn: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """The student's own transcripts, one per CLOSED session (plan 10): ``tid`` (the transcript
+    id, which is its session id), ``n`` (the session number) and ``available`` (generated and
+    not shredded).
+
+    ``purged`` is ALWAYS false in this release (review #9): ``shred_transcript`` deletes the row,
+    so nothing that survives a shred says it happened, and a purged transcript reads exactly like
+    one not generated yet (``available: false``). Plan assess-privacy-retention owns the purge
+    and its tombstone; it sets ``purged`` from that tombstone (and the 410 branch)."""
+    rows = (await conn.execute(_TRANSCRIPTS, params)).all()
+    return [
+        {
+            "tid": str(r.id),
+            "n": int(r.session_no),
+            "available": r.tid is not None and bool(r.live),
+            "purged": False,
+        }
+        for r in rows
+    ]
 
 
 async def enrich(
@@ -182,7 +209,10 @@ async def enrich(
       (the plugin compares it with the attempt its page shows: REQ-068 state 9);
     - ``pre_session{duration_min, recipients?, course_material_used, limits, privacy,
       previous_sessions, files?}``: eligible and reset_granted;
-    - ``closed_at``: closed (state 6); ``ended_at``: ended (state 11).
+    - ``closed_at``: closed (state 6); ``ended_at``: ended (state 11);
+    - ``transcripts[{tid, n, available, purged}]``: whenever the student has a CLOSED session
+      (plan 10), whatever the state; ``pre_session.recipients[{role, name}]`` comes from the
+      worker-written gate_inputs (the render check reads the course's graders), never an address.
     """
     state = view["state"]
     inputs = (row.inputs or {}) if row is not None else {}
@@ -199,6 +229,10 @@ async def enrich(
             elif s.duration_s:
                 active["minutes_left"] = minutes_left(int(s.duration_s))
             view["active"] = active
+    if row is not None and int(row.closed):
+        transcripts = await transcripts_of(conn, params)
+        if transcripts:
+            view["transcripts"] = transcripts
     if state == "closed":
         closed_at = (await conn.execute(_CLOSED_AT, params)).scalar()
         if closed_at is not None:

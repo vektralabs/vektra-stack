@@ -10,7 +10,7 @@ functions the capture readers already use (``mod_quiz_get_quizzes_by_courses``,
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
@@ -25,6 +25,9 @@ ActivityKind = Literal["quiz", "assign"]
 class ActivityRef:
     courseid: int
     instanceid: int  # quiz id or assignment id
+    #: the course's short name, from the same course list the resolution read (plan 10: the
+    #: transcript file name); not part of the identity
+    course_shortname: str | None = field(default=None, compare=False)
 
 
 async def _find(
@@ -78,5 +81,29 @@ async def resolve_activity(
         if isinstance(found, Unreadable):
             return found  # fail closed: an unreadable course is never skipped
         if found.value is not None:
-            return Readable(ActivityRef(courseid, found.value), found.evidence)
+            short = next(
+                (c.shortname for c in courses.value if c.courseid == courseid), None
+            )
+            return Readable(ActivityRef(courseid, found.value, short), found.evidence)
     return Unreadable(UnreadableReason.PARTIAL, "activity_not_in_student_courses")
+
+
+@reader
+async def resolve_in_course(
+    client: MoodleWsClient,
+    site: SiteRef,
+    *,
+    cmid: int,
+    kind: ActivityKind,
+    courseid: int,
+) -> Reading[ActivityRef]:
+    """The activity inside ONE given course, whoever is enrolled: for the course's graders of
+    a session whose student has since left the course (plan 10). The course id is only a hint
+    (the plugin's or the session's); it is accepted only when the cmid is found among that
+    course's activities of that kind, so it can never point at another activity."""
+    found = await _find(client, site, kind, courseid, cmid)
+    if isinstance(found, Unreadable):
+        return found
+    if found.value is None:
+        return Unreadable(UnreadableReason.PARTIAL, "activity_not_in_course")
+    return Readable(ActivityRef(courseid, found.value), found.evidence)

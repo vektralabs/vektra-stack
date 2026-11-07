@@ -209,8 +209,15 @@ class FakeStreamRunner:
         release: asyncio.Event | None = None,
         fail: BaseException | None = None,
         segment_delay_s: float = 0.0,
+        marks: tuple[str, ...] = (),
+        contests: tuple[Any, ...] = (),
+        language: str = "it",
     ) -> None:
         self.segments = segments
+        # what the result reports beyond the text (plan 10 turn notes)
+        self.marks = marks
+        self.contests = contests
+        self.language = language
         self.release = release
         self.fail = fail
         self.segment_delay_s = (
@@ -253,10 +260,10 @@ class FakeStreamRunner:
         yield TurnResult(
             interrupted=interrupted,
             text=text,
-            marks=(),
+            marks=self.marks,
             behaviour_class=None,
-            contest_entries=(),
-            language="it",
+            contest_entries=self.contests,
+            language=self.language,
             usage=TurnUsage(200, 20),
             call_records=(ProviderCallRecord(now, now, now, "ok"),),
             replaced_count=0,

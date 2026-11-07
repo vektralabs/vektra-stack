@@ -330,6 +330,22 @@ class VektraAssessSettings(BaseSettings):
         ),
     )
 
+    @model_validator(mode="after")
+    def _known_zone_when_enabled(self) -> VektraAssessSettings:
+        """An unknown zone is refused only while assess is ENABLED: a dormant feature must not
+        stop the API from starting (CodeRabbit 4503025935)."""
+        if not self.enabled:
+            return self
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(self.site_timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(
+                "VEKTRA_ASSESS_SITE_TIMEZONE is not a known IANA zone"
+            ) from None
+        return self
+
     @field_validator("llm_api_key", mode="before")
     @classmethod
     def _empty_key_is_none(cls, value: Any) -> Any:
@@ -597,6 +613,59 @@ class VektraAssessSettings(BaseSettings):
             "configuration does not exist yet (its store arrives with plan assess-privacy-retention; "
             "until then the gate fails closed and every Start is rolled back with "
             "privacy_not_configured). Honoured only with VEKTRA_ENV=development."
+        ),
+    )
+    # --- transcripts (plan assess-transcript-delivery) ---------------------------------------
+    site_timezone: str = Field(
+        "Europe/Rome",
+        alias="VEKTRA_ASSESS_SITE_TIMEZONE",
+        description=(
+            "IANA time zone of the transcript's timestamps and of the date in its file name "
+            "(BR-016: the date of CLOSED in the site time zone)."
+        ),
+    )
+    download_token_ttl_s: int = Field(
+        60,
+        ge=5,
+        le=120,
+        alias="VEKTRA_ASSESS_DOWNLOAD_TOKEN_TTL_S",
+        description=(
+            "Lifetime of a transcript download token (aud=transcript, single use): at most "
+            "120 s (ARCH-067)."
+        ),
+    )
+    download_rpm: int = Field(
+        10,
+        ge=2,
+        alias="VEKTRA_ASSESS_DOWNLOAD_RPM",
+        description=(
+            "Transcript operations per minute per transcript and requester, mints and downloads "
+            "counted together (one download = 2 operations, so at least 2); 429 beyond it."
+        ),
+    )
+    resend_min_interval_s: int = Field(
+        600,
+        ge=0,
+        alias="VEKTRA_ASSESS_RESEND_MIN_INTERVAL_S",
+        description=(
+            "Minimum time between two delivery rounds of the same transcript (each round mails "
+            "up to 3 graders): a resend sooner is 429 with Retry-After. Checked in the database "
+            "under the per-transcript lock, so concurrent resends cannot both pass."
+        ),
+    )
+    resend_rpm: int = Field(
+        6,
+        ge=1,
+        alias="VEKTRA_ASSESS_RESEND_RPM",
+        description="Resend calls per minute per API key (assess-local limiter); 429 beyond it.",
+    )
+    teacher_gate_max_age_s: int = Field(
+        120,
+        ge=10,
+        alias="VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S",
+        description=(
+            "Freshness bound of the worker-written grader list a teacher request is checked "
+            "against; older or absent -> 403 and a refresh is queued (fail closed)."
         ),
     )
     llm_allow_unactivated: bool = Field(

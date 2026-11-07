@@ -56,6 +56,16 @@ class AssessAuditEvent(enum.StrEnum):
     START_REFUSED = (
         "assess_start_refused"  # advisory refusal at the API, nothing consumed
     )
+    # plan assess-transcript-delivery
+    TRANSCRIPT_GENERATED = "assess_transcript_generated"
+    TRANSCRIPT_INTEGRITY_FAILED = "assess_transcript_integrity_failed"
+    TRANSCRIPT_RECIPIENTS_UNRESOLVED = "assess_transcript_recipients_unresolved"
+    DOWNLOAD_TOKEN_MINT = "assess_download_token_mint"
+    STUDENT_DOWNLOAD = "assess_student_download"
+    TEACHER_DOWNLOAD = "assess_teacher_download"
+    TRANSCRIPT_RESEND = (
+        "assess_transcript_resend"  # written by assess_enqueue_resend (0034)
+    )
 
 
 class Conn(Protocol):

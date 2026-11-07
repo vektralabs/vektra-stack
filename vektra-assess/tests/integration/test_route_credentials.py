@@ -34,6 +34,10 @@ EXPECTED = {
     ("POST", "/api/v1/assess/sessions/{sid}/finish"),
     ("POST", "/api/v1/assess/sessions/{sid}/retry"),
     ("POST", "/api/v1/assess/sessions/{sid}/turns/{turn_no}/flag"),
+    # plan 10
+    ("POST", "/api/v1/assess/transcripts/{tid}/download-token"),
+    ("GET", "/api/v1/assess/transcripts/{tid}"),
+    ("POST", "/api/v1/assess/transcripts/{tid}/resend"),
 }
 
 
@@ -114,6 +118,7 @@ async def test_no_route_accepts_a_query_string_or_cookie_credential(pg) -> None:
                 "site_id": str(w.site),
                 "report_id": str(uuid.uuid4()),
                 "turn_no": "1",
+                "tid": str(s.session_id),
             }
             before = (
                 await pg.run(

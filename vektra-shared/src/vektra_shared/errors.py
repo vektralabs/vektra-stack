@@ -183,6 +183,22 @@ ERR_ASSESS_013 = "ERR-ASSESS-013"  # Capacity reached: no Start admitted now
 ERR_ASSESS_014 = "ERR-ASSESS-014"  # Malformed or over-length request body
 ERR_ASSESS_015 = "ERR-ASSESS-015"  # Start refused: the discussion is not available
 ERR_ASSESS_016 = "ERR-ASSESS-016"  # Plugin version below the required minimum
+# Transcripts (plan assess-transcript-delivery)
+ERR_ASSESS_017 = (
+    "ERR-ASSESS-017"  # Transcript not found (unknown, other site, not generated)
+)
+ERR_ASSESS_018 = (
+    "ERR-ASSESS-018"  # Download token missing, invalid, expired or already used
+)
+ERR_ASSESS_019 = (
+    "ERR-ASSESS-019"  # Resend refused: the request names a recipient (REQ-082)
+)
+ERR_ASSESS_020 = (
+    "ERR-ASSESS-020"  # Stored transcript fails its integrity check: not served
+)
+ERR_ASSESS_021 = (
+    "ERR-ASSESS-021"  # Teacher not verified as a grader of the activity (fresh check)
+)
 
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
@@ -238,6 +254,11 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_ASSESS_014: 400,  # explicit envelope, never the 422 validation path (DEBT-035)
     ERR_ASSESS_015: 409,
     ERR_ASSESS_016: 403,
+    ERR_ASSESS_017: 404,
+    ERR_ASSESS_018: 401,
+    ERR_ASSESS_019: 400,  # explicit envelope, never the 422 validation path (DEBT-035)
+    ERR_ASSESS_020: 500,
+    ERR_ASSESS_021: 403,
 }
 
 

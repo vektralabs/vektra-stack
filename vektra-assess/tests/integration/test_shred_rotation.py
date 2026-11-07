@@ -73,20 +73,22 @@ async def test_shred_refuses_a_live_session_and_a_session_with_a_transcript(pg):
         await c.execute(
             text(
                 "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, "
-                "transcript_kid, content_hash) VALUES (:t, :s, :c, :w, :k, 'h')"
+                "transcript_kid, content_hash, turns_digest, filename, byte_size) "
+                "VALUES (:t, :s, :c, :w, :k, 'h', 'd', 'f.html', 1)"
             ),
             {"t": tid, "s": done, "c": ct, "w": wrapped, "k": tkid},
         )
         await c.execute(
             text(
-                "INSERT INTO assess_deliveries (transcript_id, recipient_hash) VALUES (:t, 'r')"
+                "INSERT INTO assess_deliveries (transcript_id, recipient_kind, recipient_userid) "
+                "VALUES (:t, 'grader', 12)"
             ),
             {"t": tid},
         )
         await c.commit()
     await pg.run(
         "super",
-        "INSERT INTO assess_transcript_download_tokens VALUES ('j', :t, 9, now(), NULL)",
+        "INSERT INTO assess_transcript_download_tokens (jti_hash, transcript_id, subject_userid, expires_at, audience_role) VALUES ('j', :t, 9, now(), 'owner')",
         {"t": tid},
     )
     async with pg.conn("worker") as c:
@@ -250,7 +252,8 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
     await pg.run(
         "worker",
         "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, "
-        "transcript_kid, content_hash) VALUES (:t, :s, :c, :w, :k, 'h')",
+        "transcript_kid, content_hash, turns_digest, filename, byte_size) "
+        "VALUES (:t, :s, :c, :w, :k, 'h', 'd', 'f.html', 1)",
         {"t": tid, "s": sid, "c": ct, "w": wrapped, "k": tkid},
     )
     kek2 = AssessKeyring(

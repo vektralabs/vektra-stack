@@ -21,6 +21,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -38,13 +39,20 @@ from vektra_assess.context.capture.capture import (
     capture_quiz,
 )
 from vektra_assess.context.capture.readers import MoodleCaptureReaders
+from vektra_assess.context.regrade import GradeReading
+from vektra_assess.context.snapshot import mark_str
 from vektra_assess.crypto.teacher_config import open_teacher_config
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.moodle import readers as r
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
-from vektra_assess.moodle.domain import AttemptState
-from vektra_assess.moodle.readers.resolve import ActivityRef, resolve_activity
+from vektra_assess.moodle.domain import AttemptState, GraderView
+from vektra_assess.moodle.readers.resolve import (
+    ActivityRef,
+    resolve_activity,
+    resolve_in_course,
+)
 from vektra_assess.moodle.result import Readable, Unreadable
+from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.preflight import MoodleGateFacts, StartTarget
 
 _SITE = text("SELECT base_url, release FROM assess_sites WHERE id = :s")
@@ -175,6 +183,114 @@ class MoodleStartSource:
             self._client, site, ref.courseid, target.student_userid
         )
         return enrol.value.is_student if isinstance(enrol, Readable) else None
+
+    def forget(self, session_id: UUID) -> None:
+        """Drop a resolution cached under ``session_id`` (a render check's scratch key)."""
+        self._resolved.pop(session_id)
+
+    @property
+    def cached(self) -> int:
+        return len(self._resolved)
+
+    async def _course_ref(
+        self, site: SiteRef, target: StartTarget
+    ) -> ActivityRef | None:
+        """The activity's course for the GRADER side (graders, close facts): resolved inside the
+        student's courses, or, once the student has left the course, inside the hinted course
+        when the cmid is found there (CodeRabbit 4503025969). Gates never use this fallback."""
+        ref, not_found = await self._resolve(site, target)
+        if ref is not None or not not_found or not target.courseid_hint:
+            return ref
+        kind = "quiz" if target.activity_type == "quiz" else "assign"
+        res = await resolve_in_course(
+            self._client,
+            site,
+            cmid=target.cmid,
+            kind=kind,
+            courseid=int(target.courseid_hint),
+        )
+        return res.value if isinstance(res, Readable) else None
+
+    async def graders(self, target: StartTarget) -> tuple[GraderView, ...] | None:
+        """The course's current graders (REQ-082); None when unreadable (never a guess)."""
+        site = await self._site(target)
+        if site is None:
+            return None
+        ref = await self._course_ref(site, target)
+        if ref is None:
+            return None
+        res = await r.read_graders(self._client, site, ref.courseid)
+        return res.value.graders if isinstance(res, Readable) else None
+
+    async def close_facts(
+        self,
+        *,
+        session_id: UUID,
+        site_id: UUID,
+        cmid: int,
+        student_userid: int,
+        courseid_hint: int | None,
+        activity_type: str,
+        sink: dict[str, Any] | None = None,
+    ) -> CloseFacts:
+        """What the transcript header needs from Moodle at close (plan 10): the course short
+        name, the grade as the student sees it NOW (release-gated: an unreleased grade never
+        leaves the reader) and the course's graders. Each part is None when unreadable."""
+        target = StartTarget(
+            session_id=session_id,
+            site_id=site_id,
+            cmid=cmid,
+            student_userid=student_userid,
+            courseid_hint=courseid_hint,
+            activity_type=activity_type,
+            session_no=1,
+            flags={},
+        )
+        site = await self._site(target)
+        if site is None:
+            return CloseFacts()
+        ref = await self._course_ref(site, target)
+        self._resolved.pop(target.session_id)
+        if ref is None:
+            return CloseFacts()
+        # each part goes to ``sink`` as soon as it is read (a caller that times out keeps it)
+        part: dict[str, Any] = sink if sink is not None else {}
+        # read with the resolution: no second course list
+        shortname = part["course_shortname"] = ref.course_shortname
+        grade = part["grade"] = await self._grade_now(site, ref, target)
+        graders = await r.read_graders(self._client, site, ref.courseid)
+        return CloseFacts(
+            course_shortname=shortname,
+            grade=grade,
+            graders=graders.value.graders if isinstance(graders, Readable) else None,
+        )
+
+    async def _grade_now(
+        self, site: SiteRef, ref: ActivityRef, target: StartTarget
+    ) -> Readable[GradeReading] | Unreadable:
+        """BR-010 at close: an assignment's grade counts as released only when the grade item is
+        visible AND the marking workflow (if any) says released; a quiz's when its item is."""
+        c, uid = self._client, target.student_userid
+        item = await r.read_grade_release(c, site, ref.courseid, uid, target.cmid)
+        if isinstance(item, Unreadable):
+            return item
+        released = not item.value.hidden
+        if released and target.activity_type != "quiz":
+            rel = await r.read_assign_release(
+                c, site, ref.courseid, ref.instanceid, uid
+            )
+            if isinstance(rel, Unreadable):
+                return rel
+            released = rel.value.released
+        v = item.value
+        return Readable(
+            GradeReading(
+                released=released,
+                grade=mark_str(v.grade) if released and v.grade is not None else None,
+                scale_label=v.grade_formatted if released else None,
+            ),
+            item.evidence,
+        )
 
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
         """The Moodle half of the START gates, read fresh; anything unreadable stays None."""

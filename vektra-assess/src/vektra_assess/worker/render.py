@@ -4,7 +4,9 @@
 hint) evaluate the SAME ``evaluate_start_gates`` the pre-flight uses, on fresh reads, and upsert:
 
 - ``assess_render_state``: the advisory REQ-068 state and the content-free reason code;
-- ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}`` only. ``opens_at``
+- ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 10)
+  ``graders`` (the course's grader user ids, for the API's fresh grader check) and ``recipients``
+  (``{role, name}`` of the transcript recipients, REQ-082) when Moodle could be read. ``opens_at``
   is set only when the date may be shown to THIS student (the activity's own close or the
   student's own override): the latest close of the cohort, which may be another student's
   extension, is never stored here, so ``GET /state`` cannot leak it.
@@ -18,15 +20,21 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 import structlog
 from sqlalchemy import text
 
 from vektra_assess.config import VektraAssessSettings
+from vektra_assess.delivery.recipients import (
+    GraderLike,
+    Recipient,
+    select_recipients,
+    state_view,
+)
 from vektra_assess.gates import ButtonState, Code, GateDecision, evaluate_start_gates
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
 from vektra_assess.worker.preflight import (
@@ -74,11 +82,24 @@ _DONE = text(
 )
 
 
+class GradersSource(Protocol):
+    async def graders(self, target: StartTarget) -> Sequence[GraderLike] | None: ...
+
+
 @dataclass(frozen=True)
 class RenderDeps:
     settings: VektraAssessSettings
     source: StartSource
     privacy: PrivacyCheck = privacy_not_configured
+    #: the course's graders (plan 10): ``graders`` (user ids, for the API's grader check) and
+    #: ``recipients`` (``{role, name}``, the pre-session screen) in gate_inputs; None = not read
+    graders: GradersSource | None = None
+
+
+@dataclass(frozen=True)
+class GradersRead:
+    graders: tuple[int, ...]
+    recipients: tuple[Recipient, ...]
 
 
 async def evaluate_render(
@@ -88,17 +109,34 @@ async def evaluate_render(
     userid: int,
     cmid: int,
     courseid_hint: int | None = None,
-) -> GateDecision:
+) -> tuple[GateDecision, StartTarget | None]:
+    """The advisory decision and the target it was evaluated for (None: no configuration row).
+
+    The target carries a scratch session id: the key of the source's resolution cache, so the
+    grader read that follows reuses the course the gates resolved; the handler forgets it after.
+    """
     settings = deps.settings
     async with acquire() as conn:
         act = (await conn.execute(_DB, {"s": site_id, "u": userid, "c": cmid})).first()
         privacy = await deps.privacy(conn, site_id) or (
             settings.privacy_allow_unset and settings.env == "development"
         )
-    if act is None or not act.enabled or act.cap_minutes is None:
-        return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED)
+    if act is None:
+        return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), None
+    target = StartTarget(
+        session_id=uuid.uuid4(),  # no session: a scratch key for the source's resolution cache
+        site_id=site_id,
+        cmid=cmid,
+        student_userid=userid,
+        courseid_hint=courseid_hint,
+        activity_type=str(act.activity_type),
+        session_no=int(act.closed_sessions) + 1,
+        flags=dict(act.flags or {}),
+    )
+    if not act.enabled or act.cap_minutes is None:
+        return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), target
     if int(act.open_sessions):
-        return GateDecision(Code.SESSION_OPEN, ButtonState.ACTIVE)
+        return GateDecision(Code.SESSION_OPEN, ButtonState.ACTIVE), target
     db = DbGateFacts(
         now=int(act.db_now),
         end_at=act.end_at,
@@ -107,33 +145,52 @@ async def evaluate_render(
         reset_grants=int(act.reset_grants),
         privacy_configured=bool(privacy),
     )
-    target = StartTarget(
-        session_id=uuid.uuid4(),  # no session: a scratch key for the source's resolution cache
-        site_id=site_id,
-        cmid=cmid,
-        student_userid=userid,
-        courseid_hint=courseid_hint,
-        activity_type=str(act.activity_type),
-        session_no=db.closed_sessions + 1,
-        flags=dict(act.flags or {}),
-    )
     try:
         facts = await deps.source.gate_facts(target)
     except Exception as exc:  # unreadable, never a guess
         log.warning("assess_render_facts_error", error_type=type(exc).__name__)
         facts = MoodleGateFacts()
-    return evaluate_start_gates(gate_inputs(target, db, facts))
+    return evaluate_start_gates(gate_inputs(target, db, facts)), target
+
+
+async def read_graders(deps: RenderDeps, target: StartTarget) -> GradersRead | None:
+    """The course's graders and the recipients the transcript will go to (REQ-082), for the
+    activity's REAL type (a quiz's cmid is resolved among the course's quizzes). Read even when
+    the activity is disabled or a session is open: a teacher still downloads earlier
+    transcripts. None when no source is configured or Moodle could not be read."""
+    if deps.graders is None:
+        return None
+    try:
+        graders = await deps.graders.graders(target)
+    except Exception as exc:
+        log.warning("assess_render_graders_error", error_type=type(exc).__name__)
+        return None
+    if graders is None:
+        return None
+    ids = tuple(sorted({g.userid for g in graders}))
+    chosen = select_recipients(graders, student_userid=target.student_userid)
+    return GradersRead(ids, chosen)
 
 
 async def store_render(
-    acquire: AcquireDb, site_id: UUID, userid: int, cmid: int, decision: GateDecision
+    acquire: AcquireDb,
+    site_id: UUID,
+    userid: int,
+    cmid: int,
+    decision: GateDecision,
+    graders: GradersRead | None = None,
 ) -> None:
-    inputs = {
+    inputs: dict[str, Any] = {
         "code": decision.code.value,
         "state": decision.state.value,
         "opens_at": decision.opens_at,
         "session_no_next": decision.session_no_next,
     }
+    if graders is not None:
+        # user ids for the grader check (plan 10 authz) and role + name for the pre-session
+        # screen: never an address (none is read)
+        inputs["graders"] = list(graders.graders)
+        inputs["recipients"] = state_view(graders.recipients)
     params = {"s": site_id, "u": userid, "c": cmid}
     async with acquire() as conn:
         async with conn.begin():
@@ -156,10 +213,18 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
         except (KeyError, ValueError):
             return  # a malformed job is a stale no-op
         hint = ctx.args.get("courseid")
-        decision = await evaluate_render(
-            deps, ctx.acquire, site_id, userid, cmid, int(hint) if hint else None
+        course = int(hint) if hint else None
+        decision, target = await evaluate_render(
+            deps, ctx.acquire, site_id, userid, cmid, course
         )
-        await store_render(ctx.acquire, site_id, userid, cmid, decision)
+        try:
+            graders = await read_graders(deps, target) if target else None
+        finally:
+            # the scratch key must not stay in the source's bounded resolution cache
+            forget = getattr(deps.source, "forget", None)
+            if target is not None and callable(forget):
+                forget(target.session_id)
+        await store_render(ctx.acquire, site_id, userid, cmid, decision, graders)
 
     return handle
 

@@ -228,3 +228,14 @@ no log files fails rather than passing.
   (ARCH-071 "rekeying the subject key later would touch every historical row").
 - Purge notice to graders is a new outbound flow; confirm with the DPO that it is covered by the
   notice (it carries no content).
+
+> Request from plan 10 (review of 10a, 2026-11-07): `GET /state` returns `transcripts[].purged`
+> as the constant `false` because `shred_transcript` deletes the transcript row and leaves no
+> trace. When this plan adds `assess_purge_records`, set `purged` from it in
+> `vektra_assess.api.state.transcripts_of` (LEFT JOIN on `transcript_id` or `session_id`) and
+> update the pinning test `test_session_state.py::test_transcripts_list_generated_and_shredded_ones`.
+
+> Request from plan 10 (CodeRabbit 4503029411 on PR #159): `transcript_generate` must not
+> recreate a transcript that was purged. When the purge tombstone lands, check it in
+> `vektra_assess.worker.transcript_gen.generate_transcript` before regenerating (a retry of a job
+> whose settlement failed could otherwise run after `shred_transcript`).

@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from vektra_assess.api.common import engine_of, fail, parse_body
+from vektra_assess.api.common import SITE_OF_KEY, engine_of, fail, parse_body
 from vektra_assess.api.deps import settings_of, tokens_of, version_at_least
 from vektra_assess.api.models import MintRequest
 from vektra_assess.audit import AssessAuditEvent, write_event
@@ -33,11 +33,6 @@ from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 router = APIRouter()
 _guard = require_exact_scope("assess:mint")
 
-_SITE_OF_KEY = text(
-    "SELECT s.id, s.min_plugin_version FROM assess_site_keys k "
-    "JOIN assess_sites s ON s.id = k.site_id "
-    "WHERE k.api_key_id = :k AND k.purpose = 'mint' AND s.disabled_at IS NULL"
-)
 _INSERT_JTI = text(
     "INSERT INTO assess_token_jti (jti, site_id, student_userid, cmid, courseid_hint, "
     "mint_key_id, expires_at) VALUES (:jti, :site, :sub, :cmid, :course, :key, :exp)"
@@ -51,7 +46,7 @@ async def mint_token(
     body = await parse_body(request, MintRequest)
     settings = settings_of(request)
     async with engine_of(request).begin() as conn:
-        site = (await conn.execute(_SITE_OF_KEY, {"k": key.key_id})).first()
+        site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": "mint"})).first()
         if site is None:
             raise fail(key_not_bound())
         site_id = site.id

@@ -146,6 +146,12 @@ jobs:
               # strings (PyYAML) and the composition used by the API and by the worker.
               "vektra_assess.llm", "vektra_assess.llm.runner", "vektra_assess.llm.shipped",
               "yaml", "vektra_app.assess_llm",
+              # Transcripts (plan assess-transcript-delivery): rendering, the allowlist, the
+              # TeX-to-MathML converter (pure Python) and the sealed store, in both processes.
+              "vektra_assess.transcript.render", "vektra_assess.transcript.allowlist",
+              "vektra_assess.transcript.mathml", "vektra_assess.transcript.store",
+              "latex2mathml.converter", "vektra_assess.worker.transcript_gen",
+              "vektra_assess.api.transcripts",
           ):
               importlib.import_module(name)
               print("imported", name, flush=True)
@@ -307,8 +313,9 @@ jobs:
               "test_moodle_live", "test_moodle_setup_live", "test_context_live",
               "test_idor_live", "test_req073_live",
               # the browser e2e needs Node and Chromium: the assess-ui-e2e job runs it,
-              # with VEKTRA_ASSESS_E2E_REQUIRED=1 (a skip there is a failure)
-              "test_ui_e2e",
+              # with VEKTRA_ASSESS_E2E_REQUIRED=1 (a skip there is a failure); the same job
+              # runs the transcript browser checks (plan 10: inertness, axe + Nu checker)
+              "test_ui_e2e", "test_transcript_inert_browser", "test_transcript_a11y",
           )
           cases = [
               c for c in root.iter("testcase")
@@ -474,8 +481,9 @@ jobs:
   # assess and UI routers over a migrated Postgres (testcontainers), framed by a Moodle stub
   # on a second origin, with a fake model. Specs: vektra-assess/ui/e2e/; harness:
   # vektra-assess/tests/integration/test_ui_e2e.py. It fails (never skips) without Node or
-  # Chromium, and passes only when every spec passed and the download spec ended SKIPPED as
-  # BLOCKED (the download endpoint is plan 10's).
+  # Chromium, and passes only when every spec passed, the transcript download included (plan
+  # 10). It also runs the transcript browser checks: hostile turns render inert (0 requests,
+  # 0 scripts) and rendered transcripts pass axe-core and the Nu HTML checker (Docker).
   assess-ui-e2e:
     name: Assess UI e2e (Playwright, axe, two origins)
     # Pinned: ubuntu-latest moved to 26.04 and Playwright 1.56 refuses it ("Playwright does not
@@ -513,7 +521,9 @@ jobs:
           VEKTRA_ASSESS_E2E_OUTPUT: ${{ github.workspace }}/test-results/playwright
         run: |
           mkdir -p test-results
-          uv run pytest vektra-assess/tests/integration/test_ui_e2e.py -m integration \
+          uv run pytest vektra-assess/tests/integration/test_ui_e2e.py \
+            vektra-assess/tests/integration/test_transcript_inert_browser.py \
+            vektra-assess/tests/integration/test_transcript_a11y.py -m integration \
             -v -s --tb=short --junitxml=test-results/assess-ui-e2e.xml
 
       - name: The e2e must have run, not skipped
@@ -526,7 +536,8 @@ jobs:
           cases = list(root.iter("testcase"))
           skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
           print(f"assess ui e2e: {len(cases)} collected, {len(skipped)} skipped")
-          if len(cases) != 2 or skipped:  # the browser run and the harness heartbeat test
+          # the browser run, the harness heartbeat test, transcript inertness, transcript a11y
+          if len(cases) != 4 or skipped:
               sys.exit(f"assess ui e2e did not run: collected={len(cases)} skipped={skipped}")
           PY
 

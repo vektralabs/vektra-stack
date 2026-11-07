@@ -10,6 +10,13 @@ import { ClosingView, saveBlob } from "./views/closing";
 import { ConfirmDialog, ControlsView, copyText, minutesLeft } from "./views/controls";
 import { h, LiveRegion } from "./views/dom";
 
+/** The file name the server chose (BR-016: identifiers only), from its ASCII
+ *  ``filename=`` parameter; anything unexpected falls back to a fixed name. */
+export function transcriptFileName(disposition: string | null): string {
+  const m = /filename="([A-Za-z0-9_.-]{1,120}\.html)"/.exec(disposition ?? "");
+  return m ? m[1] : "trascrizione.html";
+}
+
 /** How long the closing screen waits for the parent's download token. */
 export const DOWNLOAD_TIMEOUT_MS = 10_000;
 
@@ -533,7 +540,7 @@ export class App {
         cache: "no-store",
       });
       if (!r.ok) throw new Error(String(r.status));
-      saveBlob(await r.blob(), "trascrizione.html");
+      saveBlob(await r.blob(), transcriptFileName(r.headers.get("content-disposition")));
     } catch {
       if (closing) closing.textContent = M.downloadFailed;
     }

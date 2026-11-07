@@ -638,3 +638,79 @@ async def test_each_turn_hash_is_recorded_and_chained_at_persist(pg, worker) -> 
                 prev, row.turn_no, row.role, row.kind, plain
             )
             prev = row.turn_hash
+
+
+async def test_turn_notes_are_written_with_the_bot_turn(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Plan 10: post-check marks, contest entries and the reply language of a bot turn land in
+    ``assess_turn_notes`` in the turn's own transaction; a note-less turn still gets its row."""
+    from vektra_assess.llm.types import ContestEntry
+
+    runner = FakeStreamRunner(
+        marks=("values", "values", "safeguard"),
+        contests=(ContestEntry("C1", "proposed"),),
+        language="en",
+    )
+    async with world(pg, assess_runner=runner, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "Why did I lose a point on C1?"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202, r.text
+        await _wait_idle(w)
+        rows = await pg.run(
+            "super",
+            "SELECT turn_no, marks, contests, lang FROM assess_turn_notes WHERE session_id = :s",
+            {"s": s.session_id},
+        )
+        assert [tuple(r) for r in rows] == [
+            (4, ["values", "safeguard"], [{"label": "C1", "status": "proposed"}], "en")
+        ]
+        # the turn itself is untouched (BR-015): its chain still verifies
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_turns WHERE session_id = :s AND marker_flags = 0",
+                s=s.session_id,
+            )
+            == 4
+        )
+
+
+async def test_a_bot_turn_with_many_long_contest_markers_is_still_persisted(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #2: the note is deduplicated and capped, so it can never trip the table's size
+    CHECK (which would roll back the bot turn in the same transaction)."""
+    from vektra_assess.api.turns import MAX_NOTE_CONTESTS, MAX_NOTE_LABEL
+    from vektra_assess.llm.types import ContestEntry
+
+    contests = tuple(
+        ContestEntry(f"{i % 40:02d}" + "L" * 300, "confirmed") for i in range(200)
+    )
+    runner = FakeStreamRunner(
+        marks=tuple(f"m{i}" for i in range(50)), contests=contests
+    )
+    async with world(pg, assess_runner=runner, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "Contesto molti criteri"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202, r.text
+        await _wait_idle(w)
+        rows = await pg.run(
+            "super",
+            "SELECT t.kind, n.contests, cardinality(n.marks) FROM assess_turns t "
+            "JOIN assess_turn_notes n USING (session_id, turn_no) WHERE t.session_id = :s",
+            {"s": s.session_id},
+        )
+        assert (
+            len(rows) == 1 and rows[0][0] == "normal"
+        )  # the reply, not the interrupted marker
+        notes = rows[0][1]
+        assert len(notes) == MAX_NOTE_CONTESTS and rows[0][2] == 16
+        assert all(len(c["label"]) <= MAX_NOTE_LABEL for c in notes)
+        assert len({c["label"] for c in notes}) == len(notes)  # one per label

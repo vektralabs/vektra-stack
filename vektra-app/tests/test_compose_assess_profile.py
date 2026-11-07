@@ -256,6 +256,8 @@ def test_the_worker_gets_the_lifecycle_settings_the_api_reads(
         "VEKTRA_ASSESS_LLM_MAX_TOKENS",
         "VEKTRA_ASSESS_LLM_CONTEXT_WINDOW",
         "VEKTRA_ASSESS_OUTAGE_TIMEOUT_S",
+        # plan 10 (CodeRabbit 4503025939): transcript times and the file-name date
+        "VEKTRA_ASSESS_SITE_TIMEZONE",
     ):
         assert env.get(key), key
 

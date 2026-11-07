@@ -64,6 +64,7 @@ from vektra_assess.errors import (
 )
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.types import (
+    ContestEntry,
     PriorTurn,
     ProviderCallRecord,
     ProviderOutageError,
@@ -98,6 +99,70 @@ NOT_AN_OUTAGE = frozenset(
 _APPEND = text(
     "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
 )
+_NOTE = text(
+    "INSERT INTO assess_turn_notes (session_id, turn_no, marks, contests, lang) "
+    "VALUES (:s, :n, :m, CAST(:c AS jsonb), :l)"
+)
+
+
+@dataclass(frozen=True)
+class TurnNotes:
+    """What the transcript must mark on a bot turn and no turn column holds (revision 0034):
+    post-check stage codes, ``[[PUNTO_CONTESTATO]]`` entries (label + status, no text) and the
+    reply language."""
+
+    marks: tuple[str, ...]
+    contests: tuple[ContestEntry, ...]
+    lang: str | None
+
+
+#: bounds that keep a note far below the table's CHECK (``pg_column_size(contests) < 4096``,
+#: ``cardinality(marks) <= 16``): a CheckViolation would roll back the bot turn itself
+MAX_NOTE_MARKS = 16
+MAX_NOTE_CONTESTS = 16
+MAX_NOTE_LABEL = 64
+_MAX_STATUS = 16
+
+
+def _cut_utf8(text_: str, max_bytes: int) -> str:
+    return text_.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+
+
+#: the encoded budget of the contests JSON, with room for the JSONB header and overhead
+MAX_NOTE_CONTESTS_BYTES = 3000
+
+
+def turn_notes(result: TurnResult) -> TurnNotes:
+    """The note of one answered turn, deduplicated and capped (review #2): marks once each;
+    one contest entry per label (the LAST one wins, as in the transcript), the latest
+    ``MAX_NOTE_CONTESTS`` labels, each label cut to ``MAX_NOTE_LABEL`` UTF-8 BYTES (multibyte
+    text cannot inflate it), and the oldest entries dropped until the encoded JSON fits
+    ``MAX_NOTE_CONTESTS_BYTES`` (CodeRabbit 4503025930): never over the 4096-byte CHECK."""
+    latest: dict[str, str] = {}
+    for entry in result.contest_entries:
+        label = _cut_utf8(str(entry.label), MAX_NOTE_LABEL)
+        latest.pop(label, None)
+        latest[label] = _cut_utf8(str(entry.status), _MAX_STATUS)
+    kept = list(latest.items())[-MAX_NOTE_CONTESTS:]
+    while (
+        kept
+        and len(
+            json.dumps(
+                [{"label": k, "status": v} for k, v in kept], ensure_ascii=False
+            ).encode("utf-8")
+        )
+        > MAX_NOTE_CONTESTS_BYTES
+    ):
+        kept.pop(0)
+    return TurnNotes(
+        marks=tuple(dict.fromkeys(_cut_utf8(str(m), 32) for m in result.marks))[
+            :MAX_NOTE_MARKS
+        ],
+        contests=tuple(ContestEntry(label, status) for label, status in kept),  # type: ignore[arg-type]
+        lang=result.language if result.language in ("it", "en", "other") else None,
+    )
+
+
 _PENDING_TURN = text(
     "SELECT seq, pending_reply_since FROM assess_sessions "
     "WHERE id = :s AND state = 'ACTIVE' AND epoch = :e"
@@ -444,11 +509,14 @@ class TurnDriver:
         text_: str,
         tokens: int = 0,
         used: list[int] | None = None,
+        notes: TurnNotes | None = None,
     ) -> int | None:
         """Append one bot turn under the row lock; None when the session is not ACTIVE at this
         epoch or the function refuses (seq or chain moved, state changed). ``tokens`` (the
         answered turn's TurnUsage) is added to the session budget in the same transaction; the
-        new total is appended to ``used``."""
+        new total is appended to ``used``. ``notes`` (post-check marks, contest entries, reply
+        language) go to ``assess_turn_notes`` in the SAME transaction (plan 10): the transcript
+        marks them, and the turn row itself is never updated."""
         async with self.engine.begin() as conn:
             seq = (
                 await conn.execute(
@@ -473,6 +541,22 @@ class TurnDriver:
                 kind=kind,
                 text_=text_,
             )
+            if turn_no is not None and notes is not None:
+                await conn.execute(
+                    _NOTE,
+                    {
+                        "s": sid,
+                        "n": turn_no,
+                        "m": list(notes.marks),
+                        "c": json.dumps(
+                            [
+                                {"label": c.label, "status": c.status}
+                                for c in notes.contests
+                            ]
+                        ),
+                        "l": notes.lang,
+                    },
+                )
             if turn_no is not None and tokens > 0:
                 total = (
                     await conn.execute(_ADD_TOKENS, {"s": sid, "n": tokens})
@@ -498,7 +582,8 @@ class TurnDriver:
             text_ = f"{text_.rstrip()} {INTERRUPTED_REPLY}".strip()
         tokens = result.usage.prompt_tokens + result.usage.completion_tokens
         used: list[int] = []
-        turn_no = await self._append_bot(sid, epoch, kind, text_, tokens, used)
+        notes = turn_notes(result)
+        turn_no = await self._append_bot(sid, epoch, kind, text_, tokens, used, notes)
         if turn_no is None:
             # refused by assess_append_turn (state, epoch, seq or chain moved; from plan M3.3 also
             # past deadline + grace, by the database's own clock, which is left to decide): the

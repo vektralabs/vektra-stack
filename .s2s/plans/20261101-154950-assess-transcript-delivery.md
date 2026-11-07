@@ -155,7 +155,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 
 ### Transcript
 - [x] Migration (next revision): `assess_transcripts`, `assess_deliveries`, `assess_transcript_download_tokens`, enums, indexes `(status, not_before)`; add grants + SECURITY DEFINER `assess_enqueue_resend`; extend plan 2's grant-matrix CI assertion
-- [ ] `transcript/hashing.py`: canonical turn serialisation shared with plan 8's turn-time hash (single function, imported by both), `turns_digest`
+- [x] `transcript/hashing.py`: canonical turn serialisation shared with plan 8's turn-time hash (single function, imported by both), `turns_digest`
 - [ ] `transcript/templates/transcript.html.j2` + `render.py`: header/body/footer per Design Notes with semantic headings, lists, `lang`, a single static `<style>`; `StrictUndefined`; template grep test for `safe|Markup`
 - [ ] `transcript/allowlist.py`: post-render validator + rejection test corpus (one test per listed vector) + html5lib differential test
 - [ ] `transcript/mathml.py`: latex2mathml + presentation allowlist + escaped-TeX fallback; add dependency to `vektra-assess/pyproject.toml` and the BUG-027 module list (drop and record if it fails)

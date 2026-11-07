@@ -887,3 +887,42 @@ describe("a turn sent from another tab (review 5812478913, app.ts 302-320)", () 
     expect(tabB.pending.length).toBe(2);
   });
 });
+
+describe("a snapshot read while a reply is streaming", () => {
+  it("keeps the text streamed so far when the reply is still owed", async () => {
+    const { a, priv, pending, flush, root } = harness();
+    (a as unknown as { replyPending: boolean }).replyPending = true;
+    await priv.onEvent({ event: "reply_delta", data: '{"text":"prima parte"}' });
+    const read = (a as unknown as { refresh: () => Promise<unknown> }).refresh.call(a);
+    await flush();
+    pending[0].resolve(
+      view(
+        [
+          { turn_no: 1, role: "bot", text: "Benvenuto" },
+          { turn_no: 2, role: "student", text: "domanda" },
+        ],
+        { reply_pending: true },
+      ),
+    );
+    await read;
+    expect(root.querySelector("li.streaming")!.textContent).toContain("prima parte");
+    await priv.onEvent({ event: "reply_delta", data: '{"text":", seconda"}' });
+    expect(root.querySelector("li.streaming")!.textContent).toContain("prima parte, seconda");
+    expect(root.querySelectorAll("li.streaming").length).toBe(1);
+  });
+});
+
+describe("a session read that predates a state event", () => {
+  it("does not undo an outage that started while it was in flight", async () => {
+    const { a, priv, pending, flush } = harness();
+    (a as unknown as { render: (b: unknown) => void }).render.call(a, { name: "active" });
+    const read = (a as unknown as { refresh: () => Promise<unknown> }).refresh.call(a);
+    await flush();
+    await priv.onEvent({ event: "outage_start", data: "{}" });
+    pending[0].resolve(view([{ turn_no: 1, role: "bot", text: "a" }, { turn_no: 2, role: "student", text: "b" }], { reply_pending: true }));
+    await read;
+    expect(priv.state.name).toBe("outage");
+    expect(a.controls.retry.hidden).toBe(false);
+    expect(a.chat.list.querySelectorAll("article").length).toBe(2); // its turns still apply
+  });
+});

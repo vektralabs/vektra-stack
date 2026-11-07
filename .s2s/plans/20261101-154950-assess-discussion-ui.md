@@ -523,3 +523,8 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - assess_wiring.py 209-220 Outside development a site whose Moodle origin is http stops
     startup as the site's problem: "assess site <id> refused: moodle_origin_not_https", remedy
     https for that site or disable it (no longer reported as a UI-origin problem).
+  - Found by the e2e after the `turn_accepted` fix (this tab's own event now triggers a read
+    while the reply streams): a session read keeps the text streamed so far while a reply is
+    still owed (`ChatView.render(turns, keepStreaming)`), and a read issued before an
+    `outage_start`/`outage_end` keeps that event's state and deadline (only its turns apply).
+    6 consecutive green e2e runs after the fix.

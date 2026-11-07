@@ -101,9 +101,14 @@ export class ChatView {
     return this.root.querySelector("form") as HTMLFormElement;
   }
 
-  render(turns: Turn[]): void {
+  /** The persisted turns. ``keepStreaming``: a reply still owed keeps the text streamed so
+   *  far after them (a snapshot read mid-stream must not lose it); otherwise the persisted
+   *  reply replaces it. */
+  render(turns: Turn[], keepStreaming = false): void {
+    const streaming = keepStreaming ? this.streaming : null;
     this.list.replaceChildren(...turns.map((t) => turnElement(t, this.hooks)));
-    this.streaming = null;
+    if (streaming) this.list.append(streaming.li);
+    this.streaming = streaming;
   }
 
   add(turn: Turn): void {

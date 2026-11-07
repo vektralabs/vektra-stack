@@ -46,6 +46,7 @@ export class App {
   private pendingDownload: string | null = null;
   private downloadTimer: ReturnType<typeof setTimeout> | undefined; // the pending request's
   private bannerTimer: ReturnType<typeof setTimeout> | undefined; // hides the recovery text
+  private stateEvents = 0; // outage_start / outage_end received: a read older than one loses
   private replyPending = false; // the server owes a reply to the last student turn
   private readsIssued = 0; // GET /sessions/{sid} reads started, in order
   private readApplied = 0; // the newest read applied to the screen
@@ -241,21 +242,26 @@ export class App {
    *  closed: overlapping refreshes never put an older transcript back on screen. */
   private async refresh(): Promise<SessionView | null> {
     const seq = ++this.readsIssued;
+    const events = this.stateEvents;
     const view = await this.fetchSession();
     if (!view || seq < this.readApplied || this.state.name === "closed") return null;
     this.readApplied = seq;
-    this.apply(view);
+    // a state event (outage, recovery) that arrived while the read was in flight is newer
+    // than the read: its state and deadline stand, the read's turns still apply
+    this.apply(view, this.stateEvents !== events);
     return view;
   }
 
-  private apply(view: SessionView): void {
+  private apply(view: SessionView, stateIsOlder = false): void {
     if (this.state.name === "closed") return; // a late snapshot never reopens the screen
     this.lastTurnNo = Math.max(0, ...view.turns.map((t) => t.turn_no));
-    this.deadline = view.deadline_at ? Date.parse(view.deadline_at) : null;
-    this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
-    if (view.state !== "STARTING") this.chat.render(view.turns);
+    if (!stateIsOlder) {
+      this.deadline = view.deadline_at ? Date.parse(view.deadline_at) : null;
+      this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
+    }
+    if (view.state !== "STARTING") this.chat.render(view.turns, view.reply_pending);
     this.replyPending = view.reply_pending;
-    if (view.state === "OUTAGE") {
+    if (view.state === "OUTAGE" && !stateIsOlder) {
       // a resume into an outage gets no outage_start replayed: the snapshot says it, and the
       // frozen time left comes from it (4501070038, 4501070048)
       this.showOutage();
@@ -346,11 +352,13 @@ export class App {
       case "budget_warning":
         return;
       case "outage_start":
+        this.stateEvents++;
         this.showOutage();
         this.dispatch({ type: "outage_start" });
         if (this.state.name === "outage") this.live.say(M.outageLive); // why, and Riprova
         return;
       case "outage_end":
+        this.stateEvents++;
         this.banner.replaceChildren(h("p", { text: M.outageEnd }));
         if (typeof data.deadline_at === "string") this.deadline = Date.parse(data.deadline_at);
         this.dispatch({ type: "outage_end" });

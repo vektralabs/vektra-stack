@@ -46,7 +46,11 @@ from vektra_assess.keys import AssessKeyring
 from vektra_assess.moodle import readers as r
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
 from vektra_assess.moodle.domain import AttemptState, GraderView
-from vektra_assess.moodle.readers.resolve import ActivityRef, resolve_activity
+from vektra_assess.moodle.readers.resolve import (
+    ActivityRef,
+    resolve_activity,
+    resolve_in_course,
+)
 from vektra_assess.moodle.result import Readable, Unreadable
 from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.preflight import MoodleGateFacts, StartTarget
@@ -188,12 +192,31 @@ class MoodleStartSource:
     def cached(self) -> int:
         return len(self._resolved)
 
+    async def _course_ref(
+        self, site: SiteRef, target: StartTarget
+    ) -> ActivityRef | None:
+        """The activity's course for the GRADER side (graders, close facts): resolved inside the
+        student's courses, or, once the student has left the course, inside the hinted course
+        when the cmid is found there (CodeRabbit 4503025969). Gates never use this fallback."""
+        ref, not_found = await self._resolve(site, target)
+        if ref is not None or not not_found or not target.courseid_hint:
+            return ref
+        kind = "quiz" if target.activity_type == "quiz" else "assign"
+        res = await resolve_in_course(
+            self._client,
+            site,
+            cmid=target.cmid,
+            kind=kind,
+            courseid=int(target.courseid_hint),
+        )
+        return res.value if isinstance(res, Readable) else None
+
     async def graders(self, target: StartTarget) -> tuple[GraderView, ...] | None:
         """The course's current graders (REQ-082); None when unreadable (never a guess)."""
         site = await self._site(target)
         if site is None:
             return None
-        ref, _ = await self._resolve(site, target)
+        ref = await self._course_ref(site, target)
         if ref is None:
             return None
         res = await r.read_graders(self._client, site, ref.courseid)
@@ -225,7 +248,7 @@ class MoodleStartSource:
         site = await self._site(target)
         if site is None:
             return CloseFacts()
-        ref, _ = await self._resolve(site, target)
+        ref = await self._course_ref(site, target)
         self._resolved.pop(target.session_id)
         if ref is None:
             return CloseFacts()

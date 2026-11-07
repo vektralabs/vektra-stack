@@ -415,3 +415,41 @@ async def test_close_facts_read_the_course_list_once(pg, worker) -> None:  # typ
         assert names.count("core_enrol_get_users_courses") == 1, names
         assert "EAASSESS" in (await _open(pg, ring, s.session_id)).decode()
         assert src.cached == 0
+
+
+async def test_graders_resolve_after_the_student_left_the_course(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4503025969: the student is no longer enrolled anywhere, yet the course's
+    graders are read through the session's course hint, accepted because the cmid is found
+    in that course; a hint naming a course without the cmid resolves nothing."""
+    from assess_moodle_support import Replay, make_client, manifest
+    from test_context_capture import InProcessParser
+
+    from vektra_assess.worker.start_source import MoodleStartSource
+
+    ring = transcript_ring()
+    course = int(manifest("4.3")["courseid"])
+    for hint, expect_rows in ((course, 2), (course + 999, 0)):
+        async with world(pg) as w:
+            s = await _closed(w, worker)
+            await pg.run(
+                "super",
+                "UPDATE assess_sessions SET courseid_hint = :c WHERE id = :s",
+                {"c": hint, "s": s.session_id},
+            )
+            replay = Replay("4.3")
+            replay.mutate = lambda fn, body: (
+                [] if fn == "core_enrol_get_users_courses" else body
+            )
+            src = MoodleStartSource(
+                make_client(replay), InProcessParser(), worker.connect
+            )
+            deps = GenerationDeps(kek=s.kek, transcript_kek=ring, facts=src)
+            assert await generate_transcript(deps, worker.connect, s.session_id)
+            assert (
+                await count(
+                    pg,
+                    "SELECT count(*) FROM assess_deliveries WHERE transcript_id = :t",
+                    t=s.session_id,
+                )
+                == expect_rows
+            )

@@ -160,17 +160,17 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 
 ## Acceptance Criteria
 
-- [ ] The UI route response carries the exact CSP with the site's single `frame-ancestors` origin and no `X-Frame-Options`; other routes still return `X-Frame-Options: DENY` (header bytes asserted) (ARCH-076)
-- [ ] A page on a third origin cannot render the iframe (browser CSP violation recorded in Playwright) (ARCH-076)
-- [ ] Setup check reports `ui_origin_distinct` MISSING for a same-origin or non-https configuration, OK otherwise; startup refuses the same configuration outside development (ARCH-076, REQ-079)
-- [ ] No assess route accepts a token from the query string: route inventory passes and `?token=` alone returns 401 (ADR-0030)
-- [ ] The iframe ignores postMessage from a non-configured origin (handoff with a valid token from a wrong origin → no network request issued, verified via Playwright request log) (ARCH-076)
-- [ ] Full e2e flow works with streaming over fetch: the reply text in the DOM equals the persisted turn text returned by `GET /sessions/{sid}` byte-for-byte (REQ-102)
-- [ ] Fine confirm → `GET /sessions/{sid}` reports CLOSED(finished) and exactly one transcript row exists; Annulla → state ACTIVE and deadline value unchanged (REQ-072)
-- [ ] The closing-screen download returns bytes whose SHA-256 equals the stored transcript hash while delivery is still PENDING (REQ-072, REQ-088)
-- [ ] Selecting a picker item creates 0 turn rows (row count before/after) until Invia (REQ-102)
-- [ ] Every control is reachable and operable keyboard-only; axe reports 0 WCAG 2.1 AA violations on every state; no horizontal scroll at 320 px / 200% zoom; exactly one live-region announcement per completed reply and per warning (NFR-016)
-- [ ] If REQ-103 is built: one flag → exactly one marker row; flag after CLOSED → rejected and the control is absent (REQ-103)
+- [x] The UI route response carries the exact CSP with the site's single `frame-ancestors` origin and no `X-Frame-Options`; other routes still return `X-Frame-Options: DENY` (header bytes asserted) (ARCH-076) — evidence: vektra-assess/tests/integration/test_ui_router.py::test_the_page_headers_byte_for_byte, ::test_an_unknown_site_may_be_framed_by_nobody, vektra-app/tests/test_assess_startup.py::test_every_route_but_the_discussion_ui_denies_framing
+- [ ] A page on a third origin cannot render the iframe (browser CSP violation recorded in Playwright) (ARCH-076) — PENDING: the Playwright two-origin harness is not built yet (plan 9 e2e task); the CSP bytes are proven by test_ui_router.py
+- [x] Setup check reports `ui_origin_distinct` MISSING for a same-origin or non-https configuration, OK otherwise; startup refuses the same configuration outside development (ARCH-076, REQ-079) — evidence: vektra-assess/tests/test_moodle_setup_check.py::test_ui_origin_distinct_item, vektra-app/tests/test_assess_startup.py::test_startup_refuses_a_ui_origin_not_distinct_or_not_https, ::test_the_ui_origin_setting_is_a_bare_origin
+- [x] No assess route accepts a token from the query string: route inventory passes and `?token=` alone returns 401 (ADR-0030) — evidence: vektra-assess/tests/test_route_inventory.py, vektra-assess/tests/integration/test_route_credentials.py::test_no_route_accepts_a_query_string_or_cookie_credential
+- [ ] The iframe ignores postMessage from a non-configured origin (handoff with a valid token from a wrong origin → no network request issued, verified via Playwright request log) (ARCH-076) — PENDING (Playwright request log not built); unit evidence: vektra-assess/ui/test/bridge.test.ts (wrong origin, wrong source, wrong version, unknown type ignored)
+- [ ] Full e2e flow works with streaming over fetch: the reply text in the DOM equals the persisted turn text returned by `GET /sessions/{sid}` byte-for-byte (REQ-102) — PENDING: Playwright e2e not built; unit evidence: ui/test/sse.test.ts, ui/src/app.ts replaces the streamed text with the persisted turns after each reply
+- [ ] Fine confirm → `GET /sessions/{sid}` reports CLOSED(finished) and exactly one transcript row exists; Annulla → state ACTIVE and deadline value unchanged (REQ-072) — PENDING at UI level (Playwright); server side proven by vektra-assess/tests/integration/test_session_finish.py and the UI dialog by ui/test/controls.test.ts
+- [ ] The closing-screen download returns bytes whose SHA-256 equals the stored transcript hash while delivery is still PENDING (REQ-072, REQ-088) — BLOCKED: the transcript download endpoint and download tokens are plan 10's, not shipped; the UI flow (download-token request, bearer fetch, <a download>) is in ui/src/app.ts
+- [ ] Selecting a picker item creates 0 turn rows (row count before/after) until Invia (REQ-102) — NOT BUILT: the item picker (SHOULD) needs item labels that GET /sessions/{sid} does not carry (see Notes)
+- [ ] Every control is reachable and operable keyboard-only; axe reports 0 WCAG 2.1 AA violations on every state; no horizontal scroll at 320 px / 200% zoom; exactly one live-region announcement per completed reply and per warning (NFR-016) — PENDING: axe / keyboard / reflow Playwright suite not built yet; unit evidence: one live announcement per reply and per warning (ui/test/chat.test.ts, ui/test/app.test.ts), <dialog> focus handling (ui/test/controls.test.ts)
+- [x] If REQ-103 is built: one flag → exactly one marker row; flag after CLOSED → rejected and the control is absent (REQ-103) — evidence: vektra-assess/tests/integration/test_session_flag.py (one flag, one marker; after CLOSED 409), vektra-assess/ui/test/app.test.ts ('REQ-103 flag': one confirmation, one POST, marker, no control after closed)
 
 ## Testing Approach
 

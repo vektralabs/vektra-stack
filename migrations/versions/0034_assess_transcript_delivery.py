@@ -244,10 +244,10 @@ RESEND = """
         END IF;
         -- at most one round per interval and transcript (each round mails up to 3 people);
         -- checked under the lock, so concurrent calls cannot both pass
-        IF EXISTS (SELECT 1 FROM public.assess_deliveries d
+        IF p_min_interval_s > 0 AND EXISTS (SELECT 1 FROM public.assess_deliveries d
                     WHERE d.transcript_id = p_tid AND d.kind = 'transcript'
                       AND d.created_at > pg_catalog.now()
-                          - pg_catalog.make_interval(secs => GREATEST(p_min_interval_s, 0))) THEN
+                          - pg_catalog.make_interval(secs => p_min_interval_s)) THEN
             RETURN -1;
         END IF;
         INSERT INTO public.assess_deliveries

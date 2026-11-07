@@ -157,3 +157,35 @@ async def test_a_round_inside_the_minimum_interval_is_refused_under_the_lock(
         "api", "SELECT assess_enqueue_resend(:t, 'grader:11', 600)", {"t": tid}
     )
     assert got[0][0] == -1  # the new round restarts the interval
+
+
+async def test_concurrent_resends_serialise_on_the_transcript_lock(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (r1): overlapping calls on separate connections. Without an interval
+    every call gets its own round; with one, exactly one call wins and the others get -1."""
+    import asyncio
+
+    async def call(tid, gap: int) -> int:  # type: ignore[no-untyped-def]
+        return int(
+            (
+                await pg.run(
+                    "api",
+                    "SELECT assess_enqueue_resend(:t, 'grader:11', :g)",
+                    {"t": tid, "g": gap},
+                )
+            )[0][0]
+        )
+
+    tid = await _transcript(pg)
+    await _deliver(pg, tid, 11, "SENT")
+    rounds = await asyncio.gather(*(call(tid, 0) for _ in range(5)))
+    assert sorted(rounds) == [2, 3, 4, 5, 6]
+    tid2 = await _transcript(pg)
+    await _deliver(pg, tid2, 11, "SENT")
+    await pg.run(
+        "super",
+        "UPDATE assess_deliveries SET created_at = now() - interval '1 hour' "
+        "WHERE transcript_id = :t",
+        {"t": tid2},
+    )
+    rounds = await asyncio.gather(*(call(tid2, 600) for _ in range(5)))
+    assert sorted(rounds) == [-1, -1, -1, -1, 2]

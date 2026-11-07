@@ -455,3 +455,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     (`loadCommitted`: retried after 1 s and 3 s, then the unavailable text; reloading
     resumes); the stream's first `state` event (ACTIVE/OUTAGE while preparing, the session
     committed before the stream opened) loads it the same way.
+  - 4501067236, 4501070051 An outage is announced once in the polite region, naming Riprova;
+    unavailable is announced and disables the composer and Fine and closes an open dialog, so
+    nothing can be sent with the cleared token.

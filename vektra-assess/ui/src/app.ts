@@ -287,7 +287,9 @@ export class App {
       case "outage_start":
         this.banner.replaceChildren(h("p", { text: M.outage }));
         this.banner.hidden = false;
-        return this.dispatch({ type: "outage_start" });
+        this.dispatch({ type: "outage_start" });
+        if (this.state.name === "outage") this.live.say(M.outageLive); // why, and Riprova
+        return;
       case "outage_end":
         this.banner.replaceChildren(h("p", { text: M.outageEnd }));
         if (typeof data.deadline_at === "string") this.deadline = Date.parse(data.deadline_at);
@@ -485,6 +487,12 @@ export class App {
       case "unavailable":
         this.abort.abort();
         this.token = null;
+        // nothing can be sent any more: no composer, no Fine, no dialog left open over it
+        this.controls.disable();
+        if (this.controls.dialog.open) this.controls.dialog.close("cancel");
+        if (this.flagDialog.dialog.open) this.flagDialog.dialog.close("cancel");
+        this.chat.setEnabled(false, "");
+        this.live.say(M.unavailable);
         return this.setStatus(M.unavailable);
       default:
         return;

@@ -481,3 +481,28 @@ describe("the snapshot after the commit (4501067234, 4501070029)", () => {
     expect(priv.state.name).toBe("active");
   });
 });
+
+describe("outage and unavailable (4501067236, 4501070051)", () => {
+  it("an outage is announced once, with Riprova", async () => {
+    const { a, priv } = harness();
+    await priv.onEvent({ event: "outage_start", data: "{}" });
+    expect(a.live.el.textContent).toBe(
+      "Assistente temporaneamente non disponibile: questo tempo non ti viene conteggiato. Puoi usare Riprova.",
+    );
+  });
+
+  it("unavailable is announced and disables every session action", () => {
+    dialogPolyfill();
+    const { a, priv } = harness();
+    (a as unknown as { render: (b: unknown) => void }).render.call(a, { name: "active" });
+    a.controls.finish.click(); // the Fine dialog is open when the stream dies
+    (a as unknown as { dispatch: (x: unknown) => void }).dispatch.call(a, { type: "unavailable" });
+    expect(priv.state.name).toBe("unavailable");
+    expect(a.live.el.textContent).toBe(
+      "La discussione non è disponibile in questo momento. Riprova più tardi.",
+    );
+    expect(a.chat.composer.disabled).toBe(true);
+    expect(a.controls.finish.disabled).toBe(true);
+    expect(a.controls.dialog.hasAttribute("open")).toBe(false);
+  });
+});

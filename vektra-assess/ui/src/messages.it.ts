@@ -30,6 +30,8 @@ export const M = {
     min === 1 ? "Attenzione: manca 1 minuto alla fine" : `Attenzione: mancano ${min} minuti alla fine`,
   outage:
     "Assistente temporaneamente non disponibile: questo tempo non ti viene conteggiato.",
+  outageLive:
+    "Assistente temporaneamente non disponibile: questo tempo non ti viene conteggiato. Puoi usare Riprova.",
   outageEnd: "L'assistente è di nuovo disponibile; il tempo dell'interruzione ti è stato restituito.",
   sendFailed: "Il messaggio non è stato inviato. Riprova.",
   replyPending: "Attendi la risposta prima di scrivere ancora.",

@@ -78,7 +78,9 @@ export class ChatView {
     this.composer = h("textarea", {
       id: "composer",
       rows: "3",
-      maxlength: String(maxChars),
+      // the limit is enforced in code points on send, like the server (len() of the text);
+      // maxlength counts UTF-16 units, so it is only a wide upper bound: 2 units per code point
+      maxlength: String(2 * maxChars),
       "aria-describedby": "composer-help",
     });
     // type="button", never a form submission: the plugin's iframe sandbox has no allow-forms,

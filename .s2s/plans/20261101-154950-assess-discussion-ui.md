@@ -491,3 +491,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501067221 Frame denial is lifted only for `router.framable`: the page path itself and
     `/assets/<name>` for a name the built manifest lists; anything else under `/ui/`
     (`/ui/probe`, an unknown asset) keeps `X-Frame-Options: DENY`.
+  - 4501070009 (follow-up) The limit is enforced on send in code points (`[...text].length`,
+    the server's `len()`): over it the text stays and the help says "Il messaggio è troppo
+    lungo: al massimo N caratteri."; `maxlength` is only a wide bound (2 UTF-16 units per code
+    point), so `😀a` with a limit of 2 is sent.

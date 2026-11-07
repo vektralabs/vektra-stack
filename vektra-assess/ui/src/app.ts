@@ -71,7 +71,7 @@ export class App {
     private readonly bridge: Bridge,
     root: HTMLElement,
     private readonly fetchImpl: typeof fetch = (...a) => fetch(...a),
-    maxChars: number = cfg.maxMessageChars ?? 2000,
+    private readonly maxChars: number = cfg.maxMessageChars ?? 2000,
   ) {
     this.chat = new ChatView(
       {
@@ -354,6 +354,8 @@ export class App {
   private async sendTurn(): Promise<void> {
     const text = this.chat.composer.value;
     if (!text.trim() || this.state.name !== "active") return;
+    // the server's count: code points (4501070009); the student keeps the text to shorten it
+    if ([...text].length > this.maxChars) return this.chat.setEnabled(true, M.tooLong(this.maxChars));
     this.chat.setEnabled(false, "");
     // owed from the moment it is sent: the reply's events may arrive before the 202 is read
     this.replyPending = true;

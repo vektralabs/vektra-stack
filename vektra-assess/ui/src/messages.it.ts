@@ -54,6 +54,7 @@ export const M = {
   flagConfirmText: "La segnalazione resta nella trascrizione che riceve il docente.",
   flagYes: "Segnala",
   flagFailed: "Segnalazione non inviata. Riprova.",
+  tooLong: (max: number) => `Il messaggio è troppo lungo: al massimo ${max} caratteri.`,
   reloadToResume: "La discussione è stata avviata: ricarica la pagina per riprenderla.",
   finishFailed: "La discussione non è stata conclusa. Riprova.",
   flagged: "segnalato dallo studente",

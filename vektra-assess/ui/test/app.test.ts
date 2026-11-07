@@ -667,7 +667,7 @@ describe("the composer limit (4501070009)", () => {
       new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
       document.createElement("main"),
     );
-    expect(a.chat.composer.maxLength).toBe(3500);
+    expect(a.chat.composer.maxLength).toBe(7000); // 2 UTF-16 units per code point at most
   });
 });
 
@@ -688,5 +688,46 @@ describe("replayed reply events after a resume (4501070057)", () => {
     (a as unknown as { replyPending: boolean }).replyPending = true;
     await priv.onEvent({ event: "reply_delta", data: '{"text":"nuova"}' });
     expect(a.chat.list.querySelector("li.streaming")!.textContent).toContain("nuova");
+  });
+});
+
+describe("the composer limit counts code points like the server (4501070009)", () => {
+  function limited(max: number) {
+    const calls: string[] = [];
+    const root = document.createElement("main");
+    document.body.replaceChildren(root);
+    const a = new App(
+      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api", maxMessageChars: max },
+      new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
+      root,
+      (async (url: string, init: RequestInit) => {
+        calls.push(String(init.body));
+        return Response.json({ session_id: "S", turn_no: 2 }, { status: 202 });
+      }) as unknown as typeof fetch,
+    );
+    const priv = a as unknown as { state: unknown; sid: string; sendTurn: () => Promise<void> };
+    priv.state = { name: "active" };
+    priv.sid = "S";
+    root.append(a.chat.root);
+    return { a, priv, calls, root };
+  }
+
+  it("a non-BMP character is one: 😀a fits a limit of 2", async () => {
+    const { a, priv, calls } = limited(2);
+    expect(a.chat.composer.maxLength).toBeGreaterThanOrEqual(4); // never stricter than the server
+    a.chat.composer.value = "😀a";
+    await priv.sendTurn();
+    expect(calls).toEqual(['{"text":"😀a"}']);
+  });
+
+  it("one code point over the limit is not sent and says why", async () => {
+    const { a, priv, calls, root } = limited(2);
+    a.chat.composer.value = "😀ab";
+    await priv.sendTurn();
+    expect(calls).toEqual([]);
+    expect(root.querySelector("#composer-help")!.textContent).toBe(
+      "Il messaggio è troppo lungo: al massimo 2 caratteri.",
+    );
+    expect(a.chat.composer.disabled).toBe(false);
   });
 });

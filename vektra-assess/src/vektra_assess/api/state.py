@@ -152,6 +152,96 @@ def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
     return view
 
 
+_ACTIVE = text(
+    "SELECT s.session_no, s.state, s.deadline_at, s.duration_s, now() AS db_now, "
+    "(SELECT max(i.started_at) FROM assess_outage_incidents i WHERE i.session_id = s.id "
+    "AND i.ended_at IS NULL) AS paused_at FROM assess_sessions s WHERE s.id = :sid"
+)
+_CLOSED_AT = text(
+    "SELECT max(closed_at) FROM assess_sessions WHERE site_id = :s AND cmid = :c "
+    "AND student_userid = :u AND state = 'CLOSED'"
+)
+_PRE = text(
+    "SELECT c.cap_minutes, c.rag_enabled, c.end_at, coalesce(x.extra_seconds, 0) AS extra_s "
+    "FROM assess_activity_config c LEFT JOIN assess_extra_time x ON x.site_id = c.site_id "
+    "AND x.cmid = c.cmid AND x.student_userid = :u WHERE c.site_id = :s AND c.cmid = :c"
+)
+_PREDICTED = ("readable", "partial", "unreadable")
+
+
+async def enrich(
+    conn: Any, view: dict[str, Any], row: Any, params: dict[str, Any], settings: Any
+) -> dict[str, Any]:
+    """The extended contract agreed with the plugin (plan 9): optional fields, present only in
+    the states that call for them, data only (the plugin owns every text).
+
+    - ``active{session_no, minutes_left?, deadline_at?}``: active and starting;
+    - ``selected_attempt{attempt_no}``: when the render worker recorded the selected attempt
+      (the plugin compares it with the attempt its page shows: REQ-068 state 9);
+    - ``pre_session{duration_min, recipients?, course_material_used, limits, privacy,
+      previous_sessions, files?}``: eligible and reset_granted;
+    - ``closed_at``: closed (state 6); ``ended_at``: ended (state 11).
+    """
+    state = view["state"]
+    inputs = (row.inputs or {}) if row is not None else {}
+    if state in ("active", "starting") and view.get("session_id"):
+        s = (await conn.execute(_ACTIVE, {"sid": view["session_id"]})).first()
+        if s is not None:
+            active: dict[str, Any] = {"session_no": int(s.session_no)}
+            if s.deadline_at is not None:
+                now = s.paused_at or s.db_now  # the timer is frozen in OUTAGE
+                left = max(0, int((s.deadline_at - now).total_seconds()))
+                active["minutes_left"] = left // 60
+                active["deadline_at"] = s.deadline_at.isoformat()
+            elif s.duration_s:
+                active["minutes_left"] = int(s.duration_s) // 60
+            view["active"] = active
+    if state == "closed":
+        closed_at = (await conn.execute(_CLOSED_AT, params)).scalar()
+        if closed_at is not None:
+            view["closed_at"] = closed_at.isoformat()
+    attempt_no = inputs.get("selected_attempt_no")
+    if isinstance(attempt_no, int) and state not in ("not_enabled", "closed"):
+        view["selected_attempt"] = {"attempt_no": attempt_no}
+    if state in ("ended", "eligible", "reset_granted"):
+        pre = (await conn.execute(_PRE, params)).first()
+        if state == "ended" and pre is not None and pre.end_at is not None:
+            view["ended_at"] = pre.end_at.isoformat()
+        if state in ("eligible", "reset_granted") and pre is not None:
+            privacy: dict[str, Any] = {
+                "notice_version": settings.privacy_notice_version
+            }
+            if settings.privacy_notice_url:
+                privacy["notice_url"] = settings.privacy_notice_url
+            pre_session: dict[str, Any] = {
+                "duration_min": (int(pre.cap_minutes or 0) * 60 + int(pre.extra_s))
+                // 60,
+                "course_material_used": bool(pre.rag_enabled),
+                "limits": {
+                    "max_message_chars": settings.max_message_chars,
+                    "messages_per_min": settings.messages_per_min,
+                },
+                "privacy": privacy,
+                "previous_sessions": int(row.closed) if row is not None else 0,
+            }
+            recipients = inputs.get("recipients")
+            if isinstance(recipients, list):
+                pre_session["recipients"] = [
+                    {"role": str(r["role"]), "name": str(r["name"])}
+                    for r in recipients
+                    if isinstance(r, dict) and {"role", "name"} <= set(r)
+                ]
+            files = inputs.get("files")
+            if isinstance(files, list):
+                pre_session["files"] = [
+                    {"name": str(f["name"]), "predicted": str(f["predicted"])}
+                    for f in files
+                    if isinstance(f, dict) and f.get("predicted") in _PREDICTED
+                ]
+            view["pre_session"] = pre_session
+    return view
+
+
 @router.get("/state")
 async def get_state(
     request: Request, claims: PreClaims = Depends(verify_assess_token_pre)
@@ -168,6 +258,7 @@ async def get_state(
     async with engine_of(request).begin() as conn:
         row = (await conn.execute(_FACTS, params)).first()
         view = state_view(row, settings.render_fresh_s)
+        view = await enrich(conn, view, row, params, settings)
         if view["reason"] not in ("not_enabled", "session_open", "already_discussed"):
             hint = (await conn.execute(_HINT, {"j": claims.jti})).scalar()
             await queue_render_check(conn, claims.site, claims.sub, claims.cmid, hint)

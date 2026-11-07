@@ -116,7 +116,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [x] Add settings `VEKTRA_ASSESS_UI_ORIGIN` (alias-style in the assess settings class); startup step in `_run_startup()` refuses a non-https origin outside development and an origin equal to any registered site's `moodle_origin`
 - [x] Add `moodle_origin` to the site record if absent (next revision in the chain) and to the site registration/update path, validated as a bare origin (no path, no wildcard)
 - [x] Add setup-check item `ui_origin_distinct` to the REQ-079 check (plan 4's check runner), reported by name as OK/MISSING
-- [ ] Extended `GET /api/v1/assess/state` contract (agreed with P2, session vektra-moodle-cf), every field optional and ABSENT when the state does not call for it: `active{session_no, minutes_left, deadline_at}` (states active and starting); `selected_attempt{attempt_no}` (the attempt shown on the page is not the selected one, state 9); `pre_session{duration_min, recipients[{role,name}], course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url, notice_version}, previous_sessions, files[{name, predicted: readable|partial|unreadable}]}` (states eligible and reset_granted); `closed_at` (state 6); `ended_at` (state 11). Data, URLs and versions only, the texts stay in the plugin; `transcripts[...]` is plan 10's. A test per field and per absence; documented in `docs/reference/api.md`
+- [x] Extended `GET /api/v1/assess/state` contract (agreed with P2, session vektra-moodle-cf), every field optional and ABSENT when the state does not call for it: `active{session_no, minutes_left, deadline_at}` (states active and starting); `selected_attempt{attempt_no}` (the attempt shown on the page is not the selected one, state 9); `pre_session{duration_min, recipients[{role,name}], course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url, notice_version}, previous_sessions, files[{name, predicted: readable|partial|unreadable}]}` (states eligible and reset_granted); `closed_at` (state 6); `ended_at` (state 11). Data, URLs and versions only, the texts stay in the plugin; `transcripts[...]` is plan 10's. A test per field and per absence; documented in `docs/reference/api.md`
 - [ ] postMessage contract plugin↔UI documented as a stable contract in `docs/reference/api.md`: protocol v1 (ready/handoff with the token, resize, download-token request/response, `closed`), plus `{type:"vektra-assess-unavailable"}` (the parent tells the UI origin the mint failed: the UI shows a generic text) and `vektra-assess-closed`; origin AND source checked on both sides, never `"*"`
 - [ ] Accessibility of the UI content (NFR-016, WCAG 2.1 AA) tested HERE (the plugin cannot run axe inside the cross-origin iframe): axe on the UI with 0 violations, the whole flow keyboard-only, reflow at 320 px
 - [ ] Route-inventory test `vektra-assess/tests/test_route_inventory.py`: enumerate `app.routes`; assert no assess route declares a query/cookie parameter named `token|access_token|jwt|bearer`; assert `GET .../events?token=<valid>` without header → 401; assert REQ-102 inventory: no regenerate, edit, delete-turn or upload route under `/api/v1/assess`
@@ -243,4 +243,12 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     validation lives in the database: a CHECK accepts bare `http(s)://host[:port]` only, and
     existing rows are backfilled from their `base_url`. A row without it falls back to the
     origin of `base_url` (page and startup check alike).
+  - Extended `/state` (sub-task agreed with P2): `active`, `pre_session` (duration, course
+    material, limits, privacy, previous sessions), `closed_at` and `ended_at` are computed by the
+    API from its own rows and settings (`VEKTRA_ASSESS_PRIVACY_NOTICE_URL` is new).
+    `selected_attempt`, `pre_session.recipients` and `pre_session.files` are passed through from
+    the render worker's record (`assess_gate_inputs.inputs`: `selected_attempt_no`,
+    `recipients`, `files`) and stay ABSENT until the render worker writes them: that needs the
+    capture's attempt selection and file listing (plan 6 readers) and the transcript recipient
+    resolution (plan 10), so it is OPEN, for plan 10 or a plan-9 follow-up, not done here.
 

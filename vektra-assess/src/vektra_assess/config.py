@@ -425,6 +425,11 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION",
         description="Version of the privacy notice shown before Start; recorded on the session and the start audit event.",
     )
+    privacy_notice_url: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_PRIVACY_NOTICE_URL",
+        description="URL of the privacy notice the plugin links on the pre-session screen (GET /state pre_session.privacy).",
+    )
     render_fresh_s: int = Field(
         300,
         ge=10,

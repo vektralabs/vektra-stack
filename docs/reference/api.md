@@ -128,6 +128,21 @@ selected server-side at Start.
 | POST | `/api/v1/assess/sessions/{sid}/turns/{turn_no}/flag` | session | `201` (or `200`: already flagged) `{"session_id", "turn_no", "flagged": true}` | `400 ERR-ASSESS-014` (`not_a_bot_turn`), `409 ERR-ASSESS-009` after the close, `429 ERR-ASSESS-012` (`flag_rate`) |
 | POST | `/api/v1/assess/sessions/{sid}/finish` | session | `200 {"session_id", "state": "CLOSED", "close_reason"}`, idempotent | `401`, `404`, `409` |
 
+**`GET /state`, extended fields** (plan 9, agreed with the plugin). Every field is optional and
+ABSENT when the state does not call for it; Vektra sends data, URLs and versions only, the
+plugin owns every text.
+
+| Field | Present in | Content |
+|-------|-----------|---------|
+| `active` | `active`, `starting` | `{session_no, minutes_left?, deadline_at?}`: `deadline_at` once committed; `minutes_left` frozen at the outage start while in OUTAGE, the frozen duration while starting |
+| `selected_attempt` | when the render worker recorded the selected attempt | `{attempt_no}`: the plugin compares it with the attempt its page shows (REQ-068 state 9) |
+| `pre_session` | `eligible`, `reset_granted` | `{duration_min, course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url?, notice_version}, previous_sessions, recipients?[{role, name}], files?[{name, predicted: readable\|partial\|unreadable}]}` |
+| `closed_at` | `closed` (state 6) | the last close of the student's session, ISO 8601 |
+| `ended_at` | `ended` (state 11) | the activity's end date, ISO 8601 |
+
+`recipients`, `files` and `selected_attempt` come from the render worker's record and are
+omitted while it has not recorded them. `transcripts` belong to plan 10.
+
 **Tokens** (HS256, `aud=discussion`). Pre-session: `sub`, `site`, `cmid`, `stage: "pre"`, `jti`,
 `loginas: false`, `iat`, `exp` (at most 120 s, single use at Start). Session-bound: `sub`, `site`,
 `cmid`, `sid`, `seq` (the session number), `epoch`, `jti`, `loginas: false`, `exp` (never past

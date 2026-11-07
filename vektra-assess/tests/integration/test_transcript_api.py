@@ -220,6 +220,8 @@ async def test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused(
         await _graders(w, s, age="1 hour")
         r = await mint(w, s.session_id, key="teacher", actor_userid=12)
         assert r.status_code == 403 and err(r)["code"] == "ERR-ASSESS-021"
+        assert err(r)["details"]["reason"] == "grader_check_stale"
+        assert "queued" in err(r)["remediation"]
         assert (
             await count(
                 pg,
@@ -247,6 +249,8 @@ async def test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused(
         # not a grader of this activity
         r = await mint(w, s.session_id, key="teacher", actor_userid=99)
         assert r.status_code == 403 and err(r)["code"] == "ERR-ASSESS-021"
+        assert err(r)["details"]["reason"] == "not_a_grader"
+        assert "queued" not in err(r)["remediation"]
         # a grader who lost the capability between mint and download
         token = (await mint(w, s.session_id, key="teacher", actor_userid=13)).json()[
             "token"

@@ -236,7 +236,7 @@ async def mint_download_token(
         elif role == "grader":
             check = await _grader_ok(conn, row, requester, settings)
             if check is not GraderCheck.OK:
-                refused = teacher_unverified()
+                refused = teacher_unverified(stale=check is GraderCheck.STALE)
         if refused is None:
             minted = download_tokens_of(request).mint(
                 sub=requester,
@@ -330,7 +330,7 @@ async def download_transcript(
                 conn, row, claims.sub, settings, grace_s=settings.download_token_ttl_s
             )
             if check is not GraderCheck.OK:
-                refused = teacher_unverified()
+                refused = teacher_unverified(stale=check is GraderCheck.STALE)
         if refused is None:
             await conn.execute(_CONSUME, {"h": jti_hash(claims.jti)})
         if refused is None and row is not None:
@@ -404,7 +404,7 @@ async def resend_transcript(
                 raise fail(transcript_not_found())
             check = await _grader_ok(conn, row, int(body.actor_userid or 0), settings)
             if check is not GraderCheck.OK:
-                refused = teacher_unverified()
+                refused = teacher_unverified(stale=check is GraderCheck.STALE)
             actor = f"grader:{body.actor_userid}"
         else:
             if row is None:

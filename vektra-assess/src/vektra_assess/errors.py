@@ -338,10 +338,18 @@ def transcript_integrity() -> ErrorResponse:
     )
 
 
-def teacher_unverified() -> ErrorResponse:
+def teacher_unverified(*, stale: bool) -> ErrorResponse:
+    """403. ``stale``: the grader list was absent or too old and a refresh WAS queued (retry);
+    otherwise the fresh list does not name the teacher (no refresh, no point retrying)."""
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_021,
         message="The teacher could not be verified as a grader of this activity.",
-        remediation="A fresh check has been queued: retry in a few seconds.",
+        remediation=(
+            "A fresh check has been queued: retry in a few seconds."
+            if stale
+            else "Moodle does not list this user as a grader of the activity's course; "
+            "a retry will not succeed until that changes in Moodle."
+        ),
+        details={"reason": "grader_check_stale" if stale else "not_a_grader"},
     )

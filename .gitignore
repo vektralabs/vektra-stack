@@ -51,6 +51,9 @@ vendor/
 vektra-learn/static/
 # the assess discussion UI bundle: built by `npm run build` / the Docker node stage (plan 9)
 vektra-assess/src/vektra_assess/ui/static/
+# Playwright output of the UI e2e when run by hand (the harness writes to a temp dir)
+vektra-assess/ui/test-results/
+vektra-assess/ui/e2e-report.json
 
 # Test coverage
 .coverage

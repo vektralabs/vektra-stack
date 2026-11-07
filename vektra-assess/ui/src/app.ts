@@ -69,10 +69,7 @@ export class App {
       () => void this.retry(),
       () => void this.finish(),
     );
-    this.chat.form.addEventListener("submit", (ev) => {
-      ev.preventDefault();
-      void this.sendTurn();
-    });
+    this.chat.send.addEventListener("click", () => void this.sendTurn());
     this.main = root;
     root.replaceChildren(
       h("h1", { class: "title", text: M.title }),

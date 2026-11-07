@@ -186,6 +186,13 @@ other API response has `X-Frame-Options: DENY`). An unknown or disabled site is 
 `frame-ancestors 'none'`. Assets: `GET /api/v1/assess/ui/assets/{name}`, content-hashed names
 from the build manifest only.
 
+The page works inside the plugin's iframe sandbox `allow-scripts allow-same-origin
+allow-downloads` (plus `allow="clipboard-write"`): it never submits a form (no `allow-forms`:
+Invia is a plain button) and never calls `alert`/`confirm`/`prompt` (no `allow-modals`: the
+Fine and flag confirmations are in-page `<dialog>`s). The browser e2e
+(`vektra-assess/tests/integration/test_ui_e2e.py`, `make test-assess-e2e`) frames it with
+exactly that sandbox.
+
 **postMessage contract, version 1 (stable; the plugin P2 and the UI both test against it).**
 Every message is a plain object `{v: 1, type: "vektra-assess-<name>", ...}`. A receiver acts on
 a message only when ALL hold: `event.origin` is exactly the configured peer origin (the UI:

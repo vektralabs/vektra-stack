@@ -302,6 +302,9 @@ jobs:
           LIVE = (
               "test_moodle_live", "test_moodle_setup_live", "test_context_live",
               "test_idor_live", "test_req073_live",
+              # the browser e2e needs Node and Chromium: the assess-ui-e2e job runs it,
+              # with VEKTRA_ASSESS_E2E_REQUIRED=1 (a skip there is a failure)
+              "test_ui_e2e",
           )
           cases = [
               c for c in root.iter("testcase")
@@ -463,6 +466,69 @@ jobs:
           path: test-results/
           retention-days: 14
 
+  # The discussion UI in a real browser (plan 9): Playwright + axe against the production
+  # assess and UI routers over a migrated Postgres (testcontainers), framed by a Moodle stub
+  # on a second origin, with a fake model. Specs: vektra-assess/ui/e2e/; harness:
+  # vektra-assess/tests/integration/test_ui_e2e.py. It fails (never skips) without Node or
+  # Chromium, and passes only when every spec passed and the download spec ended SKIPPED as
+  # BLOCKED (the download endpoint is plan 10's).
+  assess-ui-e2e:
+    name: Assess UI e2e (Playwright, axe, two origins)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: Install the UI toolchain and Chromium
+        working-directory: vektra-assess/ui
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Run the e2e harness
+        env:
+          VEKTRA_ASSESS_E2E_REQUIRED: "1"
+        run: |
+          mkdir -p test-results
+          uv run pytest vektra-assess/tests/integration/test_ui_e2e.py -m integration \
+            -v -s --tb=short --junitxml=test-results/assess-ui-e2e.xml
+
+      - name: The e2e must have run, not skipped
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("test-results/assess-ui-e2e.xml").getroot()
+          cases = list(root.iter("testcase"))
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          print(f"assess ui e2e: {len(cases)} collected, {len(skipped)} skipped")
+          if len(cases) != 1 or skipped:
+              sys.exit(f"assess ui e2e did not run: collected={len(cases)} skipped={skipped}")
+          PY
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assess-ui-e2e-test-results
+          path: test-results/
+          retention-days: 14
+
   # Aggregator, and the single required status check in branch protection. The
   # matrix reports one check per provider ("Integration tests (pgvector)", "…
   # (qdrant)"), so without a job carrying the required name the check would never
@@ -472,7 +538,7 @@ jobs:
   # sits BLOCKED with all checks green.
   integration-gate:
     name: Integration tests + NFR gates
-    needs: [integration, package-integration, assess-stack, assess-chaos]
+    needs: [integration, package-integration, assess-stack, assess-chaos, assess-ui-e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -482,6 +548,7 @@ jobs:
           PACKAGES="${{ needs.package-integration.result }}"
           ASSESS="${{ needs.assess-stack.result }}"
           CHAOS="${{ needs.assess-chaos.result }}"
+          UI_E2E="${{ needs.assess-ui-e2e.result }}"
           if [[ "$MATRIX" != "success" ]]; then
             echo "Integration matrix did not pass (result: $MATRIX)."
             exit 1
@@ -496,6 +563,10 @@ jobs:
           fi
           if [[ "$CHAOS" != "success" ]]; then
             echo "Assess chaos tests did not pass (result: $CHAOS)."
+            exit 1
+          fi
+          if [[ "$UI_E2E" != "success" ]]; then
+            echo "Assess UI e2e did not pass (result: $UI_E2E)."
             exit 1
           fi
           echo "Integration tests passed on every vector store provider, and every package's integration suite passed."

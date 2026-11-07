@@ -171,6 +171,29 @@ describe("resume without sid and the download-token timeout", () => {
     expect((a as unknown as { state: { name: string } }).state.name).toBe("active");
   });
 
+  it("Invia sends with a click on a plain button (no form submission, no allow-forms)", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push(`${init.method ?? "GET"} ${url} ${String(init.body)}`);
+      return Response.json({ session_id: "S", turn_no: 3 }, { status: 202 });
+    }) as unknown as typeof fetch;
+    const { a, root } = host(fetchImpl);
+    const priv = a as unknown as { state: unknown; sid: string };
+    priv.state = { name: "active" };
+    priv.sid = "S";
+    root.append(a.chat.root);
+    a.chat.form.addEventListener("submit", () => {
+      throw new Error("no form submission");
+    });
+    expect(a.chat.send.type).toBe("button");
+    expect(a.chat.form.querySelector("[type=submit]")).toBeNull();
+    a.chat.setEnabled(true);
+    a.chat.composer.value = "ciao";
+    a.chat.send.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(['POST /api/sessions/S/turns {"text":"ciao"}']);
+  });
+
   it("an unanswered download-token request times out to a generic text, once", async () => {
     const { a, posted, root } = host((async () => Response.json({})) as unknown as typeof fetch);
     const priv = a as unknown as { state: unknown; sid: string };

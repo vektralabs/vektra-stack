@@ -118,7 +118,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [x] Add setup-check item `ui_origin_distinct` to the REQ-079 check (plan 4's check runner), reported by name as OK/MISSING
 - [x] Extended `GET /api/v1/assess/state` contract (agreed with P2, session vektra-moodle-cf), every field optional and ABSENT when the state does not call for it: `active{session_no, minutes_left, deadline_at}` (states active and starting); `selected_attempt{attempt_no}` (the attempt shown on the page is not the selected one, state 9); `pre_session{duration_min, recipients[{role,name}], course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url, notice_version}, previous_sessions, files[{name, predicted: readable|partial|unreadable}]}` (states eligible and reset_granted); `closed_at` (state 6); `ended_at` (state 11). Data, URLs and versions only, the texts stay in the plugin; `transcripts[...]` is plan 10's. A test per field and per absence; documented in `docs/reference/api.md`
 - [x] postMessage contract plugin↔UI documented as a stable contract in `docs/reference/api.md`: protocol v1 (ready/handoff with the token, resize, download-token request/response, `closed`), plus `{type:"vektra-assess-unavailable"}` (the parent tells the UI origin the mint failed: the UI shows a generic text) and `vektra-assess-closed`; origin AND source checked on both sides, never `"*"`
-- [ ] Accessibility of the UI content (NFR-016, WCAG 2.1 AA) tested HERE (the plugin cannot run axe inside the cross-origin iframe): axe on the UI with 0 violations, the whole flow keyboard-only, reflow at 320 px
+- [x] Accessibility of the UI content (NFR-016, WCAG 2.1 AA) tested HERE (the plugin cannot run axe inside the cross-origin iframe): axe on the UI with 0 violations, the whole flow keyboard-only, reflow at 320 px
 - [x] Route-inventory test `vektra-assess/tests/test_route_inventory.py`: enumerate `app.routes`; assert no assess route declares a query/cookie parameter named `token|access_token|jwt|bearer`; assert `GET .../events?token=<valid>` without header → 401; assert REQ-102 inventory: no regenerate, edit, delete-turn or upload route under `/api/v1/assess`
 
 ### Client bundle (`vektra-assess/ui/`)
@@ -142,9 +142,9 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 ### Tests, CI, docs
 - [x] Vitest unit tests `vektra-assess/ui/test/`: SSE parser fuzz on random chunk boundaries (1-byte splits, CRLF), bridge rejects wrong origin / wrong source / `"*"` never used, reducer transitions, no `innerHTML` usage (lint rule `no-restricted-properties`)
 - [x] Python tests `vektra-assess/tests/test_ui_router.py`: exact CSP string per site, unknown site 404, no XFO on UI route, XFO DENY on a sample other route, asset allowlist (path traversal `../` → 404), `Cache-Control: no-store`
-- [ ] Playwright e2e `vektra-assess/ui/e2e/` with a host page served from a second origin (`http://127.0.0.1:<p1>` parent vs `http://localhost:<p2>` Vektra) against the running API with the fake LLM provider and seeded session fixtures from plan 8: start → opening → 2 turns → outage (fake provider fails) → Riprova → Fine → download; resume after reload; a framing attempt from a third origin is blocked by CSP (frame not rendered, CSP violation observed)
-- [ ] Accessibility: `@axe-core/playwright` scan on every state (awaiting, preparing, active, streaming, outage, confirm dialog, closed) with 0 violations at WCAG 2.1 A/AA tags; keyboard-only run of the whole e2e flow (no mouse API calls); reflow check at 320 px width and at 1280 px with 200% zoom asserting `scrollWidth <= clientWidth`; live-region announcement counter (one per reply, one per warning)
-- [ ] CI: `ci-unit.yml` add `assess-ui` path filter + `test-assess-ui` job (npm ci, build, vitest) and add it to `ci-gate` needs; `integration.yml` add the Playwright+axe job against the compose stack; `make test-assess-ui` target; ensure the structural guard `test_suite_execution_coverage.py` recognises the JS suite or document the exemption with the CI job name
+- [x] Playwright e2e `vektra-assess/ui/e2e/` with a host page served from a second origin (`http://127.0.0.1:<p1>` parent vs `http://localhost:<p2>` Vektra) against the running API with the fake LLM provider and seeded session fixtures from plan 8: start → opening → 2 turns → outage (fake provider fails) → Riprova → Fine → download; resume after reload; a framing attempt from a third origin is blocked by CSP (frame not rendered, CSP violation observed)
+- [x] Accessibility: `@axe-core/playwright` scan on every state (awaiting, preparing, active, streaming, outage, confirm dialog, closed) with 0 violations at WCAG 2.1 A/AA tags; keyboard-only run of the whole e2e flow (no mouse API calls); reflow check at 320 px width and at 1280 px with 200% zoom asserting `scrollWidth <= clientWidth`; live-region announcement counter (one per reply, one per warning)
+- [x] CI: `ci-unit.yml` add `assess-ui` path filter + `test-assess-ui` job (npm ci, build, vitest) and add it to `ci-gate` needs; `integration.yml` add the Playwright+axe job against the compose stack; `make test-assess-ui` target; ensure the structural guard `test_suite_execution_coverage.py` recognises the JS suite or document the exemption with the CI job name
 - [x] Docs: `docs/reference/api.md` section "Assess UI" (route, headers, postMessage protocol v1, no query tokens); `docs/guides/` frame-ancestors/nginx note; `CHANGELOG.md` [Unreleased] Added + Security (nginx example change)
 
 ## State & Data Lifecycle
@@ -161,15 +161,15 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 ## Acceptance Criteria
 
 - [x] The UI route response carries the exact CSP with the site's single `frame-ancestors` origin and no `X-Frame-Options`; other routes still return `X-Frame-Options: DENY` (header bytes asserted) (ARCH-076) — evidence: vektra-assess/tests/integration/test_ui_router.py::test_the_page_headers_byte_for_byte, ::test_an_unknown_site_may_be_framed_by_nobody, vektra-app/tests/test_assess_startup.py::test_every_route_but_the_discussion_ui_denies_framing
-- [ ] A page on a third origin cannot render the iframe (browser CSP violation recorded in Playwright) (ARCH-076) — PENDING: the Playwright two-origin harness is not built yet (plan 9 e2e task); the CSP bytes are proven by test_ui_router.py
+- [x] A page on a third origin cannot render the iframe (browser CSP violation recorded in Playwright) (ARCH-076) — evidence: vektra-assess/tests/integration/test_ui_e2e.py (specs vektra-assess/ui/e2e/flow.e2e.ts "a page on a third origin cannot frame the UI": Chromium logs the frame-ancestors violation, no frame holds the UI's main#app, the UI never posts ready)
 - [x] Setup check reports `ui_origin_distinct` MISSING for a same-origin or non-https configuration, OK otherwise; startup refuses the same configuration outside development (ARCH-076, REQ-079) — evidence: vektra-assess/tests/test_moodle_setup_check.py::test_ui_origin_distinct_item, vektra-app/tests/test_assess_startup.py::test_startup_refuses_a_ui_origin_not_distinct_or_not_https, ::test_the_ui_origin_setting_is_a_bare_origin
 - [x] No assess route accepts a token from the query string: route inventory passes and `?token=` alone returns 401 (ADR-0030) — evidence: vektra-assess/tests/test_route_inventory.py, vektra-assess/tests/integration/test_route_credentials.py::test_no_route_accepts_a_query_string_or_cookie_credential
-- [ ] The iframe ignores postMessage from a non-configured origin (handoff with a valid token from a wrong origin → no network request issued, verified via Playwright request log) (ARCH-076) — PENDING (Playwright request log not built); unit evidence: vektra-assess/ui/test/bridge.test.ts (wrong origin, wrong source, wrong version, unknown type ignored)
-- [ ] Full e2e flow works with streaming over fetch: the reply text in the DOM equals the persisted turn text returned by `GET /sessions/{sid}` byte-for-byte (REQ-102) — PENDING: Playwright e2e not built; unit evidence: ui/test/sse.test.ts, ui/src/app.ts replaces the streamed text with the persisted turns after each reply
-- [ ] Fine confirm → `GET /sessions/{sid}` reports CLOSED(finished) and exactly one transcript row exists; Annulla → state ACTIVE and deadline value unchanged (REQ-072) — PENDING at UI level (Playwright); server side proven by vektra-assess/tests/integration/test_session_finish.py and the UI dialog by ui/test/controls.test.ts
-- [ ] The closing-screen download returns bytes whose SHA-256 equals the stored transcript hash while delivery is still PENDING (REQ-072, REQ-088) — BLOCKED: the transcript download endpoint and download tokens are plan 10's, not shipped; the UI flow (download-token request, bearer fetch, <a download>) is in ui/src/app.ts
-- [ ] Selecting a picker item creates 0 turn rows (row count before/after) until Invia (REQ-102) — NOT BUILT: the item picker (SHOULD) needs item labels that GET /sessions/{sid} does not carry (see Notes)
-- [ ] Every control is reachable and operable keyboard-only; axe reports 0 WCAG 2.1 AA violations on every state; no horizontal scroll at 320 px / 200% zoom; exactly one live-region announcement per completed reply and per warning (NFR-016) — PENDING: axe / keyboard / reflow Playwright suite not built yet; unit evidence: one live announcement per reply and per warning (ui/test/chat.test.ts, ui/test/app.test.ts), <dialog> focus handling (ui/test/controls.test.ts)
+- [x] The iframe ignores postMessage from a non-configured origin (handoff with a valid token from a wrong origin → no network request issued, verified via Playwright request log) (ARCH-076) — evidence: vektra-assess/tests/integration/test_ui_e2e.py (specs vektra-assess/ui/e2e/flow.e2e.ts "a valid token posted from the wrong origin is ignored: no request": a third-origin frame posts a freshly minted valid token ten times, the request log has no assess API call, no session row exists); unit: ui/test/bridge.test.ts
+- [x] Full e2e flow works with streaming over fetch: the reply text in the DOM equals the persisted turn text returned by `GET /sessions/{sid}` byte-for-byte (REQ-102) — evidence: vektra-assess/tests/integration/test_ui_e2e.py (specs vektra-assess/ui/e2e/flow.e2e.ts "start, two turns, warning, outage and Riprova, flag, Annulla and Fine: keyboard only": after each reply the last bot turn's text equals the stored text exactly, and every turn's text equals the stored text as rendered (one element per line); resume with and without sid in "resume after a reload")
+- [x] Fine confirm → `GET /sessions/{sid}` reports CLOSED(finished) and exactly one transcript row exists; Annulla → state ACTIVE and deadline value unchanged (REQ-072) — evidence: vektra-assess/tests/integration/test_ui_e2e.py (specs vektra-assess/ui/e2e/flow.e2e.ts, same spec: Annulla leaves ACTIVE with the same deadline_at and the focus on Fine; Concludi gives CLOSED/finished and exactly one transcript_generate job, the transcript row itself is plan 10's); server side also test_session_finish.py
+- [ ] The closing-screen download returns bytes whose SHA-256 equals the stored transcript hash while delivery is still PENDING (REQ-072, REQ-088) — BLOCKED (plan 10): the transcript download endpoint and download tokens do not exist; the spec "download returns the stored transcript bytes" (vektra-assess/tests/integration/test_ui_e2e.py (specs vektra-assess/ui/e2e/flow.e2e.ts) is SKIPPED as BLOCKED and the harness fails if it ever ends otherwise. What is proven now: the unanswered request times out to a generic text, asked once ("an unanswered download-token request ends in a generic text, asked once"; unit ui/test/app.test.ts)
+- [ ] Selecting a picker item creates 0 turn rows (row count before/after) until Invia (REQ-102) — NOT BUILT, SHOULD deferred: it needs item labels in `GET /sessions/{sid}` (a new field on a plan-8 route); decision for plan 13 or the coordinator (see Notes)
+- [x] Every control is reachable and operable keyboard-only; axe reports 0 WCAG 2.1 AA violations on every state; no horizontal scroll at 320 px / 200% zoom; exactly one live-region announcement per completed reply and per warning (NFR-016) — evidence: vektra-assess/tests/integration/test_ui_e2e.py (specs vektra-assess/ui/e2e/a11y.e2e.ts "axe: 0 WCAG 2.1 A/AA violations in every state" (awaiting, unavailable, preparing, active, streaming, outage, confirm dialog, flag dialog, closed; the run fails if a state is not scanned or the frame was not analysed), "reflow: no horizontal scroll at 320 px and at 1280 px with 200% zoom"; flow.e2e.ts drives the whole flow with Tab/Enter/Escape only (no mouse call) and counts one announcement per reply (3) and one per warning (the 5-minute warning, still 1 after 3 s)). The manual NVDA/VoiceOver checklist stays a release-plan artifact
 - [x] If REQ-103 is built: one flag → exactly one marker row; flag after CLOSED → rejected and the control is absent (REQ-103) — evidence: vektra-assess/tests/integration/test_session_flag.py (one flag, one marker; after CLOSED 409), vektra-assess/ui/test/app.test.ts ('REQ-103 flag': one confirmation, one POST, marker, no control after closed)
 
 ## Testing Approach
@@ -248,17 +248,27 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     API from its own rows and settings (`VEKTRA_ASSESS_PRIVACY_NOTICE_URL` is new).
     `selected_attempt`, `pre_session.recipients` and `pre_session.files` are passed through from
     the render worker's record (`assess_gate_inputs.inputs`: `selected_attempt_no`,
-    `recipients`, `files`) and stay ABSENT until the render worker writes them: that needs the
-    capture's attempt selection and file listing (plan 6 readers) and the transcript recipient
-    resolution (plan 10), so it is OPEN, for plan 10 or a plan-9 follow-up, not done here.
+    `recipients`, `files`) and stay ABSENT until the render worker writes them. Assigned
+    follow-ups (decided 2026-11-07):
+    - `pre_session.recipients` → plan 10 (it owns the transcript recipient resolution).
+    - `selected_attempt` and `pre_session.files` → an explicit follow-up for the W3 gate, NOT a
+      plan-9 task. Not small: the render worker would have to run, per student page view and
+      before any session exists, the capture's attempt selection (plan 6 quiz readers) and the
+      submission file listing with a per-file readability prediction (plan 6 readers + parser
+      sidecar), i.e. Moodle reads and parser calls on the pre-session path with their own
+      recordings, budgets and failure states; that is a capture-side change to plans 6/8, and a
+      UI plan would add it without the owner's review. Until then the plugin shows those two
+      parts as absent (the contract already makes every field optional).
   - postMessage contract: every type is prefixed `vektra-assess-` (the plugin's
     `vektra-assess-unavailable` and `vektra-assess-closed`, agreed with P2), so the plan's
     `handoff` is `vektra-assess-token` (the ready/token handshake) and the others are
     `vektra-assess-ready`, `-resize`, `-download-token-request`, `-download-token`. The table in
     `docs/reference/api.md` ("Assess UI") is the contract both sides test against.
-  - Item picker (SHOULD): NOT built. `GET /sessions/{sid}` carries no item labels (plan 8's
-    payload has turns only), and this plan must not add payload fields to plan 8's routes; the
-    task and its acceptance criterion stay open (a follow-up with a server-provided label list).
+  - Item picker (SHOULD): NOT built, deferred. It needs the server-generated item labels in
+    `GET /sessions/{sid}` (a new field on a plan-8 route; today the payload has turns only), and
+    this plan must not add payload fields to plan 8's routes. The task and its acceptance
+    criterion stay `[ ]`; whether to add the field (and build the picker) is a decision for
+    plan 13 or the coordinator.
   - The flag confirmation is an in-page modal `<dialog>` (`ConfirmDialog`, like Fine's), not the
     native `confirm()`: the plugin's iframe sandbox (`allow-scripts allow-same-origin
     allow-downloads`, no `allow-modals`) makes `window.confirm()` return false without asking,
@@ -285,3 +295,37 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     button disabled while waiting, after 10 s without an answer a generic text, the button back,
     no automatic retry, a late token ignored (until P2 ships the download part). Both in the
     api.md contract; unit tests in `ui/test/bridge.test.ts` and `ui/test/app.test.ts`.
+  - Browser e2e (2026-11-07): `vektra-assess/tests/integration/test_ui_e2e.py` is the harness,
+    the specs are `vektra-assess/ui/e2e/*.e2e.ts` (Playwright 1.56.1 + @axe-core/playwright
+    4.11.3, `playwright-core` pinned by an npm override so axe and the runner share one).
+    Instead of the compose stack the harness serves, in the test's event loop, the production
+    assess + UI routers over the testcontainers Postgres (restricted API role) on
+    `http://localhost:<p2>` and a Moodle stub on `http://127.0.0.1:<p1>` (host page with the
+    plugin's exact sandbox, server-side mint, no `sid` on resume, no answer to a download-token
+    request); the third origin is `http://localhost:<p1>`. Worker side in-process: the
+    production pre-flight handler with the recorded Moodle 4.3 responses, the worker's
+    `outage_tick` with a probe that follows the fake model's outage switch, the API's
+    `PendingTurnDriver`, a heartbeat each tick. Same code paths as the stack, deterministic,
+    and runnable by `make test-assess-e2e`. Chromium only (Firefox/WebKit: the plan's
+    Test Infrastructure lists them; one engine is what the axe/keyboard/reflow criteria need,
+    the others would triple the job for no extra criterion). The fixture recordings cover
+    student `stu1` only, so each spec uses one of the five assignments whose pre-flight commits
+    (rubric_vis, scale, wf, simple, rubric_hidden).
+  - False-pass guards: the harness fails (never skips) without Node/Chromium when
+    `VEKTRA_ASSESS_E2E_REQUIRED=1` (CI, make); it passes only when the 7 declared specs passed
+    AND the download spec ended SKIPPED (BLOCKED, plan 10); the axe spec fails if a declared
+    state was not scanned or if no node inside the UI frame was analysed; every UI claim is
+    checked against server state (`/control/session`: rows and `GET /sessions/{sid}`).
+  - Two real defects found by framing the UI with the plugin's sandbox (`allow-scripts
+    allow-same-origin allow-downloads`), both fixed: without `allow-modals` `window.confirm()`
+    returned false silently (the flag could never be sent: now an in-page `<dialog>`), and
+    without `allow-forms` Chromium blocked the composer's form submission before the submit
+    handler ran (Invia did nothing: now a plain button). Recorded in the api.md contract so P2
+    keeps the sandbox as it is.
+  - CI: the vitest suite runs in `test-assess-ui` (ci-unit.yml, in `ci-gate`); the browser e2e
+    runs in the new `assess-ui-e2e` job (integration.yml, in `integration-gate`), with a
+    junit guard (1 collected, 0 skipped). The structural guard
+    `vektra-shared/tests/test_suite_execution_coverage.py` recognises the e2e through its
+    pytest harness (collected by `package-integration`, where it is listed with the live-Moodle
+    tests as an expected skip, and by `assess-ui-e2e`); the vitest suite is not pytest and is
+    covered by the `test-assess-ui` job, which is the documented exemption.

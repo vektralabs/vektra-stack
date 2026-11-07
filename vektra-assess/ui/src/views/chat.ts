@@ -81,7 +81,9 @@ export class ChatView {
       maxlength: String(maxChars),
       "aria-describedby": "composer-help",
     });
-    this.send = h("button", { type: "submit", class: "primary", text: M.send });
+    // type="button", never a form submission: the plugin's iframe sandbox has no allow-forms,
+    // and the browser blocks a submission before any submit handler runs
+    this.send = h("button", { type: "button", class: "primary", text: M.send });
     const form = h(
       "form",
       { class: "composer", "aria-label": M.composerLabel },

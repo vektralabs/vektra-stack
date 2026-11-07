@@ -496,6 +496,9 @@ export class App {
         this.chat.setEnabled(false, "");
         const closing = new ClosingView(s.reason, this.closedAt, () => this.requestDownload());
         this.banner.hidden = true;
+        // a question about a session that no longer takes flags is withdrawn (4501067248)
+        if (this.flagDialog.dialog.open) this.flagDialog.dialog.close("cancel");
+        if (this.controls.dialog.open) this.controls.dialog.close("cancel");
         this.main.replaceChildren(...(keep as Node[]), closing.root, this.chat.root);
         this.chat.list.querySelectorAll("button.flag").forEach((b) => b.remove());
         this.bridge.send({ v: 1, type: "vektra-assess-closed", reason: s.reason });

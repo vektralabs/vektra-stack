@@ -591,3 +591,15 @@ describe("download timers (4501067245)", () => {
     vi.useRealTimers();
   });
 });
+
+describe("the flag dialog at the close (4501067248)", () => {
+  it("is closed when the session closes", async () => {
+    dialogPolyfill();
+    const { a, priv } = harness();
+    a.chat.render([{ turn_no: 1, role: "bot", kind: "opening", text: "a" }]);
+    (a.chat.list.querySelector("button.flag") as HTMLButtonElement).click();
+    expect(a.flagDialog.dialog.hasAttribute("open")).toBe(true);
+    await priv.onEvent({ event: "closed", data: '{"close_reason":"timed_out"}' });
+    expect(a.flagDialog.dialog.hasAttribute("open")).toBe(false);
+  });
+});

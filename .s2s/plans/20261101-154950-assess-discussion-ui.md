@@ -466,3 +466,4 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     new recovery), so it never hides a later outage banner.
   - 4501067245 The download request keeps its timer and the token's arrival cancels it, so an
     earlier request's deadline never fails a later one.
+  - 4501067248 The close withdraws an open flag or Fine confirmation before the closing screen.

@@ -234,3 +234,8 @@ no log files fails rather than passing.
 > trace. When this plan adds `assess_purge_records`, set `purged` from it in
 > `vektra_assess.api.state.transcripts_of` (LEFT JOIN on `transcript_id` or `session_id`) and
 > update the pinning test `test_session_state.py::test_transcripts_list_generated_and_shredded_ones`.
+
+> Request from plan 10 (CodeRabbit 4503029411 on PR #159): `transcript_generate` must not
+> recreate a transcript that was purged. When the purge tombstone lands, check it in
+> `vektra_assess.worker.transcript_gen.generate_transcript` before regenerating (a retry of a job
+> whose settlement failed could otherwise run after `shred_transcript`).

@@ -386,3 +386,25 @@ real-time run guards against clock-injection bugs.
   list is accepted up to `TEACHER_GATE_MAX_AGE_S + DOWNLOAD_TOKEN_TTL_S` old, since it was fresh
   (<= max age) when the token was minted. Fail closed is kept: a grader the list no longer names
   is refused. An integrity refusal (stored bytes fail their hash) still consumes the token.
+
+### CodeRabbit round 1 on PR #159 (2026-11-07), decisions
+
+- Activity-context grading permission (4503025975): not checkable by Vektra. The WS layer
+  offers only course-context capability listings (`core_enrol_get_enrolled_users_with_capability`);
+  a module-level prohibit is invisible to the service account. Vektra's fresh grader list stays a
+  defence in depth; **plugin request (P3)**: check `has_capability('mod/assign:grade' |
+  'mod/quiz:grade', $modulecontext)` for the acting teacher before minting a grader download token
+  or calling resend. Follow-up for 10b/plan 11: `read_graders` asks for `mod/assign:grade` for
+  quizzes too; a quiz-specific capability needs a recorded fixture first.
+- Recipients unresolved at generation (4503025990): deferred to 10b, where the delivery tick fans
+  out recipients for a transcript that has none (already recorded above); until then resend
+  answers 404 for such a transcript.
+- Durable completion marker across shredding (4503029411): deferred to plan 12, which owns the
+  purge tombstone (`assess_purge_records`); generation must check it before regenerating.
+- `/state` `tid` (4503029392): by design the transcript id IS the session id (generation inserts
+  `id = session_id`), so listing the session id is the stored id.
+- Graders after the student left the course (4503025969): the grader side falls back to the
+  course hint (session or plugin), accepted only when the cmid is found in that course; the Start
+  gates still require the student's own enrolment.
+- Session cap frozen at commit: `assess_sessions.cap_s` (revision 0034) feeds the header.
+- MathML deeper than 32 levels renders as escaped TeX (the template renders the tree recursively).

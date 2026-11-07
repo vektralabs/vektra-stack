@@ -216,7 +216,13 @@ async def ui_page(request: Request, site: str = "") -> Response:
         return _refused(503, assess_unavailable("ui_bundle"), page_headers(None))
     html = TEMPLATES.get_template("page.html.j2").render(
         cfg_json=_json_block(
-            {"site": site, "moodleOrigin": origin, "apiBase": "/api/v1/assess"}
+            {
+                "site": site,
+                "moodleOrigin": origin,
+                "apiBase": "/api/v1/assess",
+                # the composer's limit is the server's (CodeRabbit 4501070009)
+                "maxMessageChars": settings.max_message_chars,
+            }
         ),
         js_url=f"{PREFIX}/assets/{manifest['js']}",
         css_url=f"{PREFIX}/assets/{manifest['css']}",

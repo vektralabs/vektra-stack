@@ -7,6 +7,9 @@ export interface PageConfig {
   site: string;
   moodleOrigin: string;
   apiBase: string;
+  /** VEKTRA_ASSESS_MAX_MESSAGE_CHARS: the composer's maxlength (UTF-16 units, never more
+   *  permissive than the server's code-point count). */
+  maxMessageChars?: number;
 }
 
 export function readConfig(doc: Document = document): PageConfig {

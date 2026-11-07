@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { App, DOWNLOAD_TIMEOUT_MS } from "../src/app";
 import { Bridge } from "../src/bridge";
+import { readConfig } from "../src/main";
 
 function app() {
   const posted: unknown[] = [];
@@ -647,5 +648,23 @@ describe("an accepted Start whose body cannot be read (4501070014)", () => {
     expect(root.querySelector("#status")!.textContent).toBe(
       "La discussione è stata avviata: ricarica la pagina per riprenderla.",
     );
+  });
+});
+
+describe("the composer limit (4501070009)", () => {
+  it("is the server's limit from the page config", () => {
+    document.body.innerHTML = "";
+    const cfg = document.createElement("script");
+    cfg.id = "cfg";
+    cfg.type = "application/json";
+    cfg.textContent = JSON.stringify({ site: "s", moodleOrigin: "https://m.example", apiBase: "/api", maxMessageChars: 3500 });
+    document.body.append(cfg);
+    const read = readConfig(document);
+    const a = new App(
+      read,
+      new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
+      document.createElement("main"),
+    );
+    expect(a.chat.composer.maxLength).toBe(3500);
   });
 });

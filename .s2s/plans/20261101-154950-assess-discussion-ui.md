@@ -474,3 +474,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501070014 A 202 whose body cannot be read leaves the preparing state with "La
     discussione è stata avviata: ricarica la pagina per riprenderla." (the server is preparing
     it; a reload resumes it).
+  - 4501070009 The page config carries `maxMessageChars` (the server's
+    `VEKTRA_ASSESS_MAX_MESSAGE_CHARS`) and the composer's `maxlength` uses it. The browser counts
+    UTF-16 units, the server code points: the browser limit is never the more permissive one.
+    Page config only: not the postMessage contract, not `/state`.

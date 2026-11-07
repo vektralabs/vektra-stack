@@ -71,7 +71,7 @@ export class App {
     private readonly bridge: Bridge,
     root: HTMLElement,
     private readonly fetchImpl: typeof fetch = (...a) => fetch(...a),
-    maxChars = 2000,
+    maxChars: number = cfg.maxMessageChars ?? 2000,
   ) {
     this.chat = new ChatView(
       {

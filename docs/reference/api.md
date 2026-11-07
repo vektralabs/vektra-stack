@@ -187,6 +187,8 @@ other API response has `X-Frame-Options: DENY`). An unknown or disabled site is 
 `404 ERR-ASSESS-003` (unknown site or asset), `429 ERR-ASSESS-012` (`ui_page_rate`, `Retry-After`),
 `503 ERR-ASSESS-001` (remediation names `ui_origin`, `site_origin` or `ui_bundle`). Assets: `GET /api/v1/assess/ui/assets/{name}`, content-hashed names
 from the build manifest only.
+The page carries a JSON data block (never executed) with `site`, `moodleOrigin`, `apiBase` and
+`maxMessageChars` (`VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, the composer's limit).
 
 The page works inside the plugin's iframe sandbox `allow-scripts allow-same-origin
 allow-downloads` (plus `allow="clipboard-write"`): it never submits a form (no `allow-forms`:

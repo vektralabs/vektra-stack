@@ -44,6 +44,8 @@ async def test_the_page_carries_the_site_origin_and_the_hashed_assets(
         assert r.headers["cache-control"] == "no-store"
         assert cfg_of(r.text) == {
             "apiBase": "/api/v1/assess",
+            # the server's limit, so the composer never disagrees with it (4501070009)
+            "maxMessageChars": w.settings.max_message_chars,
             "moodleOrigin": "https://m.example",
             "site": str(w.site),
         }

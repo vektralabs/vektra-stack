@@ -145,6 +145,7 @@ ERR_LEARN_004 = "ERR-LEARN-004"  # Duplicate enrollment
 ERR_LEARN_005 = "ERR-LEARN-005"  # Conversation not found (WI-1)
 ERR_LEARN_006 = "ERR-LEARN-006"  # Conversation belongs to another course (WI-1)
 ERR_LEARN_007 = "ERR-LEARN-007"  # Conversation belongs to another student (FEAT-027)
+ERR_LEARN_008 = "ERR-LEARN-008"  # Conversation ownership could not be verified
 
 # Index errors (ARCH-045, index versioning)
 ERR_INDEX_001 = "ERR-INDEX-001"  # Refused: that index version is the one being served

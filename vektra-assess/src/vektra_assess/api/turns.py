@@ -13,17 +13,22 @@ marked ``interrupted`` turn when the runner was stopped) with its hash, then pub
 ``reply_done`` / ``reply_interrupted``. Plaintext lives only in memory: nothing is persisted chunk
 by chunk.
 
-Thin path (plan M1.9): a provider outage, an unexpected error or a refused bot append ends the
-attempt with the marked bot turn "[risposta interrotta]" (``turn_markers``), which clears the
-pending marker, then ``reply_interrupted``. The OUTAGE transition, the server-side answer of a
-pending turn and the reconciliation of an abandoned one are plans M4.1, M4.3 and M3.6.
+Provider outage (M4.1, REQ-086): a ``ProviderOutageError`` moves the session ACTIVE -> OUTAGE
+through ``assess_enter_outage`` (the interval starts at the failed call's own start, from its
+``ProviderCallRecord``); the timer is frozen, the input locked, and the pending student turn KEPT:
+the ``PendingTurnDriver`` answers it once the worker's probe ends the outage. The third consecutive
+failed call closes the session ``service_failure`` instead (in the same function). An unexpected
+error or a refused bot append still ends the attempt with the marked bot turn "[risposta
+interrotta]" (``turn_markers``), which clears the pending marker, then ``reply_interrupted``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -41,6 +46,8 @@ from vektra_assess.api.gate import verify_assess_token_session
 from vektra_assess.api.material import DekCache, Material, load_material
 from vektra_assess.api.models import TurnRequest
 from vektra_assess.api.session_gate import SessionRow, session_tx
+from vektra_assess.api.state import limiter_of
+from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.context.assemble import assemble_context
 from vektra_assess.context.bundle import ContextBundle
 from vektra_assess.context.policy import FrozenPolicy
@@ -49,27 +56,58 @@ from vektra_assess.crypto import envelope, hashing
 from vektra_assess.errors import (
     assess_unavailable,
     bad_request,
+    close_message_code,
+    deadline_passed,
+    rate_limited,
     reply_pending,
     state_conflict,
 )
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.types import (
     PriorTurn,
+    ProviderCallRecord,
     ProviderOutageError,
     ReleasedSegment,
     StudentTurn,
     TurnResult,
 )
 from vektra_assess.tokens import SessionClaims
-from vektra_assess.turn_markers import INTERRUPTED_REPLY
+from vektra_assess.turn_markers import INTERRUPTED_REPLY, REPLY_CLAIM_KEY_SQL
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter()
 
+#: seconds kept before deadline + grace to persist a cut reply
+CUT_MARGIN_S = 2.0
+
+#: provider errors that are the provider ANSWERING (a refusal, not an outage): rate limit,
+#: over-length, content filter, budget, a request it rejects. They never set OUTAGE and earn no
+#: credit (REQ-086); the attempt ends with the marked turn, the student may write again. Matched
+#: on the exception type name the runner records (litellm's names), never on its message.
+NOT_AN_OUTAGE = frozenset(
+    {
+        "RateLimitError",
+        "ContextWindowExceededError",
+        "ContentPolicyViolationError",
+        "BudgetExceededError",
+        "BadRequestError",
+    }
+)
+
 _APPEND = text(
     "SELECT assess_append_turn(:sid, :epoch, :seq, :role, :kind, :ct, :h, :prev)"
 )
+_PENDING_TURN = text(
+    "SELECT seq, pending_reply_since FROM assess_sessions "
+    "WHERE id = :s AND state = 'ACTIVE' AND epoch = :e"
+)
+_ADD_TOKENS = text(
+    "UPDATE assess_sessions SET tokens_used = tokens_used + :n WHERE id = :s "
+    "RETURNING tokens_used"
+)
+_CLOSE_BUDGET = text("SELECT assess_close_session(:sid, :epoch, 'budget_exhausted')")
+_ENTER_OUTAGE = text("SELECT assess_enter_outage(:sid, :epoch, :started, :reason)")
 _AUDIT = text(
     "INSERT INTO assess_audit_events (event, reason_code, actor_kind, data) "
     "VALUES (:event, :reason, 'api', CAST(:data AS jsonb))"
@@ -163,7 +201,30 @@ class TurnDriver:
     runner: Any  # DiscussionTurnRunner (or a test double with ``run_stream``)
     handoff_private: AssessKeyring
     cache: DekCache
+    #: REQ-083 session token budget (``VEKTRA_ASSESS_SESSION_TOKEN_BUDGET``); None: unlimited
+    token_budget: int | None = None
     tasks: dict[UUID, asyncio.Task[None]] = field(default_factory=dict)
+    _slots: asyncio.Semaphore | None = None
+
+    def reply_slots(self) -> int:
+        """How many replies may run at once (review fix 2). A reply holds its claim connection
+        for its whole life and needs a second one to persist, so at most half of the pool goes
+        to replies, after a margin (a quarter of the pool, at least one connection) kept for
+        every other request. The extra replies wait for a slot; they never wait holding one
+        connection for another."""
+        pool = self.engine.pool
+        size = getattr(pool, "size", None)
+        total = (size() if callable(size) else 5) + max(
+            int(getattr(pool, "_max_overflow", 0) or 0), 0
+        )
+        margin = max(1, total // 4)
+        return max(1, (total - margin) // 2)
+
+    @property
+    def slots(self) -> asyncio.Semaphore:
+        if self._slots is None:
+            self._slots = asyncio.Semaphore(self.reply_slots())
+        return self._slots
 
     def start(
         self,
@@ -171,36 +232,165 @@ class TurnDriver:
         epoch: int,
         bundle: ContextBundle,
         turn: StudentTurn,
+        cut_after_s: float | None = None,
+        expected_seq: int | None = None,
     ) -> asyncio.Task[None]:
-        task = asyncio.create_task(self._drive(sid, epoch, bundle, turn))
+        """``cut_after_s``: seconds until deadline + grace (minus the persist margin): the reply
+        is stopped then and the released part is persisted as a marked interrupted turn.
+        ``expected_seq``: the session's ``seq`` right after the student turn this reply
+        answers; once the claim is held the turn is checked to be still that pending one."""
+        # the cut is an absolute time (CodeRabbit review 5808100754): time spent waiting for
+        # a slot or the claim is not added to it
+        cut_at = (
+            asyncio.get_running_loop().time() + cut_after_s
+            if cut_after_s is not None
+            else None
+        )
+        task = asyncio.create_task(
+            self._drive(sid, epoch, bundle, turn, cut_at, expected_seq)
+        )
         self.tasks[sid] = task
         task.add_done_callback(
             lambda t: self.tasks.pop(sid, None) if self.tasks.get(sid) is t else None
         )
         return task
 
+    @asynccontextmanager
+    async def _claim(self, sid: UUID) -> AsyncIterator[bool]:
+        """The live-reply claim for the reply's lifetime: a session-level advisory lock taken
+        with ``pg_try_advisory_lock`` on a dedicated connection. Yields whether it was taken.
+
+        Never blocking and never optional: a driver that does not get the claim (another driver,
+        here or in another API process, is answering this turn) or cannot take it (database
+        unreachable) does not reply. The holder answers; a turn nobody holds is answered by the
+        ``PendingTurnDriver`` or marked by the worker's ``reconcile_reply``. Together with the
+        database guard (revision 0031: a bot turn needs a pending student turn) a student turn
+        gets exactly one bot turn."""
+        conn = None
+        claimed = False
+        # whether the session may still hold the lock in a way we could not undo: such a
+        # connection is invalidated (closed for good), never returned to the pool, where the
+        # session-level lock would survive and block the turn (CodeRabbit review 5808100754)
+        uncertain = False
+        try:
+            conn = await self.engine.connect()
+            claimed = bool(
+                (
+                    await conn.execute(
+                        text(f"SELECT pg_try_advisory_lock({REPLY_CLAIM_KEY_SQL})"),
+                        {"sid": str(sid)},
+                    )
+                ).scalar()
+            )
+            await conn.commit()
+        except Exception as exc:
+            log.warning("assess_reply_claim_failed", error_type=type(exc).__name__)
+            uncertain = conn is not None
+            claimed = False
+        try:
+            yield claimed
+        finally:
+            if conn is not None:
+                try:
+                    if claimed:
+                        unlocked = (
+                            await conn.execute(
+                                text(
+                                    f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"
+                                ),
+                                {"sid": str(sid)},
+                            )
+                        ).scalar()
+                        await conn.commit()
+                        uncertain = uncertain or not unlocked
+                except Exception:
+                    uncertain = True
+                finally:
+                    if uncertain:
+                        with contextlib.suppress(Exception):
+                            await conn.invalidate()
+                    await conn.close()
+
     async def _drive(
-        self, sid: UUID, epoch: int, bundle: ContextBundle, turn: StudentTurn
+        self,
+        sid: UUID,
+        epoch: int,
+        bundle: ContextBundle,
+        turn: StudentTurn,
+        cut_at: float | None = None,
+        expected_seq: int | None = None,
+    ) -> None:
+        """``cut_at``: the loop time of deadline + grace minus the persist margin."""
+        async with self.slots, self._claim(sid) as claimed:
+            if not claimed:
+                log.info("assess_reply_not_claimed")  # another driver answers this turn
+                return
+            # the claim may come after another driver answered (CodeRabbit review
+            # 5808100754): generate only while this very student turn is still pending
+            if expected_seq is not None and not await self._still_pending(
+                sid, epoch, expected_seq
+            ):
+                log.info("assess_reply_stale")
+                return
+            remaining = (
+                cut_at - asyncio.get_running_loop().time()
+                if cut_at is not None
+                else None
+            )
+            await self._reply(sid, epoch, bundle, turn, remaining)
+
+    async def _still_pending(self, sid: UUID, epoch: int, expected_seq: int) -> bool:
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(_PENDING_TURN, {"s": sid, "e": epoch})).first()
+        return bool(
+            row is not None
+            and row.pending_reply_since is not None
+            and int(row.seq) == expected_seq
+        )
+
+    async def _reply(
+        self,
+        sid: UUID,
+        epoch: int,
+        bundle: ContextBundle,
+        turn: StudentTurn,
+        cut_after_s: float | None = None,
     ) -> None:
         result: TurnResult | None = None
         failure: str | None = None
+        outage: ProviderCallRecord | None = None
+        stop = asyncio.Event()
+        cut = (
+            asyncio.get_running_loop().call_later(max(cut_after_s, 0.0), stop.set)
+            if cut_after_s is not None
+            else None
+        )
         try:
-            async for item in self.runner.run_stream(bundle, turn):
+            async for item in self.runner.run_stream(bundle, turn, stop):
                 if isinstance(item, ReleasedSegment):
-                    self.broker.publish(sid, "reply_delta", {"text": item.text})
+                    self.broker.publish(
+                        sid, "reply_delta", {"text": item.text}, epoch=epoch
+                    )
                 elif isinstance(item, TurnResult):
                     result = item
-        except ProviderOutageError:
-            # the ACTIVE -> OUTAGE transition and the server-side answer are plan M4.1 / M4.3;
-            # until then the attempt ends with the marked interrupted turn
-            failure = "provider_unavailable"
+        except ProviderOutageError as exc:
+            if exc.record.error_class in NOT_AN_OUTAGE:
+                failure = "provider_refused"
+            else:
+                # the server-side record: the interval starts at the call's own start
+                outage = exc.record
         except Exception as exc:
             log.warning("assess_turn_driver_error", error_type=type(exc).__name__)
             failure = "internal_error"
-        if failure is None and result is None:
+        finally:
+            if cut is not None:
+                cut.cancel()
+        if outage is None and failure is None and result is None:
             failure = "internal_error"
         try:
-            if failure is not None or result is None:
+            if outage is not None:
+                await self._outage(sid, epoch, outage)
+            elif failure is not None or result is None:
                 await self._interrupted(sid, epoch, failure or "internal_error")
             else:
                 await self._persist(sid, epoch, result)
@@ -210,11 +400,55 @@ class TurnDriver:
             log.warning("assess_turn_persist_failed", error_type=type(exc).__name__)
             self.broker.publish(sid, "reply_interrupted", {"reason": "persist_failed"})
 
+    async def _outage(self, sid: UUID, epoch: int, record: ProviderCallRecord) -> None:
+        """ACTIVE -> OUTAGE (M4.1): the pending turn is kept for the ``PendingTurnDriver``. The
+        stream learns it from ``observe`` here (``outage_start``) or from its own poll."""
+        async with self.engine.begin() as conn:
+            got = (
+                await conn.execute(
+                    _ENTER_OUTAGE,
+                    {
+                        "sid": sid,
+                        "epoch": epoch,
+                        "started": record.started_at,
+                        "reason": record.outcome,
+                    },
+                )
+            ).scalar()
+        if got == "outage":
+            self.broker.observe(
+                sid, "OUTAGE", {"state": "OUTAGE", "reason": "provider_unavailable"}
+            )
+        elif got == "closed":
+            # the third consecutive failed call: closed service_failure (M4.5)
+            self.cache.evict(sid)
+            self.broker.observe(
+                sid,
+                "CLOSED",
+                {
+                    "state": "CLOSED",
+                    "close_reason": "service_failure",
+                    "message_code": close_message_code("service_failure"),
+                },
+            )
+        else:
+            # not ACTIVE at this epoch any more (closed, revoked): nothing is moved; the marked
+            # turn is attempted and refused by the database when the session is gone
+            await self._interrupted(sid, epoch, "provider_unavailable")
+
     async def _append_bot(
-        self, sid: UUID, epoch: int, kind: str, text_: str
+        self,
+        sid: UUID,
+        epoch: int,
+        kind: str,
+        text_: str,
+        tokens: int = 0,
+        used: list[int] | None = None,
     ) -> int | None:
         """Append one bot turn under the row lock; None when the session is not ACTIVE at this
-        epoch or the function refuses (seq or chain moved, state changed)."""
+        epoch or the function refuses (seq or chain moved, state changed). ``tokens`` (the
+        answered turn's TurnUsage) is added to the session budget in the same transaction; the
+        new total is appended to ``used``."""
         async with self.engine.begin() as conn:
             seq = (
                 await conn.execute(
@@ -230,7 +464,7 @@ class TurnDriver:
             material = await load_material(
                 conn, sid, epoch, self.handoff_private, self.cache
             )
-            return await append_turn(
+            turn_no = await append_turn(
                 conn,
                 material,
                 epoch=epoch,
@@ -239,6 +473,13 @@ class TurnDriver:
                 kind=kind,
                 text_=text_,
             )
+            if turn_no is not None and tokens > 0:
+                total = (
+                    await conn.execute(_ADD_TOKENS, {"s": sid, "n": tokens})
+                ).scalar_one()
+                if used is not None:
+                    used.append(int(total))
+            return turn_no
 
     async def _interrupted(self, sid: UUID, epoch: int, reason: str) -> None:
         """The marked "[risposta interrotta]" bot turn: it answers the pending student turn, so
@@ -251,7 +492,13 @@ class TurnDriver:
 
     async def _persist(self, sid: UUID, epoch: int, result: TurnResult) -> None:
         kind = "interrupted" if result.interrupted else "normal"
-        turn_no = await self._append_bot(sid, epoch, kind, result.text)
+        text_ = result.text
+        if result.interrupted:
+            # cut at deadline + grace (REQ-070): what was released, then the fixed marker
+            text_ = f"{text_.rstrip()} {INTERRUPTED_REPLY}".strip()
+        tokens = result.usage.prompt_tokens + result.usage.completion_tokens
+        used: list[int] = []
+        turn_no = await self._append_bot(sid, epoch, kind, text_, tokens, used)
         if turn_no is None:
             # refused by assess_append_turn (state, epoch, seq or chain moved; from plan M3.3 also
             # past deadline + grace, by the database's own clock, which is left to decide): the
@@ -263,6 +510,41 @@ class TurnDriver:
             "reply_interrupted" if result.interrupted else "reply_done",
             {"turn_no": turn_no, "marked": bool(result.marks)},
         )
+        if used:
+            await self._budget(sid, epoch, used[0] - tokens, used[0])
+
+    async def _budget(self, sid: UUID, epoch: int, before: int, after: int) -> None:
+        """REQ-083: ``budget_warning`` once, when this turn crosses 80%; at 100% the session is
+        closed ``budget_exhausted`` through the plan-2 close function (one transcript job)."""
+        budget = self.token_budget
+        if not budget:
+            return
+        if before < 0.8 * budget <= after:
+            async with self.engine.begin() as conn:
+                await write_event(
+                    conn,
+                    AssessAuditEvent.BUDGET_WARNING,
+                    actor="api",
+                    session_id=sid,
+                    data={"percent": 80},
+                )
+            self.broker.publish(sid, "budget_warning", {"percent": 80})
+        if after >= budget:
+            async with self.engine.begin() as conn:
+                closed = (
+                    await conn.execute(_CLOSE_BUDGET, {"sid": sid, "epoch": epoch})
+                ).scalar()
+            if closed:
+                self.cache.evict(sid)
+                self.broker.observe(
+                    sid,
+                    "CLOSED",
+                    {
+                        "state": "CLOSED",
+                        "close_reason": "budget_exhausted",
+                        "message_code": close_message_code("budget_exhausted"),
+                    },
+                )
 
 
 def driver_of(request: Request) -> TurnDriver:
@@ -278,9 +560,30 @@ def driver_of(request: Request) -> TurnDriver:
         runner=runner,
         handoff_private=handoff_private_of(request),
         cache=dek_cache_of(request),
+        token_budget=settings_of(request).session_token_budget,
     )
     request.app.state.assess_turn_driver = driver
     return driver
+
+
+class _AppRequest:
+    """The app-level state accessors take a request; a background task has only the app."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+
+def driver_for_app(app: Any) -> TurnDriver:
+    return driver_of(_AppRequest(app))  # type: ignore[arg-type]
+
+
+def cut_after_s(row: SessionRow) -> float | None:
+    """Seconds until deadline + grace, minus the persist margin (REQ-070)."""
+    if row.deadline_at is None:
+        return None
+    grace = row.reply_grace_s
+    until = (row.deadline_at - row.server_now).total_seconds() + grace
+    return until - min(CUT_MARGIN_S, grace / 2)
 
 
 @router.post("/sessions/{sid}/turns", status_code=202)
@@ -297,9 +600,30 @@ async def post_turn(
     if len(body.text) > settings_of(request).max_message_chars:
         raise fail(bad_request("message_too_long"))
     driver = driver_of(request)
-    async with session_tx(
-        request, claims, sid, route="post_turn", allowed={"ACTIVE"}
-    ) as (conn, row):
+    async with (
+        session_tx(
+            request,
+            claims,
+            sid,
+            route="post_turn",
+            allowed={"ACTIVE"},
+            require_enrolment=True,  # gate step 6 (M3.7): a turn needs a fresh 'enrolled' check
+        ) as (conn, row)
+    ):
+        # REQ-070 input lock from the deadline on (the database refuses the append as well)
+        if row.deadline_at is not None and row.server_now >= row.deadline_at:
+            raise fail(deadline_passed())
+        # one reply at a time, decided on the locked row BEFORE the rate (review fix 4): a
+        # message refused as pending never uses the student's messages-per-minute budget
+        if row.pending_reply_since is not None:
+            raise fail(reply_pending())
+        # REQ-083 messages per minute per session: counted only for requests that passed the
+        # gate (a stale or foreign token cannot use up the student's rate), before any model call
+        allowed, _headers = limiter_of(request, "turns").check(
+            str(sid), settings_of(request).messages_per_min
+        )
+        if not allowed:
+            raise fail(rate_limited(60, "message_rate"))
         material = await load_material(
             conn, sid, row.epoch, handoff_private_of(request), dek_cache_of(request)
         )
@@ -324,7 +648,11 @@ async def post_turn(
         )
     # committed: the reply runs detached from this request from here on
     driver.broker.publish(sid, "turn_accepted", {"turn_no": turn_no})
-    driver.start(sid, row.epoch, bundle, turn)
+    # stop early enough to persist the cut turn before the database's own limit
+    # row.seq is the seq the student turn was appended at; the append moved it by one
+    driver.start(
+        sid, row.epoch, bundle, turn, cut_after_s(row), expected_seq=row.seq + 1
+    )
     return JSONResponse(
         status_code=202,
         content={"session_id": str(sid), "turn_no": turn_no},

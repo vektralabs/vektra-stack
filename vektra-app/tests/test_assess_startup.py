@@ -293,6 +293,11 @@ async def test_role_check_against_postgres(
             ).one()
         assert tuple(row) == ("vektra_assess_api", False)
         assert "assess_token_signing" in app.state.assess_keys
+        # plan 8 M5.3: one assess-local limiter per route family, the global one never armed
+        from vektra_assess.api.state import LIMITER_NAMES
+
+        assert set(app.state.assess_limiters) == set(LIMITER_NAMES)
+        assert getattr(app.state, "rate_limiter", None) is None
     finally:
         await app.state.assess_engine.dispose()
 
@@ -383,3 +388,45 @@ async def test_step_12_runs_the_guard_even_when_disabled(
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "false")
     with pytest.raises(StartupValidationError, match="parser socket is reachable"):
         await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
+
+
+async def test_the_pending_turn_driver_starts_with_the_server_and_stops_with_it() -> (
+    None
+):
+    """Plan 8 M4.3: started at the end of the shared startup (so also under ``main()`` with
+    uvicorn's lifespan off, BUG-025), only with a discussion runner; stopped at shutdown."""
+    import inspect
+
+    from vektra_app import main as app_main
+
+    bare = FastAPI()
+    assert assess_wiring.start_assess_background(bare) is False  # assess off: no runner
+
+    app = FastAPI()
+    app.state.assess_runner = object()
+    assert assess_wiring.start_assess_background(app) is True
+    driver = app.state.assess_pending_driver
+    assert driver._task is not None and not driver._task.done()
+    await assess_wiring.stop_assess_background(app)
+    assert driver._task is None and app.state.assess_pending_driver is None
+    # both serving paths run the same startup and shutdown, which call these two
+    assert "start_assess_background(app)" in inspect.getsource(app_main._run_startup)
+    assert "stop_assess_background(app)" in inspect.getsource(app_main._run_shutdown)
+
+
+def test_assess_limiters_are_local_keyed_by_session_or_student() -> None:
+    """Plan 8 M5.3: /state, /turns, /retry and /flag each have their own limiter; keys are the
+    hashables the routes pass (a (site, student, activity) tuple, a session id string), counted
+    independently of each other and of any API key."""
+    import uuid
+
+    from vektra_assess.api.state import LIMITER_NAMES
+
+    limiters = assess_wiring.build_assess_limiters()
+    assert tuple(limiters) == LIMITER_NAMES == ("state", "turns", "retry", "flag")
+    assert len({id(v) for v in limiters.values()}) == 4  # no shared instance
+    sid = str(uuid.uuid4())
+    assert limiters["turns"].check(sid, 1)[0] is True
+    assert limiters["turns"].check(sid, 1)[0] is False
+    assert limiters["retry"].check(sid, 1)[0] is True  # another family, its own count
+    assert limiters["state"].check((str(uuid.uuid4()), 7, 42), 1)[0] is True

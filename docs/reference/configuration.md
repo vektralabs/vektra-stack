@@ -222,6 +222,16 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). |
 | `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. |
 | `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. |
+| `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one `max_tokens=1` call while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
+| `VEKTRA_ASSESS_RETRY_RPM` | int | `6` | `POST /sessions/{sid}/retry` calls per minute per session; above it 429 (`retry_rate`). The retry only makes the API try the pending turn now; it never ends an OUTAGE or changes the state. |
+| `VEKTRA_ASSESS_FLAG_RPM` | int | `10` | REQ-103: `POST /sessions/{sid}/turns/{turn_no}/flag` calls per minute per session; above it 429 `flag_rate`. |
+| `VEKTRA_ASSESS_MESSAGES_PER_MIN` | int | `4` | REQ-083: student messages per minute per session; above it 429 `ERR-ASSESS-012` ("Attendi qualche secondo"), before any model call, deadline unchanged. Sized in plan 8 M5.1 (see below). |
+| `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET` | int | `500000` | REQ-083: estimated tokens (prompt + completion, from `TurnUsage`) one session may use; `budget_warning` at 80%, close `budget_exhausted` at 100% (one transcript job). Outage retries and earlier sessions do not count. Sized in plan 8 M5.1 (see below). |
+| `VEKTRA_ASSESS_START_RATE_PER_HOUR` | int | `5` | REQ-071: Start attempts per (student, activity) per hour; the next is refused 429 `start_rate_cap` with `retry_after` ("Riprova tra X minuti"), nothing consumed, audited `assess_start_rate_cap_hit`. |
+| `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER` | int | `3` | REQ-071: this many consecutive SYSTEM rollbacks (start_timeout, capture_failed, part_b_rejected, provider_unavailable, internal_error, commit_failed) of one (student, activity) enqueue `teacher_notify` and `operator_notify` once (audited `assess_rollback_cap_hit`); the student reads `technical_problem_persistent` ("Problema tecnico persistente") while the streak lasts. Worker and API. |
+| `VEKTRA_ASSESS_START_BREAKER_ROLLBACKS` | int | `10` | Per-site Start breaker: this many system rollbacks of one site within the window open it (worker-written `assess_start_breaker`, audited `assess_start_breaker_open`); the API then refuses Starts 503 `start_breaker_open` without consuming anything. |
+| `VEKTRA_ASSESS_START_BREAKER_WINDOW_S` | int | `300` | The breaker's counting window. |
+| `VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S` | int | `120` | Seconds the breaker stays fully open; then half-open (one Start at a time goes through). A commit closes it (`assess_start_breaker_close`); another system rollback re-opens it. |
 | `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. |
 | `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Safeguard of the discussion runner in the API. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
 | `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
@@ -235,7 +245,8 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_START_T_S` | int | `60` | REQ-071 commit window T: a Start not committed within T of the request is rolled back (pre-flight guard, budget cancellation and STARTING reaper). The pre-flight job's budget and lease are derived from it. The worker reads it too: `docker-compose.assess.yml` passes the `.env` value (default 60) to the worker's environment, as it does for `VEKTRA_ASSESS_ADMISSION_K`, `VEKTRA_ASSESS_RENDER_FRESH_S` and the model parameters. |
 | `VEKTRA_ASSESS_ADMISSION_K` | int | `10` | NFR-020 admission limit: live sessions (ACTIVE, OUTAGE, and STARTING sessions already in pre-flight) admitted at once. The API refuses a Start at or over K before writing anything; the worker pre-flight re-checks under a lock and is authoritative. 10 until the burst test sets it with evidence. |
 | `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION` | str | `1` | Version of the privacy notice shown before Start, recorded on the session row and on the `start` audit event. |
-| `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` | int | `2000` | Longest student message accepted (REQ-083). A longer message, or one made only of whitespace, is refused with 400 `ERR-ASSESS-014` (`details.reason` `message_too_long` / `message_empty`) before any model call; the deadline is unchanged. **Provisional default**: plan assess-session-lifecycle M5.1 sizes it on a reference session. |
+| `VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S` | int | `150` | Gate step 6: a student turn needs an `enrolled` re-check no older than this (database clock). The worker re-checks every live session every 60 s (`enrolment_recheck` jobs, WS pool); a student no longer enrolled is closed `access_revoked`; an unreadable enrolment or a worker stopped longer than this rejects turns with 503 (fail closed, nothing closed). |
+| `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` | int | `2000` | Longest student message accepted (REQ-083). A longer message, or one made only of whitespace, is refused with 400 `ERR-ASSESS-014` (`details.reason` `message_too_long` / `message_empty`) before any model call; the deadline is unchanged. Sized in plan 8 M5.1 (see below). |
 | `VEKTRA_ASSESS_RENDER_FRESH_S` | int | `300` | Age under which a worker-computed button state is fresh for `GET /state`. Older or missing: `/state` answers `unavailable` (reason `checking`) and queues one render check per student and activity. A Start is refused before writing anything only on a FRESH negative state of a Moodle-side gate; otherwise the pre-flight decides (authoritative). The gate-refresh tick re-queues stale pairs asked about in the last day. |
 | `VEKTRA_ASSESS_STATE_RPM` | int | `30` | `GET /state` calls per minute per site, student and activity (a pre-session token changes on every page view, so it is not the key). Assess-local limiter whose empty windows the housekeeping sweep removes; the global per-key limiter stays dormant. |
 | `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET` | bool | `false` | Development and CI only: let the Start gate BR-006 (h) pass while the REQ-089 privacy configuration does not exist yet (its store arrives with plan assess-privacy-retention). Without it every Start is rolled back with `privacy_not_configured` (fail closed). Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set elsewhere. The dev overlay `docker-compose.assess.dev.yml` sets it. |
@@ -359,4 +370,28 @@ Rotation order (each step is idempotent and resumable; the helper returns what i
 3. remove the old kid from the keyring only after every helper returned 0.
 
 The envelope AAD binds each ciphertext to its row (`snapshot` to the session, `turn` to session and turn number, and so on), so a ciphertext copied to another row fails authentication.
+
+### Sizing of the REQ-083 limits (plan 8 M5.1)
+
+Reference: a scripted 120-minute session (`vektra-assess/tests/test_limits_sizing.py`), one
+student message every 2 minutes (60 turns), each message 400 characters (the eval set's
+questions are 38-76 characters; 400 stands for an argued answer), replies of about 350
+characters, the default model window (8192 tokens, 600 completion), token estimates at
+3.5 characters per token, through the real `DiscussionTurnRunner`. It uses about 373,000
+tokens: the history fills the window after a few dozen turns, then every turn costs about one
+window.
+
+- `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` = 2000: about 25 times the longest eval question; about 570
+  tokens, so one message can never crowd the bundle out of the prompt.
+- `VEKTRA_ASSESS_MESSAGES_PER_MIN` = 4: twice the pace of the reference session; one reply at a
+  time already bounds a real student below it.
+- `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET` = 500,000: 1.34 times the reference session, and above
+  60 full windows (491,520), so a normal 120-minute session never reaches it. A scripted
+  client sending at the rate limit (4 messages a minute, which needs replies faster than 15 s)
+  with a full window per turn (about 8,200 tokens) uses about 33,000 tokens a minute and reaches
+  it in roughly 15-20 minutes; slower replies or shorter prompts stretch that.
+
+The test fails if a default drifts below these margins. A different model window changes the
+reference: re-run the test with the deployment's `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` before
+changing the budget.
 

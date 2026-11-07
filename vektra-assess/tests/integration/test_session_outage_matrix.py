@@ -1,0 +1,349 @@
+"""M4.6: the REQ-086 outage matrix, end to end, with a fault-injecting fake provider.
+
+The real ``DiscussionTurnRunner`` runs against ``FaultLLM`` (down, hanging, slow, refusing with a
+named provider error, or healthy), inside the real API (``TurnDriver``, ``PendingTurnDriver``) and
+the real worker bodies (``outage_tick``, ``sweep_timed_out``) on a real database. Outage LENGTHS
+are simulated on the database clock (the open interval's ``started_at`` is moved back): the
+3-minute and 15-minute cases cannot wait in real time, and the credit is computed by the database
+from those timestamps, the same as in production. The slow-success case runs in real time,
+scaled (first token inside the outage timeout, the whole reply longer than it).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
+import pytest
+from fakes import RecordingAuditSink, RecordingSafeguard, RecordingTraceWriter
+from sqlalchemy.ext.asyncio import create_async_engine
+from support.sessions import seed_session
+from support.world import world
+
+from integration.test_session_preflight import _reset
+from vektra_assess.api.pending import PendingTurnDriver
+from vektra_assess.config import VektraAssessSettings
+from vektra_assess.llm import DiscussionTurnRunner
+from vektra_assess.timing import deadline
+from vektra_assess.worker.outage_probe import make_llm_probe, outage_tick
+from vektra_assess.worker.slots import _tick_table
+from vektra_assess.worker.sweeper import sweep_timed_out
+from vektra_shared.testing_recorders import RecordingLLMProvider
+from vektra_shared.types import CompletionChunk
+
+pytestmark = pytest.mark.integration
+
+G = 20
+TIMEOUT_S = 0.3  # the outage timeout (no first token within it), scaled down
+
+
+class FaultLLM(RecordingLLMProvider):
+    """``mode``: ok | down | hang | slow | <ProviderErrorClassName>."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.mode = "ok"
+        self.n_calls = 0
+
+    def _fault(self) -> None:
+        if self.mode == "down":
+            raise ConnectionError("provider down")
+        if self.mode not in ("ok", "hang", "slow"):
+            raise type(self.mode, (Exception,), {})("refused")
+
+    async def complete(self, messages: Any, model: str, **kw: Any) -> Any:  # type: ignore[override]
+        self.n_calls += 1
+        self._fault()
+        if self.mode == "hang":
+            await asyncio.sleep(3600)
+        return None
+
+    async def stream(  # type: ignore[override]
+        self, messages: Any, model: str, **kw: Any
+    ) -> AsyncIterator[CompletionChunk]:
+        self.n_calls += 1
+        self._fault()
+        mode = self.mode
+
+        async def gen() -> AsyncIterator[CompletionChunk]:
+            if mode == "hang":
+                await asyncio.sleep(3600)
+            parts = ["Bene.", " Quale", " scelta", " vuoi spiegare?"]
+            for part in parts:
+                if mode == "slow":
+                    await asyncio.sleep(
+                        0.12
+                    )  # each gap < timeout, the whole reply > timeout
+                yield CompletionChunk(content=part)
+
+        return gen()
+
+
+def make_runner(llm: FaultLLM) -> DiscussionTurnRunner:
+    return DiscussionTurnRunner(
+        llm=llm,
+        safeguard=RecordingSafeguard(),
+        trace_writer=RecordingTraceWriter(),
+        settings=VektraAssessSettings.model_validate(
+            {
+                "VEKTRA_ASSESS_LLM_MODEL": "fault/model",
+                "VEKTRA_ASSESS_OUTAGE_TIMEOUT_S": TIMEOUT_S,
+            }
+        ),
+        audit=RecordingAuditSink(),
+    )
+
+
+@pytest.fixture
+async def worker(pg):  # type: ignore[no-untyped-def]
+    await _reset(pg)
+    engine = create_async_engine(pg.url("worker"))
+    yield engine
+    await engine.dispose()
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def wait_idle(w) -> None:  # type: ignore[no-untyped-def]
+    driver = getattr(w.app.state, "assess_turn_driver", None)
+    if driver is not None:
+        for task in list(driver.tasks.values()):
+            await asyncio.wait_for(task, 15)
+
+
+class Rig:
+    """One seeded session, the fault LLM and the server-side pieces, no client after the post."""
+
+    def __init__(self, pg, w, worker, llm: FaultLLM, sid, token: str) -> None:  # type: ignore[no-untyped-def]
+        self.pg, self.w, self.worker, self.llm, self.sid, self.token = (
+            pg,
+            w,
+            worker,
+            llm,
+            sid,
+            token,
+        )
+        self.probe = make_llm_probe(llm, "fault/model", timeout_s=TIMEOUT_S)
+        self.pending = PendingTurnDriver(w.app, min_age_s=0)
+
+    async def say(self, text: str = "Ho scelto quel metodo") -> None:
+        r = await self.w.client.post(
+            f"/api/v1/assess/sessions/{self.sid}/turns",
+            json={"text": text},
+            headers=bearer(self.token),
+        )
+        assert r.status_code == 202, r.text
+        await wait_idle(self.w)  # the client is gone from here on
+
+    async def outage_lasted(self, seconds: int) -> None:
+        """Simulated outage length: the open interval started ``seconds`` ago."""
+        await self.pg.run(
+            "super",
+            "UPDATE assess_outage_incidents SET started_at = now() - make_interval(secs => :n) "
+            "WHERE session_id = :s AND ended_at IS NULL",
+            {"s": self.sid, "n": seconds},
+        )
+
+    async def tick(self) -> None:
+        await outage_tick(self.worker.connect, self.probe, min_credit_s=G)
+        await self.pending.run_once()
+        await wait_idle(self.w)
+
+    async def row(self) -> Any:
+        return (
+            await self.pg.run(
+                "super",
+                "SELECT state, close_reason, credited_outage_s, deadline_at, committed_at, "
+                "duration_s, (SELECT count(*) FROM assess_outage_incidents i "
+                "WHERE i.session_id = s.id) AS intervals, (SELECT role || '/' || kind FROM "
+                "assess_turns t WHERE t.session_id = s.id ORDER BY turn_no DESC LIMIT 1) AS last "
+                "FROM assess_sessions s WHERE id = :s",
+                {"s": self.sid},
+            )
+        )[0]
+
+
+@asynccontextmanager
+async def rigged(pg, worker) -> AsyncIterator[Rig]:  # type: ignore[no-untyped-def]
+    llm = FaultLLM()
+    async with world(pg, assess_runner=make_runner(llm)) as w:
+        s = await seed_session(w, worker, "ACTIVE", cap_minutes=30)  # C = 900 s
+        # committed 20 minutes ago, so a simulated interval is never clamped to the commit
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET committed_at = committed_at - interval '20 minutes', "
+            "deadline_at = deadline_at - interval '20 minutes' WHERE id = :s",
+            {"s": s.session_id},
+        )
+        yield Rig(pg, w, worker, llm, s.session_id, str(s.session_token))
+
+
+@pytest.mark.parametrize(
+    ("lasted_s", "low", "high"), [(180, 175, 185), (15, 0, 0)], ids=["3min", "15s"]
+)
+async def test_an_outage_is_credited_from_g_on(pg, worker, lasted_s, low, high) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "down"
+        await rig.say()
+        assert (await rig.row()).state == "OUTAGE"
+        await rig.outage_lasted(lasted_s)
+        await rig.tick()  # still down: nothing changes
+        assert (await rig.row()).state == "OUTAGE"
+        rig.llm.mode = "ok"
+        await (
+            rig.tick()
+        )  # the probe succeeds; the pending turn is answered with no client
+        row = await rig.row()
+        assert row.state == "ACTIVE" and row.last == "bot/normal"
+        assert low <= row.credited_outage_s <= high
+        assert row.deadline_at == deadline(
+            row.committed_at, row.duration_s, row.credited_outage_s
+        )
+
+
+async def test_a_hanging_provider_is_an_outage_too(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "hang"
+        await rig.say()
+        assert (await rig.row()).state == "OUTAGE"
+
+
+async def test_a_slow_success_is_not_an_outage(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "slow"
+        await rig.say()
+        row = await rig.row()
+        assert (row.state, row.credited_outage_s, row.intervals, row.last) == (
+            "ACTIVE",
+            0,
+            0,
+            "bot/normal",
+        )
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    ["ContextWindowExceededError", "RateLimitError", "ContentPolicyViolationError"],
+)
+async def test_provider_refusals_never_set_outage_nor_earn_credit(
+    pg, worker, refusal
+) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = refusal
+        await rig.say()
+        row = await rig.row()
+        assert (row.state, row.credited_outage_s, row.intervals, row.last) == (
+            "ACTIVE",
+            0,
+            0,
+            "bot/interrupted",
+        )
+
+
+async def test_a_refused_query_never_sets_outage(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    llm = FaultLLM()
+    llm.mode = "down"  # would be an outage, if the model were called at all
+    runner = make_runner(llm)
+    runner._safeguard = RecordingSafeguard(refuse_query=True)
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "x"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202
+        await wait_idle(w)
+        st = await pg.run(
+            "super",
+            "SELECT state, (SELECT count(*) FROM assess_outage_incidents WHERE session_id = :s) "
+            "FROM assess_sessions WHERE id = :s",
+            {"s": s.session_id},
+        )
+        assert tuple(st[0]) == ("ACTIVE", 0) and llm.n_calls == 0
+
+
+async def test_beyond_c_closes_service_failure_with_the_intervals(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "down"
+        await rig.say()
+        await rig.outage_lasted(901)  # C = 900 s for a 30-minute session
+        await rig.tick()
+        row = await rig.row()
+        assert (row.state, row.close_reason, row.intervals) == (
+            "CLOSED",
+            "service_failure",
+            1,
+        )
+        ended = await rig.pg.run(
+            "super",
+            "SELECT ended_at IS NOT NULL, credited_s FROM assess_outage_incidents "
+            "WHERE session_id = :s",
+            {"s": rig.sid},
+        )
+        assert tuple(ended[0]) == (
+            True,
+            0,
+        )  # recorded for the transcript, nothing credited
+
+
+async def test_browser_killed_at_outage_start_reaches_active_or_closed_within_c(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """No client after the post. Provider back -> answered (ACTIVE); never back -> C closes."""
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "down"
+        await rig.say()
+        await rig.outage_lasted(600)
+        rig.llm.mode = "ok"
+        await rig.tick()
+        row = await rig.row()
+        assert row.state == "ACTIVE" and row.last == "bot/normal"
+        # a second outage that never recovers: closed at C, not left in OUTAGE
+        rig.llm.mode = "down"
+        await rig.say("e ancora")
+        await rig.outage_lasted(301)  # 600 + 301 > 900
+        await rig.tick()
+        row = await rig.row()
+        assert (row.state, row.close_reason) == ("CLOSED", "service_failure")
+
+
+async def test_recovery_with_the_client_absent_then_closes_timed_out(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    async with rigged(pg, worker) as rig:
+        rig.llm.mode = "down"
+        await rig.say()
+        await rig.outage_lasted(60)
+        # the sweeper never closes OUTAGE, even past the deadline
+        await rig.pg.run(
+            "super",
+            "UPDATE assess_sessions SET deadline_at = now() - interval '2 hours' WHERE id = :s",
+            {"s": rig.sid},
+        )
+        assert await sweep_timed_out(rig.worker.connect) == 0
+        assert (await rig.row()).state == "OUTAGE"
+        rig.llm.mode = "ok"
+        await outage_tick(rig.worker.connect, rig.probe, min_credit_s=G)
+        assert (await rig.row()).state == "ACTIVE"  # within one probe interval
+        # its (credited) deadline is still long past: the sweeper closes it timed_out
+        await rig.pg.run(
+            "super",
+            "UPDATE assess_sessions SET deadline_at = now() - interval '2 hours', "
+            "pending_reply_since = NULL WHERE id = :s",
+            {"s": rig.sid},
+        )
+        assert await sweep_timed_out(rig.worker.connect) == 1
+        row = await rig.row()
+        assert (row.state, row.close_reason) == ("CLOSED", "timed_out")
+
+
+def test_the_probe_interval_is_5_to_10_seconds() -> None:
+    spec = next(
+        t for t in _tick_table(VektraAssessSettings()) if t.name == "outage_probe"
+    )
+    assert 5 <= spec.interval_s and spec.interval_s + spec.jitter_s <= 10

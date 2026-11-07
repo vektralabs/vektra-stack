@@ -75,6 +75,7 @@ from vektra_assess.worker.policy import (
     COMMIT_MARGIN_S,
 )  # one value, shared with the policy
 from vektra_assess.worker.runner import AcquireDb, JobContext
+from vektra_assess.worker.start_guard import StartLimits, after_commit, after_rollback
 
 log = structlog.get_logger(__name__)
 
@@ -156,6 +157,10 @@ class StartSource(Protocol):
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts: ...
 
     async def capture(self, target: StartTarget) -> CaptureResult: ...
+
+    async def enrolled(self, target: StartTarget) -> bool | None:
+        """Still an ACTIVE student of the activity's course? None when unreadable (M3.7)."""
+        ...
 
 
 class PartBRunner(Protocol):
@@ -239,7 +244,8 @@ _WITHIN_T = text(
     # student for the time the commit transaction itself took (CodeRabbit, PR #153)
     # (one clock reading for all three: clock_timestamp() changes on every call)
     "UPDATE assess_sessions SET last_activity_at = c.t, committed_at = c.t, "
-    "deadline_at = c.t + make_interval(secs => duration_s) "
+    # the one deadline formula (vektra_assess.timing.DEADLINE_SQL) with committed_at = c.t
+    "deadline_at = c.t + make_interval(secs => duration_s + credited_outage_s) "
     "FROM (SELECT clock_timestamp() AS t) AS c WHERE id = :sid "
     "AND state = 'ACTIVE' AND c.t - created_at < make_interval(secs => :t)"
 )
@@ -270,8 +276,16 @@ _INSERT_TURN = text(
 _ACTIVATE = text(
     "UPDATE assess_sessions SET state = 'ACTIVE', committed_at = now(), "
     "deadline_at = now() + make_interval(secs => :d), duration_s = :d, seq = :seq, "
+    "reply_grace_s = :g, "
     "frozen_policy = CAST(:fp AS jsonb), starting_expires_at = NULL, last_activity_at = now() "
     "WHERE id = :s"
+)
+#: dated at the pre-flight's admission (database clock, before Moodle was read), never at the
+#: commit: the enrolment was observed then, and a slow capture must not make it look fresher
+#: than it is (CodeRabbit 4498466313)
+_ENROLLED = text(
+    "INSERT INTO assess_enrolment_checks (session_id, result, checked_at) "
+    "VALUES (:s, 'enrolled', to_timestamp(:observed))"
 )
 _HANDOFF = text(
     "INSERT INTO assess_session_handoff (session_id, session_state, epoch, sealed_dek, "
@@ -293,6 +307,7 @@ async def rollback_start(
     *,
     actor: str = "worker",
     extra: AssessAuditEvent | None = None,
+    limits: StartLimits | None = None,
 ) -> bool:
     """Delete a STARTING session and everything under it, in the CALLER's transaction.
 
@@ -317,6 +332,15 @@ async def rollback_start(
             "sid": session_id,
         },
     )
+    # REQ-071 abuse cap and the per-site breaker, in this same transaction (M5.4)
+    await after_rollback(
+        conn,
+        site_id=row.site_id,
+        cmid=int(row.cmid),
+        userid=int(row.student_userid),
+        reason=reason,
+        limits=limits or StartLimits(),
+    )
     for event in (AssessAuditEvent.START_ROLLBACK, extra):
         if event is None:
             continue
@@ -337,10 +361,13 @@ async def _rollback(
     session_id: UUID,
     reason: str,
     extra: AssessAuditEvent | None = None,
+    limits: StartLimits | None = None,
 ) -> None:
     async with acquire() as conn:
         async with conn.begin():
-            done = await rollback_start(conn, session_id, reason, extra=extra)
+            done = await rollback_start(
+                conn, session_id, reason, extra=extra, limits=limits
+            )
     log.info(
         "assess_preflight_rolled_back",
         session_id=str(session_id),
@@ -477,6 +504,7 @@ async def _commit(
     part_a: str,
     part_b: TurnResult,
     duration_s: int,
+    observed_at: int,
 ) -> bool:
     sid = target.session_id
     dek = envelope.new_dek()
@@ -519,6 +547,7 @@ async def _commit(
                         "s": sid,
                         "d": duration_s,
                         "seq": 2,
+                        "g": deps.settings.reply_grace_s,
                         "fp": built.frozen_policy.model_dump_json(),
                     },
                 )
@@ -533,6 +562,8 @@ async def _commit(
                 await conn.execute(
                     _HANDOFF, {"s": sid, "e": int(row.epoch), "d": sealed, "k": hkid}
                 )
+                # gate (f) has just verified the enrolment: the first freshness record (M3.7)
+                await conn.execute(_ENROLLED, {"s": sid, "observed": observed_at})
                 await conn.execute(
                     _ATTEMPT,
                     {
@@ -544,6 +575,8 @@ async def _commit(
                         "sid": sid,
                     },
                 )
+                # a committed half-open probe closes the breaker
+                await after_commit(conn, target.site_id, sid)
                 await write_event(
                     conn,
                     AssessAuditEvent.COMMIT,
@@ -584,7 +617,9 @@ async def _commit(
     return True
 
 
-async def _resolve_ambiguous(acquire: AcquireDb, sid: UUID) -> None:
+async def _resolve_ambiguous(
+    acquire: AcquireDb, sid: UUID, limits: StartLimits | None = None
+) -> None:
     """After an unknown COMMIT outcome, re-read the row on a NEW connection before any rollback:
 
     - ACTIVE with ``committed_at``: it committed; nothing to undo, no rollback event;
@@ -607,7 +642,7 @@ async def _resolve_ambiguous(acquire: AcquireDb, sid: UUID) -> None:
         log.info("assess_preflight_ambiguous_gone", session_id=str(sid))
         return
     if row.state == "STARTING":
-        await _rollback(acquire, sid, Reason.COMMIT_FAILED)
+        await _rollback(acquire, sid, Reason.COMMIT_FAILED, limits=limits)
         return
     log.info("assess_preflight_ambiguous_committed", session_id=str(sid))
 
@@ -615,6 +650,8 @@ async def _resolve_ambiguous(acquire: AcquireDb, sid: UUID) -> None:
 def make_preflight_handler(
     deps: PreflightDeps,
 ) -> Callable[[JobContext], Awaitable[None]]:
+    limits = StartLimits.from_settings(deps.settings)
+
     async def handle(ctx: JobContext) -> None:
         raw = ctx.args.get("session_id")
         try:
@@ -624,13 +661,15 @@ def make_preflight_handler(
         try:
             await _run(deps, ctx.acquire, sid)
         except _Rollback as rb:
-            await _rollback(ctx.acquire, sid, rb.reason, rb.extra)
+            await _rollback(ctx.acquire, sid, rb.reason, rb.extra, limits)
         except _AmbiguousCommit:
-            await _resolve_ambiguous(ctx.acquire, sid)
+            await _resolve_ambiguous(ctx.acquire, sid, limits)
         except asyncio.CancelledError:
             # the runtime's budget (T - margin) or a shutdown cancelled the pre-flight mid-way:
             # roll it back now, shielded from the cancellation, instead of leaving it to the reaper
-            await asyncio.shield(_rollback(ctx.acquire, sid, Reason.START_TIMEOUT))
+            await asyncio.shield(
+                _rollback(ctx.acquire, sid, Reason.START_TIMEOUT, limits=limits)
+            )
             raise
 
     return handle
@@ -642,6 +681,11 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     if admitted is None:
         return
     target, duration_s, elapsed, db = admitted
+    # the admission's database time, no later than the enrolment read. db.now is
+    # extract(epoch FROM now())::bigint, ROUNDED to the nearest second (up to 0.5 s in the
+    # future): one second less keeps the record never newer than the observation, and never
+    # newer than a re-check written right after the commit
+    observed_at = db.now - 1
     try:
         facts: MoodleGateFacts = await _within(
             deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)
@@ -688,7 +732,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         log.warning("assess_preflight_error", error_type=type(exc).__name__)
         raise _Rollback(Reason.INTERNAL_ERROR) from None
     committed = await _commit(
-        deps, acquire, target, captured, part_a, part_b, duration_s
+        deps, acquire, target, captured, part_a, part_b, duration_s, observed_at
     )
     if committed:
         log.info("assess_preflight_committed", session_id=str(sid))

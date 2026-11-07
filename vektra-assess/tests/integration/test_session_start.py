@@ -335,3 +335,34 @@ async def test_a_heartbeat_without_a_ready_state_refuses_the_start(pg) -> None: 
             == 0
         )
         await beat(pg)
+
+
+async def test_a_correctly_signed_token_never_minted_is_rejected_and_audited(
+    pg,
+) -> None:  # type: ignore[no-untyped-def]
+    """M5.5: signed by the right key with valid claims, but never minted through /tokens: the
+    jti has no mint row from the site's current mint key. Rejected, audited, nothing written."""
+    await _clean(pg)
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, CMID)
+        from vektra_assess.api.deps import tokens_of
+
+        class _Req:
+            app = w.app
+
+        forged = tokens_of(_Req()).mint_presession(sub=335, site=w.site, cmid=CMID)  # type: ignore[arg-type]
+        audited = (
+            "SELECT count(*) FROM assess_audit_events WHERE event = 'assess_start_refused' "
+            "AND reason_code = 'mint_correlation'"
+        )
+        before = await n(pg, audited)
+        r = await start(w, forged.token)
+        assert r.status_code == 401 and err(r)["code"] == "ERR-ASSESS-005"
+        assert (
+            await n(
+                pg, "SELECT count(*) FROM assess_sessions WHERE student_userid = 335"
+            )
+            == 0
+        )
+        assert await n(pg, "SELECT count(*) FROM assess_jobs") == 0
+        assert await n(pg, audited) == before + 1

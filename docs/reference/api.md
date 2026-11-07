@@ -79,8 +79,8 @@ curl -s \
 Components: `llm`, `embedding`, `vector_store`, `assess`.
 
 `/health/assess` is the readiness of the assessment discussion feature. It reports `disabled` when
-`VEKTRA_ASSESS_ENABLED=false`, and is never `healthy` without evidence from the worker: until the worker
-heartbeat is wired, it reports `degraded` with message `heartbeat_source_missing`. Like `llm`, it is left
+`VEKTRA_ASSESS_ENABLED=false`, and is never `healthy` without evidence from the worker: it reads the
+worker heartbeat row. Like `llm`, it is left
 out of the shallow `GET /health`, so a stopped assess worker (a separate container) does not make the API
 container look unhealthy; it is included in `?detail=full`.
 
@@ -105,9 +105,61 @@ Only mounted when `VEKTRA_ASSESS_ENABLED=true`. Exact `admin` scope. Without a p
 
 The body is the JSON report written by `make eval-assess`. The endpoint never trusts its `status`: it recomputes the SHA-256 over the canonical body, requires every HARD class (deterministic and judge-based) at 0, a judge calibration of `PASS` and a declared data basis. Every attempt, accepted or refused, writes an audit event with codes only; rows are append-only.
 
+### Assess student discussion: sessions, turns and events (iframe client)
+
+Only mounted when `VEKTRA_ASSESS_ENABLED=true` (plan assess-session-lifecycle). The Moodle plugin
+mints a pre-session token server-side with its site-bound `assess:mint` key; every other route
+takes a discussion token in `Authorization: Bearer` only (a token in a query string or a cookie is
+refused, ADR-0030). Request bodies forbid unknown fields. The one exception to "no Moodle id" is
+`POST /tokens`, called server-side by the trusted plugin: it must send `cmid` (and `sub`) and may
+send `courseid` as an optional hint (never trusted: the activity is resolved inside the student's
+own courses). No student-facing route takes a Moodle, course or attempt id: the attempt is
+selected server-side at Start.
+
+| Method | Path | Token | Success | Errors |
+|--------|------|-------|---------|--------|
+| POST | `/api/v1/assess/tokens` | `assess:mint` API key | `201 {"token", "expires_in"}` pre-session token | `401 ERR-AUTH-001`, `403 ERR-ASSESS-006` (login-as), `403 ERR-ASSESS-007` (key not bound to the site), `400 ERR-ASSESS-014`, `403 ERR-ASSESS-016` (plugin too old) |
+| GET | `/api/v1/assess/state` | pre-session | `200 {"state", "reason", ...}` the student's render state | `401 ERR-ASSESS-005`, `429 ERR-ASSESS-012` (`state_rate`) |
+| POST | `/api/v1/assess/sessions` | pre-session | `202 {"session_id", "state": "STARTING", "token", "session_no"}` | `401 ERR-ASSESS-005` (also a jti never minted by the site's current mint key: `mint_correlation`), `409 ERR-ASSESS-015` (gate code, `session_already_open`, `already_discussed`, `activity_not_configured`), `429 ERR-ASSESS-012` (`start_rate_cap`, `retry_after`), `503 ERR-ASSESS-013` (capacity), `503 ERR-ASSESS-001` (worker not ready, `start_breaker_open`) |
+| GET | `/api/v1/assess/sessions/{sid}` | session (or pre-session: resume, re-mints) | `200 {"session_id", "state", "close_reason", "session_no", "deadline_at", "server_now", "remaining_s" (frozen at the outage start while in OUTAGE), "committed_at", "reply_pending", "turns": [{"turn_no", "role", "kind", "text", "flagged"}]}` | `401`, `404 ERR-ASSESS-008`, `409 ERR-ASSESS-009` (closed), `409 ERR-ASSESS-011`, `503 ERR-ASSESS-001` |
+| GET | `/api/v1/assess/sessions/{sid}/events` | session | `200 text/event-stream` (below) | as GET; a CLOSED session answers a content-free `state` + `closed` |
+| POST | `/api/v1/assess/sessions/{sid}/turns` | session | `202 {"session_id", "turn_no"}`; the reply streams on the events | `400 ERR-ASSESS-014` (`message_empty`, `message_too_long`), `409 ERR-ASSESS-010` (reply pending), `409 ERR-ASSESS-011` (deadline passed, OUTAGE), `429 ERR-ASSESS-012` (`message_rate` "Attendi qualche secondo"), `503 ERR-ASSESS-001` (`enrolment_freshness`) |
+| POST | `/api/v1/assess/sessions/{sid}/retry` | session | `202 {"session_id", "state", "reply_pending"}`; asks the server to answer a pending turn now, never ends OUTAGE | `409`, `429 ERR-ASSESS-012` (`retry_rate`) |
+| POST | `/api/v1/assess/sessions/{sid}/turns/{turn_no}/flag` | session | `201` (or `200`: already flagged) `{"session_id", "turn_no", "flagged": true}` | `400 ERR-ASSESS-014` (`not_a_bot_turn`), `409 ERR-ASSESS-009` after the close, `429 ERR-ASSESS-012` (`flag_rate`) |
+| POST | `/api/v1/assess/sessions/{sid}/finish` | session | `200 {"session_id", "state": "CLOSED", "close_reason"}`, idempotent | `401`, `404`, `409` |
+
+**Tokens** (HS256, `aud=discussion`). Pre-session: `sub`, `site`, `cmid`, `stage: "pre"`, `jti`,
+`loginas: false`, `iat`, `exp` (at most 120 s, single use at Start). Session-bound: `sub`, `site`,
+`cmid`, `sid`, `seq` (the session number), `epoch`, `jti`, `loginas: false`, `exp` (never past
+deadline plus `VEKTRA_ASSESS_REPLY_GRACE_S`). Every close bumps the session's epoch: an older-epoch
+token of the owner is answered as closed (`ERR-ASSESS-009`), on a live session any epoch mismatch
+is a revocation (`401 ERR-ASSESS-005`). A token without `loginas: false` is refused with `403
+ERR-ASSESS-006` on every route.
+
+**Events** (`text/event-stream`, `Last-Event-ID` replays the in-memory ring). Payloads are
+content-free except `reply_delta`, which carries post-checked text only and is delivered only while
+the row is live at the token's epoch. `state` (snapshot on connect), `committed`,
+`start_rolled_back` (`reason`, `technical_problem_persistent` after 3 consecutive system
+rollbacks), `capacity_refused`, `turn_accepted`, `reply_delta`, `reply_done`, `reply_interrupted`
+(`reason`: `provider_refused`, `internal_error`, `append_refused`, `persist_failed`), `warning`
+(`minutes`: 10 / 5 / 1 against the current deadline), `budget_warning` (`percent: 80`),
+`outage_start`, `outage_end` (with the moved `deadline_at`), `closed` (`close_reason`,
+`message_code`: `closed_finished`, `closed_timed_out`, `closed_service_failure`,
+`closed_budget_exhausted`, `closed_terminated_by_teacher`, `closed_access_revoked`; the plugin
+renders the Italian text).
+
+**Timing.** Deadline = commit + duration (cap + extra time, frozen at Start) + credited outage.
+Input locks at the deadline; an in-flight reply may finish until deadline + grace, otherwise it is
+persisted cut and marked "[risposta interrotta]". A provider outage moves the session to OUTAGE
+(timer frozen, input locked, the pending turn kept); the worker's probe ends it and credits the
+interval when at least G seconds, the cumulative credit capped at C = min(15 min, half the
+duration); beyond C, or after 3 consecutive failed calls, the session closes `service_failure` and
+the close queues a `teacher_notify` job in the same transaction (delivery is plan
+transcript-delivery's). Limits and their sizing: `docs/reference/configuration.md`.
+
 ### Assess discussion context: Part A and item references (iframe client)
 
-No endpoint yet: the session routes arrive with the session lifecycle and discussion UI plans. This is the contract the iframe client will rely on.
+The opening message and the item references the session routes above serve.
 
 - **Part A** of the opening message is system text, never generated by the model: activity, "Tentativo #k di M (metodo: …)" for a quiz, the fixed statement "Voto registrato: <X> (letto il <data>). Il voto NON è stato modificato da questa discussione; decide l'orale" with the grade exactly as Moodle shows it to the student, "Sessione #N", duration, "Materiale del corso: usato / non usato", "Soluzione: mostrata / non mostrata", the overview of items, one REQ-101 status per submitted file, and how to proceed. A screen-reader summary "Discussione avviata: tentativo #k, N elementi, durata X minuti" is provided separately. Part A comes as plain text (not escaped: student-controlled file names flow through it) and as an HTML-escaped variant; a client that renders the plain text into HTML must escape it.
 - **Item labels** are snapshot-local and the only way to refer to an item: "Domanda n" (numbered as on the student's review page), "Criterio n" (rubric order), "Valutazione complessiva", "Consegna". The server resolves a label, an ordinal ("la terza", "il secondo criterio") or keywords against the frozen snapshot. An ambiguous reference returns at most 3 candidates and the bot asks; an unknown label returns "Non trovo <label> in questo tentativo; ecco l'elenco: …". Anything shaped like a Moodle id (`slot`, `cmid`, `attemptid`, a bare number that is not a label) is rejected and audited `assess_item_ref_rejected`, and so is a picker request carrying a label that is not in the snapshot.

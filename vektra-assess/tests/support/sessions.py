@@ -22,7 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from test_context_capture import InProcessParser
 
-from support.preflight import FakePartB, activate, deps, job_context
+from support.preflight import FakePartB, activate, deps, job_context, kek_ring
 from support.world import World, configure_activity
 from vektra_assess.worker.preflight import make_preflight_handler
 from vektra_assess.worker.start_source import MoodleStartSource
@@ -46,6 +46,7 @@ class Seeded:
     sub: int
     cmid: int
     session_token: str | None
+    kek: Any = None  # the KEK the session key was wrapped under (worker-side tests)
 
 
 async def _site_release(w: World, branch: str) -> None:
@@ -67,6 +68,7 @@ async def seed_session(
     cap_minutes: int = 30,
     runner: Any | None = None,
     close_reason: str = "finished",
+    kek: Any | None = None,
 ) -> Seeded:
     sub, cmid = fixture_target(branch, assignment, user)
     await _site_release(w, branch)
@@ -92,8 +94,9 @@ async def seed_session(
     source = MoodleStartSource(
         make_client(Replay(branch)), InProcessParser(), worker.connect
     )
+    kek = kek or kek_ring()
     handler = make_preflight_handler(
-        deps(w.settings, w.handoff_public, source, runner or FakePartB())
+        deps(w.settings, w.handoff_public, source, runner or FakePartB(), kek=kek)
     )
     await handler(job_context(worker, sid))
     committed = await w.pg.run(
@@ -103,11 +106,18 @@ async def seed_session(
         "seeding: the pre-flight did not commit"
     )
     if state == "OUTAGE":
-        async with worker.begin() as conn:
-            await conn.execute(
-                text("UPDATE assess_sessions SET state = 'OUTAGE' WHERE id = :s"),
-                {"s": sid},
+        # through the API's own transition (M4.1): an interval row and its audit event
+        epoch = (
+            await w.pg.run(
+                "super", "SELECT epoch FROM assess_sessions WHERE id = :s", {"s": sid}
             )
+        )[0][0]
+        got = await w.pg.run(
+            "api",
+            "SELECT assess_enter_outage(:s, :e, now(), 'first_token_timeout')",
+            {"s": sid, "e": epoch},
+        )
+        assert got[0][0] == "outage", got
     elif state == "CLOSED":
         async with worker.begin() as conn:
             ok = (
@@ -117,4 +127,4 @@ async def seed_session(
                 )
             ).scalar()
             assert ok is True
-    return Seeded(sid, sub, cmid, session_token)
+    return Seeded(sid, sub, cmid, session_token, kek)

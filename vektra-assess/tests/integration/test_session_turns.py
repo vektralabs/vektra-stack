@@ -14,7 +14,6 @@ from support.world import err, world
 
 from integration.test_session_events_sse import TIMING, parse
 from integration.test_session_preflight import _reset
-from vektra_assess.llm.types import ProviderCallRecord, ProviderOutageError
 
 pytestmark = pytest.mark.integration
 
@@ -185,19 +184,16 @@ async def test_the_reply_survives_the_client_going_away(pg, worker) -> None:  # 
     )
 
 
-async def test_an_outage_writes_the_interrupted_turn_and_the_next_turn_is_accepted(  # type: ignore[no-untyped-def]
+async def test_an_internal_error_writes_the_interrupted_turn_and_the_next_turn_is_accepted(  # type: ignore[no-untyped-def]
     pg, worker
 ) -> None:
-    """Review fix 5: an outage (or an internal error) at turn N appends the marked bot turn
-    "[risposta interrotta]" through assess_append_turn, which clears the pending marker, so turn
-    N+1 is accepted instead of a 409 forever. The ACTIVE -> OUTAGE transition is plan M4.1."""
-    from datetime import UTC, datetime
-
+    """Review fix 5: an internal error at turn N appends the marked bot turn "[risposta
+    interrotta]" through assess_append_turn, which clears the pending marker, so turn N+1 is
+    accepted instead of a 409 forever. A provider OUTAGE keeps the turn instead (M4.1,
+    test_session_outage)."""
     from vektra_assess.turn_markers import INTERRUPTED_REPLY
 
-    now = datetime.now(UTC)
-    rec = ProviderCallRecord(now, None, now, "first_token_timeout")
-    runner = FakeStreamRunner(fail=ProviderOutageError(rec))
+    runner = FakeStreamRunner(fail=RuntimeError("boom"))
     async with world(pg, assess_runner=runner) as w:
         s = await seed_session(w, worker, "ACTIVE")
         url = f"/api/v1/assess/sessions/{s.session_id}"
@@ -232,7 +228,7 @@ async def test_an_outage_writes_the_interrupted_turn_and_the_next_turn_is_accept
 
         evs = broker_of(R()).after(s.session_id, 0)  # type: ignore[arg-type]
         assert [e.type for e in evs] == ["turn_accepted", "reply_interrupted"]
-        assert evs[-1].data == {"reason": "provider_unavailable", "turn_no": 4}
+        assert evs[-1].data == {"reason": "internal_error", "turn_no": 4}
         # the provider is back: turn N+1 is accepted and answered
         runner.fail = None
         r = await w.client.post(
@@ -376,3 +372,269 @@ async def test_an_over_length_or_blank_message_is_a_400_before_any_llm_call(  # 
         )
         assert ok.status_code == 202
         await _wait_idle(w)
+
+
+async def _deadline_in(pg, sid, seconds: float, grace: int | None = None) -> None:  # type: ignore[no-untyped-def]
+    sets = f"deadline_at = now() + make_interval(secs => {seconds})"
+    if grace is not None:
+        sets += f", reply_grace_s = {grace}"
+    await pg.run(
+        "super", f"UPDATE assess_sessions SET {sets} WHERE id = :s", {"s": sid}
+    )
+
+
+async def test_input_is_locked_from_the_deadline(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M3.3: no student message is accepted from the deadline on (API and database)."""
+    runner = FakeStreamRunner()
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await _deadline_in(pg, s.session_id, -1)
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "troppo tardi"},
+            headers=bearer(s.session_token),
+        )
+        # gate step 5 (M3.4): past the deadline with no reply pending the session is closed
+        # lazily, timed_out, before the route runs; the turn is refused
+        assert r.status_code == 409 and err(r)["code"] == "ERR-ASSESS-009"
+        assert runner.turns == []
+        row = (
+            await pg.run(
+                "super",
+                "SELECT state, close_reason FROM assess_sessions WHERE id = :s",
+                {"s": s.session_id},
+            )
+        )[0]
+        assert tuple(row) == ("CLOSED", "timed_out")
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_turns WHERE session_id=:s AND role='student'",
+                s=s.session_id,
+            )
+            == 0
+        )
+
+
+async def test_a_reply_in_flight_at_the_deadline_finishes_within_the_grace(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    runner = FakeStreamRunner(segments=("Uno. ", "Due. ", "Tre."), segment_delay_s=1.0)
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await _deadline_in(pg, s.session_id, 1.5, grace=60)
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "ultima domanda"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202
+        await _wait_idle(w)  # finishes ~1.5 s after the deadline, inside the grace
+        rows = await pg.run(
+            "super",
+            "SELECT role, kind FROM assess_turns WHERE session_id=:s ORDER BY turn_no DESC LIMIT 1",
+            {"s": s.session_id},
+        )
+        assert tuple(rows[0]) == ("bot", "normal")
+
+
+async def test_a_reply_past_the_grace_is_cut_and_marked(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    from vektra_assess.turn_markers import INTERRUPTED_REPLY
+
+    runner = FakeStreamRunner(segments=("Uno. ", "Due. ", "Tre."), segment_delay_s=2.0)
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await _deadline_in(
+            pg, s.session_id, 1.0, grace=4
+        )  # cut at deadline + 4 - 2 = ~3 s
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "ultima domanda"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202
+        await _wait_idle(w)
+        # read before any further request: past the deadline the next one closes the session
+        from vektra_assess.crypto import envelope
+
+        dek = w.app.state.assess_dek_cache.get(s.session_id, 1)
+        last = (
+            await pg.run(
+                "super",
+                "SELECT turn_no, role, kind, ciphertext FROM assess_turns WHERE session_id = :s "
+                "ORDER BY turn_no DESC LIMIT 1",
+                {"s": s.session_id},
+            )
+        )[0]
+        assert (last.role, last.kind) == ("bot", "interrupted")
+        text_ = envelope.decrypt_turn(
+            dek, s.session_id, last.turn_no, bytes(last.ciphertext)
+        )
+        assert text_.decode() == f"Uno. {INTERRUPTED_REPLY}"
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_sessions WHERE id=:s AND pending_reply_since IS NULL",
+                s=s.session_id,
+            )
+            == 1
+        )
+
+
+async def test_the_database_enforces_the_input_lock_and_the_grace(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M3.3 (DB test): student turns from the deadline on, and ordinary bot replies after
+    deadline + grace, are refused by assess_append_turn itself; the marked interrupted turn is
+    still accepted."""
+    from integration.conftest import make_session
+
+    sid = await make_session(pg)
+    append = "SELECT assess_append_turn(:s, 1, :seq, :role, :kind, '\\x04', :h, :prev)"
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() - interval '1 second', reply_grace_s = 60 WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 0,
+                "role": "student",
+                "kind": "normal",
+                "h": "h2",
+                "prev": "h1",
+            },
+        )
+    )[0][0] is None
+    # a pending student turn written before the deadline: a bot reply inside the grace is accepted
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() + interval '1 hour' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 0,
+                "role": "student",
+                "kind": "normal",
+                "h": "h2",
+                "prev": "h1",
+            },
+        )
+    )[0][0] == 2
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() - interval '30 seconds' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 1,
+                "role": "bot",
+                "kind": "normal",
+                "h": "h3",
+                "prev": "h2",
+            },
+        )
+    )[0][0] == 3
+    # past deadline + grace: an ordinary reply is refused, the marked turn is not (a second
+    # student turn, written before the deadline, is pending: revision 0031 needs one)
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() + interval '1 hour' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 2,
+                "role": "student",
+                "kind": "normal",
+                "h": "h4",
+                "prev": "h3",
+            },
+        )
+    )[0][0] == 4
+    await pg.run(
+        "super",
+        "UPDATE assess_sessions SET deadline_at = now() - interval '61 seconds' WHERE id = :s",
+        {"s": sid},
+    )
+    assert (
+        await pg.run(
+            "api",
+            append,
+            {
+                "s": sid,
+                "seq": 3,
+                "role": "bot",
+                "kind": "normal",
+                "h": "h5",
+                "prev": "h4",
+            },
+        )
+    )[0][0] is None
+    assert (
+        await pg.run(
+            "worker",
+            append,
+            {
+                "s": sid,
+                "seq": 3,
+                "role": "bot",
+                "kind": "interrupted",
+                "h": "h5",
+                "prev": "h4",
+            },
+        )
+    )[0][0] == 5
+
+
+async def test_each_turn_hash_is_recorded_and_chained_at_persist(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M5.8 / REQ-102: every persisted turn carries hash(prev, turn_no, role, kind, plaintext),
+    chained on the previous turn's hash, so plan 10 can re-hash the transcript and detect any
+    change."""
+    from vektra_assess.crypto import envelope, hashing
+
+    runner = FakeStreamRunner()
+    async with world(pg, assess_runner=runner) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        for text_ in ("primo", "secondo"):
+            r = await w.client.post(
+                f"/api/v1/assess/sessions/{s.session_id}/turns",
+                json={"text": text_},
+                headers=bearer(s.session_token),
+            )
+            assert r.status_code == 202
+            await _wait_idle(w)
+        dek = w.app.state.assess_dek_cache.get(s.session_id, 1)
+        rows = await pg.run(
+            "super",
+            "SELECT turn_no, role, kind, ciphertext, turn_hash, prev_hash FROM assess_turns "
+            "WHERE session_id = :s ORDER BY turn_no",
+            {"s": s.session_id},
+        )
+        assert len(rows) == 6
+        prev = rows[0].prev_hash
+        for row in rows:
+            assert row.prev_hash == prev
+            plain = envelope.decrypt_turn(
+                dek, s.session_id, row.turn_no, bytes(row.ciphertext)
+            )
+            assert row.turn_hash == hashing.turn_hash(
+                prev, row.turn_no, row.role, row.kind, plain
+            )
+            prev = row.turn_hash

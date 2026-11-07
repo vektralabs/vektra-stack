@@ -39,6 +39,12 @@ from vektra_assess.tokens import PreClaims
 router = APIRouter()
 
 
+#: the assess-local limiters the composition root must inject (REQ-083, plan 8 M5.3), each keyed
+#: by a hashable of the session or the student, never the API key: ``state`` by (site, student,
+#: activity), ``turns`` / ``retry`` / ``flag`` by session id
+LIMITER_NAMES = ("state", "turns", "retry", "flag")
+
+
 class Limiter(Protocol):
     def check(self, key: Any, rpm_limit: int | None) -> tuple[bool, dict[str, str]]: ...
 

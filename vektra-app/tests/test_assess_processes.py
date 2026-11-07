@@ -374,7 +374,7 @@ def test_unbound_slots_refuse_to_compose_with_the_owner_named(
     with pytest.raises(StartupValidationError) as exc:
         assess_worker._compose(checked)
     text = exc.value.to_plain_text()
-    assert "job:transcript_generate" in text and "tick:sweeper" in text
+    assert "job:transcript_generate" in text and "tick:purge" in text
     assert "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND" in text
 
 
@@ -390,7 +390,9 @@ def test_development_override_composes_with_only_framework_slots_bound(
     # the heartbeat and the cleanup are the only bodies this plan writes
     unbound = {t.name for t in scheduler._ticks if not t.bound}
     assert not ({"heartbeat", "job_cleanup", "lease_reaper"} & unbound)
-    assert {"sweeper", "purge", "setup_check"} <= unbound
+    assert {"purge", "setup_check"} <= unbound  # the session ticks are bound (plan 8)
+    assert "sweeper" not in unbound
+    assert "outage_probe" not in unbound  # M4.2
 
 
 async def test_unbound_override_is_refused_outside_development(

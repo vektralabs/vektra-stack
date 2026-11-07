@@ -172,3 +172,30 @@ async def test_every_rejection_is_audited_and_changes_nothing(pg, worker) -> Non
         assert [tuple(r) for r in after] == [tuple(r) for r in before]
         audits_after = (await pg.run("super", rejections))[0][0]
         assert audits_after - audits_before == n  # exactly one audit row per rejection
+
+
+@pytest.mark.parametrize(
+    "step", ["5: deadline passed (lazy close)", "6: stale enrolment"]
+)
+async def test_steps_5_and_6_stop_before_the_material(pg, worker, step: str) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg, assess_runner=FakeStreamRunner()) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        if step.startswith("5"):
+            await pg.run(
+                "super",
+                "UPDATE assess_sessions SET deadline_at = now() - interval '1 second' WHERE id = :s",
+                {"s": s.session_id},
+            )
+        else:
+            await pg.run(
+                "super",
+                "UPDATE assess_enrolment_checks SET checked_at = now() - interval '10 minutes' WHERE session_id = :s",
+                {"s": s.session_id},
+            )
+        with spy(w.engine) as calls:
+            r = await w.client.post(
+                f"/api/v1/assess/sessions/{s.session_id}/turns", json={"text": "x"},
+                headers={"Authorization": f"Bearer {s.session_token}"},
+            )  # fmt: skip
+        assert r.status_code in (409, 503), (step, r.status_code)
+        assert calls == [], step

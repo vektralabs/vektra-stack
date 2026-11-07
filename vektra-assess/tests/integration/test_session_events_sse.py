@@ -111,7 +111,7 @@ async def test_reconnect_replays_after_last_event_id(pg, worker) -> None:  # typ
 
         broker = broker_of(R())  # type: ignore[arg-type]
         for i in range(3):
-            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"})
+            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"}, epoch=1)
         broker.publish(s.session_id, "reply_done", {"turn_no": 4})
         stream = asyncio.create_task(_stream(w, s.session_id, s.session_token, last=2))
         await asyncio.sleep(0.2)
@@ -160,7 +160,7 @@ async def test_two_streams_both_receive_closed_and_a_reconnect_drains_it(
 
         broker = broker_of(R())  # type: ignore[arg-type]
         for i in range(3):
-            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"})
+            broker.publish(s.session_id, "reply_delta", {"text": f"pezzo {i}"}, epoch=1)
         tab1 = asyncio.create_task(_stream(w, s.session_id, s.session_token))
         tab2 = asyncio.create_task(_stream(w, s.session_id, s.session_token))
         await asyncio.sleep(0.3)
@@ -192,7 +192,7 @@ async def test_a_reconnect_after_close_never_replays_reply_text(pg, worker) -> N
 
         broker = broker_of(R())  # type: ignore[arg-type]
         broker.publish(
-            s.session_id, "reply_delta", {"text": "CANARY-reply-after-close"}
+            s.session_id, "reply_delta", {"text": "CANARY-reply-after-close"}, epoch=1
         )
         broker.publish(s.session_id, "reply_done", {"turn_no": 4})
         async with worker.begin() as conn:
@@ -205,3 +205,30 @@ async def test_a_reconnect_after_close_never_replays_reply_text(pg, worker) -> N
         )
         assert "CANARY-reply-after-close" not in body
         assert [e["event"] for e in parse(body)] == ["state", "reply_done", "closed"]
+
+
+async def test_the_one_minute_warning_reaches_both_tabs_once(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M3.2: the warning is computed from the polled deadline and published once."""
+    async with world(pg, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET deadline_at = now() + interval '61 seconds' WHERE id = :s",
+            {"s": s.session_id},
+        )
+        tabs = [
+            asyncio.create_task(_stream(w, s.session_id, s.session_token))
+            for _ in range(2)
+        ]
+        await asyncio.sleep(3)
+        async with worker.begin() as conn:
+            await conn.execute(
+                text("SELECT assess_close_session(:s, 1, 'finished')"),
+                {"s": s.session_id},
+            )
+        ids = set()
+        for body in await asyncio.wait_for(asyncio.gather(*tabs), 10):
+            warnings = [e for e in parse(body) if e["event"] == "warning"]
+            assert [e["data"]["minutes"] for e in warnings] == [1]
+            ids |= {e["id"] for e in warnings}
+        assert len(ids) == 1, ids  # the same event in both tabs, published once

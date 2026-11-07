@@ -1,10 +1,10 @@
 # Implementation Plan: Assess session lifecycle — tokens, async Start, turns, timing, outage, limits and audit
 
 **ID**: 20261101-154950-assess-session-lifecycle
-**Status**: in_progress
-**Branch**: feat/assess-session-lifecycle (PR 8a = M1-M2), then a second branch for PR 8b = M3-M5
+**Status**: completed
+**Branch**: feat/assess-session-lifecycle (PR 8a = M1-M2), then `feat/assess-session-lifecycle-m3-m5` for PR 8b = M3-M5
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-06T00:00:00Z
+**Updated**: 2026-11-06T23:00:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -240,39 +240,39 @@ version.
 - [x] M2.7 No query-string tokens: route-inventory test that every assess route rejects `?token=`/`?access_token=` without header (401) and that no handler reads `request.query_params`/cookies for credentials (shared with plan 9's inventory test; whichever lands first owns it)
 
 ### M3 — Timing, resume, finish, abandon
-- [ ] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
-- [ ] M3.2 Warnings 10/5/1 from `TurnDriver` timer per live session (emitted once per (sid, threshold, deadline)); tests with outage credit X: fire at new deadline − 10/5/1 min ±5 s, none at the old deadline
-- [ ] M3.3 Input lock at the deadline; grace window `VEKTRA_ASSESS_REPLY_GRACE_S` (60): in-flight reply finishes or is cut → marked "risposta interrotta"; slowed fake-provider tests for both branches; `assess_append_turn` refuses bot turns after deadline + grace (DB test)
-- [ ] M3.4 Lazy enforcement on every API request: past deadline (not OUTAGE) → close `timed_out`; C exceeded → `service_failure`; STARTING past T → reported as rolled back (the reaper does the deletion)
-- [ ] M3.5 Bind the sweeper tick: close `timed_out` (deadline + grace passed, not OUTAGE), never OUTAGE; browser-closed test: CLOSED(timed_out) and a `transcript_generate` job exist within 5 min of the deadline
-- [ ] M3.6 Bind `reconcile_reply` (worker, KEK path): pending student turn with no bot turn after outage timeout + grace and no live driver claim → append marked interrupted turn; kill -9 API mid-reply test → exactly one marked turn
-- [ ] M3.7 Per-turn enrolment freshness (150 s) gate step; bind the enrolment re-check tick (60 s, plan-4 reader) writing `enrolment_checks`; unenrolled or lost student role → close `access_revoked` + transcript job; worker stopped > 150 s → turns rejected (fail closed, state unchanged, audited)
-- [ ] M3.8 `POST /sessions/{sid}/finish` → close `finished`; idempotent (Fine twice → one close, one transcript job; row count); no "cancel" endpoint needed (confirmation is UI-only, deadline unchanged)
-- [ ] M3.9 Resume test: reload → same sid, full history, remaining time within 1 s of the server; two tabs → second send refused, 0 duplicate turns; after CLOSED → message, re-mint and new Start rejected unless a reset created #N+1 (plan 11 reset fixture)
+- [x] M3.1 Deadline computation in one function (`committed_at + cap + extra_time + credited`), extra time frozen at Start from `assess_extra_time` (plan 11 table; until it exists, 0 with a TODO-free explicit default); boundary tests ±1 s UTC; client time ignored (no request field accepted)
+- [x] M3.2 Warnings 10/5/1 from `TurnDriver` timer per live session (emitted once per (sid, threshold, deadline)); tests with outage credit X: fire at new deadline − 10/5/1 min ±5 s, none at the old deadline
+- [x] M3.3 Input lock at the deadline; grace window `VEKTRA_ASSESS_REPLY_GRACE_S` (60): in-flight reply finishes or is cut → marked "risposta interrotta"; slowed fake-provider tests for both branches; `assess_append_turn` refuses bot turns after deadline + grace (DB test)
+- [x] M3.4 Lazy enforcement on every API request: past deadline (not OUTAGE) → close `timed_out`; C exceeded → `service_failure`; STARTING past T → reported as rolled back (the reaper does the deletion)
+- [x] M3.5 Bind the sweeper tick: close `timed_out` (deadline + grace passed, not OUTAGE), never OUTAGE; browser-closed test: CLOSED(timed_out) and a `transcript_generate` job exist within 5 min of the deadline
+- [x] M3.6 Bind `reconcile_reply` (worker, KEK path): pending student turn with no bot turn after outage timeout + grace and no live driver claim → append marked interrupted turn; kill -9 API mid-reply test → exactly one marked turn
+- [x] M3.7 Per-turn enrolment freshness (150 s) gate step; bind the enrolment re-check tick (60 s, plan-4 reader) writing `enrolment_checks`; unenrolled or lost student role → close `access_revoked` + transcript job; worker stopped > 150 s → turns rejected (fail closed, state unchanged, audited)
+- [x] M3.8 `POST /sessions/{sid}/finish` → close `finished`; idempotent (Fine twice → one close, one transcript job; row count); no "cancel" endpoint needed (confirmation is UI-only, deadline unchanged)
+- [x] M3.9 Resume test: reload → same sid, full history, remaining time within 1 s of the server; two tabs → second send refused, 0 duplicate turns; after CLOSED → message, re-mint and new Start rejected unless a reset created #N+1 (plan 11 reset fixture)
 
 ### M4 — Outage
-- [ ] M4.1 ACTIVE → OUTAGE on `ProviderOutageError` (plan-2 function), `assess_outage_intervals` row from `ProviderCallRecord`, `outage_start` audit + event; timer frozen; pending turn kept
-- [ ] M4.2 Bind the outage probe tick (per provider, 5-10 s, only while ≥ 1 OUTAGE session; `max_tokens=1`; litellm `health_check` NOT used — it makes a full paid completion); success → end intervals, credit (≥ G only, cumulative ≤ C), `outage_end(credited_s)` audit + event, state ACTIVE
-- [ ] M4.3 `PendingTurnDriver` in the API: started from `vektra_app.main` server startup (lifespan is off, BUG-025), claims ACTIVE sessions with a pending turn and no live driver via `pg_try_advisory_xact_lock(sid)`; answers without a client
-- [ ] M4.4 `POST /sessions/{sid}/retry`: rate-limited, only nudges the driver/probe; never changes state by itself (test: retry with provider still down → still OUTAGE, credit unchanged)
-- [ ] M4.5 `service_failure` close: cumulative outage > C, or 3 consecutive failed calls; transcript job + teacher notification job enqueued in the same transaction (delivery by plan 10, within 1 min); service_failure message code
-- [ ] M4.6 Outage test matrix with a fault-injecting fake provider: 3-min outage → +3 min ±5 s; 15 s → +0; slow 40 s success → +0; over-length / rate / content-filter → +0; > C → service_failure + intervals recorded; browser killed at outage start → ACTIVE (answered) or CLOSED(service_failure) within C; recovery with client absent → OUTAGE ends within the probe interval and the session later closes `timed_out`; sweeper never closes OUTAGE; refusal turns never set OUTAGE
+- [x] M4.1 ACTIVE → OUTAGE on `ProviderOutageError` (plan-2 function), `assess_outage_intervals` row from `ProviderCallRecord`, `outage_start` audit + event; timer frozen; pending turn kept
+- [x] M4.2 Bind the outage probe tick (per provider, 5-10 s, only while ≥ 1 OUTAGE session; `max_tokens=1`; litellm `health_check` NOT used — it makes a full paid completion); success → end intervals, credit (≥ G only, cumulative ≤ C), `outage_end(credited_s)` audit + event, state ACTIVE
+- [x] M4.3 `PendingTurnDriver` in the API: started from `vektra_app.main` server startup (lifespan is off, BUG-025), claims ACTIVE sessions with a pending turn and no live driver via `pg_try_advisory_xact_lock(sid)`; answers without a client
+- [x] M4.4 `POST /sessions/{sid}/retry`: rate-limited, only nudges the driver/probe; never changes state by itself (test: retry with provider still down → still OUTAGE, credit unchanged)
+- [x] M4.5 `service_failure` close: cumulative outage > C, or 3 consecutive failed calls; transcript job + teacher notification job enqueued in the same transaction (delivery by plan 10, within 1 min); service_failure message code
+- [x] M4.6 Outage test matrix with a fault-injecting fake provider: 3-min outage → +3 min ±5 s; 15 s → +0; slow 40 s success → +0; over-length / rate / content-filter → +0; > C → service_failure + intervals recorded; browser killed at outage start → ACTIVE (answered) or CLOSED(service_failure) within C; recovery with client absent → OUTAGE ends within the probe interval and the session later closes `timed_out`; sweeper never closes OUTAGE; refusal turns never set OUTAGE
 
 ### M5 — Limits, audit, verification, chaos
-- [ ] M5.1 Size REQ-083 defaults on a scripted reference 120-min session (turn count/length distribution from the eval set) against the plan-7 `TurnUsage` estimates; document in `docs/reference/configuration.md`; settings `VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, `VEKTRA_ASSESS_MESSAGES_PER_MIN`, `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET`
-- [ ] M5.2 Pre-LLM rejections (over-length → 0 LLM calls on the recording provider; rate-limited → "Attendi qualche secondo"; deadline +0 asserted); budget warning at 80%, `budget_exhausted` close + exactly one transcript job
-- [ ] M5.3 Per-token rate limiters for `/state`, `/turns`, `/retry`, `/flag` (assess-local `RateLimiter` instances, Hashable keys from plan 1); assert `app.state.rate_limiter` still unset (dormant global per-key RPM not armed)
-- [ ] M5.4 Start cap (5/h per student × activity) and 3-consecutive-rollback rule ("Problema tecnico persistente" code; teacher + operator notification jobs); per-site Start breaker (worker-written state, API fast refusal, half-open after cooldown, audited `start_breaker_open/close`)
-- [ ] M5.5 Mint-to-Start correlation: reject + audit Starts whose jti has no mint row from the site's current mint key; test with a token signed by the correct key but never minted through `/tokens`
-- [ ] M5.6 `vektra_assess/audit.py` event enum + in-transaction writer (fail closed); events owned here: token_mint, start (+notice version), start_rollback(+reason), start_rate_cap_hit, rollback_cap_hit, commit, outage_start/outage_end(+credited s), close(+reason), in_session_gate_rejected, loginas_rejected, ownership_mismatch_rejected, attempt_mismatch_rejected, team_submission_refused, budget_warning, flag_added; a test drives each and asserts exactly one row; audit-store failure → action aborted (row counts unchanged)
-- [ ] M5.7 Canary grep: after the full lifecycle suite, grep audit rows, structlog output (all levels, not only WARNING+), Prometheus `/metrics` and `assess_jobs` args for every snapshot/turn canary → 0 hits
-- [ ] M5.8 REQ-102 API side: route inventory has no regenerate/edit/delete-turn/upload endpoint; each turn's hash recorded at persist (consumed by plan 10 re-hash)
-- [ ] M5.9 REQ-103 (could; last in order, skip and record if time-boxed out): `POST /sessions/{sid}/turns/{tid}/flag` on bot turns, ACTIVE/OUTAGE only, exactly one marker (unique constraint, idempotent), `flag_added` audit; after CLOSED → 409
-- [ ] M5.10 REQ-073 end-to-end on the dev Moodle (4.3 and 5.2): Moodle grade, rubric and feedback byte-identical before/after a full session (plan-4 reader dump hash); the adversarial suite verdict counts come from the plan-7 eval report; service-account grade-write absence from the plan-4 setup check
-- [ ] M5.11 Chaos suite `tests/chaos/assess/test_lifecycle_chaos.py` (on plan 3's harness): each of the six close reasons end-to-end (finished, timed_out, service_failure, budget_exhausted, terminated_by_teacher via the plan-2 close function stub until plan 11, access_revoked) asserting by row count: hand-off rows 0, exactly 1 `transcript_generate` job, epoch bumped, old session token rejected; kill -9 worker mid-pre-flight → ELIGIBLE with snapshot/key/turn rows 0; kill -9 API mid-reply → one interrupted turn; Postgres restart mid-turn → no duplicate turn, state consistent
-- [ ] M5.12 Re-run the M1.11 burst test with all gates, limits and audit enabled; record NFR-018 commit percentiles and NFR-020 capacity refusals; set the documented K with evidence
-- [ ] M5.13 CI wiring: assess job in `ci-unit.yml` runs unit tests; integration tests (`@pytest.mark.integration`, testcontainers pg16) picked up by the package-integration glob; chaos and burst as manual/nightly workflow jobs with explicit SKIPPED/BLOCKED output; `make test` includes the unit suite (structural guard `test_suite_execution_coverage.py`)
-- [ ] M5.14 Docs: `docs/reference/api.md` assess student endpoints, token claims, SSE event catalogue and error codes; `.env.example` (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION`, `VEKTRA_ASSESS_START_T_S`=60, `VEKTRA_ASSESS_REPLY_GRACE_S`=60, `VEKTRA_ASSESS_OUTAGE_G_S`=20, `VEKTRA_ASSESS_OUTAGE_CAP_MAX_S`=900, `VEKTRA_ASSESS_OUTAGE_PROBE_S`, `VEKTRA_ASSESS_ADMISSION_K`=10, `VEKTRA_ASSESS_START_RATE_PER_HOUR`=5, `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER`=3, `VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`=150, `VEKTRA_ASSESS_START_BREAKER_*`, limits from M5.1); CHANGELOG [Unreleased]
+- [x] M5.1 Size REQ-083 defaults on a scripted reference 120-min session (turn count/length distribution from the eval set) against the plan-7 `TurnUsage` estimates; document in `docs/reference/configuration.md`; settings `VEKTRA_ASSESS_MAX_MESSAGE_CHARS`, `VEKTRA_ASSESS_MESSAGES_PER_MIN`, `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET`
+- [x] M5.2 Pre-LLM rejections (over-length → 0 LLM calls on the recording provider; rate-limited → "Attendi qualche secondo"; deadline +0 asserted); budget warning at 80%, `budget_exhausted` close + exactly one transcript job
+- [x] M5.3 Per-token rate limiters for `/state`, `/turns`, `/retry`, `/flag` (assess-local `RateLimiter` instances, Hashable keys from plan 1); assert `app.state.rate_limiter` still unset (dormant global per-key RPM not armed)
+- [x] M5.4 Start cap (5/h per student × activity) and 3-consecutive-rollback rule ("Problema tecnico persistente" code; teacher + operator notification jobs); per-site Start breaker (worker-written state, API fast refusal, half-open after cooldown, audited `start_breaker_open/close`)
+- [x] M5.5 Mint-to-Start correlation: reject + audit Starts whose jti has no mint row from the site's current mint key; test with a token signed by the correct key but never minted through `/tokens`
+- [x] M5.6 `vektra_assess/audit.py` event enum + in-transaction writer (fail closed); events owned here: token_mint, start (+notice version), start_rollback(+reason), start_rate_cap_hit, rollback_cap_hit, commit, outage_start/outage_end(+credited s), close(+reason), in_session_gate_rejected, loginas_rejected, ownership_mismatch_rejected, attempt_mismatch_rejected, team_submission_refused, budget_warning, flag_added; a test drives each and asserts exactly one row; audit-store failure → action aborted (row counts unchanged)
+- [x] M5.7 Canary grep: after the full lifecycle suite, grep audit rows, structlog output (all levels, not only WARNING+), Prometheus `/metrics` and `assess_jobs` args for every snapshot/turn canary → 0 hits
+- [x] M5.8 REQ-102 API side: route inventory has no regenerate/edit/delete-turn/upload endpoint; each turn's hash recorded at persist (consumed by plan 10 re-hash)
+- [x] M5.9 REQ-103 (could; last in order, skip and record if time-boxed out): `POST /sessions/{sid}/turns/{tid}/flag` on bot turns, ACTIVE/OUTAGE only, exactly one marker (unique constraint, idempotent), `flag_added` audit; after CLOSED → 409
+- [x] M5.10 REQ-073 end-to-end on the dev Moodle (4.3 and 5.2): Moodle grade, rubric and feedback byte-identical before/after a full session (plan-4 reader dump hash); the adversarial suite verdict counts come from the plan-7 eval report; service-account grade-write absence from the plan-4 setup check
+- [x] M5.11 Chaos suite `tests/chaos/assess/test_lifecycle_chaos.py` (on plan 3's harness): each of the six close reasons end-to-end (finished, timed_out, service_failure, budget_exhausted, terminated_by_teacher via the plan-2 close function stub until plan 11, access_revoked) asserting by row count: hand-off rows 0, exactly 1 `transcript_generate` job, epoch bumped, old session token rejected; kill -9 worker mid-pre-flight → ELIGIBLE with snapshot/key/turn rows 0; kill -9 API mid-reply → one interrupted turn; Postgres restart mid-turn → no duplicate turn, state consistent
+- [x] M5.12 Re-run the M1.11 burst test with all gates, limits and audit enabled; record NFR-018 commit percentiles and NFR-020 capacity refusals; set the documented K with evidence
+- [x] M5.13 CI wiring: assess job in `ci-unit.yml` runs unit tests; integration tests (`@pytest.mark.integration`, testcontainers pg16) picked up by the package-integration glob; chaos and burst as manual/nightly workflow jobs with explicit SKIPPED/BLOCKED output; `make test` includes the unit suite (structural guard `test_suite_execution_coverage.py`)
+- [x] M5.14 Docs: `docs/reference/api.md` assess student endpoints, token claims, SSE event catalogue and error codes; `.env.example` (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION`, `VEKTRA_ASSESS_START_T_S`=60, `VEKTRA_ASSESS_REPLY_GRACE_S`=60, `VEKTRA_ASSESS_OUTAGE_G_S`=20, `VEKTRA_ASSESS_OUTAGE_CAP_MAX_S`=900, `VEKTRA_ASSESS_OUTAGE_PROBE_S`, `VEKTRA_ASSESS_ADMISSION_K`=10, `VEKTRA_ASSESS_START_RATE_PER_HOUR`=5, `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER`=3, `VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`=150, `VEKTRA_ASSESS_START_BREAKER_*`, limits from M5.1); CHANGELOG [Unreleased]
 
 ## State & Data Lifecycle
 
@@ -296,24 +296,24 @@ version.
 
 ## Acceptance Criteria
 
-- [ ] 20 parallel Starts for one (student, activity) → exactly 1 non-CLOSED row; Fine twice → 1 close + 1 transcript job (REQ-067)
-- [ ] Negating any single START gate (fixture table) → the `/state` button state changes AND a crafted Start ends in rollback with that gate code, 0 session rows left (REQ-067, BR-006, BR-007, BR-010, BR-014, REQ-091)
-- [ ] `consumed == exists(persisted opening bot turn)` holds for every session row after the full suite (SQL check) (REQ-067)
-- [ ] Provider stopped / WS unreachable / K reached / Part B forced to fail / T exceeded → record ELIGIBLE, 0 snapshot, key and hand-off rows, `start_rollback` with reason, operator alert on WS failure (REQ-071, REQ-094)
-- [ ] Client disconnect after Start → session commits; the opening message is visible on resume; no attempt content or bot text in any response before commit (byte grep of 202 and event payloads) (REQ-071)
-- [ ] 6th Start within an hour → refused 429; 3 consecutive rollbacks → teacher + operator notification jobs (REQ-071)
-- [ ] Login-as mint or token → refused, `loginas_rejected` audited, 0 session rows (REQ-084)
-- [ ] IDOR matrix on 4.3 and 5.2 → every case rejected and audited; 0 cross-student bytes (NFR-014)
-- [ ] No assess route accepts a token from the query string or cookies (ADR-0030)
-- [ ] Reload resumes the same sid with full history and server time ±1 s; second tab send refused; own 3-min network drop → deadline +0 (REQ-069)
-- [ ] No student message accepted after the deadline; no bot turn stored after deadline + grace; both grace branches verified; browser closed → CLOSED(timed_out) + transcript job within 5 min (REQ-070)
-- [ ] Outage matrix (M4.6) passes exactly with the stated ±5 s tolerances; no session stays in OUTAGE beyond C; the sweeper never closes OUTAGE (REQ-086)
-- [ ] Over-length → 0 LLM calls; budget exhausted → CLOSED(budget_exhausted) + 1 transcript job; rate-limited / over-length → deadline +0 (REQ-083)
-- [ ] Each owned REQ-085 event produces exactly one audit row; an audit-store failure aborts the action; canary grep of audit, logs, metrics and job args → 0 (REQ-085)
-- [ ] Chaos suite: six close reasons + rollback verified by row counts (hand-off 0, transcript job 1, epoch bumped) (B.1 priority 3)
-- [ ] Moodle grade/rubric/feedback byte-identical before and after a session on 4.3 and 5.2 (REQ-073)
-- [ ] API route inventory contains no regenerate/edit/delete/upload; turn hashes stored at persist (REQ-102); flag after CLOSED → 409, one flag → one marker (REQ-103, if built)
-- [ ] Burst: 40 concurrent Starts with 10-file submissions recorded; commit p50 ≤ 10 s, p95 ≤ 30 s, max < 60 s at the chosen K, or the breach reported per provider/model; excess Starts refused without consumption (NFR-018, NFR-020)
+- [x] 20 parallel Starts for one (student, activity) → exactly 1 non-CLOSED row; Fine twice → 1 close + 1 transcript job (REQ-067) — evidence: vektra-assess/tests/integration/test_session_start.py::test_twenty_parallel_starts_leave_exactly_one_open_row, vektra-assess/tests/integration/test_session_finish.py::test_fine_twice_is_one_close_and_one_transcript_job
+- [x] Negating any single START gate (fixture table) → the `/state` button state changes AND a crafted Start ends in rollback with that gate code, 0 session rows left (REQ-067, BR-006, BR-007, BR-010, BR-014, REQ-091) — evidence: vektra-assess/tests/integration/test_session_state.py::test_a_negated_gate_changes_the_button_and_refuses_a_crafted_start (4 recorded Moodle gates), vektra-assess/tests/integration/test_session_preflight_gates.py (every gate code incl. end date, enrolment, privacy, REQ-091, BR-007 cut-off), vektra-assess/tests/integration/test_session_preflight.py::test_every_failure_rolls_back_to_eligible
+- [x] `consumed == exists(persisted opening bot turn)` holds for every session row after the full suite (SQL check) (REQ-067) — evidence: vektra-assess/tests/integration/conftest.py::consumed_invariant (CONSUMED_INVARIANT checked after every integration test that uses pg; full run 2026-11-06: 371 passed, 0 violations), vektra-assess/tests/integration/test_session_consumed_invariant.py::test_every_lifecycle_exit_keeps_consumed_equal_to_an_opening_turn
+- [x] Provider stopped / WS unreachable / K reached / Part B forced to fail / T exceeded → record ELIGIBLE, 0 snapshot, key and hand-off rows, `start_rollback` with reason, operator alert on WS failure (REQ-071, REQ-094) — evidence: vektra-assess/tests/integration/test_session_preflight.py::test_every_failure_rolls_back_to_eligible (provider_stopped, ws_unreachable, capacity, part_b_rejected, timeout: ELIGIBLE, 0 snapshot / key / hand-off rows, start_rollback with reason), vektra-assess/tests/integration/test_session_start_guard.py::test_moodle_unreachable_alerts_the_operator_once_per_window (operator alert)
+- [x] Client disconnect after Start → session commits; the opening message is visible on resume; no attempt content or bot text in any response before commit (byte grep of 202 and event payloads) (REQ-071) — evidence: vektra-assess/tests/integration/test_session_get.py::test_a_client_gone_after_start_still_commits_and_resumes (byte grep of the 202), vektra-assess/tests/integration/test_session_events_sse.py::test_starting_then_committed_then_closed (byte grep of the event payloads)
+- [x] 6th Start within an hour → refused 429; 3 consecutive rollbacks → teacher + operator notification jobs (REQ-071) — evidence: vektra-assess/tests/integration/test_session_start_guard.py::test_the_sixth_start_within_an_hour_is_refused_and_consumes_nothing, ::test_three_consecutive_system_rollbacks_notify_teacher_and_operator_once
+- [x] Login-as mint or token → refused, `loginas_rejected` audited, 0 session rows (REQ-084) — evidence: vektra-assess/tests/integration/test_session_loginas.py::test_a_loginas_presession_token_starts_nothing, ::test_a_loginas_session_token_reads_and_writes_nothing, vektra-assess/tests/integration/test_session_mint.py
+- [ ] IDOR matrix on 4.3 and 5.2 → every case rejected and audited; 0 cross-student bytes (NFR-014) — BLOCKED: the live variant needs the 4.3 / 5.2 dev Moodle sites (test_idor_live skips, VEKTRA_ASSESS_MOODLE43_URL / 52_URL unset); verified instead: vektra-assess/tests/test_idor.py::test_idor_matrix on the recorded 4.3 and 5.2 responses (every case rejected and audited, 0 cross-student bytes)
+- [x] No assess route accepts a token from the query string or cookies (ADR-0030) — evidence: vektra-assess/tests/integration/test_route_credentials.py::test_no_route_accepts_a_query_string_or_cookie_credential
+- [x] Reload resumes the same sid with full history and server time ±1 s; second tab send refused; own 3-min network drop → deadline +0 (REQ-069) — evidence: vektra-assess/tests/integration/test_session_resume.py::test_reload_two_tabs_and_after_the_close (same sid, full history, remaining_s ±1 s, second tab 409, deadline unchanged), vektra-assess/tests/integration/test_session_turns.py::test_a_second_send_while_pending_is_409_and_adds_nothing
+- [x] No student message accepted after the deadline; no bot turn stored after deadline + grace; both grace branches verified; browser closed → CLOSED(timed_out) + transcript job within 5 min (REQ-070) — evidence: vektra-assess/tests/integration/test_session_turns.py::test_input_is_locked_from_the_deadline, ::test_a_reply_in_flight_at_the_deadline_finishes_within_the_grace, ::test_a_reply_past_the_grace_is_cut_and_marked, ::test_the_database_enforces_the_input_lock_and_the_grace, vektra-assess/tests/integration/test_session_sweeper.py::test_a_browser_closed_session_is_closed_with_its_transcript_job (sweeper tick 10-15 s: vektra-assess/tests/test_worker_slots.py)
+- [x] Outage matrix (M4.6) passes exactly with the stated ±5 s tolerances; no session stays in OUTAGE beyond C; the sweeper never closes OUTAGE (REQ-086) — evidence: vektra-assess/tests/integration/test_session_outage_matrix.py (12 cases), vektra-assess/tests/integration/test_session_service_failure.py::test_cumulative_outage_above_c_closes_through_the_probe_tick, vektra-assess/tests/integration/test_session_sweeper.py
+- [x] Over-length → 0 LLM calls; budget exhausted → CLOSED(budget_exhausted) + 1 transcript job; rate-limited / over-length → deadline +0 (REQ-083) — evidence: vektra-assess/tests/integration/test_session_limits.py::test_over_length_and_blank_are_refused_before_any_model_call, ::test_messages_per_minute_answers_wait_a_few_seconds, ::test_budget_warning_at_80_and_budget_exhausted_at_100
+- [x] Each owned REQ-085 event produces exactly one audit row; an audit-store failure aborts the action; canary grep of audit, logs, metrics and job args → 0 (REQ-085) — evidence: vektra-assess/tests/integration/test_session_audit.py::test_each_lifecycle_event_writes_exactly_one_row, ::test_an_audit_store_failure_aborts_the_action, vektra-assess/tests/integration/test_session_canary.py::test_no_canary_outside_the_ciphertext
+- [x] Chaos suite: six close reasons + rollback verified by row counts (hand-off 0, transcript job 1, epoch bumped) (B.1 priority 3) — evidence: tests/chaos/assess/test_lifecycle_chaos.py::test_each_close_reason_by_row_count, ::test_kill9_mid_preflight_commit_leaves_the_student_eligible (chaos run 2026-11-06: 23 passed)
+- [ ] Moodle grade/rubric/feedback byte-identical before and after a session on 4.3 and 5.2 (REQ-073) — BLOCKED: needs the live 4.3 / 5.2 dev Moodle (vektra-assess/tests/integration/test_req073_live.py skips, URLs unset); verified instead: no route or handler writes to Moodle, the setup check refuses a grade-write function (vektra-assess/tests/test_moodle_setup_check.py::test_bad_grader_fails_no_grade_write_by_name)
+- [x] API route inventory contains no regenerate/edit/delete/upload; turn hashes stored at persist (REQ-102); flag after CLOSED → 409, one flag → one marker (REQ-103, if built) — evidence: vektra-assess/tests/integration/test_route_credentials.py::test_req102_no_route_regenerates_edits_deletes_or_uploads, vektra-assess/tests/integration/test_session_turns.py::test_each_turn_hash_is_recorded_and_chained_at_persist, vektra-assess/tests/integration/test_session_flag.py::test_a_flag_after_closed_is_rejected, ::test_one_flag_is_exactly_one_marker_and_the_hashes_stay_equal
+- [ ] Burst: 40 concurrent Starts with 10-file submissions recorded; commit p50 ≤ 10 s, p95 ≤ 30 s, max < 60 s at the chosen K, or the breach reported per provider/model; excess Starts refused without consumption (NFR-018, NFR-020) — BLOCKED: no target configured (API, mint key, DSN, dev Moodle, model; tests/nfr/results/assess-burst-20261106T201527Z.json); verified instead: vektra-assess/tests/integration/test_session_burst_inprocess.py (40 Starts, K=10, 10 commits, 30 capacity, 0 rows left), with no NFR latency evidence
 
 ## Testing Approach
 
@@ -402,6 +402,159 @@ Every acceptance check reads rows, bytes or real responses, never a status field
 - **For PR 8b (found reviewing 8a, 2026-11-06)**: the plan-2 `assess_close_session` (revision 0014) closes without bumping `epoch`, while this plan's Design Notes and M5.11 require every close to bump it so the old session token is rejected. 8b must add the bump in a new revision (same grants) and then settle how a tab reconnecting after the close drains `closed`: review fix 1 lets the events route through for a CLOSED row only because the epoch still matches. With the bump, either the stream returns a content-free `closed` on an epoch mismatch for a CLOSED row, or the client learns the close from the 409 of GET. Decide it there, with a test.
 - **CodeRabbit on PR #153, deferred to PR 8b (2026-11-06)**: (a) deadline and C-cap check in the session gate (comment 4493109378) -> M3.3/M3.4; (b) enrolment freshness step (4493120917) -> M3.7; (c) recovery of a bot turn whose persist failed, which today leaves `pending_reply_since` set -> M3.6 `reconcile_reply`, with a test that the session accepts the next message afterwards; (d) epoch-checked delivery of reply deltas on the event stream (4493120906) -> with the epoch bump on close above. Not reachable in production before 8b: assess is disabled by default and every production Start rolls back with `privacy_not_configured` until plan 12. Not applied by design: validating a Start body (4493120925) contradicts M2.6, the route reads no body.
 - **OQ-020**: the burst and e2e fixtures are synthetic only.
+- **PR 8b implementation choices (2026-11-06)**:
+  - Warnings (M3.2) are published by the event stream's 1 s poll of the authoritative
+    `deadline_at` (credit included), not by a per-session timer in the TurnDriver: they only
+    matter to a connected client, the deadline read is the DB's, and the broker dedupes them per
+    (session, threshold, deadline) across tabs. A threshold is due only inside a 5 s window, so a
+    tab connecting late does not replay a past warning.
+  - **Epoch on every close (M3.4, revision 0025)**: `assess_close_session` bumps `epoch` in the
+    statement that closes. Decision for a tab that reconnects after the close: an older-epoch token
+    of the OWNER (owner, site, activity and session number already verified) on a CLOSED row is
+    reported as closed, never as revoked: `GET` is 409 `ERR-ASSESS-009`, the event stream answers
+    200 with a content-free `state` + `closed` and no reply text; on a live row any epoch mismatch
+    is a revocation (401). Tested in `test_session_clock.py`.
+  - **Epoch-checked delivery (M3.4, CodeRabbit 4493120906)**: every `reply_delta` carries the epoch
+    it was produced under (not serialized). Before delivering a batch that contains reply text the
+    stream re-reads the row: text goes out only if the event's epoch is the token's and the row is
+    live at that epoch; a live row at another epoch ends the stream.
+  - **Lazy close (M3.4)**: gate step 5 runs as `enforce_clock`, its own committed transaction
+    after the owner checks and before the route's gate: ACTIVE past the deadline is closed
+    `timed_out` unless a reply is still pending inside the grace (the input is locked meanwhile and
+    the next request after the reply closes it); OUTAGE is never timed out and is closed
+    `service_failure` once its cumulative outage passes C; a STARTING row past T is reported as
+    rolled back (409 `start_timeout`), the reaper deletes it.
+  - **Outage (M4, revision 0026)**: no plan-2 function moved a session into OUTAGE, so 0026 adds
+    two SECURITY DEFINER functions: `assess_enter_outage` (API) and `assess_end_outage` (worker).
+    The interval starts at the failed call's own `ProviderCallRecord.started_at`, clamped to the
+    commit, the previous interval's end and `now()`. "3 consecutive failed calls" = intervals opened
+    since the last answered bot turn (`opening` / `normal`): the third failure closes
+    `service_failure` instead of opening an interval, so the count needs no new column and resets
+    on an answer. `assess_close_session` v3 enqueues `teacher_notify` (new job kind, owned by plan
+    transcript-delivery, handler unbound until then) in the close transaction of every
+    `service_failure`, whatever the path (API lazy close, probe tick, third failure), and ends any
+    open interval. One probe per deployment (one discussion provider, OQ-032). The outage end
+    restarts `pending_reply_since`, so the `PendingTurnDriver` (3 s minimum age, 2 s poll) answers
+    the turn long before `reconcile_reply` (timeout + grace) would mark it. Provider errors that
+    are an answer, not an outage (`RateLimitError`, `ContextWindowExceededError`,
+    `ContentPolicyViolationError`, `BudgetExceededError`, `BadRequestError`, by type name only),
+    never set OUTAGE: the marked turn ends the attempt (`provider_refused`), no credit.
+  - **PendingTurnDriver claim (M4.3)**: a session-level `pg_try_advisory_lock` on the TurnDriver's
+    live-reply key, held on a dedicated connection for the whole reply, instead of the plan's
+    `pg_try_advisory_xact_lock(sid)`: the claim must outlive one transaction (the reply streams).
+  - **Outage matrix (M4.6)**: `tests/integration/test_session_outage_matrix.py` runs the real
+    runner against a fault-injecting provider in the real API and worker bodies. Outage LENGTHS
+    (3 min, 15 s, > C) are simulated on the database clock by moving the open interval's start;
+    the credit is still computed by the database from those timestamps. The slow-success case runs
+    in real time, scaled (outage timeout 0.3 s).
+  - Close message codes: the `closed` event carries `message_code` (`closed_<reason>`;
+    `closed_service_failure` is REQ-086's "Sessione interrotta per un problema tecnico..."). The
+    plugin renders the text.
+  - **Limits (M5.1)**: sized on a scripted reference session (`tests/test_limits_sizing.py`,
+    rationale in `docs/reference/configuration.md`): `MAX_MESSAGE_CHARS` 2000 (no longer
+    provisional), `MESSAGES_PER_MIN` 4, `SESSION_TOKEN_BUDGET` 500,000 (reference 120-min session
+    ~373k tokens). G is `VEKTRA_ASSESS_OUTAGE_G_S` (the M5.14 name). C's 15-minute maximum stays a
+    constant (`timing.OUTAGE_CAP_MAX_S`, mirrored in revision 0026's functions), not a setting:
+    REQ-086 fixes it and an uncapped variant is not allowed.
+  - **Audit (M5.6, revision 0029)**: the close function now writes `assess_close` (the enum's
+    name) instead of the plan-2 `session_closed`. `assess_attempt_mismatch_rejected` cannot be
+    driven: no route takes a Moodle or attempt id (M2.6); it stays in the enum for plan 9.
+  - **REQ-103 flag (M5.9, revision 0030)**: done, not time-boxed out. `assess_turn_flags` (PK =
+    the turn, FK to it), API INSERT/SELECT only; the turn row is never updated, so hashes and
+    copies stay equal. The route reads the turn's role through the material function (the API
+    has no SELECT on `assess_turns`). Plan 10 reads the flags for the transcript marker
+    ("segnalato dallo studente"); the worker may SELECT and DELETE them.
+  - **M5.10 status: BLOCKED (environment), the test is written.**
+    `tests/integration/test_req073_live.py` (`-m moodle`) runs a full session against the live
+    4.3 and 5.2 dev sites and compares the plan-4 capture's canonical bytes before and after
+    (grade, rubric, feedback), and asserts `no_grade_write` OK for the service account. On this
+    machine (2026-11-06) it SKIPS: `BLOCKED: VEKTRA_ASSESS_MOODLE43_URL / 52_URL unset`; the
+    integration job lists it among the live modules allowed to skip. Never run against a site
+    yet: its first real run is the user's (assess-moodle-contract workflow or local dev envs).
+    The adversarial verdict counts are the plan-7 eval report's, not re-measured here.
+  - **Chaos (M5.11)**: `tests/chaos/assess/test_lifecycle_chaos.py` runs locally against the
+    harness's pg16 containers (23/23 chaos cases green on 2026-11-06, the six close reasons
+    included). The kill -9 cases kill real client processes holding the pre-flight commit
+    transaction (worker role) or the live-reply claim (API role); Postgres is restarted under an
+    open append. The real pre-flight under kill -9 against Moodle is not reproduced (it needs the
+    dev Moodle): its DB-level effect, an aborted commit transaction, is.
+  - **M5.12 status: BLOCKED (environment).** Re-run on 2026-11-06 with every M3-M5 gate, limit
+    and audit in the code: `tests/nfr/results/assess-burst-20261106T201527Z.json` is BLOCKED (no
+    API, mint key, DSN, dev Moodle, model or manifest configured), so no NFR-018 percentiles and
+    no NFR-020 refusal counts are recorded and K stays the documented placeholder 10 (OQ-026).
+    The in-process run against fakes (`test_session_burst_inprocess.py`: 40 Starts, K=10, 10
+    commits, 30 `capacity`, 0 rows left) still passes with the Start cap, the rollback streak and
+    the per-site breaker active (capacity refusals are not system rollbacks, so the breaker stays
+    closed). The real run, and setting K from it, is the user's.
+  - **CI (M5.13)**: unit tests run in `ci-unit.yml` (`test-assess`, `-m "not integration"`) and in
+    `make test`; the assess integration tests run in the package-integration job (live-Moodle
+    modules, `test_req073_live` included, may skip there by design); the chaos suite runs on
+    every push and PR in `assess-chaos` and now must collect at least 23 cases with none skipped;
+    the burst runs manual and weekly in `assess-moodle-contract.yml` (`assess-burst`), printing
+    PASS / FAIL / BLOCKED to the job summary, so it left `EXPECTED_UNRUN` of the suite guard.
+  - **Docs (M5.14)**: `docs/reference/api.md` documents the student routes, token claims, the SSE
+    event catalogue and the error codes; `.env.example` and `configuration.md` carry every new
+    setting. `VEKTRA_ASSESS_OUTAGE_CAP_MAX_S` and `VEKTRA_ASSESS_OUTAGE_PROBE_S` are NOT settings:
+    C's 15-minute maximum and the 5-10 s probe interval are fixed (documented as such). The
+    CHANGELOG `[Unreleased]` entry covers PR 8a and PR 8b together.
+- **Code review of PR 8b (high, 10 findings, 2026-11-06)**, one commit each:
+  1. one bot turn per student turn: the claim is a non-blocking try-lock and a driver without it
+     does not reply; revision 0031 makes `assess_append_turn` refuse a bot turn unless a student
+     turn is pending;
+  2. replies take a slot (at most half the API pool after a quarter margin) before their claim
+     connection, shared by `TurnDriver` and `PendingTurnDriver`;
+  3. `/retry` and `/flag` limiters run after the gate; 4. `409 reply_pending` before the message
+     rate;
+  5. `enforce_clock` reads without a lock and locks only when a close is due;
+  6. the event stream reuses a row read younger than `poll_s` for the delivery check (a
+     revocation lets through at most `poll_s` of reply text);
+  7. `session_gate.on_session_closed` is the one API-side close hook: DEK out and the reply task
+     cancelled; closes made by the worker still reach a running reply only through its refused
+     append (open point: a worker-side close does not stop the model at once);
+  8. the half-open breaker is decided under a per-site transaction lock in the Start transaction;
+  9. enrolment re-checks are queued oldest check first;
+  10. revision 0032: `assess_outage_cap` / `assess_outage_spent` are the one definition of C and
+     of the spent outage; a NULL duration means C = 0 everywhere (closed `service_failure`).
+- **Known residual (worker-side close of a running reply)**: when the WORKER closes a session
+  (sweeper `timed_out`, enrolment `access_revoked`, probe `service_failure`) while the API is
+  streaming a reply, the reply is not cancelled at once: the model keeps generating until the
+  reply's append is refused by the database (the session is no longer ACTIVE at that epoch).
+  Mitigations in place: event delivery to the student stops within `poll_s` (the stream re-reads
+  the row at most `poll_s` old before sending reply text); a timed-out reply is cut at deadline +
+  grace by the TurnDriver's own timer; a `service_failure` close by the probe only happens in
+  OUTAGE, when no reply is running. Decision for plan 13 or for the coordinator (for example a
+  watcher in the reply on the row state, or a NOTIFY from the close function); not implemented.
+- **Operator alert on a Moodle failure during the pre-flight (coordinator decision, 2026-11-06)**:
+  minimal form in 8b. A rollback whose reason means Moodle could not be read (`unreadable`,
+  `capture_failed_{policy_input,attempt,submission}_unreadable`: the readers turn unreachable,
+  timeout and client errors into Unreadable) queues, in the rollback's transaction, a
+  content-free `operator_notify` job (`site_id`, `reason`, `kind: moodle_unreachable`; delivery
+  by plan 10). One per site per fixed 15-minute bucket of the worker clock
+  (`start_guard.MOODLE_ALERT_WINDOW_S`, in the `dedupe_key`), also when the first alert was
+  already delivered (the unique dedupe index covers pending jobs only, so the key is looked up
+  first). A rollback for a negated gate queues nothing.
+- **CodeRabbit round 1 on PR #154 (2026-11-07), design decisions taken here**:
+  - gate step 6 (enrolment freshness) also guards `GET /sessions/{sid}` (read and resume), not
+    only turns: no decrypted history and no resume token without a fresh `enrolled` check. A
+    worker stopped longer than the freshness window now also blocks reading (503), the
+    fail-closed side of NFR-014 (comment 4498473572);
+  - the per-route limiters stay process-local (`RateLimiter` per API process, plan M5.3): the
+    shipped deployment runs one API process, the one-reply-at-a-time rule and the database
+    guard bound model calls per session whatever the process count, and a shared limiter
+    needs a shared store the plan does not have (comment 4498473536, not applied);
+  - the event stream's revocation bound stays "at most `poll_s` of reply text" (review fix 6,
+    coordinator decision; comment 4498473544, not applied).
+  - not applied, recorded: the live REQ-073 test keeps comparing the plan-4 capture (read
+    times zeroed); comparing the unprojected reader records needs the plan-4 raw-dump helper
+    and a live site to write against, so it is left to the first live run (comment
+    4498473615); a session token minted before an outage credit keeps its earlier expiry:
+    tokens live at most `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` (15 min) and the client re-mints
+    through resume, which caps the new token at the current (credited) deadline (unverified
+    finding, outage_probe.py 94-97); the worker does not check the Alembic head at start: the
+    schema is migrated by the operator before the services start (`alembic upgrade head`, API
+    startup step 3 refuses a behind schema), and the worker role has no grant on
+    `alembic_version`; adding one is a grant-matrix change for a later plan (minor comment
+    on models.py 202-204).
 - REQ-103 is a could-have and is ordered last (M5.9). Plan 9's marker task depends on it.
 - **Implementation choices, PR 8a (2026-11-06)**:
   - `assess_token_jti` is a new table (revision 0022) next to the plan-2 `assess_consumed_jtis`,

@@ -31,7 +31,12 @@ from starlette.types import ASGIApp
 
 from vektra_app import __version__
 from vektra_app.assess_llm import step_13_assess_llm_check
-from vektra_app.assess_wiring import include_assess_router, step_12_assess_check
+from vektra_app.assess_wiring import (
+    include_assess_router,
+    start_assess_background,
+    step_12_assess_check,
+    stop_assess_background,
+)
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
 from vektra_shared.errors import ERR_CONFIG_001, ErrorCategory, ErrorResponse
@@ -596,10 +601,14 @@ async def _run_startup(app: FastAPI) -> None:
         app.state.learn_service = registry.get("learn", "default")
         app.state.learn_require_enrollment = settings.learn_require_enrollment
 
+    # the assess PendingTurnDriver (plan 8 M4.3): after every step passed, in both serving paths
+    start_assess_background(app)
+
 
 async def _run_shutdown(app: FastAPI) -> None:
     """Best-effort teardown: close remote provider clients and the DB engine."""
     log.info("shutdown_started")
+    await stop_assess_background(app)
     registry: ProviderRegistry = app.state.registry
     # Close remote provider HTTP clients (TEI, FEAT-024) best-effort
     for category in ("embedding", "reranker"):

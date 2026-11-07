@@ -199,6 +199,9 @@ class SessionOrm(Base):
     starting_expires_at: Mapped[datetime | None] = _ts(nullable=True)
     deadline_at: Mapped[datetime | None] = _ts(nullable=True)
     credited_outage_s: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
+    tokens_used: Mapped[int] = mapped_column(
+        BigInteger, server_default=text("0")
+    )  # revision 0027
     seq: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
     epoch: Mapped[int] = mapped_column(INTEGER, server_default=text("1"))
     notice_version: Mapped[str | None] = mapped_column(TEXT)
@@ -214,6 +217,8 @@ class SessionOrm(Base):
     preflight_started_at: Mapped[datetime | None] = _ts(nullable=True)
     # revision 0023: set by a student turn, cleared by the bot turn (assess_append_turn)
     pending_reply_since: Mapped[datetime | None] = _ts(nullable=True)
+    # revision 0024: the reply grace frozen at commit, read by assess_append_turn
+    reply_grace_s: Mapped[int] = mapped_column(INTEGER, server_default=text("60"))
 
 
 class StartAttemptOrm(Base):
@@ -227,6 +232,32 @@ class StartAttemptOrm(Base):
     reason_code: Mapped[str | None] = mapped_column(TEXT)
     created_at: Mapped[datetime] = _ts(default=True)
     session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+
+
+class TurnFlagOrm(Base):
+    """REQ-103 'segnalato dallo studente' marker (revision 0030): one per bot turn."""
+
+    __tablename__ = "assess_turn_flags"
+
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    turn_no: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    created_at: Mapped[datetime] = _ts(default=True)
+
+
+class StartBreakerOrm(Base):
+    """Per-site Start breaker (revision 0028, plan 8 M5.4): worker-written, API-read."""
+
+    __tablename__ = "assess_start_breaker"
+
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(TEXT)
+    opened_at: Mapped[datetime | None] = _ts(nullable=True)
+    half_open_at: Mapped[datetime | None] = _ts(nullable=True)
+    updated_at: Mapped[datetime] = _ts(default=True)
 
 
 class TokenJtiOrm(Base):
@@ -257,6 +288,9 @@ class OutageIncidentOrm(Base):
     started_at: Mapped[datetime] = _ts(default=True)
     ended_at: Mapped[datetime | None] = _ts(nullable=True)
     reason_code: Mapped[str | None] = mapped_column(TEXT)
+    credited_s: Mapped[int] = mapped_column(
+        INTEGER, server_default=text("0")
+    )  # revision 0026
 
 
 class EnrolmentCheckOrm(Base):

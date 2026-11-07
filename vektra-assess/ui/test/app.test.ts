@@ -840,3 +840,50 @@ describe("the close learnt from a 409, on a real stream (4501067255 follow-up)",
     expect(closedSent()).toEqual(["unknown"]);
   });
 });
+
+describe("a turn sent from another tab (review 5812478913, app.ts 302-320)", () => {
+  it("this tab shows the turn, closes its composer and shows the reply", async () => {
+    const history = [
+      { turn_no: 1, role: "bot", text: "Benvenuto" },
+      { turn_no: 2, role: "student", text: "prima" },
+      { turn_no: 3, role: "bot", text: "risposta 1" },
+    ];
+    const tabA = harness();
+    const tabB = harness(); // the last one created owns the document; B is the one checked
+    for (const t of [tabA, tabB]) (t.a as unknown as { lastTurnNo: number }).lastTurnNo = 3;
+    // tab A sends turn 4; the server publishes turn_accepted to every connected tab
+    tabA.a.chat.composer.value = "dall'altra tab";
+    const sent = tabA.priv.sendTurn();
+    await tabA.flush();
+    tabA.pending[0].resolve(Response.json({ session_id: "S", turn_no: 4 }, { status: 202 }));
+    await sent;
+    // tab B: nothing owed until the event says otherwise
+    expect((tabB.a as unknown as { replyPending: boolean }).replyPending).toBe(false);
+    const accepted = tabB.priv.onEvent({ event: "turn_accepted", data: '{"turn_no":4}' });
+    await tabB.flush();
+    expect(tabB.a.chat.composer.disabled).toBe(true);
+    expect(tabB.pending.map((p) => p.url)).toEqual(["/api/sessions/S"]); // the text: a read
+    tabB.pending[0].resolve(
+      view([...history, { turn_no: 4, role: "student", text: "dall'altra tab" }], { reply_pending: true }),
+    );
+    await accepted;
+    expect(tabB.root.textContent).toContain("dall'altra tab");
+    await tabB.priv.onEvent({ event: "reply_delta", data: '{"text":"risposta 2"}' });
+    expect(tabB.root.querySelector("li.streaming")!.textContent).toContain("risposta 2");
+    const done = tabB.priv.onEvent({ event: "reply_done", data: '{"turn_no":5,"marked":false}' });
+    await tabB.flush();
+    tabB.pending[1].resolve(
+      view([
+        ...history,
+        { turn_no: 4, role: "student", text: "dall'altra tab" },
+        { turn_no: 5, role: "bot", text: "risposta 2" },
+      ]),
+    );
+    await done;
+    expect(tabB.a.live.announcements).toBe(1);
+    expect(tabB.a.chat.composer.disabled).toBe(false);
+    // a replayed turn_accepted for a turn the snapshot holds changes nothing
+    await tabB.priv.onEvent({ event: "turn_accepted", data: '{"turn_no":4}' });
+    expect(tabB.pending.length).toBe(2);
+  });
+});

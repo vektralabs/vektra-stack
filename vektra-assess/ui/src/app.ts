@@ -310,6 +310,16 @@ export class App {
         return;
       case "start_rolled_back":
         return this.dispatch({ type: "rolled_back", reason: String(data.reason ?? "") });
+      case "turn_accepted":
+        // a turn this screen does not show yet (sent from another tab, or this tab's own
+        // before its 202 is read): a reply is owed from now; the event has no text, so the
+        // turn comes from a session read. A replayed one (already in the snapshot) is ignored.
+        if (typeof data.turn_no === "number" && data.turn_no > this.lastTurnNo) {
+          this.replyPending = true;
+          this.syncComposer();
+          await this.refresh();
+        }
+        return;
       // reply events count only while a reply is owed: after a resume the stream may replay
       // the events of replies the snapshot already shows (4501070057)
       case "reply_delta":

@@ -512,3 +512,8 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501694787 `bare_origin` refuses an IPv6 zone id (`fe80::1%eth0`, `%25` in a URL), which
     `ORIGIN_RE` excludes: the 0033 backfill now writes NULL for it instead of failing the CHECK.
   - nitpick (test_assess_startup.py) The framing test writes its manifest under `tmp_path`.
+- **CodeRabbit review 5812478913 (outside diff, 2026-11-07)**:
+  - app.ts 302-320 A `turn_accepted` for a turn the screen does not hold yet (another tab, or
+    this tab before its 202 is read) marks a reply owed, closes the composer and reads
+    `/sessions/{sid}` for the turn's text (the event has none; plan 8's payload unchanged). A
+    replayed one is ignored; the replayed-reply filter is unchanged. Two-tab test.

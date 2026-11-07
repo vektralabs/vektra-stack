@@ -6,7 +6,13 @@ what Moodle answered. A request with no recording fails the test (``Replay.unmat
 
 from __future__ import annotations
 
+import base64
+import importlib.util
+import io
 import json
+import zipfile
+import zlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -52,6 +58,15 @@ from vektra_assess.moodle.readers import (
 from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
 
 pytestmark = pytest.mark.parametrize("branch", BRANCHES)
+
+# the recorder's own file scan (scripts/ is not a package): the test checks what it checks
+_SPEC = importlib.util.spec_from_file_location(
+    "assess_record_ws",
+    Path(__file__).resolve().parents[2] / "scripts" / "assess_record_ws.py",
+)
+assert _SPEC and _SPEC.loader
+_REC = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_REC)
 
 
 def env(branch: str) -> tuple[Replay, Any, SiteRef, dict[str, Any]]:
@@ -659,6 +674,222 @@ def test_recordings_are_scrubbed(branch: str) -> None:
     assert "localhost" not in blob and "127.0.0.1" not in blob
     assert '"userprivateaccesskey": "REDACTED"' in blob
     assert "token=" not in blob.replace("token=REDACTED", "")
+
+
+def _scan(path: Path) -> list[str]:
+    hits: list[str] = _REC.file_secret_hits(path.name, path.read_bytes())
+    return hits
+
+
+def test_recorded_files_are_scrubbed(branch: str) -> None:
+    """The submission files are written as downloaded: scan raw bytes and zip members too."""
+    files = sorted((FIXTURES / branch / "files").iterdir())
+    assert files, "no recorded submission files: the scan would be vacuous"
+    assert _zip_members(files) > 0, "no zip member was inspected"
+    assert [h for f in files for h in _scan(f)] == []
+
+
+def _zip_members(files: list[Path]) -> int:
+    """How many zip members the scan inspected across the office files."""
+    return sum(
+        len(_REC._file_layers(f.name, f.read_bytes())) - 1
+        for f in files
+        if f.suffix.lower() in _REC._ZIP_SUFFIXES  # the recorder's own rule
+    )
+
+
+def test_the_member_count_matches_suffixes_case_insensitively(
+    branch: str, tmp_path: Path
+) -> None:
+    """CodeRabbit 4499897066: the recorder lowercases the suffix, so must the count."""
+    upper = tmp_path / "stu1__REPORT.DOCX"
+    upper.write_bytes(_zip("word/document.xml", "<w:t>ok</w:t>"))
+    assert _zip_members([upper]) == 2
+
+
+def _zip(member: str, text: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", "<Types/>")
+        zf.writestr(member, text)
+    return buf.getvalue()
+
+
+def _pdf(
+    body: bytes,
+    filters: bytes = b"/FlateDecode",
+    extra: bytes = b"",
+    key: bytes = b"/Filter",
+) -> bytes:
+    return (
+        b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n4 0 obj\n<< /Length "
+        + str(len(body)).encode()
+        + b" "
+        + key
+        + b" "
+        + filters
+        + extra
+        + b" >>\nstream\n"
+        + body
+        + b"\nendstream\nendobj\n%%EOF\n"
+    )
+
+
+def _flate_pdf(text: str) -> bytes:
+    return _pdf(zlib.compress(text.encode()))
+
+
+def _a85_flate_pdf(text: str) -> bytes:
+    # /Filter [/ASCII85Decode /FlateDecode]: decode A85 first, then inflate
+    body = base64.a85encode(zlib.compress(text.encode())) + b"~>"
+    return _pdf(body, b"[/ASCII85Decode /FlateDecode]")
+
+
+def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -> None:
+    """CodeRabbit 4499365567 (round 2): an A85+Flate stream used to fail inflate and be skipped."""
+    for name, data in {
+        "a85_flate": _a85_flate_pdf("BT (key WSTOKEN=abc) Tj ET"),
+        "ahx_flate": _pdf(
+            zlib.compress(b"BT (wstoken) Tj ET").hex().encode() + b">",
+            b"[/AHx /Fl]",
+        ),
+        "ahx": _pdf(b"BT (wstoken) Tj ET".hex().encode() + b">", b"/ASCIIHexDecode"),
+        # PDF name escapes (#xx) in the key and in a filter name are decoded first
+        "escaped_key": _pdf(zlib.compress(b"wstoken"), key=b"/F#69lter"),
+        "escaped_name": _pdf(zlib.compress(b"wstoken"), b"/Fl#61teDecode"),
+        "escaped_chain": _pdf(
+            base64.a85encode(zlib.compress(b"wstoken")) + b"~>",
+            b"[/ASCII85#44ecode /#46lateDecode]",
+        ),
+        # CodeRabbit 4499897027: a longer name that starts with /DP or /DecodeParms is not one
+        # CodeRabbit 4499897054: readers accept a header that is not at offset 0
+        "late_header": b"junk before the header\n" + _flate_pdf("BT (wstoken) Tj ET"),
+        "dp_prefix_names": _pdf(
+            zlib.compress(b"wstoken"), extra=b" /DPI 72 /DecodeParmsX 1 /DP-x 2"
+        ),
+    }.items():
+        assert b"wstoken" not in data.lower(), name
+        path = tmp_path / f"stu1__{name}.pdf"
+        path.write_bytes(data)
+        hits = _scan(path)
+        assert any(h.endswith(": wstoken") for h in hits), (name, hits)
+        assert not any("uninspectable" in h for h in hits), (name, hits)
+    clean = tmp_path / "stu1__clean.pdf"
+    clean.write_bytes(_a85_flate_pdf("BT (CANARY-PDFTEXT ok) Tj ET"))
+    assert _scan(clean) == []
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _pdf(b"opaque", b"/LZWDecode"),  # unsupported filter
+        _pdf(b"opaque", b"[/ASCII85Decode /DCTDecode]"),  # unsupported link in a chain
+        _pdf(b"not zlib", b"/FlateDecode"),  # does not decode
+        _pdf(b"vvvvv~>", b"/ASCII85Decode"),  # does not decode
+        _pdf(  # a predictor rearranges the decoded bytes
+            zlib.compress(b"wstoken"),
+            b"/FlateDecode",
+            b" /DecodeParms << /Predictor 12 >>",
+        ),
+        b"%PDF-1.4\nstream\rwstoken\rendstream\n",  # a stream the scan cannot delimit
+        # CodeRabbit 4499897034: an indirect /Filter (alone or in a chain) cannot be resolved
+        _pdf(zlib.compress(b"wstoken"), b"5 0 R"),
+        _pdf(
+            base64.a85encode(zlib.compress(b"wstoken")) + b"~>",
+            b"[/ASCII85Decode 6 0 R]",
+        ),
+        # an escape that is not #xx, or one that decodes to a delimiter, is ambiguous
+        _pdf(zlib.compress(b"wstoken"), key=b"/F#zzlter"),
+        _pdf(zlib.compress(b"wstoken"), b"/A85#2FFlateDecode"),
+        _pdf(zlib.compress(b"wstoken"), extra=b" /DP<< /Predictor 12 >>"),
+    ],
+    ids=[
+        "unknown",
+        "unknown_in_chain",
+        "bad_flate",
+        "bad_a85",
+        "predictor",
+        "undelimited",
+        "indirect_filter",
+        "indirect_in_chain",
+        "bad_escape",
+        "escaped_delimiter",
+        "dp_abbreviation",
+    ],
+)
+def test_the_file_scan_refuses_an_uninspectable_pdf_stream(
+    branch: str, data: bytes, tmp_path: Path
+) -> None:
+    path = tmp_path / "stu1__opaque.pdf"
+    path.write_bytes(data)
+    assert any("uninspectable" in h for h in _scan(path))
+
+
+@pytest.mark.parametrize("needle", _REC.FILE_NEEDLES)
+@pytest.mark.parametrize("shape", ["txt", "docx", "pdf"])
+def test_the_file_scan_fails_on_a_contaminated_file(
+    branch: str, needle: str, shape: str, tmp_path: Path
+) -> None:
+    text = f"VISIBLE text {needle.upper()} more text"  # case-insensitive match
+    data = {
+        "txt": text.encode(),
+        "docx": _zip("word/document.xml", f"<w:t>{text}</w:t>"),  # deflated: not in raw
+        "pdf": _flate_pdf(f"BT ({text}) Tj ET"),  # inflated stream only
+    }[shape]
+    path = tmp_path / f"stu1__synthetic.{shape}"
+    path.write_bytes(data)
+    if shape != "txt":
+        assert needle.upper().encode() not in data, (
+            "the needle must be hidden by compression"
+        )
+    assert any(needle in h for h in _scan(path))
+
+
+def _patched_zip(
+    *, flag: int = 0, method: int | None = None, damage: bool = False
+) -> bytes:
+    """A one-member deflated zip with its headers patched (encrypted flag, method, data)."""
+    data = bytearray(_zip("word/document.xml", "<w:t>" + "wstoken " * 50 + "</w:t>"))
+    cd = data.index(b"PK\x01\x02")
+    for at in (6, cd + 8):  # general-purpose flags: local header, central directory
+        data[at] |= flag
+    if method is not None:
+        for at in (8, cd + 10):
+            data[at : at + 2] = method.to_bytes(2, "little")
+    if damage:
+        member = data.index(b"PK\x03\x04", 4)  # the second local header
+        start = member + 30 + int.from_bytes(data[member + 26 : member + 28], "little")
+        data[start : start + 8] = b"\xff" * 8
+    return bytes(data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _patched_zip(flag=0x1),  # encrypted member: RuntimeError
+        _patched_zip(method=99),  # unsupported compression: NotImplementedError
+        _patched_zip(damage=True),  # damaged deflate data: zlib.error
+    ],
+    ids=["encrypted", "unsupported_method", "damaged"],
+)
+def test_the_file_scan_refuses_a_zip_member_it_cannot_read(
+    branch: str, data: bytes, tmp_path: Path
+) -> None:
+    """CodeRabbit 4499897038: only BadZipFile was caught; a member read error escaped."""
+    path = tmp_path / "stu1__locked.docx"
+    path.write_bytes(data)
+    assert any("uninspectable" in h for h in _scan(path))
+
+
+def test_the_file_scan_passes_a_clean_file_and_refuses_an_unreadable_zip(
+    branch: str, tmp_path: Path
+) -> None:
+    clean = tmp_path / "stu1__clean.docx"
+    clean.write_bytes(_zip("word/document.xml", "<w:t>CANARY-DOCX ok</w:t>"))
+    assert _scan(clean) == []
+    broken = tmp_path / "stu1__broken.docx"
+    broken.write_bytes(b"PK\x03\x04 not really a zip")
+    assert _scan(broken) != []
 
 
 async def test_readers_log_no_body_param_or_url(branch: str) -> None:

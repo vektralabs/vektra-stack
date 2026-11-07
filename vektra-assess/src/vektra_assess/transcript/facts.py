@@ -25,4 +25,13 @@ class CloseFacts:
 
 
 class CloseFactsSource(Protocol):
-    async def close_facts(self, target: Any) -> CloseFacts: ...
+    async def close_facts(
+        self,
+        *,
+        session_id: Any,
+        site_id: Any,
+        cmid: int,
+        student_userid: int,
+        courseid_hint: int | None,
+        activity_type: str,
+    ) -> CloseFacts: ...

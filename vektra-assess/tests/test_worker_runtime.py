@@ -259,6 +259,30 @@ async def test_last_attempt_writes_audit_then_marks_dead() -> None:
     assert rt.counters[("dead", JobKind.PURGE)] == 1
 
 
+async def test_a_permanent_error_is_dead_at_once_with_its_fixed_code() -> None:
+    """Plan 10: a tampered chain is not retried: dead on attempt 1 of 5, audited first."""
+    from vektra_assess.worker.runtime import PermanentJobError
+
+    store, audit = MemStore(), Audit()
+
+    async def tampered(ctx: JobContext) -> None:
+        raise PermanentJobError("integrity_mismatch")
+
+    async def leaky(ctx: JobContext) -> None:
+        raise PermanentJobError("Student wrote: <secret>")
+
+    (jid,) = store.add(JobKind.TRANSCRIPT_GENERATE, max_attempts=5)
+    (kid,) = store.add(JobKind.PURGE, max_attempts=5)
+    rt = _rt(store, audit)
+    rt.register_handler(_spec(JobKind.TRANSCRIPT_GENERATE, tampered))
+    rt.register_handler(_spec(JobKind.PURGE, leaky))
+    await rt.claim_once()
+    await rt.wait_idle()
+    assert store.rows[jid]["state"] == "dead" and store.rows[kid]["state"] == "dead"
+    codes = {e[1]["kind"]: e[1]["error_code"] for e in audit.events}
+    assert codes == {"transcript_generate": "integrity_mismatch", "purge": "handler_error"}
+
+
 async def test_audit_failure_leaves_the_job_leased_and_is_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

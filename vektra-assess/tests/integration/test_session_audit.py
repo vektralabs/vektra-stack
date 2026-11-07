@@ -40,6 +40,14 @@ ELSEWHERE = {
     E.START_BREAKER_OPEN: "test_session_start_guard.py",
     E.START_BREAKER_CLOSE: "test_session_start_guard.py",
     E.FLAG_ADDED: "test_session_flag.py",  # REQ-103, M5.9
+    # plan assess-transcript-delivery
+    E.TRANSCRIPT_GENERATED: "test_transcript_generation.py",
+    E.TRANSCRIPT_INTEGRITY_FAILED: "test_transcript_generation.py",
+    E.TRANSCRIPT_RECIPIENTS_UNRESOLVED: "test_transcript_generation.py",
+    E.DOWNLOAD_TOKEN_MINT: "test_transcript_api.py",
+    E.STUDENT_DOWNLOAD: "test_transcript_api.py",
+    E.TEACHER_DOWNLOAD: "test_transcript_api.py",
+    E.TRANSCRIPT_RESEND: "test_transcript_schema.py",
 }
 NOT_DRIVABLE = {E.ATTEMPT_MISMATCH_REJECTED}
 

@@ -21,6 +21,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -190,10 +191,29 @@ class MoodleStartSource:
         res = await r.read_graders(self._client, site, ref.courseid)
         return res.value.graders if isinstance(res, Readable) else None
 
-    async def close_facts(self, target: StartTarget) -> CloseFacts:
+    async def close_facts(
+        self,
+        *,
+        session_id: UUID,
+        site_id: UUID,
+        cmid: int,
+        student_userid: int,
+        courseid_hint: int | None,
+        activity_type: str,
+    ) -> CloseFacts:
         """What the transcript header needs from Moodle at close (plan 10): the course short
         name, the grade as the student sees it NOW (release-gated: an unreleased grade never
         leaves the reader) and the course's graders. Each part is None when unreadable."""
+        target = StartTarget(
+            session_id=session_id,
+            site_id=site_id,
+            cmid=cmid,
+            student_userid=student_userid,
+            courseid_hint=courseid_hint,
+            activity_type=activity_type,
+            session_no=1,
+            flags={},
+        )
         site = await self._site(target)
         if site is None:
             return CloseFacts()

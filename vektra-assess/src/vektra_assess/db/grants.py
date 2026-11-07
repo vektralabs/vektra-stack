@@ -262,7 +262,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "SELECT": _ALL,
             "DELETE": _ALL,
         },  # transcript reads, purge deletes
-        "assess_turn_notes": {"SELECT": _ALL, "DELETE": _ALL},  # revision 0034, same rule
+        "assess_turn_notes": {
+            "SELECT": _ALL,
+            "DELETE": _ALL,
+        },  # revision 0034, same rule
         "assess_session_keys": {
             "SELECT": _ALL,
             "INSERT": _ALL,

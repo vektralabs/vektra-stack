@@ -330,6 +330,19 @@ class VektraAssessSettings(BaseSettings):
         ),
     )
 
+    @field_validator("site_timezone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(
+                "VEKTRA_ASSESS_SITE_TIMEZONE is not a known IANA zone"
+            ) from None
+        return value
+
     @field_validator("llm_api_key", mode="before")
     @classmethod
     def _empty_key_is_none(cls, value: Any) -> Any:
@@ -597,6 +610,43 @@ class VektraAssessSettings(BaseSettings):
             "configuration does not exist yet (its store arrives with plan assess-privacy-retention; "
             "until then the gate fails closed and every Start is rolled back with "
             "privacy_not_configured). Honoured only with VEKTRA_ENV=development."
+        ),
+    )
+    # --- transcripts (plan assess-transcript-delivery) ---------------------------------------
+    site_timezone: str = Field(
+        "Europe/Rome",
+        alias="VEKTRA_ASSESS_SITE_TIMEZONE",
+        description=(
+            "IANA time zone of the transcript's timestamps and of the date in its file name "
+            "(BR-016: the date of CLOSED in the site time zone)."
+        ),
+    )
+    download_token_ttl_s: int = Field(
+        60,
+        ge=5,
+        le=120,
+        alias="VEKTRA_ASSESS_DOWNLOAD_TOKEN_TTL_S",
+        description=(
+            "Lifetime of a transcript download token (aud=transcript, single use): at most "
+            "120 s (ARCH-067)."
+        ),
+    )
+    download_rpm: int = Field(
+        10,
+        ge=1,
+        alias="VEKTRA_ASSESS_DOWNLOAD_RPM",
+        description=(
+            "Transcript download-token mints and downloads per minute, per transcript and "
+            "requester (assess-local limiter; 429 beyond it)."
+        ),
+    )
+    teacher_gate_max_age_s: int = Field(
+        120,
+        ge=10,
+        alias="VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S",
+        description=(
+            "Freshness bound of the worker-written grader list a teacher request is checked "
+            "against; older or absent -> 403 and a refresh is queued (fail closed)."
         ),
     )
     llm_allow_unactivated: bool = Field(

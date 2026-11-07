@@ -221,7 +221,12 @@ def _version() -> str:
 
 
 #: worker secrets the session-lifecycle handlers need (all REQUIRED for the worker role)
-SESSION_KEYS = ("assess_kek", "assess_handoff_public", "assess_teacher_config_private")
+SESSION_KEYS = (
+    "assess_kek",
+    "assess_handoff_public",
+    "assess_teacher_config_private",
+    "assess_transcript_kek",  # plan transcript-delivery: the transcript_generate handler
+)
 
 
 def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
@@ -244,6 +249,10 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     from vektra_assess.worker.render import RenderDeps, make_render_handler
     from vektra_assess.worker.reply_reconcile import make_reconcile_handler
     from vektra_assess.worker.start_source import MoodleStartSource
+    from vektra_assess.worker.transcript_gen import (
+        GenerationDeps,
+        make_generate_handler,
+    )
 
     settings, engine = checked.settings, checked.engine
     runner = build_worker_part_b_runner(
@@ -272,7 +281,16 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     render = make_render_handler(
         RenderDeps(settings=settings, source=source, graders=source)
     )
+    transcript = make_generate_handler(
+        GenerationDeps(
+            kek=checked.keys["assess_kek"],
+            transcript_kek=checked.keys["assess_transcript_kek"],
+            facts=source,
+            tz=settings.site_timezone,
+        )
+    )
     return {
+        JobKind.TRANSCRIPT_GENERATE: transcript,
         JobKind.PREFLIGHT: preflight,
         JobKind.RENDER_CHECK: render,
         JobKind.GATE_REFRESH: render,
@@ -550,7 +568,7 @@ def check_imports() -> None:
     )  # the LLM provider's cost
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_guard", "start_source",
+        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",
         "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip

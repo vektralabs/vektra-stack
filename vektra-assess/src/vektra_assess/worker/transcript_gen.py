@@ -97,7 +97,7 @@ class Generated:
 _SESSION = text(
     "SELECT s.id, s.site_id, s.cmid, s.student_userid, s.session_no, s.state, s.close_reason, "
     "s.courseid_hint, s.duration_s, s.committed_at, s.closed_at, s.created_at, s.frozen_policy, "
-    "s.credited_outage_s, s.cap_s, c.activity_type, c.cap_minutes, "
+    "s.credited_outage_s, s.cap_s, s.seq, c.activity_type, c.cap_minutes, "
     "(SELECT count(*) FROM assess_sessions x WHERE x.site_id = s.site_id AND x.cmid = s.cmid "
     "AND x.student_userid = s.student_userid) AS sessions_total, "
     "(SELECT count(*) FROM assess_start_attempts a WHERE a.site_id = s.site_id "
@@ -222,6 +222,11 @@ async def generate_transcript(
             )
             records.append(_record(t, plain.decode("utf-8")))
         verify_turns(genesis, chain)
+        if len(chain) != int(row.seq):
+            # a deleted trailing turn leaves a prefix that still verifies: the session's own
+            # turn counter must agree (CodeRabbit 4503029416)
+            await _integrity_failed(acquire, row, "turn_count_mismatch", len(chain))
+            raise IntegrityFailure("turn_count_mismatch", len(chain))
     except ChainError as exc:
         await _integrity_failed(acquire, row, "turn_hash_mismatch", exc.turn_no)
         raise IntegrityFailure("turn_hash_mismatch", exc.turn_no) from None

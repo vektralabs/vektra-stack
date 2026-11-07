@@ -480,3 +480,43 @@ async def test_the_header_shows_the_cap_frozen_at_start(pg, worker) -> None:  # 
         html = (await _open(pg, ring, s.session_id)).decode()
         assert "<dt>Durata massima</dt><dd>30 min</dd>" in html
         assert "<dt>Tempo aggiuntivo</dt><dd>nessuno</dd>" in html
+
+
+async def test_a_deleted_trailing_turn_yields_no_transcript(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4503029416: the prefix left after deleting the last turn still chains;
+    the session's turn counter (seq) does not agree, so nothing is sealed."""
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        last = (
+            await pg.run(
+                "super",
+                "SELECT max(turn_no) FROM assess_turns WHERE session_id = :s",
+                {"s": s.session_id},
+            )
+        )[0][0]
+        await pg.run(
+            "super",
+            "DELETE FROM assess_turns WHERE session_id = :s AND turn_no = :n",
+            {"s": s.session_id, "n": last},
+        )
+        deps = GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Facts(facts=CloseFacts())
+        )
+        with pytest.raises(IntegrityFailure):
+            await generate_transcript(deps, worker.connect, s.session_id)
+        audit = await pg.run(
+            "super",
+            "SELECT reason_code FROM assess_audit_events WHERE session_id = :s "
+            "AND event = 'assess_transcript_integrity_failed'",
+            {"s": s.session_id},
+        )
+        assert [a[0] for a in audit] == ["turn_count_mismatch"]
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_transcripts WHERE session_id = :s",
+                s=s.session_id,
+            )
+            == 0
+        )

@@ -294,6 +294,12 @@ real-time run guards against clock-injection bugs.
   `docs/guides/assess-moodle-service-account.md`, re-records the graders fixtures with emails (scrubbed
   to the dev seed's fake addresses), and asks vektra-moodle-cf to add the capability to the dev role
   provisioning in `vektra-moodle/docker`.
+- **Verified live (vektra-moodle-cf, 2026-11-07, vektra-moodle#44 `06a16bd`, 4.3 and 5.2, maildisplay 0
+  and 2):** `moodle/course:useremail` makes `core_enrol_get_enrolled_users_with_capability` return the
+  email for 2/2 graders; `core_user_get_users_by_field` still returns 0/2 (course-scoped check only);
+  `moodle/user:viewalldetails` gives 0/2 on both; `moodle/site:viewuseridentity` gives 2/2 on both but
+  exposes every identity field, so it is broader. 10b uses `moodle/course:useremail` and resolves the
+  address through `core_enrol_get_enrolled_users_with_capability` only.
 
 ### Design decisions taken in 10a (one line each, with the reason)
 

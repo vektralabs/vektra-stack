@@ -411,3 +411,15 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     followed) and refused unless `is_relative_to` the resolved bundle directory and a regular
     file. Tests: `..`, `%2e%2e`, encoded slashes, absolute paths, a NUL, and manifest entries
     that are a symlink out of the bundle, a `../` path or an absolute path, all 404.
+  - e2e flake on PR #157 (`resume after a reload…`, opening never shown): reproduced locally
+    (2 of 3 runs, in different specs): Start answered `503 ERR-ASSESS-001 worker_heartbeat`.
+    Cause in the harness, not the UI: its worker loop refreshed the heartbeat with
+    `support.world.beat`, a DELETE then an INSERT in two transactions, so the table was
+    empty in between (a regression test reading it 300 times found it empty 150 times) and a
+    Start landing there was refused. The harness now runs the worker's own single-statement
+    upsert. Evidence: 18 full runs after the fix, 16 of them under CPU load (one busy loop
+    per core), with 0 refusals; 16 of 18 all green. The 2 loaded runs that failed (in the
+    first loaded batch) did not keep their logs; the 6 loaded runs that followed, with logs
+    kept, were all green. CI now keeps Playwright's traces and page snapshots on failure
+    (artifact `assess-ui-e2e-playwright`), and the harness prints every API answer >= 400
+    with its error code and remediation.

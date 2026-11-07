@@ -15,5 +15,11 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   outputDir: process.env.E2E_OUTPUT ?? "test-results",
   reporter: [["list"], ["json", { outputFile: process.env.E2E_REPORT ?? "e2e-report.json" }]],
-  use: { browserName: "chromium", headless: true, viewport: { width: 1024, height: 900 } },
+  use: {
+    browserName: "chromium",
+    headless: true,
+    viewport: { width: 1024, height: 900 },
+    // a failed spec keeps its trace (network, console, DOM snapshots): CI uploads it
+    trace: "retain-on-failure",
+  },
 });

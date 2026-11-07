@@ -45,7 +45,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 from support.preflight import FakePartB, activate, deps, job_context, kek_ring
 from support.sessions import fixture_target
-from support.world import beat, configure_activity, default_settings, world
+from support.world import configure_activity, default_settings, world
 from test_context_capture import InProcessParser
 
 from integration.test_session_preflight import _reset
@@ -83,6 +83,19 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])
+
+
+async def heartbeat(pg: Any) -> None:
+    """The harness's worker heartbeat, refreshed every tick: ONE upsert as the worker role, the
+    statement the worker itself runs (``worker.heartbeat.UPSERT``). ``support.world.beat`` is a
+    DELETE then an INSERT in two transactions: refreshed in a loop it leaves the table empty in
+    between, and a Start landing there is refused (503 ERR-ASSESS-001 worker_heartbeat)."""
+    await pg.run(
+        "worker",
+        "INSERT INTO assess_heartbeat (component, beat_at, details) "
+        "VALUES ('worker', now(), '{\"state\": \"ready\"}'::jsonb) "
+        "ON CONFLICT (component) DO UPDATE SET beat_at = now(), details = EXCLUDED.details",
+    )
 
 
 class Runner:
@@ -157,7 +170,9 @@ class Harness:
             await asyncio.sleep(0.3)
 
     async def _tick(self) -> None:
-        await beat(self.w.pg)  # the API refuses a Start while the worker looks dead
+        await heartbeat(
+            self.w.pg
+        )  # the API refuses a Start while the worker looks dead
         if not self.paused:
             rows = await self.w.pg.run(
                 "super", "SELECT id FROM assess_sessions WHERE state = 'STARTING'"
@@ -339,6 +354,41 @@ EVIL_PAGE = """<!doctype html>
 """
 
 
+class Refusals:
+    """ASGI wrapper: print every API answer >= 400 (method, path, status, error code), so a
+    failed spec's log says what the server refused and why. Ids only, never a body field
+    beyond the error code."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        status: list[int] = []
+        body = bytearray()
+
+        async def capture(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                status.append(message["status"])
+            elif (
+                message["type"] == "http.response.body" and status and status[0] >= 400
+            ):
+                body.extend(message.get("body", b"")[:2000])
+            await send(message)
+
+        await self.app(scope, receive, capture)
+        if status and status[0] >= 400:
+            code = ""
+            with contextlib.suppress(Exception):
+                err = json.loads(bytes(body))
+                err = (err.get("detail") or err)["error"]
+                code = f" {err.get('code')} {err.get('remediation') or ''}"
+            print(
+                f"e2e api refused: {scope['method']} {scope['path']} {status[0]}{code}"
+            )
+
+
 @contextlib.asynccontextmanager
 async def serving(app: Any, host: str, port: int) -> Any:
     server = uvicorn.Server(
@@ -473,7 +523,7 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
         report = tmp_path / "report.json"
         try:
             async with (
-                serving(w.app, "127.0.0.1", ports["ui"]),
+                serving(Refusals(w.app), "127.0.0.1", ports["ui"]),
                 serving(stub, "127.0.0.1", ports["stub"]),
             ):
                 grep = os.environ.get("E2E_GREP")  # local debugging of one spec only
@@ -489,7 +539,9 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
                         "E2E_THIRD": h.third,
                         "E2E_UI": h.ui_origin,
                         "E2E_REPORT": str(report),
-                        "E2E_OUTPUT": str(tmp_path / "results"),
+                        # CI keeps the traces and page snapshots of a failed spec (artifact)
+                        "E2E_OUTPUT": os.environ.get("VEKTRA_ASSESS_E2E_OUTPUT")
+                        or str(tmp_path / "results"),
                     },
                     timeout=900,
                 )
@@ -525,3 +577,26 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
         "AND t.role = 'bot' AND t.kind = 'opening')",
     )
     assert rows[0][0] == 0
+
+
+async def test_the_harness_heartbeat_never_leaves_the_table_empty(pg) -> None:  # type: ignore[no-untyped-def]
+    """PR #157 CI flake: a Start that read ``assess_heartbeat`` between the refresh's DELETE and
+    its INSERT found no row and was refused (503 ERR-ASSESS-001 worker_heartbeat). The harness
+    refresh must be one statement, like the worker's own upsert."""
+    seen_empty = 0
+    stop = asyncio.Event()
+
+    async def refresh() -> None:
+        while not stop.is_set():
+            await heartbeat(pg)
+
+    await heartbeat(pg)  # the worker has beaten once before any Start
+    task = asyncio.create_task(refresh())
+    try:
+        for _ in range(300):
+            rows = await pg.run("api", "SELECT count(*) FROM assess_heartbeat")
+            seen_empty += rows[0][0] == 0
+    finally:
+        stop.set()
+        await task
+    assert seen_empty == 0

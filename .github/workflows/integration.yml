@@ -505,6 +505,8 @@ jobs:
       - name: Run the e2e harness
         env:
           VEKTRA_ASSESS_E2E_REQUIRED: "1"
+          # Playwright's results (error-context page snapshots, traces) land in the artifact
+          VEKTRA_ASSESS_E2E_OUTPUT: ${{ github.workspace }}/test-results/playwright
         run: |
           mkdir -p test-results
           uv run pytest vektra-assess/tests/integration/test_ui_e2e.py -m integration \
@@ -520,9 +522,18 @@ jobs:
           cases = list(root.iter("testcase"))
           skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
           print(f"assess ui e2e: {len(cases)} collected, {len(skipped)} skipped")
-          if len(cases) != 1 or skipped:
+          if len(cases) != 2 or skipped:  # the browser run and the harness heartbeat test
               sys.exit(f"assess ui e2e did not run: collected={len(cases)} skipped={skipped}")
           PY
+
+      # a failed spec: its page snapshot and trace (npx playwright show-trace <zip>)
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assess-ui-e2e-playwright
+          path: test-results/playwright/
+          retention-days: 14
 
       - name: Upload test results
         if: always()

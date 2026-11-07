@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import base64
 import io
 import json
 import re
@@ -33,6 +34,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 import zlib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -132,24 +134,90 @@ FILE_NEEDLES = (
     *(f":{p}" for p in DEV_PORTS),
 )
 _ZIP_SUFFIXES = {".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".zip"}
-_PDF_STREAM = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.S)
+#: an indirect object's header + dictionary, then its stream body (the dictionary has /Filter)
+_PDF_STREAM = re.compile(rb"\bobj\b(.*?)\bstream\r?\n(.*?)\r?\n?endstream", re.S)
+_PDF_OBJ = re.compile(rb"\bobj\b")
+_PDF_FILTER = re.compile(rb"/Filter\s*(\[[^\]]*\]|/[A-Za-z0-9]+)")
+_PDF_NAME = re.compile(rb"/([A-Za-z0-9]+)")
+#: a layer whose name ends with this could not be read: it is a hit, never a pass
+UNINSPECTABLE = "!uninspectable"
+
+
+def _a85(data: bytes) -> bytes:
+    body = data.strip()
+    if body.startswith(b"<~"):
+        body = body[2:]
+    if body.endswith(b"~>"):
+        body = body[:-2]
+    return base64.a85decode(body, adobe=False)
+
+
+def _ahx(data: bytes) -> bytes:
+    body = re.sub(rb"\s", b"", data)
+    if body.endswith(b">"):
+        body = body[:-1]
+    if len(body) % 2:
+        body += b"0"
+    return bytes.fromhex(body.decode("ascii"))
+
+
+#: the PDF filters the scan decodes (full and abbreviated names); any other is uninspectable
+_PDF_DECODERS: dict[bytes, Callable[[bytes], bytes]] = {
+    b"FlateDecode": zlib.decompress,
+    b"Fl": zlib.decompress,
+    b"ASCII85Decode": _a85,
+    b"A85": _a85,
+    b"ASCIIHexDecode": _ahx,
+    b"AHx": _ahx,
+}
+
+
+def _pdf_stream(dictionary: bytes, body: bytes) -> bytes | None:
+    """The stream body decoded through its whole /Filter chain, in order; None if it cannot be.
+
+    No /Filter: the raw body (it is also part of the raw file scan). Fail closed on a filter
+    outside ``_PDF_DECODERS``, on /DecodeParms (a predictor rearranges the decoded bytes) and
+    on any decoding error.
+    """
+    if b"/DecodeParms" in dictionary or b"/DP" in dictionary:
+        return None
+    found = _PDF_FILTER.search(dictionary)
+    for filter_name in _PDF_NAME.findall(found.group(1)) if found else []:
+        decode = _PDF_DECODERS.get(filter_name)
+        if decode is None:
+            return None
+        try:
+            body = decode(body)
+        except (ValueError, zlib.error):  # binascii.Error is a ValueError
+            return None
+    return body
 
 
 def _file_layers(name: str, data: bytes) -> list[tuple[str, bytes]]:
-    """The raw bytes, plus every zip member (docx/pptx/odt...) and every inflatable PDF stream."""
+    """The raw bytes, plus every zip member (docx/pptx/odt...) and every decoded PDF stream.
+
+    What cannot be read (a broken zip, a PDF stream whose filter chain is unsupported or does
+    not decode, a PDF whose streams cannot all be delimited) becomes a layer whose name ends
+    with ``UNINSPECTABLE``.
+    """
     layers = [(name, data)]
     if Path(name).suffix.lower() in _ZIP_SUFFIXES or data[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 layers += [(f"{name}!{m}", zf.read(m)) for m in zf.namelist()]
         except zipfile.BadZipFile:
-            layers.append((f"{name}!unreadable-zip", b"unreadable-zip"))
+            layers.append((f"{name}{UNINSPECTABLE}", b""))
     if data[:5] == b"%PDF-":
-        for i, m in enumerate(_PDF_STREAM.finditer(data)):
-            try:
-                layers.append((f"{name}!stream{i}", zlib.decompress(m.group(1))))
-            except zlib.error:
-                pass  # not Flate-encoded: its raw bytes are already in the first layer
+        streams = list(_PDF_STREAM.finditer(data))
+        if len(streams) != data.count(b"endstream"):
+            layers.append((f"{name}!streams{UNINSPECTABLE}", b""))
+        for i, m in enumerate(streams):
+            dictionary = _PDF_OBJ.split(m.group(1))[-1]  # this object's own dictionary
+            decoded = _pdf_stream(dictionary, m.group(2))
+            if decoded is None:
+                layers.append((f"{name}!stream{i}{UNINSPECTABLE}", b""))
+            else:
+                layers.append((f"{name}!stream{i}", decoded))
     return layers
 
 
@@ -158,12 +226,12 @@ def file_secret_hits(
 ) -> list[str]:
     """``"<file>[!member]: <needle>"`` for every needle found; empty when the file is clean.
 
-    An unreadable zip counts as a hit: what cannot be inspected is not recorded.
+    An uninspectable layer counts as a hit: what cannot be inspected is not recorded.
     """
     needles = [n.lower().encode() for n in (*FILE_NEEDLES, *extra) if n]
     hits = []
     for where, blob in _file_layers(name, data):
-        if where.endswith("!unreadable-zip"):
+        if where.endswith(UNINSPECTABLE):
             hits.append(f"{where}: cannot inspect")
             continue
         low = blob.lower()

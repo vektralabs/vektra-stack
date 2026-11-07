@@ -388,3 +388,38 @@ async def test_resend_is_rate_limited_per_key(pg, worker) -> None:  # type: igno
             for _ in range(3)
         ]
         assert codes[-1] == 429, codes
+
+
+async def test_a_stale_grader_list_at_download_does_not_burn_the_token(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #7: facts fresh at mint stay acceptable for the token's lifetime; beyond that the
+    GET is refused WITHOUT consuming the jti, so the same token works after the refresh."""
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        token = (await mint(w, s.session_id, key="teacher", actor_userid=12)).json()[
+            "token"
+        ]
+        # older than the bound (120 s) but within bound + TTL (60 s): still served
+        await _graders(w, s, age="150 seconds")
+        assert (await download(w, s.session_id, token)).status_code == 200
+        await _graders(w, s)
+        token = (await mint(w, s.session_id, key="teacher", actor_userid=12)).json()[
+            "token"
+        ]
+        await _graders(w, s, age="1 hour")
+        r = await download(w, s.session_id, token)
+        assert r.status_code == 403 and err(r)["code"] == "ERR-ASSESS-021"
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_transcript_download_tokens WHERE transcript_id = :t "
+                "AND consumed_at IS NULL",
+                t=s.session_id,
+            )
+            == 1
+        )
+        await _graders(w, s)  # the refresh the 403 queued has run
+        assert (await download(w, s.session_id, token)).status_code == 200
+        assert (await download(w, s.session_id, token)).status_code == 401  # used once

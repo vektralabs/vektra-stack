@@ -380,3 +380,9 @@ real-time run guards against clock-injection bugs.
   `resend_interval` with `Retry-After`), plus `VEKTRA_ASSESS_RESEND_RPM` (6) per API key in an
   assess-local limiter. Reason: each round mails up to 3 graders; a DB check is the only one that
   holds across replicas.
+- Grader re-check at download (review #7): the jti is locked first but CONSUMED only after the
+  ownership / grader check passes, so a refusal a retry can cure (a grader list gone stale between
+  mint and GET; the 403 queued a refresh) leaves the token usable within its TTL; and at GET the
+  list is accepted up to `TEACHER_GATE_MAX_AGE_S + DOWNLOAD_TOKEN_TTL_S` old, since it was fresh
+  (<= max age) when the token was minted. Fail closed is kept: a grader the list no longer names
+  is refused. An integrity refusal (stored bytes fail their hash) still consumes the token.

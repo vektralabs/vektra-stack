@@ -86,7 +86,11 @@ jobs:
           # make the check below pass on any CPU — the same shape as a build-context
           # test that passes because the context is empty. Assert the emulated CPU
           # really lacks the features before trusting anything it says.
-          docker run --rm \
+          #
+          # --init on both runs: without it qemu is PID 1, and the SIGILL it raises
+          # on itself to die is ignored there, so a failing check hangs until the
+          # step timeout instead of exiting 132.
+          docker run --rm --init \
             -v "$QEMU:/usr/bin/qemu-x86_64-static:ro" \
             --entrypoint /usr/bin/qemu-x86_64-static \
             vektra-stack -cpu qemu64,+sse3 /app/.venv/bin/python -c '
@@ -103,7 +107,7 @@ jobs:
           # The real check: everything the container loads must import on that CPU.
           # A failure here is a genuine signal, not a flake to retry — it is the
           # production stack refusing to boot, reproduced.
-          docker run --rm \
+          docker run --rm --init \
             -e OMP_NUM_THREADS=1 \
             -v "$QEMU:/usr/bin/qemu-x86_64-static:ro" \
             --entrypoint /usr/bin/qemu-x86_64-static \

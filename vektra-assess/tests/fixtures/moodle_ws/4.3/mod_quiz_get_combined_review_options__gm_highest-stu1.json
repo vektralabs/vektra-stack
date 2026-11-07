@@ -1,8 +1,8 @@
 {
  "fixture": "gm_highest-stu1",
  "params": {
-  "quizid": 90,
-  "userid": 71
+  "quizid": 5,
+  "userid": 7
  },
  "response": {
   "alloptions": [

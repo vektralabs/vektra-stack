@@ -1,7 +1,7 @@
 {
  "fixture": "gm_average",
  "params": {
-  "quizid": 20
+  "quizid": 8
  },
  "response": {
   "overrides": []

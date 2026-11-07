@@ -8,6 +8,7 @@ The recordings (``tests/fixtures/moodle_ws/<branch>/``) come from the seeded dev
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import socket
 import time
@@ -54,11 +55,24 @@ def now(branch: str) -> int:
     return int(time.time()) if branch in _LIVE else int(manifest(branch)["seeded_at"])
 
 
+@functools.cache
+def _recorded_manifest(branch: str) -> dict[str, Any]:
+    # read once per process: callers include async test paths (support/sessions.py), which
+    # must not do file I/O on the event loop for every call
+    out: dict[str, Any] = json.loads((FIXTURES / branch / "manifest.json").read_text())
+    return out
+
+
+def preload_manifests() -> None:
+    """Fill the cache for every branch (conftest calls it once, synchronously, per session)."""
+    for branch in BRANCHES:
+        _recorded_manifest(branch)
+
+
 def manifest(branch: str) -> dict[str, Any]:
     if branch in _LIVE:
         return _LIVE[branch].manifest
-    out: dict[str, Any] = json.loads((FIXTURES / branch / "manifest.json").read_text())
-    return out
+    return copy.deepcopy(_recorded_manifest(branch))  # callers may mutate their copy
 
 
 def uid(branch: str, name: str) -> int:

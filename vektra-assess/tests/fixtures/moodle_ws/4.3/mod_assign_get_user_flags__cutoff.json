@@ -2,7 +2,7 @@
  "fixture": "cutoff",
  "params": {
   "assignmentids": [
-   92
+   1
   ]
  },
  "response": {
@@ -10,7 +10,7 @@
   "warnings": [
    {
     "item": "assignment",
-    "itemid": 92,
+    "itemid": 1,
     "message": "No access rights in module context",
     "warningcode": "1"
    }

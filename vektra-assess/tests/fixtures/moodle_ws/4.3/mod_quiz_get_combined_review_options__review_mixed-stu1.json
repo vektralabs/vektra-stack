@@ -1,8 +1,8 @@
 {
  "fixture": "review_mixed-stu1",
  "params": {
-  "quizid": 89,
-  "userid": 71
+  "quizid": 4,
+  "userid": 7
  },
  "response": {
   "alloptions": [

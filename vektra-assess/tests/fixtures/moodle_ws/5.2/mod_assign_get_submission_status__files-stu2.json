@@ -1,8 +1,8 @@
 {
  "fixture": "files-stu2",
  "params": {
-  "assignid": 25,
-  "userid": 16
+  "assignid": 12,
+  "userid": 8
  },
  "response": {
   "assignmentdata": {
@@ -28,10 +28,10 @@
    "gradingstatus": "notgraded",
    "locked": false,
    "submission": {
-    "assignment": 25,
+    "assignment": 12,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 34,
+    "id": 17,
     "latest": 1,
     "plugins": [
      {
@@ -61,111 +61,111 @@
           "filename": "multi_01.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_01.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_01.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_02.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_02.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_02.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_03.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_03.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_03.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_04.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_04.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_04.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_05.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_05.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_05.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_06.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_06.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_06.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_07.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_07.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_07.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_08.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_08.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_08.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_09.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_09.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_09.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_10.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_10.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_10.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          },
          {
           "filename": "multi_11.txt",
           "filepath": "/",
           "filesize": 30,
-          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/84/assignsubmission_file/submission_files/34/multi_11.txt",
+          "fileurl": "https://moodle.example.org/webservice/pluginfile.php/49/assignsubmission_file/submission_files/17/multi_11.txt",
           "icon": "f/text",
           "isexternalfile": false,
           "mimetype": "text/plain",
-          "timemodified": 1793619222
+          "timemodified": 1794007971
          }
         ]
        }
@@ -179,16 +179,16 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619222,
-    "timemodified": 1793619222,
+    "timecreated": 1794007971,
+    "timemodified": 1794007971,
     "timestarted": null,
-    "userid": 16
+    "userid": 8
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "timelimit": 0,
    "usergroups": [
-    3
+    1
    ]
   },
   "warnings": []

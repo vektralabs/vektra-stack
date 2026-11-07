@@ -13,6 +13,7 @@ integration job lists this module among the live ones that may skip).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 
 import pytest
 from assess_moodle_support import BRANCHES, Replay, make_client, use_live
@@ -79,6 +80,14 @@ async def moodle_dump_hash(worker, branch: str, sid) -> str:  # type: ignore[no-
         }
     )
     return hashlib.sha256(canonical_bytes(stable)).hexdigest()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_leak(branch: str) -> Iterator[None]:
+    """``run_check`` switches the branch to live and leaves switching back to its own module's
+    fixture; without this, every later test in the run reads the live manifest."""
+    yield
+    use_live(branch, None)
 
 
 async def test_a_full_session_leaves_moodle_byte_identical(pg, branch: str) -> None:  # type: ignore[no-untyped-def]

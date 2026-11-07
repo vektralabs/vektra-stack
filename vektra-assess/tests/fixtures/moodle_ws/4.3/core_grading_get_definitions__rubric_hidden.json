@@ -4,7 +4,7 @@
   "activeonly": 1,
   "areaname": "submissions",
   "cmids": [
-   194
+   18
   ]
  },
  "response": {
@@ -12,15 +12,15 @@
    {
     "activemethod": "rubric",
     "areaname": "submissions",
-    "cmid": 194,
+    "cmid": 18,
     "component": "mod_assign",
-    "contextid": 289,
+    "contextid": 41,
     "definitions": [
      {
       "copiedfromid": null,
       "description": "CANARY-RUBRICDESC-rubric_hidden-m43",
       "descriptionformat": 1,
-      "id": 24,
+      "id": 3,
       "method": "rubric",
       "name": "Rubric H",
       "rubric": {
@@ -28,24 +28,24 @@
         {
          "description": "CANARY-RUBRICCRIT-rubric_hidden-Clarity-m43",
          "descriptionformat": 1,
-         "id": 31,
+         "id": 3,
          "levels": [
           {
            "definition": "CANARY-RUBRICLVL-rubric_hidden-Clarity-poor-m43",
            "definitionformat": 1,
-           "id": 91,
+           "id": 7,
            "score": 0
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_hidden-Clarity-ok-m43",
            "definitionformat": 1,
-           "id": 92,
+           "id": 8,
            "score": 5
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_hidden-Clarity-good-m43",
            "definitionformat": 1,
-           "id": 93,
+           "id": 9,
            "score": 10
           }
          ],
@@ -54,24 +54,24 @@
         {
          "description": "CANARY-RUBRICCRIT-rubric_hidden-Method-m43",
          "descriptionformat": 1,
-         "id": 32,
+         "id": 4,
          "levels": [
           {
            "definition": "CANARY-RUBRICLVL-rubric_hidden-Method-none-m43",
            "definitionformat": 1,
-           "id": 94,
+           "id": 10,
            "score": 0
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_hidden-Method-some-m43",
            "definitionformat": 1,
-           "id": 95,
+           "id": 11,
            "score": 5
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_hidden-Method-full-m43",
            "definitionformat": 1,
-           "id": 96,
+           "id": 12,
            "score": 10
           }
          ],
@@ -81,8 +81,8 @@
       },
       "status": 20,
       "timecopied": 0,
-      "timecreated": 1793619218,
-      "timemodified": 1793619218,
+      "timecreated": 1794008057,
+      "timemodified": 1794008057,
       "usercreated": 2,
       "usermodified": 2
      }

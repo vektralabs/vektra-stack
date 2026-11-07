@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from assess_moodle_support import Replay, make_client, manifest, uid
+from assess_moodle_support import Replay, make_client, manifest, site_for, uid
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from test_context_capture import InProcessParser
@@ -50,10 +50,12 @@ class Seeded:
 
 
 async def _site_release(w: World, branch: str) -> None:
+    # the capture reads base_url from the DB: on a live run (test_req073_live) it must be the
+    # dev site's URL, not the world's placeholder; hermetic runs get the recordings' root
     await w.pg.run(
         "super",
-        "UPDATE assess_sites SET release = :r WHERE id = :s",
-        {"r": manifest(branch)["release"], "s": w.site},
+        "UPDATE assess_sites SET release = :r, base_url = :u WHERE id = :s",
+        {"r": manifest(branch)["release"], "u": site_for(branch).base_url, "s": w.site},
     )
 
 

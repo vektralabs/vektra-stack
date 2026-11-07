@@ -4,7 +4,7 @@
   "activeonly": 1,
   "areaname": "submissions",
   "cmids": [
-   44
+   18
   ]
  },
  "response": {
@@ -12,15 +12,15 @@
    {
     "activemethod": "rubric",
     "areaname": "submissions",
-    "cmid": 44,
+    "cmid": 18,
     "component": "mod_assign",
-    "contextid": 77,
+    "contextid": 42,
     "definitions": [
      {
       "copiedfromid": null,
       "description": "CANARY-RUBRICDESC-rubric_vis-m52",
       "descriptionformat": 1,
-      "id": 5,
+      "id": 2,
       "method": "rubric",
       "name": "Rubric V",
       "rubric": {
@@ -28,24 +28,24 @@
         {
          "description": "CANARY-RUBRICCRIT-rubric_vis-Clarity-m52",
          "descriptionformat": 1,
-         "id": 5,
+         "id": 1,
          "levels": [
           {
            "definition": "CANARY-RUBRICLVL-rubric_vis-Clarity-poor-m52",
            "definitionformat": 1,
-           "id": 13,
+           "id": 1,
            "score": 0
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_vis-Clarity-ok-m52",
            "definitionformat": 1,
-           "id": 14,
+           "id": 2,
            "score": 5
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_vis-Clarity-good-m52",
            "definitionformat": 1,
-           "id": 15,
+           "id": 3,
            "score": 10
           }
          ],
@@ -54,24 +54,24 @@
         {
          "description": "CANARY-RUBRICCRIT-rubric_vis-Method-m52",
          "descriptionformat": 1,
-         "id": 6,
+         "id": 2,
          "levels": [
           {
            "definition": "CANARY-RUBRICLVL-rubric_vis-Method-none-m52",
            "definitionformat": 1,
-           "id": 16,
+           "id": 4,
            "score": 0
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_vis-Method-some-m52",
            "definitionformat": 1,
-           "id": 17,
+           "id": 5,
            "score": 5
           },
           {
            "definition": "CANARY-RUBRICLVL-rubric_vis-Method-full-m52",
            "definitionformat": 1,
-           "id": 18,
+           "id": 6,
            "score": 10
           }
          ],
@@ -81,8 +81,8 @@
       },
       "status": 20,
       "timecopied": 0,
-      "timecreated": 1793619222,
-      "timemodified": 1793619222,
+      "timecreated": 1794007971,
+      "timemodified": 1794007971,
       "usercreated": 2,
       "usermodified": 2
      }

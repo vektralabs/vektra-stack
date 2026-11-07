@@ -20,7 +20,14 @@ from typing import Any
 
 import jwt
 import pytest
-from assess_moodle_support import BRANCHES, Replay, make_client, manifest, uid
+from assess_moodle_support import (
+    BRANCHES,
+    Replay,
+    make_client,
+    manifest,
+    site_for,
+    uid,
+)
 from integration.conftest import pg  # noqa: F401  (the real-Postgres fixture)
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.preflight import (
@@ -101,6 +108,13 @@ async def test_idor_matrix(pg, branch: str) -> None:  # noqa: F811
                 "super",
                 "UPDATE assess_sites SET release = :r WHERE id IN (:a, :b)",
                 {"r": m["release"], "a": w.site, "b": w.other_site},
+            )
+            # B's capture reads the site's base_url from the DB: on the live run
+            # (test_idor_live) it must be the dev site's URL, not the world's placeholder
+            await pg.run(
+                "super",
+                "UPDATE assess_sites SET base_url = :u WHERE id = :a",
+                {"u": site_for(branch).base_url, "a": w.site},
             )
             await configure_activity(pg, w.site, a_cmid)
             real = MoodleStartSource(

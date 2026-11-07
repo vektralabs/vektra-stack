@@ -1,8 +1,8 @@
 {
  "fixture": "wf-stu2",
  "params": {
-  "assignid": 22,
-  "userid": 16
+  "assignid": 9,
+  "userid": 8
  },
  "response": {
   "assignmentdata": {
@@ -28,10 +28,10 @@
    "gradingstatus": "inmarking",
    "locked": false,
    "submission": {
-    "assignment": 22,
+    "assignment": 9,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 30,
+    "id": 13,
     "latest": 1,
     "plugins": [
      {
@@ -68,16 +68,16 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619222,
-    "timemodified": 1793619222,
+    "timecreated": 1794007971,
+    "timemodified": 1794007971,
     "timestarted": null,
-    "userid": 16
+    "userid": 8
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "timelimit": 0,
    "usergroups": [
-    3
+    1
    ]
   },
   "warnings": []

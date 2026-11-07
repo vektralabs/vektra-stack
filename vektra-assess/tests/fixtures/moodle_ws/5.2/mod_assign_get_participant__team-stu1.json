@@ -1,20 +1,20 @@
 {
  "fixture": "team-stu1",
  "params": {
-  "assignid": 16,
-  "userid": 15
+  "assignid": 3,
+  "userid": 7
  },
  "response": {
-  "allowsubmissionsfromdate": 1792755221,
+  "allowsubmissionsfromdate": 1793143970,
   "blindmarking": false,
-  "cutoffdate": 1793532821,
-  "duedate": 1793446421,
-  "duedatestr": "31 October 2026, 11:33 AM",
+  "cutoffdate": 1793921570,
+  "duedate": 1793835170,
+  "duedatestr": "4 November 2026, 11:32 PM",
   "fullname": "Alice Alpha",
   "grantedextension": false,
-  "groupid": 3,
+  "groupid": 1,
   "groupname": "G1",
-  "id": 15,
+  "id": 7,
   "requiregrading": true,
   "submissionstatus": "submitted",
   "submitted": true

@@ -6,30 +6,30 @@
     "capabilities": [
      "mod/assign:grade"
     ],
-    "courseid": 10
+    "courseid": 2
    }
   ]
  },
  "response": [
   {
    "capability": "mod/assign:grade",
-   "courseid": 10,
+   "courseid": 2,
    "users": [
     {
      "enrolledcourses": [
       {
        "fullname": "Assess bot fixtures",
-       "id": 10,
+       "id": 2,
        "shortname": "EAASSESS"
       }
      ],
      "firstaccess": 0,
      "fullname": "Gina Grader",
-     "id": 76,
+     "id": 12,
      "lastaccess": 0,
      "lastcourseaccess": 0,
-     "profileimageurl": "https://moodle.example.org/theme/image.php/boost/core/1793618253/u/f1",
-     "profileimageurlsmall": "https://moodle.example.org/theme/image.php/boost/core/1793618253/u/f2",
+     "profileimageurl": "https://moodle.example.org/theme/image.php/boost/core/1794008482/u/f1",
+     "profileimageurlsmall": "https://moodle.example.org/theme/image.php/boost/core/1794008482/u/f2",
      "roles": [
       {
        "name": "",
@@ -43,17 +43,17 @@
      "enrolledcourses": [
       {
        "fullname": "Assess bot fixtures",
-       "id": 10,
+       "id": 2,
        "shortname": "EAASSESS"
       }
      ],
      "firstaccess": 0,
      "fullname": "Hugo Grader",
-     "id": 77,
+     "id": 13,
      "lastaccess": 0,
      "lastcourseaccess": 0,
-     "profileimageurl": "https://moodle.example.org/theme/image.php/boost/core/1793618253/u/f1",
-     "profileimageurlsmall": "https://moodle.example.org/theme/image.php/boost/core/1793618253/u/f2",
+     "profileimageurl": "https://moodle.example.org/theme/image.php/boost/core/1794008482/u/f1",
+     "profileimageurlsmall": "https://moodle.example.org/theme/image.php/boost/core/1794008482/u/f2",
      "roles": [
       {
        "name": "",

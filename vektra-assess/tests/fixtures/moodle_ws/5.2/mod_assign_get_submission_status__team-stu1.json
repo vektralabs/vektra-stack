@@ -1,8 +1,8 @@
 {
  "fixture": "team-stu1",
  "params": {
-  "assignid": 16,
-  "userid": 15
+  "assignid": 3,
+  "userid": 7
  },
  "response": {
   "assignmentdata": {
@@ -28,10 +28,10 @@
    "gradingstatus": "notgraded",
    "locked": false,
    "submission": {
-    "assignment": 16,
+    "assignment": 3,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 22,
+    "id": 5,
     "latest": 1,
     "plugins": [
      {
@@ -68,19 +68,19 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619222,
-    "timemodified": 1793619222,
+    "timecreated": 1794007971,
+    "timemodified": 1794007971,
     "timestarted": null,
-    "userid": 15
+    "userid": 7
    },
-   "submissiongroup": 3,
+   "submissiongroup": 1,
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "teamsubmission": {
-    "assignment": 16,
+    "assignment": 3,
     "attemptnumber": 0,
-    "groupid": 3,
-    "id": 21,
+    "groupid": 1,
+    "id": 4,
     "latest": 1,
     "plugins": [
      {
@@ -117,14 +117,14 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619222,
-    "timemodified": 1793619222,
+    "timecreated": 1794007971,
+    "timemodified": 1794007971,
     "timestarted": null,
     "userid": 0
    },
    "timelimit": 0,
    "usergroups": [
-    3
+    1
    ]
   },
   "warnings": []

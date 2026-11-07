@@ -10,7 +10,11 @@ the WS functions the reader uses against a seeded dev site and writes
 
 Safety rules (the recorder REFUSES, it does not warn):
 - the base URL must be ``http://localhost:<port>`` or ``http://127.0.0.1:<port>``;
-- the site's own ``release`` must be a 4.3.x / 5.2.x *dev build* (``4.3.11+ (Build: ...)``);
+- the site's own ``release`` must be a 4.3.x / 5.2.x *dev build*: a weekly build
+  (``4.3.11+ (Build: ...)``) or a pinned point release (``5.2.4 (Build: ...)``);
+- the release is not an identity: the site must also BE a seeded vektra-moodle dev site
+  (wwwroot == the local URL, the dev service account, the manifest's version, the seeded
+  course and users; ``check_identity``);
 - redirects are never followed;
 - the token, the host and ``userprivateaccesskey`` must not survive scrubbing: the run aborts
   and writes nothing if they do.
@@ -39,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 SCRUBBED_ROOT = "https://moodle.example.org"
-DEV_RELEASE = re.compile(r"^(4\.3|5\.2)\.\d+\+ \(Build: \d+\)$")
+DEV_RELEASE = re.compile(r"^(4\.3|5\.2)\.\d+\+? \(Build: \d+\)$")
 #: the hosts a dev site may live on; the base-URL rule and the downloaded-file scan both use them
 DEV_HOSTS = ("localhost", "127.0.0.1")
 #: the ports of the two dev sites (vektra-moodle docker/env.43, env.52)
@@ -76,6 +80,54 @@ def check_release(release: Any) -> str:
             "refused: the site is not a 4.3.x / 5.2.x dev build (release string mismatch)"
         )
     return release.split(".")[0] + "." + release.split(".")[1]
+
+
+#: what vektra-moodle's dev provisioning and seeder create (docker/provision,
+#: docker/fixtures/fixtures.json): a production site has none of them
+DEV_SERVICE_USERNAME = "vektra_assess_svc"
+DEV_COURSE_SHORTNAME = "EAASSESS"
+
+
+def check_identity(
+    base: str, token: str, info: dict[str, Any], manifest: dict[str, Any]
+) -> None:
+    """Refuse unless the site IS a seeded vektra-moodle dev site, not just a matching release.
+
+    A release string can be pinned anywhere, and any site can be forwarded to localhost. So:
+    1. the site's own wwwroot (``siteurl``) is the local URL we called: Moodle redirects a
+       request for any other host to its wwwroot, so a forwarded production site reports its
+       real address here;
+    2. the token belongs to the dev service account, and the site's ``version`` is the one
+       the manifest was seeded on;
+    3. the manifest's course is the seeded course (by id and shortname) and every seeded user
+       is enrolled in it under the manifest's id.
+    Read-only calls, all in the service's function list; nothing is staged before they pass.
+    """
+    if str(info.get("siteurl", "")).rstrip("/") != base:
+        raise RecorderRefused("refused: the site's wwwroot is not the local dev URL")
+    if info.get("username") != DEV_SERVICE_USERNAME:
+        raise RecorderRefused("refused: the token is not the dev service account's")
+    if not manifest.get("version") or info.get("version") != manifest["version"]:
+        raise RecorderRefused(
+            "refused: the site's version is not the one the manifest was seeded on"
+        )
+    users = manifest.get("users") or {}
+    cid = manifest.get("courseid")
+    probe = users.get("stu1", {}).get("id")
+    courses = ws_call(base, token, "core_enrol_get_users_courses", {"userid": probe})
+    if not isinstance(courses, list) or not any(
+        isinstance(c, dict)
+        and c.get("id") == cid
+        and c.get("shortname") == DEV_COURSE_SHORTNAME
+        for c in courses
+    ):
+        raise RecorderRefused("refused: the seeded dev course is not on this site")
+    enrolled = ws_call(base, token, "core_enrol_get_enrolled_users", {"courseid": cid})
+    if not isinstance(enrolled, list):
+        enrolled = []
+    ids = {u.get("id") for u in enrolled if isinstance(u, dict)}
+    if not users or any(u.get("id") not in ids for u in users.values()):
+        raise RecorderRefused("refused: the seeded dev users are not on this site")
 
 
 # --- scrubbing ---------------------------------------------------------------------------
@@ -456,6 +508,7 @@ def record(
         raise RecorderRefused(
             "refused: the manifest does not belong to this site's release"
         )
+    check_identity(base, token, info, manifest)
 
     staged: dict[str, bytes] = {}
     # the service account's own user record (REQ-079 ``interactive_login_disabled`` reads its

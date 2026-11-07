@@ -669,6 +669,36 @@ def test_every_reader_function_has_a_recording(branch: str) -> None:
     assert needed <= have, needed - have
 
 
+def test_the_recorded_manifest_is_read_once_and_handed_out_as_a_copy(
+    branch: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodeRabbit 4500701652: site_for()/manifest() run on async paths, so after the session
+    preload (conftest, synchronous) they must read no file at all, not even the first time."""
+    import assess_moodle_support as support
+
+    # the session fixture has already filled the cache for every branch
+    assert support._recorded_manifest.cache_info().currsize >= len(support.BRANCHES)
+    # and preloading from an empty cache is what fills it (the cache is left full again)
+    support._recorded_manifest.cache_clear()
+    support.preload_manifests()
+
+    reads: list[Path] = []
+    real = Path.read_text
+
+    def spy(self: Path, *a: Any, **k: Any) -> str:
+        reads.append(self)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", spy)
+    for b in support.BRANCHES:
+        first = manifest(b)
+        site_for(b)
+        uid(b, "stu1")
+        first["users"].clear()  # a caller's mutation does not reach the next caller
+        assert manifest(b)["users"]
+    assert reads == [], "no manifest read after the preload"
+
+
 def test_recordings_are_scrubbed(branch: str) -> None:
     blob = "".join(f.read_text() for f in (FIXTURES / branch).glob("*.json"))
     assert "localhost" not in blob and "127.0.0.1" not in blob

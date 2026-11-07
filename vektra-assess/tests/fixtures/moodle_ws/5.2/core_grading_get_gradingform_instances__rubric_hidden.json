@@ -1,7 +1,7 @@
 {
  "fixture": "rubric_hidden",
  "params": {
-  "definitionid": 6,
+  "definitionid": 3,
   "since": 0
  },
  "response": {
@@ -9,30 +9,30 @@
    {
     "feedback": "",
     "feedbackformat": 0,
-    "id": 4,
-    "itemid": 10,
+    "id": 2,
+    "itemid": 2,
     "raterid": 2,
     "rawgrade": null,
     "rubric": {
      "criteria": [
       {
-       "criterionid": 7,
-       "id": 7,
-       "levelid": 20,
+       "criterionid": 3,
+       "id": 3,
+       "levelid": 8,
        "remark": "VISIBLE-REMARK-rubric_hidden-Clarity-m52",
        "remarkformat": 1
       },
       {
-       "criterionid": 8,
-       "id": 8,
-       "levelid": 23,
+       "criterionid": 4,
+       "id": 4,
+       "levelid": 11,
        "remark": "VISIBLE-REMARK-rubric_hidden-Method-m52",
        "remarkformat": 1
       }
      ]
     },
     "status": 1,
-    "timemodified": 1793619222
+    "timemodified": 1794007971
    }
   ],
   "warnings": []

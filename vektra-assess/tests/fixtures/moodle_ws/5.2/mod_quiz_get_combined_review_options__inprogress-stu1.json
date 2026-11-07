@@ -1,8 +1,8 @@
 {
  "fixture": "inprogress-stu1",
  "params": {
-  "quizid": 21,
-  "userid": 15
+  "quizid": 9,
+  "userid": 7
  },
  "response": {
   "alloptions": [

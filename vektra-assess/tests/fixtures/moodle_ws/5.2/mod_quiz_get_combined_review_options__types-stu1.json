@@ -1,8 +1,8 @@
 {
  "fixture": "types-stu1",
  "params": {
-  "quizid": 13,
-  "userid": 15
+  "quizid": 1,
+  "userid": 7
  },
  "response": {
   "alloptions": [

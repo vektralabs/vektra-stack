@@ -1,8 +1,8 @@
 {
  "fixture": "cutoff-stu4",
  "params": {
-  "assignid": 14,
-  "userid": 18
+  "assignid": 1,
+  "userid": 10
  },
  "response": {
   "assignmentdata": {
@@ -28,10 +28,10 @@
    "gradingstatus": "notgraded",
    "locked": false,
    "submission": {
-    "assignment": 14,
+    "assignment": 1,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 35,
+    "id": 58,
     "latest": 1,
     "plugins": [
      {
@@ -68,10 +68,10 @@
      }
     ],
     "status": "new",
-    "timecreated": 1793619761,
-    "timemodified": 1793619761,
+    "timecreated": 1794011906,
+    "timemodified": 1794011906,
     "timestarted": null,
-    "userid": 18
+    "userid": 10
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,

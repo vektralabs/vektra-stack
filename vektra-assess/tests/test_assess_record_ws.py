@@ -119,6 +119,44 @@ def test_record_refuses_a_manifest_of_another_site(
         )
 
 
+def test_record_refuses_a_contaminated_download_by_position_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CodeRabbit 4499897062: the refusal names the file's position, never its name."""
+    release = "5.2.4+ (Build: 20261030)"
+    secret_name = (
+        f"leak-{TOKEN}.txt"  # a name is unchecked: it must not reach the message
+    )
+    files = {
+        "clean.txt": b"VISIBLE text",
+        secret_name: b"see http://localhost:8082/x",  # the 2nd of 3 carries the dev host
+        "late.txt": b"more VISIBLE text",
+    }
+
+    def ws_call(_base: str, _token: str, fn: str, _params: Any) -> Any:
+        if fn == "core_webservice_get_site_info":
+            return {"release": release, "userid": 2}
+        if fn == "mod_assign_get_submission_status":
+            area = {"files": [{"filename": n, "fileurl": f"/f/{n}"} for n in files]}
+            return {"lastattempt": {"submission": {"plugins": [{"fileareas": [area]}]}}}
+        return {}
+
+    monkeypatch.setattr(rec, "ws_call", ws_call)
+    monkeypatch.setattr(rec, "plan", lambda *_a: [])
+    monkeypatch.setattr(rec, "download", lambda _b, _t, url: files[url.split("/")[-1]])
+    manifest = {
+        "release": release,
+        "users": {"stu1": {"id": 5, "role": "student"}},
+        "assigns": {"files": {"id": 9, "submissions": {"stu1": {}}}},
+    }
+    with pytest.raises(rec.RecorderRefused) as refused:
+        rec.record("http://localhost:8082", TOKEN, manifest, tmp_path)
+    message = str(refused.value)
+    assert "file 2 of 3" in message
+    assert TOKEN not in message and "leak" not in message
+    assert list(tmp_path.iterdir()) == []  # nothing written
+
+
 def test_record_refuses_a_non_local_url_before_any_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

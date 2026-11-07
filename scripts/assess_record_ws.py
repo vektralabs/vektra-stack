@@ -24,18 +24,29 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
+import zlib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 SCRUBBED_ROOT = "https://moodle.example.org"
 DEV_RELEASE = re.compile(r"^(4\.3|5\.2)\.\d+\+ \(Build: \d+\)$")
-LOCAL_URL = re.compile(r"^http://(localhost|127\.0\.0\.1):\d{2,5}$")
+#: the hosts a dev site may live on; the base-URL rule and the downloaded-file scan both use them
+DEV_HOSTS = ("localhost", "127.0.0.1")
+#: the ports of the two dev sites (vektra-moodle docker/env.43, env.52)
+DEV_PORTS = (8080, 8082)
+LOCAL_URL = re.compile(
+    r"^http://(" + "|".join(re.escape(h) for h in DEV_HOSTS) + r"):\d{2,5}$"
+)
 DEFAULT_OUT = (
     Path(__file__).resolve().parent.parent
     / "vektra-assess"
@@ -112,6 +123,174 @@ def assert_clean(
         r'"userprivateaccesskey": "REDACTED"', blob
     ):
         raise RecorderRefused("refused: userprivateaccesskey not redacted")
+
+
+#: what must never appear in a recorded submission file, matched case-insensitively
+FILE_NEEDLES = (
+    "wstoken",
+    "privatetoken",
+    "token=",
+    *DEV_HOSTS,
+    *(f":{p}" for p in DEV_PORTS),
+)
+_ZIP_SUFFIXES = {".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".zip"}
+#: an indirect object's header + dictionary, then its stream body (the dictionary has /Filter)
+_PDF_STREAM = re.compile(rb"\bobj\b(.*?)\bstream\r?\n(.*?)\r?\n?endstream", re.S)
+_PDF_OBJ = re.compile(rb"\bobj\b")
+#: a PDF name ends at white space or a delimiter; any other byte extends it
+_NAME_END = rb"(?![^\x00\t\n\x0c\r ()<>\[\]{}/%])"
+_PDF_FILTER_KEY = re.compile(rb"/Filter" + _NAME_END)
+_PDF_DECODE_PARMS = re.compile(rb"/(?:DecodeParms|DP)" + _NAME_END)
+#: the only /Filter values the scan accepts: one direct name, or an array of direct names
+_PDF_FILTER_VALUE = re.compile(
+    rb"\s*(?:(/[A-Za-z0-9]+)"
+    + _NAME_END
+    + rb"|\[((?:\s*/[A-Za-z0-9]+"
+    + _NAME_END
+    + rb")*)\s*\])"
+)
+_PDF_NAME = re.compile(rb"/([A-Za-z0-9]+)")
+#: a layer whose name ends with this could not be read: it is a hit, never a pass
+UNINSPECTABLE = "!uninspectable"
+
+
+def _a85(data: bytes) -> bytes:
+    body = data.strip()
+    if body.startswith(b"<~"):
+        body = body[2:]
+    if body.endswith(b"~>"):
+        body = body[:-2]
+    return base64.a85decode(body, adobe=False)
+
+
+def _ahx(data: bytes) -> bytes:
+    body = re.sub(rb"\s", b"", data)
+    if body.endswith(b">"):
+        body = body[:-1]
+    if len(body) % 2:
+        body += b"0"
+    return bytes.fromhex(body.decode("ascii"))
+
+
+#: the PDF filters the scan decodes (full and abbreviated names); any other is uninspectable
+_PDF_DECODERS: dict[bytes, Callable[[bytes], bytes]] = {
+    b"FlateDecode": zlib.decompress,
+    b"Fl": zlib.decompress,
+    b"ASCII85Decode": _a85,
+    b"A85": _a85,
+    b"ASCIIHexDecode": _ahx,
+    b"AHx": _ahx,
+}
+
+
+_PDF_ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
+#: bytes that, once unescaped, would change where a name ends: refuse rather than re-tokenize
+_PDF_SPECIAL = frozenset(b"\x00\t\n\x0c\r ()<>[]{}/%#")
+
+
+def _unescape_names(dictionary: bytes) -> bytes | None:
+    """Decode PDF name escapes (``/F#69lter`` is ``/Filter``); None when that is ambiguous.
+
+    A ``#`` that is not a valid escape, or an escape that decodes to white space, a delimiter
+    or ``#``, is refused: unescaping it would re-split the names a reader sees.
+    """
+    if b"#" not in dictionary:
+        return dictionary
+    escapes = _PDF_ESCAPE.findall(dictionary)
+    if len(escapes) != dictionary.count(b"#"):
+        return None
+    if any(int(h, 16) in _PDF_SPECIAL for h in escapes):
+        return None
+    return _PDF_ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), dictionary)
+
+
+def _pdf_stream(raw_dictionary: bytes, body: bytes) -> bytes | None:
+    """The stream body decoded through its whole /Filter chain, in order; None if it cannot be.
+
+    No /Filter: the raw body (it is also part of the raw file scan). Name escapes (#xx) are
+    decoded first, so an escaped key or filter name is handled as the plain one. Fail closed
+    on an ambiguous escape, on a filter outside ``_PDF_DECODERS``, on /DecodeParms (a
+    predictor rearranges the decoded bytes) and on any decoding error.
+    """
+    dictionary = _unescape_names(raw_dictionary)
+    if dictionary is None:
+        return None
+    if _PDF_DECODE_PARMS.search(dictionary):
+        return None
+    keys = list(_PDF_FILTER_KEY.finditer(dictionary))
+    if len(keys) > 1:
+        return None  # which /Filter a reader applies is not ours to guess
+    names: list[bytes] = []
+    if keys:
+        # an indirect reference (``5 0 R``), alone or inside the array, is not resolved here
+        value = _PDF_FILTER_VALUE.match(dictionary, keys[0].end())
+        if value is None:
+            return None
+        names = _PDF_NAME.findall(value.group(1) or value.group(2))
+    for filter_name in names:
+        decode = _PDF_DECODERS.get(filter_name)
+        if decode is None:
+            return None
+        try:
+            body = decode(body)
+        except (ValueError, zlib.error):  # binascii.Error is a ValueError
+            return None
+    return body
+
+
+def _file_layers(name: str, data: bytes) -> list[tuple[str, bytes]]:
+    """The raw bytes, plus every zip member (docx/pptx/odt...) and every decoded PDF stream.
+
+    What cannot be read (a broken zip, a PDF stream whose filter chain is unsupported or does
+    not decode, a PDF whose streams cannot all be delimited) becomes a layer whose name ends
+    with ``UNINSPECTABLE``.
+    """
+    layers = [(name, data)]
+    if Path(name).suffix.lower() in _ZIP_SUFFIXES or data[:4] == b"PK\x03\x04":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                layers += [(f"{name}!{m}", zf.read(m)) for m in zf.namelist()]
+        except (
+            zipfile.BadZipFile,  # bad archive, bad CRC
+            RuntimeError,  # encrypted member
+            NotImplementedError,  # unsupported compression method
+            EOFError,  # truncated member data
+            zlib.error,  # damaged deflate data
+            ValueError,  # malformed header fields
+        ):
+            layers.append((f"{name}{UNINSPECTABLE}", b""))
+    # readers find the header past offset 0; any file holding one is parsed as a PDF (a
+    # non-PDF that merely contains it is refused only if its streams do not check out)
+    if b"%PDF-" in data:
+        streams = list(_PDF_STREAM.finditer(data))
+        if len(streams) != data.count(b"endstream"):
+            layers.append((f"{name}!streams{UNINSPECTABLE}", b""))
+        for i, m in enumerate(streams):
+            dictionary = _PDF_OBJ.split(m.group(1))[-1]  # this object's own dictionary
+            decoded = _pdf_stream(dictionary, m.group(2))
+            if decoded is None:
+                layers.append((f"{name}!stream{i}{UNINSPECTABLE}", b""))
+            else:
+                layers.append((f"{name}!stream{i}", decoded))
+    return layers
+
+
+def file_secret_hits(
+    name: str, data: bytes, *, extra: tuple[str, ...] = ()
+) -> list[str]:
+    """``"<file>[!member]: <needle>"`` for every needle found; empty when the file is clean.
+
+    An uninspectable layer counts as a hit: what cannot be inspected is not recorded.
+    """
+    needles = [n.lower().encode() for n in (*FILE_NEEDLES, *extra) if n]
+    hits = []
+    for where, blob in _file_layers(name, data):
+        if where.endswith(UNINSPECTABLE):
+            hits.append(f"{where}: cannot inspect")
+            continue
+        low = blob.lower()
+        hits += [f"{where}: {n.decode()}" for n in needles if n in low]
+    return hits
 
 
 # --- transport ---------------------------------------------------------------------------
@@ -328,6 +507,16 @@ def record(
 
     for blob in staged.values():
         assert_clean(blob.decode(), base_url=base, token=token)
+    # a submission file is written as downloaded: scan its bytes (and zip members, PDF
+    # streams) for the token, token-bearing names and the dev host before anything is written
+    hostport = urllib.parse.urlsplit(base).netloc
+    # the message gives the position only: a file name is not scanned and may carry anything
+    for position, (name, data) in enumerate(files.items(), start=1):
+        if file_secret_hits(name, data, extra=(token, base, hostport)):
+            raise RecorderRefused(
+                f"refused: downloaded file {position} of {len(files)} "
+                "carries a secret or the dev host, or cannot be inspected"
+            )
 
     target = out_dir / branch
     (target / "files").mkdir(parents=True, exist_ok=True)

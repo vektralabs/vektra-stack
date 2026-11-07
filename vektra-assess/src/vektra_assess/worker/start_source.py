@@ -16,6 +16,7 @@ this path at all.
 
 from __future__ import annotations
 
+import json
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -41,7 +42,7 @@ from vektra_assess.context.capture.capture import (
 from vektra_assess.context.capture.readers import MoodleCaptureReaders
 from vektra_assess.context.regrade import GradeReading
 from vektra_assess.context.snapshot import mark_str
-from vektra_assess.crypto.teacher_config import open_teacher_config
+from vektra_assess.crypto.teacher_config import CONFIG_FIELD, open_teacher_config
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.moodle import readers as r
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
@@ -63,7 +64,19 @@ _CAPS = text(
 _SEALED = text(
     "SELECT teacher_config_sealed FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
 )
-SOLUTION_FIELD = "solution"
+#: the teacher config is ONE JSON object sealed under binding ``config`` (rotation re-seals it the
+#: same way): ``{"solution"?: str, "transcript_recipients": [...]}``; plan 11's PUT writes it
+SOLUTION_KEY = "solution"
+
+
+def solution_of(plain: str) -> str | None:
+    """The ``solution`` text of the opened config object; None when absent or not a string."""
+    try:
+        doc = json.loads(plain)
+    except json.JSONDecodeError:
+        return None
+    value = doc.get(SOLUTION_KEY) if isinstance(doc, dict) else None
+    return value if isinstance(value, str) and value else None
 
 
 class _BoundedCache:
@@ -426,12 +439,14 @@ class MoodleStartSource:
                     await conn.execute(_SEALED, {"s": target.site_id, "c": target.cmid})
                 ).scalar()
                 if sealed is not None:
-                    solution = open_teacher_config(
-                        self._teacher_private,
-                        bytes(sealed),
-                        target.site_id,
-                        target.cmid,
-                        SOLUTION_FIELD,
+                    solution = solution_of(
+                        open_teacher_config(
+                            self._teacher_private,
+                            bytes(sealed),
+                            target.site_id,
+                            target.cmid,
+                            CONFIG_FIELD,
+                        )
                     )
         ref = SiteRef(str(target.site_id), str(site.base_url), str(site.release))
         capabilities = Capabilities(

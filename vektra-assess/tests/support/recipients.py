@@ -13,9 +13,8 @@ import uuid
 from typing import Any
 
 from vektra_assess.crypto.seal import public_from_private
-from vektra_assess.crypto.teacher_config import seal_teacher_config
+from vektra_assess.crypto.teacher_config import CONFIG_FIELD, seal_teacher_config
 from vektra_assess.delivery.recipients import (
-    CONFIG_FIELD,
     RECIPIENTS_KEY,
     ConfigRecipients,
     recipient_ref,

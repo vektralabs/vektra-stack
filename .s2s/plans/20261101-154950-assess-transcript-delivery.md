@@ -432,7 +432,7 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
 ### Design decisions taken in 10b (one line each, with the reason)
 
 - SMTP account: the existing `assess_smtp` credentials secret `{"username", "password"}` (`{}` = no AUTH; one without the other refuses startup), not `VEKTRA_ASSESS_SMTP_USERNAME_FILE|PASSWORD_FILE`: KEY_MATRIX already has that row (worker required, API forbidden, file or env name), so the API refusal needed no new secret kind.
-- The sealed teacher config is opened under binding field `config` (the binding `crypto/rotation.py` re-seals under) and must be a JSON object; `transcript_recipients` is read from it. `worker/start_source.py` still opens the solution under binding `solution`: a pre-existing mismatch that plan 11, which owns the config format, must settle (request below).
+- Teacher config format (decided by the coordinator, 2026-11-08, review #4): `teacher_config_sealed` holds ONE JSON object `{"solution"?: str, "transcript_recipients": [...]}` sealed under binding `config` (`crypto.teacher_config.CONFIG_FIELD`, the one rotation uses); the snapshot capture (`start_source.solution_of`) and the delivery read it that way (`test_teacher_config_format.py`).
 - The worker refuses to start without `VEKTRA_ASSESS_SMTP_HOST` and `_FROM` unless `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` (development): without them the delivery slots stay unbound, and the refusal names the settings instead of the slot.
 - The API role reads every `assess_deliveries` column except `recipient_ref` (grant matrix, revision 0035): a ref is a hash of a guessable address, and the API needs only the status.
 - Fan-out touches only rounds that still have live rows (or round 1 of a transcript with none); a row in flight is never REPLACED; a ref REPLACED and configured again is not revived in the same round (UNIQUE per round); the fan-out takes the resend function's per-transcript advisory lock.
@@ -448,7 +448,7 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
 
 ### Requests from 10b
 
-- Plan 11 (teacher-ops, config PUT): store the teacher config as ONE JSON object sealed under binding field `config` (what rotation and the delivery reader use), with `transcript_recipients` (1..3, the normalisation of `delivery/recipients.normalize_address`) and the solution inside it; move `start_source`'s solution read to that object. Validate the addresses against `VEKTRA_ASSESS_RECIPIENT_DOMAINS` at PUT (field error naming the domains) and audit old/new as refs.
+- Plan 11 (teacher-ops, config PUT): the format is decided, not open: write `teacher_config_sealed` as ONE JSON object `{"solution"?: str, "transcript_recipients": [...]}` sealed under `crypto.teacher_config.CONFIG_FIELD` (`config`); the readers already expect it. The addresses follow `delivery/address.normalize_address`; validate them against `VEKTRA_ASSESS_RECIPIENT_DOMAINS` at PUT (field error naming the domains) and audit old/new as refs.
 - Plan 12 (privacy-retention): `/health/assess` reads the `smtp` row of `assess_heartbeat` (and its age); metrics over delivery status and `assess.delivery.alert`; a shredded transcript's live rows go ABANDONED (the handler now just skips a transcript without ciphertext).
 - Plugin (vektra-moodle-discuss, owned by the other session): nothing beyond the P3 request in "Decision REVISED"; the site admin's allowlist copy must equal `VEKTRA_ASSESS_RECIPIENT_DOMAINS`, documented in `docs/guides/assess-moodle-service-account.md`.
 

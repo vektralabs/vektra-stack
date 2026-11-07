@@ -30,7 +30,7 @@ from typing import Any, Protocol
 
 from sqlalchemy import text
 
-from vektra_assess.crypto.teacher_config import open_teacher_config
+from vektra_assess.crypto.teacher_config import CONFIG_FIELD, open_teacher_config
 from vektra_assess.delivery.address import normalize_address
 from vektra_assess.keys import AssessKeyring
 
@@ -38,8 +38,6 @@ MAX_RECIPIENTS = 3
 ROLE_RECIPIENT = "recipient"
 #: the key of the sealed teacher config that lists the transcript recipients (plan 11 writes it)
 RECIPIENTS_KEY = "transcript_recipients"
-#: binding field of the whole sealed teacher config (the rotation job re-seals under it too)
-CONFIG_FIELD = "config"
 
 
 class GraderLike(Protocol):

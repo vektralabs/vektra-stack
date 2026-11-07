@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import uuid
 
@@ -255,7 +256,11 @@ async def test_no_plaintext_canary_in_any_table_dump_or_log(pg):
     site = await make_site(pg)
     worker_pub, _ = x_ring("w1")
     blob, kid = teacher_config.seal_teacher_config(
-        worker_pub, site, 9, "config", TEACHER_CANARY
+        worker_pub,
+        site,
+        9,
+        teacher_config.CONFIG_FIELD,
+        json.dumps({"solution": TEACHER_CANARY}),
     )
     await pg.run(
         "api",

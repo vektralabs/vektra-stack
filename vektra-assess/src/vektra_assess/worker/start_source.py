@@ -229,13 +229,10 @@ class MoodleStartSource:
         self._resolved.pop(target.session_id)
         if ref is None:
             return CloseFacts()
-        c, uid = self._client, target.student_userid
-        courses = await r.read_user_courses(c, site, uid)
-        shortname = None
-        if isinstance(courses, Readable):
-            shortname = next(
-                (x.shortname for x in courses.value if x.courseid == ref.courseid), None
-            )
+        c = self._client
+        shortname = (
+            ref.course_shortname
+        )  # read with the resolution: no second course list
         grade = await self._grade_now(site, ref, target)
         graders = await r.read_graders(c, site, ref.courseid)
         return CloseFacts(

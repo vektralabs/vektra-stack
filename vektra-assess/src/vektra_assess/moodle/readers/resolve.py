@@ -10,7 +10,7 @@ functions the capture readers already use (``mod_quiz_get_quizzes_by_courses``,
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
@@ -25,6 +25,9 @@ ActivityKind = Literal["quiz", "assign"]
 class ActivityRef:
     courseid: int
     instanceid: int  # quiz id or assignment id
+    #: the course's short name, from the same course list the resolution read (plan 10: the
+    #: transcript file name); not part of the identity
+    course_shortname: str | None = field(default=None, compare=False)
 
 
 async def _find(
@@ -78,5 +81,8 @@ async def resolve_activity(
         if isinstance(found, Unreadable):
             return found  # fail closed: an unreadable course is never skipped
         if found.value is not None:
-            return Readable(ActivityRef(courseid, found.value), found.evidence)
+            short = next(
+                (c.shortname for c in courses.value if c.courseid == courseid), None
+            )
+            return Readable(ActivityRef(courseid, found.value, short), found.evidence)
     return Unreadable(UnreadableReason.PARTIAL, "activity_not_in_student_courses")

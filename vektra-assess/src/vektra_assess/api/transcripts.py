@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from vektra_assess.api.common import (
+    SITE_OF_KEY,
     engine_of,
     fail,
     json_object,
@@ -98,10 +99,6 @@ class ResendBody(BaseModel):
     actor_userid: int | None = Field(None, ge=1)
 
 
-_SITE_OF_KEY = text(
-    "SELECT s.id FROM assess_site_keys k JOIN assess_sites s ON s.id = k.site_id "
-    "WHERE k.api_key_id = :k AND k.purpose = :p AND s.disabled_at IS NULL"
-)
 _TRANSCRIPT = text(
     "SELECT t.id, t.ciphertext, t.dek_wrapped, t.content_hash, t.filename, s.site_id, s.cmid, "
     "s.student_userid, s.courseid_hint FROM assess_transcripts t "
@@ -176,7 +173,7 @@ def _limit(request: Request, key: Any) -> None:
 
 
 async def _site_of(conn: Any, key: ApiKeyInfo, purpose: str) -> UUID:
-    site = (await conn.execute(_SITE_OF_KEY, {"k": key.key_id, "p": purpose})).scalar()
+    site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": purpose})).scalar()
     if site is None:
         raise fail(key_not_bound())
     return site  # type: ignore[no-any-return]

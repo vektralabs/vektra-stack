@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from vektra_assess.errors import assess_unavailable, bad_request
@@ -19,6 +20,15 @@ from vektra_shared.errors import ErrorResponse, http_status_for
 
 #: no assess request body is legitimately larger than this (a turn is capped far below it)
 MAX_BODY_BYTES = 64 * 1024
+
+
+#: the enabled site a key is bound to for ``purpose`` (``mint`` | ``teacher``); shared by every
+#: route that resolves its site from the caller's key
+SITE_OF_KEY = text(
+    "SELECT s.id, s.min_plugin_version FROM assess_site_keys k "
+    "JOIN assess_sites s ON s.id = k.site_id "
+    "WHERE k.api_key_id = :k AND k.purpose = :p AND s.disabled_at IS NULL"
+)
 
 
 def fail(err: ErrorResponse, headers: dict[str, str] | None = None) -> HTTPException:

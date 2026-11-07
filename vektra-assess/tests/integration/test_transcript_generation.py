@@ -394,3 +394,24 @@ async def test_a_missing_kek_kid_is_retryable_not_an_integrity_failure(
         )
         got = await generate_transcript(deps, worker.connect, s.session_id, attempt=2)
         assert got is not None and got.created
+
+
+async def test_close_facts_read_the_course_list_once(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #10: the short name comes with the activity resolution (one
+    core_enrol_get_users_courses), and the resolution is not left in the source's cache."""
+    from assess_moodle_support import Replay, make_client
+    from test_context_capture import InProcessParser
+
+    from vektra_assess.worker.start_source import MoodleStartSource
+
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        replay = Replay("4.3")
+        src = MoodleStartSource(make_client(replay), InProcessParser(), worker.connect)
+        deps = GenerationDeps(kek=s.kek, transcript_kek=ring, facts=src)
+        assert await generate_transcript(deps, worker.connect, s.session_id)
+        names = [c[0] for c in replay.calls]
+        assert names.count("core_enrol_get_users_courses") == 1, names
+        assert "EAASSESS" in (await _open(pg, ring, s.session_id)).decode()
+        assert src.cached == 0

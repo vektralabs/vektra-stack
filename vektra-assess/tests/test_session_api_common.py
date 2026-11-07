@@ -166,3 +166,24 @@ def test_turn_notes_fit_the_check_with_multibyte_labels() -> None:
     assert all(len(c.label.encode()) <= 64 for c in notes.contests)
     # 40 distinct marks after the 32-byte cut (2 + 7 * 4 bytes), capped at the first 16
     assert notes.marks == tuple(f"{i:02d}" + "\U0001d510" * 7 for i in range(16))
+
+
+def test_turn_notes_cut_marks_at_32_bytes_and_dedupe_after_the_cut() -> None:
+    """CodeRabbit round 5: an ASCII mark of 33 bytes keeps exactly 32, and two marks that
+    differ only past the cut collapse into one, kept at the position of the first."""
+    from vektra_assess.api.turns import turn_notes
+    from vektra_assess.llm.types import TurnResult, TurnUsage
+
+    long_prefix = "00" + "\U0001d510" * 40
+    result = TurnResult(
+        text="x",
+        marks=("a" * 33, long_prefix + "a", "b", long_prefix + "b"),
+        behaviour_class=None,
+        contest_entries=(),
+        language="it",
+        usage=TurnUsage(1, 1),
+        call_records=(),
+        replaced_count=0,
+        content_hash="h",
+    )
+    assert turn_notes(result).marks == ("a" * 32, "00" + "\U0001d510" * 7, "b")

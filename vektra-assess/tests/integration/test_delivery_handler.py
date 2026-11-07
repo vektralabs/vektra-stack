@@ -1,0 +1,520 @@
+"""Plan 10b: ``transcript_deliver`` end to end, real Postgres + the in-process TLS mail sink.
+
+The sink is the only accepted evidence of a send: every SENT row is matched to a stored message by
+its Message-ID (``assert_sent_rows_are_on_the_sink`` runs after every scenario), and a refusal is
+checked to have left nothing there. Time-dependent behaviour (a 2 h outage, the 72 h window, the
+crash window) runs on an injected clock; the relay is really down, really refusing, really
+without STARTTLS.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fixtures.mailsink import MailSink, sink_config
+from sqlalchemy.ext.asyncio import create_async_engine
+from support.recipients import TEACHERS, config_pair, configure_recipients, refs
+from support.sessions import seed_session
+from support.world import world
+
+from integration.test_session_preflight import _reset
+from integration.test_transcript_api import download, mint
+from vektra_assess.delivery import handler as h
+from vektra_assess.delivery.backoff import parse_schedule
+from vektra_assess.delivery.recipients import recipient_ref
+from vektra_assess.delivery.smtp import SmtpSender
+from vektra_assess.keys import AssessKeyring
+from vektra_assess.transcript import store
+from vektra_assess.transcript.facts import CloseFacts
+from vektra_assess.worker.transcript_gen import GenerationDeps, generate_transcript
+
+pytestmark = pytest.mark.integration
+
+STALE = timedelta(seconds=240)
+
+
+class Clock:
+    """The handler's clock, started from the DATABASE's clock (rows get ``now()`` defaults;
+    a container VM may run a little apart from the host)."""
+
+    def __init__(self) -> None:
+        self.now = datetime.now(UTC)
+
+    async def sync(self, pg) -> Clock:  # type: ignore[no-untyped-def]
+        db_now = (await pg.run("super", "SELECT now()"))[0][0]
+        self.now = db_now + timedelta(seconds=1)
+        return self
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, **kw: float) -> None:
+        self.now += timedelta(**kw)
+
+
+class Facts:
+    def __init__(self, course: str = "EA-2026") -> None:
+        self.course = course
+
+    async def close_facts(self, **_: Any) -> CloseFacts:
+        return CloseFacts(course_shortname=self.course)
+
+
+@pytest.fixture
+async def worker(pg):  # type: ignore[no-untyped-def]
+    await _reset(pg)
+    engine = create_async_engine(pg.url("worker"))
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+def sink(tmp_path: Path) -> Iterator[MailSink]:
+    s = MailSink(tmp_path / "sink").start()
+    yield s
+    s.stop()
+
+
+async def _ready(w, worker, addresses=TEACHERS, *, pair=None):  # type: ignore[no-untyped-def]
+    """A CLOSED session, its configured recipients and its generated transcript."""
+    ring = AssessKeyring(store.KEYRING, "t1", {"t1": os.urandom(32)})
+    w.app.state.assess_keys[store.KEYRING] = ring
+    s = await seed_session(w, worker, "CLOSED")
+    pair = pair or config_pair()
+    config = await configure_recipients(w.pg, w.site, s.cmid, addresses, pair=pair)
+    got = await generate_transcript(
+        GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Facts(), recipients=config
+        ),
+        worker.connect,
+        s.session_id,
+    )
+    assert got is not None and got.created
+    return s, ring, config, pair
+
+
+def _deps(ring, config, sink, clock, *, domains=("unical.it",), sender=None):  # type: ignore[no-untyped-def]
+    return h.DeliveryDeps(
+        transcript_kek=ring,
+        recipients=config,
+        sender=sender or SmtpSender(sink_config(sink)),
+        sender_address="vektra@vektra.example.org",
+        message_id_domain="vektra.example.org",
+        domains=frozenset(domains),
+        schedule=parse_schedule("1m,5m,15m,1h"),
+        window=timedelta(hours=72),
+        stale_after=STALE,
+        clock=clock,
+    )
+
+
+async def rows(pg, tid) -> list[Any]:  # type: ignore[no-untyped-def]
+    return await pg.run(
+        "super",
+        "SELECT id, round, recipient_ref, status, attempts, not_before, last_error_class, "
+        "smtp_code, message_id, sent_at, attempt_started_at FROM assess_deliveries "
+        "WHERE transcript_id = :t ORDER BY round, recipient_ref",
+        {"t": tid},
+    )
+
+
+async def events(pg, tid, event: str) -> list[Any]:  # type: ignore[no-untyped-def]
+    return await pg.run(
+        "super",
+        "SELECT reason_code, data FROM assess_audit_events WHERE session_id = :s "
+        "AND event = :e ORDER BY id",
+        {"s": tid, "e": event},
+    )
+
+
+async def assert_sent_rows_are_on_the_sink(pg, tid, sink: MailSink) -> None:  # type: ignore[no-untyped-def]
+    """REQ-075: no row is SENT without a sink-recorded message of the same Message-ID."""
+    for r in await rows(pg, tid):
+        if r.status == "SENT":
+            assert r.message_id and sink.by_message_id(r.message_id), r
+
+
+async def assert_no_address_stored(pg, addresses) -> None:  # type: ignore[no-untyped-def]
+    dump = json.dumps(
+        [
+            [str(c) for c in row]
+            for table in ("assess_deliveries", "assess_audit_events", "assess_jobs")
+            for row in await pg.run("super", f"SELECT * FROM {table}")
+        ]
+    )
+    for a in addresses:
+        local = a.split("@")[0]
+        assert a not in dump and (len(local) < 4 or local not in dump)
+
+
+def alerts(cap) -> list[dict[str, Any]]:  # type: ignore[no-untyped-def]
+    out = []
+    for line in cap.lines():
+        try:
+            doc = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if doc.get("event") == "assess.delivery.alert":
+            out.append(doc)
+    return out
+
+
+async def test_each_recipient_gets_the_downloaded_bytes_once(
+    pg, worker, sink, canary_log_capture
+) -> None:  # type: ignore[no-untyped-def]
+    """REQ-074 / REQ-075: one message per recipient, over TLS with AUTH; the attachment
+    hash-equals the stored hash AND the bytes the student downloads."""
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        got = await h.deliver_transcript(
+            _deps(ring, config, sink, clock), worker.connect, s.session_id
+        )
+        assert got is not None and got.sent == 2
+        sent = await rows(pg, s.session_id)
+        assert {r.status for r in sent} == {"SENT"} and len(sent) == 2
+        token = (await mint(w, s.session_id, sub=s.sub)).json()["token"]
+        downloaded = (await download(w, s.session_id, token)).content
+        stored = (
+            await pg.run(
+                "super",
+                "SELECT content_hash FROM assess_transcripts WHERE id = :t",
+                {"t": s.session_id},
+            )
+        )[0][0]
+        for address in TEACHERS:
+            copies = sink.to(address)
+            assert len(copies) == 1 and copies[0].tls and copies[0].authenticated
+            att = next(copies[0].message.iter_attachments()).get_payload(decode=True)
+            assert att == downloaded
+            assert hashlib.sha256(att).hexdigest() == stored
+        assert len(sink.messages) == 2
+        # a second job finds nothing due: still two messages
+        again = await h.deliver_transcript(
+            _deps(ring, config, sink, clock), worker.connect, s.session_id
+        )
+        assert again is not None and again.sent == 0 and len(sink.messages) == 2
+        assert len(await events(pg, s.session_id, "assess_delivery_sent")) == 2
+        attempts = await events(pg, s.session_id, "assess_delivery_attempt")
+        assert [a.data["outcome"] for a in attempts] == ["sent", "sent"]
+        assert {a.data["ref"] for a in attempts} == refs(w.site)
+        await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
+        await assert_no_address_stored(pg, TEACHERS)
+    canary_log_capture.assert_clean(TEACHERS, require_lines=True)
+
+
+async def test_smtp_down_two_hours_then_up_delivers_exactly_once(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """REQ-075: the relay is unreachable for a simulated 2 h; every attempt is a real refused
+    connection; once it is back, each recipient holds exactly one message."""
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        t0 = clock.now
+        deps = _deps(ring, config, sink, clock)
+        sink.down()
+        runs = 0
+        while clock.now < t0 + timedelta(hours=2):
+            got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+            assert got is not None and got.sent == 0
+            runs += 1
+            current = await rows(pg, s.session_id)
+            assert {r.status for r in current} == {"RETRYING"}
+            assert {r.last_error_class for r in current} == {"connect"}
+            # the tick sees the due rows when their time comes, and queues one job
+            clock.now = min(r.not_before for r in current)
+        assert runs >= 5  # 1, 5, 15 min, then hourly: the backoff really ran
+        tick = await h.delivery_retry_tick(
+            worker.connect, stale_after=STALE, window=deps.window, now=clock.now
+        )
+        assert tick["queued"] == 1
+        sink.up()
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 2
+        for address in TEACHERS:
+            assert len(sink.to(address)) == 1
+        assert len(sink.messages) == 2
+        await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
+
+
+async def test_a_relay_without_starttls_gets_nothing_and_alerts(
+    pg, worker, tmp_path, canary_log_capture
+) -> None:  # type: ignore[no-untyped-def]
+    plain = MailSink(tmp_path / "plain", starttls=False, require_auth=False).start()
+    try:
+        clock = Clock()
+        async with world(pg) as w:
+            s, ring, config, _ = await _ready(w, worker)
+            await clock.sync(pg)
+            got = await h.deliver_transcript(
+                _deps(ring, config, plain, clock), worker.connect, s.session_id
+            )
+            assert got is not None and got.retrying == 2 and got.sent == 0
+            current = await rows(pg, s.session_id)
+            assert {(r.status, r.last_error_class) for r in current} == {
+                ("RETRYING", "tls")
+            }
+            assert plain.messages == [] and plain.auth_attempts == []
+        assert [a["alert"] for a in alerts(canary_log_capture)].count("smtp_tls") == 2
+    finally:
+        plain.stop()
+
+
+async def test_a_crash_between_250_and_the_sent_commit_is_one_audited_duplicate(
+    pg, worker, sink, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """OQ-029: the relay accepted, the worker died before committing SENT. After the lease the
+    row is resent with the SAME Message-ID: one SENT row per recipient, at most one duplicate
+    on the sink, and an ``assess_delivery_possible_duplicate`` event per resent row."""
+    clock = Clock()
+    real_settle = h._settle
+
+    async def crash_after_relay(*args: Any, **kw: Any) -> None:
+        if args[4].ok:  # the relay said 250
+            raise RuntimeError("worker killed before the outcome commit")
+        await real_settle(*args, **kw)
+
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        monkeypatch.setattr(h, "_settle", crash_after_relay)
+        with pytest.raises(RuntimeError):
+            await h.deliver_transcript(deps, worker.connect, s.session_id)
+        monkeypatch.setattr(h, "_settle", real_settle)
+        assert len(sink.messages) == 2
+        stuck = await rows(pg, s.session_id)
+        assert {r.status for r in stuck} == {"PENDING"}
+        assert all(r.attempt_started_at is not None for r in stuck)
+        # inside the lease: the attempt may still be running, nothing is taken again
+        clock.advance(seconds=10)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 0 and len(sink.messages) == 2
+        clock.now += STALE
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 2 and got.duplicates == 2
+        final = await rows(pg, s.session_id)
+        assert [r.status for r in final] == ["SENT", "SENT"]
+        for r in final:
+            copies = sink.by_message_id(r.message_id)
+            assert len(copies) == 2  # the original and at most one known duplicate
+        dup = await events(pg, s.session_id, "assess_delivery_possible_duplicate")
+        assert {d.data["ref"] for d in dup} == refs(w.site) and len(dup) == 2
+        await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
+
+
+async def test_the_72_hour_window_ends_in_failed_with_an_alert(
+    pg, worker, sink, canary_log_capture
+) -> None:  # type: ignore[no-untyped-def]
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        sink.down()
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        clock.advance(hours=72, minutes=1)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.failed == 2
+        final = await rows(pg, s.session_id)
+        assert {(r.status, r.last_error_class) for r in final} == {
+            ("FAILED", "connect")
+        }
+        assert len(await events(pg, s.session_id, "assess_delivery_failed")) == 2
+        # FAILED is final: the relay coming back changes nothing
+        sink.up()
+        clock.advance(hours=1)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 0 and sink.messages == []
+    assert [a["alert"] for a in alerts(canary_log_capture)].count(
+        "delivery_failed"
+    ) == 2
+
+
+async def test_a_header_injection_in_the_course_is_one_header_on_the_wire(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        # the course part of the stored name, as an attacker with DB write access would set it
+        await pg.run(
+            "super",
+            "UPDATE assess_transcripts SET filename = :f WHERE id = :t",
+            {
+                "f": "EA\r\nBcc: victim@evil.example\r\nX-Evil: 1_9_9_s1_20261107.html",
+                "t": s.session_id,
+            },
+        )
+        got = await h.deliver_transcript(
+            _deps(ring, config, sink, clock), worker.connect, s.session_id
+        )
+        assert got is not None and got.sent == 2
+        for item in sink.messages:
+            head = item.raw.split(b"\r\n\r\n", 1)[0].split(b"\r\n")
+            assert sum(1 for ln in head if ln.lower().startswith(b"subject:")) == 1
+            assert not any(ln.lower().startswith((b"bcc:", b"x-evil:")) for ln in head)
+            assert "victim@evil.example" not in item.rcpt
+        assert sink.to("victim@evil.example") == []
+
+
+async def test_a_removed_address_is_replaced_and_a_fourth_never_exists(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """REQ-082 as amended: re-read at send time. Removed -> REPLACED (old ref audited), added
+    -> its own row (new ref audited), never more than 3 rows per round that are not REPLACED."""
+    a, b, c, d, e, f = (f"{x}@unical.it" for x in "abcdef")
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, pair = await _ready(w, worker, (a, b, c))
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        sink.fault = "4xx"
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert {r.status for r in await rows(pg, s.session_id)} == {"RETRYING"}
+        # the teacher edits the activity: b and c out, d, e, f in
+        await configure_recipients(pg, w.site, s.cmid, (a, d, e, f), pair=pair)
+        sink.fault = None
+        clock.advance(minutes=2)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and (got.replaced, got.added, got.sent) == (2, 2, 3)
+        final = {r.recipient_ref: r.status for r in await rows(pg, s.session_id)}
+        ref = {x: recipient_ref(w.site, x) for x in (a, b, c, d, e, f)}
+        assert final == {
+            ref[a]: "SENT",
+            ref[b]: "REPLACED",
+            ref[c]: "REPLACED",
+            ref[d]: "SENT",
+            ref[e]: "SENT",
+        }  # f: no 4th recipient in the round
+        assert [len(sink.to(x)) for x in (a, b, c, d, e, f)] == [1, 0, 0, 1, 1, 0]
+        old = await events(pg, s.session_id, "assess_delivery_recipient_replaced")
+        new = await events(pg, s.session_id, "assess_delivery_recipient_added")
+        assert {o.data["old"] for o in old} == {ref[b], ref[c]}
+        assert {n.data["new"] for n in new} == {ref[d], ref[e]}
+        await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
+        await assert_no_address_stored(pg, (a, b, c, d, e, f))
+
+
+async def test_an_address_outside_the_domain_allowlist_gets_nothing(
+    pg, worker, sink, canary_log_capture
+) -> None:  # type: ignore[no-untyped-def]
+    inside, outside = "prof@unical.it", "prof@gmail.example"
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker, (inside, outside))
+        await clock.sync(pg)
+        got = await h.deliver_transcript(
+            _deps(ring, config, sink, clock), worker.connect, s.session_id
+        )
+        assert got is not None and (got.sent, got.failed) == (1, 1)
+        by_ref = {r.recipient_ref: r for r in await rows(pg, s.session_id)}
+        bad = by_ref[recipient_ref(w.site, outside)]
+        assert (bad.status, bad.last_error_class) == ("FAILED", "domain_not_allowed")
+        assert sink.to(outside) == [] and len(sink.to(inside)) == 1
+    async with world(pg) as w:
+        # an empty allowlist refuses every address
+        s, ring, config, _ = await _ready(w, worker, (inside,))
+        await clock.sync(pg)
+        sink.clear()
+        got = await h.deliver_transcript(
+            _deps(ring, config, sink, clock, domains=()), worker.connect, s.session_id
+        )
+        assert got is not None and got.failed == 1 and sink.messages == []
+    fails = [a for a in alerts(canary_log_capture) if a["alert"] == "delivery_failed"]
+    assert {a["reason_code"] for a in fails} == {"domain_not_allowed"} and len(
+        fails
+    ) == 2
+
+
+async def test_synchronous_replies_retry_on_4xx_and_fail_on_5xx(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        sink.fault = "4xx"
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert {(r.status, r.smtp_code) for r in await rows(pg, s.session_id)} == {
+            ("RETRYING", 451)
+        }
+        sink.fault = "5xx"
+        clock.advance(minutes=2)
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        final = await rows(pg, s.session_id)
+        assert {(r.status, r.last_error_class, r.smtp_code) for r in final} == {
+            ("FAILED", "perm_5xx", 550)
+        }
+        assert sink.messages == []
+
+
+async def test_recipients_configured_after_the_close_are_fanned_out(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """No readable config at generation: no row. The tick queues a (throttled) fan-out job;
+    once the teacher configured the activity, round 1 is created and delivered. A config that
+    becomes unreadable keeps the rows waiting (RETRYING, recipients_unresolved)."""
+    clock = Clock()
+    async with world(pg) as w:
+        ring = AssessKeyring(store.KEYRING, "t1", {"t1": os.urandom(32)})
+        s = await seed_session(w, worker, "CLOSED")
+        await generate_transcript(
+            GenerationDeps(kek=s.kek, transcript_kek=ring, facts=Facts()),
+            worker.connect,
+            s.session_id,
+        )
+        assert await rows(pg, s.session_id) == []
+        await clock.sync(pg)
+        pub, priv = config_pair()
+        from vektra_assess.delivery.recipients import ConfigRecipients
+
+        deps = _deps(ring, ConfigRecipients(priv), sink, clock)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.unresolved and await rows(pg, s.session_id) == []
+        tick = await h.delivery_retry_tick(
+            worker.connect, stale_after=STALE, window=deps.window, now=clock.now
+        )
+        assert tick["fanout"] == 1
+        await configure_recipients(pg, w.site, s.cmid, pair=(pub, priv))
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and (got.added, got.sent) == (2, 2)
+        assert {len(sink.to(a)) for a in TEACHERS} == {1}
+        # a resend round while the config cannot be opened: rows wait, nothing is sent
+        await pg.run(
+            "super",
+            "UPDATE assess_deliveries SET created_at = now() - interval '1 hour' "
+            "WHERE transcript_id = :t",
+            {"t": s.session_id},
+        )
+        await pg.run(
+            "api",
+            "SELECT assess_enqueue_resend(:t, 'operator', 0)",
+            {"t": s.session_id},
+        )
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET teacher_config_sealed = NULL, "
+            "teacher_config_kid = NULL WHERE site_id = :s AND cmid = :c",
+            {"s": w.site, "c": s.cmid},
+        )
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.unresolved and got.retrying == 2
+        round2 = [r for r in await rows(pg, s.session_id) if r.round == 2]
+        assert {(r.status, r.last_error_class) for r in round2} == {
+            ("RETRYING", "recipients_unresolved")
+        }
+        assert len(sink.messages) == 2
+        await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)

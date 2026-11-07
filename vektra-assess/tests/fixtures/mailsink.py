@@ -24,6 +24,7 @@ from __future__ import annotations
 import datetime as dt
 import email
 import ipaddress
+import logging
 import smtplib
 import socket
 import ssl
@@ -209,6 +210,11 @@ class MailSink:
         return AuthResult(success=ok, handled=False)
 
     def start(self) -> MailSink:
+        # the relay's own protocol log (aiosmtpd ``mail.log``) echoes every RCPT and header: it
+        # stands for an external server, not Vektra, and must not pollute the log canary checks
+        relay_log = logging.getLogger("mail.log")
+        relay_log.propagate = False
+        relay_log.setLevel(logging.CRITICAL)
         kwargs: dict[str, Any] = {
             "hostname": HOST,
             "port": self.port,

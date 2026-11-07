@@ -355,3 +355,31 @@ def test_the_inlined_shipped_strings_match_the_shipped_files() -> None:
     sh = shipped.get("it")
     assert render.REPLACED == sh.missing["replaced_by_system"]
     assert render.BR009_TEMPLATE == sh.br009
+
+
+def test_contest_entries_carry_the_criterion_remark_by_canonical_label() -> None:
+    """CodeRabbit 4503025945: a contest on "Criterio 1" shows the remark stored under C1."""
+    from vektra_assess.context.snapshot import ActivityKind, AssignCriterion
+
+    base = make_snapshot()
+    snap = base.model_copy(
+        update={
+            "header": base.header.model_copy(
+                update={"activity_kind": ActivityKind.ASSIGN, "grade_method": None}
+            ),
+            "quiz_items": (),
+            "criteria": (
+                AssignCriterion(
+                    label="C1", level_index=2, level_count=4, points="3",
+                    max_points="5", remark="REMARK-ONE",
+                ),
+            ),
+        }
+    )  # fmt: skip
+    turns = (
+        render.TurnRecord(
+            1, "bot", "normal", "x", T0, contests=(("Criterio 1", "proposed"),)
+        ),
+    )
+    out = render.render(render.build_doc(_input(snapshot=snap, turns=turns))).decode()
+    assert "REMARK-ONE" in out

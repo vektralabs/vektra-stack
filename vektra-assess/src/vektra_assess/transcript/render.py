@@ -21,6 +21,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from vektra_assess.context.regrade import RegradeFlag, RegradeKind
 from vektra_assess.context.snapshot import GradeKind, Snapshot
+from vektra_assess.context.strings import CRITERION_LABEL
 from vektra_assess.parser_protocol import FileStatus
 from vektra_assess.transcript.mathml import Segment, segments
 
@@ -248,7 +249,12 @@ def _contests(
         for label, status in t.contests:
             latest.pop(label, None)
             latest[label] = (status, t.no)
-    remarks = {c.label: c.remark for c in snapshot.criteria}
+    # contest markers carry the bundle's CANONICAL labels ("Criterio 1", references.
+    # canonical_labels), not the snapshot-local "C1" (CodeRabbit 4503025945)
+    remarks = {
+        CRITERION_LABEL.format(n=n): c.remark
+        for n, c in enumerate(snapshot.criteria, start=1)
+    }
     return tuple(
         ContestView(
             label=label,

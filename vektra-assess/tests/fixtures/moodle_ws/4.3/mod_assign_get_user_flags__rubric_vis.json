@@ -2,7 +2,7 @@
  "fixture": "rubric_vis",
  "params": {
   "assignmentids": [
-   96
+   5
   ]
  },
  "response": {
@@ -10,7 +10,7 @@
   "warnings": [
    {
     "item": "assignment",
-    "itemid": 96,
+    "itemid": 5,
     "message": "No access rights in module context",
     "warningcode": "1"
    }

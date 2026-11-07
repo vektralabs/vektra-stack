@@ -1,8 +1,8 @@
 {
  "fixture": "essay-stu1",
  "params": {
-  "quizid": 24,
-  "userid": 15
+  "quizid": 12,
+  "userid": 7
  },
  "response": {
   "alloptions": [

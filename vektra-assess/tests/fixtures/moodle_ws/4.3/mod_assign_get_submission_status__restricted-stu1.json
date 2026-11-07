@@ -1,8 +1,8 @@
 {
  "fixture": "restricted-stu1",
  "params": {
-  "assignid": 104,
-  "userid": 71
+  "assignid": 13,
+  "userid": 7
  },
  "response": {
   "assignmentdata": {
@@ -28,10 +28,10 @@
    "gradingstatus": "notgraded",
    "locked": false,
    "submission": {
-    "assignment": 104,
+    "assignment": 13,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 138,
+    "id": 59,
     "latest": 1,
     "plugins": [
      {
@@ -68,16 +68,16 @@
      }
     ],
     "status": "new",
-    "timecreated": 1793619759,
-    "timemodified": 1793619759,
+    "timecreated": 1794011903,
+    "timemodified": 1794011903,
     "timestarted": null,
-    "userid": 71
+    "userid": 7
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "timelimit": 0,
    "usergroups": [
-    17
+    1
    ]
   },
   "warnings": []

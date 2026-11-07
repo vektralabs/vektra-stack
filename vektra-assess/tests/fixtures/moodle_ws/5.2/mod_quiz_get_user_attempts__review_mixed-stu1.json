@@ -1,30 +1,30 @@
 {
  "fixture": "review_mixed-stu1",
  "params": {
-  "quizid": 16,
+  "quizid": 4,
   "status": "all",
-  "userid": 15
+  "userid": 7
  },
  "response": {
   "attempts": [
    {
     "attempt": 1,
     "currentpage": 0,
-    "gradednotificationsenttime": 1793619221,
+    "gradednotificationsenttime": 1794007970,
     "gradeitemmarks": [],
-    "id": 38,
+    "id": 8,
     "layout": "1,2,0",
     "preview": 0,
-    "quiz": 16,
+    "quiz": 4,
     "state": "finished",
     "sumgrades": 1,
     "timecheckstate": null,
-    "timefinish": 1793446421,
-    "timemodified": 1793446421,
+    "timefinish": 1793835170,
+    "timemodified": 1793835170,
     "timemodifiedoffline": 0,
-    "timestart": 1793446421,
-    "uniqueid": 38,
-    "userid": 15
+    "timestart": 1793835170,
+    "uniqueid": 8,
+    "userid": 7
    }
   ],
   "warnings": []

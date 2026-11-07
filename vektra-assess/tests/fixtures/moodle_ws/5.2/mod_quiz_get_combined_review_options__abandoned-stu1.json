@@ -1,8 +1,8 @@
 {
  "fixture": "abandoned-stu1",
  "params": {
-  "quizid": 23,
-  "userid": 15
+  "quizid": 11,
+  "userid": 7
  },
  "response": {
   "alloptions": [

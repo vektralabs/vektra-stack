@@ -1,8 +1,8 @@
 {
  "fixture": "hiddengrade-stu1",
  "params": {
-  "assignid": 101,
-  "userid": 71
+  "assignid": 10,
+  "userid": 7
  },
  "response": {
   "assignmentdata": {
@@ -28,10 +28,10 @@
    "gradingstatus": "graded",
    "locked": false,
    "submission": {
-    "assignment": 101,
+    "assignment": 10,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 133,
+    "id": 14,
     "latest": 1,
     "plugins": [
      {
@@ -68,16 +68,16 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619218,
-    "timemodified": 1793619218,
+    "timecreated": 1794008057,
+    "timemodified": 1794008057,
     "timestarted": null,
-    "userid": 71
+    "userid": 7
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "timelimit": 0,
    "usergroups": [
-    17
+    1
    ]
   },
   "warnings": []

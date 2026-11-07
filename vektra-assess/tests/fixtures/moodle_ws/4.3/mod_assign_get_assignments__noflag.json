@@ -2,7 +2,7 @@
  "fixture": "noflag",
  "params": {
   "courseids": [
-   10
+   2
   ]
  },
  "response": {
@@ -10,7 +10,7 @@
   "warnings": [
    {
     "item": "course",
-    "itemid": 10,
+    "itemid": 2,
     "message": "User is not enrolled or does not have requested capability",
     "warningcode": "2"
    }

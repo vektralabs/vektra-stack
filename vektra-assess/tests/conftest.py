@@ -23,6 +23,16 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _preload_recorded_manifests() -> None:
+    """Read both recorded manifests once, synchronously, before any test runs: the first
+    ``manifest()``/``site_for()`` call may come from an async path, which must not do file
+    I/O on the event loop (CodeRabbit 4500701652)."""
+    from assess_moodle_support import preload_manifests
+
+    preload_manifests()
+
+
 @pytest.fixture(autouse=True)
 def _fresh_structlog():
     """A structlog logger caches ``sys.stdout`` when it is first used. A test that ran under

@@ -113,3 +113,30 @@ describe("consume", () => {
     expect(backoffMs(0, () => 1)).toBe(1200);
   });
 });
+
+describe("a terminal event ends the read (CodeRabbit review 5811279241, sse.ts 125-132)", () => {
+  it("returns after start_rolled_back even if the response stays open", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('event: start_rolled_back\ndata: {"reason":"x"}\n\n'));
+        // never closed by the server
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const events: string[] = [];
+    const done = consume({
+      url: "/e",
+      token: () => "T",
+      onEvent: (e) => events.push(e.event),
+      onTerminal: () => {},
+      fetchImpl: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch,
+    });
+    const result = await Promise.race([done.then(() => "returned"), new Promise((r) => setTimeout(() => r("hung"), 200))]);
+    expect(result).toBe("returned");
+    expect(events).toEqual(["start_rolled_back"]);
+    expect(cancelled).toBe(true);
+  });
+});

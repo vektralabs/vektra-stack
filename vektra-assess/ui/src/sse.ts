@@ -126,9 +126,15 @@ export async function consume(opts: StreamOptions): Promise<void> {
           opts.onEvent(ev);
           if (ev.event === "closed" || ev.event === "start_rolled_back") ended = true;
         }
+        // a terminal event ends the read even if the server keeps the response open
+        if (ended) break;
       }
     } catch {
       // a broken connection: reconnect below
+    }
+    if (ended) {
+      await reader.cancel().catch(() => {});
+      return;
     }
     if (ended) return;
     if (opts.signal?.aborted) return;

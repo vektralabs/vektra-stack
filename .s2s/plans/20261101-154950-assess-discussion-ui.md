@@ -478,3 +478,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     `VEKTRA_ASSESS_MAX_MESSAGE_CHARS`) and the composer's `maxlength` uses it. The browser counts
     UTF-16 units, the server code points: the browser limit is never the more permissive one.
     Page config only: not the postMessage contract, not `/state`.
+  - review 5811279241 (sse.ts, outside diff) After `closed` or `start_rolled_back` the
+    consumer stops reading and cancels the reader, even if the server keeps the response open.

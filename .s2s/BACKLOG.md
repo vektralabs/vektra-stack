@@ -411,58 +411,43 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 
 ---
 
-### DEBT-039: 32 known advisories ship inside the published images, all of them fixable
+### DEBT-039: known advisories ship inside the published images
 
-**Status**: planned | **Priority**: medium | **Created**: 2026-09-02
+**Status**: in progress (Phase 1 in review, Phase 2 not started) | **Priority**: medium | **Created**: 2026-09-02
 **Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02) and then auditing what that exposes.
 
-**Context**: GitHub reports 32 open Dependabot advisories on `develop`, 1 critical, 17 high, 13 moderate and 1 low (30 when this entry was first written on 2026-09-02, 31 hours later, 32 the next day: **the number moves**, which is why the acceptance criteria below ask for the remaining count rather than fixing a target), **every one of them `runtime` scope and resolved in `uv.lock`**, so they are not a dev-tooling footnote: they are in the wheels the container installs. Verified in the published image rather than inferred from the lock file, by listing `site-packages` inside `vektra:0.7.0` (the same build as `0.7.0-ocr` on GHCR): all nine packages are present.
+**Context**: the published images install wheels with open advisories, in packages the service actually loads: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads. Making the package public did **not** create the exposure (the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image); it lowered the cost of finding out to one `docker pull` and one scanner run, on an artifact that carries the project's name.
 
-| Package | In the image | Advisories | First patched |
-|---|---|---|---|
-| pillow | 12.2.0 | 13 | 12.3.0 |
-| pypdf | 6.14.2 | 6 | 6.16.2 |
-| aiohttp | 3.14.1 | 3 | 3.14.3 |
-| pyasn1 | 0.6.3 | 3 | 0.6.4 |
-| transformers | 5.3.0 | 2 | 5.10.0 |
-| cryptography | 49.0.0 | 1 | 50.0.0 |
-| h2 | 4.3.0 | 1 | 4.4.1 |
-| setuptools | 82.0.0 | 1 | 83.0.0 |
-| torch | 2.10.0+cpu | 1 | 2.13.0 |
-| unstructured | 0.21.5 | 1 (**critical**) | 0.24.0 |
+**How to count, and why no count is written here.** The number moves on its own, as new advisories are published against versions already shipped, so a count written in this entry is stale the day after. Two predicates, and they answer different questions:
 
-**A critical arrived on 2026-09-03, and it needs its own reading rather than its severity label.** `unstructured` 0.21.5 carries a full-read SSRF: the `url=` argument of `partition()`, `partition_html()` and `partition_md()` is fetched with no host validation and the response body is returned as element text, so a caller who controls that argument reaches loopback admin APIs and cloud metadata endpoints. Two measurements bound it, both taken on the artifacts rather than reasoned about:
+- **Dependabot alerts** (`gh api repos/vektralabs/vektra-stack/dependabot/alerts --paginate`, `state=open`) measure the **default branch, `main`**, which is what the last release shipped. They say nothing about `develop`: a fix merged into `develop` leaves every alert open until the release reaches `main`.
+- **What an image installs**: `uv export --frozen --no-dev --no-hashes --no-emit-workspace --all-packages --extra sparse --extra qdrant` (add `--extra ocr` for the `-ocr` variant), keeping only the requirements whose markers hold for CPython 3.12 on linux x86_64, then `pip-audit --no-deps -r` on the result. This is the predicate for a branch, because it reads that branch's lock.
 
-- **The entry point is not reachable through Vektra.** `UnstructuredExtractor._extract_impl` calls `partition_pdf(file=io.BytesIO(request.content), strategy="auto")`: bytes already in memory, never a `url=`, and `partition_pdf` is not one of the three functions the advisory names.
-- **Only one of the two published images contains the library at all.** Verified by pulling `ghcr.io/vektralabs/vektra:0.7.1` and listing `site-packages`: it has `pdfplumber` and no `unstructured`. The `-ocr` variant has `unstructured-0.21.5`, because the extra is installed only when `INSTALL_UNSTRUCTURED=true`.
+Both were checked on a package they must find (pillow and pypdf, counted identically by the two) before trusting what they did not find.
 
-So it is present-but-not-exercised, the same shape as the `.dockerignore` gap in INFRA-008, and it does **not** turn this entry into an incident. It does belong in Phase 1: the jump is 0.21.5 -> 0.24.0, three minors rather than a patch, so unlike its seven neighbours it needs the OCR image to be built and an extraction run against a real PDF before it is taken. `docker-ocr-build.yml` already builds that variant whenever `uv.lock` changes, which covers the build half.
+**The Phase 1 command first written here is wrong, and must not be re-run.** It was `uv lock -P pillow -P pypdf -P aiohttp -P pyasn1 -P cryptography -P h2 -P setuptools`, measured against a lock that has since changed. Run on today's `develop`, it **downgrades pillow to 10.4.0** (and pi-heif to 0.22.0) for every Python, 3.12 included. The cause is the `numpy<2` constraint that BUG-027 added, combined with a workspace whose `requires-python` has no upper bound: on the 3.13+ forks numpy<2 has no wheel, the resolver backs fastembed down to 0.4.2, which caps pillow below 11, and with `-P pillow` that cap ends up applied to the 3.12 fork as well (measured outcome; the lock before the command already split pillow into 10.4.0 for 3.13+ and 12.2.0 for 3.12). The fix is `[tool.uv] environments = ["python_version < '3.13'"]`: every image and CI job runs 3.12, and the bound removes the forks that cannot be satisfied. "All seven are transitive" and "the blast radius is eight lines" were also measurements of that older lock and no longer hold.
 
-**Take the reachability finding as a bound, not as permission to defer indefinitely.** It says today's callers are safe; it says nothing about a future endpoint that accepts a URL, and the repo's own record is that a dormant path gets armed by an unrelated fix.
+**Phase 1, taken**: pillow 13.0.0, pypdf 6.21.4, aiohttp 3.14.5, pyasn1 0.6.5, cryptography 50.0.2, h2 4.4.1, setuptools 84.2.1, plus pyjwt, certifi, anyio, urllib3 and filelock, which carried advisories of their own by the time the bump was made, and fsspec 2026.6.0, mako 1.4.2, multidict 6.9.1, nltk 3.10.4 and soupsieve 2.9, each taken at its first fixed version with `-P pkg==version`. That pin matters: unpinned, the resolver takes multidict 7.x and soupsieve 4.0, a major version inside a security bump. fastembed moves 0.8.0 -> 0.9.1 with pillow (0.8.0 caps pillow below 13); it computes the BM25 sparse vectors, so it was checked rather than assumed: both versions produce identical indices and values on the same corpus (only the array dtype differs, and `_to_sparse_vector` calls `.tolist()`, which erases it), and 0.9.1 loads a model cache written by 0.8.0 without the network. Before merging, both images were built, real PDFs extracted by both extractors gave identical chunks on the old and the new `-ocr` image, and the images were run under `qemu-x86_64 -cpu qemu64,+sse3` to keep BUG-027 closed. The numbers, per image and per predicate, are in the Phase 1 PR.
 
-**None is unfixable**: every alert carries a `first_patched_version`, so there is no "no upstream fix yet" tail to argue about.
+**`unstructured` cannot be taken under the current constraints, and it is not reachable today.** Both of its advisories need 0.24.0 or later (the full-read SSRF GHSA-4mvj-m6j5-pmf7 is fixed in 0.24.0, the XSS GHSA-v5mq-3xhg-98m9 in 0.24.1). No version from 0.19.0 up resolves together with `numpy<2`, with or without the Python bound: `unstructured[pdf]>=0.24` requires `unstructured-inference>=1.6.12`, which requires `opencv-python>=4.13.0.90`, which requires `numpy>=2`. And `numpy<2` is not negotiable while the production CPU predates x86-64-v2 (BUG-027). This is a fact to know, not a defect waiting for a fix: it stays until either the production host changes or an opencv release builds against numpy 1.x again. Meanwhile the SSRF is not reachable through Vektra, and that was measured in the artifacts, with a check that could have said otherwise:
 
-**What making the package public did and did not change.** It did **not** create the exposure: the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image and enumerate the same versions. What changed is the cost of finding out, which is now one `docker pull` and one scanner run, on an artifact that carries the project's name. Several of these are attacker-controlled-input classes reachable from what this service actually does: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads, and `pillow` alone accounts for 13 of the 32 (heap out-of-bounds writes, decompression-bomb DoS, out-of-bounds reads on attacker-controlled strides).
+- the advisory's entry points are the `url=` argument of `partition()`, `partition_html()` and `partition_md()`. Vektra imports none of the three: a search of every `vektra-*/src` for those names finds only `partition_pdf`, and the same search finds `partition_pdf` (the positive control), so it is not a search that cannot match;
+- `UnstructuredExtractor._extract_impl` calls `partition_pdf(file=io.BytesIO(request.content), strategy="auto")`: bytes already in memory. In the installed 0.18.32 wheel, `partition/pdf.py` performs no fetch; `url` appears there only as link metadata;
+- only the `-ocr` image installs `unstructured` at all (`INSTALL_UNSTRUCTURED=true`); the standard image has no such package.
 
-**Two phases on purpose, in one entry because the second only makes sense after the first.** Splitting into two entries is a one-line edit if it ever needs separate scheduling.
+**What would arm it**: any future endpoint or ingest path that passes a caller-supplied URL into one of those three functions, or that switches extraction to `partition()` on a URL. Whoever adds URL ingestion must reopen this entry first.
 
-*Phase 1, do first*: pillow, pypdf, aiohttp, pyasn1, cryptography, h2, setuptools (low risk), plus `unstructured` (see the critical above: same phase, but it needs the OCR image built and one real extraction run, because the jump is three minors). Closes **29 of the 32**. Measured with `uv lock --dry-run` on 2026-09-02, so the two things that could have made this expensive are already answered: **all seven are transitive** (none is declared in any of our `pyproject.toml`, so no dependency constraint is edited), and **no parent blocks any of them** (each reaches or exceeds the patched version on its own). It is one command:
+**Phase 2, not started, on purpose**: `transformers`, `torch`, `sentence-transformers` and `accelerate` carry the embedding model and the cross-encoder reranker, so "it builds and the tests pass" is **not** evidence that retrieval is unchanged: a bump here can move scores without failing anything. Run the eval corpus before and after and compare hit rate and MRR against the recorded Combo D baselines. One transformers advisory (GHSA-x9r9) has no patched version at all.
 
-```
-uv lock -P pillow -P pypdf -P aiohttp -P pyasn1 -P cryptography -P h2 -P setuptools
-```
-
-and the blast radius is eight lines, nothing else in the lock moves: pillow 12.2.0 -> 12.3.0, pypdf 6.14.2 -> 6.16.2, aiohttp 3.14.1 -> 3.14.3, pyasn1 0.6.3 -> 0.6.4, cryptography 49.0.0 -> 50.0.1, h2 4.3.0 -> 4.4.1 (which pulls hpack 4.1.0 -> 4.2.0), setuptools 82.0.0 -> 84.0.0. Who pulls them in, for the record: pillow via pdfplumber / pikepdf / python-pptx / torchvision / fastembed, pypdf via unstructured, aiohttp via litellm, cryptography via pdfminer / google-auth / presidio, setuptools via torch / spacy. `make lint` + `make test` + the integration matrix are enough evidence for this phase.
-
-*Phase 2, measure before taking*: `transformers` 5.3.0 -> 5.10.0 and `torch` 2.10.0 -> 2.13.0. These carry the embedding model and the cross-encoder reranker, so "it builds and the tests pass" is **not** evidence that retrieval is unchanged: a bump here can move scores without failing anything. Run the eval corpus before and after and compare hit rate and MRR against the recorded Combo D baselines. The existing Dependabot PR #100 (transformers 5.3.0 -> 5.5.0) belongs to this phase and closes only one of the two transformers advisories; 5.10.0 closes both.
+**`litellm` is outside both phases**: its advisories are fixed in later 1.9x releases, but it is the LLM abstraction every query goes through, so it moves in a block of its own with end-to-end query checks, not inside a dependency security sweep.
 
 **Acceptance criteria**:
-- [ ] Phase 1 merged, and the alert count for those seven packages is 0 (checked against the API, not assumed from the diff)
+- [ ] Phase 1 merged into `develop`, and the image-install predicate above, run on the rebuilt images, shows none of the Phase 1 packages
+- [ ] After the next release reaches `main`, the Dependabot count for the Phase 1 packages is 0, checked against the API. Not before: until then those alerts stay open by construction, and reading them as a regression is the mistake this line exists to prevent
 - [ ] Phase 2 taken or explicitly deferred **with the eval numbers in hand**, not on the strength of a green suite
-- [ ] A patch release cut afterwards, so the images on GHCR actually carry the fixes: a merged bump that is never tagged changes nothing for anyone pulling
-- [ ] The remaining count is stated, including any alert deliberately not taken and why
+- [ ] The remaining count is stated, including every alert deliberately not taken and why (`unstructured` above, the Phase 2 packages, `litellm`)
 
-**Traceability**: INFRA-007 (the images exist), INFRA-008 (what else the image carries), the RAG tuning baselines for the Phase 2 comparison.
+**Traceability**: INFRA-007 (the images exist), INFRA-008 (what else the image carries), BUG-027 (the `numpy<2` constraint that shapes this entry), the RAG tuning baselines for the Phase 2 comparison.
 
 ---
 

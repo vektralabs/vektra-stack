@@ -332,6 +332,33 @@ def test_no_forbidden_file_can_reach_the_image() -> None:
 # --- plan 9: the assess discussion UI bundle -----------------------------------------------
 
 
+def test_the_assess_ui_bundle_is_built_in_its_own_stage_and_only_its_output_ships() -> (
+    None
+):
+    """The node stage builds vektra-assess/ui; the builder takes only the built static dir
+    (hashed assets + manifest) into the package before the non-editable install; the UI
+    sources and node_modules are never copied into the builder or runtime stages, and the
+    build emits no source map."""
+    text = DOCKERFILE.read_text()
+    assert "FROM node:22-slim AS assess-ui-builder" in text
+    copies = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("COPY")]
+    stage_ui = [c for c in copies if "--from=assess-ui-builder" in c]
+    assert stage_ui == [
+        "COPY --from=assess-ui-builder /assess/src/vektra_assess/ui/static "
+        "vektra-assess/src/vektra_assess/ui/static"
+    ]
+    # outside the node stage, nothing of vektra-assess/ui is copied
+    builder_part = text.split("AS builder", 1)[1]
+    assert "vektra-assess/ui" not in builder_part.replace("vektra_assess/ui/static", "")
+    ignore = DOCKERIGNORE.read_text()
+    assert "**/node_modules" in ignore
+    assert "vektra-assess/src/vektra_assess/ui/static" in ignore
+    esbuild = (REPO_ROOT / "vektra-assess/ui/esbuild.config.mjs").read_text()
+    assert "sourcemap: false" in esbuild and "manifest.json" in esbuild
+    pyproject = (REPO_ROOT / "vektra-assess/pyproject.toml").read_text()
+    assert 'artifacts = ["src/vektra_assess/ui/static/*"]' in pyproject
+
+
 def test_the_nginx_example_lets_only_the_assess_ui_be_framed() -> None:
     """Plan 9 (ARCH-076): the server keeps X-Frame-Options DENY; the UI location re-declares
     HSTS and nosniff (nginx drops inherited add_header) and never X-Frame-Options; the events

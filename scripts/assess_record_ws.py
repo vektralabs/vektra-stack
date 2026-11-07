@@ -182,13 +182,38 @@ _PDF_DECODERS: dict[bytes, Callable[[bytes], bytes]] = {
 }
 
 
-def _pdf_stream(dictionary: bytes, body: bytes) -> bytes | None:
+_PDF_ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
+#: bytes that, once unescaped, would change where a name ends: refuse rather than re-tokenize
+_PDF_SPECIAL = frozenset(b"\x00\t\n\x0c\r ()<>[]{}/%#")
+
+
+def _unescape_names(dictionary: bytes) -> bytes | None:
+    """Decode PDF name escapes (``/F#69lter`` is ``/Filter``); None when that is ambiguous.
+
+    A ``#`` that is not a valid escape, or an escape that decodes to white space, a delimiter
+    or ``#``, is refused: unescaping it would re-split the names a reader sees.
+    """
+    if b"#" not in dictionary:
+        return dictionary
+    escapes = _PDF_ESCAPE.findall(dictionary)
+    if len(escapes) != dictionary.count(b"#"):
+        return None
+    if any(int(h, 16) in _PDF_SPECIAL for h in escapes):
+        return None
+    return _PDF_ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), dictionary)
+
+
+def _pdf_stream(raw_dictionary: bytes, body: bytes) -> bytes | None:
     """The stream body decoded through its whole /Filter chain, in order; None if it cannot be.
 
-    No /Filter: the raw body (it is also part of the raw file scan). Fail closed on a filter
-    outside ``_PDF_DECODERS``, on /DecodeParms (a predictor rearranges the decoded bytes) and
-    on any decoding error.
+    No /Filter: the raw body (it is also part of the raw file scan). Name escapes (#xx) are
+    decoded first, so an escaped key or filter name is handled as the plain one. Fail closed
+    on an ambiguous escape, on a filter outside ``_PDF_DECODERS``, on /DecodeParms (a
+    predictor rearranges the decoded bytes) and on any decoding error.
     """
+    dictionary = _unescape_names(raw_dictionary)
+    if dictionary is None:
+        return None
     if b"/DecodeParms" in dictionary or b"/DP" in dictionary:
         return None
     keys = list(_PDF_FILTER_KEY.finditer(dictionary))

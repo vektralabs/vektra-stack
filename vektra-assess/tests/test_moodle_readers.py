@@ -702,11 +702,18 @@ def _zip(member: str, text: str) -> bytes:
     return buf.getvalue()
 
 
-def _pdf(body: bytes, filters: bytes = b"/FlateDecode", extra: bytes = b"") -> bytes:
+def _pdf(
+    body: bytes,
+    filters: bytes = b"/FlateDecode",
+    extra: bytes = b"",
+    key: bytes = b"/Filter",
+) -> bytes:
     return (
         b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n4 0 obj\n<< /Length "
         + str(len(body)).encode()
-        + b" /Filter "
+        + b" "
+        + key
+        + b" "
         + filters
         + extra
         + b" >>\nstream\n"
@@ -734,6 +741,13 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
             b"[/AHx /Fl]",
         ),
         "ahx": _pdf(b"BT (wstoken) Tj ET".hex().encode() + b">", b"/ASCIIHexDecode"),
+        # PDF name escapes (#xx) in the key and in a filter name are decoded first
+        "escaped_key": _pdf(zlib.compress(b"wstoken"), key=b"/F#69lter"),
+        "escaped_name": _pdf(zlib.compress(b"wstoken"), b"/Fl#61teDecode"),
+        "escaped_chain": _pdf(
+            base64.a85encode(zlib.compress(b"wstoken")) + b"~>",
+            b"[/ASCII85#44ecode /#46lateDecode]",
+        ),
     }.items():
         assert b"wstoken" not in data.lower(), name
         path = tmp_path / f"stu1__{name}.pdf"
@@ -765,6 +779,9 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
             base64.a85encode(zlib.compress(b"wstoken")) + b"~>",
             b"[/ASCII85Decode 6 0 R]",
         ),
+        # an escape that is not #xx, or one that decodes to a delimiter, is ambiguous
+        _pdf(zlib.compress(b"wstoken"), key=b"/F#zzlter"),
+        _pdf(zlib.compress(b"wstoken"), b"/A85#2FFlateDecode"),
     ],
     ids=[
         "unknown",
@@ -775,6 +792,8 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
         "undelimited",
         "indirect_filter",
         "indirect_in_chain",
+        "bad_escape",
+        "escaped_delimiter",
     ],
 )
 def test_the_file_scan_refuses_an_uninspectable_pdf_stream(

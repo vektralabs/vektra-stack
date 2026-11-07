@@ -361,3 +361,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     `X-Forwarded-Host` is read, the proxy forwards the client's `Host` (nginx example). With
     assess enabled, startup refuses an unset UI origin outside development (development starts,
     the page is 503 until set). Documented in configuration.md.
+  - #9 The manifest is read once per directory (`router.manifest_of`, `functools.cache`), a
+    missing bundle included: the bundle is part of the image, a new bundle is a new process.
+    The directory is `STATIC_DIR`; only tests override it (`app.state.assess_ui_static_dir`).

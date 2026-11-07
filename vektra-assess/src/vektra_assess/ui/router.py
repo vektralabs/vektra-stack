@@ -13,6 +13,7 @@ traversal can reach another file. Without a built bundle the page is 503.
 
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,14 @@ router = APIRouter(prefix=PREFIX, dependencies=[Depends(public_assess_ui)])
 def static_dir(request: Request) -> Path:
     override = getattr(request.app.state, "assess_ui_static_dir", None)
     return Path(override) if override else STATIC_DIR
+
+
+@functools.cache
+def manifest_of(directory: Path) -> dict[str, str] | None:
+    """``load_manifest`` once per directory for the process lifetime (review #9): the bundle
+    is part of the image, a new bundle is a new process. The directory is ``STATIC_DIR`` in
+    production; tests point ``app.state.assess_ui_static_dir`` at their own fixture bundle."""
+    return load_manifest(directory)
 
 
 def load_manifest(directory: Path) -> dict[str, str] | None:
@@ -108,7 +117,7 @@ async def ui_page(request: Request, site: str = "") -> Response:
     origin = await _site_origin(request, site)
     if origin is None:
         return Response(status_code=404, headers=page_headers(None))
-    manifest = load_manifest(static_dir(request))
+    manifest = manifest_of(static_dir(request))
     if manifest is None:
         return Response(status_code=503, headers=page_headers(None))
     html = TEMPLATES.get_template("page.html.j2").render(
@@ -126,7 +135,7 @@ async def ui_page(request: Request, site: str = "") -> Response:
 @router.get("/assets/{name}")
 async def ui_asset(request: Request, name: str) -> Response:
     directory = static_dir(request)
-    manifest = load_manifest(directory)
+    manifest = manifest_of(directory)
     if manifest is None or name not in manifest.values():
         return Response(status_code=404, headers=asset_headers())
     media = "text/javascript" if name.endswith(".js") else "text/css"

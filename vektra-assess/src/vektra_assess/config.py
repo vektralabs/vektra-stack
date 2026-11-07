@@ -443,6 +443,97 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_STATE_RPM",
         description="GET /state calls per minute per (site, student, activity).",
     )
+    enrolment_freshness_s: int = Field(
+        150,
+        ge=60,
+        le=3600,
+        alias="VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S",
+        description=(
+            "A turn needs an 'enrolled' re-check no older than this (gate step 6). The worker "
+            "re-checks every 60 s; a worker stopped longer than this rejects turns (fail closed)."
+        ),
+    )
+    start_rate_per_hour: int = Field(
+        5,
+        ge=1,
+        le=100,
+        alias="VEKTRA_ASSESS_START_RATE_PER_HOUR",
+        description="REQ-071: Start attempts per (student, activity) per hour; beyond it 429 'Riprova tra X minuti'.",
+    )
+    rollback_notify_after: int = Field(
+        3,
+        ge=1,
+        le=20,
+        alias="VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER",
+        description="REQ-071: consecutive system rollbacks of one (student, activity) that notify teacher and operator ('Problema tecnico persistente').",
+    )
+    start_breaker_rollbacks: int = Field(
+        10,
+        ge=2,
+        le=1000,
+        alias="VEKTRA_ASSESS_START_BREAKER_ROLLBACKS",
+        description="Per-site Start breaker: system rollbacks within the window that open it.",
+    )
+    start_breaker_window_s: int = Field(
+        300,
+        ge=30,
+        le=86_400,
+        alias="VEKTRA_ASSESS_START_BREAKER_WINDOW_S",
+        description="Per-site Start breaker: the window the rollbacks are counted in.",
+    )
+    start_breaker_cooldown_s: int = Field(
+        120,
+        ge=10,
+        le=86_400,
+        alias="VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S",
+        description="Per-site Start breaker: seconds fully open before one Start at a time is let through (half-open).",
+    )
+    flag_rpm: int = Field(
+        10,
+        ge=1,
+        le=600,
+        alias="VEKTRA_ASSESS_FLAG_RPM",
+        description="POST /sessions/{sid}/turns/{turn_no}/flag calls per minute per session (REQ-103).",
+    )
+    retry_rpm: int = Field(
+        6,
+        ge=1,
+        le=600,
+        alias="VEKTRA_ASSESS_RETRY_RPM",
+        description="POST /sessions/{sid}/retry calls per minute per session (REQ-086).",
+    )
+    outage_g_s: int = Field(
+        20,
+        ge=0,
+        le=300,
+        alias="VEKTRA_ASSESS_OUTAGE_G_S",
+        description=(
+            "REQ-086 G: an outage shorter than this earns no time back; a longer one is credited "
+            "in full, the cumulative credit capped at C = min(15 min, half the duration)."
+        ),
+    )
+    messages_per_min: int = Field(
+        4,
+        ge=1,
+        le=60,
+        alias="VEKTRA_ASSESS_MESSAGES_PER_MIN",
+        description=(
+            "Student messages per minute per session (REQ-083, M5.1); above it 429 'Attendi "
+            "qualche secondo', before any model call. One reply at a time already holds a real "
+            "student well under it."
+        ),
+    )
+    session_token_budget: int = Field(
+        500_000,
+        ge=10_000,
+        le=10_000_000,
+        alias="VEKTRA_ASSESS_SESSION_TOKEN_BUDGET",
+        description=(
+            "Estimated tokens (prompt + completion, TurnUsage) one session may use (REQ-083, "
+            "M5.1): budget_warning at 80%, the session closes budget_exhausted at 100%. Outage "
+            "retries and earlier sessions do not count."
+        ),
+    )
     max_message_chars: int = Field(
         2000,
         ge=1,
@@ -450,7 +541,8 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_MAX_MESSAGE_CHARS",
         description=(
             "Longest student message accepted (REQ-083); longer or blank is a 400 before any model "
-            "call. PROVISIONAL default: plan M5.1 sizes it on the reference session."
+            "call. Sized in M5.1: about 25x the longest eval-set question (76 chars), room for a "
+            "multi-paragraph argument, about 570 tokens (well inside the prompt budget)."
         ),
     )
     privacy_allow_unset: bool = Field(

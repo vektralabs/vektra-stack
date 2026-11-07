@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from vektra_assess.worker.preflight import Reason, rollback_start
 from vektra_assess.worker.runner import AcquireDb
+from vektra_assess.worker.start_guard import StartLimits
 
 log = structlog.get_logger(__name__)
 
@@ -34,7 +35,13 @@ _EXPIRED = text(
 )
 
 
-async def reap_starting(acquire: AcquireDb, start_t_s: int, *, batch: int = 100) -> int:
+async def reap_starting(
+    acquire: AcquireDb,
+    start_t_s: int,
+    *,
+    batch: int = 100,
+    limits: StartLimits | None = None,
+) -> int:
     """Roll back every expired, unleased STARTING session (one transaction each)."""
     async with acquire() as conn:
         ids: list[UUID] = [
@@ -45,7 +52,9 @@ async def reap_starting(acquire: AcquireDb, start_t_s: int, *, batch: int = 100)
     for sid in ids:
         async with acquire() as conn:
             async with conn.begin():
-                reaped += await rollback_start(conn, sid, Reason.START_TIMEOUT)
+                reaped += await rollback_start(
+                    conn, sid, Reason.START_TIMEOUT, limits=limits
+                )
     if reaped:
         log.info("assess_starting_reaped", count=reaped)
     return reaped

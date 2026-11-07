@@ -55,6 +55,11 @@ class JobKind(enum.StrEnum):
     ROTATE_KEYS = "rotate_keys"
     ERASURE = "erasure"
     PREFLIGHT = "preflight"  # plan assess-session-lifecycle (revision 0022)
+    RECONCILE_REPLY = "reconcile_reply"  # plan assess-session-lifecycle (revision 0024)
+    # enqueued by a service_failure close (revision 0026); delivered by plan transcript-delivery
+    TEACHER_NOTIFY = "teacher_notify"
+    # 3 consecutive system rollbacks (revision 0028); delivered by plan transcript-delivery
+    OPERATOR_NOTIFY = "operator_notify"
 
 
 def render_dedupe_key(site_id: object, userid: int, cmid: int) -> str:

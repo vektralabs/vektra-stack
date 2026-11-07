@@ -177,7 +177,8 @@ async def test_a_refused_resume_mint_leaves_the_jti_unconsumed(pg, worker) -> No
         r = await w.client.get(
             f"/api/v1/assess/sessions/{s.session_id}", headers=bearer(pre)
         )
-        assert r.status_code == 401 and "token" not in r.json()
+        # M3.4: past its deadline the session is closed lazily (timed_out): 409, no token
+        assert r.status_code == 409 and "token" not in r.json()
         jti = jwt.decode(pre, options={"verify_signature": False})["jti"]
         assert (
             await n(
@@ -187,3 +188,88 @@ async def test_a_refused_resume_mint_leaves_the_jti_unconsumed(pg, worker) -> No
             )
             == 1
         )
+
+
+async def test_the_stored_deadline_is_the_one_formula(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """M3.1: deadline_at == committed_at + cap + extra + credited, on the server's clock."""
+    from datetime import datetime
+
+    from vektra_assess.timing import deadline, remaining_s
+
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE", cap_minutes=30)
+        row = (
+            await pg.run(
+                "super",
+                "SELECT committed_at, duration_s, credited_outage_s, deadline_at "
+                "FROM assess_sessions WHERE id = :s",
+                {"s": s.session_id},
+            )
+        )[0]
+        assert row.deadline_at == deadline(
+            row.committed_at, row.duration_s, row.credited_outage_s
+        )
+        body = (
+            await w.client.get(
+                f"/api/v1/assess/sessions/{s.session_id}",
+                headers=bearer(s.session_token),
+            )
+        ).json()
+        now, dl = (
+            datetime.fromisoformat(body["server_now"]),
+            datetime.fromisoformat(body["deadline_at"]),
+        )
+        assert abs(body["remaining_s"] - remaining_s(dl, now)) <= 1
+        assert 29 * 60 <= body["remaining_s"] <= 30 * 60
+
+
+async def test_a_client_gone_after_start_still_commits_and_resumes(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """REQ-071 acceptance: the client disconnects right after Start (no stream, no poll); the
+    pre-flight commits anyway, the opening message is visible on resume, and the 202 carried no
+    attempt content or bot text (byte grep against the committed opening turns)."""
+    from support.preflight import FakePartB, deps, job_context
+    from support.sessions import fixture_target
+
+    from vektra_assess.worker.preflight import make_preflight_handler
+
+    async with world(pg) as w:
+        # Start through the route; the client keeps the 202 and leaves (no stream, no poll)
+        await seed_session(w, worker, "ELIGIBLE")
+        pre_start = await w.presession(*fixture_target())
+        r = await w.client.post("/api/v1/assess/sessions", headers=bearer(pre_start))
+        assert r.status_code == 202, r.text
+        start_202 = r.text
+        sid = uuid.UUID(r.json()["session_id"])
+        # the pre-flight runs with nobody connected
+        from assess_moodle_support import Replay, make_client
+        from support.preflight import activate, kek_ring
+        from test_context_capture import InProcessParser
+
+        from vektra_assess.worker.start_source import MoodleStartSource
+
+        await activate(pg)
+        source = MoodleStartSource(
+            make_client(Replay("4.3")), InProcessParser(), worker.connect
+        )
+        handler = make_preflight_handler(
+            deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek_ring())
+        )
+        await handler(job_context(worker, sid))
+        assert (
+            await n(
+                pg,
+                "SELECT count(*) FROM assess_sessions WHERE id = :s AND state = 'ACTIVE'",
+                s=sid,
+            )
+            == 1
+        )
+        # resume from a fresh page view (pre-session token): the opening is there
+        pre = await w.presession(*fixture_target())
+        got = await w.client.get(f"/api/v1/assess/sessions/{sid}", headers=bearer(pre))
+        assert got.status_code == 200, got.text
+        opening = [t["text"] for t in got.json()["turns"] if t["kind"] == "opening"]
+        assert len(opening) == 2 and all(opening)
+        # the 202 the client got before the commit carries none of it (byte grep)
+        for text_ in opening:
+            for line in (ln for ln in text_.splitlines() if len(ln) >= 12):
+                assert line not in start_202

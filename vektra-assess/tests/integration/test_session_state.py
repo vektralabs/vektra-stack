@@ -127,16 +127,25 @@ async def test_checking_then_eligible_with_one_deduped_check(pg, worker) -> None
         assert r.json()["state"] == "eligible" and r.json()["reason"] == "ok"
 
 
+@pytest.mark.parametrize(
+    ("assignment", "reason"),
+    [
+        ("hiddengrade", "not_released"),
+        ("team", "team_submission"),
+        ("guide", "marking_guide"),
+        ("nocutoff", "not_fully_graded"),
+    ],
+)
 async def test_a_negated_gate_changes_the_button_and_refuses_a_crafted_start(
-    pg, worker
+    pg, worker, assignment: str, reason: str
 ) -> None:  # type: ignore[no-untyped-def]
     async with world(pg) as w:
-        cm = cmid("hiddengrade")
+        cm = cmid(assignment)
         await configure_activity(pg, w.site, cm)
         await render(w, worker, STU1, cm)
         r = await state(w, await w.presession(sub=STU1, cmid=cm))
-        assert (
-            r.json()["state"] == "not_graded" and r.json()["reason"] == "not_released"
+        assert r.json()["state"] != "eligible" and r.json()["reason"] == reason, (
+            r.json()
         )
         start = await w.client.post(
             "/api/v1/assess/sessions",
@@ -144,10 +153,7 @@ async def test_a_negated_gate_changes_the_button_and_refuses_a_crafted_start(
                 "Authorization": f"Bearer {await w.presession(sub=STU1, cmid=cm)}"
             },
         )
-        assert (
-            start.status_code == 409
-            and err(start)["details"]["reason"] == "not_released"
-        )
+        assert start.status_code == 409 and err(start)["details"]["reason"] == reason
         assert (
             await n(pg, "SELECT count(*) FROM assess_sessions WHERE cmid = :c", c=cm)
             == 0

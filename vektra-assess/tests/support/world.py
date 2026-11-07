@@ -202,8 +202,9 @@ async def world(
     app.state.assess_engine = engine
     app.state.assess_settings = cfg
     from vektra_admin.rate_limit import RateLimiter
+    from vektra_assess.api.state import LIMITER_NAMES
 
-    app.state.assess_limiters = {"state": RateLimiter()}
+    app.state.assess_limiters = {name: RateLimiter() for name in LIMITER_NAMES}
     app.state.assess_keys = {
         "assess_token_signing": signing,
         "assess_handoff_private": priv,

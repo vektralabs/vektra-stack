@@ -10,9 +10,12 @@ from fastapi import APIRouter, Depends
 
 from vektra_assess.api import (
     events,
+    finish,
+    flag,
     housekeeping,
     mint,
     model_activations,
+    retry,
     sessions,
     setup_check,
     start,
@@ -36,3 +39,6 @@ router.include_router(sessions.router)
 router.include_router(events.router)
 router.include_router(turns.router)
 router.include_router(state.router)
+router.include_router(finish.router)
+router.include_router(retry.router)
+router.include_router(flag.router)

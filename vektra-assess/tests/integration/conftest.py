@@ -118,6 +118,27 @@ def pg() -> Iterator[Pg]:
         yield handle
 
 
+@pytest.fixture(autouse=True)
+def consumed_invariant(request: pytest.FixtureRequest) -> Iterator[None]:
+    """REQ-067 (plan 8 acceptance): after EVERY test that uses ``pg``, before a later test can
+    clean its rows up, on every session row: "consumed" (committed: ACTIVE, OUTAGE or CLOSED)
+    == "has a persisted opening bot turn" (CodeRabbit 4498473609)."""
+    yield
+    if "pg" not in request.fixturenames:
+        return
+    handle = request.getfixturevalue("pg")
+    bad = asyncio.run(handle.run("super", CONSUMED_INVARIANT))
+    assert bad == [], f"consumed != exists(opening bot turn) for {bad}"
+
+
+#: the rows that break consumed == exists(persisted opening bot turn); must be none
+CONSUMED_INVARIANT = (
+    "SELECT s.id, s.state FROM assess_sessions s "
+    "WHERE (s.state <> 'STARTING') <> EXISTS (SELECT 1 FROM assess_turns t "
+    "WHERE t.session_id = s.id AND t.role = 'bot' AND t.kind = 'opening')"
+)
+
+
 GENESIS = "genesis-hash"
 
 

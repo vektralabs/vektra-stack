@@ -42,7 +42,7 @@ def test_broker_sweeps_closed_and_rolled_back_channels_after_their_ttl_and_idle_
     closed, rolled, live, idle = (uuid.uuid4() for _ in range(4))
     b.publish(closed, "closed", {})
     b.publish(rolled, "start_rolled_back", {})
-    b.publish(live, "reply_delta", {"text": "x"})
+    b.publish(live, "reply_delta", {"text": "x"}, epoch=1)
     b.publish(idle, "turn_accepted", {})
     clock.t += 30
     b.publish(live, "reply_done", {})  # recent activity

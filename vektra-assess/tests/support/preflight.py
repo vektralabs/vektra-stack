@@ -117,13 +117,20 @@ class FakeSource:
         stall: bool = False,
         inner: StartSource | None = None,
         facts: MoodleGateFacts = PASSING_FACTS,
+        enrolled: bool | None = True,
     ) -> None:
+        self.enrolled_value = enrolled
         self.result = result
         self.raises = raises
         self.stall = stall
         self.inner = inner
         self.facts = facts
         self.targets: list[StartTarget] = []
+
+    async def enrolled(self, target: StartTarget) -> bool | None:
+        if self.inner is not None:
+            return await self.inner.enrolled(target)
+        return self.enrolled_value
 
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
         if self.inner is not None:
@@ -201,10 +208,14 @@ class FakeStreamRunner:
         *,
         release: asyncio.Event | None = None,
         fail: BaseException | None = None,
+        segment_delay_s: float = 0.0,
     ) -> None:
         self.segments = segments
         self.release = release
         self.fail = fail
+        self.segment_delay_s = (
+            segment_delay_s  # a slow provider, between released segments
+        )
         self.turns: list[Any] = []
 
     async def run_stream(
@@ -219,11 +230,28 @@ class FakeStreamRunner:
             await self.release.wait()
         if self.fail is not None:
             raise self.fail
+        released: list[str] = []
+        interrupted = False
         for seg in self.segments:
+            if self.segment_delay_s:
+                if stop is not None:
+                    try:
+                        await asyncio.wait_for(stop.wait(), self.segment_delay_s)
+                    except TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(self.segment_delay_s)
+            if stop is not None and stop.is_set():
+                interrupted = (
+                    True  # like the real runner: only what was already released
+                )
+                break
+            released.append(seg)
             yield ReleasedSegment(seg)
-        text = "".join(self.segments)
+        text = "".join(released)
         now = datetime.now(UTC)
         yield TurnResult(
+            interrupted=interrupted,
             text=text,
             marks=(),
             behaviour_class=None,

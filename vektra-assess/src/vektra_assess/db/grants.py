@@ -49,11 +49,13 @@ TABLES: tuple[str, ...] = (
     "assess_site_capabilities",
     "assess_site_keys",
     "assess_sites",
+    "assess_start_breaker",
     "assess_snapshots",
     "assess_start_attempts",
     "assess_token_jti",
     "assess_transcript_download_tokens",
     "assess_transcripts",
+    "assess_turn_flags",
     "assess_turns",
 )
 
@@ -112,6 +114,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_render_state": {"SELECT": _ALL},
         "assess_gate_inputs": {"SELECT": _ALL},
         "assess_enrolment_checks": {"SELECT": _ALL},
+        # the outage cap C of the lazy close (plan 8 M3.4): read only
+        "assess_outage_incidents": {"SELECT": _ALL},
         "assess_heartbeat": {"SELECT": _ALL},
         # not probe_manifest: the fixture expectations are the worker's
         "assess_sites": {"SELECT": _SITES_API_READ},
@@ -122,12 +126,16 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_sessions": {
             "SELECT": _ALL,
             "INSERT": _ALL,
-            "UPDATE": (
-                "epoch",
-            ),  # seq and last_activity_at move only via the functions
+            # seq and last_activity_at move only via the functions; tokens_used is the REQ-083
+            # session budget the TurnDriver adds each answered turn's TurnUsage to (rev 0027)
+            "UPDATE": ("epoch", "tokens_used"),
         },
         # SELECT: the Start cap and the rollback reason of a STARTING session (plan 8)
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL},
+        # the per-site Start breaker: written by the worker only, read for the fast refusal
+        "assess_start_breaker": {"SELECT": _ALL},
+        # REQ-103 flags (revision 0030): one marker per bot turn, never updated or deleted here
+        "assess_turn_flags": {"SELECT": _ALL, "INSERT": _ALL},
         # mint inserts, Start / resume consume (plan 8); identity columns never change
         "assess_token_jti": {
             "SELECT": _ALL,
@@ -195,6 +203,12 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "DELETE": _ALL,
         },
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
+        "assess_start_breaker": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": _ALL,
+            "DELETE": _ALL,
+        },
         "assess_consumed_jtis": {"SELECT": _ALL, "DELETE": _ALL},
         # the done-job cleanup tick deletes expired mint rows (plan 8)
         "assess_token_jti": {"SELECT": _ALL, "DELETE": _ALL},
@@ -238,6 +252,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         },
         "assess_snapshots": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
         "assess_turns": {"SELECT": _ALL, "INSERT": _ALL, "DELETE": _ALL},
+        "assess_turn_flags": {
+            "SELECT": _ALL,
+            "DELETE": _ALL,
+        },  # transcript reads, purge deletes
         "assess_session_keys": {
             "SELECT": _ALL,
             "INSERT": _ALL,
@@ -275,7 +293,18 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
                 "close_reason",
                 "closed_at",
                 "pending_reply_since",  # revision 0023 (plan 8): the one-reply-at-a-time rule
+                "epoch",  # revision 0025: every close bumps the epoch (revokes session tokens)
+                # revision 0026 (plan 8 M4): the outage functions credit the outage and move the
+                # deadline by the one formula
+                "credited_outage_s",
+                "deadline_at",
             ),
+        },
+        # revision 0026: ACTIVE -> OUTAGE records the interval, its end sets ended_at + credit
+        "assess_outage_incidents": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": ("ended_at", "credited_s"),
         },
         "assess_session_handoff": {"SELECT": _ALL, "DELETE": _ALL},
         "assess_snapshots": {"SELECT": _ALL},
@@ -296,7 +325,11 @@ SEQUENCE_USAGE: Mapping[str, tuple[str, ...]] = {
         "assess_start_attempts_id_seq",
     ),
     WORKER: SEQUENCES,
-    DEFINER: ("assess_audit_events_id_seq", "assess_jobs_id_seq"),
+    DEFINER: (
+        "assess_audit_events_id_seq",
+        "assess_jobs_id_seq",
+        "assess_outage_incidents_id_seq",  # revision 0026
+    ),
 }
 
 #: privileges on tables OUTSIDE ``assess_*`` (every other table: none at all, checked by the
@@ -324,13 +357,19 @@ EXTERNAL_TABLES: tuple[str, ...] = ("query_traces",)
 #: SECURITY DEFINER functions (signature -> roles with EXECUTE). Never PUBLIC.
 FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     "get_session_material(uuid,integer)": (API,),
-    "assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)": (API,),
+    # the worker's reconcile_reply appends the marked interrupted turn (revision 0024)
+    "assess_append_turn(uuid,integer,integer,text,text,bytea,text,text)": (API, WORKER),
     "assess_close_session(uuid,integer,text)": (API, WORKER),
+    # REQ-086 (revision 0026): the API's turn drivers move a session into OUTAGE, the worker's
+    # outage probe ends it with the credit
+    "assess_enter_outage(uuid,integer,timestamp with time zone,text)": (API,),
+    "assess_end_outage(uuid,integer)": (WORKER,),
 }
 
 
 def render_statements() -> list[str]:
-    """The SQL of revision 0015, in order: revoke everything, then grant the matrix."""
+    """The SQL of the latest grants revision, in order: revoke everything, then grant the
+    matrix, then the SECURITY DEFINER functions' EXECUTE (rendered from revision 0024 on)."""
     out: list[str] = []
     tables = ", ".join(TABLES)
     roles = ", ".join(ROLES)
@@ -350,4 +389,10 @@ def render_statements() -> list[str]:
         seqs = SEQUENCE_USAGE.get(role, ())
         if seqs:
             out.append(f"GRANT USAGE ON SEQUENCE {', '.join(seqs)} TO {role}")
+    # SECURITY DEFINER functions (rendered since revision 0024): never PUBLIC, exactly FUNCTIONS
+    for sig, allowed in sorted(FUNCTIONS.items()):
+        # never from the definer: it OWNS the functions, revoking would strip its own EXECUTE
+        out.append(f"REVOKE ALL ON FUNCTION public.{sig} FROM PUBLIC, {API}, {WORKER}")
+        for role in allowed:
+            out.append(f"GRANT EXECUTE ON FUNCTION public.{sig} TO {role}")
     return out

@@ -78,12 +78,16 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.CAPABILITY_PROBE: _WS,
     JobKind.TRANSCRIPT_GENERATE: KindPolicy("transcript", 30, 60),
     JobKind.TRANSCRIPT_DELIVER: KindPolicy("delivery", 30, 60),
+    JobKind.TEACHER_NOTIFY: KindPolicy("delivery", 30, 60),
+    JobKind.OPERATOR_NOTIFY: KindPolicy("delivery", 30, 60),
     # the setup check makes about twenty live Moodle calls: own pool, 120 s hard timeout
     JobKind.SETUP_CHECK: KindPolicy("setup", 120, 240),
     JobKind.PURGE: _MAINT,
     JobKind.ROTATE_KEYS: _MAINT,
     JobKind.ERASURE: _MAINT,
     JobKind.SESSION_DEADLINE: _MAINT,
+    # unwrap the DEK, append one marked turn: short, its own budget in the maintenance pool
+    JobKind.RECONCILE_REPLY: KindPolicy("maintenance", 20, 40, 3),
 }
 
 _POOL_PREFIX = "VEKTRA_ASSESS_POOL_"

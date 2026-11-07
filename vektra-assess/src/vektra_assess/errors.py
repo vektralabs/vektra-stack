@@ -53,6 +53,7 @@ __all__ = [
     "assess_unavailable",
     "bad_request",
     "capacity_reached",
+    "deadline_passed",
     "key_not_bound",
     "loginas_refused",
     "plugin_too_old",
@@ -75,6 +76,19 @@ def assess_unavailable(failing_item: str) -> ErrorResponse:
         code=ERR_ASSESS_001,
         message="The assessment discussion service is unavailable.",
         remediation=f"Readiness item failing: {failing_item}. See GET /health/assess.",
+    )
+
+
+def start_breaker_open(retry_after_s: int) -> ErrorResponse:
+    """503: the site's Start breaker is open (plan 8 M5.4); nothing was consumed."""
+    wait = max(int(retry_after_s), 1)
+    return ErrorResponse(
+        category=ErrorCategory.TRANSIENT,
+        code=ERR_ASSESS_001,
+        message="Servizio momentaneamente non disponibile.",
+        remediation=f"Retry after about {wait} seconds; the session was not used.",
+        retry_after=wait,
+        details={"reason": "start_breaker_open"},
     )
 
 
@@ -180,6 +194,17 @@ def state_conflict(state: str) -> ErrorResponse:
     )
 
 
+def deadline_passed() -> ErrorResponse:
+    """409: the session's time is over; input is locked (REQ-070)."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_011,
+        message="Il tempo della discussione è scaduto.",
+        remediation="No further messages can be sent in this session.",
+        details={"reason": "deadline_passed"},
+    )
+
+
 def rate_limited(retry_after_s: int, reason: str = "rate_limit") -> ErrorResponse:
     wait = max(int(retry_after_s), 1)
     return ErrorResponse(
@@ -230,3 +255,23 @@ def plugin_too_old() -> ErrorResponse:
         message="The Moodle plugin version is below the minimum this service accepts.",
         remediation="Upgrade local_vektradiscuss on the Moodle site.",
     )
+
+
+#: close reason -> the content-free message code the plugin renders (in Italian, client side).
+#: ``closed_service_failure`` is REQ-086's "Sessione interrotta per un problema tecnico, non per
+#: causa tua. Il docente è stato avvisato e può abilitarti una nuova sessione."
+CLOSE_MESSAGE_CODES = {
+    reason: f"closed_{reason}"
+    for reason in (
+        "finished",
+        "timed_out",
+        "service_failure",
+        "budget_exhausted",
+        "terminated_by_teacher",
+        "access_revoked",
+    )
+}
+
+
+def close_message_code(reason: str | None) -> str | None:
+    return CLOSE_MESSAGE_CODES.get(reason) if reason else None

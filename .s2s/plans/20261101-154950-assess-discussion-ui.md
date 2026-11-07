@@ -132,7 +132,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [x] Warnings and outage: SSE `warning` → polite live region once; `outage_start/outage_end` → banner with credited-time text; no stack traces or codes shown
 - [x] `src/views/closing.ts` (REQ-072): per close reason texts (finished: "Sessione conclusa il <data>; trascrizione inviata al docente"; terminated_by_teacher: "Sessione chiusa dal docente; trascrizione disponibile"; timed_out, service_failure, budget_exhausted, access_revoked), REQ-093 hint "Ti consigliamo di scaricare una copia della trascrizione", "Visualizza / scarica la tua trascrizione" button driving the download-token flow; input disabled
 - [x] REQ-103 marker (COULD; last task, skip and record if plan 8 did not ship the flag endpoint): "Segnala un errore dell'assistente" on bot turns while ACTIVE/OUTAGE only; one confirmation; marker label "segnalato dallo studente"; hidden after CLOSED
-- [ ] `src/messages.it.ts` with every user-facing string; no string concatenation of server text into markup
+- [x] `src/messages.it.ts` with every user-facing string; no string concatenation of server text into markup
 
 ### Deployment
 - [ ] Fix `deploy/nginx/vektra.conf.example`: keep `X-Frame-Options DENY` at server level, add `location /api/v1/assess/ui` (and its `/assets/`) that proxies identically and re-declares HSTS + nosniff WITHOUT `X-Frame-Options` (nginx drops inherited `add_header` when a location declares its own — comment this); events location keeps `proxy_buffering off`
@@ -256,4 +256,9 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     `handoff` is `vektra-assess-token` (the ready/token handshake) and the others are
     `vektra-assess-ready`, `-resize`, `-download-token-request`, `-download-token`. The table in
     `docs/reference/api.md` ("Assess UI") is the contract both sides test against.
+  - Item picker (SHOULD): NOT built. `GET /sessions/{sid}` carries no item labels (plan 8's
+    payload has turns only), and this plan must not add payload fields to plan 8's routes; the
+    task and its acceptance criterion stay open (a follow-up with a server-provided label list).
+  - The flag confirmation is the browser's native `confirm()` (one confirmation, keyboard and
+    screen-reader operable); Fine has its own modal `<dialog>`.
 

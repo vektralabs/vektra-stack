@@ -53,6 +53,29 @@
 
 ---
 
+### BUG-029: the documented `namespace` form field of `POST /api/v1/ingest` was ignored
+
+**Status**: completed (2026-11-07) | **Priority**: high | **Created**: 2026-11-07
+**Origin**: the v0.8.0 widget acceptance run. Its ingest step sent `-F namespace=vk080`, got 200 for both documents, and every student question then answered "I couldn't find relevant information": the documents were in `default`.
+
+**Context**: the endpoint read the form field under the parameter's own name, `namespace_form`, because the `Form()` had no alias. The served OpenAPI schema listed `file, namespace_form, metadata`. Two dates, because the defect is the gap between them:
+- the **behaviour** is old: `namespace_form` has been the field name since 000a27d (2026-03-13), and it is in v0.7.1. The endpoint docstring said only "query param or form field", vague but naming no field;
+- the **false statement** is new: the form-field table in `docs/reference/api.md`, added in this cycle by 934cb66 (FEAT-026, 2026-09-08, not an ancestor of `main`), documented the field as `namespace`. v0.7.1 never shipped it.
+
+So without a fix, v0.8.0 would have published a reference doc written in this cycle that sends an integrator's documents to the wrong namespace, silently: 200, a `document_id`, a chunk count, and the course's students cannot retrieve any of it while whoever queries `default` can.
+
+**Fix, and the alternative not taken**: either the code accepts the documented name, or the table row is deleted and the query parameter stays the only way. The code was aligned to the doc: `namespace` is the name the query parameter already uses, `namespace_form` was an internal artefact, and no client sends it (searched in vektra-stack, vektra-moodle and vektra-internal on `develop` and `main`: only the endpoint itself and one test). The fix is an alias on the existing parameter, not a second parameter, so one field cannot be read two ways. `POST /api/v1/ingest/batch` was checked and needs nothing: its docs promise the namespace only as a query parameter, which is what it reads.
+
+**Acceptance criteria**:
+- [x] `-F namespace=X` lands in X; with both, the form field wins over the query, as documented; the query alone still works
+- [x] The test fails without the alias (mutation: the two form-field cases and the reserved-namespace-by-form case go red, the query-only controls stay green)
+- [x] The served OpenAPI schema lists `namespace` among the form fields
+- [ ] The v0.8.0 widget acceptance run ingests into the course namespace through the documented field
+
+**Traceability**: FEAT-026 (the doc table), 000a27d (the field name), the v0.8.0 release PR.
+
+---
+
 ### FEAT-028: enable course-material RAG for assessment discussions (guarded)
 
 **Status**: draft | **Priority**: low | **Created**: 2026-11-01

@@ -225,8 +225,11 @@ async def ingest(
     background_tasks: BackgroundTasks,
     file: UploadFile,
     namespace: str = Query("default"),
+    # The form field is `namespace`, as documented: without the alias FastAPI reads
+    # a field named after the parameter, and a documented `-F namespace=X` landed
+    # in "default" with a 200 (BUG-029).
     namespace_form: str | None = Form(
-        None, description="Target namespace (overrides query param)"
+        None, alias="namespace", description="Target namespace (overrides query param)"
     ),
     metadata: str | None = Form(
         None,

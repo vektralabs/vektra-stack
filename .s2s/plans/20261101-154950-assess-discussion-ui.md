@@ -460,3 +460,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     nothing can be sent with the cleared token.
   - 4501070043 A turn that fails (lost or an error status) reopens the composer only if the
     session is still ACTIVE with no reply owed (`sendFailed`).
+  - 4501070038, 4501070048 A snapshot in OUTAGE (a resume: `outage_start` is not replayed)
+    shows the outage banner and the frozen time left from `remaining_s`, rounded up.

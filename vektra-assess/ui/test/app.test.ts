@@ -527,3 +527,25 @@ describe("a failed send after the state changed (4501070043)", () => {
     });
   }
 });
+
+describe("resuming into an outage (4501070038, 4501070048)", () => {
+  it("shows the outage banner and the frozen time left", async () => {
+    const { a, priv, pending, flush, root } = harness();
+    priv.state = { name: "resuming" };
+    const read = (a as unknown as { refresh: () => Promise<unknown> }).refresh.call(a);
+    await flush();
+    pending[0].resolve(
+      view([{ turn_no: 1, role: "bot", text: "a" }], {
+        state: "OUTAGE",
+        reply_pending: true,
+        remaining_s: 125,
+      }),
+    );
+    await read;
+    expect(priv.state.name).toBe("outage");
+    const banner = root.querySelector(".banner") as HTMLElement;
+    expect(banner.hidden).toBe(false);
+    expect(banner.textContent).toContain("temporaneamente non disponibile");
+    expect(a.controls.timer.textContent).toBe("Mancano 3 minuti");
+  });
+});

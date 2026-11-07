@@ -20,6 +20,7 @@ interface SessionView {
   deadline_at: string | null;
   server_now: string;
   reply_pending: boolean;
+  remaining_s?: number; // frozen at the outage start while in OUTAGE
   turns: Turn[];
   token?: string;
 }
@@ -227,8 +228,20 @@ export class App {
     this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
     if (view.state !== "STARTING") this.chat.render(view.turns);
     this.replyPending = view.reply_pending;
+    if (view.state === "OUTAGE") {
+      // a resume into an outage gets no outage_start replayed: the snapshot says it, and the
+      // frozen time left comes from it (4501070038, 4501070048)
+      this.showOutage();
+      if (typeof view.remaining_s === "number")
+        this.controls.setTime(minutesLeft(view.remaining_s * 1000, 0));
+    }
     this.syncComposer();
     this.tick();
+  }
+
+  private showOutage(): void {
+    this.banner.replaceChildren(h("p", { text: M.outage }));
+    this.banner.hidden = false;
   }
 
   /** The one rule for the composer: open only while ACTIVE and no reply is owed. */
@@ -285,8 +298,7 @@ export class App {
       case "budget_warning":
         return;
       case "outage_start":
-        this.banner.replaceChildren(h("p", { text: M.outage }));
-        this.banner.hidden = false;
+        this.showOutage();
         this.dispatch({ type: "outage_start" });
         if (this.state.name === "outage") this.live.say(M.outageLive); // why, and Riprova
         return;

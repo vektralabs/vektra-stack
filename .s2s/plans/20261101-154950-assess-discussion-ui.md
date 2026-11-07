@@ -131,7 +131,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [ ] Item picker (SHOULD): list of server-generated item labels from the session payload; selecting inserts `Spiegami: <label>` into the composer and focuses it; never sends; listbox keyboard pattern
 - [x] Warnings and outage: SSE `warning` → polite live region once; `outage_start/outage_end` → banner with credited-time text; no stack traces or codes shown
 - [x] `src/views/closing.ts` (REQ-072): per close reason texts (finished: "Sessione conclusa il <data>; trascrizione inviata al docente"; terminated_by_teacher: "Sessione chiusa dal docente; trascrizione disponibile"; timed_out, service_failure, budget_exhausted, access_revoked), REQ-093 hint "Ti consigliamo di scaricare una copia della trascrizione", "Visualizza / scarica la tua trascrizione" button driving the download-token flow; input disabled
-- [ ] REQ-103 marker (COULD; last task, skip and record if plan 8 did not ship the flag endpoint): "Segnala un errore dell'assistente" on bot turns while ACTIVE/OUTAGE only; one confirmation; marker label "segnalato dallo studente"; hidden after CLOSED
+- [x] REQ-103 marker (COULD; last task, skip and record if plan 8 did not ship the flag endpoint): "Segnala un errore dell'assistente" on bot turns while ACTIVE/OUTAGE only; one confirmation; marker label "segnalato dallo studente"; hidden after CLOSED
 - [ ] `src/messages.it.ts` with every user-facing string; no string concatenation of server text into markup
 
 ### Deployment

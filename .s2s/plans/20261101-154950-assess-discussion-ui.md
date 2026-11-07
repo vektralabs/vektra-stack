@@ -445,3 +445,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - review 5811279241 (router, outside diff) The page and asset refusals carry the standard
     error envelope (404 ERR-ASSESS-003, 429 ERR-ASSESS-012 `ui_page_rate`, 503 ERR-ASSESS-001
     naming `ui_origin`, `site_origin` or `ui_bundle`) with the same framing headers.
+  - review 5811279241 (e2e harness, outside diff and nitpick) `Harness.__init__ -> None`; a
+    failed worker tick is logged with structlog (`error_type`, `error=str(exc)`), not printed.

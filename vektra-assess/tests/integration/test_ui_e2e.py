@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import structlog
 import uvicorn
 from assess_moodle_support import Replay, make_client, manifest
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -62,6 +63,8 @@ from vektra_assess.worker.preflight import make_preflight_handler
 from vektra_assess.worker.start_source import MoodleStartSource
 
 pytestmark = pytest.mark.integration
+
+log = structlog.get_logger(__name__)
 
 UI_DIR = Path(__file__).resolve().parents[2] / "ui"
 BRANCH = "4.3"
@@ -143,7 +146,9 @@ class Runner:
 
 
 class Harness:
-    def __init__(self, w: Any, worker: Any, runner: Runner, ports: dict[str, int]):
+    def __init__(
+        self, w: Any, worker: Any, runner: Runner, ports: dict[str, int]
+    ) -> None:
         self.w = w
         self.worker = worker
         self.runner = runner
@@ -166,7 +171,11 @@ class Harness:
             try:
                 await self._tick()
             except Exception as exc:  # pragma: no cover - surfaced by the specs failing
-                print("e2e worker tick failed:", type(exc).__name__, exc)
+                log.warning(
+                    "e2e_worker_tick_failed",
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
             await asyncio.sleep(0.3)
 
     async def _tick(self) -> None:

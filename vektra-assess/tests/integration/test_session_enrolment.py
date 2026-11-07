@@ -236,3 +236,26 @@ async def test_the_event_stream_needs_a_fresh_enrolment_check(pg, worker) -> Non
             headers=bearer(s.session_token),
         )
         assert r.status_code == 503 and "enrolment_freshness" in err(r)["remediation"]
+
+
+async def test_a_recheck_is_dated_before_the_moodle_read(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5809548168 (enrolment.py 75-105): the re-check row is dated when
+    the read started, not when the (slow) answer was written."""
+    import asyncio
+
+    class Slow(FakeSource):
+        async def enrolled(self, target):  # type: ignore[no-untyped-def]
+            await asyncio.sleep(1.5)
+            return True
+
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        before = (await pg.run("super", "SELECT clock_timestamp()"))[0][0]
+        assert await recheck_one(worker.connect, Slow(), s.session_id) == "enrolled"
+        lag = await pg.run(
+            "super",
+            "SELECT extract(epoch FROM max(checked_at) - :b) FROM assess_enrolment_checks "
+            "WHERE session_id = :s",
+            {"s": s.session_id, "b": before},
+        )
+        assert float(lag[0][0]) < 1.0, lag

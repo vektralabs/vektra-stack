@@ -45,9 +45,13 @@ _SESSION = text(
     "s.state, c.activity_type, c.flags FROM assess_sessions s JOIN assess_activity_config c "
     "ON c.site_id = s.site_id AND c.cmid = s.cmid WHERE s.id = :sid"
 )
+#: dated when the Moodle read STARTED (database clock), not when its answer is written: a
+#: slow read must not make the observation look fresher (CodeRabbit review 5809548168)
 _RECORD = text(
-    "INSERT INTO assess_enrolment_checks (session_id, result) VALUES (:s, :r)"
+    "INSERT INTO assess_enrolment_checks (session_id, result, checked_at) "
+    "VALUES (:s, :r, :observed)"
 )
+_CLOCK = text("SELECT clock_timestamp()")
 _TRIM = text(
     "DELETE FROM assess_enrolment_checks WHERE session_id = :s "
     "AND checked_at < now() - interval '1 hour' AND id <> (SELECT max(id) FROM "
@@ -74,6 +78,7 @@ async def recheck_one(acquire: AcquireDb, source: StartSource, sid: UUID) -> str
     """Re-check one session; returns the recorded result (None for a stale job)."""
     async with acquire() as conn:
         row = (await conn.execute(_SESSION, {"sid": sid})).first()
+        observed = (await conn.execute(_CLOCK)).scalar_one()  # before the read
     if row is None or row.state not in ("ACTIVE", "OUTAGE"):
         return None
     target = StartTarget(
@@ -100,7 +105,7 @@ async def recheck_one(acquire: AcquireDb, source: StartSource, sid: UUID) -> str
     )
     async with acquire() as conn:
         async with conn.begin():
-            await conn.execute(_RECORD, {"s": sid, "r": result})
+            await conn.execute(_RECORD, {"s": sid, "r": result, "observed": observed})
             await conn.execute(_TRIM, {"s": sid})
             if result == "not_enrolled":
                 await conn.execute(_CLOSE, {"sid": sid, "epoch": row.epoch})

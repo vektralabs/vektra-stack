@@ -250,7 +250,14 @@ def _file_layers(name: str, data: bytes) -> list[tuple[str, bytes]]:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 layers += [(f"{name}!{m}", zf.read(m)) for m in zf.namelist()]
-        except zipfile.BadZipFile:
+        except (
+            zipfile.BadZipFile,  # bad archive, bad CRC
+            RuntimeError,  # encrypted member
+            NotImplementedError,  # unsupported compression method
+            EOFError,  # truncated member data
+            zlib.error,  # damaged deflate data
+            ValueError,  # malformed header fields
+        ):
             layers.append((f"{name}{UNINSPECTABLE}", b""))
     if data[:5] == b"%PDF-":
         streams = list(_PDF_STREAM.finditer(data))

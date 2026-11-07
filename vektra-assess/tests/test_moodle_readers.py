@@ -830,6 +830,42 @@ def test_the_file_scan_fails_on_a_contaminated_file(
     assert any(needle in h for h in _scan(path))
 
 
+def _patched_zip(
+    *, flag: int = 0, method: int | None = None, damage: bool = False
+) -> bytes:
+    """A one-member deflated zip with its headers patched (encrypted flag, method, data)."""
+    data = bytearray(_zip("word/document.xml", "<w:t>" + "wstoken " * 50 + "</w:t>"))
+    cd = data.index(b"PK\x01\x02")
+    for at in (6, cd + 8):  # general-purpose flags: local header, central directory
+        data[at] |= flag
+    if method is not None:
+        for at in (8, cd + 10):
+            data[at : at + 2] = method.to_bytes(2, "little")
+    if damage:
+        member = data.index(b"PK\x03\x04", 4)  # the second local header
+        start = member + 30 + int.from_bytes(data[member + 26 : member + 28], "little")
+        data[start : start + 8] = b"\xff" * 8
+    return bytes(data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _patched_zip(flag=0x1),  # encrypted member: RuntimeError
+        _patched_zip(method=99),  # unsupported compression: NotImplementedError
+        _patched_zip(damage=True),  # damaged deflate data: zlib.error
+    ],
+    ids=["encrypted", "unsupported_method", "damaged"],
+)
+def test_the_file_scan_refuses_a_zip_member_it_cannot_read(
+    branch: str, data: bytes, tmp_path: Path
+) -> None:
+    """CodeRabbit 4499897038: only BadZipFile was caught; a member read error escaped."""
+    path = tmp_path / "stu1__locked.docx"
+    path.write_bytes(data)
+    assert any("uninspectable" in h for h in _scan(path))
+
+
 def test_the_file_scan_passes_a_clean_file_and_refuses_an_unreadable_zip(
     branch: str, tmp_path: Path
 ) -> None:

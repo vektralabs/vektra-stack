@@ -34,6 +34,9 @@ export class App {
   private abort = new AbortController();
   private pendingDownload: string | null = null;
   private replyPending = false; // the server owes a reply to the last student turn
+  private readsIssued = 0; // GET /sessions/{sid} reads started, in order
+  private readApplied = 0; // the newest read applied to the screen
+  private lastTurnNo = 0; // the highest turn number on screen from a snapshot
   readonly live = new LiveRegion(M.statusLive);
   readonly status = h("p", { class: "status", id: "status", tabindex: "-1" });
   readonly banner = h("div", { class: "banner", role: "region", "aria-label": M.outage, hidden: true });
@@ -192,7 +195,20 @@ export class App {
     }
   }
 
+  /** Read the session and apply it, unless a newer read was applied meanwhile or the UI is
+   *  closed: overlapping refreshes never put an older transcript back on screen. */
+  private async refresh(): Promise<SessionView | null> {
+    const seq = ++this.readsIssued;
+    const view = await this.fetchSession();
+    if (!view || seq < this.readApplied || this.state.name === "closed") return null;
+    this.readApplied = seq;
+    this.apply(view);
+    return view;
+  }
+
   private apply(view: SessionView): void {
+    if (this.state.name === "closed") return; // a late snapshot never reopens the screen
+    this.lastTurnNo = Math.max(0, ...view.turns.map((t) => t.turn_no));
     this.deadline = view.deadline_at ? Date.parse(view.deadline_at) : null;
     this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
     if (view.state !== "STARTING") this.chat.render(view.turns);
@@ -230,8 +246,7 @@ export class App {
     }
     switch (ev.event) {
       case "committed": {
-        const view = await this.fetchSession();
-        if (view) this.apply(view);
+        await this.refresh();
         this.dispatch({ type: "committed" });
         return;
       }
@@ -243,8 +258,7 @@ export class App {
       case "reply_done":
       case "reply_interrupted": {
         // the persisted turn replaces the streamed text: the DOM shows exactly what was stored
-        const view = await this.fetchSession();
-        if (view) this.apply(view);
+        await this.refresh();
         this.chat.replyDone(ev.event === "reply_interrupted");
         return;
       }
@@ -295,8 +309,13 @@ export class App {
     if (r.status === 202) {
       this.chat.composer.value = "";
       const body = (await r.json()) as { turn_no: number };
-      this.chat.add({ turn_no: body.turn_no, role: "student", kind: "normal", text });
-      this.replyPending = true;
+      // a snapshot applied meanwhile may already hold this turn (and its reply): it is the
+      // server's word, so nothing is added and no reply is assumed owed
+      if (body.turn_no > this.lastTurnNo) {
+        this.chat.add({ turn_no: body.turn_no, role: "student", kind: "normal", text });
+        this.lastTurnNo = body.turn_no;
+        this.replyPending = true;
+      }
       return this.syncComposer();
     }
     const help =
@@ -332,8 +351,7 @@ export class App {
     }
     // not concluded (or unknown): re-read the session so the screen shows the server's state
     // (still active, or closed meanwhile), then say so
-    const view = await this.fetchSession();
-    if (view) this.apply(view);
+    await this.refresh();
     if (this.state.name !== "closed") {
       this.setStatus(M.finishFailed);
       this.live.say(M.finishFailed);

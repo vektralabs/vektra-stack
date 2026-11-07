@@ -343,3 +343,94 @@ describe("review #10: Fine and flag failures", () => {
     );
   });
 });
+
+// --- CodeRabbit round 1 on PR #157 ------------------------------------------------------------
+
+type Deferred = { url: string; resolve: (r: Response) => void };
+
+function harness() {
+  const pending: Deferred[] = [];
+  const fetchImpl = ((url: string) =>
+    new Promise<Response>((resolve) => pending.push({ url, resolve }))) as unknown as typeof fetch;
+  const root = document.createElement("main");
+  document.body.replaceChildren(root);
+  const a = new App(
+    { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+    new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
+    root,
+    fetchImpl,
+  );
+  const priv = a as unknown as {
+    state: { name: string };
+    sid: string;
+    onEvent: (e: unknown) => Promise<void>;
+    sendTurn: () => Promise<void>;
+  };
+  priv.state = { name: "active" };
+  priv.sid = "S";
+  root.append(a.chat.root);
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  return { a, priv, pending, flush, root };
+}
+
+function view(turns: { turn_no: number; role: string; text: string }[], extra: object = {}) {
+  return Response.json({
+    session_id: "S",
+    state: "ACTIVE",
+    close_reason: null,
+    deadline_at: new Date(Date.now() + 600000).toISOString(),
+    server_now: new Date().toISOString(),
+    reply_pending: false,
+    remaining_s: 600,
+    turns: turns.map((t) => ({ kind: t.turn_no === 1 ? "opening" : "normal", ...t })),
+    ...extra,
+  });
+}
+
+describe("snapshot ordering (4501070026, 4501070021, review 5811279241 app.ts 295-301)", () => {
+  it("an older session read that arrives last does not replace the newer view", async () => {
+    const { priv, pending, flush, root } = harness();
+    const one = priv.onEvent({ event: "reply_done", data: "{}" });
+    const two = priv.onEvent({ event: "reply_done", data: "{}" });
+    await flush();
+    expect(pending.map((p) => p.url)).toEqual(["/api/sessions/S", "/api/sessions/S"]);
+    pending[1].resolve(view([{ turn_no: 1, role: "bot", text: "a" }, { turn_no: 2, role: "student", text: "b" }]));
+    await two;
+    pending[0].resolve(view([{ turn_no: 1, role: "bot", text: "a" }]));
+    await one;
+    expect(root.querySelectorAll("article.turn").length).toBe(2);
+  });
+
+  it("a session read that completes after the close is ignored", async () => {
+    const { priv, pending, flush, root } = harness();
+    const late = priv.onEvent({ event: "reply_done", data: "{}" });
+    await flush();
+    await priv.onEvent({ event: "closed", data: '{"close_reason":"finished"}' });
+    pending[0].resolve(view([{ turn_no: 1, role: "bot", text: "a" }]));
+    await late;
+    expect(priv.state.name).toBe("closed");
+    expect(root.querySelectorAll("button.flag").length).toBe(0);
+  });
+
+  it("a 202 read after a snapshot that already holds the turn adds nothing and owes nothing", async () => {
+    const { a, priv, pending, flush, root } = harness();
+    a.chat.composer.value = "ciao";
+    const post = priv.sendTurn();
+    await flush();
+    // the reply completed and its snapshot (with the student turn) is applied first
+    const done = priv.onEvent({ event: "reply_done", data: "{}" });
+    await flush();
+    pending[1].resolve(
+      view([
+        { turn_no: 1, role: "bot", text: "a" },
+        { turn_no: 2, role: "student", text: "ciao" },
+        { turn_no: 3, role: "bot", text: "risposta" },
+      ]),
+    );
+    await done;
+    pending[0].resolve(Response.json({ session_id: "S", turn_no: 2 }, { status: 202 }));
+    await post;
+    expect(root.querySelectorAll("article.turn").length).toBe(3);
+    expect(a.chat.composer.disabled).toBe(false);
+  });
+});

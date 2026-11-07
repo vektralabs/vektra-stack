@@ -447,3 +447,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     naming `ui_origin`, `site_origin` or `ui_bundle`) with the same framing headers.
   - review 5811279241 (e2e harness, outside diff and nitpick) `Harness.__init__ -> None`; a
     failed worker tick is logged with structlog (`error_type`, `error=str(exc)`), not printed.
+  - 4501070026, 4501070021, review 5811279241 (app.ts 295-301) Session reads go through
+    `App.refresh()`: numbered, an older read finishing last is dropped, nothing is applied
+    once closed; a 202 whose turn a newer snapshot already holds adds nothing and does not
+    mark a reply owed.

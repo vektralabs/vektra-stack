@@ -323,7 +323,7 @@ export class App {
         body: JSON.stringify({ text }),
       });
     } catch {
-      return this.chat.setEnabled(true, M.sendFailed);
+      return this.sendFailed(M.sendFailed);
     }
     if (r.status === 202) {
       this.chat.composer.value = "";
@@ -337,9 +337,15 @@ export class App {
       }
       return this.syncComposer();
     }
-    const help =
-      r.status === 429 ? M.waitAFewSeconds : r.status === 409 ? M.replyPending : M.sendFailed;
-    this.chat.setEnabled(r.status !== 409, help);
+    if (r.status === 409) return this.chat.setEnabled(false, M.replyPending);
+    this.sendFailed(r.status === 429 ? M.waitAFewSeconds : M.sendFailed);
+  }
+
+  /** A turn that did not go through: the composer opens again only if the session is still
+   *  ACTIVE with no reply owed (an outage or a close meanwhile keeps it closed, 4501070043). */
+  private sendFailed(help: string): void {
+    if (this.state.name === "active" && !this.replyPending) this.chat.setEnabled(true, help);
+    else this.syncComposer();
   }
 
   private async retry(): Promise<void> {

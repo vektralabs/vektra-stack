@@ -458,3 +458,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501067236, 4501070051 An outage is announced once in the polite region, naming Riprova;
     unavailable is announced and disables the composer and Fine and closes an open dialog, so
     nothing can be sent with the cleared token.
+  - 4501070043 A turn that fails (lost or an error status) reopens the composer only if the
+    session is still ACTIVE with no reply owed (`sendFailed`).

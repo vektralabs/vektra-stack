@@ -506,3 +506,24 @@ describe("outage and unavailable (4501067236, 4501070051)", () => {
     expect(a.controls.dialog.hasAttribute("open")).toBe(false);
   });
 });
+
+describe("a failed send after the state changed (4501070043)", () => {
+  for (const [label, answer] of [
+    ["a lost request", null],
+    ["an error status", new Response("", { status: 500 })],
+  ] as const) {
+    it(`${label} during an outage leaves the composer closed`, async () => {
+      const { a, priv, pending, flush } = harness();
+      (a as unknown as { render: (b: unknown) => void }).render.call(a, { name: "active" });
+      a.chat.composer.value = "ciao";
+      const post = priv.sendTurn();
+      await flush();
+      await priv.onEvent({ event: "outage_start", data: "{}" });
+      if (answer) pending[0].resolve(answer);
+      else (pending[0] as unknown as { resolve: (r: unknown) => void }).resolve(Promise.reject(new TypeError("net")));
+      await post;
+      expect(priv.state.name).toBe("outage");
+      expect(a.chat.composer.disabled).toBe(true);
+    });
+  }
+});

@@ -337,3 +337,8 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     and the SQL `site_origin_sql()` (the column choice is made in Python, not with a regex in
     SQL); `ui_origin_problem` normalises both sides, so `HTTPS://M.Example:443` equals
     `https://m.example`.
+  - #3 `ui_origin_distinct` judges the UI origin against the same Moodle origin the router puts
+    in `frame-ancestors`: the run reads `moodle_origin` with the site row and passes it to
+    `evaluate()` (`CheckContext.moodle_origin`); `site_origin()` picks the column, else the
+    origin of `base_url`. `ui_not_same_origin` (same-site with base_url and the API) is
+    unchanged.

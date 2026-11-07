@@ -96,6 +96,7 @@ async def good(
         kw.pop("pm", None) or derive_probe_manifest(manifest(branch)),
         registry=kw.pop("registry", None),
         now=now(branch),
+        **({"moodle_origin": kw.pop("moodle_origin")} if "moodle_origin" in kw else {}),
     )
     assert not replay.unmatched
     return replay, {i.name: (i.result, i.reason_code) for i in out.items}, out
@@ -504,3 +505,23 @@ async def test_ui_origin_distinct_item(branch: str) -> None:
         ),
     )
     assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_not_https")
+
+
+async def test_ui_origin_distinct_uses_the_sites_moodle_origin_column(
+    branch: str,
+) -> None:
+    """Review #3: the same Moodle origin as the UI router (``moodle_origin``, else the origin of
+    ``base_url``), through the same normalisation."""
+    from vektra_assess.ui.origins import url_origin
+
+    # the column names the UI origin itself, spelled differently: refused
+    _r, items, _o = await good(branch, moodle_origin="HTTPS://Chat.Vektra-UI.test:443")
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_equals_moodle_origin")
+    # the column wins over base_url: a UI on the base_url's origin is judged against the column
+    moodle = url_origin(site_for(branch).base_url)
+    _r, items, _o = await good(
+        branch,
+        cfg=settings(VEKTRA_ASSESS_UI_ORIGIN=moodle),
+        moodle_origin="https://moodle-frame.example",
+    )
+    assert items["ui_origin_distinct"] == ("OK", None)

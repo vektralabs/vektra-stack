@@ -187,9 +187,10 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [ ] Delivery tests with injected clock: SMTP down for a simulated 2 h then up → each recipient exactly one message on the sink; no-STARTTLS sink → 0 messages, RETRYING + TLS alert; crash between 250 and SENT commit → one SENT row, ≤ 1 duplicate on the sink with identical Message-ID, audit event present; 72 h expiry → FAILED + alert; header injection payload in course shortname → single header on the wire
 - [ ] API tests: student B's token for A's transcript → 403 + audit; replayed token → 401; expired token (clock) → 401; non-grader teacher → 403; admin key on download-token mint → 403 (non-inheriting); resend with `recipient` in body or query → 400; response headers asserted
 - [ ] NFR-021 benchmark `tests/nfr/test_assess_transcript_timing.py`: 50 sessions closed concurrently on the compose stack with the mail sink; measure `generated_at - closed_at` and `sent_at - closed_at`
-- [ ] Accessibility: axe-core scan of a rendered transcript (quiz + assignment fixtures with math) and HTML validation (`html5validator` or `vnu` container) for UTF-8 and `lang`
+- [x] Accessibility: axe-core scan of a rendered transcript (quiz + assignment fixtures with math) and HTML validation (`html5validator` or `vnu` container) for UTF-8 and `lang` (`tests/integration/test_transcript_a11y.py`; manual NVDA read-through BLOCKED, see Notes)
 - [ ] CI: add the new modules to the BUG-027 import list (worker side), `aiosmtplib`/`latex2mathml` declared explicitly in `vektra-assess/pyproject.toml`; mypy path list; `test-assess` job picks the new tests up
-- [ ] Docs: `docs/reference/api.md` transcript endpoints; `docs/reference/configuration.md` + `.env.example` SMTP settings; `CHANGELOG.md` [Unreleased] Added
+- [x] Docs (10a): `docs/reference/api.md` transcript endpoints and `/state` fields, `docs/reference/error-codes.md` 017-021, `configuration.md` + `.env.example` transcript settings, `CHANGELOG.md` [Unreleased] Added
+- [ ] Docs (10b): `docs/reference/configuration.md` + `.env.example` SMTP settings; CHANGELOG for delivery
 
 ## State & Data Lifecycle
 

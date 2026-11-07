@@ -139,6 +139,11 @@ _ADD = text(
     "'PENDING', :now) ON CONFLICT (transcript_id, round, recipient_ref) DO NOTHING "
     "RETURNING id"
 )
+_READD = text(
+    "UPDATE assess_deliveries SET status = 'PENDING', not_before = :now, "
+    "last_error_class = NULL, smtp_code = NULL, attempt_started_at = NULL "
+    "WHERE id = :i AND status = 'REPLACED' RETURNING id"
+)
 _CLAIM = text(
     "WITH due AS (SELECT id, attempt_started_at AS prev FROM assess_deliveries "
     "WHERE transcript_id = :t AND kind = 'transcript' AND status IN ('PENDING', 'RETRYING') "
@@ -198,7 +203,15 @@ async def _audit(
 async def _fan_out(
     conn: Any, t: Any, refs: Sequence[str], now: datetime, out: Delivered
 ) -> None:
-    """REPLACED for live rows no longer configured; new rows for configured refs, <= 3."""
+    """Make the round's rows match the configuration NOW (REQ-082 as amended).
+
+    The cap counts the refs configured now (``configured_recipients`` keeps at most 3), so
+    every configured ref has exactly one row per round: missing -> INSERT, ``REPLACED`` ->
+    back to ``PENDING`` (re-added). A live row whose ref is no longer configured is
+    ``REPLACED``; a final row (``SENT``, ``FAILED``) of such a ref stays as history and takes
+    no slot. A row in flight is left alone (its outcome decides; the next pass looks again).
+    """
+    assert len(refs) <= MAX_RECIPIENTS  # configured_recipients caps the configuration
     rows = (await conn.execute(_ROWS, {"t": t.id})).all()
     rounds = sorted({r.round for r in rows if r.status in LIVE}) or (
         [] if rows else [1]
@@ -218,27 +231,27 @@ async def _fan_out(
                     delivery_id=str(r.id),
                 )
                 out.replaced += 1
-        kept = {r.recipient_ref for r in mine if r.status != "REPLACED"}
-        kept -= {
-            r.recipient_ref
-            for r in mine
-            if r.status in LIVE
-            and r.recipient_ref not in refs
-            and r.attempt_started_at is None
-        }
-        known = {r.recipient_ref for r in mine}
+        by_ref = {r.recipient_ref: r for r in mine if r.recipient_ref is not None}
         for ref in refs:
-            if ref in known or len(kept) >= MAX_RECIPIENTS:
-                continue
-            got = (
-                await conn.execute(_ADD, {"t": t.id, "r": rnd, "ref": ref, "now": now})
-            ).scalar()
+            row = by_ref.get(ref)
+            reason: str | None = None
+            if row is None:
+                got = (
+                    await conn.execute(
+                        _ADD, {"t": t.id, "r": rnd, "ref": ref, "now": now}
+                    )
+                ).scalar()
+            elif row.status == "REPLACED":
+                got = (await conn.execute(_READD, {"i": row.id, "now": now})).scalar()
+                reason = "re_added"
+            else:
+                continue  # already has its row (live, SENT or FAILED)
             if got is not None:
-                kept.add(ref)
                 await _audit(
                     conn,
                     AssessAuditEvent.DELIVERY_RECIPIENT_ADDED,
                     t,
+                    reason=reason,
                     round=rnd,
                     new=ref,
                     delivery_id=str(got),

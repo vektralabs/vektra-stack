@@ -536,3 +536,62 @@ async def test_the_subject_carries_the_real_course_short_name(pg, worker, sink) 
         for item in sink.messages:
             subject = str(item.message["Subject"])
             assert "EA 2026/27" in subject and "EA-2026-27" not in subject
+
+
+async def test_a_recipient_removed_and_added_back_is_mailed(pg, worker, sink) -> None:  # type: ignore[no-untyped-def]
+    """Review #2: removed -> REPLACED; configured again in the same round -> the same row goes
+    back to PENDING (audited as re-added) and is delivered."""
+    a, b = "a@unical.it", "b@unical.it"
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, pair = await _ready(w, worker, (a, b))
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        sink.fault = "4xx"
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        await configure_recipients(pg, w.site, s.cmid, (a,), pair=pair)
+        clock.advance(minutes=2)
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        status = {r.recipient_ref: r.status for r in await rows(pg, s.session_id)}
+        assert status[recipient_ref(w.site, b)] == "REPLACED"
+        await configure_recipients(pg, w.site, s.cmid, (a, b), pair=pair)
+        sink.fault = None
+        clock.advance(minutes=10)
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        final = await rows(pg, s.session_id)
+        assert {r.status for r in final} == {"SENT"} and len(final) == 2
+        assert len(sink.to(a)) == 1 and len(sink.to(b)) == 1
+        readded = await events(pg, s.session_id, "assess_delivery_recipient_added")
+        assert [(e.reason_code, e.data["new"]) for e in readded] == [
+            ("re_added", recipient_ref(w.site, b))
+        ]
+        await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
+
+
+async def test_a_failed_address_no_longer_configured_frees_its_slot(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #3: the cap counts the refs configured NOW. A FAILED row of an address the
+    teacher removed stays as history and does not keep the corrected address out."""
+    a, bad, b, c = "a@unical.it", "x@gmail.example", "b@unical.it", "c@unical.it"
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, pair = await _ready(w, worker, (a, bad, b))
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        sink.fault = "4xx"
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        by = {r.recipient_ref: r.status for r in await rows(pg, s.session_id)}
+        assert by[recipient_ref(w.site, bad)] == "FAILED"
+        await configure_recipients(pg, w.site, s.cmid, (a, b, c), pair=pair)
+        sink.fault = None
+        clock.advance(minutes=2)
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        by = {r.recipient_ref: r.status for r in await rows(pg, s.session_id)}
+        assert by == {
+            recipient_ref(w.site, a): "SENT",
+            recipient_ref(w.site, b): "SENT",
+            recipient_ref(w.site, c): "SENT",
+            recipient_ref(w.site, bad): "FAILED",  # history, not a slot
+        }
+        assert [len(sink.to(x)) for x in (a, b, c, bad)] == [1, 1, 1, 0]

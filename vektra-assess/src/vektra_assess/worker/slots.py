@@ -61,6 +61,7 @@ TICK_OWNERS: dict[str, str] = {
     "enrolment_recheck": SESSION,
     "gate_refresh": SESSION,
     "delivery_retry": TRANSCRIPT,
+    "smtp_probe": TRANSCRIPT,
     "purge": PRIVACY,
     "setup_check": MOODLE_WS,
 }
@@ -117,6 +118,8 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
         t("enrolment_recheck", 60, 40, locks.ENROLMENT_RECHECK, jitter_s=10),
         t("gate_refresh", 300, 60, locks.GATE_REFRESH, jitter_s=30),  # design default
         t("delivery_retry", 30, 30, locks.DELIVERY_RETRY, jitter_s=5),  # design default
+        # INT-003 readiness of the relay for /health/assess; never sends (design default)
+        t("smtp_probe", 300, 45, locks.SMTP_PROBE, jitter_s=30, run_on_startup=True),
         t("purge", 86_400, 600, locks.PURGE, jitter_s=3600),  # daily
         t(
             "setup_check",

@@ -32,6 +32,9 @@ LEASE_REAPER = _key(12)  # finishes exhausted leases whose audit write failed
 ADMISSION = _key(
     13
 )  # transaction-scoped: the pre-flight admission count (plan session-lifecycle)
+SMTP_PROBE = _key(
+    14
+)  # plan transcript-delivery 10b: EHLO/STARTTLS/AUTH/QUIT, never sends
 
 
 def all_keys() -> dict[str, int]:

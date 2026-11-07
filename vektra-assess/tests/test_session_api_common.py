@@ -144,7 +144,8 @@ def test_turn_notes_fit_the_check_with_multibyte_labels() -> None:
         marks=tuple("\U0001d510" * 40 + str(i) for i in range(40)),
         behaviour_class=None,
         contest_entries=tuple(
-            ContestEntry(f"{i:02d}" + "\U0001d510" * 200, "corrected") for i in range(40)
+            ContestEntry(f"{i:02d}" + "\U0001d510" * 200, "corrected")
+            for i in range(40)
         ),
         language="it",
         usage=TurnUsage(1, 1),

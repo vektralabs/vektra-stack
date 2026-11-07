@@ -371,3 +371,15 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     trade-off: a disabled site or a new `moodle_origin` takes effect within 30 s, not at once.
     Per address rather than per site: random site ids are the flood, so a per-site key would
     not bound it.
+  - #6 Origin model, ONE backend and TWO public origins: the API origin (Moodle server-side
+    mint, admin, everything else; `X-Frame-Options: DENY`) and the UI origin
+    (`VEKTRA_ASSESS_UI_ORIGIN`: the page, its assets and only the student routes the page calls
+    on its own origin, `connect-src 'self'`: `/state`, `/sessions...`, `/transcripts/...` for
+    plan 10; everything else 404; never `X-Frame-Options`). The two rules do not conflict: the
+    distinctness the setup check enforces (`ui_not_same_origin`: another site than Moodle and
+    the API; `ui_origin_distinct`: another origin than every Moodle origin) is about the
+    browser-visible origin, not the backend. ADR-0030 (ARCH-076: "a TLS Vektra origin reachable
+    from student browsers") already describes exactly this, so no ADR change. The nginx example
+    has a separate UI `server` (headers declared once at server level, no `add_header` in its
+    locations); the API server returns 404 for `/api/v1/assess/ui`. Documented in the
+    service-account guide; `nginx -t` passes on the example (nginx 1.27).

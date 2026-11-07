@@ -359,21 +359,83 @@ def test_the_assess_ui_bundle_is_built_in_its_own_stage_and_only_its_output_ship
     assert 'artifacts = ["src/vektra_assess/ui/static/*"]' in pyproject
 
 
-def test_the_nginx_example_lets_only_the_assess_ui_be_framed() -> None:
-    """Plan 9 (ARCH-076): the server keeps X-Frame-Options DENY; the UI location re-declares
-    HSTS and nosniff (nginx drops inherited add_header) and never X-Frame-Options; the events
-    stream keeps proxy_buffering off."""
+def _nginx_servers(conf: str) -> dict[tuple[str, str], str]:
+    """``(server_name, listen) -> block text`` of the example's server blocks."""
+    import re
+
+    out: dict[tuple[str, str], str] = {}
+    for block in conf.split("\nserver {")[1:]:
+        name = re.search(r"server_name\s+([^;]+);", block)
+        listen = re.search(r"listen\s+([^;]+);", block)
+        assert name and listen
+        out[(name.group(1).strip(), listen.group(1).split()[0])] = block
+    return out
+
+
+def _locations(block: str) -> dict[str, str]:
+    import re
+
+    return {
+        m.group(1).strip(): m.group(2)
+        for m in re.finditer(r"location\s+([^{]+)\{([^}]*)\}", block)
+    }
+
+
+def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
+    """Plan 9 review #6 (ARCH-076): the discussion UI has its own server block (its own origin,
+    the one in VEKTRA_ASSESS_UI_ORIGIN): the page, its assets and only the student API routes the
+    page calls on its own origin (CSP connect-src 'self'), never X-Frame-Options; everything else
+    there is 404. The API server keeps X-Frame-Options DENY and does not serve the page."""
+    from vektra_assess.moodle.setup_check import same_site
+
     conf = (REPO_ROOT / "deploy/nginx/vektra.conf.example").read_text()
-    server_level = conf.split("location /", 1)[0]
-    assert "add_header X-Frame-Options DENY always;" in server_level
-    ui = conf.split("location /api/v1/assess/ui {", 1)[1].split("}", 1)[0]
+    servers = _nginx_servers(conf)
+    api, ui = servers[("YOUR_DOMAIN", "443")], servers[("YOUR_UI_DOMAIN", "443")]
+
+    api_server_level = api.split("location ", 1)[0]
+    assert "add_header X-Frame-Options DENY always;" in api_server_level
+    api_locations = _locations(api)
+    assert "return 404;" in api_locations["^~ /api/v1/assess/ui"]
+    assert "proxy_buffering off;" in api_locations["/"]
+
     assert "X-Frame-Options" not in ui
+    ui_server_level = ui.split("location ", 1)[0]
     assert (
         'add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'
-        in ui
+        in ui_server_level
     )
-    assert "add_header X-Content-Type-Options nosniff always;" in ui
-    root = conf.split("location / {", 1)[1].split("}", 1)[0]
+    assert "add_header X-Content-Type-Options nosniff always;" in ui_server_level
+    ui_locations = _locations(ui)
+    for body in ui_locations.values():
+        assert (
+            "add_header" not in body
+        )  # nginx would drop the server-level headers there
+    assert set(ui_locations) == {
+        "^~ /api/v1/assess/ui",
+        "= /api/v1/assess/state",
+        "^~ /api/v1/assess/sessions",
+        "^~ /api/v1/assess/transcripts/",
+        "/",
+    }
     assert (
-        "proxy_buffering off;" in root
-    )  # /api/v1/assess/sessions/{sid}/events goes here
+        ui_locations["/"].strip() == "return 404;"
+    )  # no mint, teacher or admin route here
+    assert (
+        "proxy_buffering off;" in ui_locations["^~ /api/v1/assess/sessions"]
+    )  # the events
+    for name, body in ui_locations.items():
+        if name != "/":
+            assert "proxy_set_header Host $host;" in body
+            assert "proxy_set_header X-Forwarded-Proto $scheme;" in body
+
+    # the example values the header documents pass the setup check's same-site items
+    import re
+
+    examples = dict(re.findall(r"#\s+(YOUR_\w+|MOODLE)\s+e\.g\.\s+(\S+)", conf))
+    ui_origin = f"https://{examples['YOUR_UI_DOMAIN']}"
+    assert not same_site(
+        ui_origin, f"https://{examples['YOUR_DOMAIN']}"
+    )  # same_site_as_api
+    assert not same_site(
+        ui_origin, f"https://{examples['MOODLE']}"
+    )  # same_site_as_moodle

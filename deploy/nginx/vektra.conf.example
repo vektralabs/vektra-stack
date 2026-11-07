@@ -1,9 +1,26 @@
 # Nginx reverse proxy with TLS termination for Vektra (NFR-012).
 #
+# Two public origins, one backend (plan 9, ARCH-076):
+#   YOUR_DOMAIN      e.g. vektra.uni.example
+#       the API: Moodle's server-side calls (token mint), admin, every other route.
+#   YOUR_UI_DOMAIN   e.g. assess.vektra-chat.example
+#       the assess discussion UI only, framed by Moodle: VEKTRA_ASSESS_UI_ORIGIN is
+#       https://YOUR_UI_DOMAIN. It must be another SITE than the API and than Moodle
+#       (e.g. not a subdomain of either: the setup check refuses same_site_as_api and
+#       same_site_as_moodle), and another origin than every Moodle site (the plugin's
+#       iframe has allow-same-origin). The page calls the API on its OWN origin (CSP
+#       connect-src 'self'), so this server proxies the few student routes it needs to the
+#       same backend; nothing else is reachable on it.
+#   MOODLE           e.g. moodle.uni.example
+#
+# The backend sees the client's Host on both (the UI page answers only when scheme+Host are
+# VEKTRA_ASSESS_UI_ORIGIN). If nginx runs in another container than the API, set uvicorn's
+# FORWARDED_ALLOW_IPS to its address so X-Forwarded-Proto/For are trusted.
+#
 # Usage:
 #   1. Copy to /etc/nginx/sites-available/vektra.conf
-#   2. Replace YOUR_DOMAIN with your actual domain
-#   3. Place TLS certificates at the paths below (or use certbot)
+#   2. Replace YOUR_DOMAIN and YOUR_UI_DOMAIN with your actual domains
+#   3. Place TLS certificates at the paths below (or use certbot), one pair per domain
 #   4. ln -s /etc/nginx/sites-available/vektra.conf /etc/nginx/sites-enabled/
 #   5. nginx -t && systemctl reload nginx
 
@@ -15,10 +32,11 @@ upstream vektra_backend {
 # Redirect HTTP to HTTPS
 server {
     listen 80;
-    server_name YOUR_DOMAIN;
+    server_name YOUR_DOMAIN YOUR_UI_DOMAIN;
     return 301 https://$host$request_uri;
 }
 
+# --- the API --------------------------------------------------------------------------------
 server {
     listen 443 ssl;
     http2 on;
@@ -59,23 +77,9 @@ server {
         proxy_read_timeout 300s;
     }
 
-    # Assess discussion UI (plan 9, ARCH-076): this page and its assets are shown in an iframe
-    # on the Moodle site, so they must NOT carry X-Frame-Options; the page's own CSP
-    # frame-ancestors allows exactly the site's Moodle origin. nginx drops EVERY inherited
-    # add_header as soon as a location declares one of its own, so HSTS and nosniff are
-    # re-declared here and X-Frame-Options deliberately is not. Every other location keeps
-    # the server-level DENY (and the API sets it too).
-    location /api/v1/assess/ui {
-        proxy_pass http://vektra_backend;
-        proxy_http_version 1.1;
-        proxy_set_header X-Request-ID $request_id;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Host $host;
-        proxy_set_header Connection "";
-
-        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-        add_header X-Content-Type-Options nosniff always;
+    # The discussion UI is served on YOUR_UI_DOMAIN only (the API answers 503 here anyway)
+    location ^~ /api/v1/assess/ui {
+        return 404;
     }
 
     # Health check (no TLS overhead for internal monitoring)
@@ -92,5 +96,80 @@ server {
         allow 192.168.0.0/16;
         deny all;
         access_log off;
+    }
+}
+
+# --- the assess discussion UI (VEKTRA_ASSESS_UI_ORIGIN) -------------------------------------
+# Framed by the Moodle sites: NO X-Frame-Options anywhere in this server (the page's own CSP
+# frame-ancestors allows exactly the site's Moodle origin). The headers are declared once, at
+# server level: nginx drops every inherited add_header as soon as a location declares one, so
+# no location below declares any.
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name YOUR_UI_DOMAIN;
+
+    ssl_certificate     /etc/ssl/certs/vektra-ui.crt;
+    ssl_certificate_key /etc/ssl/private/vektra-ui.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+
+    client_max_body_size 1m;
+
+    # the page and its content-hashed assets
+    location ^~ /api/v1/assess/ui {
+        proxy_pass http://vektra_backend;
+        proxy_http_version 1.1;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+    }
+
+    # resume without sid: the open session through the pre-session token
+    location = /api/v1/assess/state {
+        proxy_pass http://vektra_backend;
+        proxy_http_version 1.1;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+    }
+
+    # Start, resume, turns, retry, flag, Fine and the event stream (no buffering)
+    location ^~ /api/v1/assess/sessions {
+        proxy_pass http://vektra_backend;
+        proxy_http_version 1.1;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    # the closing-screen transcript download (plan 10)
+    location ^~ /api/v1/assess/transcripts/ {
+        proxy_pass http://vektra_backend;
+        proxy_http_version 1.1;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+    }
+
+    # nothing else: no token mint, teacher, admin or health route on the UI origin
+    location / {
+        return 404;
     }
 }

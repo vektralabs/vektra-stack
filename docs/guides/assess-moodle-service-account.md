@@ -117,10 +117,19 @@ served by Vektra (`GET /api/v1/assess/ui?site=<site id>`) on its own origin,
 - Each site's `moodle_origin` (on `assess_sites`, a bare origin) is the one origin allowed to
   frame the page (CSP `frame-ancestors`) and to exchange postMessage with it. A site without it
   falls back to the origin of its `base_url`.
-- The reverse proxy must not add `X-Frame-Options` to `/api/v1/assess/ui`: the shipped nginx
-  example (`deploy/nginx/vektra.conf.example`) keeps `X-Frame-Options: DENY` everywhere else and
-  has a dedicated location for the UI that re-declares HSTS and `nosniff` without it. nginx drops
-  every inherited `add_header` once a location declares its own, so copy the whole block. A
-  deployment that copied the older example sends `DENY` on the UI too, and the iframe stays
-  blank.
+- The UI origin has its own server on the reverse proxy. The origin model: ONE backend, TWO
+  public origins. The API origin (`VEKTRA_ASSESS_API_PUBLIC_ORIGIN`) serves Moodle's
+  server-side calls (token mint), admin and every other route, with `X-Frame-Options: DENY`.
+  The UI origin (`VEKTRA_ASSESS_UI_ORIGIN`) serves the page, its assets and only the student
+  routes the page calls on its own origin (CSP `connect-src 'self'`): `GET /state`,
+  `/sessions...` (Start, resume, turns, retry, flag, Fine, the event stream) and, with plan 10,
+  `/transcripts/...`; everything else there is 404, and it never sends `X-Frame-Options`. "The
+  UI calls the API on its own origin" and "the UI origin is distinct from the API origin" do
+  not conflict: the rule is about the browser-visible origin (another site than the API and
+  than Moodle, so `ui_not_same_origin` and `ui_origin_distinct` pass), not about the backend
+  behind it. The shipped nginx example (`deploy/nginx/vektra.conf.example`) has both servers;
+  the UI page answers only when the request's scheme and `Host` are the UI origin, so the
+  proxy must forward `Host` (and, from another container, be in uvicorn's
+  `FORWARDED_ALLOW_IPS`). A deployment that copied an older example serves the page on the API
+  origin, where it is now 503.
 

@@ -631,8 +631,8 @@ describe("409 on a session read (4501070018, 4501067255)", () => {
     expect(priv.state).toEqual({ name: "closed", reason: "unknown" });
     await priv.onEvent({ event: "closed", data: '{"close_reason":"budget_exhausted"}' });
     expect(priv.state).toEqual({ name: "closed", reason: "budget_exhausted" });
+    // one notice, with the reason (the 409's "unknown" waits for it: 4501067255 follow-up)
     expect(posted.filter((m) => m.type === "vektra-assess-closed").map((m) => m.reason)).toEqual([
-      "unknown",
       "budget_exhausted",
     ]);
   });
@@ -774,5 +774,69 @@ describe("replay of an earlier reply while a later turn is pending (4501070057 f
     expect(a.live.announcements).toBe(1);
     expect(root.querySelectorAll("article.turn").length).toBe(5);
     expect(root.textContent!.match(/vecchia risposta/g)!.length).toBe(1);
+  });
+});
+
+describe("the close learnt from a 409, on a real stream (4501067255 follow-up)", () => {
+  function streamed() {
+    let push: (s: string) => void = () => {};
+    const events = new ReadableStream<Uint8Array>({
+      start(c) {
+        push = (s) => c.enqueue(new TextEncoder().encode(s));
+      },
+    });
+    const fetchImpl = (async (url: string) => {
+      if (url.endsWith("/events")) return new Response(events, { status: 200 });
+      return Response.json({ detail: { error: { code: "ERR-ASSESS-009", remediation: "r" } } }, { status: 409 });
+    }) as unknown as typeof fetch;
+    const posted: { type: string; reason?: string }[] = [];
+    const root = document.createElement("main");
+    document.body.replaceChildren(root);
+    const a = new App(
+      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      new Bridge(
+        { parent: { postMessage: (m: unknown) => posted.push(m as never) }, addEventListener: () => {} },
+        "https://m.example",
+      ),
+      root,
+      fetchImpl,
+    );
+    const priv = a as unknown as {
+      state: { name: string; reason?: string };
+      sid: string;
+      token: string;
+      closeReasonWaitMs: number;
+      openStream: () => void;
+      refresh: () => Promise<unknown>;
+    };
+    priv.state = { name: "active" };
+    priv.sid = "S";
+    priv.token = "T";
+    priv.closeReasonWaitMs = 200;
+    priv.openStream.call(a);
+    const closedSent = () => posted.filter((m) => m.type === "vektra-assess-closed").map((m) => m.reason);
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    return { a, priv, push, closedSent, wait, root };
+  }
+
+  it("the 409 first, then the closed event: one notice, with the event's reason", async () => {
+    const { a, priv, push, closedSent, wait, root } = streamed();
+    await priv.refresh.call(a); // the read answers 409 ERR-ASSESS-009 before the event is read
+    expect(priv.state).toEqual({ name: "closed", reason: "unknown" });
+    expect(closedSent()).toEqual([]); // the parent waits for the reason
+    push('event: closed\ndata: {"close_reason":"budget_exhausted"}\n\n');
+    await wait(20);
+    expect(priv.state).toEqual({ name: "closed", reason: "budget_exhausted" });
+    expect(closedSent()).toEqual(["budget_exhausted"]);
+    expect(root.querySelector("#closing-title")!.textContent).not.toContain("Sessione conclusa il");
+    await wait(250);
+    expect(closedSent()).toEqual(["budget_exhausted"]); // once
+  });
+
+  it("no closed event within the wait: one notice, unknown", async () => {
+    const { a, priv, closedSent, wait } = streamed();
+    await priv.refresh.call(a);
+    await wait(250);
+    expect(closedSent()).toEqual(["unknown"]);
   });
 });

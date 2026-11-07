@@ -52,6 +52,10 @@ export class App {
   private lastTurnNo = 0; // the highest turn number on screen from a snapshot
   /** Waits between the attempts to read the session once it is committed (tests shorten it). */
   snapshotRetryMs = [1000, 3000];
+  /** How long a close without its reason waits for the stream's closed event (tests shorten it). */
+  closeReasonWaitMs = 3000;
+  private closedNoticed = false;
+  private closeWait: ReturnType<typeof setTimeout> | undefined;
   readonly live = new LiveRegion(M.statusLive);
   readonly status = h("p", { class: "status", id: "status", tabindex: "-1" });
   readonly banner = h("div", { class: "banner", role: "region", "aria-label": M.outage, hidden: true });
@@ -459,6 +463,26 @@ export class App {
     marker.focus();
   }
 
+  /** Tell the parent once, with the reason. A close learnt from a 409 has no reason yet: the
+   *  closed event normally follows on the stream, so the notice waits for it, at most
+   *  ``closeReasonWaitMs``, then goes out as "unknown" (CodeRabbit 4501067255). */
+  private noticeClosed(reason: string): void {
+    if (this.closedNoticed) return;
+    if (reason === "unknown") {
+      this.closeWait ??= setTimeout(() => this.sendClosed("unknown"), this.closeReasonWaitMs);
+      return;
+    }
+    this.sendClosed(reason);
+  }
+
+  private sendClosed(reason: string): void {
+    if (this.closedNoticed) return;
+    this.closedNoticed = true;
+    clearTimeout(this.closeWait);
+    this.abort.abort(); // the stream has nothing more to say
+    this.bridge.send({ v: 1, type: "vektra-assess-closed", reason });
+  }
+
   /** Ask the parent for a download token; one request at a time, no automatic retry. If the
    *  parent does not answer within DOWNLOAD_TIMEOUT_MS (a plugin without the download part),
    *  a generic text is shown and the button works again. */
@@ -525,7 +549,8 @@ export class App {
         this.tick();
         return;
       case "closed": {
-        this.abort.abort();
+        // the stream stays open while the reason is unknown: its closed event may still bring
+        // it (see noticeClosed); nothing can be sent any more either way
         this.token = null;
         this.controls.disable();
         this.chat.setEnabled(false, "");
@@ -536,7 +561,7 @@ export class App {
         if (this.controls.dialog.open) this.controls.dialog.close("cancel");
         this.main.replaceChildren(...(keep as Node[]), closing.root, this.chat.root);
         this.chat.list.querySelectorAll("button.flag").forEach((b) => b.remove());
-        this.bridge.send({ v: 1, type: "vektra-assess-closed", reason: s.reason });
+        this.noticeClosed(s.reason);
         closing.focus();
         return;
       }

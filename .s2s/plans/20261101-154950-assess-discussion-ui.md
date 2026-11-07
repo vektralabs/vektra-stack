@@ -500,3 +500,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     streamed for it is discarded, with no read and no announcement; the owed reply's events
     follow it in the ring and are shown. `reply_delta` carries no turn number (plan 8's payload),
     so the binding is made at its `reply_done`; no cursor is added to `GET /sessions/{sid}`.
+  - 4501067255 (follow-up) The parent gets ONE `vektra-assess-closed`, with the reason: a close
+    learnt from a 409 keeps the stream open and waits (at most 3 s, `closeReasonWaitMs`) for
+    the closed event; then the notice goes out (as `unknown` if no event came) and the stream
+    is aborted. Tested on a real stream: 409 first, closed event after.

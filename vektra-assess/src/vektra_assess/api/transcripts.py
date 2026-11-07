@@ -35,10 +35,10 @@ from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of, fail, parse_body
 from vektra_assess.api.deps import bearer_token, settings_of
+from vektra_assess.api.download_tokens import DownloadClaims, DownloadTokens, jti_hash
+from vektra_assess.api.graders import GraderCheck, check_fresh_grader
 from vektra_assess.api.state import limiter_of
 from vektra_assess.audit import AssessAuditEvent, write_event
-from vektra_assess.authz.graders import GraderCheck, check_fresh_grader
-from vektra_assess.download_tokens import DownloadClaims, DownloadTokens, jti_hash
 from vektra_assess.errors import (
     assess_unavailable,
     bad_request,

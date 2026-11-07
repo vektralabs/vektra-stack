@@ -280,7 +280,10 @@ async def test_a_permanent_error_is_dead_at_once_with_its_fixed_code() -> None:
     await rt.wait_idle()
     assert store.rows[jid]["state"] == "dead" and store.rows[kid]["state"] == "dead"
     codes = {e[1]["kind"]: e[1]["error_code"] for e in audit.events}
-    assert codes == {"transcript_generate": "integrity_mismatch", "purge": "handler_error"}
+    assert codes == {
+        "transcript_generate": "integrity_mismatch",
+        "purge": "handler_error",
+    }
 
 
 async def test_audit_failure_leaves_the_job_leased_and_is_logged(

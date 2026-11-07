@@ -183,8 +183,12 @@ ERR_ASSESS_014 = "ERR-ASSESS-014"  # Malformed or over-length request body
 ERR_ASSESS_015 = "ERR-ASSESS-015"  # Start refused: the discussion is not available
 ERR_ASSESS_016 = "ERR-ASSESS-016"  # Plugin version below the required minimum
 # Transcripts (plan assess-transcript-delivery)
-ERR_ASSESS_017 = "ERR-ASSESS-017"  # Transcript not found (unknown, other site, not generated)
-ERR_ASSESS_018 = "ERR-ASSESS-018"  # Download token missing, invalid, expired or already used
+ERR_ASSESS_017 = (
+    "ERR-ASSESS-017"  # Transcript not found (unknown, other site, not generated)
+)
+ERR_ASSESS_018 = (
+    "ERR-ASSESS-018"  # Download token missing, invalid, expired or already used
+)
 ERR_ASSESS_019 = (
     "ERR-ASSESS-019"  # Resend refused: the request names a recipient (REQ-082)
 )

@@ -1,4 +1,4 @@
-"""Is this teacher a grader of this activity, NOW? (plan 10; reused by plan 11.)
+"""Is this teacher a grader of this activity, NOW? (plan 10 `authz/graders`; plan 11 reuses it.)
 
 The API cannot ask Moodle (only the worker holds the WS token). It reads the grader user ids the
 render worker last wrote into ``assess_gate_inputs`` for (site, student, cmid) and accepts them

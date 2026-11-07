@@ -28,6 +28,8 @@ MATH_ATTRS = frozenset(
 #: attribute values the filter accepts (a value is never user text, but it is still checked)
 _VALUE = re.compile(r"^[A-Za-z0-9 .\-]{0,32}$")
 MAX_TEX_CHARS = 2000
+#: deepest MathML nesting rendered as MathML (CodeRabbit 4503029399); deeper -> escaped TeX
+MAX_DEPTH = 32
 
 _DELIMS = re.compile(r"\\\((.+?)\\\)|\\\[(.+?)\\\]|\$\$(.+?)\$\$", re.DOTALL)
 
@@ -81,6 +83,10 @@ class _Builder(HTMLParser):
             if name not in MATH_ATTRS or value is None or not _VALUE.match(value):
                 raise _Reject(name)
             kept.append((name, value))
+        if len(self.stack) > MAX_DEPTH:
+            # the template renders the tree recursively: a deep tree would exhaust Jinja's
+            # recursion and fail the whole transcript; the TeX fallback shows it instead
+            raise _Reject("depth")
         self.stack.append((tag, kept, []))
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:

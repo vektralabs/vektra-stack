@@ -397,3 +397,17 @@ def test_a_turn_in_another_language_is_not_tagged_italian() -> None:
     allowlist.check(out.encode())
     assert '<li class="turn student" lang="und">' in out
     assert '<li class="turn bot" lang="it">' in out
+
+
+def test_deeply_nested_tex_falls_back_instead_of_failing_the_render() -> None:
+    """CodeRabbit 4503029399: 150 nested fractions convert, but would exhaust the template's
+    recursion;
+    the filter refuses trees deeper than MAX_DEPTH, so the TeX is shown escaped."""
+    deep = "\\frac{1}{" * 150 + "x" + "}" * 150
+    seg = mathml.tex_to_math(deep, display=False)
+    assert isinstance(seg, mathml.Tex)
+    out = _render("x", "Formula: \\(" + deep + "\\)")
+    allowlist.check(out)
+    assert b'<code aria-label="formula in formato TeX">' in out
+    shallow = mathml.tex_to_math("\\frac{1}{\\frac{2}{3}}", display=False)
+    assert isinstance(shallow, mathml.Math)

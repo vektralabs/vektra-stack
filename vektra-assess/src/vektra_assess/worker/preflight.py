@@ -426,7 +426,7 @@ def _remaining(deps: PreflightDeps, elapsed_at_load: float, t_load: float) -> fl
 
 async def _admit(
     deps: PreflightDeps, acquire: AcquireDb, session_id: UUID
-) -> tuple[StartTarget, int, float, DbGateFacts] | None:
+) -> tuple[StartTarget, int, float, DbGateFacts, int] | None:
     """Steps 1-3. Returns (target, duration_s, elapsed_s, db facts, cap_s) or None for a stale
     job. ``cap_s`` is the activity cap frozen with the session (the transcript header, plan 10)."""
     settings = deps.settings

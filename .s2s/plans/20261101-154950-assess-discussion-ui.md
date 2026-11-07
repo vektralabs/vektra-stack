@@ -124,7 +124,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 ### Client bundle (`vektra-assess/ui/`)
 - [x] Scaffold `package.json`, `esbuild.config.mjs`, `tsconfig.json`, `src/main.ts`; `npm run build` writes hashed assets + manifest; commit `package-lock.json`
 - [x] `src/sse.ts`: incremental SSE parser + `fetch`/`ReadableStream` consumer with bearer header, `Last-Event-ID`, backoff and terminal-status handling
-- [ ] `src/bridge.ts`: postMessage protocol v1 with origin + source checks and explicit `targetOrigin`; `ResizeObserver` → `resize` messages
+- [x] `src/bridge.ts`: postMessage protocol v1 with origin + source checks and explicit `targetOrigin`; `ResizeObserver` → `resize` messages
 - [ ] `src/state.ts`: explicit state machine — `awaiting_handoff` → `preparing` (Start 202; "Preparazione della discussione…" announced once) → `active` ⇄ `outage` → `closed(reason)`; plus `capacity_refused`, `start_rolled_back`, `unavailable` (non-technical texts, REQ-071/REQ-068 state 7), `resume`; one pure reducer unit-tested per transition
 - [ ] `src/views/chat.ts`: opening message (system facts block as a semantic list + LLM orientation, REQ-094), turn list (`<ol>` of `<article>` with role label and timestamp), composer (`<textarea>` + Invia), streaming reply rendered into a non-live element and announced once on completion via a polite live region
 - [ ] `src/views/controls.ts` (REQ-102): Invia, per-message Copia (`navigator.clipboard.writeText`, fallback select-text), Riprova (visible in OUTAGE; POST retry; never ends OUTAGE client-side), Fine with confirmation dialog (`<dialog>`, focus trapped, Annulla returns focus; Annulla leaves state untouched), remaining-time display (`role="timer"`, `aria-live="off"`; minute-level text for AT)

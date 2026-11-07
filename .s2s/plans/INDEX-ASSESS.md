@@ -139,7 +139,7 @@ The 40-Start burst test runs EARLY, at session-lifecycle milestone M1, not at th
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
 | 8 | [assess-session-lifecycle](20261101-154950-assess-session-lifecycle.md) | Tokens, gates, Start/commit/rollback, timing, outage, limits | 47 | 3, 7 | completed (PR #153 + 8b; live IDOR, REQ-073 and real-model burst BLOCKED, see plan) |
-| 9 | [assess-discussion-ui](20261101-154950-assess-discussion-ui.md) | Cross-origin iframe UI, fetch streaming, CSP | 29 | 8 | in_progress |
+| 9 | [assess-discussion-ui](20261101-154950-assess-discussion-ui.md) | Cross-origin iframe UI, fetch streaming, CSP | 29 | 8 | completed (download BLOCKED on plan 10; item picker SHOULD deferred; /state selected_attempt/files follow-up, see plan) |
 | 10 | [assess-transcript-delivery](20261101-154950-assess-transcript-delivery.md) | Transcript rendering, outbox SMTP, download tokens | 26 | 3, 8 | pending |
 | P2 | [discuss-student](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-student.md) | Button, pre-session screen, mint, iframe, own transcript | 24 | P1, 8, 9, 10 | in_progress (P2a merged, vektra-moodle-discuss#2; P2b in progress, #3 draft) |
 

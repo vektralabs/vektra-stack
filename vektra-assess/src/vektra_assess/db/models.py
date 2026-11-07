@@ -377,6 +377,8 @@ class TranscriptOrm(Base):
     turns_digest: Mapped[str | None] = mapped_column(TEXT)
     filename: Mapped[str | None] = mapped_column(TEXT)
     byte_size: Mapped[int | None] = mapped_column(INTEGER)
+    # revision 0035: the course short name read at close (email subject)
+    course_shortname: Mapped[str | None] = mapped_column(TEXT)
 
 
 class DeliveryOrm(Base):

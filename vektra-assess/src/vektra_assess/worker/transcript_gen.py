@@ -133,8 +133,9 @@ _EARLIER = text(
 )
 _INSERT = text(
     "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, transcript_kid, "
-    "content_hash, turns_digest, filename, byte_size) VALUES (:id, :sid, :ct, :dek, :kid, :h, "
-    ":digest, :name, :size) ON CONFLICT (session_id) DO NOTHING RETURNING id"
+    "content_hash, turns_digest, filename, byte_size, course_shortname) VALUES (:id, :sid, :ct, "
+    ":dek, :kid, :h, :digest, :name, :size, :course) ON CONFLICT (session_id) DO NOTHING "
+    "RETURNING id"
 )
 _DELIVERY = text(
     "INSERT INTO assess_deliveries (transcript_id, kind, round, recipient_kind, "
@@ -316,6 +317,7 @@ async def generate_transcript(
                     "digest": inp.digest,
                     "name": name,
                     "size": sealed.byte_size,
+                    "course": facts.course_shortname,
                 },
             )
         ).scalar()

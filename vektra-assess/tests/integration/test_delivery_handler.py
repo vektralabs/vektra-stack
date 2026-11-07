@@ -82,7 +82,7 @@ def sink(tmp_path: Path) -> Iterator[MailSink]:
     s.stop()
 
 
-async def _ready(w, worker, addresses=TEACHERS, *, pair=None):  # type: ignore[no-untyped-def]
+async def _ready(w, worker, addresses=TEACHERS, *, pair=None, course="EA-2026"):  # type: ignore[no-untyped-def]
     """A CLOSED session, its configured recipients and its generated transcript."""
     ring = AssessKeyring(store.KEYRING, "t1", {"t1": os.urandom(32)})
     w.app.state.assess_keys[store.KEYRING] = ring
@@ -91,7 +91,7 @@ async def _ready(w, worker, addresses=TEACHERS, *, pair=None):  # type: ignore[n
     config = await configure_recipients(w.pg, w.site, s.cmid, addresses, pair=pair)
     got = await generate_transcript(
         GenerationDeps(
-            kek=s.kek, transcript_kek=ring, facts=Facts(), recipients=config
+            kek=s.kek, transcript_kek=ring, facts=Facts(course), recipients=config
         ),
         worker.connect,
         s.session_id,
@@ -348,11 +348,13 @@ async def test_a_header_injection_in_the_course_is_one_header_on_the_wire(
     async with world(pg) as w:
         s, ring, config, _ = await _ready(w, worker)
         await clock.sync(pg)
-        # the course part of the stored name, as an attacker with DB write access would set it
+        # the stored course short name (from Moodle) and the attachment's file name, as a
+        # hostile course name or an attacker with DB write access would set them
         await pg.run(
             "super",
-            "UPDATE assess_transcripts SET filename = :f WHERE id = :t",
+            "UPDATE assess_transcripts SET course_shortname = :c, filename = :f WHERE id = :t",
             {
+                "c": "EA\r\nBcc: victim@evil.example\r\nX-Evil: 1",
                 "f": "EA\r\nBcc: victim@evil.example\r\nX-Evil: 1_9_9_s1_20261107.html",
                 "t": s.session_id,
             },
@@ -518,3 +520,19 @@ async def test_recipients_configured_after_the_close_are_fanned_out(
         }
         assert len(sink.messages) == 2
         await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
+
+
+async def test_the_subject_carries_the_real_course_short_name(pg, worker, sink) -> None:  # type: ignore[no-untyped-def]
+    """Review #9: the short name read at close is stored with the transcript and used as is
+    (sanitised for the header), not the folded file-name prefix."""
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker, course="EA 2026/27")
+        await clock.sync(pg)
+        got = await h.deliver_transcript(
+            _deps(ring, config, sink, clock), worker.connect, s.session_id
+        )
+        assert got is not None and got.sent == 2
+        for item in sink.messages:
+            subject = str(item.message["Subject"])
+            assert "EA 2026/27" in subject and "EA-2026-27" not in subject

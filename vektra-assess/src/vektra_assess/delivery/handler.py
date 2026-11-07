@@ -117,7 +117,8 @@ def _alert(event: str, **fields: Any) -> None:
 
 
 _TRANSCRIPT = text(
-    "SELECT t.id, t.ciphertext, t.dek_wrapped, t.content_hash, t.filename, s.site_id, "
+    "SELECT t.id, t.ciphertext, t.dek_wrapped, t.content_hash, t.filename, "
+    "t.course_shortname, s.site_id, "
     "s.cmid, s.student_userid, s.session_no FROM assess_transcripts t "
     "JOIN assess_sessions s ON s.id = t.session_id WHERE t.id = :t"
 )
@@ -433,7 +434,8 @@ async def _one(
         )
         return
     mid = mail.message_id(t.id, c.round, c.ref or "", deps.message_id_domain)
-    course = str(t.filename or "").split("_", 1)[0]
+    # the short name read at close (sanitised for the header by ``message``)
+    course = t.course_shortname or "corso non disponibile"
     msg = mail.build(
         mail.TranscriptMail(
             sender=deps.sender_address,

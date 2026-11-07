@@ -11,6 +11,8 @@ the sealed config; a delivery row names its recipient by ``recipient_ref``
 - one row per (transcript, round, recipient ref): ``uq_assess_deliveries_round_ref``.
 - ``assess_enqueue_resend``: round n+1 copies the ref too (the caller still names no recipient).
 - the API role reads every delivery column but ``recipient_ref``: the matrix is re-rendered.
+- ``assess_transcripts.course_shortname``: the course short name read at close, written by the
+  generation, used in the email subject (the file name holds only its folded form).
 
 Revision ID: 0035
 Revises: 0034
@@ -286,6 +288,7 @@ def upgrade() -> None:
         "ALTER TABLE assess_deliveries ADD CONSTRAINT uq_assess_deliveries_round_ref "
         "UNIQUE (transcript_id, round, recipient_ref)"
     )
+    op.execute("ALTER TABLE assess_transcripts ADD COLUMN course_shortname TEXT NULL")
     op.execute(RESEND)  # CREATE OR REPLACE: owner and EXECUTE privileges are kept
     for stmt in GRANT_STATEMENTS:
         op.execute(stmt)
@@ -314,6 +317,7 @@ def downgrade() -> None:
         "ALTER TABLE assess_deliveries ALTER COLUMN recipient_userid SET NOT NULL"
     )
     op.execute("ALTER TABLE assess_deliveries DROP COLUMN recipient_ref")
+    op.execute("ALTER TABLE assess_transcripts DROP COLUMN course_shortname")
     spec = util.spec_from_file_location(
         "rev_0034", Path(__file__).with_name("0034_assess_transcript_delivery.py")
     )

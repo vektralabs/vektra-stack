@@ -164,3 +164,60 @@ async def test_the_probe_never_sends(sink: MailSink, tmp_path: Path) -> None:
         assert res.error_class is ErrorClass.TLS and plain.messages == []
     finally:
         plain.stop()
+
+
+# --- review fixes: QUIT after the 250, and CONNECT vs TLS --------------------------------
+
+
+async def test_a_quit_that_never_answers_after_the_250_is_still_sent(
+    sink: MailSink,
+) -> None:
+    """Accepted after the 250 to DATA means SENT: QUIT is best effort, outside the send's
+    timeout, with its own short bound (a resend here would be a real duplicate)."""
+    sink.fault = "slow_quit"
+    sender = SmtpSender(sink_config(sink, timeout_s=1.0))
+    sender.quit_timeout_s = 0.2
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    res = await sender.send(_msg(), "prof@unical.it")
+    assert res.ok and res.smtp_code == 250
+    assert len(sink.messages) == 1
+    assert loop.time() - started < 1.0  # the QUIT bound, not the send timeout, ended it
+
+
+async def test_a_refused_connection_is_connect_in_both_tls_modes(
+    sink: MailSink,
+) -> None:
+    port = sink.port
+    sink.down()
+    for mode in ("starttls", "implicit"):
+        res = await SmtpSender(sink_config(sink, tls_mode=mode, port=port)).send(
+            _msg(), "prof@unical.it"
+        )
+        assert res.error_class is ErrorClass.CONNECT, mode
+
+
+async def test_a_drop_during_the_plaintext_ehlo_is_connect_not_tls(
+    sink: MailSink,
+) -> None:
+    sink.fault = "drop_on_ehlo"
+    res = await SmtpSender(sink_config(sink)).send(_msg(), "prof@unical.it")
+    assert res.error_class is ErrorClass.CONNECT and sink.messages == []
+
+
+async def test_implicit_tls_sends_and_an_untrusted_certificate_is_tls(
+    tmp_path: Path,
+) -> None:
+    sink = MailSink(tmp_path / "465", implicit=True).start()
+    other = MailSink(tmp_path / "other-ca")
+    try:
+        ok = await SmtpSender(sink_config(sink, tls_mode="implicit")).send(
+            _msg(), "prof@unical.it"
+        )
+        assert ok.ok and len(sink.messages) == 1
+        bad = await SmtpSender(
+            sink_config(sink, tls_mode="implicit", ca_file=other.ca_file)
+        ).send(_msg(1), "prof@unical.it")
+        assert bad.error_class is ErrorClass.TLS and len(sink.messages) == 1
+    finally:
+        sink.stop()

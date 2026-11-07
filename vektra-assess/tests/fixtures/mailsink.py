@@ -21,6 +21,7 @@ crash-window duplicate shows up as two copies with the same id).
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import email
 import ipaddress
@@ -157,6 +158,24 @@ class _Handler:
         envelope.rcpt_tos.append(address)
         return "250 OK"
 
+    async def handle_EHLO(
+        self,
+        server: Any,
+        session: Any,
+        envelope: Any,
+        hostname: str,
+        responses: list[str],
+    ) -> list[str]:
+        session.host_name = hostname  # what aiosmtpd does itself when no hook is set
+        if self.sink.fault == "drop_on_ehlo" and session.ssl is None:
+            server.transport.close()  # the plaintext EHLO, before any STARTTLS
+        return responses
+
+    async def handle_QUIT(self, server: Any, session: Any, envelope: Any) -> str:
+        if self.sink.fault == "slow_quit":
+            await asyncio.sleep(30)  # the 250 to DATA was sent; QUIT never answers
+        return "221 Bye"
+
     async def handle_DATA(self, server: Any, session: Any, envelope: Any) -> str:
         self.sink._store(
             Stored(
@@ -178,6 +197,7 @@ class MailSink:
     workdir: Path
     starttls: bool = True
     require_auth: bool = True
+    implicit: bool = False  # TLS from the first byte (port 465 style)
     fault: str | None = None
     port: int = field(default_factory=_free_port)
     messages: list[Stored] = field(default_factory=list)
@@ -222,7 +242,10 @@ class MailSink:
             "auth_require_tls": True,
             "auth_required": self.require_auth,
         }
-        if self.starttls:
+        if self.implicit:
+            # the whole connection is TLS; aiosmtpd's auth_require_tls only knows STARTTLS
+            kwargs |= {"ssl_context": self._server_context(), "auth_require_tls": False}
+        elif self.starttls:
             kwargs |= {"tls_context": self._server_context(), "require_starttls": True}
         self._controller = Controller(_Handler(self), **kwargs)
         self._controller.start()
@@ -246,6 +269,11 @@ class MailSink:
         handshake trusting only the sink's CA."""
         with socket.create_connection((HOST, self.port), timeout=5):
             pass
+        if self.implicit:
+            ctx = ssl.create_default_context(cafile=str(self.ca_file))
+            with smtplib.SMTP_SSL(HOST, self.port, timeout=5, context=ctx) as client:
+                client.ehlo()
+            return
         if not self.starttls:
             return
         ctx = ssl.create_default_context(cafile=str(self.ca_file))

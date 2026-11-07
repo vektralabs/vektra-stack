@@ -23,6 +23,7 @@ Convention (Keep a Changelog 1.1.0):
 
 ### Fixed
 
+- **ingest**: `POST /api/v1/ingest` now reads the target namespace from the `namespace` form field, as `docs/reference/api.md` documents, with the form field still overriding the query parameter (BUG-029). The server read that field as `namespace_form` (already so in 0.7.1), and the form-field table added in this cycle with FEAT-026 documented it as `namespace`, so a client following the reference got 200 while its documents went to `default`. `namespace_form` is no longer accepted; no known client sent it. `POST /api/v1/ingest/batch` is unchanged: it is documented and read as a query parameter only.
 - **assess**: a question or response block cut at the parser's per-block cap, or shortened to keep the review item within its char cap, now carries a `truncated` flag from the sidecar to the snapshot, and Part A and the model payload say the text is cut instead of presenting it as complete.
 - **assess**: an online text the sanitizer reads only in part, or cuts to nothing at the budget, is announced as truncated in the model payload.
 

@@ -124,19 +124,40 @@ MAX_NOTE_LABEL = 64
 _MAX_STATUS = 16
 
 
+def _cut_utf8(text_: str, max_bytes: int) -> str:
+    return text_.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+
+
+#: the encoded budget of the contests JSON, with room for the JSONB header and overhead
+MAX_NOTE_CONTESTS_BYTES = 3000
+
+
 def turn_notes(result: TurnResult) -> TurnNotes:
     """The note of one answered turn, deduplicated and capped (review #2): marks once each;
     one contest entry per label (the LAST one wins, as in the transcript), the latest
-    ``MAX_NOTE_CONTESTS`` labels, each label cut to ``MAX_NOTE_LABEL`` characters. Worst case
-    about 16 x (64 + 16 + 30) bytes of JSON: well under 4096."""
+    ``MAX_NOTE_CONTESTS`` labels, each label cut to ``MAX_NOTE_LABEL`` UTF-8 BYTES (multibyte
+    text cannot inflate it), and the oldest entries dropped until the encoded JSON fits
+    ``MAX_NOTE_CONTESTS_BYTES`` (CodeRabbit 4503025930): never over the 4096-byte CHECK."""
     latest: dict[str, str] = {}
     for entry in result.contest_entries:
-        label = str(entry.label)[:MAX_NOTE_LABEL]
+        label = _cut_utf8(str(entry.label), MAX_NOTE_LABEL)
         latest.pop(label, None)
-        latest[label] = str(entry.status)[:_MAX_STATUS]
+        latest[label] = _cut_utf8(str(entry.status), _MAX_STATUS)
     kept = list(latest.items())[-MAX_NOTE_CONTESTS:]
+    while (
+        kept
+        and len(
+            json.dumps(
+                [{"label": k, "status": v} for k, v in kept], ensure_ascii=False
+            ).encode("utf-8")
+        )
+        > MAX_NOTE_CONTESTS_BYTES
+    ):
+        kept.pop(0)
     return TurnNotes(
-        marks=tuple(dict.fromkeys(str(m)[:32] for m in result.marks))[:MAX_NOTE_MARKS],
+        marks=tuple(dict.fromkeys(_cut_utf8(str(m), 32) for m in result.marks))[
+            :MAX_NOTE_MARKS
+        ],
         contests=tuple(ContestEntry(label, status) for label, status in kept),  # type: ignore[arg-type]
         lang=result.language if result.language in ("it", "en", "other") else None,
     )

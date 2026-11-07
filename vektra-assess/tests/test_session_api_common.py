@@ -129,3 +129,34 @@ async def test_an_oversized_body_is_refused_without_reading_it_all() -> None:
     assert r.status_code == 400
     assert r.json()["error"]["details"]["reason"] == "body_too_large"
     assert chunks_read["n"] < 10
+
+
+def test_turn_notes_fit_the_check_with_multibyte_labels() -> None:
+    """CodeRabbit 4503025930: 16 distinct labels of 4-byte characters stay under the
+    table's 4096-byte CHECK once encoded (labels are cut by bytes, the JSON is bounded)."""
+    import json
+
+    from vektra_assess.api.turns import MAX_NOTE_CONTESTS_BYTES, turn_notes
+    from vektra_assess.llm.types import ContestEntry, TurnResult, TurnUsage
+
+    result = TurnResult(
+        text="x",
+        marks=tuple("\U0001d510" * 40 + str(i) for i in range(40)),
+        behaviour_class=None,
+        contest_entries=tuple(
+            ContestEntry(f"{i:02d}" + "\U0001d510" * 200, "corrected") for i in range(40)
+        ),
+        language="it",
+        usage=TurnUsage(1, 1),
+        call_records=(),
+        replaced_count=0,
+        content_hash="h",
+    )
+    notes = turn_notes(result)
+    encoded = json.dumps(
+        [{"label": c.label, "status": c.status} for c in notes.contests],
+        ensure_ascii=False,
+    ).encode("utf-8")
+    assert notes.contests and len(encoded) <= MAX_NOTE_CONTESTS_BYTES < 4096
+    assert all(len(c.label.encode()) <= 64 for c in notes.contests)
+    assert len(notes.marks) <= 16

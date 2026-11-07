@@ -434,3 +434,50 @@ describe("snapshot ordering (4501070026, 4501070021, review 5811279241 app.ts 29
     expect(a.chat.composer.disabled).toBe(false);
   });
 });
+
+describe("the snapshot after the commit (4501067234, 4501070029)", () => {
+  function preparing() {
+    const h = harness();
+    h.priv.state = { name: "preparing" } as never;
+    (h.a as unknown as { snapshotRetryMs: number[] }).snapshotRetryMs = [0, 0];
+    return h;
+  }
+  const opening = () => view([{ turn_no: 1, role: "bot", text: "Benvenuto" }]);
+
+  it("a failed read after committed is retried; nothing opens until it loads", async () => {
+    const { a, priv, pending, flush } = preparing();
+    const ev = priv.onEvent({ event: "committed", data: "{}" });
+    await flush();
+    pending[0].resolve(new Response("", { status: 503 }));
+    await flush();
+    expect(priv.state.name).toBe("preparing");
+    expect(a.chat.list.querySelectorAll("article").length).toBe(0); // nothing shown yet
+    await flush();
+    pending[1].resolve(opening());
+    await ev;
+    expect(priv.state.name).toBe("active");
+    expect(a.chat.list.querySelectorAll("article").length).toBe(1);
+  });
+
+  it("when every retry fails the discussion is unavailable, never an empty open chat", async () => {
+    const { priv, pending, flush } = preparing();
+    const ev = priv.onEvent({ event: "committed", data: "{}" });
+    for (let i = 0; i < 3; i++) {
+      await flush();
+      await flush();
+      pending[i]?.resolve(new Response("", { status: 503 }));
+    }
+    await ev;
+    expect(priv.state.name).toBe("unavailable");
+  });
+
+  it("an ACTIVE state snapshot without a committed event loads the session", async () => {
+    const { priv, pending, flush } = preparing();
+    const ev = priv.onEvent({ event: "state", data: '{"state":"ACTIVE"}' });
+    await flush();
+    expect(pending.map((p) => p.url)).toEqual(["/api/sessions/S"]);
+    pending[0].resolve(opening());
+    await ev;
+    expect(priv.state.name).toBe("active");
+  });
+});

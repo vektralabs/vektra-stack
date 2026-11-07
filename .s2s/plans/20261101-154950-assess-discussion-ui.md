@@ -451,3 +451,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     `App.refresh()`: numbered, an older read finishing last is dropped, nothing is applied
     once closed; a 202 whose turn a newer snapshot already holds adds nothing and does not
     mark a reply owed.
+  - 4501067234, 4501070029 The committed session is shown only once its snapshot loads
+    (`loadCommitted`: retried after 1 s and 3 s, then the unavailable text; reloading
+    resumes); the stream's first `state` event (ACTIVE/OUTAGE while preparing, the session
+    committed before the stream opened) loads it the same way.

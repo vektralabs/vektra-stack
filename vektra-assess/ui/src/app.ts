@@ -37,6 +37,8 @@ export class App {
   private readsIssued = 0; // GET /sessions/{sid} reads started, in order
   private readApplied = 0; // the newest read applied to the screen
   private lastTurnNo = 0; // the highest turn number on screen from a snapshot
+  /** Waits between the attempts to read the session once it is committed (tests shorten it). */
+  snapshotRetryMs = [1000, 3000];
   readonly live = new LiveRegion(M.statusLive);
   readonly status = h("p", { class: "status", id: "status", tabindex: "-1" });
   readonly banner = h("div", { class: "banner", role: "region", "aria-label": M.outage, hidden: true });
@@ -138,6 +140,18 @@ export class App {
     this.token = body.token;
     this.dispatch({ type: "start_accepted" });
     this.openStream();
+  }
+
+  /** The session is committed: show it only once its snapshot (opening, deadline, turns) is
+   *  loaded, retrying a failed read; if every attempt fails the discussion is unavailable
+   *  (reloading resumes it), never an empty open conversation (4501067234). */
+  private async loadCommitted(): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      if (await this.refresh()) return this.dispatch({ type: "committed" });
+      if (this.state.name === "closed") return;
+      if (attempt >= this.snapshotRetryMs.length) return this.dispatch({ type: "unavailable" });
+      await new Promise((r) => setTimeout(r, this.snapshotRetryMs[attempt]));
+    }
   }
 
   private async capacityOr(r: Response): Promise<"capacity_refused" | "unavailable"> {
@@ -245,11 +259,14 @@ export class App {
       return;
     }
     switch (ev.event) {
-      case "committed": {
-        await this.refresh();
-        this.dispatch({ type: "committed" });
+      case "committed":
+        return this.loadCommitted();
+      case "state":
+        // the stream's first event is a state snapshot: a session that committed before the
+        // stream opened sends ACTIVE (or OUTAGE) and no committed event (4501070029)
+        if (this.state.name === "preparing" && (data.state === "ACTIVE" || data.state === "OUTAGE"))
+          return this.loadCommitted();
         return;
-      }
       case "start_rolled_back":
         return this.dispatch({ type: "rolled_back", reason: String(data.reason ?? "") });
       case "reply_delta":

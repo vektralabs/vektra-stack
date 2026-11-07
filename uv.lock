@@ -5238,7 +5238,7 @@ wheels = [
 
 [[package]]
 name = "vektra-admin"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-admin" }
 dependencies = [
     { name = "argon2-cffi", marker = "python_full_version < '3.13'" },
@@ -5287,7 +5287,7 @@ dev = [
 
 [[package]]
 name = "vektra-analytics"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-analytics" }
 dependencies = [
     { name = "fastapi", marker = "python_full_version < '3.13'" },
@@ -5322,7 +5322,7 @@ dev = [
 
 [[package]]
 name = "vektra-app"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-app" }
 dependencies = [
     { name = "alembic", marker = "python_full_version < '3.13'" },
@@ -5373,7 +5373,7 @@ dev = [
 
 [[package]]
 name = "vektra-assess"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-assess" }
 dependencies = [
     { name = "aiosmtplib", marker = "python_full_version < '3.13'" },
@@ -5426,7 +5426,7 @@ dev = [
 
 [[package]]
 name = "vektra-core"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-core" }
 dependencies = [
     { name = "fastapi", marker = "python_full_version < '3.13'" },
@@ -5471,7 +5471,7 @@ dev = [
 
 [[package]]
 name = "vektra-index"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-index" }
 dependencies = [
     { name = "asyncpg", marker = "python_full_version < '3.13'" },
@@ -5528,7 +5528,7 @@ dev = [
 
 [[package]]
 name = "vektra-ingest"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-ingest" }
 dependencies = [
     { name = "arq", marker = "python_full_version < '3.13'" },
@@ -5593,7 +5593,7 @@ dev = [
 
 [[package]]
 name = "vektra-learn"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-learn" }
 dependencies = [
     { name = "fastapi", marker = "python_full_version < '3.13'" },
@@ -5630,7 +5630,7 @@ dev = [
 
 [[package]]
 name = "vektra-shared"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "vektra-shared" }
 dependencies = [
     { name = "asyncpg", marker = "python_full_version < '3.13'" },

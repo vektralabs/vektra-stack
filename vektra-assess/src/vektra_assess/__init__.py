@@ -4,4 +4,4 @@ Sub-packages never import each other from their ``__init__``: a partial import g
 partial, and the import-linter contracts bind to real modules.
 """
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"

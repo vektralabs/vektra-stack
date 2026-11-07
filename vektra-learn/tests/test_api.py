@@ -1106,6 +1106,7 @@ class TestConversationOwnerRecording:
         req = CourseQueryRequest(question="What is ML?")
 
         conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(return_value=None)
         conv_store.ensure_conversation = AsyncMock()
 
         mock_pipeline = AsyncMock()
@@ -1257,3 +1258,92 @@ class TestQueryPathOwnership:
             conv_store.ensure_conversation.call_args.kwargs["owner_subject"]
             == "student-a"
         )
+
+    async def test_failed_ownership_lookup_refuses_with_transient_error(self):
+        """A store that cannot answer must not let the id through.
+
+        The check used to log and fall through, so an outage of the lookup
+        turned "someone else's conversation" into "allowed".
+        """
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        conv_store = MagicMock()
+        conv_store.get_metadata = AsyncMock(side_effect=OSError("db down"))
+        conv_store.ensure_conversation = AsyncMock()
+        pipeline = self._pipeline()
+
+        with pytest.raises(HTTPException) as exc:
+            await course_query(
+                CourseQueryRequest(question="Hi", conversation_id=uuid4()),
+                self._make_request(conv_store, pipeline),
+                {"sub": "student-a", "course_id": "CS101"},
+                MagicMock(),
+                AsyncMock(),
+            )
+
+        assert exc.value.status_code == 503
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-008"
+        pipeline.execute.assert_not_called()
+        conv_store.ensure_conversation.assert_not_called()
+
+
+class TestQueryPathOwnershipInMemory:
+    """Without VEKTRA_CONVERSATION_KEY the store is in memory and must still
+    refuse another student's conversation id (FEAT-027)."""
+
+    @staticmethod
+    async def _ask(store, sub, conversation_id=None):
+        from vektra_learn.api import course_query
+        from vektra_learn.query import CourseQueryRequest
+
+        pipeline = TestQueryPathOwnership._pipeline()
+        result = await course_query(
+            CourseQueryRequest(question="Q", conversation_id=conversation_id),
+            TestQueryPathOwnership._make_request(store, pipeline),
+            {"sub": sub, "course_id": "CS101"},
+            MagicMock(),
+            AsyncMock(),
+        )
+        return result, pipeline
+
+    async def test_owner_continues_and_another_student_is_refused(self):
+        from vektra_core.conversation import InMemoryConversationStore
+
+        store = InMemoryConversationStore()
+        cid = uuid4()
+
+        await self._ask(store, "student-a", cid)
+        # Control: the owner can continue, so the refusal below is about the
+        # caller and not about the id being unusable.
+        _, pipeline = await self._ask(store, "student-a", cid)
+        pipeline.execute.assert_called_once()
+
+        with pytest.raises(HTTPException) as exc:
+            await self._ask(store, "student-b", cid)
+        assert exc.value.status_code == 403
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-007"
+
+    async def test_conversation_without_owner_is_refused(self):
+        """Turns written through /api/v1/query carry no subject."""
+        from vektra_core.conversation import InMemoryConversationStore
+
+        store = InMemoryConversationStore()
+        cid = uuid4()
+        await store.add_turn(cid, "api-key question", "answer")
+
+        with pytest.raises(HTTPException) as exc:
+            await self._ask(store, "student-a", cid)
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-007"
+
+    async def test_in_memory_store_is_still_not_a_history_store(self):
+        """get_owner must not make the history endpoints treat it as persistent."""
+        from vektra_core.conversation import InMemoryConversationStore
+        from vektra_learn.api import _get_conversation_store
+
+        request = TestQueryPathOwnership._make_request(
+            InMemoryConversationStore(), MagicMock()
+        )
+        with pytest.raises(HTTPException) as exc:
+            _get_conversation_store(request)
+        assert exc.value.detail["error"]["code"] == "ERR-LEARN-001"

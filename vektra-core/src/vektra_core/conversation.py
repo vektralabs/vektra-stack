@@ -65,7 +65,40 @@ class InMemoryConversationStore:
             raise ValueError("max_turns must be >= 1")
         self._max_turns = max_turns
         self._store: dict[UUID, list[_InMemoryTurn]] = {}
+        self._owners: dict[UUID, str | None] = {}
         self._lock = asyncio.Lock()
+
+    async def ensure_conversation(
+        self,
+        conversation_id: UUID,
+        namespace_id: str,
+        key_id: UUID,
+        owner_subject: str | None = None,
+    ) -> None:
+        """Record the conversation's owner the first time its id is seen.
+
+        Same contract as the persistent store: written on creation only, so a
+        second caller cannot claim someone else's conversation by sending its
+        id (FEAT-027). *namespace_id* and *key_id* are accepted for signature
+        parity and not stored.
+        """
+        async with self._lock:
+            self._owners.setdefault(conversation_id, owner_subject)
+
+    async def get_owner(self, conversation_id: UUID) -> tuple[bool, str | None]:
+        """Return ``(known, owner_subject)`` for a conversation id.
+
+        Deliberately not named ``get_metadata``: the learn endpoints use the
+        presence of ``get_metadata`` to recognise the persistent store, and
+        this store must keep answering ERR-LEARN-001 on the history endpoints
+        rather than pretend to hold durable, listable conversations.
+
+        An id with turns but no recorded owner (written through
+        ``/api/v1/query`` by an API-key caller) is known and ownerless.
+        """
+        async with self._lock:
+            known = conversation_id in self._owners or conversation_id in self._store
+            return known, self._owners.get(conversation_id)
 
     async def get_history(self, conversation_id: UUID) -> list[dict[str, str | None]]:
         """Return conversation history as a list of dicts (oldest first)."""

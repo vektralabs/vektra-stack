@@ -27,6 +27,7 @@ The worker holds the session KEK; this module never logs content and never touch
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -77,6 +78,9 @@ class GenerationDeps:
     facts: CloseFactsSource | None = None
     tz: str = "Europe/Rome"
     br009_template: str = render.BR009_TEMPLATE
+    #: Moodle's share of the 30 s job budget (review #4): past it the header says "non
+    #: disponibile" and the transcript is still generated, well inside the budget
+    facts_timeout_s: float = 12.0
 
 
 @dataclass(frozen=True)
@@ -356,17 +360,18 @@ async def _close_facts(deps: GenerationDeps, row: Any) -> CloseFacts:
     if deps.facts is None:
         return CloseFacts()
     try:
-        return await deps.facts.close_facts(
-            session_id=row.id,
-            site_id=row.site_id,
-            cmid=int(row.cmid),
-            student_userid=int(row.student_userid),
-            courseid_hint=row.courseid_hint,
-            activity_type=str(row.activity_type or "assign"),
-        )
-    except (
-        Exception
-    ) as exc:  # Moodle down: the header says "non disponibile", never a guess
+        async with asyncio.timeout(deps.facts_timeout_s):
+            return await deps.facts.close_facts(
+                session_id=row.id,
+                site_id=row.site_id,
+                cmid=int(row.cmid),
+                student_userid=int(row.student_userid),
+                courseid_hint=row.courseid_hint,
+                activity_type=str(row.activity_type or "assign"),
+            )
+    # Moodle down, or slower than its share (an inner TimeoutError, never the job's own
+    # cancellation): the header says "non disponibile", never a guess
+    except Exception as exc:
         log.warning("assess_transcript_facts_error", error_type=type(exc).__name__)
         return CloseFacts()
 

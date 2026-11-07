@@ -336,3 +336,26 @@ async def test_a_tampered_snapshot_is_audited_as_a_transcript_integrity_failure(
             )
             == 0
         )
+
+
+async def test_slow_moodle_facts_fall_back_inside_the_job_budget(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #4: Moodle answering slower than its share of the budget yields the transcript
+    with "non disponibile" fields, inside the job's own timeout (which would kill the job)."""
+    import asyncio
+
+    class Slow:
+        async def close_facts(self, **_: Any) -> CloseFacts:
+            await asyncio.sleep(30)
+            return CloseFacts(course_shortname="NEVER")
+
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        deps = GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Slow(), facts_timeout_s=0.3
+        )
+        async with asyncio.timeout(3):  # stands for the job budget
+            got = await generate_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.created
+        html = (await _open(pg, ring, s.session_id)).decode()
+        assert "non disponibile" in html and "NEVER" not in html

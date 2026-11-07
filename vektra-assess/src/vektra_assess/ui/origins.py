@@ -83,6 +83,17 @@ def site_origin(moodle_origin: str | None, base_url: str | None) -> str | None:
     return url_origin(base_url) if base_url else None
 
 
+def site_origin_or_problem(
+    moodle_origin: str | None, base_url: str | None
+) -> tuple[str | None, str | None]:
+    """``(origin, None)``, or ``(None, "moodle_origin_invalid")`` when the site has no usable
+    origin (a stored ``moodle_origin`` that is not a bare origin, or no column and a
+    ``base_url`` without one): reported by startup and the setup check, never skipped
+    (CodeRabbit 4501070007; the page answers 404 for such a site)."""
+    origin = site_origin(moodle_origin, base_url)
+    return (origin, None) if origin else (None, "moodle_origin_invalid")
+
+
 #: the enabled sites' two origin columns (``site_origin`` decides in Python, not in SQL)
 SITE_ORIGINS_SQL = (
     "SELECT moodle_origin, base_url FROM assess_sites WHERE disabled_at IS NULL"

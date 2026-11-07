@@ -533,3 +533,6 @@ async def test_ui_origin_distinct_uses_the_sites_moodle_origin_column(
         moodle_origin="https://moodle-frame.example",
     )
     assert items["ui_origin_distinct"] == ("OK", None)
+    # CodeRabbit 4501070007: a stored origin that cannot be used is reported, not skipped
+    _r, items, _o = await good(branch, moodle_origin="https://u:p@moodle.example")
+    assert items["ui_origin_distinct"] == ("MISSING", "moodle_origin_invalid")

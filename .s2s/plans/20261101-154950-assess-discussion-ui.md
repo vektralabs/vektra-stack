@@ -431,3 +431,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501067228 The page re-applies `ui_origin_problem` to the site's current origin on every
     request (after the cache): a site re-pointed at the UI origin, or at a non-https origin
     outside development, after startup is 503 with `frame-ancestors 'none'`.
+  - 4501070007 A site without a usable origin (a stored `moodle_origin` that is not bare, or
+    no column and a `base_url` without one) is reported as `moodle_origin_invalid` by startup
+    (refused) and by `ui_origin_distinct` (MISSING), instead of being dropped from the check.

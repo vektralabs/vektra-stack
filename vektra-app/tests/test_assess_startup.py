@@ -516,6 +516,13 @@ class _Rows:
             ["HTTPS://M.EXAMPLE:443"],
             "ui_origin_equals_moodle_origin",
         ),
+        # CodeRabbit 4501070007: an unusable stored origin refuses startup, never skipped
+        (
+            "production",
+            "https://ui.example",
+            ["https://m.example/path"],
+            "moodle_origin_invalid",
+        ),
         ("development", "http://localhost:8000", ["http://127.0.0.1:8080"], None),
         (
             "development",

@@ -185,14 +185,15 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
 
     from vektra_assess.ui.origins import (
         SITE_ORIGINS_SQL,
-        site_origin,
+        site_origin_or_problem,
         ui_origin_problem,
     )
 
     async with engine.connect() as conn:
         rows = (await conn.execute(text(SITE_ORIGINS_SQL))).all()
-    origins = [o for o in (site_origin(r[0], r[1]) for r in rows) if o]
-    problem = ui_origin_problem(
+    checked = [site_origin_or_problem(r[0], r[1]) for r in rows]
+    origins = [o for o, _ in checked if o]
+    problem = next((p for _, p in checked if p), None) or ui_origin_problem(
         settings.ui_origin, origins, development=settings.env == "development"
     )
     if problem is not None:

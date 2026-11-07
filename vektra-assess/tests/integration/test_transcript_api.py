@@ -441,3 +441,20 @@ async def test_mint_and_download_share_one_rate_budget(pg, worker) -> None:  # t
         assert (await download(w, s.session_id, r.json()["token"])).status_code == 200
         r = await mint(w, s.session_id, sub=s.sub)
         assert r.status_code == 429 and err(r)["details"]["reason"] == "download_rate"
+
+
+async def test_a_transcript_key_not_loaded_is_503_and_keeps_the_token(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4503029403: during a key rotation the API may not hold the kid yet: 503
+    (retryable), the token stays usable, no integrity failure is reported."""
+    async with world(pg) as w:
+        s, ring = await _ready(w, worker)
+        token = (await mint(w, s.session_id, sub=s.sub)).json()["token"]
+        w.app.state.assess_keys[store.KEYRING] = AssessKeyring(
+            store.KEYRING, "t2", {"t2": os.urandom(32)}
+        )
+        r = await download(w, s.session_id, token)
+        assert r.status_code == 503 and err(r)["code"] == "ERR-ASSESS-001"
+        w.app.state.assess_keys[store.KEYRING] = ring  # the key arrives
+        assert (await download(w, s.session_id, token)).status_code == 200

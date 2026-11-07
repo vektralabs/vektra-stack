@@ -28,6 +28,11 @@ class TranscriptIntegrityError(ValueError):
     """The stored transcript cannot be opened or does not match its hash (content-free)."""
 
 
+class TranscriptKeyUnavailable(LookupError):
+    """The envelope names a transcript-key kid this process does not hold (rotation or
+    configuration): retryable, never an integrity failure."""
+
+
 @dataclass(frozen=True)
 class Sealed:
     ciphertext: bytes
@@ -53,7 +58,9 @@ def open_verified(
 ) -> bytes:
     try:
         plain = decrypt_transcript(kek, transcript_id, ciphertext, dek_wrapped)
-    except (InvalidTag, EnvelopeError, KeyNotAvailable):
+    except KeyNotAvailable:
+        raise TranscriptKeyUnavailable("kid_not_loaded") from None
+    except (InvalidTag, EnvelopeError):
         raise TranscriptIntegrityError("decrypt_failed") from None
     if hashlib.sha256(plain).hexdigest() != content_sha256:
         raise TranscriptIntegrityError("hash_mismatch")

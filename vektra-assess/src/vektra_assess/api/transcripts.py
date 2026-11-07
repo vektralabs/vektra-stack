@@ -331,8 +331,6 @@ async def download_transcript(
             )
             if check is not GraderCheck.OK:
                 refused = teacher_unverified(stale=check is GraderCheck.STALE)
-        if refused is None:
-            await conn.execute(_CONSUME, {"h": jti_hash(claims.jti)})
         if refused is None and row is not None:
             filename = str(row.filename)
             try:
@@ -343,7 +341,17 @@ async def download_transcript(
                     bytes(row.dek_wrapped),
                     str(row.content_hash),
                 )
+            except store.TranscriptKeyUnavailable:
+                # rotation or configuration (CodeRabbit 4503029403): retryable, the token is
+                # NOT consumed and nothing is reported as an integrity failure
+                log.error(
+                    "assess.transcript.alert",
+                    alert="transcript_key_not_available",
+                    transcript_id=str(t),
+                )
+                refused = assess_unavailable("transcript_key")
             except store.TranscriptIntegrityError as exc:
+                await conn.execute(_CONSUME, {"h": jti_hash(claims.jti)})
                 log.error(
                     "assess.transcript.alert",
                     alert="integrity_mismatch_at_download",
@@ -352,6 +360,7 @@ async def download_transcript(
                 )
                 refused = transcript_integrity()
             else:
+                await conn.execute(_CONSUME, {"h": jti_hash(claims.jti)})
                 await write_event(
                     conn,
                     AssessAuditEvent.STUDENT_DOWNLOAD

@@ -234,8 +234,9 @@ class MoodleStartSource:
         sink: dict[str, Any] | None = None,
     ) -> CloseFacts:
         """What the transcript header needs from Moodle at close (plan 10): the course short
-        name, the grade as the student sees it NOW (release-gated: an unreleased grade never
-        leaves the reader) and the course's graders. Each part is None when unreadable."""
+        name and the grade as the student sees it NOW (release-gated: an unreleased grade never
+        leaves the reader). Each part is None when unreadable. The recipients come from the
+        sealed teacher config (REQ-082 as amended), not from Moodle."""
         target = StartTarget(
             session_id=session_id,
             site_id=site_id,
@@ -258,12 +259,7 @@ class MoodleStartSource:
         # read with the resolution: no second course list
         shortname = part["course_shortname"] = ref.course_shortname
         grade = part["grade"] = await self._grade_now(site, ref, target)
-        graders = await r.read_graders(self._client, site, ref.courseid)
-        return CloseFacts(
-            course_shortname=shortname,
-            grade=grade,
-            graders=graders.value.graders if isinstance(graders, Readable) else None,
-        )
+        return CloseFacts(course_shortname=shortname, grade=grade)
 
     async def _grade_now(
         self, site: SiteRef, ref: ActivityRef, target: StartTarget

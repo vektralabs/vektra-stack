@@ -240,6 +240,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     if not all(k in checked.keys for k in SESSION_KEYS):
         return {}
     from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
+    from vektra_assess.delivery.recipients import ConfigRecipients
     from vektra_assess.jobs import JobKind
     from vektra_assess.moodle.client import MoodleWsClient
     from vektra_assess.moodle.tokens import secret_token_provider
@@ -278,14 +279,19 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
             runner=runner,
         )
     )
+    # the transcript recipients: the sealed teacher config, opened by the worker only
+    recipients = ConfigRecipients(checked.keys["assess_teacher_config_private"])
     render = make_render_handler(
-        RenderDeps(settings=settings, source=source, graders=source)
+        RenderDeps(
+            settings=settings, source=source, graders=source, recipients=recipients
+        )
     )
     transcript = make_generate_handler(
         GenerationDeps(
             kek=checked.keys["assess_kek"],
             transcript_kek=checked.keys["assess_transcript_kek"],
             facts=source,
+            recipients=recipients,
             tz=settings.site_timezone,
         )
     )

@@ -14,27 +14,22 @@ from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.recipients import configure_recipients, refs
 from support.sessions import seed_session
 from support.world import auth, err, world
 
 from integration.test_session_preflight import _reset
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.moodle.domain import GraderView
 from vektra_assess.transcript import naming, store
 from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.transcript_gen import GenerationDeps, generate_transcript
 
 pytestmark = pytest.mark.integration
 
-GRADERS = (
-    GraderView(12, "Gina Grader", None, ("editingteacher",)),
-    GraderView(13, "Hugo Grader", None, ("teacher",)),
-)
-
 
 class Facts:
     async def close_facts(self, **_: Any) -> CloseFacts:
-        return CloseFacts(course_shortname="EA 2026/27", graders=GRADERS)
+        return CloseFacts(course_shortname="EA 2026/27")
 
 
 @pytest.fixture
@@ -50,8 +45,11 @@ async def _ready(w, worker):  # type: ignore[no-untyped-def]
     ring = AssessKeyring(store.KEYRING, "t1", {"t1": os.urandom(32)})
     w.app.state.assess_keys[store.KEYRING] = ring
     s = await seed_session(w, worker, "CLOSED")
+    recipients = await configure_recipients(w.pg, w.site, s.cmid)
     got = await generate_transcript(
-        GenerationDeps(kek=s.kek, transcript_kek=ring, facts=Facts()),
+        GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Facts(), recipients=recipients
+        ),
         worker.connect,
         s.session_id,
     )
@@ -312,18 +310,13 @@ async def test_resend_never_takes_a_recipient(pg, worker) -> None:  # type: igno
         assert r.status_code == 202 and r.json()["round"] == 3, r.text
         rows = await pg.run(
             "super",
-            "SELECT round, recipient_userid FROM assess_deliveries WHERE transcript_id = :t "
-            "ORDER BY round, recipient_userid",
+            "SELECT round, recipient_ref FROM assess_deliveries WHERE transcript_id = :t",
             {"t": s.session_id},
         )
-        assert [tuple(x) for x in rows] == [
-            (1, 12),
-            (1, 13),
-            (2, 12),
-            (2, 13),
-            (3, 12),
-            (3, 13),
-        ]
+        # the same configured recipients in every round, by ref (never an address)
+        for n in (1, 2, 3):
+            assert {x.recipient_ref for x in rows if x.round == n} == refs(w.site)
+        assert len(rows) == 6
         assert (
             await count(
                 pg,

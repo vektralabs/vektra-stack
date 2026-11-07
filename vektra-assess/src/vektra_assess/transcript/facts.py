@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from vektra_assess.context.regrade import GradeReading
-from vektra_assess.delivery.recipients import GraderLike
 from vektra_assess.readable import Readable, Unreadable
 
 
@@ -21,7 +20,6 @@ class CloseFacts:
 
     course_shortname: str | None = None
     grade: Readable[GradeReading] | Unreadable | None = None
-    graders: tuple[GraderLike, ...] | None = None
 
 
 class CloseFactsSource(Protocol):

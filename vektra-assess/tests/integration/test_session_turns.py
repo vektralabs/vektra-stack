@@ -676,3 +676,41 @@ async def test_turn_notes_are_written_with_the_bot_turn(pg, worker) -> None:  # 
             )
             == 4
         )
+
+
+async def test_a_bot_turn_with_many_long_contest_markers_is_still_persisted(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #2: the note is deduplicated and capped, so it can never trip the table's size
+    CHECK (which would roll back the bot turn in the same transaction)."""
+    from vektra_assess.api.turns import MAX_NOTE_CONTESTS, MAX_NOTE_LABEL
+    from vektra_assess.llm.types import ContestEntry
+
+    contests = tuple(
+        ContestEntry(f"{i % 40:02d}" + "L" * 300, "confirmed") for i in range(200)
+    )
+    runner = FakeStreamRunner(
+        marks=tuple(f"m{i}" for i in range(50)), contests=contests
+    )
+    async with world(pg, assess_runner=runner, assess_sse_timing=TIMING) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        r = await w.client.post(
+            f"/api/v1/assess/sessions/{s.session_id}/turns",
+            json={"text": "Contesto molti criteri"},
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 202, r.text
+        await _wait_idle(w)
+        rows = await pg.run(
+            "super",
+            "SELECT t.kind, n.contests, cardinality(n.marks) FROM assess_turns t "
+            "JOIN assess_turn_notes n USING (session_id, turn_no) WHERE t.session_id = :s",
+            {"s": s.session_id},
+        )
+        assert (
+            len(rows) == 1 and rows[0][0] == "normal"
+        )  # the reply, not the interrupted marker
+        notes = rows[0][1]
+        assert len(notes) == MAX_NOTE_CONTESTS and rows[0][2] == 16
+        assert all(len(c["label"]) <= MAX_NOTE_LABEL for c in notes)
+        assert len({c["label"] for c in notes}) == len(notes)  # one per label

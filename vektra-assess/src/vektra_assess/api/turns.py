@@ -116,6 +116,32 @@ class TurnNotes:
     lang: str | None
 
 
+#: bounds that keep a note far below the table's CHECK (``pg_column_size(contests) < 4096``,
+#: ``cardinality(marks) <= 16``): a CheckViolation would roll back the bot turn itself
+MAX_NOTE_MARKS = 16
+MAX_NOTE_CONTESTS = 16
+MAX_NOTE_LABEL = 64
+_MAX_STATUS = 16
+
+
+def turn_notes(result: TurnResult) -> TurnNotes:
+    """The note of one answered turn, deduplicated and capped (review #2): marks once each;
+    one contest entry per label (the LAST one wins, as in the transcript), the latest
+    ``MAX_NOTE_CONTESTS`` labels, each label cut to ``MAX_NOTE_LABEL`` characters. Worst case
+    about 16 x (64 + 16 + 30) bytes of JSON: well under 4096."""
+    latest: dict[str, str] = {}
+    for entry in result.contest_entries:
+        label = str(entry.label)[:MAX_NOTE_LABEL]
+        latest.pop(label, None)
+        latest[label] = str(entry.status)[:_MAX_STATUS]
+    kept = list(latest.items())[-MAX_NOTE_CONTESTS:]
+    return TurnNotes(
+        marks=tuple(dict.fromkeys(str(m)[:32] for m in result.marks))[:MAX_NOTE_MARKS],
+        contests=tuple(ContestEntry(label, status) for label, status in kept),  # type: ignore[arg-type]
+        lang=result.language if result.language in ("it", "en", "other") else None,
+    )
+
+
 _PENDING_TURN = text(
     "SELECT seq, pending_reply_since FROM assess_sessions "
     "WHERE id = :s AND state = 'ACTIVE' AND epoch = :e"
@@ -535,11 +561,7 @@ class TurnDriver:
             text_ = f"{text_.rstrip()} {INTERRUPTED_REPLY}".strip()
         tokens = result.usage.prompt_tokens + result.usage.completion_tokens
         used: list[int] = []
-        notes = TurnNotes(
-            marks=tuple(dict.fromkeys(result.marks))[:16],
-            contests=result.contest_entries,
-            lang=result.language if result.language in ("it", "en", "other") else None,
-        )
+        notes = turn_notes(result)
         turn_no = await self._append_bot(sid, epoch, kind, text_, tokens, used, notes)
         if turn_no is None:
             # refused by assess_append_turn (state, epoch, seq or chain moved; from plan M3.3 also

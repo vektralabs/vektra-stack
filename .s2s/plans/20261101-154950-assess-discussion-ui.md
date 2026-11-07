@@ -442,3 +442,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     scheme+Host with `VEKTRA_ASSESS_UI_ORIGIN`.
   - review 5811279241 (assess_wiring, outside diff) The UI router runs `assess_housekeeping`
     like the assess API, so page-only traffic still sweeps empty `ui_page` limiter windows.
+  - review 5811279241 (router, outside diff) The page and asset refusals carry the standard
+    error envelope (404 ERR-ASSESS-003, 429 ERR-ASSESS-012 `ui_page_rate`, 503 ERR-ASSESS-001
+    naming `ui_origin`, `site_origin` or `ui_bundle`) with the same framing headers.

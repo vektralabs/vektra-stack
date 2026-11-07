@@ -183,7 +183,9 @@ trusted types with no policy), `Referrer-Policy: no-referrer`, `X-Content-Type-O
 `Cache-Control: no-store`, `Permissions-Policy: clipboard-write=(self), camera=(), microphone=(),
 geolocation=()`, `Cross-Origin-Resource-Policy: same-origin`, and no `X-Frame-Options` (every
 other API response has `X-Frame-Options: DENY`). An unknown or disabled site is 404 with
-`frame-ancestors 'none'`. Assets: `GET /api/v1/assess/ui/assets/{name}`, content-hashed names
+`frame-ancestors 'none'`. Every refusal carries the standard error envelope with the page or asset headers:
+`404 ERR-ASSESS-003` (unknown site or asset), `429 ERR-ASSESS-012` (`ui_page_rate`, `Retry-After`),
+`503 ERR-ASSESS-001` (remediation names `ui_origin`, `site_origin` or `ui_bundle`). Assets: `GET /api/v1/assess/ui/assets/{name}`, content-hashed names
 from the build manifest only.
 
 The page works inside the plugin's iframe sandbox `allow-scripts allow-same-origin

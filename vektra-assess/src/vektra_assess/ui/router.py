@@ -22,7 +22,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy import text
 
@@ -30,8 +30,10 @@ from vektra_assess.api.common import engine_of
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.housekeeping import assess_housekeeping
 from vektra_assess.api.state import limiter_of
+from vektra_assess.errors import ERR_ASSESS_003, assess_unavailable, rate_limited
 from vektra_assess.ui.headers import asset_headers, page_headers
 from vektra_assess.ui.origins import site_origin, ui_origin_problem, url_origin
+from vektra_shared.errors import ErrorCategory, ErrorResponse
 
 PREFIX = "/api/v1/assess/ui"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -44,6 +46,21 @@ _SITE = text(
     "SELECT id, base_url, moodle_origin, disabled_at FROM assess_sites "
     "WHERE id = CAST(:s AS uuid)"
 )
+
+
+def _not_found(what: str) -> ErrorResponse:
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_003,
+        message=f"Discussion {what} not found.",
+        remediation="Open the discussion from the activity page in Moodle.",
+    )
+
+
+def _refused(status: int, err: ErrorResponse, headers: dict[str, str]) -> Response:
+    """An error envelope (code and remediation, REQ-009/010) with the page or asset headers:
+    the framing restrictions and any Retry-After are kept (CodeRabbit review 5811279241)."""
+    return JSONResponse(err.to_envelope(), status_code=status, headers=headers)
 
 
 def public_assess_ui() -> None:
@@ -170,7 +187,7 @@ def on_ui_origin(request: Request) -> bool:
 @router.get("", response_class=HTMLResponse)
 async def ui_page(request: Request, site: str = "") -> Response:
     if not on_ui_origin(request):
-        return Response(status_code=503, headers=page_headers(None))
+        return _refused(503, assess_unavailable("ui_origin"), page_headers(None))
     # per client address (the proxy's X-Forwarded-For counts only when uvicorn trusts it),
     # before any database read
     client = request.client.host if request.client else "unknown"
@@ -179,23 +196,24 @@ async def ui_page(request: Request, site: str = "") -> Response:
     )
     if not allowed:
         retry = max(1, int(rl.get("X-RateLimit-Reset", "0")) - int(time.time()))
-        return Response(
-            status_code=429,
-            headers={**page_headers(None), **rl, "Retry-After": str(retry)},
+        return _refused(
+            429,
+            rate_limited(retry, "ui_page_rate"),
+            {**page_headers(None), **rl, "Retry-After": str(retry)},
         )
     origin = await _site_origin(request, site)
     if origin is None:
-        return Response(status_code=404, headers=page_headers(None))
+        return _refused(404, _not_found("page"), page_headers(None))
     # the startup check, again for THIS site now: an origin changed after startup that is the
     # UI origin (or not https outside development) is never framed (CodeRabbit 4501067228)
     settings = settings_of(request)
     if ui_origin_problem(
         settings.ui_origin, [origin], development=settings.env == "development"
     ):
-        return Response(status_code=503, headers=page_headers(None))
+        return _refused(503, assess_unavailable("site_origin"), page_headers(None))
     manifest = manifest_of(static_dir(request))
     if manifest is None:
-        return Response(status_code=503, headers=page_headers(None))
+        return _refused(503, assess_unavailable("ui_bundle"), page_headers(None))
     html = TEMPLATES.get_template("page.html.j2").render(
         cfg_json=_json_block(
             {"site": site, "moodleOrigin": origin, "apiBase": "/api/v1/assess"}
@@ -232,6 +250,6 @@ def asset_path(directory: Path, name: str) -> Path | None:
 async def ui_asset(request: Request, name: str) -> Response:
     path = asset_path(static_dir(request), name)
     if path is None:
-        return Response(status_code=404, headers=asset_headers())
+        return _refused(404, _not_found("asset"), asset_headers())
     media = "text/javascript" if path.suffix == ".js" else "text/css"
     return FileResponse(path, media_type=media, headers=asset_headers())

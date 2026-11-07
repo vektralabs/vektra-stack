@@ -56,7 +56,10 @@ async def test_the_page_carries_the_site_origin_and_the_hashed_assets(
 async def test_an_unknown_or_malformed_site_is_404(pg, bundle, site: str) -> None:  # type: ignore[no-untyped-def]
     async with world(pg, assess_ui_static_dir=str(bundle)) as w:
         r = await w.client.get(PAGE, params={"site": site})
-        assert r.status_code == 404 and r.text == ""
+        assert r.status_code == 404
+        # CodeRabbit review 5811279241 (router): the error envelope, with a remediation
+        assert r.json()["error"]["code"] == "ERR-ASSESS-003"
+        assert r.json()["error"]["remediation"]
 
 
 async def test_a_disabled_site_is_404(pg, bundle) -> None:  # type: ignore[no-untyped-def]
@@ -90,9 +93,10 @@ async def test_only_manifest_assets_are_served(pg, bundle) -> None:  # type: ign
             "..%2Fsecret.txt",
             "%2E%2E%2Fmanifest.json",
         ):
-            assert (await w.client.get(f"{PAGE}/assets/{name}")).status_code == 404, (
-                name
-            )
+            missing = await w.client.get(f"{PAGE}/assets/{name}")
+            assert missing.status_code == 404, name
+            if "%2F" not in name:  # an encoded slash never reaches the route at all
+                assert missing.json()["error"]["code"] == "ERR-ASSESS-003"
 
 
 @pytest.mark.parametrize(
@@ -233,7 +237,9 @@ async def test_without_a_ui_origin_the_page_is_503(pg, bundle) -> None:  # type:
     cfg = default_settings(VEKTRA_ASSESS_UI_ORIGIN="")
     async with world(pg, cfg, assess_ui_static_dir=str(bundle)) as w:
         r = await w.client.get(PAGE, params={"site": str(w.site)})
-        assert r.status_code == 503 and r.text == ""
+        assert r.status_code == 503
+        assert r.json()["error"]["code"] == "ERR-ASSESS-001"
+        assert "ui_origin" in r.json()["error"]["remediation"]
         assert r.headers["content-security-policy"] == EXPECTED_CSP.format("'none'")
 
 
@@ -314,6 +320,8 @@ async def test_a_flood_of_random_sites_is_rate_limited(pg, bundle) -> None:  # t
         ]
         assert codes[:30] == [404] * 30
         assert set(codes[30:]) == {429}  # the limiter answers before any lookup
+        throttled = await w.client.get(PAGE, params={"site": str(uuid.uuid4())})
+        assert throttled.json()["error"]["code"] == "ERR-ASSESS-012"
         assert (
             checkouts[0] <= 30
         )  # one lookup per allowed request, never one per request

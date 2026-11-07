@@ -387,11 +387,16 @@ async def test_resend_is_rate_limited_per_key(pg, worker) -> None:  # type: igno
     async with world(pg, default_settings(VEKTRA_ASSESS_RESEND_RPM=2)) as w:
         s, _ = await _ready(w, worker)
         url = f"/api/v1/assess/transcripts/{s.session_id}/resend"
-        codes = [
-            (await w.client.post(url, json={}, headers=auth("admin"))).status_code
-            for _ in range(3)
+        responses = [
+            await w.client.post(url, json={}, headers=auth("admin")) for _ in range(3)
         ]
-        assert codes[-1] == 429, codes
+        # the first two pass the per-key limiter and meet the interval (round 1 is fresh);
+        # the third is the per-key limiter's own refusal
+        assert [(r.status_code, err(r)["details"]["reason"]) for r in responses] == [
+            (429, "resend_interval"),
+            (429, "resend_interval"),
+            (429, "resend_rate"),
+        ]
 
 
 async def test_a_stale_grader_list_at_download_does_not_burn_the_token(

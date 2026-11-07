@@ -166,7 +166,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [x] (added) Recipient selection `delivery/recipients.py` (one function, used by generation and by `/state`): ≤ 3 current course graders; render worker writes `graders` (user ids) and `recipients` (`{role, name}`) into the student's `assess_gate_inputs`
 
 ### Delivery
-- [ ] `delivery/message.py`: EmailMessage builder, header sanitiser (CR/LF/C0 strip), deterministic Message-ID, plain-text body template (Italian, content-free)
+- [x] `delivery/message.py`: EmailMessage builder, header sanitiser (CR/LF/C0 strip), deterministic Message-ID, plain-text body template (Italian, content-free) (`test_delivery_message.py`: CR/LF/C0/C1/U+2028 injection in the course -> one Subject, no Bcc; Message-ID over `tid|round|recipient_ref`)
 - [ ] `delivery/smtp.py`: aiosmtplib client with mandatory TLS, AUTH after TLS, cert validation, semaphore cap, timeout, error classification (`tls`, `connect`, `temp_4xx`, `perm_5xx`, `auth`)
 - [ ] `delivery/backoff.py`: schedule parser + `next_not_before(attempts, first_attempt_at)`; window expiry → FAILED
 - [ ] `delivery/handler.py`: claim due rows (`status IN (PENDING, RETRYING) AND not_before<=now()`), re-read the configured recipients from the current sealed config + domain allowlist, REPLACED fan-out (see "Decision REVISED"), attempt-start commit, send, outcome commit, audit per attempt and result (REQ-085), alerts; reconciliation of in-window crashes per OQ-029 default

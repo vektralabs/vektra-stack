@@ -370,3 +370,13 @@ real-time run guards against clock-injection bugs.
   (axe WCAG 2.1 AA + Nu checker, with a broken control document) passes.
 - BLOCKED until 10b: NFR-021 benchmark, SMTP criteria (REQ-075, OQ-029), recipient replacement
   (REQ-082 send-time half), download bytes == email attachment bytes (the download half is proven).
+
+### Code review of 10a (2026-11-07), decisions
+
+- Resend limits (review #6): at most one delivery round per transcript per
+  `VEKTRA_ASSESS_RESEND_MIN_INTERVAL_S` (default 600 s, generation's round 1 included), checked
+  inside `assess_enqueue_resend` under the per-transcript advisory lock (so concurrent calls and
+  several API replicas cannot both pass; the function returns -1, the API answers 429
+  `resend_interval` with `Retry-After`), plus `VEKTRA_ASSESS_RESEND_RPM` (6) per API key in an
+  assess-local limiter. Reason: each round mails up to 3 graders; a DB check is the only one that
+  holds across replicas.

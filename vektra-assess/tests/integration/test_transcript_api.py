@@ -73,6 +73,15 @@ async def _graders(w, s, ids=(12, 13), age: str = "1 second") -> None:  # type: 
     )
 
 
+async def _age_rounds(pg, s) -> None:  # type: ignore[no-untyped-def]
+    await pg.run(
+        "super",
+        "UPDATE assess_deliveries SET created_at = now() - interval '1 hour' "
+        "WHERE transcript_id = :t",
+        {"t": s.session_id},
+    )
+
+
 async def mint(w, tid, key: str = "mint", **body: Any):  # type: ignore[no-untyped-def]
     return await w.client.post(
         f"/api/v1/assess/transcripts/{tid}/download-token", json=body, headers=auth(key)
@@ -286,9 +295,15 @@ async def test_resend_never_takes_a_recipient(pg, worker) -> None:  # type: igno
             )
             == 0
         )
+        # round 1 was just created by the generation: too soon (review #6), nothing written
+        r = await w.client.post(url, json={"actor_userid": 12}, headers=auth("teacher"))
+        assert r.status_code == 429 and err(r)["details"]["reason"] == "resend_interval"
+        assert int(r.headers["retry-after"]) == 600
         # a grader's resend: round 2 for the same recipients; an operator's: round 3
+        await _age_rounds(pg, s)
         r = await w.client.post(url, json={"actor_userid": 12}, headers=auth("teacher"))
         assert r.status_code == 202 and r.json()["round"] == 2, r.text
+        await _age_rounds(pg, s)
         r = await w.client.post(url, json={}, headers=auth("admin"))
         assert r.status_code == 202 and r.json()["round"] == 3, r.text
         rows = await pg.run(
@@ -359,3 +374,17 @@ async def test_resend_bodies_are_capped_and_never_a_500(pg, worker) -> None:  # 
             )
             == 0
         )
+
+
+async def test_resend_is_rate_limited_per_key(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #6: at most VEKTRA_ASSESS_RESEND_RPM resend calls per minute per API key."""
+    from support.world import default_settings
+
+    async with world(pg, default_settings(VEKTRA_ASSESS_RESEND_RPM=2)) as w:
+        s, _ = await _ready(w, worker)
+        url = f"/api/v1/assess/transcripts/{s.session_id}/resend"
+        codes = [
+            (await w.client.post(url, json={}, headers=auth("admin"))).status_code
+            for _ in range(3)
+        ]
+        assert codes[-1] == 429, codes

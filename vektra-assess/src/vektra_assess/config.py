@@ -640,6 +640,22 @@ class VektraAssessSettings(BaseSettings):
             "requester (assess-local limiter; 429 beyond it)."
         ),
     )
+    resend_min_interval_s: int = Field(
+        600,
+        ge=0,
+        alias="VEKTRA_ASSESS_RESEND_MIN_INTERVAL_S",
+        description=(
+            "Minimum time between two delivery rounds of the same transcript (each round mails "
+            "up to 3 graders): a resend sooner is 429 with Retry-After. Checked in the database "
+            "under the per-transcript lock, so concurrent resends cannot both pass."
+        ),
+    )
+    resend_rpm: int = Field(
+        6,
+        ge=1,
+        alias="VEKTRA_ASSESS_RESEND_RPM",
+        description="Resend calls per minute per API key (assess-local limiter); 429 beyond it.",
+    )
     teacher_gate_max_age_s: int = Field(
         120,
         ge=10,

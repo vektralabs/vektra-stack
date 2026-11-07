@@ -380,7 +380,7 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     "assess_end_outage(uuid,integer)": (WORKER,),
     # REQ-082 resend (revision 0034): a new round for the transcript's current recipients; the
     # caller can never name a recipient
-    "assess_enqueue_resend(uuid,text)": (API,),
+    "assess_enqueue_resend(uuid,text,integer)": (API,),
 }
 
 

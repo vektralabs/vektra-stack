@@ -12,9 +12,10 @@
 - ``assess_turn_notes``: the post-check mark codes, the contest entries (label + status) and the
   reply language of a bot turn, written by the API turn driver in the turn's own transaction (the turn row is never
   updated, BR-015); the transcript renders the markers and "Punti contestati" from it.
-- ``assess_enqueue_resend(tid, actor)``: SECURITY DEFINER, round n+1 for the recipients of the
-  last round (never a REPLACED one); the caller cannot name a recipient (REQ-082). Serialised per
-  transcript by an advisory lock.
+- ``assess_enqueue_resend(tid, actor, min_interval_s)``: SECURITY DEFINER, round n+1 for the
+  recipients of the last round (never a REPLACED one); the caller cannot name a recipient
+  (REQ-082). Serialised per transcript by an advisory lock; -1 when a round was created less than
+  ``min_interval_s`` ago (the API answers 429).
 
 The whole grant matrix is re-rendered.
 
@@ -30,7 +31,7 @@ branch_labels = None
 depends_on = None
 
 DEFINER = "vektra_assess_definer"
-SIG_RESEND = "public.assess_enqueue_resend(uuid,text)"
+SIG_RESEND = "public.assess_enqueue_resend(uuid,text,integer)"
 
 GRANT_STATEMENTS = (
     "REVOKE ALL ON assess_activity_config, assess_audit_events, assess_consumed_jtis, assess_deliveries, assess_enrolment_checks, assess_erasure_records, assess_extra_time, assess_gate_inputs, assess_heartbeat, assess_jobs, assess_model_activations, assess_outage_incidents, assess_render_checks, assess_render_state, assess_reset_grants, assess_session_handoff, assess_session_keys, assess_sessions, assess_setup_check_reports, assess_setup_checks, assess_site_capabilities, assess_site_keys, assess_sites, assess_start_breaker, assess_snapshots, assess_start_attempts, assess_token_jti, assess_transcript_download_tokens, assess_transcripts, assess_turn_flags, assess_turn_notes, assess_turns FROM vektra_assess_api, vektra_assess_worker, vektra_assess_definer",
@@ -203,8 +204,8 @@ GRANT_STATEMENTS = (
     "GRANT EXECUTE ON FUNCTION public.assess_close_session(uuid,integer,text) TO vektra_assess_worker",
     "REVOKE ALL ON FUNCTION public.assess_end_outage(uuid,integer) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_end_outage(uuid,integer) TO vektra_assess_worker",
-    "REVOKE ALL ON FUNCTION public.assess_enqueue_resend(uuid,text) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
-    "GRANT EXECUTE ON FUNCTION public.assess_enqueue_resend(uuid,text) TO vektra_assess_api",
+    "REVOKE ALL ON FUNCTION public.assess_enqueue_resend(uuid,text,integer) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
+    "GRANT EXECUTE ON FUNCTION public.assess_enqueue_resend(uuid,text,integer) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.assess_enter_outage(uuid,integer,timestamp with time zone,text) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
     "GRANT EXECUTE ON FUNCTION public.assess_enter_outage(uuid,integer,timestamp with time zone,text) TO vektra_assess_api",
     "REVOKE ALL ON FUNCTION public.get_session_material(uuid,integer) FROM PUBLIC, vektra_assess_api, vektra_assess_worker",
@@ -212,7 +213,9 @@ GRANT_STATEMENTS = (
 )
 
 RESEND = """
-    CREATE FUNCTION public.assess_enqueue_resend(p_tid uuid, p_actor text) RETURNS integer
+    CREATE FUNCTION public.assess_enqueue_resend(
+        p_tid uuid, p_actor text, p_min_interval_s integer
+    ) RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     DECLARE
         v_round integer;
@@ -236,6 +239,14 @@ RESEND = """
          WHERE d.transcript_id = p_tid AND d.kind = 'transcript';
         IF v_round IS NULL THEN
             RETURN 0;  -- never delivered to anyone: nothing to resend
+        END IF;
+        -- at most one round per interval and transcript (each round mails up to 3 people);
+        -- checked under the lock, so concurrent calls cannot both pass
+        IF EXISTS (SELECT 1 FROM public.assess_deliveries d
+                    WHERE d.transcript_id = p_tid AND d.kind = 'transcript'
+                      AND d.created_at > pg_catalog.now()
+                          - pg_catalog.make_interval(secs => GREATEST(p_min_interval_s, 0))) THEN
+            RETURN -1;
         END IF;
         INSERT INTO public.assess_deliveries
             (transcript_id, kind, round, recipient_kind, recipient_userid, status)

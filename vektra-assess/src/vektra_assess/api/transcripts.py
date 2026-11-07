@@ -115,7 +115,7 @@ _CONSUME = text(
     "AND consumed_at IS NULL AND expires_at > now() AND transcript_id = :t "
     "RETURNING subject_userid, audience_role, site_id"
 )
-_RESEND = text("SELECT assess_enqueue_resend(:t, :a)")
+_RESEND = text("SELECT assess_enqueue_resend(:t, :a, :gap)")
 
 
 def download_tokens_of(request: Request) -> DownloadTokens:
@@ -376,6 +376,11 @@ async def resend_transcript(
     body = validate_body(doc, ResendBody)
     settings = settings_of(request)
     t = _uuid(tid)
+    allowed, _ = limiter_of(request, "resend").check(
+        ("resend", key.key_id), settings.resend_rpm
+    )
+    if not allowed:
+        raise fail(rate_limited(60, "resend_rate"))
     teacher = "assess:teacher" in key.scopes and "admin" not in key.scopes
     if teacher and body.actor_userid is None:
         raise fail(bad_request("actor_userid"))
@@ -395,19 +400,22 @@ async def resend_transcript(
                 raise fail(transcript_not_found())
             actor = f"operator:{key.key_id}"[:64]
         if refused is None:
-            new_round = int(
-                (await conn.execute(_RESEND, {"t": t, "a": actor})).scalar() or 0
-            )
+            gap = settings.resend_min_interval_s
+            got = await conn.execute(_RESEND, {"t": t, "a": actor, "gap": gap})
+            new_round = int(got.scalar() or 0)
             if new_round == 0:
-                raise fail(
-                    transcript_not_found()
-                )  # not generated, or never had a recipient
-            await enqueue_job(
-                conn,
-                JobKind.TRANSCRIPT_DELIVER,
-                {"transcript_id": str(t)},
-                dedupe_key=f"transcript_deliver:{t}:{new_round}",
-            )
+                # not generated, or never had a recipient
+                raise fail(transcript_not_found())
+            if new_round == -1:
+                # a round less than the minimum interval ago (review #6): each mails up to 3
+                refused = rate_limited(max(1, gap), "resend_interval")
+            else:
+                await enqueue_job(
+                    conn,
+                    JobKind.TRANSCRIPT_DELIVER,
+                    {"transcript_id": str(t)},
+                    dedupe_key=f"transcript_deliver:{t}:{new_round}",
+                )
     if refused is not None:
         raise fail(refused)
     return JSONResponse(

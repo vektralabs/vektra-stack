@@ -77,7 +77,7 @@ async def test_resend_is_a_new_round_for_the_current_recipients(pg) -> None:  # 
     await _deliver(pg, tid, 12, "FAILED")
     await _deliver(pg, tid, 13, "REPLACED")
     got = await pg.run(
-        "api", "SELECT assess_enqueue_resend(:t, 'grader:11')", {"t": tid}
+        "api", "SELECT assess_enqueue_resend(:t, 'grader:11', 0)", {"t": tid}
     )
     assert got[0][0] == 2
     rows = await pg.run(
@@ -88,7 +88,7 @@ async def test_resend_is_a_new_round_for_the_current_recipients(pg) -> None:  # 
     )
     assert [tuple(r) for r in rows] == [(11, "PENDING"), (12, "PENDING")]
     again = await pg.run(
-        "api", "SELECT assess_enqueue_resend(:t, 'grader:11')", {"t": tid}
+        "api", "SELECT assess_enqueue_resend(:t, 'grader:11', 0)", {"t": tid}
     )
     assert again[0][0] == 3  # serialised: never the same round twice
     audits = await pg.run(
@@ -103,7 +103,7 @@ async def test_resend_of_nothing_writes_nothing(pg) -> None:  # type: ignore[no-
     tid = await _transcript(pg)  # never delivered
     for target in (tid, uuid.uuid4()):
         got = await pg.run(
-            "api", "SELECT assess_enqueue_resend(:t, 'operator')", {"t": target}
+            "api", "SELECT assess_enqueue_resend(:t, 'operator', 0)", {"t": target}
         )
         assert got[0][0] == 0
     rows = await pg.run(
@@ -131,3 +131,29 @@ def test_round_trip_to_0033_and_back(pg) -> None:  # type: ignore[no-untyped-def
     assert down.returncode == 0, down.stderr
     up = _alembic(pg.super_url, "upgrade", "head")
     assert up.returncode == 0, up.stderr
+
+
+async def test_a_round_inside_the_minimum_interval_is_refused_under_the_lock(
+    pg,
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #6: -1 (no row, no audit) while the last round is younger than the interval."""
+    tid = await _transcript(pg)
+    await _deliver(pg, tid, 11, "SENT")
+    got = await pg.run(
+        "api", "SELECT assess_enqueue_resend(:t, 'grader:11', 600)", {"t": tid}
+    )
+    assert got[0][0] == -1
+    await pg.run(
+        "super",
+        "UPDATE assess_deliveries SET created_at = now() - interval '11 minutes' "
+        "WHERE transcript_id = :t",
+        {"t": tid},
+    )
+    got = await pg.run(
+        "api", "SELECT assess_enqueue_resend(:t, 'grader:11', 600)", {"t": tid}
+    )
+    assert got[0][0] == 2
+    got = await pg.run(
+        "api", "SELECT assess_enqueue_resend(:t, 'grader:11', 600)", {"t": tid}
+    )
+    assert got[0][0] == -1  # the new round restarts the interval

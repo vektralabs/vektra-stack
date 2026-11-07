@@ -97,7 +97,7 @@ class Generated:
 _SESSION = text(
     "SELECT s.id, s.site_id, s.cmid, s.student_userid, s.session_no, s.state, s.close_reason, "
     "s.courseid_hint, s.duration_s, s.committed_at, s.closed_at, s.created_at, s.frozen_policy, "
-    "s.credited_outage_s, c.activity_type, c.cap_minutes, "
+    "s.credited_outage_s, s.cap_s, c.activity_type, c.cap_minutes, "
     "(SELECT count(*) FROM assess_sessions x WHERE x.site_id = s.site_id AND x.cmid = s.cmid "
     "AND x.student_userid = s.student_userid) AS sessions_total, "
     "(SELECT count(*) FROM assess_start_attempts a WHERE a.site_id = s.site_id "
@@ -251,7 +251,9 @@ async def generate_transcript(
             if facts.grade is not None
             else Unreadable(UnreadableReason.PARTIAL, "not_read"),
         ),
-        cap_minutes=row.cap_minutes,
+        # frozen at the commit; the configuration's value only for sessions committed before
+        # revision 0034 (CodeRabbit 4503025981)
+        cap_minutes=(int(row.cap_s) // 60) if row.cap_s else row.cap_minutes,
         duration_s=row.duration_s,
         committed_at=row.committed_at,
         closed_at=row.closed_at,

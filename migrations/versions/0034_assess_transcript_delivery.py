@@ -12,6 +12,8 @@
 - ``assess_turn_notes``: the post-check mark codes, the contest entries (label + status) and the
   reply language of a bot turn, written by the API turn driver in the turn's own transaction (the turn row is never
   updated, BR-015); the transcript renders the markers and "Punti contestati" from it.
+- ``assess_sessions.cap_s``: the activity cap frozen at the commit (the header's cap and extra
+  time are those of the session, not of today's configuration).
 - ``assess_enqueue_resend(tid, actor, min_interval_s)``: SECURITY DEFINER, round n+1 for the
   recipients of the last round (never a REPLACED one); the caller cannot name a recipient
   (REQ-082). Serialised per transcript by an advisory lock; -1 when a round was created less than
@@ -338,6 +340,12 @@ def upgrade() -> None:
                 CHECK (pg_column_size(contests) < 4096 AND cardinality(marks) <= 16)
         )
     """)
+    # the activity cap frozen at the commit (the transcript header shows cap + extra as they
+    # were when the session started, never the current configuration)
+    op.execute(
+        "ALTER TABLE assess_sessions ADD COLUMN cap_s INTEGER NULL "
+        "CONSTRAINT ck_assess_sessions_cap_s CHECK (cap_s IS NULL OR cap_s > 0)"
+    )
     op.execute(RESEND)
     # ALTER FUNCTION ... OWNER TO needs CREATE on the schema (revoked again by the matrix below)
     op.execute(f"GRANT CREATE ON SCHEMA public TO {DEFINER}")
@@ -349,6 +357,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(f"DROP FUNCTION {SIG_RESEND}")
+    op.execute("ALTER TABLE assess_sessions DROP COLUMN cap_s")
     op.execute("DROP TABLE assess_turn_notes")
     op.execute("ALTER TABLE assess_transcript_download_tokens DROP COLUMN site_id")
     op.execute(

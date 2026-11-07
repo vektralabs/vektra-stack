@@ -220,6 +220,8 @@ class SessionOrm(Base):
     pending_reply_since: Mapped[datetime | None] = _ts(nullable=True)
     # revision 0024: the reply grace frozen at commit, read by assess_append_turn
     reply_grace_s: Mapped[int] = mapped_column(INTEGER, server_default=text("60"))
+    # revision 0034 (plan 10): the activity cap frozen at the commit
+    cap_s: Mapped[int | None] = mapped_column(INTEGER)
 
 
 class StartAttemptOrm(Base):

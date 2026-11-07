@@ -276,7 +276,7 @@ _INSERT_TURN = text(
 _ACTIVATE = text(
     "UPDATE assess_sessions SET state = 'ACTIVE', committed_at = now(), "
     "deadline_at = now() + make_interval(secs => :d), duration_s = :d, seq = :seq, "
-    "reply_grace_s = :g, "
+    "reply_grace_s = :g, cap_s = :cap, "
     "frozen_policy = CAST(:fp AS jsonb), starting_expires_at = NULL, last_activity_at = now() "
     "WHERE id = :s"
 )
@@ -427,7 +427,8 @@ def _remaining(deps: PreflightDeps, elapsed_at_load: float, t_load: float) -> fl
 async def _admit(
     deps: PreflightDeps, acquire: AcquireDb, session_id: UUID
 ) -> tuple[StartTarget, int, float, DbGateFacts] | None:
-    """Steps 1-3. Returns (target, duration_s, elapsed_s, db facts) or None for a stale job."""
+    """Steps 1-3. Returns (target, duration_s, elapsed_s, db facts, cap_s) or None for a stale
+    job. ``cap_s`` is the activity cap frozen with the session (the transcript header, plan 10)."""
     settings = deps.settings
     async with acquire() as conn:
         async with conn.begin():
@@ -481,7 +482,7 @@ async def _admit(
         flags=dict(act.flags or {}),
     )
     duration = int(act.cap_minutes) * 60 + int(act.extra_s)
-    return target, duration, elapsed, db
+    return target, duration, elapsed, db, int(act.cap_minutes) * 60
 
 
 async def _within(
@@ -505,6 +506,8 @@ async def _commit(
     part_b: TurnResult,
     duration_s: int,
     observed_at: int,
+    *,
+    cap_s: int | None = None,
 ) -> bool:
     sid = target.session_id
     dek = envelope.new_dek()
@@ -549,6 +552,7 @@ async def _commit(
                         "seq": 2,
                         "g": deps.settings.reply_grace_s,
                         "fp": built.frozen_policy.model_dump_json(),
+                        "cap": cap_s,
                     },
                 )
                 hkid = deps.handoff_public.active
@@ -680,7 +684,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     admitted = await _admit(deps, acquire, sid)
     if admitted is None:
         return
-    target, duration_s, elapsed, db = admitted
+    target, duration_s, elapsed, db, cap_s = admitted
     # the admission's database time, no later than the enrolment read. db.now is
     # extract(epoch FROM now())::bigint, ROUNDED to the nearest second (up to 0.5 s in the
     # future): one second less keeps the record never newer than the observation, and never
@@ -732,7 +736,15 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
         log.warning("assess_preflight_error", error_type=type(exc).__name__)
         raise _Rollback(Reason.INTERNAL_ERROR) from None
     committed = await _commit(
-        deps, acquire, target, captured, part_a, part_b, duration_s, observed_at
+        deps,
+        acquire,
+        target,
+        captured,
+        part_a,
+        part_b,
+        duration_s,
+        observed_at,
+        cap_s=cap_s,
     )
     if committed:
         log.info("assess_preflight_committed", session_id=str(sid))

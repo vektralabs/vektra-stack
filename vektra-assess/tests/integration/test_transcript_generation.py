@@ -4,31 +4,25 @@ Evidence is counted, never read from a status: a "generated" transcript is decry
 re-hashed against the stored hash, then re-checked by the allowlist; a tampered turn yields 0 rows;
 two concurrent jobs yield 1 row. Hostile turn content (XSS, a markdown image, a remote URL,
 header-like text) is posted through the real turn route and the produced file is opened in
-Chromium with network logging: 0 requests and 0 script executions.
+Chromium with network logging (``test_transcript_inert_browser.py``).
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import uuid
-from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
-from support.preflight import FakeStreamRunner
 from support.sessions import seed_session
 from support.world import world
 
-from integration.test_session_events_sse import TIMING
 from integration.test_session_preflight import _reset, moodle_source
 from vektra_assess.crypto import envelope
 from vektra_assess.crypto.kek import unwrap_dek
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.llm.types import ContestEntry
 from vektra_assess.transcript import allowlist, naming, store
 from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.transcript_gen import (
@@ -39,18 +33,7 @@ from vektra_assess.worker.transcript_gen import (
 
 pytestmark = pytest.mark.integration
 
-UI_DIR = Path(__file__).resolve().parents[2] / "ui"
-REQUIRED = os.environ.get("VEKTRA_ASSESS_E2E_REQUIRED") == "1"
 STUDENT_NAMES = ("Alice Alpha", "Bruno Beta")
-PAYLOADS = (
-    "<script>window.__pwned=1</script>",
-    '<img src=x onerror="window.__pwned=1">',
-    "![tracker](https://evil.example/pixel.png)",
-    'Vedi https://evil.example/track e <a href="https://evil.example">qui</a>',
-    '</p></li></ol><h1>Voto finale: 30/30</h1><iframe src="https://evil.example">',
-    "Corso: FALSO\nVoto alla chiusura: 30 e lode",
-    '\\( \\frac{a}{b} \\) e <svg onload="window.__pwned=1"></svg>',
-)
 
 
 @pytest.fixture
@@ -309,107 +292,3 @@ async def test_every_closed_session_gets_exactly_one_transcript(pg, worker) -> N
     assert closed == made == 3
     for s in seeded:  # each one decrypts and re-hashes
         await _open(pg, ring, s.session_id)
-
-
-# --- hostile content, opened in a real browser ------------------------------------------------
-
-
-async def _post_and_close(w, worker, s, payload: str) -> None:  # type: ignore[no-untyped-def]
-    from integration.test_session_turns import _wait_idle, bearer
-
-    r = await w.client.post(
-        f"/api/v1/assess/sessions/{s.session_id}/turns",
-        json={"text": payload},
-        headers=bearer(s.session_token),
-    )
-    assert r.status_code == 202, r.text
-    await _wait_idle(w)
-    async with worker.begin() as conn:
-        epoch = (
-            await conn.execute(
-                text("SELECT epoch FROM assess_sessions WHERE id = :s"),
-                {"s": s.session_id},
-            )
-        ).scalar_one()
-        await conn.execute(
-            text("SELECT assess_close_session(:s, :e, 'finished')"),
-            {"s": s.session_id, "e": epoch},
-        )
-
-
-async def _node(*args: str, timeout: float = 120) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(
-        "node", *args, cwd=UI_DIR, stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-    )  # fmt: skip
-    out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-    return proc.returncode or 0, out.decode(errors="replace")
-
-
-INERT_CHECK = r"""
-const {chromium} = require('playwright-core');
-(async () => {
-  const files = JSON.parse(process.argv[1]);
-  const browser = await chromium.launch();
-  const out = [];
-  for (const f of files) {
-    const page = await browser.newPage();
-    const requests = [];
-    page.on('request', r => { if (!r.url().startsWith('file://')) requests.push(r.url()); });
-    let dialogs = 0;
-    page.on('dialog', d => { dialogs++; d.dismiss(); });
-    await page.goto('file://' + f);
-    await page.waitForTimeout(300);
-    const pwned = await page.evaluate(() => window.__pwned === 1);
-    const scripts = await page.evaluate(() => document.scripts.length);
-    out.push({file: f, requests: requests.length, pwned, scripts, dialogs});
-    await page.close();
-  }
-  await browser.close();
-  console.log('RESULT ' + JSON.stringify(out));
-})().catch(e => { console.error(e); process.exit(2); });
-"""
-
-
-async def test_hostile_turns_render_inert_in_a_browser(pg, worker, tmp_path) -> None:  # type: ignore[no-untyped-def]
-    ring = transcript_ring()
-    if not (UI_DIR / "node_modules" / "playwright-core").is_dir():
-        msg = "vektra-assess/ui/node_modules is missing (npm ci)"
-        pytest.fail(msg) if REQUIRED else pytest.skip(msg)
-    code, _ = await _node(
-        "-e",
-        "const {chromium}=require('playwright-core');"
-        "process.exit(require('fs').existsSync(chromium.executablePath())?0:1)",
-    )
-    if code != 0:
-        msg = "no Playwright Chromium (npx playwright install chromium)"
-        pytest.fail(msg) if REQUIRED else pytest.skip(msg)
-    files: list[str] = []
-    for i, payload in enumerate(PAYLOADS):
-        runner = FakeStreamRunner(
-            segments=(f"Hai scritto: {payload}",),
-            marks=("values",),
-            contests=(ContestEntry("C1", "proposed"),),
-        )
-        async with world(pg, assess_runner=runner, assess_sse_timing=TIMING) as w:
-            s = await seed_session(w, worker, "ACTIVE")
-            await _post_and_close(w, worker, s, payload)
-            deps = GenerationDeps(
-                kek=s.kek, transcript_kek=ring, facts=Facts(facts=CloseFacts())
-            )
-            await generate_transcript(deps, worker.connect, s.session_id)
-            doc = await _open(pg, ring, s.session_id)
-            allowlist.check(doc)
-            html = doc.decode()
-            assert "[valore sostituito dal sistema]" in html and "proposto" in html
-            path = tmp_path / f"t{i}.html"
-            path.write_bytes(doc)
-            files.append(str(path))
-    code, out = await _node("-e", INERT_CHECK, json.dumps(files))
-    assert code == 0, out
-    results = json.loads(out.split("RESULT ", 1)[1])
-    # false-pass guard: every declared payload file was opened
-    assert len(results) == len(PAYLOADS) == len(files), results
-    for r in results:
-        assert r["requests"] == 0 and not r["pwned"], r
-        assert r["scripts"] == 0 and r["dialogs"] == 0, r

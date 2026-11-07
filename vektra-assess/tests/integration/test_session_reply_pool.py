@@ -82,17 +82,26 @@ async def test_the_cut_stays_at_the_deadline_however_long_the_reply_waited(
     )
     async with world(pg, assess_runner=runner) as w:
         s = await seed_session(w, worker, "ACTIVE")
-        # deadline in 5 s (room for the setup and the POST before the input lock), grace
-        # 4 s: the cut is 7 s after the post (persist margin 2 s)
+        # Every time below is derived from the deadline the test sets (CodeRabbit 4499657940),
+        # never from how long the POST takes: deadline D = 5 s ahead (room for the POST
+        # before the input lock), grace G = 6 s, persist margin min(2, G / 2) = 2 s, so the
+        # cut is at D + G - 2 = 9 s after the UPDATE. The slots are released RELEASE_BEFORE_CUT
+        # before that cut: the reply streams for that long (one segment each 0.3 s), then is
+        # cut. A cut computed from the start of the reply instead would let all 10 through.
+        deadline_s, grace_s, margin_s = 5.0, 6, 2.0
+        release_before_cut_s, segment_s = 1.2, 0.3
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
         await pg.run(
             "super",
-            "UPDATE assess_sessions SET deadline_at = now() + interval '5 seconds', "
-            "reply_grace_s = 4 WHERE id = :s",
-            {"s": s.session_id},
+            "UPDATE assess_sessions SET deadline_at = now() + make_interval(secs => :d), "
+            "reply_grace_s = :g WHERE id = :s",
+            {"s": s.session_id, "d": deadline_s, "g": grace_s},
         )
+        cut_at = t0 + deadline_s + grace_s - margin_s
         driver = driver_for_app(w.app)
         n_slots = driver.reply_slots()
-        for _ in range(n_slots):  # every reply slot busy for 6.5 s
+        for _ in range(n_slots):  # every reply slot busy until shortly before the cut
             await driver.slots.acquire()
         r = await w.client.post(
             f"/api/v1/assess/sessions/{s.session_id}/turns",
@@ -100,7 +109,7 @@ async def test_the_cut_stays_at_the_deadline_however_long_the_reply_waited(
             headers={"Authorization": f"Bearer {s.session_token}"},
         )
         assert r.status_code == 202, r.text
-        await asyncio.sleep(6.5)
+        await asyncio.sleep(max(0.0, cut_at - release_before_cut_s - loop.time()))
         for _ in range(n_slots):
             driver.slots.release()
         await asyncio.wait_for(asyncio.gather(*list(driver.tasks.values())), 15)
@@ -111,8 +120,10 @@ async def test_the_cut_stays_at_the_deadline_however_long_the_reply_waited(
         deltas = [
             e for e in broker_of(_R()).after(s.session_id, 0) if e.type == "reply_delta"
         ]
-        # the reply made progress (at least one released segment) and was cut ~0.5 s in
-        assert 1 <= len(deltas) <= 3, len(deltas)
+        # the reply streamed until the cut (1.2 s: about 4 segments, at least one even on a
+        # slow runner) and was cut there, far before its 10 segments
+        most = int(release_before_cut_s / segment_s) + 1
+        assert 1 <= len(deltas) <= most, (len(deltas), most)
         last = await pg.run(
             "super",
             "SELECT role, kind FROM assess_turns WHERE session_id = :s "

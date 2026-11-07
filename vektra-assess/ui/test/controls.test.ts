@@ -23,6 +23,11 @@ describe("controls", () => {
     expect(minutesLeft(0, 5)).toBe(0);
   });
 
+  it("rounds like /state's active.minutes_left (same vectors as tests/test_timing.py)", () => {
+    const vectors: [number, number][] = [[0, 0], [1, 1], [59, 1], [60, 1], [61, 2], [1799, 30], [1800, 30]];
+    for (const [seconds, minutes] of vectors) expect(minutesLeft(seconds * 1000, 0)).toBe(minutes);
+  });
+
   it("the timer is not live and shows minute text", () => {
     const c = new ControlsView(() => {}, () => {});
     expect(c.timer.getAttribute("role")).toBe("timer");

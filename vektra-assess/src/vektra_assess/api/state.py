@@ -34,6 +34,7 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.gate import verify_assess_token_pre
 from vektra_assess.errors import assess_unavailable, rate_limited
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
+from vektra_assess.timing import minutes_left
 from vektra_assess.tokens import PreClaims
 
 router = APIRouter()
@@ -191,11 +192,12 @@ async def enrich(
             active: dict[str, Any] = {"session_no": int(s.session_no)}
             if s.deadline_at is not None:
                 now = s.paused_at or s.db_now  # the timer is frozen in OUTAGE
-                left = max(0, int((s.deadline_at - now).total_seconds()))
-                active["minutes_left"] = left // 60
+                active["minutes_left"] = minutes_left(
+                    (s.deadline_at - now).total_seconds()
+                )
                 active["deadline_at"] = s.deadline_at.isoformat()
             elif s.duration_s:
-                active["minutes_left"] = int(s.duration_s) // 60
+                active["minutes_left"] = minutes_left(int(s.duration_s))
             view["active"] = active
     if state == "closed":
         closed_at = (await conn.execute(_CLOSED_AT, params)).scalar()

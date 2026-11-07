@@ -387,3 +387,9 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     `replyPending` comes from every `GET /sessions/{sid}` (`apply`) and is set by a sent turn;
     the `active`/`outage` render uses the same rule, so `outage_end` over an unanswered turn
     keeps the composer closed with "Attendi la risposta…" until the persisted reply arrives.
+  - #10c `minutes_left` rounds UP on both sides: `/state`'s `active.minutes_left` now uses
+    `timing.minutes_left` (it floored before) and the UI's `minutesLeft` already did. Up, not
+    down: "1 minuto" stays until the deadline and 0 means the time is over, which matches the
+    1-minute warning; a student never reads "0 minuti" while still able to write. The same
+    test vectors are in `tests/test_timing.py` and `ui/test/controls.test.ts`; documented in
+    the `/state` table of api.md.

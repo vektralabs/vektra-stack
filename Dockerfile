@@ -129,9 +129,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
 #
 #   docker compose build --build-arg VEKTRA_EMBEDDING_MODEL=<model>
 #
-# Getting this wrong is not fatal but it is not free either: the container
-# downloads the real model while serving its first request, which is exactly
-# when a cutover is least able to afford it.
+# Getting this wrong costs the start itself: the container downloads the real
+# model during the ARCH-057 embedding warm-up, before Uvicorn answers anything,
+# so on a host without Hugging Face Hub egress it does not start at all.
 ARG VEKTRA_EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
 RUN python -c "import sys; from sentence_transformers import SentenceTransformer; SentenceTransformer(sys.argv[1])" "$VEKTRA_EMBEDDING_MODEL"
 

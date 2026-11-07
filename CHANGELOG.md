@@ -17,6 +17,8 @@ Convention (Keep a Changelog 1.1.0):
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-07
+
 ### Fixed
 
 - **docker**: the image pre-cached an embedding model no default deployment uses. The build step downloaded `all-MiniLM-L6-v2` (English) while `EmbeddingConfig` defaults to `paraphrase-multilingual-MiniLM-L12-v2`, so a default container shipped ~80MB of weights it never loads *and* still downloaded the real model from the Hugging Face Hub while serving its first request — the moment a cutover can least afford it. The two values lived in different files with nothing tying them together, and the comment above the step called the wrong one "the default". The step now takes `ARG VEKTRA_EMBEDDING_MODEL`, defaulting to the config default, and `docker-compose.yml` forwards the variable, so a deployment running a different model gets that model baked in from the same `.env` the server reads instead of patching the Dockerfile on the host. Verified on a real build: the default image caches only the multilingual model and loads it with `HF_HUB_OFFLINE=1`, and `--build-arg VEKTRA_EMBEDDING_MODEL=all-MiniLM-L6-v2` caches that one instead — so the parameter works, rather than the default merely happening to be right. A structural guard fails if the two defaults drift apart again, if the pre-cache step stops reading the arg, or if compose stops forwarding it.

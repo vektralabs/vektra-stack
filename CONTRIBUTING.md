@@ -160,7 +160,10 @@ edits) do not require a changelog entry.
 
 1. Rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
 2. Add a fresh empty `## [Unreleased]` block above the new release entry
-3. Bump versions in all `vektra-*/pyproject.toml` from `X.Y.Z-dev` to `X.Y.Z`
+3. Bump the version in all `vektra-*/pyproject.toml` from the previous release to
+   `X.Y.Z` (there is no `-dev` suffix between releases), and in every `__version__`
+   constant, which nothing derives from `pyproject.toml`: `git grep -n '^__version__ ='`
+   lists them
 4. Refresh `uv.lock` to match the new versions
 5. Bump the published-image examples (`docs/getting-started/index.md`,
    `deploy/docker-compose.image.yml.example`) to the tag this release publishes

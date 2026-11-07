@@ -20,9 +20,11 @@ from support.sessions import seed_session
 from support.world import world
 
 from integration.test_session_preflight import _reset, moodle_source
+from vektra_assess.context.regrade import GradeReading
 from vektra_assess.crypto import envelope
 from vektra_assess.crypto.kek import unwrap_dek
 from vektra_assess.keys import AssessKeyring
+from vektra_assess.readable import Readable
 from vektra_assess.transcript import allowlist, naming, store
 from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.transcript_gen import (
@@ -532,6 +534,7 @@ async def test_a_grader_read_timeout_keeps_the_course_and_grade_already_read(
     class Partial:
         async def close_facts(self, *, sink: dict[str, Any], **_: Any) -> CloseFacts:
             sink["course_shortname"] = "PARTIAL-COURSE"
+            sink["grade"] = Readable(GradeReading(True, "27.25"))
             await asyncio.sleep(30)  # the grader read never answers
             return CloseFacts()
 
@@ -543,7 +546,9 @@ async def test_a_grader_read_timeout_keeps_the_course_and_grade_already_read(
         )
         got = await generate_transcript(deps, worker.connect, s.session_id)
         assert got is not None and got.recipients == 0
-        assert "PARTIAL-COURSE" in (await _open(pg, ring, s.session_id)).decode()
+        html = (await _open(pg, ring, s.session_id)).decode()
+        assert "PARTIAL-COURSE" in html
+        assert "27.25" in html or "27,25" in html  # the grade read before the hang
         name = (
             await pg.run(
                 "super",

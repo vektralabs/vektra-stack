@@ -219,3 +219,45 @@ describe("resume without sid and the download-token timeout", () => {
     vi.useRealTimers();
   });
 });
+
+describe("review #5: outage_end and a pending reply", () => {
+  it("does not enable the composer while the pending turn is still unanswered", async () => {
+    const root = document.createElement("main");
+    document.body.replaceChildren(root);
+    const a = new App(
+      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      new Bridge({ parent: { postMessage: () => {} }, addEventListener: () => {} }, "https://m.example"),
+      root,
+      (async () => Response.json({})) as unknown as typeof fetch,
+    );
+    const priv = a as unknown as {
+      state: unknown;
+      sid: string;
+      apply: (v: unknown) => void;
+      onEvent: (e: unknown) => Promise<void>;
+    };
+    priv.state = { name: "resuming" };
+    priv.sid = "S";
+    const view = (state: string, pending: boolean) => ({
+      session_id: "S",
+      state,
+      close_reason: null,
+      deadline_at: new Date(Date.now() + 600000).toISOString(),
+      server_now: new Date().toISOString(),
+      reply_pending: pending,
+      turns: [{ turn_no: 1, role: "student", kind: "normal", text: "ciao" }],
+    });
+    priv.apply.call(a, view("OUTAGE", true)); // the outage froze an unanswered turn
+    expect(a.chat.composer.disabled).toBe(true);
+    await priv.onEvent.call(a, { event: "outage_end", data: "{}" });
+    expect((a as unknown as { state: { name: string } }).state.name).toBe("active");
+    expect(a.chat.composer.disabled).toBe(true); // the server still owes the reply
+    expect(root.querySelector("#composer-help")!.textContent).toBe(
+      "Attendi la risposta prima di scrivere ancora.",
+    );
+    // the reply arrives: the persisted turns say nothing is pending, the composer opens
+    a.chat.add({ turn_no: 2, role: "bot", kind: "normal", text: "ok" });
+    priv.apply.call(a, view("ACTIVE", false));
+    expect(a.chat.composer.disabled).toBe(false);
+  });
+});

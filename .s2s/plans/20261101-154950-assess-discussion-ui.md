@@ -383,3 +383,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     has a separate UI `server` (headers declared once at server level, no `add_header` in its
     locations); the API server returns 404 for `/api/v1/assess/ui`. Documented in the
     service-account guide; `nginx -t` passes on the example (nginx 1.27).
+  - #5 One composer rule (`App.syncComposer`): open only while ACTIVE and no reply is owed.
+    `replyPending` comes from every `GET /sessions/{sid}` (`apply`) and is set by a sent turn;
+    the `active`/`outage` render uses the same rule, so `outage_end` over an unanswered turn
+    keeps the composer closed with "Attendi la risposta…" until the persisted reply arrives.

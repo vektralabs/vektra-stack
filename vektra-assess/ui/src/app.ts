@@ -33,6 +33,7 @@ export class App {
   private clockOffset = 0; // server time - local time, ms
   private abort = new AbortController();
   private pendingDownload: string | null = null;
+  private replyPending = false; // the server owes a reply to the last student turn
   readonly live = new LiveRegion(M.statusLive);
   readonly status = h("p", { class: "status", id: "status", tabindex: "-1" });
   readonly banner = h("div", { class: "banner", role: "region", "aria-label": M.outage, hidden: true });
@@ -195,11 +196,17 @@ export class App {
     this.deadline = view.deadline_at ? Date.parse(view.deadline_at) : null;
     this.dispatch({ type: "session_state", state: view.state, closeReason: view.close_reason });
     if (view.state !== "STARTING") this.chat.render(view.turns);
-    this.chat.setEnabled(
-      this.state.name === "active" && !view.reply_pending,
-      view.reply_pending ? M.replyPending : "",
-    );
+    this.replyPending = view.reply_pending;
+    this.syncComposer();
     this.tick();
+  }
+
+  /** The one rule for the composer: open only while ACTIVE and no reply is owed. */
+  private syncComposer(): void {
+    this.chat.setEnabled(
+      this.state.name === "active" && !this.replyPending,
+      this.replyPending ? M.replyPending : "",
+    );
   }
 
   private openStream(): void {
@@ -289,7 +296,8 @@ export class App {
       this.chat.composer.value = "";
       const body = (await r.json()) as { turn_no: number };
       this.chat.add({ turn_no: body.turn_no, role: "student", kind: "normal", text });
-      return this.chat.setEnabled(false, M.replyPending);
+      this.replyPending = true;
+      return this.syncComposer();
     }
     const help =
       r.status === 429 ? M.waitAFewSeconds : r.status === 409 ? M.replyPending : M.sendFailed;
@@ -398,7 +406,7 @@ export class App {
         if (!this.main.contains(this.chat.root))
           this.main.replaceChildren(...(keep as Node[]), this.controls.root, this.chat.root);
         this.controls.setOutage(s.name === "outage");
-        this.chat.setEnabled(s.name === "active", "");
+        this.syncComposer(); // never opens over a reply the server still owes (review #5)
         if (s.name === "active") this.banner.hidden = this.banner.textContent !== M.outageEnd;
         this.tick();
         return;

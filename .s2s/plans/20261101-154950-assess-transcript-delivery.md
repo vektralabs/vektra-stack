@@ -169,7 +169,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [ ] `delivery/message.py`: EmailMessage builder, header sanitiser (CR/LF/C0 strip), deterministic Message-ID, plain-text body template (Italian, content-free)
 - [ ] `delivery/smtp.py`: aiosmtplib client with mandatory TLS, AUTH after TLS, cert validation, semaphore cap, timeout, error classification (`tls`, `connect`, `temp_4xx`, `perm_5xx`, `auth`)
 - [ ] `delivery/backoff.py`: schedule parser + `next_not_before(attempts, first_attempt_at)`; window expiry → FAILED
-- [ ] `delivery/handler.py`: claim due rows (`status IN (PENDING, RETRYING) AND not_before<=now()`), re-resolve recipient + capability via the graders reader, REPLACED fan-out, attempt-start commit, send, outcome commit, audit per attempt and result (REQ-085), alerts; reconciliation of in-window crashes per OQ-029 default
+- [ ] `delivery/handler.py`: claim due rows (`status IN (PENDING, RETRYING) AND not_before<=now()`), re-read the configured recipients from the current sealed config + domain allowlist, REPLACED fan-out (see "Decision REVISED"), attempt-start commit, send, outcome commit, audit per attempt and result (REQ-085), alerts; reconciliation of in-window crashes per OQ-029 default
 - [ ] `delivery/probe.py`: EHLO + STARTTLS + AUTH + QUIT, never sends; result written to a worker status row for `/health/assess` (plan 12 reads it)
 - [ ] Settings in the worker settings class: `VEKTRA_ASSESS_SMTP_HOST|PORT|TLS_MODE|FROM|USERNAME_FILE|PASSWORD_FILE|MAX_CONNECTIONS|RETRY_SCHEDULE|RETRY_WINDOW_HOURS`, `VEKTRA_ASSESS_MESSAGE_ID_DOMAIN`; API startup refuses if SMTP credential files are present (ARCH-071 matrix)
 
@@ -210,7 +210,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [x] Re-hashing every turn at generation matches 100%; a tampered turn yields 0 transcripts and an alert (REQ-102) — evidence: `test_transcript_generation.py::test_a_tampered_turn_yields_no_transcript_and_an_alert` (re-encrypted turn 2 with the session DEK: 0 rows, audit with turn_no 2, dead job), every generated transcript re-hashes in `_open`
 - [x] Transcripts with XSS, markdown-image and remote-URL payloads execute 0 scripts and make 0 network requests when opened; served responses carry `Content-Disposition: attachment` and `CSP: sandbox`; file name matches the BR-016 pattern with 0 full-name occurrences (BR-016) — evidence: `test_transcript_inert_browser.py` (7 payload files opened in Chromium: 0 requests, 0 scripts, 0 executed payloads; false-pass guard on the file count), `test_transcript_api.py::test_the_owner_downloads_the_exact_bytes_once` (headers), `test_transcript_render.py` naming tests + `test_transcript_generation.py` (pattern, 0 full names)
 - [ ] SMTP down 2 h then restored → every pending transcript delivered exactly once per recipient on the mail sink; no row is SENT without a sink-recorded message; crash-window duplicate ≤ 1 and audited (REQ-075, OQ-029)
-- [ ] A recipient who lost the grading capability is replaced by current graders (≤ 3) and audited; a 4th recipient never exists (REQ-082)
+- [ ] An address removed from the activity config is REPLACED by the current configured ones (≤ 3), audited old/new; an address outside `VEKTRA_ASSESS_RECIPIENT_DOMAINS` (or any, with the list empty) gets 0 messages, FAILED + alert; a 4th recipient never exists (REQ-082 as amended 2026-11-07)
 - [x] Student B requesting A's transcript gets 403 and an audit event; the student copy is hash-equal to the teacher copy; a download token works exactly once and expires ≤ 120 s (REQ-088, ARCH-067) — evidence: `test_transcript_api.py` (`test_student_b_cannot_get_a_token_for_a_transcript`, `test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused`, `test_the_owner_downloads_the_exact_bytes_once`: second use 401, `test_expired_foreign_and_query_tokens_are_refused`), TTL <= 120 by the setting bound and the token check
 - [x] Resend carrying a recipient parameter (body or query) is rejected with 400 (REQ-080 via REQ-082) — evidence: `test_transcript_api.py::test_resend_never_takes_a_recipient` (body keys at any depth and query names, 0 rows written)
 - [ ] Generation p99 ≤ 60 s after CLOSED and SENT p95 ≤ 5 min with SMTP healthy; ≥ 99% SENT or downloadable within 15 min (NFR-021, REQ-075)
@@ -265,7 +265,7 @@ real-time run guards against clock-injection bugs.
 
 > Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.
 
-> **State (2026-11-07, branch `feat/assess-transcript-delivery`): split at 10a / 10b. STOPPED before 10b on a decision.**
+> **State (2026-11-07): 10a merged (PR #159, 0e38f49). 10b in progress on `feat/assess-transcript-delivery-smtp`; the recipient decision is "Decision REVISED" below.**
 > 10a is done and green: schema (rev 0034), generation with turn-hash re-verification, inert render
 > + allowlist + MathML, sealed store, download tokens + single-use download + resend, `/state`
 > transcripts and recipients, UI download end to end, a11y checks, docs. 10b (delivery: `message`,
@@ -312,6 +312,40 @@ real-time run guards against clock-injection bugs.
   enrolled user's hidden email, not only graders'; `userfields` limits what is returned, not what the
   account may read. Options: accept and document it in the REQ-079 amendment, or assign the service
   role per course instead of at system level.
+
+### Decision REVISED (user, 2026-11-07 night): recipients come from the teacher's activity config
+
+Supersedes option (a) above and the "10b must also" item: no `moodle/course:useremail`, no `email`
+in the enrol models, no re-recorded graders fixtures. vektra-moodle#44 closed unmerged (dev 43/52
+run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-text path is v1).
+
+10b design (branch `feat/assess-transcript-delivery-smtp`):
+- **Field.** Sealed teacher config JSON gains `"transcript_recipients": ["a@x.it", ...]`
+  (1..3 strings, trimmed, lowercased domain, RFC 5321 addr-spec subset: one `@`, no whitespace, no
+  control chars, no display name, total <= 254 bytes; duplicates collapse). Written by plan 11's
+  config PUT (plugin P3 form, prefilled with the teacher's own Moodle address); 10b only reads it
+  (`delivery/recipients.py: configured_recipients(sealed_config) -> tuple[str, ...]`).
+- **Allowlist.** `VEKTRA_ASSESS_RECIPIENT_DOMAINS` (comma list, exact domain match, worker
+  setting; empty = every address refused). Checked by the worker at send time (FAILED,
+  `last_error_class=domain_not_allowed`, audit + alert) and by plan 11's PUT (field error).
+- **Rows.** `assess_deliveries` keys a recipient by `recipient_ref = sha256(site_id|address)` hex
+  (revision 0035: add `recipient_ref`, make `recipient_userid` NULL-able, unique
+  `(transcript_id, round, recipient_ref)`, `recipient_kind` gains `address`). The address itself
+  is never stored outside the sealed config; logs and audit carry the ref only.
+- **Send time.** Re-open the current sealed config: a row whose ref is no longer configured ->
+  REPLACED (audited old/new refs), configured refs with no row in the round -> new PENDING rows,
+  never more than 3 live per round. Config unreadable or no recipients -> rows stay, RETRYING with
+  `recipients_unresolved`, alert; the transcript stays downloadable.
+- **Generation** (10a code) switches from graders to `configured_recipients`; a transcript with
+  none still generates (audit `assess_transcript_recipients_unresolved` as today).
+- **/state** `pre_session.recipients`: `[{role: "recipient", name: "m***@unical.it"}]` (first char
+  of the local part, then `***`), written by the render worker into gate_inputs as today. The API
+  never sees a full address.
+- **Grader download/resend authz unchanged** (fresh grader list from Moodle user ids).
+- **Plugin request (P3, sent to vektra-moodle-cf):** form field "Destinatari della trascrizione"
+  1..3 emails, prefilled with `$USER->email`, validated against the site-admin copy of the domain
+  allowlist (error names the allowed domains), sent in the sealed teacher config as
+  `transcript_recipients`; the pre-session screen names them from the config.
 
 ### Design decisions taken in 10a (one line each, with the reason)
 

@@ -71,7 +71,7 @@ class AllowlistViolation(ValueError):
 
 
 #: SHA-256 of the template's stylesheet (``templates/transcript.css``). A test recomputes it.
-STYLE_SHA256 = "ebcf382f8de374bbe878ebc5b47f17c27d5db294a62c6d4ca5f4ba1835f170bd"
+STYLE_SHA256 = "d435a52514347012e4cdb9d0cba58f3f1b5cdeb3c6aedd99aa0566599ee103c7"
 
 
 class _Checker(HTMLParser):

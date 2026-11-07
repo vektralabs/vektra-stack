@@ -92,7 +92,7 @@ def _docs() -> dict[str, bytes]:
             for i, (role, kind, text) in enumerate(TURNS)
         )
         inp = render.TranscriptInput(
-            course="EA-2026", cmid=501, student_userid=101, session_no=2, sessions_total=2,
+            course="EA-2026-" + "X" * 80, cmid=501, student_userid=101, session_no=2, sessions_total=2,
             earlier=(render.EarlierSession(1, T0 - timedelta(days=3), "timed_out"),),
             previous_context=False, snapshot=snap,
             regrade=RegradeFlag(RegradeKind.WITHDRAWN, old="7.5"), cap_minutes=30,
@@ -133,7 +133,11 @@ const axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'
     await page.addScriptTag({content: axeSource});
     const r = await page.evaluate(() => axe.run(document, {runOnly: {type: 'tag',
       values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']}}));
-    out.push({file: f, violations: r.violations.map(v => v.id), passes: r.passes.length,
+    // WCAG 1.4.10 reflow: at 320 CSS px nothing scrolls horizontally
+    await page.setViewportSize({width: 320, height: 640});
+    const overflow = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    out.push({file: f, overflow, violations: r.violations.map(v => v.id), passes: r.passes.length,
       lang: await page.evaluate(() => document.documentElement.lang),
       charset: await page.evaluate(() => document.characterSet)});
     await page.close();
@@ -162,6 +166,7 @@ async def test_transcripts_pass_axe_and_the_nu_checker(tmp_path) -> None:  # typ
     assert len(results) == 2, results  # false-pass guard: both documents were scanned
     for r in results:
         assert r["violations"] == [], r
+        assert r["overflow"] <= 0, r
         assert r["passes"] > 10 and r["lang"] == "it" and r["charset"] == "UTF-8", r
     # control: a broken document must produce errors, so a silent checker cannot pass
     (tmp_path / "control.html").write_text(

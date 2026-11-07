@@ -749,6 +749,8 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
             b"[/ASCII85#44ecode /#46lateDecode]",
         ),
         # CodeRabbit 4499897027: a longer name that starts with /DP or /DecodeParms is not one
+        # CodeRabbit 4499897054: readers accept a header that is not at offset 0
+        "late_header": b"junk before the header\n" + _flate_pdf("BT (wstoken) Tj ET"),
         "dp_prefix_names": _pdf(
             zlib.compress(b"wstoken"), extra=b" /DPI 72 /DecodeParmsX 1 /DP-x 2"
         ),

@@ -259,7 +259,9 @@ def _file_layers(name: str, data: bytes) -> list[tuple[str, bytes]]:
             ValueError,  # malformed header fields
         ):
             layers.append((f"{name}{UNINSPECTABLE}", b""))
-    if data[:5] == b"%PDF-":
+    # readers find the header past offset 0; any file holding one is parsed as a PDF (a
+    # non-PDF that merely contains it is refused only if its streams do not check out)
+    if b"%PDF-" in data:
         streams = list(_PDF_STREAM.finditer(data))
         if len(streams) != data.count(b"endstream"):
             layers.append((f"{name}!streams{UNINSPECTABLE}", b""))

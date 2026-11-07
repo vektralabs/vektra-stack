@@ -331,3 +331,31 @@ async def test_an_altered_stored_transcript_is_not_served(pg, worker) -> None:  
         r = await download(w, s.session_id, token)
         assert r.status_code == 500 and err(r)["code"] == "ERR-ASSESS-020"
         assert b"<html" not in r.content
+
+
+async def test_resend_bodies_are_capped_and_never_a_500(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #5: the resend reads its body through the same streamed cap as every route, and
+    a nesting deep enough to exhaust the JSON decoder is a 400 envelope."""
+    async with world(pg) as w:
+        s, _ = await _ready(w, worker)
+        await _graders(w, s)
+        url = f"/api/v1/assess/transcripts/{s.session_id}/resend"
+        big = b'{"actor_userid": 12, "pad": "' + b"x" * 70_000 + b'"}'
+        deep = b'{"a":' * 100_000 + b"1" + b"}" * 100_000
+        for raw in (big, deep, b"[" * 50_000):
+            r = await w.client.post(
+                url,
+                content=raw,
+                headers={**auth("teacher"), "Content-Type": "application/json"},
+            )
+            assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014", (
+                r.status_code
+            )
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_deliveries WHERE transcript_id = :t AND round > 1",
+                t=s.session_id,
+            )
+            == 0
+        )

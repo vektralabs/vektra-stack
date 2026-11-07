@@ -33,7 +33,14 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
-from vektra_assess.api.common import engine_of, fail, parse_body
+from vektra_assess.api.common import (
+    engine_of,
+    fail,
+    json_object,
+    parse_body,
+    read_capped_body,
+    validate_body,
+)
 from vektra_assess.api.deps import bearer_token, settings_of
 from vektra_assess.api.download_tokens import DownloadClaims, DownloadTokens, jti_hash
 from vektra_assess.api.graders import GraderCheck, check_fresh_grader
@@ -362,10 +369,11 @@ async def resend_transcript(
     tid: str, request: Request, key: ApiKeyInfo = Depends(_resend_guard)
 ) -> JSONResponse:
     _refuse_query(request)
-    raw = await _raw_keys(request)
-    if any(RECIPIENT_LIKE.search(k) for k in raw):
+    # one capped read (review #5): the recipient scan and the model see the same object
+    doc = json_object(await read_capped_body(request))
+    if any(RECIPIENT_LIKE.search(k) for k in _all_keys(doc)):
         raise fail(resend_recipient_forbidden())
-    body = await parse_body(request, ResendBody)
+    body = validate_body(doc, ResendBody)
     settings = settings_of(request)
     t = _uuid(tid)
     teacher = "assess:teacher" in key.scopes and "admin" not in key.scopes
@@ -420,29 +428,17 @@ def _refuse_query(request: Request) -> None:
         raise fail(bad_request("query_not_allowed"))
 
 
-async def _raw_keys(request: Request) -> list[str]:
-    """Every key of the JSON body, at any depth, before the model sees it (extra="forbid"
-    would only report the first one, as a generic 400)."""
-    import json
-
-    raw = await request.body()
-    if not raw:
-        return []
-    try:
-        doc = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return []  # parse_body answers the malformed body
-
+def _all_keys(doc: Any) -> list[str]:
+    """Every key of a decoded JSON body, at any depth, before the model sees it (``extra=
+    "forbid"`` would report only the first one, as a generic 400). Iterative: no recursion
+    limit to hit, whatever the nesting the decoder accepted."""
     keys: list[str] = []
-
-    def walk(node: Any) -> None:
+    stack = [doc]
+    while stack:
+        node = stack.pop()
         if isinstance(node, dict):
-            for k, v in node.items():
-                keys.append(str(k))
-                walk(v)
+            keys.extend(str(k) for k in node)
+            stack.extend(node.values())
         elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(doc)
+            stack.extend(node)
     return keys

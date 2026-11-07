@@ -37,12 +37,12 @@ def engine_of(request: Request) -> AsyncEngine:
     return engine  # type: ignore[no-any-return]
 
 
-async def parse_body[M: BaseModel](
-    request: Request, model: type[M], *, max_bytes: int = MAX_BODY_BYTES
-) -> M:
-    # streamed with the cap applied per chunk: an oversized body is refused as soon as it passes
-    # max_bytes, never buffered whole first (a declared Content-Length over the cap is refused at
-    # once, a chunked body as soon as it crosses it)
+async def read_capped_body(
+    request: Request, *, max_bytes: int = MAX_BODY_BYTES
+) -> bytes:
+    """The raw body, streamed with the cap applied per chunk: an oversized body is refused as
+    soon as it passes ``max_bytes``, never buffered whole first (a declared Content-Length over
+    the cap is refused at once, a chunked body as soon as it crosses it)."""
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > max_bytes:
         raise fail(bad_request("body_too_large"))
@@ -51,13 +51,22 @@ async def parse_body[M: BaseModel](
         if len(buf) + len(chunk) > max_bytes:
             raise fail(bad_request("body_too_large"))
         buf += chunk
-    raw = bytes(buf)
+    return bytes(buf)
+
+
+def json_object(raw: bytes) -> dict[str, Any]:
+    """Decode a JSON object; anything else (bad UTF-8 or JSON, nesting deep enough to exhaust
+    the decoder's recursion, a non-object) is the 400 envelope, never a 500."""
     try:
         doc: Any = json.loads(raw or b"null")
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise fail(bad_request("malformed_json")) from None
     if not isinstance(doc, dict):
         raise fail(bad_request("body_not_object"))
+    return doc
+
+
+def validate_body[M: BaseModel](doc: dict[str, Any], model: type[M]) -> M:
     try:
         return model.model_validate(doc)
     except ValidationError as exc:
@@ -66,3 +75,10 @@ async def parse_body[M: BaseModel](
         loc = ".".join(str(p) for p in errs[0]["loc"])[:60] if errs else ""
         kind = str(errs[0]["type"])[:40] if errs else "invalid"
         raise fail(bad_request(f"{kind}:{loc}" if loc else kind)) from None
+
+
+async def parse_body[M: BaseModel](
+    request: Request, model: type[M], *, max_bytes: int = MAX_BODY_BYTES
+) -> M:
+    raw = await read_capped_body(request, max_bytes=max_bytes)
+    return validate_body(json_object(raw), model)

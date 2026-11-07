@@ -59,6 +59,25 @@ server {
         proxy_read_timeout 300s;
     }
 
+    # Assess discussion UI (plan 9, ARCH-076): this page and its assets are shown in an iframe
+    # on the Moodle site, so they must NOT carry X-Frame-Options; the page's own CSP
+    # frame-ancestors allows exactly the site's Moodle origin. nginx drops EVERY inherited
+    # add_header as soon as a location declares one of its own, so HSTS and nosniff are
+    # re-declared here and X-Frame-Options deliberately is not. Every other location keeps
+    # the server-level DENY (and the API sets it too).
+    location /api/v1/assess/ui {
+        proxy_pass http://vektra_backend;
+        proxy_http_version 1.1;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options nosniff always;
+    }
+
     # Health check (no TLS overhead for internal monitoring)
     location /health {
         proxy_pass http://vektra_backend/health;

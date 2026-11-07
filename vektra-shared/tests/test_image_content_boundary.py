@@ -327,3 +327,26 @@ def test_no_forbidden_file_can_reach_the_image() -> None:
         + "\n\nAdd a `**`-prefixed rule to .dockerignore: an entry without a slash "
         "matches the context root only."
     )
+
+
+# --- plan 9: the assess discussion UI bundle -----------------------------------------------
+
+
+def test_the_nginx_example_lets_only_the_assess_ui_be_framed() -> None:
+    """Plan 9 (ARCH-076): the server keeps X-Frame-Options DENY; the UI location re-declares
+    HSTS and nosniff (nginx drops inherited add_header) and never X-Frame-Options; the events
+    stream keeps proxy_buffering off."""
+    conf = (REPO_ROOT / "deploy/nginx/vektra.conf.example").read_text()
+    server_level = conf.split("location /", 1)[0]
+    assert "add_header X-Frame-Options DENY always;" in server_level
+    ui = conf.split("location /api/v1/assess/ui {", 1)[1].split("}", 1)[0]
+    assert "X-Frame-Options" not in ui
+    assert (
+        'add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'
+        in ui
+    )
+    assert "add_header X-Content-Type-Options nosniff always;" in ui
+    root = conf.split("location / {", 1)[1].split("}", 1)[0]
+    assert (
+        "proxy_buffering off;" in root
+    )  # /api/v1/assess/sessions/{sid}/events goes here

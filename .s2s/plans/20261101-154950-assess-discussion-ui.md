@@ -135,7 +135,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [x] `src/messages.it.ts` with every user-facing string; no string concatenation of server text into markup
 
 ### Deployment
-- [ ] Fix `deploy/nginx/vektra.conf.example`: keep `X-Frame-Options DENY` at server level, add `location /api/v1/assess/ui` (and its `/assets/`) that proxies identically and re-declares HSTS + nosniff WITHOUT `X-Frame-Options` (nginx drops inherited `add_header` when a location declares its own — comment this); events location keeps `proxy_buffering off`
+- [x] Fix `deploy/nginx/vektra.conf.example`: keep `X-Frame-Options DENY` at server level, add `location /api/v1/assess/ui` (and its `/assets/`) that proxies identically and re-declares HSTS + nosniff WITHOUT `X-Frame-Options` (nginx drops inherited `add_header` when a location declares its own — comment this); events location keeps `proxy_buffering off`
 - [ ] Check `deploy/traefik/docker-compose.traefik.yml.example` for an equivalent frame-deny middleware and exempt the UI route the same way
 - [ ] Dockerfile node stage: build `vektra-assess/ui` alongside the widget; copy only the built assets; extend `test_image_content_boundary.py` to assert the manifest assets are present and `ui/src`, `node_modules`, `*.map` are absent
 

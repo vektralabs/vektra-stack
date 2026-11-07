@@ -510,10 +510,12 @@ def record(
     # a submission file is written as downloaded: scan its bytes (and zip members, PDF
     # streams) for the token, token-bearing names and the dev host before anything is written
     hostport = urllib.parse.urlsplit(base).netloc
-    for name, data in files.items():
+    # the message gives the position only: a file name is not scanned and may carry anything
+    for position, (name, data) in enumerate(files.items(), start=1):
         if file_secret_hits(name, data, extra=(token, base, hostport)):
             raise RecorderRefused(
-                "refused: a downloaded file carries a secret or the dev host"
+                f"refused: downloaded file {position} of {len(files)} "
+                "carries a secret or the dev host, or cannot be inspected"
             )
 
     target = out_dir / branch

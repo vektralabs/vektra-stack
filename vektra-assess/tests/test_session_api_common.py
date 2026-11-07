@@ -141,7 +141,7 @@ def test_turn_notes_fit_the_check_with_multibyte_labels() -> None:
 
     result = TurnResult(
         text="x",
-        marks=tuple("\U0001d510" * 40 + str(i) for i in range(40)),
+        marks=tuple(f"{i:02d}" + "\U0001d510" * 40 for i in range(40)),
         behaviour_class=None,
         contest_entries=tuple(
             ContestEntry(f"{i:02d}" + "\U0001d510" * 200, "corrected")
@@ -160,4 +160,4 @@ def test_turn_notes_fit_the_check_with_multibyte_labels() -> None:
     ).encode("utf-8")
     assert notes.contests and len(encoded) <= MAX_NOTE_CONTESTS_BYTES < 4096
     assert all(len(c.label.encode()) <= 64 for c in notes.contests)
-    assert len(notes.marks) <= 16
+    assert len(notes.marks) == 16  # 40 distinct marks after the byte cut, capped

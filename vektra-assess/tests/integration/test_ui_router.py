@@ -168,3 +168,57 @@ async def test_the_site_moodle_origin_is_the_framing_origin(pg, bundle) -> None:
                     "UPDATE assess_sites SET moodle_origin = :o WHERE id = :s",
                     {"o": bad, "s": w.site},
                 )
+
+
+# --- review #1: the page is served on VEKTRA_ASSESS_UI_ORIGIN only --------------------------------
+
+
+async def test_without_a_ui_origin_the_page_is_503(pg, bundle) -> None:  # type: ignore[no-untyped-def]
+    from support.world import default_settings
+
+    cfg = default_settings(VEKTRA_ASSESS_UI_ORIGIN="")
+    async with world(pg, cfg, assess_ui_static_dir=str(bundle)) as w:
+        r = await w.client.get(PAGE, params={"site": str(w.site)})
+        assert r.status_code == 503 and r.text == ""
+        assert r.headers["content-security-policy"] == EXPECTED_CSP.format("'none'")
+
+
+@pytest.mark.parametrize(
+    "host", ["other.example", "t:8080", "m.example", "evil.example:80"]
+)
+async def test_the_page_is_503_on_any_other_host(pg, bundle, host: str) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg, assess_ui_static_dir=str(bundle)) as w:  # UI origin http://t
+        r = await w.client.get(
+            PAGE, params={"site": str(w.site)}, headers={"Host": host}
+        )
+        assert r.status_code == 503
+        # the same spelling of the right origin is accepted (case, default port)
+        ok = await w.client.get(
+            PAGE, params={"site": str(w.site)}, headers={"Host": "T:80"}
+        )
+        assert ok.status_code == 200
+
+
+@pytest.mark.parametrize(("trusted", "status"), [("127.0.0.1", 200), ("10.9.9.9", 503)])
+async def test_the_forwarded_scheme_counts_only_from_a_trusted_proxy(
+    pg, bundle, trusted: str, status: int
+) -> None:  # type: ignore[no-untyped-def]
+    """The production server (uvicorn) applies X-Forwarded-Proto only for FORWARDED_ALLOW_IPS
+    (its ProxyHeadersMiddleware); the page reads the resulting scheme and the Host header."""
+    import httpx
+    from support.world import default_settings
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    cfg = default_settings(VEKTRA_ASSESS_UI_ORIGIN="https://t")
+    async with world(pg, cfg, assess_ui_static_dir=str(bundle)) as w:
+        app = ProxyHeadersMiddleware(w.app, trusted_hosts=trusted)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 5000)),
+            base_url="http://t",
+        ) as client:
+            r = await client.get(
+                PAGE,
+                params={"site": str(w.site)},
+                headers={"X-Forwarded-Proto": "https"},
+            )
+        assert r.status_code == status

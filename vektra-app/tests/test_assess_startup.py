@@ -575,3 +575,24 @@ def test_a_malformed_ui_origin_only_warns_while_assess_is_disabled(
     with pytest.warns(UserWarning, match="VEKTRA_ASSESS_UI_ORIGIN"):
         loaded = VektraAssessSettings()
     assert loaded.ui_origin == "https://ui.example/path"  # kept as given, never used
+
+
+@pytest.mark.parametrize(
+    ("env", "refused"), [("production", True), ("development", False)]
+)
+async def test_an_unset_ui_origin_is_refused_outside_development(
+    env: str, refused: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review #1: with assess enabled the UI origin is the precondition of the iframe's
+    allow-same-origin sandbox; unset is refused outside development (development: the page
+    answers 503 until it is set)."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", env)
+    monkeypatch.delenv("VEKTRA_ASSESS_UI_ORIGIN", raising=False)
+    settings = VektraAssessSettings()
+    if refused:
+        with pytest.raises(StartupValidationError, match="ui_origin_unset"):
+            await assess_wiring.check_ui_origin(_Rows([]), settings)
+    else:
+        await assess_wiring.check_ui_origin(_Rows([]), settings)

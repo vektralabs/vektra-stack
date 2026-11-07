@@ -354,3 +354,10 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     with `VEKTRA_ASSESS_ENABLED=true`; disabled, a `UserWarning` and the value is kept as given
     (never used). The setup check case `origin_invalid` (`ui_not_same_origin`) is restored on a
     dormant configuration, and `ui_origin_distinct` reports it as `ui_origin_invalid`.
+  - #1 The page answers on `VEKTRA_ASSESS_UI_ORIGIN` only: unset, or requested with another
+    scheme+`Host` (normalised), it is 503 (before any database read). The scheme is the one the
+    server saw: the repo's pattern for a trusted proxy is uvicorn's own ProxyHeadersMiddleware,
+    which applies `X-Forwarded-Proto` only for `FORWARDED_ALLOW_IPS` (default 127.0.0.1); no
+    `X-Forwarded-Host` is read, the proxy forwards the client's `Host` (nginx example). With
+    assess enabled, startup refuses an unset UI origin outside development (development starts,
+    the page is 503 until set). Documented in configuration.md.

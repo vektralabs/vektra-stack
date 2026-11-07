@@ -175,11 +175,11 @@ async def step_12_assess_check(
 
 
 async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
-    """Plan 9 (ARCH-076): with ``VEKTRA_ASSESS_UI_ORIGIN`` set, refuse to start when it is not
-    https outside development, or equals a registered site's Moodle origin (the iframe's
-    ``allow-same-origin`` sandbox is safe only across distinct origins). Unset: nothing to
-    check here; the setup check reports ``ui_origin_distinct`` MISSING."""
-    if not settings.ui_origin:
+    """Plan 9 (ARCH-076): refuse to start when ``VEKTRA_ASSESS_UI_ORIGIN`` is unset outside
+    development, not https outside development, or equal to a registered site's Moodle origin
+    (the iframe's ``allow-same-origin`` sandbox is safe only across distinct origins). In
+    development an unset origin starts; the UI page then answers 503 until it is set."""
+    if not settings.ui_origin and settings.env == "development":
         return
     from sqlalchemy import text
 

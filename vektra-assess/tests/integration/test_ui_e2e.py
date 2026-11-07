@@ -45,7 +45,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 from support.preflight import FakePartB, activate, deps, job_context, kek_ring
 from support.sessions import fixture_target
-from support.world import beat, configure_activity, world
+from support.world import beat, configure_activity, default_settings, world
 from test_context_capture import InProcessParser
 
 from integration.test_session_preflight import _reset
@@ -436,6 +436,8 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
     runner = Runner()
     async with world(
         pg,
+        # the page answers on VEKTRA_ASSESS_UI_ORIGIN only (review #1)
+        default_settings(VEKTRA_ASSESS_UI_ORIGIN=f"http://localhost:{ports['ui']}"),
         assess_runner=runner,
         assess_sse_timing={"poll_s": 0.3, "keepalive_s": 5.0},
     ) as w:

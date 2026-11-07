@@ -174,6 +174,8 @@ def default_settings(**over: Any) -> VektraAssessSettings:
         "VEKTRA_ASSESS_ENABLED": True,
         "VEKTRA_ENV": "development",
         "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET": True,
+        # the origin of the test client (base_url http://t): the UI page answers there only
+        "VEKTRA_ASSESS_UI_ORIGIN": "http://t",
     }
     return VektraAssessSettings.model_validate({**base, **over})
 

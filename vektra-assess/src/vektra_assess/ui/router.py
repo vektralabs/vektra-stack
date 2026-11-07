@@ -24,8 +24,9 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of
+from vektra_assess.api.deps import settings_of
 from vektra_assess.ui.headers import asset_headers, page_headers
-from vektra_assess.ui.origins import site_origin
+from vektra_assess.ui.origins import site_origin, url_origin
 
 PREFIX = "/api/v1/assess/ui"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -84,8 +85,26 @@ async def _site_origin(request: Request, site: str) -> str | None:
     return site_origin(row.moodle_origin, row.base_url)
 
 
+def request_origin(request: Request) -> str | None:
+    """The origin this request was addressed to: the scheme the server saw (uvicorn applies
+    ``X-Forwarded-Proto`` only for a proxy in ``FORWARDED_ALLOW_IPS``, its ProxyHeadersMiddleware)
+    and the ``Host`` header (the nginx example forwards the client's own), normalised."""
+    host = request.headers.get("host")
+    return url_origin(f"{request.url.scheme}://{host}") if host else None
+
+
+def on_ui_origin(request: Request) -> bool:
+    """Review #1: the page answers on ``VEKTRA_ASSESS_UI_ORIGIN`` only. Served on another host
+    (the API's own origin, a Moodle origin) the plugin's ``allow-same-origin`` sandbox would
+    no longer separate it from the parent, so it is not served at all."""
+    ui = settings_of(request).ui_origin
+    return bool(ui) and request_origin(request) == ui
+
+
 @router.get("", response_class=HTMLResponse)
 async def ui_page(request: Request, site: str = "") -> Response:
+    if not on_ui_origin(request):
+        return Response(status_code=503, headers=page_headers(None))
     origin = await _site_origin(request, site)
     if origin is None:
         return Response(status_code=404, headers=page_headers(None))

@@ -342,3 +342,11 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     `evaluate()` (`CheckContext.moodle_origin`); `site_origin()` picks the column, else the
     origin of `base_url`. `ui_not_same_origin` (same-site with base_url and the API) is
     unchanged.
+  - #8 Revision 0033's backfill is done in Python with `url_origin` (the code's normalisation)
+    and writes NULL when `base_url` cannot be normalised (credentials, an underscore host); its
+    CHECK uses `ui.origins.ORIGIN_RE` (lower-case DNS names or a bracketed IPv6, optional port),
+    the shape every `bare_origin` output has. The migration imports `vektra_assess.ui.origins`
+    (pure standard library) instead of copying it: one normalisation, as asked; the price is
+    that a later change to `bare_origin` changes what a fresh upgrade writes, which is the
+    intended behaviour for a normalisation. Test: `vektra-assess/tests/test_migration_0033.py`
+    (0032 -> 0033 with underscore, IPv6, credentials, case and default-port rows).

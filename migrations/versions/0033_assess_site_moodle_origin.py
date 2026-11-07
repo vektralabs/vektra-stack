@@ -2,22 +2,27 @@
 
 ``assess_sites.moodle_origin``: the one origin allowed to frame the discussion UI page
 (``frame-ancestors``) and to talk to it by ``postMessage``. A bare origin, enforced by a CHECK
-(``http(s)://host[:port]``: no path, query, fragment, credentials or wildcard); existing rows
-are backfilled from the origin of their ``base_url``. The API may read it; the whole grant
-matrix is re-rendered.
+(``http(s)://host[:port]``, normalised: lower case, no default port, IPv6 in brackets; no path,
+query, fragment, credentials or wildcard); existing rows are backfilled from the origin of their
+``base_url`` with the code's own normalisation (``vektra_assess.ui.origins.url_origin``), and a
+``base_url`` it cannot normalise is backfilled as NULL (the code then falls back to ``base_url``
+and refuses it the same way), so the backfill can never violate the CHECK. The API may read it;
+the whole grant matrix is re-rendered.
 
 Revision ID: 0033
 Revises: 0032
 """
 
+import sqlalchemy as sa
 from alembic import op
+
+from vektra_assess.ui.origins import ORIGIN_RE, url_origin
 
 revision = "0033"
 down_revision = "0032"
 branch_labels = None
 depends_on = None
 
-ORIGIN_RE = r"^https?://[A-Za-z0-9.\-]+(:[0-9]{1,5})?$"
 
 GRANT_STATEMENTS = (
     "REVOKE ALL ON assess_activity_config, assess_audit_events, assess_consumed_jtis, assess_deliveries, assess_enrolment_checks, assess_erasure_records, assess_extra_time, assess_gate_inputs, assess_heartbeat, assess_jobs, assess_model_activations, assess_outage_incidents, assess_render_checks, assess_render_state, assess_reset_grants, assess_session_handoff, assess_session_keys, assess_sessions, assess_setup_check_reports, assess_setup_checks, assess_site_capabilities, assess_site_keys, assess_sites, assess_start_breaker, assess_snapshots, assess_start_attempts, assess_token_jti, assess_transcript_download_tokens, assess_transcripts, assess_turn_flags, assess_turns FROM vektra_assess_api, vektra_assess_worker, vektra_assess_definer",
@@ -193,10 +198,13 @@ GRANT_STATEMENTS = (
 
 def upgrade() -> None:
     op.execute("ALTER TABLE assess_sites ADD COLUMN moodle_origin TEXT NULL")
-    op.execute(
-        "UPDATE assess_sites SET moodle_origin = lower(substring(base_url from "
-        "'^(https?://[^/?#@]+)')) WHERE moodle_origin IS NULL"
-    )
+    conn = op.get_bind()
+    rows = conn.execute(sa.text("SELECT id, base_url FROM assess_sites")).all()
+    for site_id, base_url in rows:
+        conn.execute(
+            sa.text("UPDATE assess_sites SET moodle_origin = :o WHERE id = :i"),
+            {"o": url_origin(str(base_url)) if base_url else None, "i": site_id},
+        )
     op.execute(
         "ALTER TABLE assess_sites ADD CONSTRAINT ck_assess_sites_moodle_origin "
         f"CHECK (moodle_origin IS NULL OR moodle_origin ~ '{ORIGIN_RE}')"

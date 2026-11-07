@@ -140,6 +140,7 @@ _PDF_OBJ = re.compile(rb"\bobj\b")
 #: a PDF name ends at white space or a delimiter; any other byte extends it
 _NAME_END = rb"(?![^\x00\t\n\x0c\r ()<>\[\]{}/%])"
 _PDF_FILTER_KEY = re.compile(rb"/Filter" + _NAME_END)
+_PDF_DECODE_PARMS = re.compile(rb"/(?:DecodeParms|DP)" + _NAME_END)
 #: the only /Filter values the scan accepts: one direct name, or an array of direct names
 _PDF_FILTER_VALUE = re.compile(
     rb"\s*(?:(/[A-Za-z0-9]+)"
@@ -214,7 +215,7 @@ def _pdf_stream(raw_dictionary: bytes, body: bytes) -> bytes | None:
     dictionary = _unescape_names(raw_dictionary)
     if dictionary is None:
         return None
-    if b"/DecodeParms" in dictionary or b"/DP" in dictionary:
+    if _PDF_DECODE_PARMS.search(dictionary):
         return None
     keys = list(_PDF_FILTER_KEY.finditer(dictionary))
     if len(keys) > 1:

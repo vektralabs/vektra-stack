@@ -748,6 +748,10 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
             base64.a85encode(zlib.compress(b"wstoken")) + b"~>",
             b"[/ASCII85#44ecode /#46lateDecode]",
         ),
+        # CodeRabbit 4499897027: a longer name that starts with /DP or /DecodeParms is not one
+        "dp_prefix_names": _pdf(
+            zlib.compress(b"wstoken"), extra=b" /DPI 72 /DecodeParmsX 1 /DP-x 2"
+        ),
     }.items():
         assert b"wstoken" not in data.lower(), name
         path = tmp_path / f"stu1__{name}.pdf"
@@ -782,6 +786,7 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
         # an escape that is not #xx, or one that decodes to a delimiter, is ambiguous
         _pdf(zlib.compress(b"wstoken"), key=b"/F#zzlter"),
         _pdf(zlib.compress(b"wstoken"), b"/A85#2FFlateDecode"),
+        _pdf(zlib.compress(b"wstoken"), extra=b" /DP<< /Predictor 12 >>"),
     ],
     ids=[
         "unknown",
@@ -794,6 +799,7 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
         "indirect_in_chain",
         "bad_escape",
         "escaped_delimiter",
+        "dp_abbreviation",
     ],
 )
 def test_the_file_scan_refuses_an_uninspectable_pdf_stream(

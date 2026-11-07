@@ -295,3 +295,44 @@ async def test_every_closed_session_gets_exactly_one_transcript(pg, worker) -> N
     assert closed == made == 3
     for s in seeded:  # each one decrypts and re-hashes
         await _open(pg, ring, s.session_id)
+
+
+async def test_a_tampered_snapshot_is_audited_as_a_transcript_integrity_failure(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #3: a snapshot that no longer re-hashes to the chain's genesis writes the
+    transcript integrity audit row (and no transcript)."""
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        # an actor with owner rights bypasses the BR-015 immutability trigger
+        await pg.run("super", "ALTER TABLE assess_snapshots DISABLE TRIGGER USER")
+        try:
+            await pg.run(
+                "super",
+                "UPDATE assess_snapshots SET content_hash = repeat('0', 64) "
+                "WHERE session_id = :s",
+                {"s": s.session_id},
+            )
+        finally:
+            await pg.run("super", "ALTER TABLE assess_snapshots ENABLE TRIGGER USER")
+        deps = GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Facts(facts=CloseFacts())
+        )
+        with pytest.raises(IntegrityFailure):
+            await generate_transcript(deps, worker.connect, s.session_id)
+        audit = await pg.run(
+            "super",
+            "SELECT reason_code FROM assess_audit_events WHERE session_id = :s "
+            "AND event = 'assess_transcript_integrity_failed'",
+            {"s": s.session_id},
+        )
+        assert [a[0] for a in audit] == ["snapshot_hash_mismatch"]
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_transcripts WHERE session_id = :s",
+                s=s.session_id,
+            )
+            == 0
+        )

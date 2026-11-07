@@ -186,8 +186,11 @@ async def generate_transcript(
     async with acquire() as conn, conn.begin():
         snap = await verify_snapshot_integrity(conn, sid, dek, genesis)
     if isinstance(snap, Mismatch):
-        _alert("integrity_mismatch", session_id=str(sid), reason="snapshot")
-        raise IntegrityFailure("snapshot_" + snap.reason.value)
+        # the snapshot check audited its own event; the transcript refusal is audited too, under
+        # the one event every integrity refusal of generation writes (with the alert)
+        reason = "snapshot_" + snap.reason.value
+        await _integrity_failed(acquire, row, reason, None)
+        raise IntegrityFailure(reason)
     chain: list[ChainTurn] = []
     records: list[render.TurnRecord] = []
     try:

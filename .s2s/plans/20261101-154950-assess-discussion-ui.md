@@ -511,3 +511,4 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
 - **CodeRabbit review 5812178787 (2026-11-07)**:
   - 4501694787 `bare_origin` refuses an IPv6 zone id (`fe80::1%eth0`, `%25` in a URL), which
     `ORIGIN_RE` excludes: the 0033 backfill now writes NULL for it instead of failing the CHECK.
+  - nitpick (test_assess_startup.py) The framing test writes its manifest under `tmp_path`.

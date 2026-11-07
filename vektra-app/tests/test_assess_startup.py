@@ -441,7 +441,7 @@ def test_assess_limiters_are_local_keyed_by_session_or_student() -> None:
     assert limiters["state"].check((str(uuid.uuid4()), 7, 42), 1)[0] is True
 
 
-def test_every_route_but_the_discussion_ui_denies_framing() -> None:
+def test_every_route_but_the_discussion_ui_denies_framing(tmp_path: Path) -> None:
     """Plan 9 (ARCH-076): X-Frame-Options: DENY on every response of the API; the assess UI
     page and assets are framed through their own CSP and carry no X-Frame-Options."""
     from vektra_app.main import create_app
@@ -449,10 +449,8 @@ def test_every_route_but_the_discussion_ui_denies_framing() -> None:
     app = create_app()
 
     import json
-    import tempfile
-    from pathlib import Path
 
-    bundle = Path(tempfile.mkdtemp())
+    bundle = tmp_path  # removed by pytest (CodeRabbit review 5812178787)
     (bundle / "manifest.json").write_text(
         json.dumps({"js": "assess-ui.abc.js", "css": "assess-ui.abc.css"})
     )

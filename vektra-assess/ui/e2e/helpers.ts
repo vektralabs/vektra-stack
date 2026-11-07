@@ -58,6 +58,8 @@ export interface ServerSession {
   close_reason: string | null;
   deadline_at: string | null;
   transcript_jobs: number;
+  transcript_sha256: string | null; // plan 10: the stored transcript's SHA-256, once generated
+  transcript_filename: string | null;
   turns: ServerTurn[];
 }
 

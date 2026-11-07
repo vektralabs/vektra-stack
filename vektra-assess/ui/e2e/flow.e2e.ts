@@ -1,5 +1,7 @@
 // The discussion UI end to end, framed by the Moodle stub on another origin (plan 9). Every
 // user-visible claim is checked against server state (rows, GET /sessions/{sid}).
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, test, type Request } from "@playwright/test";
 import {
   botReplies,
@@ -221,9 +223,38 @@ test("an unanswered download-token request ends in a generic text, asked once", 
   expect(await requests()).toBe(1); // no automatic retry
 });
 
-test("download returns the stored transcript bytes", async () => {
-  // REQ-072 / REQ-088: the closing-screen download must return bytes whose SHA-256 equals the
-  // stored transcript hash while delivery is PENDING. The transcript download endpoint and the
-  // download tokens are plan 10's and do not exist yet: this spec stays BLOCKED, it never passes.
-  test.skip(true, "BLOCKED: transcript download endpoint and download tokens are plan 10's");
+test("download returns the stored transcript bytes", async ({ page, request }) => {
+  // REQ-072 / REQ-088 (plan 10): the closing-screen download returns bytes whose SHA-256 equals
+  // the stored transcript hash. The stub plugin answers the UI's request with a download token it
+  // minted server-side; the UI fetches with the token in the Authorization header only.
+  const t: Target = { who: "stu1", a: "files" };
+  await page.goto(hostUrl(t, { download: "1" }));
+  const ui = await uiFrame(page);
+  await opened(request, ui, t);
+  await tabTo(page, ui, "button.finish");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  await expect(ui.locator("#closing-title")).toBeVisible();
+  // the worker generates it after the close: wait for the row, never for a status text
+  await expect.poll(async () => (await serverSession(request, t)).transcript_sha256, { timeout: 20_000 })
+    .toBeTruthy();
+  const server = await serverSession(request, t);
+  const fetched: Request[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/api/v1/assess/transcripts/")) fetched.push(r);
+  });
+  await tabTo(page, ui, ".closing button");
+  const downloading = page.waitForEvent("download");
+  await page.keyboard.press("Enter");
+  const file = await downloading;
+  expect(file.suggestedFilename()).toBe(server.transcript_filename);
+  const path = await file.path();
+  const bytes = readFileSync(path);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(server.transcript_sha256);
+  // the token travelled in the header, never in the URL
+  expect(fetched.length).toBe(1);
+  expect(fetched[0].url()).not.toContain("token");
+  expect((await fetched[0].allHeaders())["authorization"]).toMatch(/^Bearer /);
+  await expect(ui.locator(".download-status")).not.toHaveText(TEXT.downloadFailed);
 });

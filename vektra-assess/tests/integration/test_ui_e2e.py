@@ -6,20 +6,21 @@ The harness serves, in this test's event loop:
   restricted API role) on ``http://localhost:<p2>``;
 * a Moodle stub on ``http://127.0.0.1:<p1>``: the host page that frames the UI with the plugin's
   sandbox attributes and plays the parent side of the postMessage contract (server-side mint of
-  the pre-session token, no ``sid`` on a resume, no answer to a download-token request: the
-  download part is plan 10's), plus ``/control/*`` endpoints the specs use to drive the fakes and
+  the pre-session token, no ``sid`` on a resume, and, with ``download=1``, the server-side mint of
+  a transcript download token answering the UI's request, as plugin P2 does), plus ``/control/*`` endpoints the specs use to drive the fakes and
   to read server state;
 * a third origin, ``http://localhost:<p1>`` (same stub, another host name), that must not be able
   to frame the UI.
 
 The model is fake (``Runner`` below: scripted replies, an outage switch, a hold after the first
 segment); the pre-flight is the production handler with the recorded Moodle 4.3 responses, run by
-a background loop like the worker's; the outage probe is the worker's ``outage_tick`` with a probe
+a background loop like the worker's, which also runs the production ``transcript_generate`` body
+for every CLOSED session (plan 10); the outage probe is the worker's ``outage_tick`` with a probe
 that follows the outage switch; pending turns are answered by the API's ``PendingTurnDriver``.
 
 The specs live in ``vektra-assess/ui/e2e/`` and run with ``npx playwright test``. This test
-passes only when every spec passed and the download spec ended SKIPPED as BLOCKED (plan 10):
-a download that passed would prove an endpoint that does not exist.
+passes only when every declared spec ran and passed, the download spec included (plan 10: the
+downloaded bytes must re-hash to the stored transcript's SHA-256).
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ from test_context_capture import InProcessParser
 
 from integration.test_session_preflight import _reset
 from vektra_assess.api.pending import PendingTurnDriver
+from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.types import (
     ProviderCallRecord,
     ProviderOutageError,
@@ -58,9 +60,11 @@ from vektra_assess.llm.types import (
     TurnResult,
     TurnUsage,
 )
+from vektra_assess.transcript import store
 from vektra_assess.worker.outage_probe import outage_tick
 from vektra_assess.worker.preflight import make_preflight_handler
 from vektra_assess.worker.start_source import MoodleStartSource
+from vektra_assess.worker.transcript_gen import GenerationDeps, generate_transcript
 
 pytestmark = pytest.mark.integration
 
@@ -70,10 +74,9 @@ UI_DIR = Path(__file__).resolve().parents[2] / "ui"
 BRANCH = "4.3"
 #: CI sets it: a missing Node toolchain or browser is then a failure, never a skip
 REQUIRED = os.environ.get("VEKTRA_ASSESS_E2E_REQUIRED") == "1"
-#: the spec that must end skipped as BLOCKED until plan 10 ships the download endpoint
-BLOCKED_SPEC = "download returns the stored transcript bytes"
-#: the specs that must run and pass (the e2e/*.e2e.ts files; the BLOCKED one excluded)
-SPECS_RUN = 7
+#: the specs that must run and pass (the e2e/*.e2e.ts files; plan 10 added the download one)
+SPECS_RUN = 8
+DOWNLOAD_SPEC = "download returns the stored transcript bytes"
 
 
 def _toolchain_problem() -> str | None:
@@ -160,9 +163,14 @@ class Harness:
         source = MoodleStartSource(
             make_client(Replay(BRANCH)), InProcessParser(), worker.connect
         )
+        self.kek = kek_ring()
         self.preflight = make_preflight_handler(
-            deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek_ring())
+            deps(w.settings, w.handoff_public, source, FakePartB(), kek=self.kek)
         )
+        # plan 10: the transcript key is held by both processes (API serves, worker seals)
+        self.transcript_kek = AssessKeyring(store.KEYRING, "t1", {"t1": os.urandom(32)})
+        w.app.state.assess_keys[store.KEYRING] = self.transcript_kek
+        self.generated: set[uuid.UUID] = set()
 
     # --- the worker's side: pre-flight jobs and the outage probe -------------------------------
 
@@ -206,6 +214,20 @@ class Harness:
             return not self.runner.down
 
         await outage_tick(self.worker.connect, probe, min_credit_s=1)
+        # transcript_generate for every CLOSED session (the production body, plan 10)
+        closed = await self.w.pg.run(
+            "super",
+            "SELECT s.id FROM assess_sessions s WHERE s.state = 'CLOSED' AND NOT EXISTS "
+            "(SELECT 1 FROM assess_transcripts t WHERE t.session_id = s.id)",
+        )
+        for (sid,) in closed:
+            if sid not in self.generated:
+                self.generated.add(sid)
+                await generate_transcript(
+                    GenerationDeps(kek=self.kek, transcript_kek=self.transcript_kek),
+                    self.worker.connect,
+                    sid,
+                )
 
     # --- the stub's helpers ---------------------------------------------------------------------
 
@@ -221,6 +243,19 @@ class Harness:
             return JSONResponse({"error": r.text}, status_code=502)
         return JSONResponse({"token": r.json()["token"]})
 
+    async def mint_download(self, request: Request) -> Response:
+        """Plugin P2's server side: a download token for the student's own transcript."""
+        sub, _cmid = self.target(request)
+        tid = request.query_params["tid"]
+        r = await self.w.client.post(
+            f"/api/v1/assess/transcripts/{tid}/download-token",
+            json={"sub": sub},
+            headers={"Authorization": "Bearer mint"},
+        )
+        if r.status_code != 201:
+            return JSONResponse({"error": r.text}, status_code=502)
+        return JSONResponse({"token": r.json()["token"]})
+
     def host_page(self, request: Request) -> Response:
         q = request.query_params
         cfg = {
@@ -231,6 +266,10 @@ class Harness:
             "hold": q.get("hold") == "1",
             "unavailable": q.get("unavailable") == "1",
             "mint": f"/mint?who={q.get('who', 'stu1')}&a={q.get('a', 'rubric_vis')}",
+            "download": f"/mint-download?who={q.get('who', 'stu1')}"
+            f"&a={q.get('a', 'rubric_vis')}"
+            if q.get("download") == "1"
+            else None,
             "evil": f"{self.third}/evil?who={q.get('who', 'stu1')}"
             f"&a={q.get('a', 'rubric_vis')}"
             if q.get("evil") == "1"
@@ -249,14 +288,16 @@ class Harness:
         rows = await self.w.pg.run(
             "super",
             "SELECT id, state, close_reason, deadline_at, (SELECT count(*) FROM assess_jobs j "
-            "WHERE j.kind = 'transcript_generate' AND j.args->>'session_id' = s.id::text) "
+            "WHERE j.kind = 'transcript_generate' AND j.args->>'session_id' = s.id::text), "
+            "(SELECT t.content_hash FROM assess_transcripts t WHERE t.session_id = s.id), "
+            "(SELECT t.filename FROM assess_transcripts t WHERE t.session_id = s.id) "
             "FROM assess_sessions s WHERE site_id = :site AND student_userid = :u "
             "AND cmid = :c ORDER BY session_no DESC LIMIT 1",
             {"site": self.w.site, "u": sub, "c": cmid},
         )
         if not rows:
             return JSONResponse({"session_id": None})
-        sid, state, reason, deadline_at, jobs = rows[0]
+        sid, state, reason, deadline_at, jobs, transcript_sha256, filename = rows[0]
         turns: list[dict[str, Any]] = []
         if state != "CLOSED":
             token = await self.w.presession(sub, cmid)
@@ -272,6 +313,8 @@ class Harness:
                 "close_reason": reason,
                 "deadline_at": deadline_at.isoformat() if deadline_at else None,
                 "transcript_jobs": jobs,
+                "transcript_sha256": transcript_sha256,
+                "transcript_filename": filename,
                 "turns": turns,
             }
         )
@@ -326,6 +369,12 @@ window.addEventListener("message", async (ev) => {
   const m = ev.data;
   window.__fromUi.push(m.type);
   if (m.type === "vektra-assess-resize") frame.style.height = (m.height + 32) + "px";
+  if (m.type === "vektra-assess-download-token-request") {
+    if (!cfg.download) return;  // without download=1 the request stays unanswered (a spec)
+    const r = await fetch(cfg.download + "&tid=" + encodeURIComponent(m.tid));
+    if (r.ok) post({ v: 1, type: "vektra-assess-download-token", tid: m.tid, token: (await r.json()).token });
+    return;
+  }
   if (m.type !== "vektra-assess-ready" || cfg.hold) return;
   if (cfg.unavailable) return post({ v: 1, type: "vektra-assess-unavailable" });
   const r = await fetch(cfg.mint);
@@ -333,7 +382,6 @@ window.addEventListener("message", async (ev) => {
   const msg = { v: 1, type: "vektra-assess-token", token: (await r.json()).token, mode: cfg.mode };
   if (cfg.sid) msg.sid = cfg.sid;
   post(msg);
-  // vektra-assess-download-token-request is not answered: the download part is plan 10's
 });
 frame.src = cfg.ui;
 if (cfg.evil) {
@@ -524,6 +572,7 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
                 Route("/host", h.host_page),
                 Route("/evil", h.evil_page),
                 Route("/mint", h.mint),
+                Route("/mint-download", h.mint_download),
                 Route("/control/session", h.session),
                 Route("/control/{name}", h.control, methods=["POST"]),
             ]
@@ -571,11 +620,9 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
     assert report.exists(), out
     outcomes = _outcomes(json.loads(report.read_text()))
     assert code == 0, out
-    assert outcomes.get(BLOCKED_SPEC) == "skipped", (
-        f"the download spec must end SKIPPED (BLOCKED, plan 10): {outcomes}"
-    )
-    ran = {t: s for t, s in outcomes.items() if t != BLOCKED_SPEC}
+    ran = dict(outcomes)
     assert ran and all(s == "passed" for s in ran.values()), outcomes
+    assert ran.get(DOWNLOAD_SPEC) == "passed", outcomes
     # false-pass guard: the declared specs all ran (a filtered or empty run fails here)
     assert len(ran) == SPECS_RUN, outcomes
     # every session the browser drove satisfies the server-side invariants

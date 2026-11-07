@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { App, DOWNLOAD_TIMEOUT_MS } from "../src/app";
+import { App, DOWNLOAD_TIMEOUT_MS, transcriptFileName } from "../src/app";
 import { Bridge } from "../src/bridge";
 import { readConfig } from "../src/main";
 
@@ -924,5 +924,76 @@ describe("a session read that predates a state event", () => {
     expect(priv.state.name).toBe("outage");
     expect(a.controls.retry.hidden).toBe(false);
     expect(a.chat.list.querySelectorAll("article").length).toBe(2); // its turns still apply
+  });
+});
+
+describe("transcript download (plan 10)", () => {
+  it("fetches with the parent's token as a bearer header and saves under the server's name", async () => {
+    const { a, priv, pending, flush } = harness();
+    const posted: { type: string; tid?: string }[] = [];
+    (a as unknown as { bridge: { send: (m: never) => void } }).bridge.send = (m) => posted.push(m);
+    await priv.onEvent({ event: "closed", data: '{"close_reason":"finished"}' });
+    (document.querySelector(".closing button") as HTMLButtonElement).click();
+    expect(posted.filter((m) => m.type === "vektra-assess-download-token-request")).toEqual([
+      { v: 1, type: "vektra-assess-download-token-request", tid: "S" },
+    ]);
+    const saved: { name: string; size: number }[] = [];
+    const created = URL.createObjectURL;
+    URL.createObjectURL = () => "blob:x";
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      saved.push({ name: this.download, size: 0 });
+    };
+    try {
+      const done = (a as unknown as { onMessage: (m: unknown) => Promise<void> }).onMessage.call(a, {
+        v: 1,
+        type: "vektra-assess-download-token",
+        tid: "S",
+        token: "DL-TOKEN",
+      });
+      await flush();
+      const req = pending[pending.length - 1] as unknown as { url: string; resolve: (r: Response) => void };
+      expect(req.url).toBe("/api/transcripts/S");
+      req.resolve(
+        new Response("<!DOCTYPE html><html></html>", {
+          status: 200,
+          headers: {
+            "content-disposition":
+              "attachment; filename=\"EA-2026_501_101_s1_20261107.html\"; filename*=UTF-8''EA-2026_501_101_s1_20261107.html",
+          },
+        }),
+      );
+      await done;
+      await flush();
+      expect(saved.map((x) => x.name)).toEqual(["EA-2026_501_101_s1_20261107.html"]);
+    } finally {
+      URL.createObjectURL = created;
+      HTMLAnchorElement.prototype.click = click;
+    }
+  });
+
+  it("a refused download (404 not generated yet, 401 used token) shows the generic text", async () => {
+    const { a, priv, pending, flush, root } = harness();
+    await priv.onEvent({ event: "closed", data: '{"close_reason":"finished"}' });
+    (document.querySelector(".closing button") as HTMLButtonElement).click();
+    const done = (a as unknown as { onMessage: (m: unknown) => Promise<void> }).onMessage.call(a, {
+      v: 1,
+      type: "vektra-assess-download-token",
+      tid: "S",
+      token: "T",
+    });
+    await flush();
+    (pending[pending.length - 1] as unknown as { resolve: (r: Response) => void }).resolve(
+      new Response("", { status: 404 }),
+    );
+    await done;
+    expect(root.querySelector(".download-status")!.textContent).toMatch(/Non è stato possibile/);
+  });
+
+  it("only a well-formed ASCII .html name from the header is used", () => {
+    expect(transcriptFileName('attachment; filename="A_1_2_s1_20261107.html"')).toBe("A_1_2_s1_20261107.html");
+    for (const bad of [null, "", 'attachment; filename="../x.html"', 'attachment; filename="x.exe"']) {
+      expect(transcriptFileName(bad)).toBe("trascrizione.html");
+    }
   });
 });

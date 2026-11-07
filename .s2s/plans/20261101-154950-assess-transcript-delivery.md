@@ -178,7 +178,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [x] `GET /transcripts/{tid}`: single-use consumption, ownership re-check, decrypt + hash verify, headers, audit; per-token rate limit using plan 1's generalised `RateLimiter`
 - [x] `POST /transcripts/{tid}/resend` with recipient-parameter rejection and audit
 - [x] (added) `/state` gains `transcripts: [{tid, n, available, purged}]` (n = session number, `purged` false until plan 12, absent when none) and `pre_session.recipients: [{role, name}]` from the worker-written gate_inputs; documented in `docs/reference/api.md` next to the other `/state` fields; never an email address
-- [ ] (added) Plan 9 UI download wired end to end: postMessage token request → `GET /transcripts/{tid}` with the bearer header, file name from `Content-Disposition`; UI unit tests and the Playwright e2e download scenario
+- [x] (added) Plan 9 UI download wired end to end: postMessage token request → `GET /transcripts/{tid}` with the bearer header, file name from `Content-Disposition`; UI unit tests and the Playwright e2e download scenario
 - [x] Add `ERR_ASSESS_TRANSCRIPT_NOT_FOUND` (ERR-ASSESS-017), `ERR_ASSESS_DOWNLOAD_TOKEN_INVALID` (018), `ERR_ASSESS_RESEND_RECIPIENT_FORBIDDEN` (019), `ERR_ASSESS_TRANSCRIPT_INTEGRITY` (020) and the teacher-unverified 021 (plan 11 reuses it) to `vektra_shared/errors.py` with `_CODE_STATUS_OVERRIDE` entries and `docs/reference/error-codes.md`
 
 ### Tests, CI, docs

@@ -215,3 +215,24 @@ async def test_sessions_with_a_pending_recheck_do_not_take_the_batch(pg) -> None
         assert queued[0][0] == 4
     finally:
         await engine.dispose()
+
+
+async def test_the_event_stream_needs_a_fresh_enrolment_check(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit review 5809548168 (events.py 316-327): the stream carries reply text, so
+    opening or reconnecting needs a fresh 'enrolled' check, like GET and the turns."""
+    timing = {"poll_s": 0.05, "keepalive_s": 0.2, "max_s": 2}  # a stream ends in 2 s
+    async with world(
+        pg, assess_runner=FakeStreamRunner(), assess_sse_timing=timing
+    ) as w:
+        s = await seed_session(w, worker, "ACTIVE")
+        await pg.run(
+            "super",
+            "UPDATE assess_enrolment_checks SET checked_at = now() - interval '151 seconds' "
+            "WHERE session_id = :s",
+            {"s": s.session_id},
+        )
+        r = await w.client.get(
+            f"/api/v1/assess/sessions/{s.session_id}/events",
+            headers=bearer(s.session_token),
+        )
+        assert r.status_code == 503 and "enrolment_freshness" in err(r)["remediation"]

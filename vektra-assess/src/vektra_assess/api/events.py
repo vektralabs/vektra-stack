@@ -323,6 +323,10 @@ async def session_events(
             allowed=ANY_OPEN | {"CLOSED"},
             lock=False,
             allow_closed=True,  # a reconnect may still drain ``closed``; nothing is decrypted here
+            # the stream carries reply text: opening or reconnecting needs a fresh 'enrolled'
+            # check (gate step 6, live rows only, so a CLOSED session still drains;
+            # CodeRabbit review 5809548168)
+            require_enrolment=True,
         ) as (_conn, row)
     ):
         snapshot = {

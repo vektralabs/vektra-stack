@@ -423,3 +423,17 @@ async def test_a_stale_grader_list_at_download_does_not_burn_the_token(
         await _graders(w, s)  # the refresh the 403 queued has run
         assert (await download(w, s.session_id, token)).status_code == 200
         assert (await download(w, s.session_id, token)).status_code == 401  # used once
+
+
+async def test_mint_and_download_share_one_rate_budget(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4503025922: with VEKTRA_ASSESS_DOWNLOAD_RPM=2 one mint-and-download pair
+    fits, a second mint in the same minute does not."""
+    from support.world import default_settings
+
+    async with world(pg, default_settings(VEKTRA_ASSESS_DOWNLOAD_RPM=2)) as w:
+        s, _ = await _ready(w, worker)
+        r = await mint(w, s.session_id, sub=s.sub)
+        assert r.status_code == 201
+        assert (await download(w, s.session_id, r.json()["token"])).status_code == 200
+        r = await mint(w, s.session_id, sub=s.sub)
+        assert r.status_code == 429 and err(r)["details"]["reason"] == "download_rate"

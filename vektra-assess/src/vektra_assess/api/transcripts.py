@@ -165,6 +165,8 @@ def _uuid(tid: str) -> UUID:
 
 
 def _limit(request: Request, key: Any) -> None:
+    """One budget per (transcript, role, requester) shared by the mint AND the download: a
+    complete download costs two operations of ``VEKTRA_ASSESS_DOWNLOAD_RPM`` (at least 2)."""
     allowed, _ = limiter_of(request, "download").check(
         key, settings_of(request).download_rpm
     )
@@ -214,7 +216,7 @@ async def mint_download_token(
     else:
         raise fail(bad_request("sub_or_actor_userid"))
     t = _uuid(tid)
-    _limit(request, ("mint", t, role, requester))
+    _limit(request, (t, role, requester))
     refused: Any = None
     async with engine_of(request).begin() as conn:
         site = await _site_of(conn, key, purpose)
@@ -291,7 +293,7 @@ async def download_transcript(
     t = _uuid(tid)
     if claims.tid != t:
         raise fail(download_token_invalid())
-    _limit(request, ("get", t, claims.role, claims.sub))
+    _limit(request, (t, claims.role, claims.sub))
     settings = settings_of(request)
     refused: Any = None
     async with engine_of(request).begin() as conn:

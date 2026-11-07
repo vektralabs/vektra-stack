@@ -633,11 +633,11 @@ class VektraAssessSettings(BaseSettings):
     )
     download_rpm: int = Field(
         10,
-        ge=1,
+        ge=2,
         alias="VEKTRA_ASSESS_DOWNLOAD_RPM",
         description=(
-            "Transcript download-token mints and downloads per minute, per transcript and "
-            "requester (assess-local limiter; 429 beyond it)."
+            "Transcript operations per minute per transcript and requester, mints and downloads "
+            "counted together (one download = 2 operations, so at least 2); 429 beyond it."
         ),
     )
     resend_min_interval_s: int = Field(

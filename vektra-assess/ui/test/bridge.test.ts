@@ -76,7 +76,15 @@ describe("Bridge", () => {
 describe("parseInbound", () => {
   it("validates every field", () => {
     expect(parseInbound({ v: 1, type: "vektra-assess-token", token: "", mode: "start" })).toBeNull();
-    expect(parseInbound({ v: 1, type: "vektra-assess-token", token: "T", mode: "resume" })).toBeNull();
+    expect(parseInbound({ v: 1, type: "vektra-assess-token", token: "T", mode: "resume" })).toEqual({
+      v: 1,
+      type: "vektra-assess-token",
+      token: "T",
+      mode: "resume",
+    });
+    expect(
+      parseInbound({ v: 1, type: "vektra-assess-token", token: "T", mode: "resume", sid: 7 }),
+    ).toBeNull();
     expect(
       parseInbound({ v: 1, type: "vektra-assess-token", token: "T", mode: "resume", sid: "s" }),
     ).toEqual({ v: 1, type: "vektra-assess-token", token: "T", mode: "resume", sid: "s" });

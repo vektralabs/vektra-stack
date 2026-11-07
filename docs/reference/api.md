@@ -198,7 +198,7 @@ appear in a URL, in storage or in a log, on either side.
 | Direction | `type` | Fields | Meaning |
 |-----------|--------|--------|---------|
 | UI -> plugin | `vektra-assess-ready` | none | the page is loaded and listening; the handshake starts here |
-| plugin -> UI | `vektra-assess-token` | `token`, `mode: "start" \| "resume"`, `sid?` (resume) | the freshly minted pre-session token (server-side mint, single use, TTL <= 2 min); the UI Starts or resumes with it |
+| plugin -> UI | `vektra-assess-token` | `token`, `mode: "start" \| "resume"`, `sid?` (optional, the plugin does not send it) | the freshly minted pre-session token (server-side mint, single use, TTL <= 2 min); the UI Starts or resumes with it |
 | plugin -> UI | `vektra-assess-unavailable` | none | the mint failed; the UI shows a generic, non-technical text and makes no request |
 | UI -> plugin | `vektra-assess-resize` | `height` (CSS px) | the content height, so the parent can size the iframe |
 | UI -> plugin | `vektra-assess-download-token-request` | `tid` | the closing screen asks for a transcript download token |
@@ -209,6 +209,17 @@ Handshake: the UI posts `vektra-assess-ready` once it listens; the parent answer
 `vektra-assess-token` or `vektra-assess-unavailable`. The UI holds the token in memory only; a
 reload loses it and the parent mints a new pre-session token for a resume (`GET
 /sessions/{sid}` re-mints the session token).
+
+Resume without `sid`: the plugin sends `mode: "resume"` and no `sid`. The UI then reads the
+open session's `session_id` from `GET /state` with the same pre-session token and resumes with
+`GET /sessions/{sid}`; when `/state` has no `session_id` (or fails) the UI shows the generic
+unavailable text. A `sid` that is present but not a string makes the message invalid (ignored).
+
+Download-token timeout: the UI sends one `vektra-assess-download-token-request` at a time and
+disables the download button while it waits. If no `vektra-assess-download-token` for that `tid`
+arrives within 10 s (a plugin that does not implement the download part yet), the UI shows a
+generic text ("Non è stato possibile scaricare la trascrizione. Riprova più tardi."), enables the
+button again and does not retry by itself; a token arriving after the timeout is ignored.
 
 ### Assess discussion context: Part A and item references (iframe client)
 

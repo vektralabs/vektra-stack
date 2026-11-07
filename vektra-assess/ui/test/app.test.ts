@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { App } from "../src/app";
+import { describe, expect, it, vi } from "vitest";
+import { App, DOWNLOAD_TIMEOUT_MS } from "../src/app";
 import { Bridge } from "../src/bridge";
 
 function app() {
@@ -91,5 +91,82 @@ describe("REQ-103 flag", () => {
     const ev = (a as unknown as { onEvent: (e: unknown) => Promise<void> }).onEvent.bind(a);
     await ev({ event: "closed", data: '{"close_reason":"finished"}' });
     expect(root.querySelectorAll("button.flag").length).toBe(0);
+  });
+});
+
+describe("resume without sid and the download-token timeout", () => {
+  function host(fetchImpl: typeof fetch) {
+    const posted: unknown[] = [];
+    let listener: (ev: MessageEvent) => void = () => {};
+    const parent = { postMessage: (m: unknown) => posted.push(m) };
+    const win = {
+      parent,
+      addEventListener: (_t: "message", l: (ev: MessageEvent) => void) => (listener = l),
+    };
+    const root = document.createElement("main");
+    document.body.replaceChildren(root);
+    const a = new App(
+      { site: "s", moodleOrigin: "https://m.example", apiBase: "/api" },
+      new Bridge(win, "https://m.example"),
+      root,
+      fetchImpl,
+    );
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe() {}
+    };
+    a.start();
+    const send = (data: unknown) =>
+      listener({ data, origin: "https://m.example", source: parent } as unknown as MessageEvent);
+    return { a, posted, send, root };
+  }
+
+  it("a resume without sid finds the open session through GET /state", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push(`${url} ${(init.headers as Record<string, string>).Authorization}`);
+      if (url === "/api/state") return Response.json({ state: "active", session_id: "S9" });
+      if (url === "/api/sessions/S9")
+        return Response.json({
+          session_id: "S9",
+          state: "ACTIVE",
+          close_reason: null,
+          deadline_at: new Date(Date.now() + 600000).toISOString(),
+          server_now: new Date().toISOString(),
+          reply_pending: false,
+          turns: [],
+          token: "SESSION",
+        });
+      return new Promise<Response>(() => {}); // the event stream stays open
+    }) as unknown as typeof fetch;
+    const { a, send } = host(fetchImpl);
+    send({ v: 1, type: "vektra-assess-token", token: "PRE", mode: "resume" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls.slice(0, 2)).toEqual(["/api/state Bearer PRE", "/api/sessions/S9 Bearer PRE"]);
+    expect((a as unknown as { state: { name: string } }).state.name).toBe("active");
+  });
+
+  it("an unanswered download-token request times out to a generic text, once", async () => {
+    const { a, posted, root } = host((async () => Response.json({})) as unknown as typeof fetch);
+    const priv = a as unknown as { state: unknown; sid: string };
+    priv.state = { name: "active" };
+    priv.sid = "S";
+    const ev = (a as unknown as { onEvent: (e: unknown) => Promise<void> }).onEvent.bind(a);
+    vi.useFakeTimers();
+    await ev({ event: "closed", data: '{"close_reason":"finished"}' });
+    const button = root.querySelector(".closing button") as HTMLButtonElement;
+    button.click();
+    button.click(); // a second click while waiting asks nothing more
+    const requests = () =>
+      posted.filter((m) => (m as { type: string }).type === "vektra-assess-download-token-request");
+    expect(requests().length).toBe(1);
+    expect(button.disabled).toBe(true);
+    vi.advanceTimersByTime(DOWNLOAD_TIMEOUT_MS + 1);
+    expect(root.querySelector(".download-status")!.textContent).toBe(
+      "Non è stato possibile scaricare la trascrizione. Riprova più tardi.",
+    );
+    expect(button.disabled).toBe(false);
+    vi.advanceTimersByTime(5 * DOWNLOAD_TIMEOUT_MS);
+    expect(requests().length).toBe(1); // no automatic retry
+    vi.useRealTimers();
   });
 });

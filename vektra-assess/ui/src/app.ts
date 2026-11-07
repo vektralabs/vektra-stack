@@ -10,6 +10,9 @@ import { ClosingView, saveBlob } from "./views/closing";
 import { ControlsView, copyText, minutesLeft } from "./views/controls";
 import { h, LiveRegion } from "./views/dom";
 
+/** How long the closing screen waits for the parent's download token. */
+export const DOWNLOAD_TIMEOUT_MS = 10_000;
+
 interface SessionView {
   session_id: string;
   state: string;
@@ -104,7 +107,7 @@ export class App {
     this.token = m.token;
     this.dispatch({ type: "handoff", mode: m.mode });
     if (m.mode === "start") await this.startSession();
-    else await this.resume(m.sid as string);
+    else await this.resume(m.sid ?? (await this.openSessionId()));
   }
 
   private async startSession(): Promise<void> {
@@ -137,7 +140,23 @@ export class App {
     }
   }
 
-  private async resume(sid: string): Promise<void> {
+  /** The student's open session, looked up with the pre-session token (GET /state). */
+  private async openSessionId(): Promise<string | null> {
+    try {
+      const r = await this.fetchImpl(`${this.cfg.apiBase}/state`, {
+        headers: this.headers(),
+        cache: "no-store",
+      });
+      if (!r.ok) return null;
+      const body = (await r.json()) as { session_id?: string };
+      return typeof body.session_id === "string" ? body.session_id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async resume(sid: string | null): Promise<void> {
+    if (!sid) return this.dispatch({ type: "unavailable" });
     this.sid = sid;
     const view = await this.fetchSession();
     if (!view) return this.dispatch({ type: "unavailable" });
@@ -311,14 +330,29 @@ export class App {
     }
   }
 
+  /** Ask the parent for a download token; one request at a time, no automatic retry. If the
+   *  parent does not answer within DOWNLOAD_TIMEOUT_MS (a plugin without the download part),
+   *  a generic text is shown and the button works again. */
   private requestDownload(): void {
-    if (!this.sid) return;
-    this.pendingDownload = this.sid;
-    this.bridge.send({ v: 1, type: "vektra-assess-download-token-request", tid: this.sid });
+    if (!this.sid || this.pendingDownload) return;
+    const tid = this.sid;
+    this.pendingDownload = tid;
+    const button = this.main.querySelector(".closing button") as HTMLButtonElement | null;
+    if (button) button.disabled = true;
+    this.bridge.send({ v: 1, type: "vektra-assess-download-token-request", tid });
+    setTimeout(() => {
+      if (this.pendingDownload !== tid) return;
+      this.pendingDownload = null;
+      const status = this.main.querySelector(".download-status");
+      if (status) status.textContent = M.downloadFailed;
+      if (button) button.disabled = false;
+    }, DOWNLOAD_TIMEOUT_MS);
   }
 
   private async downloadWith(tid: string, token: string): Promise<void> {
     this.pendingDownload = null;
+    const button = this.main.querySelector(".closing button") as HTMLButtonElement | null;
+    if (button) button.disabled = false;
     const closing = this.main.querySelector(".download-status");
     try {
       const r = await this.fetchImpl(`${this.cfg.apiBase}/transcripts/${tid}`, {

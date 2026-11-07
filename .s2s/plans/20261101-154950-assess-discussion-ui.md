@@ -275,3 +275,10 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     404, `Cache-Control: no-store`; X-Frame-Options DENY on another route is asserted on the
     real `create_app()` stack in `vektra-app/tests/test_assess_startup.py`.
 
+  - Two contract adjustments agreed with P2 (2026-11-07): (1) resume without `sid`: the plugin
+    sends `vektra-assess-token` with `mode: "resume"` and no `sid`; the UI reads `session_id`
+    from `GET /state` with the pre-session token, then resumes with `GET /sessions/{sid}` (no
+    `session_id` → generic unavailable text). (2) download-token timeout: one request at a time,
+    button disabled while waiting, after 10 s without an answer a generic text, the button back,
+    no automatic retry, a late token ignored (until P2 ships the download part). Both in the
+    api.md contract; unit tests in `ui/test/bridge.test.ts` and `ui/test/app.test.ts`.

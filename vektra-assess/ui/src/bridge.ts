@@ -23,9 +23,11 @@ export function parseInbound(data: unknown): InboundMessage | null {
     case "vektra-assess-token":
       if (typeof m.token !== "string" || !m.token) return null;
       if (m.mode !== "start" && m.mode !== "resume") return null;
-      if (m.mode === "resume" && typeof m.sid !== "string") return null;
-      return m.mode === "resume"
-        ? { v: 1, type: m.type, token: m.token, mode: m.mode, sid: m.sid as string }
+      // sid is optional (the plugin does not send it): a resume without it looks the open
+      // session up through GET /state with the same pre-session token
+      if (m.mode === "resume" && m.sid !== undefined && typeof m.sid !== "string") return null;
+      return m.mode === "resume" && typeof m.sid === "string"
+        ? { v: 1, type: m.type, token: m.token, mode: m.mode, sid: m.sid }
         : { v: 1, type: m.type, token: m.token, mode: m.mode };
     case "vektra-assess-unavailable":
       return { v: 1, type: m.type };

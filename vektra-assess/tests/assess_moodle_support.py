@@ -63,6 +63,12 @@ def _recorded_manifest(branch: str) -> dict[str, Any]:
     return out
 
 
+def preload_manifests() -> None:
+    """Fill the cache for every branch (conftest calls it once, synchronously, per session)."""
+    for branch in BRANCHES:
+        _recorded_manifest(branch)
+
+
 def manifest(branch: str) -> dict[str, Any]:
     if branch in _LIVE:
         return _LIVE[branch].manifest

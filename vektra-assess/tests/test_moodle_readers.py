@@ -672,10 +672,16 @@ def test_every_reader_function_has_a_recording(branch: str) -> None:
 def test_the_recorded_manifest_is_read_once_and_handed_out_as_a_copy(
     branch: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """CodeRabbit 4500701652: site_for()/manifest() run on async paths; no per-call file read."""
+    """CodeRabbit 4500701652: site_for()/manifest() run on async paths, so after the session
+    preload (conftest, synchronous) they must read no file at all, not even the first time."""
     import assess_moodle_support as support
 
+    # the session fixture has already filled the cache for every branch
+    assert support._recorded_manifest.cache_info().currsize >= len(support.BRANCHES)
+    # and preloading from an empty cache is what fills it (the cache is left full again)
     support._recorded_manifest.cache_clear()
+    support.preload_manifests()
+
     reads: list[Path] = []
     real = Path.read_text
 
@@ -684,12 +690,13 @@ def test_the_recorded_manifest_is_read_once_and_handed_out_as_a_copy(
         return real(self, *a, **k)
 
     monkeypatch.setattr(Path, "read_text", spy)
-    first = manifest(branch)
-    site_for(branch)
-    uid(branch, "stu1")
-    assert [p.name for p in reads] == ["manifest.json"]
-    first["users"].clear()  # a caller's mutation does not reach the next caller
-    assert manifest(branch)["users"]
+    for b in support.BRANCHES:
+        first = manifest(b)
+        site_for(b)
+        uid(b, "stu1")
+        first["users"].clear()  # a caller's mutation does not reach the next caller
+        assert manifest(b)["users"]
+    assert reads == [], "no manifest read after the preload"
 
 
 def test_recordings_are_scrubbed(branch: str) -> None:

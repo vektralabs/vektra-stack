@@ -806,3 +806,45 @@ async def test_batch_ingest_rejects_bad_metadata_for_the_whole_request():
 
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "ERR-INGEST-005"
+
+
+# ---------------------------------------------------------------------------
+# Target namespace: query param or documented `namespace` form field (BUG-029)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params", "data", "expected"),
+    [
+        # control: the query param alone already worked, and must keep working
+        ({"namespace": "from-query"}, None, "from-query"),
+        # the documented form field; before the fix it was ignored -> "default"
+        (None, {"namespace": "from-form"}, "from-form"),
+        # documented precedence: the form field overrides the query param
+        ({"namespace": "from-query"}, {"namespace": "from-form"}, "from-form"),
+    ],
+)
+async def test_ingest_honours_the_documented_namespace_field(params, data, expected):
+    app = _make_app()
+
+    with patch("vektra_ingest.api.run_ingest") as mock_ingest:
+        from vektra_ingest.pipeline import IngestResult
+
+        mock_ingest.return_value = IngestResult(
+            status="new", document_id=uuid4(), chunk_count=1
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post(
+                "/api/v1/ingest",
+                files={"file": ("doc.pdf", _make_pdf_file())},
+                params=params,
+                data=data,
+                headers={"Authorization": "Bearer token"},
+            )
+
+    assert resp.status_code == 200
+    assert mock_ingest.call_args.kwargs["namespace"] == expected

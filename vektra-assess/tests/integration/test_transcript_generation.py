@@ -98,6 +98,9 @@ async def test_a_closed_session_gets_one_verified_transcript_and_recipient_rows(
         assert "EAASSESS" in html and "Sessione #1 di 1" in html
         for name in STUDENT_NAMES:
             assert name not in html  # identifiers only (OQ-020)
+        # canaries (REQ-074): no system prompt, no context framing, no hidden-grade text
+        for canary in ("Sei l'assistente di Vektra", "CONTESTO DELLA PROVA", "FONTI."):
+            assert canary not in html and canary.replace("'", "&#39;") not in html
         row = (
             await pg.run(
                 "super",

@@ -672,3 +672,23 @@ async def test_a_ui_origin_problem_keeps_the_ui_origin_message(
         err.detail == "VEKTRA_ASSESS_UI_ORIGIN refused: ui_origin_equals_moodle_origin"
     )
     assert "own https origin" in err.remediation
+
+
+async def test_a_site_on_http_is_named_with_its_own_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CodeRabbit review 5812478913 (assess_wiring.py 209-220): outside development a site whose
+    Moodle origin is http is the SITE's problem, reported with its id and its own remedy."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://ui.example")
+    with pytest.raises(StartupValidationError) as refused:
+        await assess_wiring.check_ui_origin(
+            _Rows(["https://moodle.example", "http://m.example"]),
+            VektraAssessSettings(),
+        )
+    err = refused.value
+    assert err.detail == "assess site site-1 refused: moodle_origin_not_https"
+    assert "https" in err.remediation and "disable" in err.remediation
+    assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.remediation

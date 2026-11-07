@@ -520,3 +520,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - setup_check.py 453-470 `ui_origin_distinct` also requires another SITE than both the
     framing origin (`same_site_as_moodle_origin`) and `base_url` (`same_site_as_moodle`);
     either one fails the item.
+  - assess_wiring.py 209-220 Outside development a site whose Moodle origin is http stops
+    startup as the site's problem: "assess site <id> refused: moodle_origin_not_https", remedy
+    https for that site or disable it (no longer reported as a UI-origin problem).

@@ -204,6 +204,20 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
                     "(https://host[:port]), or disable the site (assess_sites.disabled_at)."
                 ),
             )
+        if (
+            origin
+            and settings.env != "development"
+            and not origin.startswith("https://")
+        ):
+            # also the SITE's problem: its Moodle origin is not https (review 5812478913)
+            raise StartupValidationError(
+                step=STEP,
+                detail=f"assess site {site_id} refused: moodle_origin_not_https",
+                remediation=(
+                    "Serve that Moodle site over https and set assess_sites.moodle_origin to "
+                    "its https origin, or disable the site (assess_sites.disabled_at)."
+                ),
+            )
         if origin:
             origins.append(origin)
     problem = ui_origin_problem(

@@ -212,6 +212,9 @@ async def world(
     for name, value in app_state.items():
         setattr(app.state, name, value)
     app.include_router(router)
+    from vektra_assess.ui.router import router as ui_router
+
+    app.include_router(ui_router)
     await beat(pg)
     try:
         async with httpx.AsyncClient(

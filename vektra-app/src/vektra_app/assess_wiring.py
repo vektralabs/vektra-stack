@@ -56,8 +56,12 @@ def include_assess_router(app: FastAPI) -> bool:
     if not enabled:
         return False
     from vektra_assess.api.router import router
+    from vektra_assess.ui.router import router as ui_router
 
     app.include_router(router)
+    app.include_router(
+        ui_router
+    )  # the discussion UI page (plan 9), dormant with assess
     return True
 
 

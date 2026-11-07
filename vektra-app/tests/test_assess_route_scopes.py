@@ -21,6 +21,8 @@ from vektra_shared.auth import require_exact_scope, require_scope
 
 ASSESS_PREFIX = "/api/v1/assess"
 ALLOWED_PREFIXES = ("require_exact_scope_", "verify_assess_token")
+#: the only unauthenticated assess paths (plan 9): the UI page carries no data and no credential
+UI_PREFIX = "/api/v1/assess/ui"
 FORBIDDEN_PREFIX = "require_scope_"
 
 
@@ -57,6 +59,8 @@ def _violations(app: FastAPI) -> tuple[int, list[str]]:
         names = list(_dependency_names(dependant))
         if any(n.startswith(FORBIDDEN_PREFIX) for n in names):
             bad.append(f"{path}: uses require_scope (admin superscope)")
+        elif path.startswith(UI_PREFIX) and "public_assess_ui" in names:
+            continue  # the discussion UI page and assets: public by design (ARCH-076)
         elif not any(n.startswith(ALLOWED_PREFIXES) for n in names):
             bad.append(f"{path}: no exact scope or assess token dependency")
     return count, bad

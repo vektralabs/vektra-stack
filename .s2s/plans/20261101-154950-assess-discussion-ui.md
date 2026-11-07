@@ -111,7 +111,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 ## Tasks
 
 ### Server side
-- [ ] Add `vektra-assess/src/vektra_assess/ui/router.py`: `GET /api/v1/assess/ui` (unauthenticated, `site` query param = public site key only), page template `ui/templates/page.html.j2` (autoescape) with the JSON config block, asset route `/api/v1/assess/ui/assets/{name}` resolving only names in `manifest.json`; include the router in `vektra_app/main.py create_app()`
+- [x] Add `vektra-assess/src/vektra_assess/ui/router.py`: `GET /api/v1/assess/ui` (unauthenticated, `site` query param = public site key only), page template `ui/templates/page.html.j2` (autoescape) with the JSON config block, asset route `/api/v1/assess/ui/assets/{name}` resolving only names in `manifest.json`; include the router in `vektra_app/main.py create_app()`
 - [ ] Implement the header builder `ui/headers.py` producing the CSP and companion headers listed in Design Notes; per-site `frame-ancestors` read from the site record on every request (no cache); unknown/disabled site → 404 with `frame-ancestors 'none'`
 - [ ] Add settings `VEKTRA_ASSESS_UI_ORIGIN` (alias-style in the assess settings class); startup step in `_run_startup()` refuses a non-https origin outside development and an origin equal to any registered site's `moodle_origin`
 - [ ] Add `moodle_origin` to the site record if absent (next revision in the chain) and to the site registration/update path, validated as a bare origin (no path, no wildcard)
@@ -220,3 +220,15 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
 - OQ-026 (reference model) affects only latency feel, not this plan's acceptance.
 
 > Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.
+
+- **Implementation choices (2026-11-07, plan 9 in progress)**:
+  - `site` is the site's public id (`assess_sites.id`, the `site` claim of every token): an
+    opaque UUID, never a credential. A malformed, unknown or disabled site is 404.
+  - The UI router is mounted with the assess router (`include_assess_router`), so it is dormant
+    like every assess route while `VEKTRA_ASSESS_ENABLED=false`, instead of unconditionally in
+    `create_app()`. It carries a `public_assess_ui` marker dependency: the route-scope
+    structural test accepts it only under `/api/v1/assess/ui`.
+  - The built bundle is never committed: without `static/manifest.json` the page is 503; tests
+    point `app.state.assess_ui_static_dir` at a fixture bundle. The router tests need the site
+    table, so they live in `tests/integration/test_ui_router.py` (not `tests/`).
+

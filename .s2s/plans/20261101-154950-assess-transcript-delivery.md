@@ -4,7 +4,7 @@
 **Status**: active
 **Branch**: feat/assess-transcript-delivery
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-07T17:00:00Z
+**Updated**: 2026-11-08T00:30:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -267,7 +267,7 @@ real-time run guards against clock-injection bugs.
 
 > Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.
 
-> **State (2026-11-07): 10a merged (PR #159, 0e38f49). 10b in progress on `feat/assess-transcript-delivery-smtp`; the recipient decision is "Decision REVISED" below.**
+> **State (2026-11-08): 10a merged (PR #159, 0e38f49). 10b implemented on `feat/assess-transcript-delivery-smtp` (Delivery tasks, mail sink, delivery tests, settings, docs done; NFR-021 run BLOCKED, OQ-029 confirmation open); the recipient decision is "Decision REVISED" below.**
 > 10a is done and green: schema (rev 0034), generation with turn-hash re-verification, inert render
 > + allowlist + MathML, sealed store, download tokens + single-use download + resend, `/state`
 > transcripts and recipients, UI download end to end, a11y checks, docs. 10b (delivery: `message`,
@@ -416,8 +416,41 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
 
 - BLOCKED: manual NVDA read-through (NFR-016) needs a person with a screen reader; the automated half
   (axe WCAG 2.1 AA + Nu checker, with a broken control document) passes.
-- BLOCKED until 10b: NFR-021 benchmark, SMTP criteria (REQ-075, OQ-029), recipient replacement
-  (REQ-082 send-time half), download bytes == email attachment bytes (the download half is proven).
+- 10b closed the SMTP criteria (REQ-075 on the mail sink, OQ-029 design default), the recipient
+  replacement and allowlist (REQ-082 as amended) and download bytes == attachment bytes.
+- BLOCKED (10b): the NFR-021 run. `tests/nfr/test_assess_transcript_timing.py` needs a stack run
+  that does not exist here: the compose stack with the assess profile, the worker's relay pointed
+  at a recording TLS mail sink (none is packaged as a container), and a driver that closes 50
+  sessions concurrently with configured recipients (the burst script starts sessions but does
+  not close them). The test writes a BLOCKED result and SKIPS; it is in `EXPECTED_UNRUN`. The
+  NFR-021 acceptance criterion stays open.
+- Still open (human): OQ-029, product/QA confirmation that "one SENT row per recipient, at most one
+  known, audited duplicate after a crash in the window" satisfies REQ-075's "exactly once".
+- Test runner note: `pytest-xdist` is not a dependency of this repo, so `-n 2` is not available;
+  the integration runs of 10b were serial (one process).
+
+### Design decisions taken in 10b (one line each, with the reason)
+
+- SMTP account: the existing `assess_smtp` credentials secret `{"username", "password"}` (`{}` = no AUTH; one without the other refuses startup), not `VEKTRA_ASSESS_SMTP_USERNAME_FILE|PASSWORD_FILE`: KEY_MATRIX already has that row (worker required, API forbidden, file or env name), so the API refusal needed no new secret kind.
+- The sealed teacher config is opened under binding field `config` (the binding `crypto/rotation.py` re-seals under) and must be a JSON object; `transcript_recipients` is read from it. `worker/start_source.py` still opens the solution under binding `solution`: a pre-existing mismatch that plan 11, which owns the config format, must settle (request below).
+- The worker refuses to start without `VEKTRA_ASSESS_SMTP_HOST` and `_FROM` unless `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` (development): without them the delivery slots stay unbound, and the refusal names the settings instead of the slot.
+- The API role reads every `assess_deliveries` column except `recipient_ref` (grant matrix, revision 0035): a ref is a hash of a guessable address, and the API needs only the status.
+- Fan-out touches only rounds that still have live rows (or round 1 of a transcript with none); a row in flight is never REPLACED; a ref REPLACED and configured again is not revived in the same round (UNIQUE per round); the fan-out takes the resend function's per-transcript advisory lock.
+- The 72 h window counts from the delivery row's `created_at` (no `first_attempt_at` column): a row created by a resend or a fan-out gets its own window.
+- Unreadable or empty recipients count as a failed attempt (`recipients_unresolved`, backoff, alert), so the window still ends them in FAILED; the transcript stays downloadable.
+- Final without retry: `domain_not_allowed`, a stored transcript that fails its hash, any synchronous 5xx (RCPT, MAIL FROM or DATA). Retried: `tls`, `connect`, `temp_4xx`, `auth` (TLS and AUTH alert on every occurrence, an operator can fix them inside the window).
+- `transcript_deliver` budget 120 s / lease 240 s (3 recipients, 2 sessions, 30 s each); the lease is the crash window after which an attempt with no outcome is resent with the same Message-ID.
+- Rows of one job are attempted concurrently (under the sender's semaphore) and all run to their outcome before a failure is raised, so a DB error on one row never leaves the others in flight.
+- A transcript with no delivery row (recipients unresolved at generation) gets a fan-out job from the `delivery_retry` tick at most every 5 min, within the retry window; no alert on those (generation already alerted).
+- SMTP probe: no new table; it upserts the `smtp` row of `assess_heartbeat` (`{ok, error_class, smtp_code}`, `beat_at` = check time); new tick `smtp_probe` every 300 s and at startup, lock key 14.
+- Audit events (refs, never addresses): `assess_delivery_attempt` (every attempt, with outcome), `assess_delivery_sent`, `assess_delivery_failed`, `assess_delivery_possible_duplicate`, `assess_delivery_recipient_replaced` (old ref), `assess_delivery_recipient_added` (new ref); unresolved rows reuse `assess_transcript_recipients_unresolved`.
+- The email's course is the BR-016 file name's prefix (the folded short name stored with the transcript): no Moodle read at send time; the header sanitiser still runs on it.
+
+### Requests from 10b
+
+- Plan 11 (teacher-ops, config PUT): store the teacher config as ONE JSON object sealed under binding field `config` (what rotation and the delivery reader use), with `transcript_recipients` (1..3, the normalisation of `delivery/recipients.normalize_address`) and the solution inside it; move `start_source`'s solution read to that object. Validate the addresses against `VEKTRA_ASSESS_RECIPIENT_DOMAINS` at PUT (field error naming the domains) and audit old/new as refs.
+- Plan 12 (privacy-retention): `/health/assess` reads the `smtp` row of `assess_heartbeat` (and its age); metrics over delivery status and `assess.delivery.alert`; a shredded transcript's live rows go ABANDONED (the handler now just skips a transcript without ciphertext).
+- Plugin (vektra-moodle-discuss, owned by the other session): nothing beyond the P3 request in "Decision REVISED"; the site admin's allowlist copy must equal `VEKTRA_ASSESS_RECIPIENT_DOMAINS`, documented in `docs/guides/assess-moodle-service-account.md`.
 
 ### Code review of 10a (2026-11-07), decisions
 

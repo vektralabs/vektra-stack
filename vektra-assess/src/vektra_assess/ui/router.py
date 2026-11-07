@@ -195,11 +195,30 @@ async def ui_page(request: Request, site: str = "") -> Response:
     return HTMLResponse(html, headers=page_headers(origin))
 
 
+def asset_path(directory: Path, name: str) -> Path | None:
+    """The file to serve for the requested asset ``name``, or None.
+
+    ``name`` is only a KEY looked up among the manifest's entries; the path is built from the
+    manifest's own value, never from the request. The resolved path (symlinks followed) must
+    then stay inside the resolved bundle directory, so a manifest entry with ``..``, an absolute
+    path or a symlink out of the bundle is refused too (CodeQL path injection, PR #157)."""
+    manifest = manifest_of(directory)
+    if manifest is None:
+        return None
+    entry = next((value for value in manifest.values() if value == name), None)
+    if entry is None:
+        return None
+    root = directory.resolve()
+    candidate = (root / entry).resolve()
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        return None
+    return candidate
+
+
 @router.get("/assets/{name}")
 async def ui_asset(request: Request, name: str) -> Response:
-    directory = static_dir(request)
-    manifest = manifest_of(directory)
-    if manifest is None or name not in manifest.values():
+    path = asset_path(static_dir(request), name)
+    if path is None:
         return Response(status_code=404, headers=asset_headers())
-    media = "text/javascript" if name.endswith(".js") else "text/css"
-    return FileResponse(directory / name, media_type=media, headers=asset_headers())
+    media = "text/javascript" if path.suffix == ".js" else "text/css"
+    return FileResponse(path, media_type=media, headers=asset_headers())

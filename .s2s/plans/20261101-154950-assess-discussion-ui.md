@@ -406,3 +406,8 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - The `assess-ui-e2e` job runs on `ubuntu-24.04`, pinned: `ubuntu-latest` moved to 26.04,
     which Playwright 1.56 refuses for Chromium. It is the only job that installs a browser
     (the vitest suite uses jsdom).
+  - CodeQL path injection (`ui/router.py`, asset route): the requested name is only a key; the
+    served path is built from the manifest's own entry (`asset_path`), then resolved (symlinks
+    followed) and refused unless `is_relative_to` the resolved bundle directory and a regular
+    file. Tests: `..`, `%2e%2e`, encoded slashes, absolute paths, a NUL, and manifest entries
+    that are a symlink out of the bundle, a `../` path or an absolute path, all 404.

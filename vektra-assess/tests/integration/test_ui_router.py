@@ -95,6 +95,53 @@ async def test_only_manifest_assets_are_served(pg, bundle) -> None:  # type: ign
             )
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "..",
+        "%2e%2e",
+        "%2E%2E%2Fsecret.txt",
+        "..%2Fsecret.txt",
+        "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "%2Fetc%2Fpasswd",
+        "%2F" + "%2F".join(["tmp", "x.js"]),
+        "assess-ui.abc123.js%00.css",
+    ],
+)
+async def test_a_traversal_or_absolute_asset_name_is_404(pg, bundle, name: str) -> None:  # type: ignore[no-untyped-def]
+    """CodeQL path injection (PR #157): the request names an asset, it never builds a path."""
+    async with world(pg, assess_ui_static_dir=str(bundle)) as w:
+        r = await w.client.get(f"{PAGE}/assets/{name}")
+        assert r.status_code == 404, name
+        assert b"not an asset" not in r.content and b"root:" not in r.content
+
+
+async def test_a_manifest_entry_that_leaves_the_bundle_is_404(pg, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The file served comes from the manifest and must resolve inside the bundle directory:
+    a symlink out of it, or a manifest entry with ``..`` or an absolute path, is 404."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    outside = tmp_path / "outside.js"
+    outside.write_text("stolen\n")
+    (dist / "assess-ui.link.js").symlink_to(outside)
+    (dist / "assess-ui.ok.css").write_text("body{}\n")
+    for js in ("assess-ui.link.js", "../outside.js", str(outside)):
+        (dist / "manifest.json").write_text(
+            json.dumps({"js": js, "css": "assess-ui.ok.css"})
+        )
+        from vektra_assess.ui.router import manifest_of
+
+        manifest_of.cache_clear()
+        async with world(pg, assess_ui_static_dir=str(dist)) as w:
+            name = js.rsplit("/", 1)[-1]
+            r = await w.client.get(f"{PAGE}/assets/{name}")
+            assert r.status_code == 404, js
+            assert b"stolen" not in r.content
+            ok = await w.client.get(f"{PAGE}/assets/assess-ui.ok.css")
+            assert ok.status_code == 200
+    manifest_of.cache_clear()
+
+
 EXPECTED_CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
     "img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; "

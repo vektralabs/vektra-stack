@@ -82,16 +82,17 @@ async def test_the_cut_stays_at_the_deadline_however_long_the_reply_waited(
     )
     async with world(pg, assess_runner=runner) as w:
         s = await seed_session(w, worker, "ACTIVE")
-        # deadline in 1 s, grace 4 s: the cut is 3 s after the post (persist margin 2 s)
+        # deadline in 5 s (room for the setup and the POST before the input lock), grace
+        # 4 s: the cut is 7 s after the post (persist margin 2 s)
         await pg.run(
             "super",
-            "UPDATE assess_sessions SET deadline_at = now() + interval '1 second', "
+            "UPDATE assess_sessions SET deadline_at = now() + interval '5 seconds', "
             "reply_grace_s = 4 WHERE id = :s",
             {"s": s.session_id},
         )
         driver = driver_for_app(w.app)
         n_slots = driver.reply_slots()
-        for _ in range(n_slots):  # every reply slot busy for 2.5 s
+        for _ in range(n_slots):  # every reply slot busy for 6.5 s
             await driver.slots.acquire()
         r = await w.client.post(
             f"/api/v1/assess/sessions/{s.session_id}/turns",
@@ -99,7 +100,7 @@ async def test_the_cut_stays_at_the_deadline_however_long_the_reply_waited(
             headers={"Authorization": f"Bearer {s.session_token}"},
         )
         assert r.status_code == 202, r.text
-        await asyncio.sleep(2.5)
+        await asyncio.sleep(6.5)
         for _ in range(n_slots):
             driver.slots.release()
         await asyncio.wait_for(asyncio.gather(*list(driver.tasks.values())), 15)

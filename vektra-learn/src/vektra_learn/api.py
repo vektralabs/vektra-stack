@@ -56,6 +56,7 @@ from vektra_shared.errors import (
     ERR_LEARN_005,
     ERR_LEARN_006,
     ERR_LEARN_007,
+    ERR_LEARN_008,
     ErrorCategory,
     ErrorResponse,
     http_status_for,
@@ -554,6 +555,26 @@ def _resolve_namespace_from_token(
     return str(ns)
 
 
+async def _conversation_owner(
+    conv_store: Any, conversation_id: Any
+) -> tuple[bool, Any]:
+    """Return ``(known, owner_subject)`` for the query-side ownership check.
+
+    The persistent store answers through ``get_metadata`` (soft-deleted rows
+    included, so a deleted conversation stays its owner's). The in-memory
+    store answers through ``get_owner``; it has no ``get_metadata`` because
+    ``_get_conversation_store`` treats that method as the mark of a
+    persistent store.
+    """
+    if hasattr(conv_store, "get_metadata"):
+        meta = await conv_store.get_metadata(conversation_id)
+        if meta is None:
+            return False, None
+        return True, meta.get("owner_subject")
+    known, owner = await conv_store.get_owner(conversation_id)
+    return known, owner
+
+
 def _get_conversation_store(request: Request) -> Any:
     """Return the registered conversation store, or raise the right envelope.
 
@@ -940,16 +961,27 @@ async def course_query(
     #
     # Raised outside the try/except below on purpose: a 403 must reach the
     # client, not be swallowed as a failed conversation write.
+    #
+    # A lookup that fails refuses the request. Letting it through hands the id
+    # to the pipeline, which reads its history from the same store moments
+    # later: one failed lookup would let someone else's conversation through.
     if conv_store is not None and req.conversation_id is not None:
-        existing = None
-        if hasattr(conv_store, "get_metadata"):
-            try:
-                existing = await conv_store.get_metadata(req.conversation_id)
-            except Exception as exc:  # store unavailable: fall through
-                structlog.get_logger(__name__).warning(
-                    "conversation_owner_check_failed", error=str(exc)
-                )
-        if existing is not None and existing.get("owner_subject") != student_id:
+        try:
+            known, owner = await _conversation_owner(conv_store, req.conversation_id)
+        except Exception as exc:
+            structlog.get_logger(__name__).warning(
+                "conversation_owner_check_failed", error=str(exc)
+            )
+            err = ErrorResponse(
+                category=ErrorCategory.TRANSIENT,
+                code=ERR_LEARN_008,
+                message="Cannot verify conversation ownership.",
+                remediation="Retry shortly.",
+            )
+            raise HTTPException(
+                status_code=http_status_for(err), detail=err.to_envelope()
+            ) from exc
+        if known and owner != student_id:
             err = ErrorResponse(
                 category=ErrorCategory.PERMANENT,
                 code=ERR_LEARN_007,

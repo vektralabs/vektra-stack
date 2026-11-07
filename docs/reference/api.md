@@ -925,6 +925,8 @@ Request body:
 | `top_k` | int | `5` | Number of chunks to retrieve (1-100) |
 | `stream` | bool | `false` | Enable Server-Sent Events streaming |
 
+A `conversation_id` that already exists must belong to the token's `sub`: otherwise the request is refused with `403 ERR-LEARN-007` before any history is loaded, and a conversation with no recorded owner is refused the same way. If ownership cannot be checked because the conversation store is unreachable, the request is refused with `503 ERR-LEARN-008` (transient, retry) rather than let through. This holds for the in-memory store too, where it applies to conversations seen since the last restart.
+
 Response (HTTP 200, JSON):
 
 ```json

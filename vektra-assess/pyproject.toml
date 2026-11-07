@@ -1,6 +1,6 @@
 [project]
 name = "vektra-assess"
-version = "0.7.1"
+version = "0.8.0"
 description = "Assessment discussion chatbot backend (ARCH-065..079, ADR-0027)"
 readme = "README.md"
 requires-python = ">=3.12"

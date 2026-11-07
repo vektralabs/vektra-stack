@@ -22,6 +22,60 @@
 
 ## Planned
 
+### BUG-028: the learn query checks a conversation's owner but not its course
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-11-07
+**Origin**: the v0.8.0 release-prep review of `course_query` (read from the code, not reproduced).
+
+**Context**: `POST /api/v1/learn/query` refuses a `conversation_id` whose `owner_subject` is not the token's `sub` (ERR-LEARN-007), but never compares the conversation's `namespace_id` with the token's namespace. The turns endpoint does both (ERR-LEARN-006, then ERR-LEARN-007). So the same student, enrolled in two courses, who sends a conversation id from course A with a course B token has course A's history loaded into a course B prompt, and the new turn appended to the course A conversation. No other student's data is reachable: the owner check holds. What can go wrong is a cross-course answer and a conversation that mixes two courses, which the widget of either course then lists.
+
+**Proposed approach**: in the query-side check, refuse with ERR-LEARN-006 when the stored namespace differs, before the owner comparison, as the turns endpoint does. The in-memory store would need to record the namespace next to the owner.
+
+**Acceptance criteria**:
+- [ ] Reproduced first: a test where one subject queries course B with a course A conversation id, failing before the fix
+- [ ] Refused with ERR-LEARN-006 on both stores, nothing loaded and nothing appended
+- [ ] Control: the same id with the course A token still continues the conversation
+
+---
+
+### DEBT-041: nothing checks that every version number agrees
+
+**Status**: draft | **Priority**: low | **Created**: 2026-11-07
+**Origin**: the v0.8.0 release prep, where the list of files carrying the version had to be rebuilt by hand because a new workspace package added two more.
+
+**Context**: a release bumps nine `pyproject.toml`, four `__version__` constants (nothing derives them from the package metadata), the nine workspace entries of `uv.lock`, and the published-image examples. A missed one ships silently: `vektra_app.__version__` is what `app.state.version` reports. `CONTRIBUTING.md` lists how to find them, which is a convention and not a check.
+
+**Proposed approach**: a structure test that reads every workspace `pyproject.toml` version and every `^__version__ =` found by `git ls-files`, and fails unless they are all equal; the lock entries follow from `uv lock --check`. Its negative control is a fixture tree with one value off.
+
+**Acceptance criteria**:
+- [ ] The test fails on a tree with one `__version__` left behind, and passes on the real tree
+- [ ] It discovers the files from the repository, not from a list in the test
+
+---
+
+### BUG-029: the documented `namespace` form field of `POST /api/v1/ingest` was ignored
+
+**Status**: completed (2026-11-07) | **Priority**: high | **Created**: 2026-11-07
+**Origin**: the v0.8.0 widget acceptance run. Its ingest step sent `-F namespace=vk080`, got 200 for both documents, and every student question then answered "I couldn't find relevant information": the documents were in `default`.
+
+**Context**: the endpoint read the form field under the parameter's own name, `namespace_form`, because the `Form()` had no alias. The served OpenAPI schema listed `file, namespace_form, metadata`. Two dates, because the defect is the gap between them:
+- the **behaviour** is old: `namespace_form` has been the field name since 000a27d (2026-03-13), and it is in v0.7.1. The endpoint docstring said only "query param or form field", vague but naming no field;
+- the **false statement** is new: the form-field table in `docs/reference/api.md`, added in this cycle by 934cb66 (FEAT-026, 2026-09-08, not an ancestor of `main`), documented the field as `namespace`. v0.7.1 never shipped it.
+
+So without a fix, v0.8.0 would have published a reference doc written in this cycle that sends an integrator's documents to the wrong namespace, silently: 200, a `document_id`, a chunk count, and the course's students cannot retrieve any of it while whoever queries `default` can.
+
+**Fix, and the alternative not taken**: either the code accepts the documented name, or the table row is deleted and the query parameter stays the only way. The code was aligned to the doc: `namespace` is the name the query parameter already uses, `namespace_form` was an internal artefact, and no client sends it (searched in vektra-stack, vektra-moodle and vektra-internal on `develop` and `main`: only the endpoint itself and one test). The fix is an alias on the existing parameter, not a second parameter, so one field cannot be read two ways. `POST /api/v1/ingest/batch` was checked and needs nothing: its docs promise the namespace only as a query parameter, which is what it reads.
+
+**Acceptance criteria**:
+- [x] `-F namespace=X` lands in X; with both, the form field wins over the query, as documented; the query alone still works
+- [x] The test fails without the alias (mutation: the two form-field cases and the reserved-namespace-by-form case go red, the query-only controls stay green)
+- [x] The served OpenAPI schema lists `namespace` among the form fields
+- [ ] The v0.8.0 widget acceptance run ingests into the course namespace through the documented field
+
+**Traceability**: FEAT-026 (the doc table), 000a27d (the field name), the v0.8.0 release PR.
+
+---
+
 ### FEAT-028: enable course-material RAG for assessment discussions (guarded)
 
 **Status**: draft | **Priority**: low | **Created**: 2026-11-01

@@ -402,3 +402,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - #10b The flag call is in a try/catch: an error status or a lost request leaves the control
     in place and adds "Segnalazione non inviata. Riprova." (`role="status"`) next to it; a
     retry removes the old text first.
+- **CI fixes after PR #157 (2026-11-07)**:
+  - The `assess-ui-e2e` job runs on `ubuntu-24.04`, pinned: `ubuntu-latest` moved to 26.04,
+    which Playwright 1.56 refuses for Chromium. It is the only job that installs a browser
+    (the vitest suite uses jsdom).

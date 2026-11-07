@@ -109,17 +109,34 @@ async def evaluate_render(
     userid: int,
     cmid: int,
     courseid_hint: int | None = None,
-) -> GateDecision:
+) -> tuple[GateDecision, StartTarget | None]:
+    """The advisory decision and the target it was evaluated for (None: no configuration row).
+
+    The target carries a scratch session id: the key of the source's resolution cache, so the
+    grader read that follows reuses the course the gates resolved; the handler forgets it after.
+    """
     settings = deps.settings
     async with acquire() as conn:
         act = (await conn.execute(_DB, {"s": site_id, "u": userid, "c": cmid})).first()
         privacy = await deps.privacy(conn, site_id) or (
             settings.privacy_allow_unset and settings.env == "development"
         )
-    if act is None or not act.enabled or act.cap_minutes is None:
-        return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED)
+    if act is None:
+        return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), None
+    target = StartTarget(
+        session_id=uuid.uuid4(),  # no session: a scratch key for the source's resolution cache
+        site_id=site_id,
+        cmid=cmid,
+        student_userid=userid,
+        courseid_hint=courseid_hint,
+        activity_type=str(act.activity_type),
+        session_no=int(act.closed_sessions) + 1,
+        flags=dict(act.flags or {}),
+    )
+    if not act.enabled or act.cap_minutes is None:
+        return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), target
     if int(act.open_sessions):
-        return GateDecision(Code.SESSION_OPEN, ButtonState.ACTIVE)
+        return GateDecision(Code.SESSION_OPEN, ButtonState.ACTIVE), target
     db = DbGateFacts(
         now=int(act.db_now),
         end_at=act.end_at,
@@ -128,41 +145,21 @@ async def evaluate_render(
         reset_grants=int(act.reset_grants),
         privacy_configured=bool(privacy),
     )
-    target = StartTarget(
-        session_id=uuid.uuid4(),  # no session: a scratch key for the source's resolution cache
-        site_id=site_id,
-        cmid=cmid,
-        student_userid=userid,
-        courseid_hint=courseid_hint,
-        activity_type=str(act.activity_type),
-        session_no=db.closed_sessions + 1,
-        flags=dict(act.flags or {}),
-    )
     try:
         facts = await deps.source.gate_facts(target)
     except Exception as exc:  # unreadable, never a guess
         log.warning("assess_render_facts_error", error_type=type(exc).__name__)
         facts = MoodleGateFacts()
-    return evaluate_start_gates(gate_inputs(target, db, facts))
+    return evaluate_start_gates(gate_inputs(target, db, facts)), target
 
 
-async def read_graders(
-    deps: RenderDeps, site_id: UUID, userid: int, cmid: int, courseid_hint: int | None
-) -> GradersRead | None:
-    """The course's graders and the recipients the transcript will go to (REQ-082). None when
-    no source is configured or Moodle could not be read: then nothing is claimed about them."""
+async def read_graders(deps: RenderDeps, target: StartTarget) -> GradersRead | None:
+    """The course's graders and the recipients the transcript will go to (REQ-082), for the
+    activity's REAL type (a quiz's cmid is resolved among the course's quizzes). Read even when
+    the activity is disabled or a session is open: a teacher still downloads earlier
+    transcripts. None when no source is configured or Moodle could not be read."""
     if deps.graders is None:
         return None
-    target = StartTarget(
-        session_id=uuid.uuid4(),
-        site_id=site_id,
-        cmid=cmid,
-        student_userid=userid,
-        courseid_hint=courseid_hint,
-        activity_type="assign",
-        session_no=1,
-        flags={},
-    )
     try:
         graders = await deps.graders.graders(target)
     except Exception as exc:
@@ -171,7 +168,7 @@ async def read_graders(
     if graders is None:
         return None
     ids = tuple(sorted({g.userid for g in graders}))
-    chosen = select_recipients(graders, student_userid=userid)
+    chosen = select_recipients(graders, student_userid=target.student_userid)
     return GradersRead(ids, chosen)
 
 
@@ -217,10 +214,16 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
             return  # a malformed job is a stale no-op
         hint = ctx.args.get("courseid")
         course = int(hint) if hint else None
-        decision = await evaluate_render(
+        decision, target = await evaluate_render(
             deps, ctx.acquire, site_id, userid, cmid, course
         )
-        graders = await read_graders(deps, site_id, userid, cmid, course)
+        try:
+            graders = await read_graders(deps, target) if target else None
+        finally:
+            # the scratch key must not stay in the source's bounded resolution cache
+            forget = getattr(deps.source, "forget", None)
+            if target is not None and callable(forget):
+                forget(target.session_id)
         await store_render(ctx.acquire, site_id, userid, cmid, decision, graders)
 
     return handle

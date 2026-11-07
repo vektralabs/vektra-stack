@@ -180,6 +180,14 @@ class MoodleStartSource:
         )
         return enrol.value.is_student if isinstance(enrol, Readable) else None
 
+    def forget(self, session_id: UUID) -> None:
+        """Drop a resolution cached under ``session_id`` (a render check's scratch key)."""
+        self._resolved.pop(session_id)
+
+    @property
+    def cached(self) -> int:
+        return len(self._resolved)
+
     async def graders(self, target: StartTarget) -> tuple[GraderView, ...] | None:
         """The course's current graders (REQ-082); None when unreadable (never a guess)."""
         site = await self._site(target)

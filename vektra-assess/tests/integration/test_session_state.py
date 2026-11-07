@@ -509,3 +509,36 @@ async def test_ended_carries_ended_at(pg, worker) -> None:  # type: ignore[no-un
         assert view["state"] == "ended", view
         assert datetime.fromisoformat(view["ended_at"]).tzinfo is not None
         assert not {"active", "pre_session", "closed_at"} & set(view)
+
+
+@pytest.mark.parametrize(
+    ("kind", "cm"),
+    [("quiz", int(M["quizzes"]["essay"]["cmid"])), ("assign", cmid("rubric_vis"))],
+)
+async def test_graders_are_recorded_for_quizzes_and_assignments_alike(
+    pg, worker, kind: str, cm: int
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #1/#10: the grader read uses the activity's real type (a quiz cmid resolves among
+    the course's quizzes), also while the activity is disabled, and leaves no scratch entry in
+    the source's resolution cache."""
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, cm, kind=kind, enabled=False)
+        await pg.run(
+            "super",
+            "UPDATE assess_sites SET release = :r, base_url = :b WHERE id = :s",
+            {"r": M["release"], "b": "https://moodle.example.org", "s": w.site},
+        )
+        src = moodle_source(worker)
+        await render(w, worker, STU1, cm, src, graders=src)
+        inputs = (
+            await pg.run(
+                "super",
+                "SELECT inputs FROM assess_gate_inputs WHERE site_id = :s AND cmid = :c "
+                "AND student_userid = :u",
+                {"s": w.site, "c": cm, "u": STU1},
+            )
+        )[0][0]
+        assert inputs["graders"] == sorted(
+            uid("4.3", g) for g in ("grader1", "grader2")
+        )
+        assert src.cached == 0

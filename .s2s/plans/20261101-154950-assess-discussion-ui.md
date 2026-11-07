@@ -141,7 +141,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 
 ### Tests, CI, docs
 - [x] Vitest unit tests `vektra-assess/ui/test/`: SSE parser fuzz on random chunk boundaries (1-byte splits, CRLF), bridge rejects wrong origin / wrong source / `"*"` never used, reducer transitions, no `innerHTML` usage (lint rule `no-restricted-properties`)
-- [ ] Python tests `vektra-assess/tests/test_ui_router.py`: exact CSP string per site, unknown site 404, no XFO on UI route, XFO DENY on a sample other route, asset allowlist (path traversal `../` → 404), `Cache-Control: no-store`
+- [x] Python tests `vektra-assess/tests/test_ui_router.py`: exact CSP string per site, unknown site 404, no XFO on UI route, XFO DENY on a sample other route, asset allowlist (path traversal `../` → 404), `Cache-Control: no-store`
 - [ ] Playwright e2e `vektra-assess/ui/e2e/` with a host page served from a second origin (`http://127.0.0.1:<p1>` parent vs `http://localhost:<p2>` Vektra) against the running API with the fake LLM provider and seeded session fixtures from plan 8: start → opening → 2 turns → outage (fake provider fails) → Riprova → Fine → download; resume after reload; a framing attempt from a third origin is blocked by CSP (frame not rendered, CSP violation observed)
 - [ ] Accessibility: `@axe-core/playwright` scan on every state (awaiting, preparing, active, streaming, outage, confirm dialog, closed) with 0 violations at WCAG 2.1 A/AA tags; keyboard-only run of the whole e2e flow (no mouse API calls); reflow check at 320 px width and at 1280 px with 200% zoom asserting `scrollWidth <= clientWidth`; live-region announcement counter (one per reply, one per warning)
 - [ ] CI: `ci-unit.yml` add `assess-ui` path filter + `test-assess-ui` job (npm ci, build, vitest) and add it to `ci-gate` needs; `integration.yml` add the Playwright+axe job against the compose stack; `make test-assess-ui` target; ensure the structural guard `test_suite_execution_coverage.py` recognises the JS suite or document the exemption with the CI job name
@@ -269,4 +269,9 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     `no-restricted-properties` rule: same guarantee without an ESLint toolchain. CI runs it in
     the new `test-assess-ui` job (ci-unit.yml, in `ci-gate`) with the type check, the build and
     vitest; `make test-assess-ui` does the same locally.
+  - The router tests live in `tests/integration/test_ui_router.py` (they read the site table):
+    exact CSP bytes per site and after an origin change, unknown/disabled site 404 with
+    `frame-ancestors 'none'`, no X-Frame-Options on the UI route, asset allowlist and traversal
+    404, `Cache-Control: no-store`; X-Frame-Options DENY on another route is asserted on the
+    real `create_app()` stack in `vektra-app/tests/test_assess_startup.py`.
 

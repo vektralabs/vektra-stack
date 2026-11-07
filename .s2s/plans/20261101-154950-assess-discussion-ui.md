@@ -114,7 +114,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [x] Add `vektra-assess/src/vektra_assess/ui/router.py`: `GET /api/v1/assess/ui` (unauthenticated, `site` query param = public site key only), page template `ui/templates/page.html.j2` (autoescape) with the JSON config block, asset route `/api/v1/assess/ui/assets/{name}` resolving only names in `manifest.json`; include the router in `vektra_app/main.py create_app()`
 - [x] Implement the header builder `ui/headers.py` producing the CSP and companion headers listed in Design Notes; per-site `frame-ancestors` read from the site record on every request (no cache); unknown/disabled site → 404 with `frame-ancestors 'none'`
 - [x] Add settings `VEKTRA_ASSESS_UI_ORIGIN` (alias-style in the assess settings class); startup step in `_run_startup()` refuses a non-https origin outside development and an origin equal to any registered site's `moodle_origin`
-- [ ] Add `moodle_origin` to the site record if absent (next revision in the chain) and to the site registration/update path, validated as a bare origin (no path, no wildcard)
+- [x] Add `moodle_origin` to the site record if absent (next revision in the chain) and to the site registration/update path, validated as a bare origin (no path, no wildcard)
 - [ ] Add setup-check item `ui_origin_distinct` to the REQ-079 check (plan 4's check runner), reported by name as OK/MISSING
 - [ ] Extended `GET /api/v1/assess/state` contract (agreed with P2, session vektra-moodle-cf), every field optional and ABSENT when the state does not call for it: `active{session_no, minutes_left, deadline_at}` (states active and starting); `selected_attempt{attempt_no}` (the attempt shown on the page is not the selected one, state 9); `pre_session{duration_min, recipients[{role,name}], course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url, notice_version}, previous_sessions, files[{name, predicted: readable|partial|unreadable}]}` (states eligible and reset_granted); `closed_at` (state 6); `ended_at` (state 11). Data, URLs and versions only, the texts stay in the plugin; `transcripts[...]` is plan 10's. A test per field and per absence; documented in `docs/reference/api.md`
 - [ ] postMessage contract plugin↔UI documented as a stable contract in `docs/reference/api.md`: protocol v1 (ready/handoff with the token, resize, download-token request/response, `closed`), plus `{type:"vektra-assess-unavailable"}` (the parent tells the UI origin the mint failed: the UI shows a generic text) and `vektra-assess-closed`; origin AND source checked on both sides, never `"*"`
@@ -238,4 +238,9 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - `VEKTRA_ASSESS_UI_ORIGIN` already existed (plan 4, setup-check item `ui_not_same_origin`):
     plan 9 reuses it, now validated as a bare origin at load (a malformed value no longer
     reaches the setup check as UNVERIFIABLE: settings refuse it), and adds the startup refusal.
+  - `moodle_origin` (revision 0033): there is no site registration or update path in code yet
+    (sites are inserted by the operator; the teacher-ops plan 11 owns the admin surface), so the
+    validation lives in the database: a CHECK accepts bare `http(s)://host[:port]` only, and
+    existing rows are backfilled from their `base_url`. A row without it falls back to the
+    origin of `base_url` (page and startup check alike).
 

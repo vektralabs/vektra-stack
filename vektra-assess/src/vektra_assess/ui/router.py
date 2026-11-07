@@ -34,16 +34,17 @@ TEMPLATES = Environment(
 )
 
 _SITE = text(
-    "SELECT id, base_url, disabled_at FROM assess_sites WHERE id = CAST(:s AS uuid)"
+    "SELECT id, base_url, moodle_origin, disabled_at FROM assess_sites "
+    "WHERE id = CAST(:s AS uuid)"
 )
 
 
 def site_origin_sql() -> str:
-    """The origins of the enabled sites, one per row (the Moodle origins that may frame the
-    page; plan 9 task 4 moves them to their own column)."""
+    """The Moodle origins of the enabled sites, one per row (the origins that may frame the
+    page): ``moodle_origin`` (revision 0033), or the origin of ``base_url`` when unset."""
     return (
-        "SELECT substring(base_url from '^(https?://[^/?#]+)') FROM assess_sites "
-        "WHERE disabled_at IS NULL"
+        "SELECT coalesce(moodle_origin, lower(substring(base_url from "
+        "'^(https?://[^/?#@]+)'))) FROM assess_sites WHERE disabled_at IS NULL"
     )
 
 
@@ -96,7 +97,9 @@ async def _site_origin(request: Request, site: str) -> str | None:
         row = (await conn.execute(_SITE, {"s": site})).first()
     if row is None or row.disabled_at is not None:
         return None
-    return origin_of(str(row.base_url))
+    # the site's own Moodle origin (revision 0033); a row registered without one falls back to
+    # the origin of its base_url
+    return str(row.moodle_origin) if row.moodle_origin else origin_of(str(row.base_url))
 
 
 @router.get("", response_class=HTMLResponse)

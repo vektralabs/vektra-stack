@@ -25,6 +25,7 @@ from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of
 from vektra_assess.ui.headers import asset_headers, page_headers
+from vektra_assess.ui.origins import origin_of
 
 PREFIX = "/api/v1/assess/ui"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -70,16 +71,6 @@ def load_manifest(directory: Path) -> dict[str, str] | None:
     if not isinstance(data, dict) or not {"js", "css"} <= set(data):
         return None
     return {k: str(data[k]) for k in ("js", "css")}
-
-
-def origin_of(url: str) -> str | None:
-    """scheme://host[:port] of an absolute http(s) URL, or None."""
-    from urllib.parse import urlsplit
-
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        return None
-    return f"{parts.scheme}://{parts.netloc}"
 
 
 def _json_block(data: dict[str, Any]) -> str:

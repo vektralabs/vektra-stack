@@ -448,6 +448,21 @@ async def ui_not_same_origin(ctx: CheckContext) -> Outcome:
     return ok()
 
 
+async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
+    """Plan 9 (ARCH-076): the discussion UI origin is https (outside development) and is not
+    this site's Moodle origin, the precondition of the iframe's ``allow-same-origin``
+    sandbox. Same decision as the API's startup refusal (``ui.origins``)."""
+    from vektra_assess.ui.origins import origin_of, ui_origin_problem
+
+    moodle = origin_of(ctx.site.base_url)
+    problem = ui_origin_problem(
+        ctx.settings.ui_origin,
+        [moodle] if moodle else [],
+        development=ctx.settings.env == "development",
+    )
+    return ok() if problem is None else missing(problem)
+
+
 # --- registry -------------------------------------------------------------------------------------
 
 
@@ -468,6 +483,7 @@ def builtin_registry() -> ItemRegistry:
         ("no_grade_write", no_grade_write),
         ("ws_tls_ok", ws_tls_ok),
         ("ui_not_same_origin", ui_not_same_origin),
+        ("ui_origin_distinct", ui_origin_distinct),  # plan 9
     ):
         reg.register(name, check)
     return reg

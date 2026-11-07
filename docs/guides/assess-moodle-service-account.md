@@ -83,6 +83,7 @@ verified is never assumed fine.
 | `no_grade_write` | no grade-write function appears in the service's function list |
 | `ws_tls_ok` | the connection is https verified against the configured CA |
 | `ui_not_same_origin` | the discussion UI origin is not same-site with Moodle or the API |
+| `ui_origin_distinct` | the discussion UI origin is https (outside development) and is not this site's Moodle origin: the precondition of the iframe's `allow-same-origin` sandbox (ARCH-076); the API also refuses to start otherwise |
 | `parser_sidecar_running`, `smtp_probe`, `db_log_statement_none` | registered by other components; an unregistered item is `MISSING` (fail closed) |
 
 ## Capability flags and their fail-closed fallbacks

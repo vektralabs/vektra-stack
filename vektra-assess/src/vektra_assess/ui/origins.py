@@ -45,3 +45,11 @@ def ui_origin_problem(
         if moodle == ui_origin:
             return "ui_origin_equals_moodle_origin"
     return None
+
+
+def origin_of(url: str) -> str | None:
+    """scheme://host[:port] of an absolute http(s) URL, or None."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"

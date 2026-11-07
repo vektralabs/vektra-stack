@@ -478,3 +478,29 @@ async def test_a_site_admin_answer_carries_a_secret_that_is_dropped(
     _r, items, _o = await good(branch, mutate=replay.mutate)
     assert items["token_works"] == ("OK", None)
     assert items["not_site_admin"] == ("MISSING", "site_admin")
+
+
+async def test_ui_origin_distinct_item(branch: str) -> None:
+    """Plan 9 (ARCH-076): OK for a UI origin distinct from the site's Moodle origin (https
+    outside development); MISSING when unset, equal to the Moodle origin, or not https."""
+    from vektra_assess.ui.origins import origin_of
+
+    _r, items, _o = await good(
+        branch
+    )  # https://chat.vektra-ui.test vs the fixture site
+    assert items["ui_origin_distinct"] == ("OK", None)
+    unset = VektraAssessSettings(
+        **{k: v for k, v in ENV.items() if "UI_ORIGIN" not in k}
+    )  # type: ignore[arg-type]
+    _r, items, _o = await good(branch, cfg=unset)
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_unset")
+    moodle = origin_of(site_for(branch).base_url)
+    _r, items, _o = await good(branch, cfg=settings(VEKTRA_ASSESS_UI_ORIGIN=moodle))
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_equals_moodle_origin")
+    _r, items, _o = await good(
+        branch,
+        cfg=settings(
+            VEKTRA_ENV="production", VEKTRA_ASSESS_UI_ORIGIN="http://ui.example"
+        ),
+    )
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_not_https")

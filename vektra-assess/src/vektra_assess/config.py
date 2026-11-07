@@ -494,6 +494,13 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S",
         description="Per-site Start breaker: seconds fully open before one Start at a time is let through (half-open).",
     )
+    ui_page_rpm: int = Field(
+        60,
+        ge=1,
+        le=6000,
+        alias="VEKTRA_ASSESS_UI_PAGE_RPM",
+        description="GET /api/v1/assess/ui (the public discussion page) per minute per client address (plan 9). Over it: 429 before any database read.",
+    )
     flag_rpm: int = Field(
         10,
         ge=1,

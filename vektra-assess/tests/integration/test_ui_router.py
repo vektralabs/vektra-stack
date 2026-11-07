@@ -120,12 +120,19 @@ async def test_the_page_headers_byte_for_byte(pg, bundle) -> None:  # type: igno
         )
         assert raw[b"cross-origin-resource-policy"] == b"same-origin"
         assert b"x-frame-options" not in raw
-        # another site, another single origin: read per request, never cached
+        # another origin for the site: honoured once the short cache entry expires (review #4)
         await pg.run(
             "super",
             "UPDATE assess_sites SET base_url = 'https://other.example:8443' WHERE id = :s",
             {"s": w.site},
         )
+        cached = await w.client.get(PAGE, params={"site": str(w.site)})
+        assert cached.headers["content-security-policy"] == EXPECTED_CSP.format(
+            "https://m.example"
+        )
+        from vektra_assess.ui.router import SiteOriginCache
+
+        w.app.state.assess_ui_site_cache = SiteOriginCache(ttl_s=0)
         again = await w.client.get(PAGE, params={"site": str(w.site)})
         assert again.headers["content-security-policy"] == EXPECTED_CSP.format(
             "https://other.example:8443"
@@ -222,3 +229,50 @@ async def test_the_forwarded_scheme_counts_only_from_a_trusted_proxy(
                 headers={"X-Forwarded-Proto": "https"},
             )
         assert r.status_code == status
+
+
+# --- review #4: an unauthenticated page that never floods the database -----------------------------
+
+
+def _count_checkouts(engine) -> list[int]:  # type: ignore[no-untyped-def]
+    from sqlalchemy import event
+
+    seen = [0]
+
+    @event.listens_for(engine.sync_engine, "checkout")
+    def _checkout(*_a) -> None:  # type: ignore[no-untyped-def]
+        seen[0] += 1
+
+    return seen
+
+
+async def test_a_repeated_page_request_does_not_touch_the_database(pg, bundle) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg, assess_ui_static_dir=str(bundle)) as w:
+        checkouts = _count_checkouts(w.engine)
+        for _ in range(20):
+            r = await w.client.get(PAGE, params={"site": str(w.site)})
+            assert r.status_code == 200
+        assert checkouts[0] == 1  # the site's origin is cached (short TTL)
+
+
+async def test_a_flood_of_random_sites_is_rate_limited(pg, bundle) -> None:  # type: ignore[no-untyped-def]
+    from support.world import default_settings
+
+    cfg = default_settings(VEKTRA_ASSESS_UI_PAGE_RPM=30)
+    async with world(pg, cfg, assess_ui_static_dir=str(bundle)) as w:
+        checkouts = _count_checkouts(w.engine)
+        codes = [
+            (await w.client.get(PAGE, params={"site": str(uuid.uuid4())})).status_code
+            for _ in range(200)
+        ]
+        assert codes[:30] == [404] * 30
+        assert set(codes[30:]) == {429}  # the limiter answers before any lookup
+        assert (
+            checkouts[0] <= 30
+        )  # one lookup per allowed request, never one per request
+        limited = await w.client.get(PAGE, params={"site": str(uuid.uuid4())})
+        assert "retry-after" in {k.lower() for k in limited.headers}
+        assert limited.headers["content-security-policy"] == EXPECTED_CSP.format(
+            "'none'"
+        )
+        assert w.engine.pool.checkedout() == 0

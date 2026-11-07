@@ -364,3 +364,10 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - #9 The manifest is read once per directory (`router.manifest_of`, `functools.cache`), a
     missing bundle included: the bundle is part of the image, a new bundle is a new process.
     The directory is `STATIC_DIR`; only tests override it (`app.state.assess_ui_static_dir`).
+  - #4 The public page cannot flood the database: an assess-local `ui_page` limiter (one more
+    `LIMITER_NAMES` entry) keyed by client address (`VEKTRA_ASSESS_UI_PAGE_RPM`, default 60;
+    429 with `Retry-After` before any lookup), and a per-process `SiteOriginCache` (30 s TTL,
+    1024 sites, negative results cached too) so a repeated request costs no connection. The
+    trade-off: a disabled site or a new `moodle_origin` takes effect within 30 s, not at once.
+    Per address rather than per site: random site ids are the flood, so a per-site key would
+    not bound it.

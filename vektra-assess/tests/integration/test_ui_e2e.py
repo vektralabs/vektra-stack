@@ -434,13 +434,18 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
 
     ports = {"stub": _free_port(), "ui": _free_port()}
     runner = Runner()
-    async with world(
-        pg,
-        # the page answers on VEKTRA_ASSESS_UI_ORIGIN only (review #1)
-        default_settings(VEKTRA_ASSESS_UI_ORIGIN=f"http://localhost:{ports['ui']}"),
-        assess_runner=runner,
-        assess_sse_timing={"poll_s": 0.3, "keepalive_s": 5.0},
-    ) as w:
+    async with (
+        world(
+            pg,
+            # the page answers on VEKTRA_ASSESS_UI_ORIGIN only (review #1)
+            default_settings(
+                VEKTRA_ASSESS_UI_ORIGIN=f"http://localhost:{ports['ui']}",
+                VEKTRA_ASSESS_UI_PAGE_RPM=600,  # one browser reloads the page many times a minute
+            ),
+            assess_runner=runner,
+            assess_sse_timing={"poll_s": 0.3, "keepalive_s": 5.0},
+        ) as w
+    ):
         await w.pg.run(
             "super",
             "UPDATE assess_sites SET release = :r, moodle_origin = :o WHERE id = :s",

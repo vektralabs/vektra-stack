@@ -428,8 +428,12 @@ def test_assess_limiters_are_local_keyed_by_session_or_student() -> None:
     from vektra_assess.api.state import LIMITER_NAMES
 
     limiters = assess_wiring.build_assess_limiters()
-    assert tuple(limiters) == LIMITER_NAMES == ("state", "turns", "retry", "flag")
-    assert len({id(v) for v in limiters.values()}) == 4  # no shared instance
+    assert (
+        tuple(limiters)
+        == LIMITER_NAMES
+        == ("state", "turns", "retry", "flag", "ui_page")
+    )
+    assert len({id(v) for v in limiters.values()}) == 5  # no shared instance
     sid = str(uuid.uuid4())
     assert limiters["turns"].check(sid, 1)[0] is True
     assert limiters["turns"].check(sid, 1)[0] is False

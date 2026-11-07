@@ -41,8 +41,9 @@ router = APIRouter()
 
 #: the assess-local limiters the composition root must inject (REQ-083, plan 8 M5.3), each keyed
 #: by a hashable of the session or the student, never the API key: ``state`` by (site, student,
-#: activity), ``turns`` / ``retry`` / ``flag`` by session id
-LIMITER_NAMES = ("state", "turns", "retry", "flag")
+#: activity), ``turns`` / ``retry`` / ``flag`` by session id, ``ui_page`` (the public discussion
+#: UI page, plan 9) by client address
+LIMITER_NAMES = ("state", "turns", "retry", "flag", "ui_page")
 
 
 class Limiter(Protocol):

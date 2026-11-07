@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import functools
 import json
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -26,6 +28,7 @@ from sqlalchemy import text
 
 from vektra_assess.api.common import engine_of
 from vektra_assess.api.deps import settings_of
+from vektra_assess.api.state import limiter_of
 from vektra_assess.ui.headers import asset_headers, page_headers
 from vektra_assess.ui.origins import site_origin, url_origin
 
@@ -80,11 +83,59 @@ def _json_block(data: dict[str, Any]) -> str:
     return raw.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
+#: how long a site's framing origin (or its absence) is reused without reading the database
+SITE_TTL_S = 30.0
+SITE_CACHE_MAX = 1024
+
+
+class SiteOriginCache:
+    """Review #4: the page is public, so a repeated request must not cost a database
+    connection. A site's framing origin, or None for an unknown/disabled site, is kept
+    ``SITE_TTL_S`` seconds; at most ``SITE_CACHE_MAX`` sites, the oldest dropped first. A site
+    disabled or re-pointed is therefore honoured within the TTL."""
+
+    def __init__(self, ttl_s: float = SITE_TTL_S, size: int = SITE_CACHE_MAX) -> None:
+        self.ttl_s = ttl_s
+        self.size = size
+        self._items: OrderedDict[str, tuple[float, str | None]] = OrderedDict()
+
+    def get(self, site: str) -> tuple[bool, str | None]:
+        hit = self._items.get(site)
+        if hit is None or hit[0] < time.monotonic():
+            self._items.pop(site, None)
+            return False, None
+        return True, hit[1]
+
+    def put(self, site: str, origin: str | None) -> None:
+        self._items[site] = (time.monotonic() + self.ttl_s, origin)
+        self._items.move_to_end(site)
+        while len(self._items) > self.size:
+            self._items.popitem(last=False)
+
+
+def _cache(request: Request) -> SiteOriginCache:
+    cache = getattr(request.app.state, "assess_ui_site_cache", None)
+    if cache is None:
+        cache = SiteOriginCache()
+        request.app.state.assess_ui_site_cache = cache
+    return cache
+
+
 async def _site_origin(request: Request, site: str) -> str | None:
     try:
         UUID(site)
     except ValueError:
         return None
+    cache = _cache(request)
+    hit, origin = cache.get(site)
+    if hit:
+        return origin
+    origin = await _read_site_origin(request, site)
+    cache.put(site, origin)
+    return origin
+
+
+async def _read_site_origin(request: Request, site: str) -> str | None:
     async with engine_of(request).connect() as conn:
         row = (await conn.execute(_SITE, {"s": site})).first()
     if row is None or row.disabled_at is not None:
@@ -114,6 +165,18 @@ def on_ui_origin(request: Request) -> bool:
 async def ui_page(request: Request, site: str = "") -> Response:
     if not on_ui_origin(request):
         return Response(status_code=503, headers=page_headers(None))
+    # per client address (the proxy's X-Forwarded-For counts only when uvicorn trusts it),
+    # before any database read
+    client = request.client.host if request.client else "unknown"
+    allowed, rl = limiter_of(request, "ui_page").check(
+        ("ui_page", client), settings_of(request).ui_page_rpm
+    )
+    if not allowed:
+        retry = max(1, int(rl.get("X-RateLimit-Reset", "0")) - int(time.time()))
+        return Response(
+            status_code=429,
+            headers={**page_headers(None), **rl, "Retry-After": str(retry)},
+        )
     origin = await _site_origin(request, site)
     if origin is None:
         return Response(status_code=404, headers=page_headers(None))

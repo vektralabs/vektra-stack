@@ -386,8 +386,6 @@ def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
     the one in VEKTRA_ASSESS_UI_ORIGIN): the page, its assets and only the student API routes the
     page calls on its own origin (CSP connect-src 'self'), never X-Frame-Options; everything else
     there is 404. The API server keeps X-Frame-Options DENY and does not serve the page."""
-    from vektra_assess.moodle.setup_check import same_site
-
     conf = (REPO_ROOT / "deploy/nginx/vektra.conf.example").read_text()
     servers = _nginx_servers(conf)
     api, ui = servers[("YOUR_DOMAIN", "443")], servers[("YOUR_UI_DOMAIN", "443")]
@@ -428,14 +426,25 @@ def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
             assert "proxy_set_header Host $host;" in body
             assert "proxy_set_header X-Forwarded-Proto $scheme;" in body
 
-    # the example values the header documents pass the setup check's same-site items
-    import re
 
-    examples = dict(re.findall(r"#\s+(YOUR_\w+|MOODLE)\s+e\.g\.\s+(\S+)", conf))
-    ui_origin = f"https://{examples['YOUR_UI_DOMAIN']}"
-    assert not same_site(
-        ui_origin, f"https://{examples['YOUR_DOMAIN']}"
-    )  # same_site_as_api
-    assert not same_site(
-        ui_origin, f"https://{examples['MOODLE']}"
-    )  # same_site_as_moodle
+def test_the_shared_tests_import_no_other_vektra_package() -> None:
+    """CodeRabbit 4501067261: the shared foundation's tests run without the other packages
+    installed, so they import ``vektra_shared`` only (checks that need ``vektra_assess`` live
+    in the assess tests)."""
+    import ast
+
+    offenders = []
+    for path in sorted((REPO_ROOT / "vektra-shared" / "tests").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            names = (
+                [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            for name in names:
+                top = name.split(".")[0]
+                if top.startswith("vektra_") and top != "vektra_shared":
+                    offenders.append(f"{path.name}:{node.lineno} {name}")
+    assert offenders == []

@@ -86,3 +86,25 @@ def test_the_distinct_check_compares_normalised_origins() -> None:
         )
         is None
     )
+
+
+def test_the_nginx_example_domains_pass_the_same_site_items() -> None:
+    """The two public origins the nginx example documents (API and UI) and its Moodle example
+    pass the setup check's same-site items (moved here from the shared tests, CodeRabbit
+    4501067261: the shared tests import no assess code)."""
+    import re
+    from pathlib import Path
+
+    from vektra_assess.moodle.setup_check import same_site
+
+    conf = (
+        Path(__file__).resolve().parents[2] / "deploy/nginx/vektra.conf.example"
+    ).read_text()
+    examples = dict(re.findall(r"#\s+(YOUR_\w+|MOODLE)\s+e\.g\.\s+(\S+)", conf))
+    ui_origin = f"https://{examples['YOUR_UI_DOMAIN']}"
+    assert not same_site(
+        ui_origin, f"https://{examples['YOUR_DOMAIN']}"
+    )  # same_site_as_api
+    assert not same_site(
+        ui_origin, f"https://{examples['MOODLE']}"
+    )  # same_site_as_moodle

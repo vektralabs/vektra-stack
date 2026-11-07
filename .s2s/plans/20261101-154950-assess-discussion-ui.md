@@ -434,3 +434,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501070007 A site without a usable origin (a stored `moodle_origin` that is not bare, or
     no column and a `base_url` without one) is reported as `moodle_origin_invalid` by startup
     (refused) and by `ui_origin_distinct` (MISSING), instead of being dropped from the check.
+  - 4501067261 The same-site check of the nginx example domains moved to
+    `vektra-assess/tests/test_ui_origins.py`; the shared tests stay free of other vektra
+    packages, guarded by an AST scan of `vektra-shared/tests`.

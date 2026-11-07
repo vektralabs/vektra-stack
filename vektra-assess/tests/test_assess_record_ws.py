@@ -137,7 +137,6 @@ def test_record_refuses_a_contaminated_download_by_position_and_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """CodeRabbit 4499897062: the refusal names the file's position, never its name."""
-    release = "5.2.4+ (Build: 20261030)"
     secret_name = (
         f"leak-{TOKEN}.txt"  # a name is unchecked: it must not reach the message
     )
@@ -146,10 +145,52 @@ def test_record_refuses_a_contaminated_download_by_position_and_writes_nothing(
         secret_name: b"see http://localhost:8082/x",  # the 2nd of 3 carries the dev host
         "late.txt": b"more VISIBLE text",
     }
+    _patch_site(monkeypatch, files)
+    with pytest.raises(rec.RecorderRefused) as refused:
+        rec.record(DEV, TOKEN, _manifest(), tmp_path)
+    message = str(refused.value)
+    assert "file 2 of 3" in message
+    assert TOKEN not in message and "leak" not in message
+    assert list(tmp_path.iterdir()) == []  # nothing written
+
+
+DEV = "http://localhost:8082"
+_INFO = {
+    "release": "5.2.4 (Build: 20261005)",
+    "version": "2026042004",
+    "siteurl": DEV,
+    "username": "vektra_assess_svc",
+    "userid": 3,
+}
+
+
+def _manifest() -> dict[str, Any]:
+    return {
+        "release": _INFO["release"],
+        "version": _INFO["version"],
+        "courseid": 2,
+        "users": {
+            "stu1": {"id": 7, "role": "student"},
+            "grader1": {"id": 12, "role": "editingteacher"},
+        },
+        "assigns": {"files": {"id": 9, "submissions": {"stu1": {}}}},
+    }
+
+
+def _patch_site(
+    monkeypatch: pytest.MonkeyPatch, files: dict[str, bytes], **override: Any
+) -> None:
+    """A fake seeded dev site; ``override`` replaces one wsfunction's answer."""
+    answers: dict[str, Any] = {
+        "core_webservice_get_site_info": _INFO,
+        "core_enrol_get_users_courses": [{"id": 2, "shortname": "EAASSESS"}],
+        "core_enrol_get_enrolled_users": [{"id": 7}, {"id": 12}, {"id": 99}],
+        **override,
+    }
 
     def ws_call(_base: str, _token: str, fn: str, _params: Any) -> Any:
-        if fn == "core_webservice_get_site_info":
-            return {"release": release, "userid": 2}
+        if fn in answers:
+            return answers[fn]
         if fn == "mod_assign_get_submission_status":
             area = {"files": [{"filename": n, "fileurl": f"/f/{n}"} for n in files]}
             return {"lastattempt": {"submission": {"plugins": [{"fileareas": [area]}]}}}
@@ -158,16 +199,65 @@ def test_record_refuses_a_contaminated_download_by_position_and_writes_nothing(
     monkeypatch.setattr(rec, "ws_call", ws_call)
     monkeypatch.setattr(rec, "plan", lambda *_a: [])
     monkeypatch.setattr(rec, "download", lambda _b, _t, url: files[url.split("/")[-1]])
-    manifest = {
-        "release": release,
-        "users": {"stu1": {"id": 5, "role": "student"}},
-        "assigns": {"files": {"id": 9, "submissions": {"stu1": {}}}},
-    }
-    with pytest.raises(rec.RecorderRefused) as refused:
-        rec.record("http://localhost:8082", TOKEN, manifest, tmp_path)
-    message = str(refused.value)
-    assert "file 2 of 3" in message
-    assert TOKEN not in message and "leak" not in message
+
+
+def test_record_accepts_a_seeded_dev_site(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_site(monkeypatch, {"clean.txt": b"VISIBLE text"})
+    assert rec.record(DEV, TOKEN, _manifest(), tmp_path)["files"] == 1
+    assert (tmp_path / "5.2" / "files" / "stu1__clean.txt").exists()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        # a production site forwarded to localhost reports its real wwwroot
+        {
+            "core_webservice_get_site_info": {
+                **_INFO,
+                "siteurl": "https://moodle.uni.example",
+            }
+        },
+        {
+            "core_webservice_get_site_info": {
+                **_INFO,
+                "siteurl": "http://localhost:8080",
+            }
+        },
+        {
+            "core_webservice_get_site_info": {
+                k: v for k, v in _INFO.items() if k != "siteurl"
+            }
+        },
+        {"core_webservice_get_site_info": {**_INFO, "username": "ws_prod"}},
+        {"core_webservice_get_site_info": {**_INFO, "version": "2026042099"}},
+        {"core_enrol_get_users_courses": [{"id": 2, "shortname": "MATH101"}]},
+        {"core_enrol_get_users_courses": [{"id": 3, "shortname": "EAASSESS"}]},
+        {"core_enrol_get_users_courses": {"exception": "x"}},
+        {"core_enrol_get_enrolled_users": [{"id": 7}]},  # grader1 missing
+        {"core_enrol_get_enrolled_users": {"exception": "x"}},
+    ],
+    ids=[
+        "wwwroot_production",
+        "wwwroot_other_dev_port",
+        "wwwroot_missing",
+        "not_the_service_account",
+        "other_version",
+        "course_shortname",
+        "course_id",
+        "courses_error",
+        "seed_user_missing",
+        "enrolment_error",
+    ],
+)
+def test_record_refuses_a_matching_release_with_another_identity(
+    override: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CodeRabbit 4500701647: a pinned release string is not an identity."""
+    _patch_site(monkeypatch, {"clean.txt": b"VISIBLE text"}, **override)
+    with pytest.raises(rec.RecorderRefused):
+        rec.record(DEV, TOKEN, _manifest(), tmp_path)
     assert list(tmp_path.iterdir()) == []  # nothing written
 
 

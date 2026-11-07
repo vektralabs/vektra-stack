@@ -330,18 +330,21 @@ class VektraAssessSettings(BaseSettings):
         ),
     )
 
-    @field_validator("site_timezone")
-    @classmethod
-    def _known_zone(cls, value: str) -> str:
+    @model_validator(mode="after")
+    def _known_zone_when_enabled(self) -> VektraAssessSettings:
+        """An unknown zone is refused only while assess is ENABLED: a dormant feature must not
+        stop the API from starting (CodeRabbit 4503025935)."""
+        if not self.enabled:
+            return self
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
         try:
-            ZoneInfo(value)
+            ZoneInfo(self.site_timezone)
         except (ZoneInfoNotFoundError, ValueError):
             raise ValueError(
                 "VEKTRA_ASSESS_SITE_TIMEZONE is not a known IANA zone"
             ) from None
-        return value
+        return self
 
     @field_validator("llm_api_key", mode="before")
     @classmethod

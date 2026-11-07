@@ -489,8 +489,11 @@ class _Rows:
         self.origins = origins
 
     def connect(self):  # type: ignore[no-untyped-def]
-        # (moodle_origin, base_url) per enabled site: the column set, base_url irrelevant
-        rows = [(o, "https://ignored.example/moodle") for o in self.origins]
+        # (id, moodle_origin, base_url) per enabled site: the column set, base_url irrelevant
+        rows = [
+            (f"site-{i}", o, "https://ignored.example/moodle")
+            for i, o in enumerate(self.origins)
+        ]
 
         class _Result(list):  # type: ignore[type-arg]
             def all(self):  # type: ignore[no-untyped-def]
@@ -632,3 +635,42 @@ async def test_an_unset_ui_origin_is_refused_outside_development(
             await assess_wiring.check_ui_origin(_Rows([]), settings)
     else:
         await assess_wiring.check_ui_origin(_Rows([]), settings)
+
+
+async def test_a_site_without_a_usable_origin_is_named_with_its_own_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CodeRabbit 4501246170: the site's problem names the site and points at
+    assess_sites.moodle_origin (or disabling the site), not at the UI origin."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://ui.example")
+    with pytest.raises(StartupValidationError) as refused:
+        await assess_wiring.check_ui_origin(
+            _Rows(["https://moodle.example", "https://m.example/path"]),
+            VektraAssessSettings(),
+        )
+    err = refused.value
+    assert "site-1" in err.detail and "moodle_origin_invalid" in err.detail
+    assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.detail
+    assert "assess_sites.moodle_origin" in err.remediation
+    assert "disable" in err.remediation
+
+
+async def test_a_ui_origin_problem_keeps_the_ui_origin_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ENV", "production")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://m.example")
+    with pytest.raises(StartupValidationError) as refused:
+        await assess_wiring.check_ui_origin(
+            _Rows(["https://m.example"]), VektraAssessSettings()
+        )
+    err = refused.value
+    assert (
+        err.detail == "VEKTRA_ASSESS_UI_ORIGIN refused: ui_origin_equals_moodle_origin"
+    )
+    assert "own https origin" in err.remediation

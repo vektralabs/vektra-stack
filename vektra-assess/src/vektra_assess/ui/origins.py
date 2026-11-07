@@ -96,7 +96,7 @@ def site_origin_or_problem(
 
 #: the enabled sites' two origin columns (``site_origin`` decides in Python, not in SQL)
 SITE_ORIGINS_SQL = (
-    "SELECT moodle_origin, base_url FROM assess_sites WHERE disabled_at IS NULL"
+    "SELECT id, moodle_origin, base_url FROM assess_sites WHERE disabled_at IS NULL"
 )
 
 

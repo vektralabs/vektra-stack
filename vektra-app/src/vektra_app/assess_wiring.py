@@ -191,9 +191,22 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
 
     async with engine.connect() as conn:
         rows = (await conn.execute(text(SITE_ORIGINS_SQL))).all()
-    checked = [site_origin_or_problem(r[0], r[1]) for r in rows]
-    origins = [o for o, _ in checked if o]
-    problem = next((p for _, p in checked if p), None) or ui_origin_problem(
+    origins: list[str] = []
+    for site_id, moodle_origin, base_url in rows:
+        origin, site_problem = site_origin_or_problem(moodle_origin, base_url)
+        if site_problem is not None:
+            # the SITE is misconfigured, not the UI origin (CodeRabbit 4501246170)
+            raise StartupValidationError(
+                step=STEP,
+                detail=f"assess site {site_id} refused: {site_problem}",
+                remediation=(
+                    "Set assess_sites.moodle_origin of that site to its bare Moodle origin "
+                    "(https://host[:port]), or disable the site (assess_sites.disabled_at)."
+                ),
+            )
+        if origin:
+            origins.append(origin)
+    problem = ui_origin_problem(
         settings.ui_origin, origins, development=settings.env == "development"
     )
     if problem is not None:

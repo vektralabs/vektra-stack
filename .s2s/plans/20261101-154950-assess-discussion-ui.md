@@ -504,3 +504,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     learnt from a 409 keeps the stream open and waits (at most 3 s, `closeReasonWaitMs`) for
     the closed event; then the notice goes out (as `unknown` if no event came) and the stream
     is aborted. Tested on a real stream: 409 first, closed event after.
+  - 4501246170 Startup separates the two refusals: a site without a usable origin is
+    "assess site <id> refused: moodle_origin_invalid", remedied by setting
+    `assess_sites.moodle_origin` or disabling the site; a UI-origin problem keeps the
+    `VEKTRA_ASSESS_UI_ORIGIN refused: ...` text. The startup query selects the site id.

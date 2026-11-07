@@ -25,28 +25,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
 from sqlalchemy import text
 
 from vektra_assess.crypto.teacher_config import open_teacher_config
+from vektra_assess.delivery.address import normalize_address
 from vektra_assess.keys import AssessKeyring
 
 MAX_RECIPIENTS = 3
-MAX_ADDRESS_BYTES = 254
 ROLE_RECIPIENT = "recipient"
 #: the key of the sealed teacher config that lists the transcript recipients (plan 11 writes it)
 RECIPIENTS_KEY = "transcript_recipients"
 #: binding field of the whole sealed teacher config (the rotation job re-seals under it too)
 CONFIG_FIELD = "config"
-
-_LOCAL = re.compile(
-    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$"
-)
-_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
-_DOMAIN = re.compile(rf"^{_LABEL}(?:\.{_LABEL})+$")
 
 
 class GraderLike(Protocol):
@@ -59,21 +52,6 @@ class GraderLike(Protocol):
 
     @property
     def fullname(self) -> str: ...
-
-
-def normalize_address(raw: object) -> str | None:
-    if not isinstance(raw, str):
-        return None
-    value = raw.strip()
-    if not value or len(value.encode("utf-8")) > MAX_ADDRESS_BYTES:
-        return None
-    if value.count("@") != 1:
-        return None
-    local, domain = value.split("@")
-    domain = domain.lower()
-    if len(local) > 64 or not _LOCAL.match(local) or not _DOMAIN.match(domain):
-        return None
-    return f"{local}@{domain}"
 
 
 def configured_recipients(config: Mapping[str, Any] | str | None) -> tuple[str, ...]:

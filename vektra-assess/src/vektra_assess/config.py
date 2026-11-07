@@ -748,6 +748,23 @@ class VektraAssessSettings(BaseSettings):
     def _blank_is_unset(cls, value: Any) -> Any:
         return None if isinstance(value, str) and not value.strip() else value
 
+    @field_validator("smtp_from")
+    @classmethod
+    def _bare_from(cls, value: str | None) -> str | None:
+        """A bare addr-spec (no display name, no <>, no whitespace or CR/LF): it goes to
+        the From header and to MAIL FROM as is."""
+        if value is None:
+            return None
+        from vektra_assess.delivery.address import normalize_address
+
+        address = normalize_address(value)
+        if address is None:
+            raise ValueError(
+                "VEKTRA_ASSESS_SMTP_FROM must be a bare e-mail address "
+                "(name@domain, no display name, no <>, no spaces)"
+            )
+        return address
+
     @field_validator("smtp_ca_file", mode="before")
     @classmethod
     def _blank_path_is_unset(cls, value: Any) -> Any:

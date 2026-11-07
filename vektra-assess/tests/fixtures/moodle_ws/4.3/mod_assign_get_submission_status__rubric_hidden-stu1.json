@@ -1,8 +1,8 @@
 {
  "fixture": "rubric_hidden-stu1",
  "params": {
-  "assignid": 97,
-  "userid": 71
+  "assignid": 6,
+  "userid": 7
  },
  "response": {
   "assignmentdata": {
@@ -12,16 +12,16 @@
   },
   "feedback": {
    "grade": {
-    "assignment": 97,
+    "assignment": 6,
     "attemptnumber": 0,
     "grade": "50.00000",
     "grader": 2,
-    "id": 58,
-    "timecreated": 1793619218,
-    "timemodified": 1793619218,
-    "userid": 71
+    "id": 2,
+    "timecreated": 1794008057,
+    "timemodified": 1794008057,
+    "userid": 7
    },
-   "gradeddate": 1793619218,
+   "gradeddate": 1794008057,
    "gradefordisplay": "50.00 / 100.00",
    "plugins": [
     {
@@ -62,10 +62,10 @@
    "gradingstatus": "graded",
    "locked": false,
    "submission": {
-    "assignment": 97,
+    "assignment": 6,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 128,
+    "id": 9,
     "latest": 1,
     "plugins": [
      {
@@ -102,16 +102,16 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619218,
-    "timemodified": 1793619218,
+    "timecreated": 1794008057,
+    "timemodified": 1794008057,
     "timestarted": null,
-    "userid": 71
+    "userid": 7
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "timelimit": 0,
    "usergroups": [
-    17
+    1
    ]
   },
   "warnings": []

@@ -2,7 +2,7 @@
  "fixture": "simple",
  "params": {
   "assignmentids": [
-   98
+   7
   ]
  },
  "response": {
@@ -10,7 +10,7 @@
   "warnings": [
    {
     "item": "assignment",
-    "itemid": 98,
+    "itemid": 7,
     "message": "No access rights in module context",
     "warningcode": "1"
    }

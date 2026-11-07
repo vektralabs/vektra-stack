@@ -1,8 +1,8 @@
 {
  "fixture": "cutoff-stu2",
  "params": {
-  "assignid": 92,
-  "userid": 72
+  "assignid": 1,
+  "userid": 8
  },
  "response": {
   "assignmentdata": {
@@ -23,15 +23,15 @@
    "canedit": false,
    "caneditowner": true,
    "cansubmit": false,
-   "extensionduedate": 1793878417,
+   "extensionduedate": 1794267256,
    "graded": false,
    "gradingstatus": "notgraded",
    "locked": false,
    "submission": {
-    "assignment": 92,
+    "assignment": 1,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 121,
+    "id": 2,
     "latest": 1,
     "plugins": [
      {
@@ -68,16 +68,16 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619218,
-    "timemodified": 1793619218,
+    "timecreated": 1794008057,
+    "timemodified": 1794008057,
     "timestarted": null,
-    "userid": 72
+    "userid": 8
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "timelimit": 0,
    "usergroups": [
-    17
+    1
    ]
   },
   "warnings": []

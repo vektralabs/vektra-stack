@@ -2,7 +2,7 @@
  "fixture": "course",
  "params": {
   "courseids": [
-   10
+   2
   ],
   "includenotenrolledcourses": 1
  },
@@ -11,10 +11,10 @@
    {
     "assignments": [
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 189,
+      "cmid": 13,
       "completionsubmit": 0,
       "configs": [
        {
@@ -78,13 +78,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 92,
+      "id": 1,
       "intro": "Test assign 1",
       "introattachments": [],
       "introfiles": [],
@@ -106,13 +106,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 190,
+      "cmid": 14,
       "completionsubmit": 0,
       "configs": [
        {
@@ -176,13 +176,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
+      "course": 2,
       "cutoffdate": 0,
-      "duedate": 1793446417,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 93,
+      "id": 2,
       "intro": "Test assign 2",
       "introattachments": [],
       "introfiles": [],
@@ -204,13 +204,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 191,
+      "cmid": 15,
       "completionsubmit": 0,
       "configs": [
        {
@@ -274,13 +274,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 94,
+      "id": 3,
       "intro": "Test assign 3",
       "introattachments": [],
       "introfiles": [],
@@ -302,13 +302,13 @@
       "teamsubmission": 1,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 192,
+      "cmid": 16,
       "completionsubmit": 0,
       "configs": [
        {
@@ -372,13 +372,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 95,
+      "id": 4,
       "intro": "Test assign 4",
       "introattachments": [],
       "introfiles": [],
@@ -400,13 +400,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 193,
+      "cmid": 17,
       "completionsubmit": 0,
       "configs": [
        {
@@ -470,13 +470,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 96,
+      "id": 5,
       "intro": "Test assign 5",
       "introattachments": [],
       "introfiles": [],
@@ -498,13 +498,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 194,
+      "cmid": 18,
       "completionsubmit": 0,
       "configs": [
        {
@@ -568,13 +568,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 97,
+      "id": 6,
       "intro": "Test assign 6",
       "introattachments": [],
       "introfiles": [],
@@ -596,13 +596,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 195,
+      "cmid": 19,
       "completionsubmit": 0,
       "configs": [
        {
@@ -666,13 +666,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 98,
+      "id": 7,
       "intro": "Test assign 7",
       "introattachments": [],
       "introfiles": [],
@@ -694,13 +694,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 196,
+      "cmid": 20,
       "completionsubmit": 0,
       "configs": [
        {
@@ -764,13 +764,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
-      "grade": -11,
-      "gradingduedate": 1793705617,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
+      "grade": -3,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 99,
+      "id": 8,
       "intro": "Test assign 8",
       "introattachments": [],
       "introfiles": [],
@@ -792,13 +792,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 197,
+      "cmid": 21,
       "completionsubmit": 0,
       "configs": [
        {
@@ -862,13 +862,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 100,
+      "id": 9,
       "intro": "Test assign 9",
       "introattachments": [],
       "introfiles": [],
@@ -890,13 +890,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 198,
+      "cmid": 22,
       "completionsubmit": 0,
       "configs": [
        {
@@ -960,13 +960,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 101,
+      "id": 10,
       "intro": "Test assign 10",
       "introattachments": [],
       "introfiles": [],
@@ -988,13 +988,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 199,
+      "cmid": 23,
       "completionsubmit": 0,
       "configs": [
        {
@@ -1058,13 +1058,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 102,
+      "id": 11,
       "intro": "Test assign 11",
       "introattachments": [],
       "introfiles": [],
@@ -1086,13 +1086,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 200,
+      "cmid": 24,
       "completionsubmit": 0,
       "configs": [
        {
@@ -1156,13 +1156,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
-      "cutoffdate": 1793532817,
-      "duedate": 1793446417,
+      "course": 2,
+      "cutoffdate": 1793921656,
+      "duedate": 1793835256,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 103,
+      "id": 12,
       "intro": "Test assign 12",
       "introattachments": [],
       "introfiles": [],
@@ -1184,13 +1184,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      },
      {
-      "allowsubmissionsfromdate": 1792755217,
+      "allowsubmissionsfromdate": 1793144056,
       "attemptreopenmethod": "none",
       "blindmarking": 0,
-      "cmid": 201,
+      "cmid": 25,
       "completionsubmit": 0,
       "configs": [
        {
@@ -1254,13 +1254,13 @@
         "value": "0"
        }
       ],
-      "course": 10,
+      "course": 2,
       "cutoffdate": 0,
-      "duedate": 1793792017,
+      "duedate": 1794180856,
       "grade": 100,
-      "gradingduedate": 1793705617,
+      "gradingduedate": 1794094456,
       "hidegrader": 0,
-      "id": 104,
+      "id": 13,
       "intro": "Test assign 13",
       "introattachments": [],
       "introfiles": [],
@@ -1282,13 +1282,13 @@
       "teamsubmission": 0,
       "teamsubmissiongroupingid": 0,
       "timelimit": 0,
-      "timemodified": 1793619218
+      "timemodified": 1794008057
      }
     ],
     "fullname": "Assess bot fixtures",
-    "id": 10,
+    "id": 2,
     "shortname": "EAASSESS",
-    "timemodified": 1793619217
+    "timemodified": 1794008056
    }
   ],
   "warnings": []

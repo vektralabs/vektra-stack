@@ -1,8 +1,8 @@
 {
  "fixture": "wf-stu1",
  "params": {
-  "assignid": 22,
-  "userid": 15
+  "assignid": 9,
+  "userid": 7
  },
  "response": {
   "assignmentdata": {
@@ -12,16 +12,16 @@
   },
   "feedback": {
    "grade": {
-    "assignment": 22,
+    "assignment": 9,
     "attemptnumber": 0,
     "grade": "80.00000",
     "grader": 2,
-    "id": 13,
-    "timecreated": 1793619222,
-    "timemodified": 1793619222,
-    "userid": 15
+    "id": 5,
+    "timecreated": 1794007971,
+    "timemodified": 1794007971,
+    "userid": 7
    },
-   "gradeddate": 1793619222,
+   "gradeddate": 1794007971,
    "gradefordisplay": "80.00&nbsp;/&nbsp;100.00",
    "plugins": [
     {
@@ -62,10 +62,10 @@
    "gradingstatus": "released",
    "locked": false,
    "submission": {
-    "assignment": 22,
+    "assignment": 9,
     "attemptnumber": 0,
     "groupid": 0,
-    "id": 29,
+    "id": 12,
     "latest": 1,
     "plugins": [
      {
@@ -102,16 +102,16 @@
      }
     ],
     "status": "submitted",
-    "timecreated": 1793619222,
-    "timemodified": 1793619222,
+    "timecreated": 1794007971,
+    "timemodified": 1794007971,
     "timestarted": null,
-    "userid": 15
+    "userid": 7
    },
    "submissiongroupmemberswhoneedtosubmit": [],
    "submissionsenabled": true,
    "timelimit": 0,
    "usergroups": [
-    3
+    1
    ]
   },
   "warnings": []

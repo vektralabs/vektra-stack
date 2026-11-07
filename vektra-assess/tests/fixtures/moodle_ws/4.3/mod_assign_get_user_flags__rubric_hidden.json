@@ -2,7 +2,7 @@
  "fixture": "rubric_hidden",
  "params": {
   "assignmentids": [
-   97
+   6
   ]
  },
  "response": {
@@ -10,7 +10,7 @@
   "warnings": [
    {
     "item": "assignment",
-    "itemid": 97,
+    "itemid": 6,
     "message": "No access rights in module context",
     "warningcode": "1"
    }

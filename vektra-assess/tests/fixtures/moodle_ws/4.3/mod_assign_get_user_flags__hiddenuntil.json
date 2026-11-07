@@ -2,7 +2,7 @@
  "fixture": "hiddenuntil",
  "params": {
   "assignmentids": [
-   102
+   11
   ]
  },
  "response": {
@@ -10,7 +10,7 @@
   "warnings": [
    {
     "item": "assignment",
-    "itemid": 102,
+    "itemid": 11,
     "message": "No access rights in module context",
     "warningcode": "1"
    }

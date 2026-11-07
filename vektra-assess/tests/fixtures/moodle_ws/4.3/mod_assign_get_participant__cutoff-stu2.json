@@ -1,18 +1,18 @@
 {
  "fixture": "cutoff-stu2",
  "params": {
-  "assignid": 92,
-  "userid": 72
+  "assignid": 1,
+  "userid": 8
  },
  "response": {
-  "allowsubmissionsfromdate": 1792755217,
+  "allowsubmissionsfromdate": 1793144056,
   "blindmarking": false,
-  "cutoffdate": 1793532817,
-  "duedate": 1793446417,
-  "duedatestr": "31 October 2026, 11:33 AM",
+  "cutoffdate": 1793921656,
+  "duedate": 1793835256,
+  "duedatestr": "4 November 2026, 11:34 PM",
   "fullname": "Bruno Beta",
   "grantedextension": true,
-  "id": 72,
+  "id": 8,
   "requiregrading": true,
   "submissionstatus": "submitted",
   "submitted": true

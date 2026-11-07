@@ -1,9 +1,9 @@
 {
  "fixture": "inprogress-stu2",
  "params": {
-  "quizid": 21,
+  "quizid": 9,
   "status": "all",
-  "userid": 16
+  "userid": 8
  },
  "response": {
   "attempts": [
@@ -12,19 +12,19 @@
     "currentpage": 0,
     "gradednotificationsenttime": null,
     "gradeitemmarks": [],
-    "id": 56,
+    "id": 26,
     "layout": "1,2,0",
     "preview": 0,
-    "quiz": 21,
+    "quiz": 9,
     "state": "inprogress",
     "sumgrades": null,
-    "timecheckstate": 1793622821,
+    "timecheckstate": 1794011570,
     "timefinish": 0,
-    "timemodified": 1793619221,
+    "timemodified": 1794007970,
     "timemodifiedoffline": 0,
-    "timestart": 1793619221,
-    "uniqueid": 56,
-    "userid": 16
+    "timestart": 1794007970,
+    "uniqueid": 26,
+    "userid": 8
    }
   ],
   "warnings": []

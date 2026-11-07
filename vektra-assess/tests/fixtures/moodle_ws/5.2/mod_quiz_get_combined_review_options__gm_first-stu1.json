@@ -1,8 +1,8 @@
 {
  "fixture": "gm_first-stu1",
  "params": {
-  "quizid": 18,
-  "userid": 15
+  "quizid": 6,
+  "userid": 7
  },
  "response": {
   "alloptions": [

@@ -1,7 +1,7 @@
 {
  "fixture": "types",
  "params": {
-  "quizid": 13
+  "quizid": 1
  },
  "response": {
   "overrides": []

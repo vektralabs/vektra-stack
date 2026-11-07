@@ -172,6 +172,44 @@ duration); beyond C, or after 3 consecutive failed calls, the session closes `se
 the close queues a `teacher_notify` job in the same transaction (delivery is plan
 transcript-delivery's). Limits and their sizing: `docs/reference/configuration.md`.
 
+### Assess UI: the discussion page and the postMessage contract (plugin <-> UI)
+
+`GET /api/v1/assess/ui?site=<site id>` is the student discussion page, on
+`VEKTRA_ASSESS_UI_ORIGIN`, framed by the site's Moodle origin only (`frame-ancestors`, the
+site's `moodle_origin`). It is public: it carries no data and no credential, and never reads a
+token from its URL (no route does). Response headers: the strict CSP (`default-src 'none'`,
+`'self'` for scripts, styles, connections, images and fonts, `frame-ancestors <moodle origin>`,
+trusted types with no policy), `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`,
+`Cache-Control: no-store`, `Permissions-Policy: clipboard-write=(self), camera=(), microphone=(),
+geolocation=()`, `Cross-Origin-Resource-Policy: same-origin`, and no `X-Frame-Options` (every
+other API response has `X-Frame-Options: DENY`). An unknown or disabled site is 404 with
+`frame-ancestors 'none'`. Assets: `GET /api/v1/assess/ui/assets/{name}`, content-hashed names
+from the build manifest only.
+
+**postMessage contract, version 1 (stable; the plugin P2 and the UI both test against it).**
+Every message is a plain object `{v: 1, type: "vektra-assess-<name>", ...}`. A receiver acts on
+a message only when ALL hold: `event.origin` is exactly the configured peer origin (the UI:
+the site's Moodle origin from its page config; the plugin: `VEKTRA_ASSESS_UI_ORIGIN`),
+`event.source` is the expected window (the UI: `window.parent`; the plugin: the iframe's
+`contentWindow`), `v === 1` and `type` is known. Anything else is ignored silently. Senders
+always pass the explicit peer origin as `targetOrigin`; `"*"` is never used. Tokens never
+appear in a URL, in storage or in a log, on either side.
+
+| Direction | `type` | Fields | Meaning |
+|-----------|--------|--------|---------|
+| UI -> plugin | `vektra-assess-ready` | none | the page is loaded and listening; the handshake starts here |
+| plugin -> UI | `vektra-assess-token` | `token`, `mode: "start" \| "resume"`, `sid?` (resume) | the freshly minted pre-session token (server-side mint, single use, TTL <= 2 min); the UI Starts or resumes with it |
+| plugin -> UI | `vektra-assess-unavailable` | none | the mint failed; the UI shows a generic, non-technical text and makes no request |
+| UI -> plugin | `vektra-assess-resize` | `height` (CSS px) | the content height, so the parent can size the iframe |
+| UI -> plugin | `vektra-assess-download-token-request` | `tid` | the closing screen asks for a transcript download token |
+| plugin -> UI | `vektra-assess-download-token` | `tid`, `token` | the single-use download token (`aud=transcript`, plan 10) |
+| UI -> plugin | `vektra-assess-closed` | `reason` (a close reason) | the session is closed; the plugin may refresh its button state |
+
+Handshake: the UI posts `vektra-assess-ready` once it listens; the parent answers with either
+`vektra-assess-token` or `vektra-assess-unavailable`. The UI holds the token in memory only; a
+reload loses it and the parent mints a new pre-session token for a resume (`GET
+/sessions/{sid}` re-mints the session token).
+
 ### Assess discussion context: Part A and item references (iframe client)
 
 The opening message and the item references the session routes above serve.

@@ -457,6 +457,9 @@ def test_every_route_but_the_discussion_ui_denies_framing() -> None:
     assert other.headers["x-frame-options"] == "DENY"
     ui = client.get("/api/v1/assess/ui/probe")
     assert ui.status_code == 200 and "x-frame-options" not in ui.headers
+    # CodeRabbit 4501067221: only the UI page and its assets, not a sibling path
+    for sibling in ("/api/v1/assess/ui-other", "/api/v1/assess/uix/probe"):
+        assert client.get(sibling).headers["x-frame-options"] == "DENY", sibling
 
 
 class _Rows:

@@ -423,3 +423,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     kept, were all green. CI now keeps Playwright's traces and page snapshots on failure
     (artifact `assess-ui-e2e-playwright`), and the harness prints every API answer >= 400
     with its error code and remediation.
+- **CodeRabbit round 1 on PR #157 (2026-11-07)**:
+  - 4501067221 The frame-deny exemption is `headers.is_ui_path` (the prefix itself or below
+    it): a sibling like `/api/v1/assess/ui-other` keeps `X-Frame-Options: DENY`.

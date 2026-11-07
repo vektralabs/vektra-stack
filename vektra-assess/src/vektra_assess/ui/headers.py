@@ -30,6 +30,12 @@ PAGE_BASE = {
 UI_PATH_PREFIX = "/api/v1/assess/ui"
 
 
+def is_ui_path(path: str) -> bool:
+    """The UI page or one of its assets: the prefix itself or below it, never a sibling path
+    that merely starts with the same characters (``/api/v1/assess/ui-other``)."""
+    return path == UI_PATH_PREFIX or path.startswith(UI_PATH_PREFIX + "/")
+
+
 def csp(frame_origin: str | None) -> str:
     """The page CSP; ``None`` (unknown or disabled site) means nobody may frame it."""
     return CSP_BASE.format(ancestors=frame_origin or "'none'")

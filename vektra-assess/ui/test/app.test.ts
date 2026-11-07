@@ -731,3 +731,48 @@ describe("the composer limit counts code points like the server (4501070009)", (
     expect(a.chat.composer.disabled).toBe(false);
   });
 });
+
+describe("replay of an earlier reply while a later turn is pending (4501070057 follow-up)", () => {
+  it("drops the old reply's replay and keeps the pending reply", async () => {
+    const { a, priv, pending, flush, root } = harness();
+    // resume snapshot: opening (1), student (2), bot reply (3) done, student (4) pending
+    const read = (a as unknown as { refresh: () => Promise<unknown> }).refresh.call(a);
+    await flush();
+    pending[0].resolve(
+      view(
+        [
+          { turn_no: 1, role: "bot", text: "Benvenuto" },
+          { turn_no: 2, role: "student", text: "prima" },
+          { turn_no: 3, role: "bot", text: "vecchia risposta" },
+          { turn_no: 4, role: "student", text: "seconda" },
+        ],
+        { reply_pending: true },
+      ),
+    );
+    await read;
+    // the stream starts without a cursor: the ring replays reply 3, then the pending reply 5
+    await priv.onEvent({ event: "reply_delta", data: '{"text":"vecchia risposta"}' });
+    await priv.onEvent({ event: "reply_done", data: '{"turn_no":3,"marked":false}' });
+    expect(root.querySelector("li.streaming")).toBeNull(); // the replayed text is gone
+    expect(a.live.announcements).toBe(0); // and never announced
+    expect(pending.length).toBe(1); // no read for an old reply
+    await priv.onEvent({ event: "reply_delta", data: '{"text":"nuova"}' });
+    expect(root.querySelector("li.streaming")!.textContent).toContain("nuova");
+    expect(root.querySelectorAll("article.turn-bot").length).toBe(3); // 1, 3 and the stream
+    const done = priv.onEvent({ event: "reply_done", data: '{"turn_no":5,"marked":false}' });
+    await flush();
+    pending[1].resolve(
+      view([
+        { turn_no: 1, role: "bot", text: "Benvenuto" },
+        { turn_no: 2, role: "student", text: "prima" },
+        { turn_no: 3, role: "bot", text: "vecchia risposta" },
+        { turn_no: 4, role: "student", text: "seconda" },
+        { turn_no: 5, role: "bot", text: "nuova" },
+      ]),
+    );
+    await done;
+    expect(a.live.announcements).toBe(1);
+    expect(root.querySelectorAll("article.turn").length).toBe(5);
+    expect(root.textContent!.match(/vecchia risposta/g)!.length).toBe(1);
+  });
+});

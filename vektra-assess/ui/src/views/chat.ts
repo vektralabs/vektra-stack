@@ -128,6 +128,12 @@ export class ChatView {
     );
   }
 
+  /** Drop the text streamed so far without announcing it (a replayed, already shown reply). */
+  discardStreaming(): void {
+    this.streaming?.li.remove();
+    this.streaming = null;
+  }
+
   /** The reply is complete: one announcement in the polite live region. */
   replyDone(interrupted: boolean): void {
     if (this.streaming) this.streaming.li.removeAttribute("aria-busy");

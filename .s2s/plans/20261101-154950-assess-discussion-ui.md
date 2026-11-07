@@ -495,3 +495,8 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     the server's `len()`): over it the text stays and the help says "Il messaggio è troppo
     lungo: al massimo N caratteri."; `maxlength` is only a wide bound (2 UTF-16 units per code
     point), so `😀a` with a limit of 2 is sent.
+  - 4501070057 (follow-up) A `reply_done` whose `turn_no` the snapshot already holds is the
+    end of a replayed reply (a stream opened without a cursor replays its ring): the text
+    streamed for it is discarded, with no read and no announcement; the owed reply's events
+    follow it in the ring and are shown. `reply_delta` carries no turn number (plan 8's payload),
+    so the binding is made at its `reply_done`; no cursor is added to `GET /sessions/{sid}`.

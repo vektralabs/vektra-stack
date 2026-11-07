@@ -314,6 +314,13 @@ export class App {
       case "reply_done":
       case "reply_interrupted": {
         if (!this.replyPending) return;
+        // the end of a reply the snapshot already shows (the stream replays its ring when it
+        // opens without a cursor): its replayed text goes, no read, no announcement; the
+        // owed reply's events follow it in the ring (4501070057 follow-up)
+        if (typeof data.turn_no === "number" && data.turn_no <= this.lastTurnNo) {
+          this.chat.discardStreaming();
+          return;
+        }
         // the persisted turn replaces the streamed text: the DOM shows exactly what was stored
         await this.refresh();
         this.chat.replyDone(ev.event === "reply_interrupted");

@@ -140,7 +140,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [x] Dockerfile node stage: build `vektra-assess/ui` alongside the widget; copy only the built assets; extend `test_image_content_boundary.py` to assert the manifest assets are present and `ui/src`, `node_modules`, `*.map` are absent
 
 ### Tests, CI, docs
-- [ ] Vitest unit tests `vektra-assess/ui/test/`: SSE parser fuzz on random chunk boundaries (1-byte splits, CRLF), bridge rejects wrong origin / wrong source / `"*"` never used, reducer transitions, no `innerHTML` usage (lint rule `no-restricted-properties`)
+- [x] Vitest unit tests `vektra-assess/ui/test/`: SSE parser fuzz on random chunk boundaries (1-byte splits, CRLF), bridge rejects wrong origin / wrong source / `"*"` never used, reducer transitions, no `innerHTML` usage (lint rule `no-restricted-properties`)
 - [ ] Python tests `vektra-assess/tests/test_ui_router.py`: exact CSP string per site, unknown site 404, no XFO on UI route, XFO DENY on a sample other route, asset allowlist (path traversal `../` → 404), `Cache-Control: no-store`
 - [ ] Playwright e2e `vektra-assess/ui/e2e/` with a host page served from a second origin (`http://127.0.0.1:<p1>` parent vs `http://localhost:<p2>` Vektra) against the running API with the fake LLM provider and seeded session fixtures from plan 8: start → opening → 2 turns → outage (fake provider fails) → Riprova → Fine → download; resume after reload; a framing attempt from a third origin is blocked by CSP (frame not rendered, CSP violation observed)
 - [ ] Accessibility: `@axe-core/playwright` scan on every state (awaiting, preparing, active, streaming, outage, confirm dialog, closed) with 0 violations at WCAG 2.1 A/AA tags; keyboard-only run of the whole e2e flow (no mouse API calls); reflow check at 320 px width and at 1280 px with 200% zoom asserting `scrollWidth <= clientWidth`; live-region announcement counter (one per reply, one per warning)
@@ -264,4 +264,9 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - Traefik example checked (2026-11-07): it defines no headers middleware (no frameDeny, no
     customResponseHeaders), so there is nothing to exempt; the API's own FrameDenyMiddleware
     gives every non-UI route `X-Frame-Options: DENY` behind Traefik too.
+  - The no-`innerHTML` rule is `npm run lint` (`scripts/no-html-sinks.mjs`: innerHTML,
+    outerHTML, insertAdjacentHTML, document.write, DOMParser), not an ESLint
+    `no-restricted-properties` rule: same guarantee without an ESLint toolchain. CI runs it in
+    the new `test-assess-ui` job (ci-unit.yml, in `ci-gate`) with the type check, the build and
+    vitest; `make test-assess-ui` does the same locally.
 

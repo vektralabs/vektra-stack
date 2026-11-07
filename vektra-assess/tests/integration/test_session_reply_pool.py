@@ -111,4 +111,12 @@ async def test_the_cut_stays_at_the_deadline_however_long_the_reply_waited(
         deltas = [
             e for e in broker_of(_R()).after(s.session_id, 0) if e.type == "reply_delta"
         ]
-        assert len(deltas) <= 3, len(deltas)  # cut ~0.5 s into the reply
+        # the reply made progress (at least one released segment) and was cut ~0.5 s in
+        assert 1 <= len(deltas) <= 3, len(deltas)
+        last = await pg.run(
+            "super",
+            "SELECT role, kind FROM assess_turns WHERE session_id = :s "
+            "ORDER BY turn_no DESC LIMIT 1",
+            {"s": s.session_id},
+        )
+        assert tuple(last[0]) == ("bot", "interrupted")

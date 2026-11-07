@@ -22,6 +22,37 @@
 
 ## Planned
 
+### BUG-028: the learn query checks a conversation's owner but not its course
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-11-07
+**Origin**: the v0.8.0 release-prep review of `course_query` (read from the code, not reproduced).
+
+**Context**: `POST /api/v1/learn/query` refuses a `conversation_id` whose `owner_subject` is not the token's `sub` (ERR-LEARN-007), but never compares the conversation's `namespace_id` with the token's namespace. The turns endpoint does both (ERR-LEARN-006, then ERR-LEARN-007). So the same student, enrolled in two courses, who sends a conversation id from course A with a course B token has course A's history loaded into a course B prompt, and the new turn appended to the course A conversation. No other student's data is reachable: the owner check holds. What can go wrong is a cross-course answer and a conversation that mixes two courses, which the widget of either course then lists.
+
+**Proposed approach**: in the query-side check, refuse with ERR-LEARN-006 when the stored namespace differs, before the owner comparison, as the turns endpoint does. The in-memory store would need to record the namespace next to the owner.
+
+**Acceptance criteria**:
+- [ ] Reproduced first: a test where one subject queries course B with a course A conversation id, failing before the fix
+- [ ] Refused with ERR-LEARN-006 on both stores, nothing loaded and nothing appended
+- [ ] Control: the same id with the course A token still continues the conversation
+
+---
+
+### DEBT-041: nothing checks that every version number agrees
+
+**Status**: draft | **Priority**: low | **Created**: 2026-11-07
+**Origin**: the v0.8.0 release prep, where the list of files carrying the version had to be rebuilt by hand because a new workspace package added two more.
+
+**Context**: a release bumps nine `pyproject.toml`, four `__version__` constants (nothing derives them from the package metadata), the nine workspace entries of `uv.lock`, and the published-image examples. A missed one ships silently: `vektra_app.__version__` is what `app.state.version` reports. `CONTRIBUTING.md` lists how to find them, which is a convention and not a check.
+
+**Proposed approach**: a structure test that reads every workspace `pyproject.toml` version and every `^__version__ =` found by `git ls-files`, and fails unless they are all equal; the lock entries follow from `uv lock --check`. Its negative control is a fixture tree with one value off.
+
+**Acceptance criteria**:
+- [ ] The test fails on a tree with one `__version__` left behind, and passes on the real tree
+- [ ] It discovers the files from the repository, not from a list in the test
+
+---
+
 ### BUG-029: the documented `namespace` form field of `POST /api/v1/ingest` was ignored
 
 **Status**: completed (2026-11-07) | **Priority**: high | **Created**: 2026-11-07

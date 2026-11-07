@@ -430,3 +430,21 @@ def test_assess_limiters_are_local_keyed_by_session_or_student() -> None:
     assert limiters["turns"].check(sid, 1)[0] is False
     assert limiters["retry"].check(sid, 1)[0] is True  # another family, its own count
     assert limiters["state"].check((str(uuid.uuid4()), 7, 42), 1)[0] is True
+
+
+def test_every_route_but_the_discussion_ui_denies_framing() -> None:
+    """Plan 9 (ARCH-076): X-Frame-Options: DENY on every response of the API; the assess UI
+    page and assets are framed through their own CSP and carry no X-Frame-Options."""
+    from vektra_app.main import create_app
+
+    app = create_app()
+
+    @app.get("/api/v1/assess/ui/probe")
+    async def ui_probe() -> dict[str, str]:
+        return {"ok": "ui"}
+
+    client = TestClient(app)  # no lifespan: only the middleware stack is exercised
+    other = client.get("/openapi.json")
+    assert other.headers["x-frame-options"] == "DENY"
+    ui = client.get("/api/v1/assess/ui/probe")
+    assert ui.status_code == 200 and "x-frame-options" not in ui.headers

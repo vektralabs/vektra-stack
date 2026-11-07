@@ -112,7 +112,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 
 ### Server side
 - [x] Add `vektra-assess/src/vektra_assess/ui/router.py`: `GET /api/v1/assess/ui` (unauthenticated, `site` query param = public site key only), page template `ui/templates/page.html.j2` (autoescape) with the JSON config block, asset route `/api/v1/assess/ui/assets/{name}` resolving only names in `manifest.json`; include the router in `vektra_app/main.py create_app()`
-- [ ] Implement the header builder `ui/headers.py` producing the CSP and companion headers listed in Design Notes; per-site `frame-ancestors` read from the site record on every request (no cache); unknown/disabled site → 404 with `frame-ancestors 'none'`
+- [x] Implement the header builder `ui/headers.py` producing the CSP and companion headers listed in Design Notes; per-site `frame-ancestors` read from the site record on every request (no cache); unknown/disabled site → 404 with `frame-ancestors 'none'`
 - [ ] Add settings `VEKTRA_ASSESS_UI_ORIGIN` (alias-style in the assess settings class); startup step in `_run_startup()` refuses a non-https origin outside development and an origin equal to any registered site's `moodle_origin`
 - [ ] Add `moodle_origin` to the site record if absent (next revision in the chain) and to the site registration/update path, validated as a bare origin (no path, no wildcard)
 - [ ] Add setup-check item `ui_origin_distinct` to the REQ-079 check (plan 4's check runner), reported by name as OK/MISSING
@@ -231,4 +231,8 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - The built bundle is never committed: without `static/manifest.json` the page is 503; tests
     point `app.state.assess_ui_static_dir` at a fixture bundle. The router tests need the site
     table, so they live in `tests/integration/test_ui_router.py` (not `tests/`).
+  - `X-Frame-Options: DENY` is set by the API itself on every response but the UI page and its
+    assets (`FrameDenyMiddleware`, pure ASGI so SSE is not buffered), not only by the nginx
+    example: a deployment without the proxy keeps the protection. One middleware is added to
+    `create_app()`; the existing order is unchanged.
 

@@ -93,3 +93,48 @@ async def test_only_manifest_assets_are_served(pg, bundle) -> None:  # type: ign
             assert (await w.client.get(f"{PAGE}/assets/{name}")).status_code == 404, (
                 name
             )
+
+
+EXPECTED_CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+    "img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; "
+    "object-src 'none'; frame-ancestors {}; "
+    "require-trusted-types-for 'script'; trusted-types 'none'"
+)
+
+
+async def test_the_page_headers_byte_for_byte(pg, bundle) -> None:  # type: ignore[no-untyped-def]
+    """ARCH-076: exactly the site's Moodle origin may frame the page, no X-Frame-Options."""
+    async with world(pg, assess_ui_static_dir=str(bundle)) as w:
+        r = await w.client.get(PAGE, params={"site": str(w.site)})
+        raw = {k.lower(): v for k, v in r.headers.raw}
+        assert (
+            raw[b"content-security-policy"]
+            == EXPECTED_CSP.format("https://m.example").encode()
+        )
+        assert raw[b"referrer-policy"] == b"no-referrer"
+        assert raw[b"x-content-type-options"] == b"nosniff"
+        assert raw[b"cache-control"] == b"no-store"
+        assert raw[b"permissions-policy"] == (
+            b"clipboard-write=(self), camera=(), microphone=(), geolocation=()"
+        )
+        assert raw[b"cross-origin-resource-policy"] == b"same-origin"
+        assert b"x-frame-options" not in raw
+        # another site, another single origin: read per request, never cached
+        await pg.run(
+            "super",
+            "UPDATE assess_sites SET base_url = 'https://other.example:8443' WHERE id = :s",
+            {"s": w.site},
+        )
+        again = await w.client.get(PAGE, params={"site": str(w.site)})
+        assert again.headers["content-security-policy"] == EXPECTED_CSP.format(
+            "https://other.example:8443"
+        )
+
+
+async def test_an_unknown_site_may_be_framed_by_nobody(pg, bundle) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg, assess_ui_static_dir=str(bundle)) as w:
+        r = await w.client.get(PAGE, params={"site": str(uuid.uuid4())})
+        assert r.headers["content-security-policy"] == EXPECTED_CSP.format("'none'")
+        asset = await w.client.get(f"{PAGE}/assets/assess-ui.def456.css")
+        assert asset.headers["cross-origin-resource-policy"] == "same-origin"

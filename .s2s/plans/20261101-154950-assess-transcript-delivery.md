@@ -349,7 +349,7 @@ real-time run guards against clock-injection bugs.
   includes it); output re-parsed into an allowlisted node tree; TeX fallback is escaped text in
   `<code>` with a constant `aria-label` (user text never reaches an attribute, so a student cannot
   make the allowlist fail their own transcript).
-- `/state.transcripts[].purged` is computed from `shredded_at` (false until plan 12 shreds).
+- `/state.transcripts[].purged` is the constant `false` (review #9): `shred_transcript` deletes the row, so no trace survives a shred; plan 12 (privacy-retention) must record a tombstone and set `purged` from it (request recorded for plan 12). A test pins today's contract (a shredded transcript reads `available: false, purged: false`).
 - Revision 0034 re-creates `assess_deliveries` (nothing ever wrote the plan-2 draft) and adds the
   live-transcript CHECK as `NOT VALID` (exempts rows of no generator).
 

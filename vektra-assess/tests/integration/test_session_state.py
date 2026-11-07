@@ -394,15 +394,17 @@ async def test_transcripts_list_generated_and_shredded_ones(pg, worker) -> None:
         assert view["transcripts"] == [
             {"tid": str(s.session_id), "n": 1, "available": True, "purged": False}
         ]
-        await pg.run(
-            "super",
-            "UPDATE assess_transcripts SET ciphertext = NULL, dek_wrapped = NULL, "
-            "shredded_at = now() WHERE id = :t",
-            {"t": s.session_id},
-        )
+        # the plan-2 shred deletes the row: the entry reads "not available", and purged stays
+        # false (review #9: no surviving trace of the shred until plan 12's tombstone)
+        from vektra_assess.crypto.shred import shred_transcript
+
+        async with worker.begin() as conn:
+            report = await shred_transcript(conn, s.session_id)
+        assert report.deleted["assess_transcripts"] == 1
         view = (await state(w, await w.presession(sub=s.sub, cmid=s.cmid))).json()
-        assert view["transcripts"][0]["available"] is False
-        assert view["transcripts"][0]["purged"] is True
+        assert view["transcripts"] == [
+            {"tid": str(s.session_id), "n": 1, "available": False, "purged": False}
+        ]
 
 
 async def test_eligible_names_the_recipients_from_the_course_graders(

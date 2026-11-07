@@ -685,13 +685,26 @@ def test_recorded_files_are_scrubbed(branch: str) -> None:
     """The submission files are written as downloaded: scan raw bytes and zip members too."""
     files = sorted((FIXTURES / branch / "files").iterdir())
     assert files, "no recorded submission files: the scan would be vacuous"
-    members = sum(
+    assert _zip_members(files) > 0, "no zip member was inspected"
+    assert [h for f in files for h in _scan(f)] == []
+
+
+def _zip_members(files: list[Path]) -> int:
+    """How many zip members the scan inspected across the office files."""
+    return sum(
         len(_REC._file_layers(f.name, f.read_bytes())) - 1
         for f in files
-        if f.suffix in {".docx", ".pptx", ".odt"}
+        if f.suffix.lower() in _REC._ZIP_SUFFIXES  # the recorder's own rule
     )
-    assert members > 0, "no zip member was inspected"
-    assert [h for f in files for h in _scan(f)] == []
+
+
+def test_the_member_count_matches_suffixes_case_insensitively(
+    branch: str, tmp_path: Path
+) -> None:
+    """CodeRabbit 4499897066: the recorder lowercases the suffix, so must the count."""
+    upper = tmp_path / "stu1__REPORT.DOCX"
+    upper.write_bytes(_zip("word/document.xml", "<w:t>ok</w:t>"))
+    assert _zip_members([upper]) == 2
 
 
 def _zip(member: str, text: str) -> bytes:

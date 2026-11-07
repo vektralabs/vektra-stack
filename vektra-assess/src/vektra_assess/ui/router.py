@@ -77,8 +77,25 @@ router = APIRouter(
 
 
 def static_dir(request: Request) -> Path:
-    override = getattr(request.app.state, "assess_ui_static_dir", None)
+    return static_dir_of(request.app)
+
+
+def static_dir_of(app: Any) -> Path:
+    override = getattr(getattr(app, "state", None), "assess_ui_static_dir", None)
     return Path(override) if override else STATIC_DIR
+
+
+def framable(app: Any, path: str) -> bool:
+    """The paths that may be framed (no ``X-Frame-Options``): the page itself and the asset
+    names the built manifest lists, nothing else under ``/ui/`` (CodeRabbit 4501067221)."""
+    if path == PREFIX:
+        return True
+    assets = PREFIX + "/assets/"
+    if not path.startswith(assets):
+        return False
+    name = path[len(assets) :]
+    manifest = manifest_of(static_dir_of(app))
+    return manifest is not None and "/" not in name and name in manifest.values()
 
 
 @functools.cache

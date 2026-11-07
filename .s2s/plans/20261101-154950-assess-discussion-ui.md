@@ -487,3 +487,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     plan-8 route).
   - 4501067257 The closing-text test builds its date in local time (it failed under
     `TZ=Pacific/Kiritimati`).
+- **CodeRabbit round 2 on PR #157 (thread replies, 2026-11-07)**:
+  - 4501067221 Frame denial is lifted only for `router.framable`: the page path itself and
+    `/assets/<name>` for a name the built manifest lists; anything else under `/ui/`
+    (`/ui/probe`, an unknown asset) keeps `X-Frame-Options: DENY`.

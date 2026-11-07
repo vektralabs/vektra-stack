@@ -696,9 +696,11 @@ class FrameDenyMiddleware:
         self.app = app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        from vektra_assess.ui.headers import is_ui_path
+        from vektra_assess.ui.router import framable
 
-        if scope.get("type") != "http" or is_ui_path(str(scope.get("path", ""))):
+        if scope.get("type") != "http" or framable(
+            scope.get("app"), str(scope.get("path", ""))
+        ):
             await self.app(scope, receive, send)
             return
 

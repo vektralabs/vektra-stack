@@ -448,18 +448,40 @@ def test_every_route_but_the_discussion_ui_denies_framing() -> None:
 
     app = create_app()
 
+    import json
+    import tempfile
+    from pathlib import Path
+
+    bundle = Path(tempfile.mkdtemp())
+    (bundle / "manifest.json").write_text(
+        json.dumps({"js": "assess-ui.abc.js", "css": "assess-ui.abc.css"})
+    )
+    app.state.assess_ui_static_dir = str(bundle)
+
+    # stand-ins for the UI routes (assess is not mounted here): only the middleware is tested
+    @app.get("/api/v1/assess/ui")
     @app.get("/api/v1/assess/ui/probe")
+    @app.get("/api/v1/assess/ui/assets/{name}")
+    @app.get("/api/v1/assess/ui-other")
+    @app.get("/api/v1/assess/uix/probe")
     async def ui_probe() -> dict[str, str]:
         return {"ok": "ui"}
 
     client = TestClient(app)  # no lifespan: only the middleware stack is exercised
     other = client.get("/openapi.json")
     assert other.headers["x-frame-options"] == "DENY"
-    ui = client.get("/api/v1/assess/ui/probe")
-    assert ui.status_code == 200 and "x-frame-options" not in ui.headers
-    # CodeRabbit 4501067221: only the UI page and its assets, not a sibling path
-    for sibling in ("/api/v1/assess/ui-other", "/api/v1/assess/uix/probe"):
-        assert client.get(sibling).headers["x-frame-options"] == "DENY", sibling
+    # CodeRabbit 4501067221: only the page and the assets the manifest names are exempt; any
+    # other path, under /ui/ or a sibling, keeps DENY
+    for denied in (
+        "/api/v1/assess/ui/probe",
+        "/api/v1/assess/ui-other",
+        "/api/v1/assess/uix/probe",
+        "/api/v1/assess/ui/assets/not-in-the-manifest.js",
+    ):
+        assert client.get(denied).headers["x-frame-options"] == "DENY", denied
+    for framable in ("/api/v1/assess/ui", "/api/v1/assess/ui/assets/assess-ui.abc.js"):
+        r = client.get(framable)
+        assert r.status_code == 200 and "x-frame-options" not in r.headers, framable
 
 
 class _Rows:

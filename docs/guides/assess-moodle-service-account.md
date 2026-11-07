@@ -103,3 +103,24 @@ every row at once and queues a new check; Starts are blocked until it passes.
 | `rubric_display_settings` | always unreadable: rubric descriptors are excluded from the model context |
 | `module_visibility_per_student`, `loginas_crosscheck` | unreadable: the retrieval of course material stays off, and login-as is trusted to the plugin |
 | `release_state`, `grading_state`, `graders_resolvable`, `enrolment_readable`, `per_student_timelimit` | the matching gate stays closed |
+
+## The discussion UI origin and framing (plan 9)
+
+The student discussion runs in an iframe on the Moodle results page, but the page inside it is
+served by Vektra (`GET /api/v1/assess/ui?site=<site id>`) on its own origin,
+`VEKTRA_ASSESS_UI_ORIGIN`. Three settings must agree:
+
+- `VEKTRA_ASSESS_UI_ORIGIN` is an `https` origin (scheme, host, port; no path), different from
+  every Moodle origin. The API refuses to start otherwise, and the setup check reports
+  `ui_origin_distinct`. The plugin's iframe sandbox includes `allow-same-origin`, which is safe
+  only because the two origins differ.
+- Each site's `moodle_origin` (on `assess_sites`, a bare origin) is the one origin allowed to
+  frame the page (CSP `frame-ancestors`) and to exchange postMessage with it. A site without it
+  falls back to the origin of its `base_url`.
+- The reverse proxy must not add `X-Frame-Options` to `/api/v1/assess/ui`: the shipped nginx
+  example (`deploy/nginx/vektra.conf.example`) keeps `X-Frame-Options: DENY` everywhere else and
+  has a dedicated location for the UI that re-declares HSTS and `nosniff` without it. nginx drops
+  every inherited `add_header` once a location declares its own, so copy the whole block. A
+  deployment that copied the older example sends `DENY` on the UI too, and the iframe stays
+  blank.
+

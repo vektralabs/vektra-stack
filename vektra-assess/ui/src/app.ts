@@ -306,11 +306,14 @@ export class App {
         return;
       case "start_rolled_back":
         return this.dispatch({ type: "rolled_back", reason: String(data.reason ?? "") });
+      // reply events count only while a reply is owed: after a resume the stream may replay
+      // the events of replies the snapshot already shows (4501070057)
       case "reply_delta":
-        if (typeof data.text === "string") this.chat.delta(data.text);
+        if (this.replyPending && typeof data.text === "string") this.chat.delta(data.text);
         return;
       case "reply_done":
       case "reply_interrupted": {
+        if (!this.replyPending) return;
         // the persisted turn replaces the streamed text: the DOM shows exactly what was stored
         await this.refresh();
         this.chat.replyDone(ev.event === "reply_interrupted");
@@ -352,6 +355,8 @@ export class App {
     const text = this.chat.composer.value;
     if (!text.trim() || this.state.name !== "active") return;
     this.chat.setEnabled(false, "");
+    // owed from the moment it is sent: the reply's events may arrive before the 202 is read
+    this.replyPending = true;
     let r: Response;
     try {
       r = await this.fetchImpl(`${this.cfg.apiBase}/sessions/${this.sid}/turns`, {
@@ -366,11 +371,10 @@ export class App {
       this.chat.composer.value = "";
       const body = (await r.json()) as { turn_no: number };
       // a snapshot applied meanwhile may already hold this turn (and its reply): it is the
-      // server's word, so nothing is added and no reply is assumed owed
+      // server's word (its reply_pending included), so nothing is added
       if (body.turn_no > this.lastTurnNo) {
         this.chat.add({ turn_no: body.turn_no, role: "student", kind: "normal", text });
         this.lastTurnNo = body.turn_no;
-        this.replyPending = true;
       }
       return this.syncComposer();
     }
@@ -381,6 +385,7 @@ export class App {
   /** A turn that did not go through: the composer opens again only if the session is still
    *  ACTIVE with no reply owed (an outage or a close meanwhile keeps it closed, 4501070043). */
   private sendFailed(help: string): void {
+    this.replyPending = false; // nothing was accepted, so nothing is owed
     if (this.state.name === "active" && !this.replyPending) this.chat.setEnabled(true, help);
     else this.syncComposer();
   }

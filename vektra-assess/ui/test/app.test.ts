@@ -391,6 +391,7 @@ function view(turns: { turn_no: number; role: string; text: string }[], extra: o
 describe("snapshot ordering (4501070026, 4501070021, review 5811279241 app.ts 295-301)", () => {
   it("an older session read that arrives last does not replace the newer view", async () => {
     const { priv, pending, flush, root } = harness();
+    (priv as unknown as { replyPending: boolean }).replyPending = true; // a reply is owed
     const one = priv.onEvent({ event: "reply_done", data: "{}" });
     const two = priv.onEvent({ event: "reply_done", data: "{}" });
     await flush();
@@ -404,6 +405,7 @@ describe("snapshot ordering (4501070026, 4501070021, review 5811279241 app.ts 29
 
   it("a session read that completes after the close is ignored", async () => {
     const { priv, pending, flush, root } = harness();
+    (priv as unknown as { replyPending: boolean }).replyPending = true; // a reply is owed
     const late = priv.onEvent({ event: "reply_done", data: "{}" });
     await flush();
     await priv.onEvent({ event: "closed", data: '{"close_reason":"finished"}' });
@@ -666,5 +668,25 @@ describe("the composer limit (4501070009)", () => {
       document.createElement("main"),
     );
     expect(a.chat.composer.maxLength).toBe(3500);
+  });
+});
+
+describe("replayed reply events after a resume (4501070057)", () => {
+  it("are ignored when no reply is owed: no duplicate text, no announcement, no read", async () => {
+    const { a, priv, pending } = harness();
+    // the resume snapshot already holds the reply and owes nothing
+    (a as unknown as { replyPending: boolean }).replyPending = false;
+    await priv.onEvent({ event: "reply_delta", data: '{"text":"vecchia risposta"}' });
+    await priv.onEvent({ event: "reply_done", data: "{}" });
+    expect(a.chat.list.querySelector("li.streaming")).toBeNull();
+    expect(a.live.announcements).toBe(0);
+    expect(pending.length).toBe(0);
+  });
+
+  it("are shown while a reply is owed", async () => {
+    const { a, priv } = harness();
+    (a as unknown as { replyPending: boolean }).replyPending = true;
+    await priv.onEvent({ event: "reply_delta", data: '{"text":"nuova"}' });
+    expect(a.chat.list.querySelector("li.streaming")!.textContent).toContain("nuova");
   });
 });

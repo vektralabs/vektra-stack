@@ -480,3 +480,8 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     Page config only: not the postMessage contract, not `/state`.
   - review 5811279241 (sse.ts, outside diff) After `closed` or `start_rolled_back` the
     consumer stops reading and cancels the reader, even if the server keeps the response open.
+  - 4501070057 Reply events count only while a reply is owed (`replyPending`): a resume's
+    replay of replies the snapshot already shows adds no text, no announcement and no read. A
+    reply is owed from the moment a turn is sent (its events can precede the 202), and a send
+    that is not accepted clears it. No stream cursor is added to `GET /sessions/{sid}` (a
+    plan-8 route).

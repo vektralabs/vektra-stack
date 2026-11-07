@@ -287,6 +287,13 @@ real-time run guards against clock-injection bugs.
   production address resolver can be built against a resolver interface, but binding the worker's
   `transcript_deliver` handler needs the choice. 10a already writes the recipient USER IDS
   (PENDING rows, round 1) and the `transcript_deliver` job, so nothing is lost while this is open.
+- **Decided (user, 2026-11-07): option (a).** The service-account role gains the narrowest capability
+  that exposes grader emails (verify `moodle/course:useremail` vs `moodle/user:viewalldetails` live on
+  4.3 and 5.2, pick the narrowest that works). 10b amends REQ-079 (minimal role) in
+  `.s2s/requirements.md`, adds a setup-check item for it, updates
+  `docs/guides/assess-moodle-service-account.md`, re-records the graders fixtures with emails (scrubbed
+  to the dev seed's fake addresses), and asks vektra-moodle-cf to add the capability to the dev role
+  provisioning in `vektra-moodle/docker`.
 
 ### Design decisions taken in 10a (one line each, with the reason)
 

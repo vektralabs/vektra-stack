@@ -96,6 +96,7 @@ async def good(
         kw.pop("pm", None) or derive_probe_manifest(manifest(branch)),
         registry=kw.pop("registry", None),
         now=now(branch),
+        **({"moodle_origin": kw.pop("moodle_origin")} if "moodle_origin" in kw else {}),
     )
     assert not replay.unmatched
     return replay, {i.name: (i.result, i.reason_code) for i in out.items}, out
@@ -405,11 +406,18 @@ async def test_ui_origin_item(branch: str) -> None:
             "same_site_as_api",
         ),
         ("https://chat.vektra-ui.test", "https://chat2.other.test"): ("OK", None),
-        ("not-a-url", "https://api.vektra-api.test"): (
-            "UNVERIFIABLE",
-            "origin_invalid",
-        ),
     }
+    # with assess enabled the settings refuse a malformed UI origin at load (plan 9); disabled
+    # they only warn and keep it, and the item then reports it (review #7)
+    with pytest.raises(ValueError):
+        settings(VEKTRA_ASSESS_UI_ORIGIN="not-a-url")
+    with pytest.warns(UserWarning):
+        dormant = settings(
+            VEKTRA_ASSESS_ENABLED="false", VEKTRA_ASSESS_UI_ORIGIN="not-a-url"
+        )
+    _r, items, _o = await good(branch, cfg=dormant)
+    assert items["ui_not_same_origin"] == ("UNVERIFIABLE", "origin_invalid")
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_invalid")
     # the API origin that makes the second case is the UI's own site
     for (ui, api), want in cases.items():
         env = {"VEKTRA_ASSESS_UI_ORIGIN": ui, "VEKTRA_ASSESS_API_PUBLIC_ORIGIN": api}
@@ -479,3 +487,64 @@ async def test_a_site_admin_answer_carries_a_secret_that_is_dropped(
     _r, items, _o = await good(branch, mutate=replay.mutate)
     assert items["token_works"] == ("OK", None)
     assert items["not_site_admin"] == ("MISSING", "site_admin")
+
+
+async def test_ui_origin_distinct_item(branch: str) -> None:
+    """Plan 9 (ARCH-076): OK for a UI origin distinct from the site's Moodle origin (https
+    outside development); MISSING when unset, equal to the Moodle origin, or not https."""
+    from vektra_assess.ui.origins import url_origin
+
+    _r, items, _o = await good(
+        branch
+    )  # https://chat.vektra-ui.test vs the fixture site
+    assert items["ui_origin_distinct"] == ("OK", None)
+    unset = VektraAssessSettings(
+        **{k: v for k, v in ENV.items() if "UI_ORIGIN" not in k}
+    )  # type: ignore[arg-type]
+    _r, items, _o = await good(branch, cfg=unset)
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_unset")
+    moodle = url_origin(site_for(branch).base_url)
+    _r, items, _o = await good(branch, cfg=settings(VEKTRA_ASSESS_UI_ORIGIN=moodle))
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_equals_moodle_origin")
+    _r, items, _o = await good(
+        branch,
+        cfg=settings(
+            VEKTRA_ENV="production", VEKTRA_ASSESS_UI_ORIGIN="http://ui.example"
+        ),
+    )
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_not_https")
+
+
+async def test_ui_origin_distinct_uses_the_sites_moodle_origin_column(
+    branch: str,
+) -> None:
+    """Review #3: the same Moodle origin as the UI router (``moodle_origin``, else the origin of
+    ``base_url``), through the same normalisation."""
+    from vektra_assess.ui.origins import url_origin
+
+    # the column names the UI origin itself, spelled differently: refused
+    _r, items, _o = await good(branch, moodle_origin="HTTPS://Chat.Vektra-UI.test:443")
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_equals_moodle_origin")
+    # review 5812478913: separate SITES from both the framing origin (the column) and base_url;
+    # either one failing fails the item
+    moodle = url_origin(site_for(branch).base_url)
+    _r, items, _o = await good(
+        branch,
+        cfg=settings(VEKTRA_ASSESS_UI_ORIGIN=moodle),
+        moodle_origin="https://moodle-frame.example",
+    )
+    assert items["ui_origin_distinct"] == ("MISSING", "same_site_as_moodle")
+    _r, items, _o = await good(
+        branch,
+        cfg=settings(VEKTRA_ASSESS_UI_ORIGIN="https://chat.moodle-frame.example"),
+        moodle_origin="https://moodle-frame.example",
+    )
+    assert items["ui_origin_distinct"] == ("MISSING", "same_site_as_moodle_origin")
+    _r, items, _o = await good(branch, moodle_origin="https://moodle-frame.example")
+    assert items["ui_origin_distinct"] == (
+        "OK",
+        None,
+    )  # chat.vektra-ui.test: another site
+    # CodeRabbit 4501070007: a stored origin that cannot be used is reported, not skipped
+    _r, items, _o = await good(branch, moodle_origin="https://u:p@moodle.example")
+    assert items["ui_origin_distinct"] == ("MISSING", "moodle_origin_invalid")

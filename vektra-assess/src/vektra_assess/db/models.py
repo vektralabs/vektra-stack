@@ -56,6 +56,7 @@ class SiteOrm(Base):
     disabled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     probe_manifest: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     last_seen_release: Mapped[str | None] = mapped_column(TEXT)
+    moodle_origin: Mapped[str | None] = mapped_column(TEXT)  # revision 0033 (plan 9)
 
 
 class SiteKeyOrm(Base):

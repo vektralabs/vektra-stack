@@ -24,6 +24,7 @@ EXPECTED_SUBPACKAGES = {
     "delivery",
     "crypto",
     "db",
+    "ui",  # the discussion UI page, its headers and origins (plan 9)
 }
 EXPECTED_MODULES = {"config", "keys", "errors", "health", "parser_protocol"}
 

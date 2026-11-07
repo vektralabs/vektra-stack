@@ -21,6 +21,19 @@ COPY vektra-learn/widget/ ./
 RUN node esbuild.config.mjs
 
 # --------------------------------------------------------------------------
+# Stage 1b: assess discussion UI bundle (plan 9). Only the built, content-hashed assets and
+# their manifest leave this stage: the TypeScript sources, node_modules and source maps (none
+# are produced) never reach the image.
+# --------------------------------------------------------------------------
+FROM node:22-slim AS assess-ui-builder
+
+WORKDIR /assess/ui
+COPY vektra-assess/ui/package.json vektra-assess/ui/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY vektra-assess/ui/ ./
+RUN node esbuild.config.mjs
+
+# --------------------------------------------------------------------------
 # Stage 2: builder - install dependencies with uv
 # --------------------------------------------------------------------------
 FROM python:3.12-slim AS builder
@@ -66,6 +79,8 @@ COPY vektra-index/src vektra-index/src
 COPY vektra-analytics/src vektra-analytics/src
 COPY vektra-learn/src vektra-learn/src
 COPY vektra-assess/src vektra-assess/src
+# the discussion UI bundle, into the package before the non-editable install (plan 9)
+COPY --from=assess-ui-builder /assess/src/vektra_assess/ui/static vektra-assess/src/vektra_assess/ui/static
 COPY vektra-app/src vektra-app/src
 
 # Build and install workspace packages (non-editable: packages are placed

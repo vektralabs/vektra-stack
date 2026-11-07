@@ -69,6 +69,14 @@ async def render(w, worker, sub: int, cm: int, source=None) -> None:  # type: ig
     )
 
 
+EXTENDED = ("active", "selected_attempt", "pre_session", "closed_at", "ended_at")
+
+
+def core(view: dict) -> dict:  # type: ignore[type-arg]
+    """The plan-8 fields of a /state view, without the plan-9 extended contract."""
+    return {k: v for k, v in view.items() if k not in EXTENDED}
+
+
 async def test_not_configured_is_not_enabled_and_queues_nothing(pg, worker) -> None:  # type: ignore[no-untyped-def]
     async with world(pg) as w:
         r = await state(w, await w.presession(sub=STU1, cmid=4242))
@@ -203,7 +211,7 @@ async def test_an_open_session_is_active_with_its_id(pg, worker) -> None:  # typ
     async with world(pg) as w:
         s = await seed_session(w, worker, "ACTIVE")
         r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))
-        assert r.json() == {
+        assert core(r.json()) == {
             "state": "active",
             "reason": "session_open",
             "session_id": str(s.session_id),
@@ -298,7 +306,7 @@ async def test_a_closed_session_without_reset_is_closed_whatever_the_render_says
             {"s": w.site, "u": s.sub, "c": s.cmid, "st": render_status},
         )
         r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))
-        assert r.json() == {"state": "closed", "reason": "already_discussed"}
+        assert core(r.json()) == {"state": "closed", "reason": "already_discussed"}
         # a reset grant reopens the decision to the render state
         await pg.run(
             "super",
@@ -318,8 +326,113 @@ async def test_an_open_session_stays_active_when_the_activity_is_disabled(
         s = await seed_session(w, worker, "ACTIVE")
         await configure_activity(pg, w.site, s.cmid, enabled=False)
         r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))
-        assert r.json() == {
+        assert core(r.json()) == {
             "state": "active",
             "reason": "session_open",
             "session_id": str(s.session_id),
         }
+
+
+# --- plan 9: the extended /state contract agreed with the plugin (P2) ----------------------
+
+
+async def test_active_carries_session_no_minutes_left_and_deadline(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "ACTIVE", cap_minutes=30)
+        view = (await state(w, await w.presession(sub=s.sub, cmid=s.cmid))).json()
+        assert view["active"]["session_no"] == 1
+        assert 29 <= view["active"]["minutes_left"] <= 30
+        assert datetime.fromisoformat(view["active"]["deadline_at"]).tzinfo is not None
+        assert not {"pre_session", "closed_at", "ended_at", "selected_attempt"} & set(
+            view
+        )
+
+
+async def test_starting_has_no_deadline_yet(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "STARTING")
+        view = (await state(w, await w.presession(sub=s.sub, cmid=s.cmid))).json()
+        assert view["state"] == "starting" and view["active"]["session_no"] == 1
+        assert "deadline_at" not in view["active"]
+
+
+async def test_closed_carries_closed_at_only(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "CLOSED")
+        view = (await state(w, await w.presession(sub=s.sub, cmid=s.cmid))).json()
+        assert view["state"] == "closed"
+        assert datetime.fromisoformat(view["closed_at"]).tzinfo is not None
+        assert not {"active", "pre_session", "ended_at", "selected_attempt"} & set(view)
+
+
+async def test_eligible_carries_the_pre_session_data(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    settings = default_settings(
+        VEKTRA_ASSESS_PRIVACY_NOTICE_URL="https://uni.example/privacy"
+    )
+    async with world(pg, settings) as w:
+        cm = cmid("rubric_vis")
+        await configure_activity(pg, w.site, cm, cap_minutes=30)
+        await pg.run(
+            "super",
+            "INSERT INTO assess_extra_time (site_id, cmid, student_userid, extra_seconds) "
+            "VALUES (:s, :c, :u, 600)",
+            {"s": w.site, "c": cm, "u": STU1},
+        )
+        await render(w, worker, STU1, cm, FakeSource(facts=PASSING_FACTS))
+        view = (await state(w, await w.presession(sub=STU1, cmid=cm))).json()
+        assert view["state"] == "eligible", view
+        assert view["pre_session"] == {
+            "duration_min": 40,
+            "course_material_used": False,
+            "limits": {"max_message_chars": 2000, "messages_per_min": 4},
+            "privacy": {
+                "notice_url": "https://uni.example/privacy",
+                "notice_version": "1",
+            },
+            "previous_sessions": 0,
+        }  # recipients and files only when the render worker recorded them
+        assert not {"active", "closed_at", "ended_at", "selected_attempt"} & set(view)
+        # what the render worker records is passed through (data only, filtered)
+        await pg.run(
+            "super",
+            "UPDATE assess_gate_inputs SET inputs = inputs || CAST(:j AS jsonb) "
+            "WHERE site_id = :s AND cmid = :c AND student_userid = :u",
+            {
+                "s": w.site,
+                "c": cm,
+                "u": STU1,
+                "j": json.dumps(
+                    {
+                        "selected_attempt_no": 2,
+                        "recipients": [
+                            {"role": "editingteacher", "name": "Prof. Rossi"}
+                        ],
+                        "files": [
+                            {"name": "relazione.pdf", "predicted": "readable"},
+                            {"name": "x.bin", "predicted": "bogus"},
+                        ],
+                    }
+                ),
+            },
+        )
+        view = (await state(w, await w.presession(sub=STU1, cmid=cm))).json()
+        assert view["selected_attempt"] == {"attempt_no": 2}
+        assert view["pre_session"]["recipients"] == [
+            {"role": "editingteacher", "name": "Prof. Rossi"}
+        ]
+        assert view["pre_session"]["files"] == [
+            {"name": "relazione.pdf", "predicted": "readable"}
+        ]
+
+
+async def test_ended_carries_ended_at(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        cm = cmid("rubric_vis")
+        await configure_activity(
+            pg, w.site, cm, cap_minutes=30, end_at_sql="now() - interval '1 day'"
+        )
+        await render(w, worker, STU1, cm, FakeSource(facts=PASSING_FACTS))
+        view = (await state(w, await w.presession(sub=STU1, cmid=cm))).json()
+        assert view["state"] == "ended", view
+        assert datetime.fromisoformat(view["ended_at"]).tzinfo is not None
+        assert not {"active", "pre_session", "closed_at"} & set(view)

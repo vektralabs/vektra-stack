@@ -437,3 +437,6 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501067261 The same-site check of the nginx example domains moved to
     `vektra-assess/tests/test_ui_origins.py`; the shared tests stay free of other vektra
     packages, guarded by an AST scan of `vektra-shared/tests`.
+  - review 5811279241 (nginx example, outside diff) The UI server forwards `$http_host`, the
+    client's Host with its port: `$host` drops a non-default port, and the page compares
+    scheme+Host with `VEKTRA_ASSESS_UI_ORIGIN`.

@@ -423,7 +423,10 @@ def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
     )  # the events
     for name, body in ui_locations.items():
         if name != "/":
-            assert "proxy_set_header Host $host;" in body
+            # the client's Host with its port: the page compares scheme+Host with
+            # VEKTRA_ASSESS_UI_ORIGIN, and $host drops a non-default port (CodeRabbit review
+            # 5811279241, nginx example)
+            assert "proxy_set_header Host $http_host;" in body
             assert "proxy_set_header X-Forwarded-Proto $scheme;" in body
 
 

@@ -13,7 +13,7 @@
 #       same backend; nothing else is reachable on it.
 #   MOODLE           e.g. moodle.uni.example
 #
-# The backend sees the client's Host on both (the UI page answers only when scheme+Host are
+# The backend sees the client's Host (the UI server forwards it with its port) on both (the UI page answers only when scheme+Host are
 # VEKTRA_ASSESS_UI_ORIGIN). If nginx runs in another container than the API, set uvicorn's
 # FORWARDED_ALLOW_IPS to its address so X-Forwarded-Proto/For are trusted.
 #
@@ -122,6 +122,9 @@ server {
 
     client_max_body_size 1m;
 
+    # $http_host, not $host: the client's Host WITH its port. The page answers only when
+    # scheme+Host are VEKTRA_ASSESS_UI_ORIGIN, and $host drops a non-default port.
+
     # the page and its content-hashed assets
     location ^~ /api/v1/assess/ui {
         proxy_pass http://vektra_backend;
@@ -129,7 +132,7 @@ server {
         proxy_set_header X-Request-ID $request_id;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header Connection "";
     }
 
@@ -140,7 +143,7 @@ server {
         proxy_set_header X-Request-ID $request_id;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header Connection "";
     }
 
@@ -151,7 +154,7 @@ server {
         proxy_set_header X-Request-ID $request_id;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header Connection "";
         proxy_buffering off;
         proxy_read_timeout 300s;
@@ -164,7 +167,7 @@ server {
         proxy_set_header X-Request-ID $request_id;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header Connection "";
     }
 

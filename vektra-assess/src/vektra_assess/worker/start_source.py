@@ -231,6 +231,7 @@ class MoodleStartSource:
         student_userid: int,
         courseid_hint: int | None,
         activity_type: str,
+        sink: dict[str, Any] | None = None,
     ) -> CloseFacts:
         """What the transcript header needs from Moodle at close (plan 10): the course short
         name, the grade as the student sees it NOW (release-gated: an unreleased grade never
@@ -252,12 +253,12 @@ class MoodleStartSource:
         self._resolved.pop(target.session_id)
         if ref is None:
             return CloseFacts()
-        c = self._client
-        shortname = (
-            ref.course_shortname
-        )  # read with the resolution: no second course list
-        grade = await self._grade_now(site, ref, target)
-        graders = await r.read_graders(c, site, ref.courseid)
+        # each part goes to ``sink`` as soon as it is read (a caller that times out keeps it)
+        part: dict[str, Any] = sink if sink is not None else {}
+        # read with the resolution: no second course list
+        shortname = part["course_shortname"] = ref.course_shortname
+        grade = part["grade"] = await self._grade_now(site, ref, target)
+        graders = await r.read_graders(self._client, site, ref.courseid)
         return CloseFacts(
             course_shortname=shortname,
             grade=grade,

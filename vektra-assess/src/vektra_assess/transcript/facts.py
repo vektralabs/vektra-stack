@@ -34,4 +34,8 @@ class CloseFactsSource(Protocol):
         student_userid: int,
         courseid_hint: int | None,
         activity_type: str,
-    ) -> CloseFacts: ...
+        sink: dict[str, Any] | None = None,
+    ) -> CloseFacts:
+        """``sink``, when given, receives each part as soon as it is read (the keys of
+        ``CloseFacts``), so a caller that times out keeps what was already read."""
+        ...

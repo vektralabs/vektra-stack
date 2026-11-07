@@ -520,3 +520,35 @@ async def test_a_deleted_trailing_turn_yields_no_transcript(pg, worker) -> None:
             )
             == 0
         )
+
+
+async def test_a_grader_read_timeout_keeps_the_course_and_grade_already_read(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4503029420: the course short name was read before the graders hung: the
+    transcript keeps it (header and file name), only the recipients are missing."""
+    import asyncio
+
+    class Partial:
+        async def close_facts(self, *, sink: dict[str, Any], **_: Any) -> CloseFacts:
+            sink["course_shortname"] = "PARTIAL-COURSE"
+            await asyncio.sleep(30)  # the grader read never answers
+            return CloseFacts()
+
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        deps = GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Partial(), facts_timeout_s=0.3
+        )
+        got = await generate_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.recipients == 0
+        assert "PARTIAL-COURSE" in (await _open(pg, ring, s.session_id)).decode()
+        name = (
+            await pg.run(
+                "super",
+                "SELECT filename FROM assess_transcripts WHERE id = :t",
+                {"t": s.session_id},
+            )
+        )[0][0]
+        assert name.startswith("PARTIAL-COURSE_")

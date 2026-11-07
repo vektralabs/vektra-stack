@@ -381,6 +381,9 @@ def _record(t: Any, text_: str) -> render.TurnRecord:
 async def _close_facts(deps: GenerationDeps, row: Any) -> CloseFacts:
     if deps.facts is None:
         return CloseFacts()
+    # each part lands here as soon as it is read: past the timeout the transcript keeps the
+    # course and the grade already read, only the rest is "non disponibile" (4503029420)
+    sink: dict[str, Any] = {}
     try:
         async with asyncio.timeout(deps.facts_timeout_s):
             return await deps.facts.close_facts(
@@ -390,12 +393,17 @@ async def _close_facts(deps: GenerationDeps, row: Any) -> CloseFacts:
                 student_userid=int(row.student_userid),
                 courseid_hint=row.courseid_hint,
                 activity_type=str(row.activity_type or "assign"),
+                sink=sink,
             )
     # Moodle down, or slower than its share (an inner TimeoutError, never the job's own
-    # cancellation): the header says "non disponibile", never a guess
+    # cancellation): what was read is kept, the rest says "non disponibile", never a guess
     except Exception as exc:
         log.warning("assess_transcript_facts_error", error_type=type(exc).__name__)
-        return CloseFacts()
+        return CloseFacts(
+            course_shortname=sink.get("course_shortname"),
+            grade=sink.get("grade"),
+            graders=sink.get("graders"),
+        )
 
 
 def make_generate_handler(

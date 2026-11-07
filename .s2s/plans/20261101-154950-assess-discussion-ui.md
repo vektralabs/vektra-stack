@@ -462,3 +462,5 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     session is still ACTIVE with no reply owed (`sendFailed`).
   - 4501070038, 4501070048 A snapshot in OUTAGE (a resume: `outage_start` is not replayed)
     shows the outage banner and the frozen time left from `remaining_s`, rounded up.
+  - 4501070034 The recovery text's 8 s hide timer is kept and cancelled by a new outage (or a
+    new recovery), so it never hides a later outage banner.

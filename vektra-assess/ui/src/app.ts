@@ -34,6 +34,7 @@ export class App {
   private clockOffset = 0; // server time - local time, ms
   private abort = new AbortController();
   private pendingDownload: string | null = null;
+  private bannerTimer: ReturnType<typeof setTimeout> | undefined; // hides the recovery text
   private replyPending = false; // the server owes a reply to the last student turn
   private readsIssued = 0; // GET /sessions/{sid} reads started, in order
   private readApplied = 0; // the newest read applied to the screen
@@ -240,6 +241,7 @@ export class App {
   }
 
   private showOutage(): void {
+    clearTimeout(this.bannerTimer); // a recovery's pending hide never hides a new outage
     this.banner.replaceChildren(h("p", { text: M.outage }));
     this.banner.hidden = false;
   }
@@ -306,7 +308,8 @@ export class App {
         this.banner.replaceChildren(h("p", { text: M.outageEnd }));
         if (typeof data.deadline_at === "string") this.deadline = Date.parse(data.deadline_at);
         this.dispatch({ type: "outage_end" });
-        setTimeout(() => (this.banner.hidden = true), 8000);
+        clearTimeout(this.bannerTimer);
+        this.bannerTimer = setTimeout(() => (this.banner.hidden = true), 8000);
         return;
       case "closed":
         this.closedAt = new Date(Date.now() + this.clockOffset);

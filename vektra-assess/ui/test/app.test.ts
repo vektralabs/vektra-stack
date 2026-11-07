@@ -549,3 +549,19 @@ describe("resuming into an outage (4501070038, 4501070048)", () => {
     expect(a.controls.timer.textContent).toBe("Mancano 3 minuti");
   });
 });
+
+describe("the outage banner timer (4501070034)", () => {
+  it("a new outage within 8 s of the recovery keeps its banner", async () => {
+    vi.useFakeTimers();
+    const { priv, root } = harness();
+    priv.state = { name: "outage" };
+    await priv.onEvent({ event: "outage_end", data: "{}" });
+    vi.advanceTimersByTime(3000);
+    await priv.onEvent({ event: "outage_start", data: "{}" });
+    vi.advanceTimersByTime(6000); // the recovery's hide timer would fire here
+    const banner = root.querySelector(".banner") as HTMLElement;
+    expect(banner.hidden).toBe(false);
+    expect(banner.textContent).toContain("temporaneamente non disponibile");
+    vi.useRealTimers();
+  });
+});

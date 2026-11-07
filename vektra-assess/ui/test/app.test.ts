@@ -565,3 +565,29 @@ describe("the outage banner timer (4501070034)", () => {
     vi.useRealTimers();
   });
 });
+
+describe("download timers (4501067245)", () => {
+  it("the first request's timer never cuts a second request short", async () => {
+    vi.useFakeTimers();
+    const { a, priv } = harness();
+    const ev = priv.onEvent.bind(a);
+    await ev({ event: "closed", data: '{"close_reason":"finished"}' });
+    const button = () => document.querySelector(".closing button") as HTMLButtonElement;
+    button().click(); // request 1 at t=0
+    void (a as unknown as { onMessage: (m: unknown) => Promise<void> }).onMessage.call(a, {
+      v: 1,
+      type: "vektra-assess-download-token",
+      tid: "S",
+      token: "T1",
+    }); // its transcript fetch stays pending: only the token's arrival matters here
+    await Promise.resolve();
+    vi.advanceTimersByTime(5000);
+    button().click(); // request 2 at t=5 s
+    expect(button().disabled).toBe(true);
+    vi.advanceTimersByTime(5500); // t=10.5 s: request 1's deadline, not request 2's
+    expect(button().disabled).toBe(true);
+    vi.advanceTimersByTime(5000); // t=15.5 s: request 2 times out
+    expect(button().disabled).toBe(false);
+    vi.useRealTimers();
+  });
+});

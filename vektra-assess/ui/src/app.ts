@@ -34,6 +34,7 @@ export class App {
   private clockOffset = 0; // server time - local time, ms
   private abort = new AbortController();
   private pendingDownload: string | null = null;
+  private downloadTimer: ReturnType<typeof setTimeout> | undefined; // the pending request's
   private bannerTimer: ReturnType<typeof setTimeout> | undefined; // hides the recovery text
   private replyPending = false; // the server owes a reply to the last student turn
   private readsIssued = 0; // GET /sessions/{sid} reads started, in order
@@ -433,7 +434,8 @@ export class App {
     const button = this.main.querySelector(".closing button") as HTMLButtonElement | null;
     if (button) button.disabled = true;
     this.bridge.send({ v: 1, type: "vektra-assess-download-token-request", tid });
-    setTimeout(() => {
+    clearTimeout(this.downloadTimer);
+    this.downloadTimer = setTimeout(() => {
       if (this.pendingDownload !== tid) return;
       this.pendingDownload = null;
       const status = this.main.querySelector(".download-status");
@@ -443,6 +445,7 @@ export class App {
   }
 
   private async downloadWith(tid: string, token: string): Promise<void> {
+    clearTimeout(this.downloadTimer); // answered: this request's deadline is gone (4501067245)
     this.pendingDownload = null;
     const button = this.main.querySelector(".closing button") as HTMLButtonElement | null;
     if (button) button.disabled = false;

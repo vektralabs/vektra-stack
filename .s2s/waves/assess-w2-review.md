@@ -45,8 +45,9 @@ is no reference model yet (OQ-026).
 - **Line structure of released text**: segments are stripped sentences joined with spaces; keeping the model's
   line breaks is deferred to the discussion UI plan (plan 9).
 - **Golden Part A text** (plan 6): full review owed by the product owner.
-- **Requests to the vektra-moodle session**: graded recordings for match / gapselect / multianswer / ddwtos;
-  grade and release the `files` assignment for stu1, then re-record.
+- ~~**Requests to the vektra-moodle session**: graded recordings for match / gapselect / multianswer / ddwtos;
+  grade and release the `files` assignment for stu1, then re-record.~~ **Covered 2026-11-07**: vektra-moodle#43
+  seeded both, and the 4.3/5.2 recordings were redone on `chore/assess-rerecord-ws` (details in plan 6's notes).
 - CodeRabbit's docstring-coverage pre-merge check (40% vs 80%) was not addressed in either runner PR.
 
 ## Findings worth knowing

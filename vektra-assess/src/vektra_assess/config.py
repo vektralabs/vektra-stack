@@ -11,6 +11,7 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -503,12 +504,33 @@ class VektraAssessSettings(BaseSettings):
 
     @field_validator("ui_origin", mode="before")
     @classmethod
-    def _ui_origin_is_bare(cls, value: Any) -> Any:
-        if value in (None, ""):
-            return None
+    def _ui_origin_blank_is_unset(cls, value: Any) -> Any:
+        return None if value in (None, "") else str(value).strip()
+
+    @model_validator(mode="after")
+    def _ui_origin_is_bare(self) -> Self:
+        """The UI origin, normalised (``ui.origins.bare_origin``). Malformed: refused while
+        assess is enabled; while it is disabled only a warning, the value kept as given and
+        never used (a dormant feature's setting never stops the API from starting)."""
+        if not self.ui_origin:
+            return self
         from vektra_assess.ui.origins import bare_origin
 
-        return bare_origin(str(value))
+        try:
+            # the settings are frozen: the normalised value replaces the raw one at load only
+            object.__setattr__(self, "ui_origin", bare_origin(self.ui_origin))
+        except ValueError as exc:
+            if self.enabled:
+                raise ValueError(
+                    f"VEKTRA_ASSESS_UI_ORIGIN is not a bare http(s) origin: {exc}"
+                ) from exc
+            warnings.warn(
+                "VEKTRA_ASSESS_UI_ORIGIN is not a bare http(s) origin; ignored while "
+                "VEKTRA_ASSESS_ENABLED=false, refused once it is enabled",
+                UserWarning,
+                stacklevel=2,
+            )
+        return self
 
     retry_rpm: int = Field(
         6,

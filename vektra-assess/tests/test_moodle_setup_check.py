@@ -407,9 +407,17 @@ async def test_ui_origin_item(branch: str) -> None:
         ),
         ("https://chat.vektra-ui.test", "https://chat2.other.test"): ("OK", None),
     }
-    # a malformed UI origin never reaches the item: the settings refuse it at load (plan 9)
+    # with assess enabled the settings refuse a malformed UI origin at load (plan 9); disabled
+    # they only warn and keep it, and the item then reports it (review #7)
     with pytest.raises(ValueError):
         settings(VEKTRA_ASSESS_UI_ORIGIN="not-a-url")
+    with pytest.warns(UserWarning):
+        dormant = settings(
+            VEKTRA_ASSESS_ENABLED="false", VEKTRA_ASSESS_UI_ORIGIN="not-a-url"
+        )
+    _r, items, _o = await good(branch, cfg=dormant)
+    assert items["ui_not_same_origin"] == ("UNVERIFIABLE", "origin_invalid")
+    assert items["ui_origin_distinct"] == ("MISSING", "ui_origin_invalid")
     # the API origin that makes the second case is the UI's own site
     for (ui, api), want in cases.items():
         env = {"VEKTRA_ASSESS_UI_ORIGIN": ui, "VEKTRA_ASSESS_API_PUBLIC_ORIGIN": api}

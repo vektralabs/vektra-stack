@@ -556,8 +556,22 @@ def test_the_ui_origin_setting_is_a_bare_origin(
 
     from vektra_assess.config import VektraAssessSettings
 
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", bad)
     with pytest.raises(ValidationError):
         VektraAssessSettings()
     monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "HTTPS://UI.Example:8443/")
     assert VektraAssessSettings().ui_origin == "https://ui.example:8443"
+
+
+def test_a_malformed_ui_origin_only_warns_while_assess_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review #7: a dormant feature's setting never stops the API from starting."""
+    from vektra_assess.config import VektraAssessSettings
+
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "false")
+    monkeypatch.setenv("VEKTRA_ASSESS_UI_ORIGIN", "https://ui.example/path")
+    with pytest.warns(UserWarning, match="VEKTRA_ASSESS_UI_ORIGIN"):
+        loaded = VektraAssessSettings()
+    assert loaded.ui_origin == "https://ui.example/path"  # kept as given, never used

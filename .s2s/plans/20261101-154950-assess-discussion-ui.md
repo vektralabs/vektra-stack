@@ -350,3 +350,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
     that a later change to `bare_origin` changes what a fresh upgrade writes, which is the
     intended behaviour for a normalisation. Test: `vektra-assess/tests/test_migration_0033.py`
     (0032 -> 0033 with underscore, IPv6, credentials, case and default-port rows).
+  - #7 `VEKTRA_ASSESS_UI_ORIGIN` is normalised by a model validator: malformed is refused only
+    with `VEKTRA_ASSESS_ENABLED=true`; disabled, a `UserWarning` and the value is kept as given
+    (never used). The setup check case `origin_invalid` (`ui_not_same_origin`) is restored on a
+    dormant configuration, and `ui_origin_distinct` reports it as `ui_origin_invalid`.

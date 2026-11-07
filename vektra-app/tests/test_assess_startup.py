@@ -133,6 +133,25 @@ async def test_disabled_api_with_kek_env_refuses(
         await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_the_api_refuses_the_smtp_account(
+    secrets_dir: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    """ARCH-071 / plan 10b: the SMTP account is the worker's; the API refuses to start with
+    it mounted or named in its environment, assess enabled or not."""
+    if enabled:
+        _api_keys(secrets_dir)
+        monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    _write_keyring(secrets_dir, "assess_smtp")
+    with pytest.raises(StartupValidationError, match="assess_smtp: forbidden for api"):
+        await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
+    (secrets_dir / "assess_smtp").chmod(0o600)
+    (secrets_dir / "assess_smtp").unlink()
+    monkeypatch.setenv("VEKTRA_ASSESS_SMTP_FILE", "/run/secrets/assess_smtp")
+    with pytest.raises(StartupValidationError, match="assess_smtp: forbidden for api"):
+        await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
+
+
 async def test_disabled_clean_api_passes(secrets_dir: Path) -> None:
     app = _state_app()
     await assess_wiring.step_12_assess_check(app, MAIN_DSN)  # type: ignore[arg-type]

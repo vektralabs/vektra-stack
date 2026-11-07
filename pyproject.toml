@@ -309,6 +309,14 @@ type = "forbidden"
 source_modules = ["vektra_assess.api", "vektra_app.main"]
 forbidden_modules = ["vektra_assess.worker"]
 
+# (i) the SMTP client, the delivery job and aiosmtplib stay out of the API process (plan
+# assess-transcript-delivery 10b, ARCH-071): the API holds no SMTP account and cannot send mail
+[[tool.importlinter.contracts]]
+name = "the API process never imports the SMTP client or aiosmtplib"
+type = "forbidden"
+source_modules = ["vektra_assess.api", "vektra_app.main", "vektra_app.assess_wiring"]
+forbidden_modules = ["vektra_assess.delivery.smtp", "vektra_assess.delivery.handler", "vektra_assess.delivery.probe", "aiosmtplib"]
+
 # (g) the API entry never reaches the parser entry: parsing happens in the sidecar only
 [[tool.importlinter.contracts]]
 name = "vektra_app.main must not import the parser entry"

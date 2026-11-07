@@ -94,6 +94,19 @@ services:
       VEKTRA_ASSESS_ADMISSION_K: ${VEKTRA_ASSESS_ADMISSION_K:-10}
       VEKTRA_ASSESS_RENDER_FRESH_S: ${VEKTRA_ASSESS_RENDER_FRESH_S:-300}
       VEKTRA_ASSESS_REPLY_GRACE_S: ${VEKTRA_ASSESS_REPLY_GRACE_S:-60}
+      # transcript delivery (plan transcript-delivery 10b): the relay and the recipient domain
+      # allowlist; the account is the assess_smtp secret, never an environment variable. Empty
+      # host: delivery is not bound and the worker refuses to start (unless the dev override).
+      VEKTRA_ASSESS_SMTP_HOST: ${VEKTRA_ASSESS_SMTP_HOST:-}
+      VEKTRA_ASSESS_SMTP_PORT: ${VEKTRA_ASSESS_SMTP_PORT:-587}
+      VEKTRA_ASSESS_SMTP_TLS_MODE: ${VEKTRA_ASSESS_SMTP_TLS_MODE:-starttls}
+      VEKTRA_ASSESS_SMTP_FROM: ${VEKTRA_ASSESS_SMTP_FROM:-}
+      VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS: ${VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS:-2}
+      VEKTRA_ASSESS_SMTP_TIMEOUT_S: ${VEKTRA_ASSESS_SMTP_TIMEOUT_S:-30}
+      VEKTRA_ASSESS_SMTP_RETRY_SCHEDULE: ${VEKTRA_ASSESS_SMTP_RETRY_SCHEDULE:-1m,5m,15m,1h}
+      VEKTRA_ASSESS_SMTP_RETRY_WINDOW_HOURS: ${VEKTRA_ASSESS_SMTP_RETRY_WINDOW_HOURS:-72}
+      VEKTRA_ASSESS_MESSAGE_ID_DOMAIN: ${VEKTRA_ASSESS_MESSAGE_ID_DOMAIN:-}
+      VEKTRA_ASSESS_RECIPIENT_DOMAINS: ${VEKTRA_ASSESS_RECIPIENT_DOMAINS:-}
     secrets:
       - { source: assess_handoff_public, <<: *secret }
       - { source: assess_transcript_kek, <<: *secret }

@@ -84,6 +84,24 @@ def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:
         )
 
 
+def assert_smtp_configured(settings: Any) -> None:
+    """Transcripts are delivered by the worker's SMTP (REQ-075): without a relay and a From
+    address the delivery slots stay unbound, so the worker refuses to start, naming the
+    settings, unless the development override lets it run with unbound slots."""
+    if settings.worker_allow_unbound or (settings.smtp_host and settings.smtp_from):
+        return
+    raise StartupValidationError(
+        step=STEP,
+        detail="VEKTRA_ASSESS_SMTP_HOST and VEKTRA_ASSESS_SMTP_FROM must be set: transcripts "
+        "are delivered by the worker's SMTP (REQ-075)",
+        remediation=(
+            "Set the relay host and the From address (and the assess_smtp secret with the "
+            "account), or for development only VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true with "
+            "VEKTRA_ENV=development."
+        ),
+    )
+
+
 def make_engine(url: str, pool_size: int, command_timeout_s: float = 30.0) -> Any:
     """The worker's single pool: it serves the job SQL and the handlers' transactions.
 
@@ -196,6 +214,7 @@ async def _checks() -> Checked:
     from vektra_core.providers.litellm_provider import LitellmProvider  # noqa: F401
 
     assert_import_ceiling()
+    assert_smtp_configured(settings)
 
     engine = make_engine(
         worker_url, settings.worker_pool_size, settings.worker_db_command_timeout_s
@@ -305,6 +324,102 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
             checked.keys["assess_kek"], settings.outage_timeout_s
         ),
     }
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryParts:
+    handlers: Mapping[Any, Any]
+    ticks: Mapping[str, Any]
+
+
+def smtp_config(settings: Any, credentials: Any) -> Any:
+    """The relay settings plus the worker-only ``assess_smtp`` account ({} = no AUTH)."""
+    from vektra_assess.delivery.smtp import SmtpConfig
+
+    data = dict(getattr(credentials, "data", {}) or {})
+    username, password = data.get("username"), data.get("password")
+    if (username is None) != (password is None) or not all(
+        v is None or (isinstance(v, str) and v) for v in (username, password)
+    ):
+        raise StartupValidationError(
+            step=STEP,
+            detail="assess_smtp must hold both 'username' and 'password' (strings) or neither",
+            remediation='Write {"username": "...", "password": "..."} (or {} for a relay '
+            "that takes no AUTH) into the assess_smtp secret.",
+        )
+    return SmtpConfig(
+        host=str(settings.smtp_host),
+        port=settings.smtp_port,
+        sender=str(settings.smtp_from),
+        tls_mode=settings.smtp_tls_mode,
+        username=username,
+        password=password,
+        timeout_s=settings.smtp_timeout_s,
+        ca_file=settings.smtp_ca_file,
+        max_connections=settings.smtp_max_connections,
+    )
+
+
+def _delivery_parts(checked: Checked) -> DeliveryParts:
+    """The ``transcript_deliver`` handler and the ``delivery_retry`` / ``smtp_probe`` ticks.
+
+    Bound only with the relay configured and the worker keys loaded; otherwise nothing is bound
+    and ``assert_all_bound`` (or the startup check above) refuses to run without the development
+    override. One ``SmtpSender`` serves the handler and the probe: one connection cap.
+    """
+    settings = checked.settings
+    needed = ("assess_transcript_kek", "assess_teacher_config_private", "assess_smtp")
+    if not (settings.smtp_host and settings.smtp_from) or not all(
+        k in checked.keys for k in needed
+    ):
+        return DeliveryParts({}, {})
+    from datetime import timedelta
+
+    from vektra_assess.delivery.backoff import parse_schedule
+    from vektra_assess.delivery.handler import (
+        DeliveryDeps,
+        delivery_retry_tick,
+        make_deliver_handler,
+    )
+    from vektra_assess.delivery.probe import run_probe
+    from vektra_assess.delivery.recipients import ConfigRecipients, parse_domains
+    from vektra_assess.delivery.smtp import SmtpSender
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.worker.policy import load_policy
+
+    sender = SmtpSender(smtp_config(settings, checked.keys["assess_smtp"]))
+    lease = load_policy(os.environ).kinds[JobKind.TRANSCRIPT_DELIVER].lease_s
+    domains = parse_domains(settings.recipient_domains)
+    if not domains:
+        log.warning(
+            "assess_recipient_domains_empty", reason_code="every_address_refused"
+        )
+    deps = DeliveryDeps(
+        transcript_kek=checked.keys["assess_transcript_kek"],
+        recipients=ConfigRecipients(checked.keys["assess_teacher_config_private"]),
+        sender=sender,
+        sender_address=str(settings.smtp_from),
+        message_id_domain=settings.message_id_domain
+        or str(settings.smtp_from).rpartition("@")[2],
+        domains=domains,
+        schedule=parse_schedule(settings.smtp_retry_schedule),
+        window=timedelta(hours=settings.smtp_retry_window_hours),
+        stale_after=timedelta(seconds=lease),
+    )
+    engine = checked.engine
+
+    async def delivery_retry() -> None:
+        await delivery_retry_tick(
+            engine.connect, stale_after=deps.stale_after, window=deps.window
+        )
+
+    async def smtp_probe() -> None:
+        await run_probe(sender, engine.connect)
+
+    return DeliveryParts(
+        {JobKind.TRANSCRIPT_DELIVER: make_deliver_handler(deps)},
+        {"delivery_retry": delivery_retry, "smtp_probe": smtp_probe},
+    )
 
 
 def _session_ticks(checked: Checked) -> dict[str, Any]:
@@ -442,8 +557,10 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
         await reap_exhausted(acquire_raw, audit)
 
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
+    delivery = _delivery_parts(checked)
     extra = bindings or Bindings(
-        handlers=_session_handlers(checked, audit), ticks=_session_ticks(checked)
+        handlers={**_session_handlers(checked, audit), **delivery.handlers},
+        ticks={**_session_ticks(checked), **delivery.ticks},
     )
     slots = build_slots(
         policy,
@@ -572,6 +689,8 @@ def check_imports() -> None:
     importlib.import_module(
         "vektra_core.providers.litellm_provider"
     )  # the LLM provider's cost
+    for name in ("handler", "probe", "smtp"):  # plan transcript-delivery 10b
+        importlib.import_module(f"vektra_assess.delivery.{name}")
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
         "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",

@@ -668,6 +668,91 @@ class VektraAssessSettings(BaseSettings):
             "against; older or absent -> 403 and a refresh is queued (fail closed)."
         ),
     )
+    # --- transcript delivery by SMTP (plan assess-transcript-delivery 10b; worker only) -------
+    # The account is the worker-only secret ``assess_smtp`` ({"username", "password"}, ARCH-071
+    # key matrix: the API refuses to start when it is mounted or named in its environment).
+    smtp_host: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_SMTP_HOST",
+        description="SMTP relay host of the transcript emails (worker only). Unset: delivery is not bound and the worker refuses to start unless VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND is set (development).",
+    )
+    smtp_port: int = Field(
+        587,
+        ge=1,
+        le=65535,
+        alias="VEKTRA_ASSESS_SMTP_PORT",
+        description="Relay port: 587 with STARTTLS, 465 with implicit TLS.",
+    )
+    smtp_tls_mode: Literal["starttls", "implicit"] = Field(
+        "starttls",
+        alias="VEKTRA_ASSESS_SMTP_TLS_MODE",
+        description="'starttls' (STARTTLS required: a relay that does not offer it gets nothing) or 'implicit' (TLS from the first byte). There is no plaintext mode.",
+    )
+    smtp_from: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_SMTP_FROM",
+        description="From address (and envelope sender) of the transcript emails.",
+    )
+    smtp_ca_file: Path | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_SMTP_CA_FILE",
+        description="CA bundle that verifies the relay's certificate (an on-prem relay with its own CA); the system store when unset. Certificates are always verified.",
+    )
+    smtp_max_connections: int = Field(
+        2,
+        ge=1,
+        le=20,
+        alias="VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS",
+        description="Concurrent sessions to the relay per worker.",
+    )
+    smtp_timeout_s: float = Field(
+        30.0,
+        ge=1,
+        le=60,
+        alias="VEKTRA_ASSESS_SMTP_TIMEOUT_S",
+        description="Hard timeout of one send (connect, TLS, AUTH, DATA) or one probe.",
+    )
+    smtp_retry_schedule: str = Field(
+        "1m,5m,15m,1h",
+        alias="VEKTRA_ASSESS_SMTP_RETRY_SCHEDULE",
+        description="Waits after the 1st, 2nd, ... failed attempt (s, m, h); the last one repeats until the window closes.",
+    )
+    smtp_retry_window_hours: int = Field(
+        72,
+        ge=1,
+        le=168,
+        alias="VEKTRA_ASSESS_SMTP_RETRY_WINDOW_HOURS",
+        description="Hours a delivery row is retried (from its creation) before it is FAILED (REQ-075: 24 to 72 h proposed).",
+    )
+    message_id_domain: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_MESSAGE_ID_DOMAIN",
+        description="Right-hand side of the deterministic Message-ID; the domain of VEKTRA_ASSESS_SMTP_FROM when unset.",
+    )
+    recipient_domains: str = Field(
+        "",
+        alias="VEKTRA_ASSESS_RECIPIENT_DOMAINS",
+        description="Comma list of the domains a transcript may be mailed to (exact match, REQ-082 as amended). Empty refuses every address: the delivery row is FAILED (domain_not_allowed) with an alert. The plugin validates the teacher's form against the same list.",
+    )
+
+    @field_validator("smtp_retry_schedule")
+    @classmethod
+    def _valid_schedule(cls, value: str) -> str:
+        from vektra_assess.delivery.backoff import parse_schedule
+
+        parse_schedule(value)  # raises ValueError: refused at startup, never replaced
+        return value
+
+    @field_validator("smtp_host", "smtp_from", "message_id_domain", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("smtp_ca_file", mode="before")
+    @classmethod
+    def _blank_path_is_unset(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
+
     llm_allow_unactivated: bool = Field(
         False,
         alias="VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED",

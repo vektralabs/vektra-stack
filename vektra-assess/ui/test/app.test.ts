@@ -603,3 +603,34 @@ describe("the flag dialog at the close (4501067248)", () => {
     expect(a.flagDialog.dialog.hasAttribute("open")).toBe(false);
   });
 });
+
+describe("409 on a session read (4501070018, 4501067255)", () => {
+  const conflict = (code: string) =>
+    Response.json({ detail: { error: { code, remediation: "r" } } }, { status: 409 });
+
+  it("a conflict that is not the close leaves the session open", async () => {
+    const { a, priv, pending, flush } = harness();
+    const read = (a as unknown as { refresh: () => Promise<unknown> }).refresh.call(a);
+    await flush();
+    pending[0].resolve(conflict("ERR-ASSESS-011"));
+    await read;
+    expect(priv.state.name).toBe("active");
+  });
+
+  it("the close (ERR-ASSESS-009) closes, and a later closed event names the reason", async () => {
+    const posted: { type: string; reason?: string }[] = [];
+    const { a, priv, pending, flush } = harness();
+    (a as unknown as { bridge: { send: (m: never) => void } }).bridge.send = (m) => posted.push(m);
+    const read = (a as unknown as { refresh: () => Promise<unknown> }).refresh.call(a);
+    await flush();
+    pending[0].resolve(conflict("ERR-ASSESS-009"));
+    await read;
+    expect(priv.state).toEqual({ name: "closed", reason: "unknown" });
+    await priv.onEvent({ event: "closed", data: '{"close_reason":"budget_exhausted"}' });
+    expect(priv.state).toEqual({ name: "closed", reason: "budget_exhausted" });
+    expect(posted.filter((m) => m.type === "vektra-assess-closed").map((m) => m.reason)).toEqual([
+      "unknown",
+      "budget_exhausted",
+    ]);
+  });
+});

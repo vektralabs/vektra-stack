@@ -25,6 +25,16 @@ interface SessionView {
   token?: string;
 }
 
+/** The error code of an error envelope (``{"error": ...}`` or ``{"detail": {"error": ...}}``). */
+async function errorCode(r: Response): Promise<string | null> {
+  try {
+    const body = (await r.json()) as { error?: { code?: string }; detail?: { error?: { code?: string } } };
+    return (body.error ?? body.detail?.error)?.code ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export class App {
   private state: UiState = INITIAL;
   private token: string | null = null; // the session (or pre-session) token, memory only
@@ -198,7 +208,9 @@ export class App {
         cache: "no-store",
       });
       if (r.status === 409) {
-        this.dispatch({ type: "closed", reason: null });
+        // only ERR-ASSESS-009 is the close; another conflict (material being re-sealed, a
+        // state the read does not allow) leaves the session open (CodeRabbit 4501070018)
+        if ((await errorCode(r)) === "ERR-ASSESS-009") this.dispatch({ type: "closed", reason: null });
         return null;
       }
       if (!r.ok) return null;

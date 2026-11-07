@@ -75,3 +75,14 @@ describe("reduce", () => {
     expect(reduce(res, { type: "handoff", mode: "start" })).toBe(res);
   });
 });
+
+describe("the close reason (CodeRabbit 4501067255)", () => {
+  it("an unknown close (a 409) takes the reason a later closed event carries, once", () => {
+    let s = reduce({ name: "active" }, { type: "closed", reason: null });
+    expect(s).toEqual({ name: "closed", reason: "unknown" });
+    s = reduce(s, { type: "closed", reason: "budget_exhausted" });
+    expect(s).toEqual({ name: "closed", reason: "budget_exhausted" });
+    // a known reason is final
+    expect(reduce(s, { type: "closed", reason: "finished" })).toBe(s);
+  });
+});

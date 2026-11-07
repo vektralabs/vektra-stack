@@ -467,3 +467,7 @@ Firefox, VoiceOver + Safari) with a recorded checklist, because no automated too
   - 4501067245 The download request keeps its timer and the token's arrival cancels it, so an
     earlier request's deadline never fails a later one.
   - 4501067248 The close withdraws an open flag or Fine confirmation before the closing screen.
+  - 4501070018, 4501067255 A 409 on a session read closes the UI only for ERR-ASSESS-009 (the
+    close); another conflict (ERR-ASSESS-011) leaves it open. A close learnt without its reason
+    takes the reason of the closed event that follows (reducer), and the parent is told again
+    with it.

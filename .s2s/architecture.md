@@ -26,6 +26,7 @@
 11. [Risks and technical debt](#11-risks-and-technical-debt)
 12. [Glossary](#12-glossary)
 A. [Traceability matrix](#appendix-a-traceability-matrix)
+B. [Assessment discussion chatbot](#appendix-b-assessment-discussion-chatbot-feature-architecture)
 
 ---
 
@@ -1880,6 +1881,12 @@ See ADRs in `.s2s/decisions/`:
 | [ADR-0020](decisions/ADR-0020-prompt-template-architecture.md) | Composable Jinja2 prompt templates | accepted |
 | [ADR-0021](decisions/ADR-0021-retrieval-quality-controls.md) | Retrieval quality controls in QueryPipeline | accepted |
 | [ADR-0022](decisions/ADR-0022-orm-sqlalchemy-async.md) | SQLAlchemy 2.0 async with asyncpg for ORM | accepted |
+| [ADR-0027](decisions/ADR-0027-assessment-discussion-as-a-top-level-vektra-assess.md) | Assessment discussion as a top-level vektra_assess module with a Vektra-authoritative split and a thin Moodle local plugin | accepted |
+| [ADR-0028](decisions/ADR-0028-assess-trust-domains-and-deployment-topology-asses.md) | Assess trust domains and deployment topology: 'assess' Compose profile, worker as sole WS/SMTP holder with no listener, network-less parser sidecar, Postgres-only API to worker channel (addendum to ADR-0004) | accepted |
+| [ADR-0029](decisions/ADR-0029-postgres-native-leased-job-loop-for-assess-with-db.md) | Postgres-native leased job loop for assess with DB-enforced lifecycle invariants and transactional outbox (alongside ADR-0006) | accepted |
+| [ADR-0030](decisions/ADR-0030-discussion-token-contract-and-ui-embedding-separat.md) | Discussion token contract and UI embedding: separate key and aud, site-bound scopes, positive login-as, epoch revocation, transcript download token, cross-origin iframe with fetch streaming | accepted |
+| [ADR-0031](decisions/ADR-0031-envelope-encryption-with-live-session-key-hand-off.md) | Envelope encryption with live-session key hand-off and crypto-shredding for assess data | accepted |
+| [ADR-0032](decisions/ADR-0032-llm-context-boundary-capture-time-minimisation-typ.md) | LLM context boundary: capture-time minimisation, typed ContextBundle, direct DiscussionTurnRunner outside QueryPipeline, allowlist retrieval locked by default | accepted |
 
 ---
 
@@ -2236,3 +2243,984 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 *Version 1.10 - OQ-018/OQ-019 resolution: ARCH-062 (admin UI server-side rendering, ADR-0024), ARCH-063 (learn chatbot widget, ADR-0025), ARCH-064 (Phase 2 hardware target 8GB/4CPU). Glossary: HTMX added. Deferred table: 3 entries added.*
 *Version 2.0 - Phase 2 delivery annotations: all Phase 2 features marked as implemented (v0.2.0). Component table expanded with vektra-analytics and vektra-learn. Protocol implementations updated: QdrantVectorStoreProvider, UnstructuredExtractor, DualStrategyChunking, AdvancedQueryPipeline, FastEmbedBM25Provider, WebhookEventEmitter. LogEventEmitter was originally scoped for Phase 2 but never built; the webhook path subsumed the use case.*
 *Version 2.1 - Protocol count corrected from 9 to 10: KeyStoreProvider (`vektra_shared/auth.py`, registry slot `key_store`) has existed since the vektra_shared foundation commit and was never listed. Section 8.3 gains its subsection; the quality table, the component diagram, section 8.3's opening and the glossary are updated. EmbeddingProvider's Phase 2 implementation (TEIEmbeddingProvider, FEAT-024) named in CONTEXT.md.*
+
+---
+
+## Appendix B: Assessment discussion chatbot (feature architecture)
+
+*Merged from design session `20261101-143802-design-assessment-discussion-chatbot` (2026-11-01, strategy: debate, 3 rounds; panel: software-architect, security-champion, technical-lead, devops-engineer). Requirements: `.s2s/requirements.md` REQ-067..REQ-103, BR-006..BR-016, NFR-014..NFR-023. Decision IDs renumbered for merge (session ARCH-001..015 → ARCH-065..079; design OQ-001..007 → OQ-028..034). ADRs: ADR-0027..ADR-0032.*
+
+### B.1 Summary
+
+CLOSING (confidence: SA 0.80, SEC 0.80, TL 0.70, DevOps 0.70; the observer joined the majority).
+
+CONF-007 is resolved unanimously as OPTION C. Both Pro speakers moved from A, accepting SEC's
+blast-radius point, and SEC accepted the Pro latency and availability case against B. DevOps
+showed that B degenerates into C anyway, because the API must still decrypt in order to relay.
+- Turns execute in the API.
+- Each session has its own DEK, wrapped by a KEK that only the worker holds.
+- At commit, a persisted hand-off row is written, readable only through a state- and
+  epoch-checked SECURITY DEFINER function.
+- The hand-off row is deleted in the CLOSED transaction, backed by a trigger.
+- Purge is crypto-shredding.
+- App-side AES-256-GCM is used instead of pgcrypto SQL keys (4/4).
+
+Two variants differed on how the DEK is wrapped for the API. The facilitator chose the 3/4
+majority, a sealed box to the API's X25519 public key, combined with TL/DevOps's point that the
+row persists. API restarts and resumes therefore re-read the row without the worker.
+
+Every COMP, INT and in_progress ARCH item was ratified with ACCEPT or a minimum AMEND, and the
+amendments are folded in below. The closing round surfaced real defects, now fixed:
+- EventSource cannot send an Authorization header, so streaming uses fetch (SA).
+- A closed session had no download credential, so a single-use transcript download token is
+  added (SEC).
+- The Moodle Privacy provider had no erasure path (SEC). Raised to the DPO with a default.
+- MathML and SVG are XSS channels in the transcript, so the template allowlist is tightened
+  (SEC, SA).
+- WS redirects could leak the token, so redirects are disabled (SEC).
+- API liveness was tied to the worker, so readiness and liveness are split (DevOps).
+- "Pure Python only" contradicted cryptography and lxml, so the rule becomes "passes the BUG-027
+  baseline" (SEC, TL).
+
+External decisions remain open with design defaults: OQ-029 (SMTP reading, product/QA), OQ-031
+(spike), OQ-032 (hardware, ops), plus two new ones (privacy erasure, DPO; teacher-config
+re-display, product). None blocks the architecture.
+
+PLAN-PHASE PRIORITIES (the residual risks the speakers named, in order):
+1. The OQ-025 WS spike on 4.3 and 5.2, paired with a capture-time BR-011/NFR-015 canary suite on
+   the exact LLM request bytes (SA, SEC).
+2. A walking-skeleton burst test: 40 Starts with 10-file submissions on the target LLM (TL).
+3. A job-loop and key-lifecycle chaos suite across all six close reasons plus rollback, verified
+   by row counts (DevOps, SEC, TL).
+Revised effort: backend 10-14 dev-weeks, plugin 3-5.
+
+### B.2 Architectural decisions
+
+#### ARCH-065: Vektra-authoritative split with a thin, non-authoritative Moodle local_ plugin
+
+**Context**:
+
+REQ-067 says nothing rendered by Moodle is authoritative. BR-006(d) needs cohort-wide override
+reads, which are invisible in the student's own session. REQ-070 and REQ-086 need
+client-less, sub-minute scheduling, which Moodle cron cannot guarantee. REQ-075 requires
+Vektra's own SMTP, and REQ-079 a dedicated service account.
+
+**Decision**:
+
+VEKTRA owns: the session state machine; START and IN-SESSION gates; attempt selection
+(BR-012); the WS client and setup check; the snapshot and context assembly; the LLM path with
+the post-check and safeguards; timer, outage and sweeper; transcript rendering and hash
+verification; outbox and SMTP delivery; audit; purge.
+The new local_ plugin (local_vektradiscuss) lives in its own public repository,
+vektralabs/vektra-moodle-discuss (GPL-3.0), not in vektra-moodle, and is installed and released
+independently of block_vektra. It has its own HTTP client (no code dependency on
+block_vektra's vektra_client, whose helpers are private and whose paths are hard-coded); it
+declares block_vektra as a Moodle dependency only to reuse its apiurl/publicurl settings.
+*(Amended 2026-11-01, coordinator decision.)* It does only the following:
+- injects the button and pre-session screen through page hooks, rendered from a Vektra state
+  endpoint (advisory; gates are re-evaluated at Start);
+- requests tokens server-side (sesskey, require_login, login-as check);
+- provides the settings section (coursemodule_standard_elements / edit_post_actions), which
+  forwards config to Vektra (BR-013 is validated in Vektra);
+- provides teacher pages that call Vektra APIs;
+- provides the transcript download path (headers per BR-016);
+- implements the Privacy API provider, which pulls server-to-server.
+The plugin holds no session state, caches no eligibility, and renders nothing or a generic
+unavailable notice on any non-2xx response. Moodle ids sent by the plugin are always
+re-resolved by Vektra (REQ-095).
+
+**Rationale**:
+
+Converged 4/4 in the opening statements. All three P1 alternatives contradict accepted requirements.
+
+**Options considered**:
+
+- **Vektra-authoritative, thin plugin** — pros: gates and state implemented once in Python, constant across 4.3/5.2; DB-level invariants; client-less scheduling; cons: heavy Moodle WS consumer; a WS outage blocks Starts (fail closed, user-visible); login-as remains plugin-asserted
+- **Moodle-side gate evaluation / state** — pros: no WS dependency for gate inputs; cons: violates REQ-067; cannot read other students' overrides in the student context; duplicate PHP logic across two Moodle versions; Moodle cron cannot meet REQ-070/REQ-086
+
+**Consequences**:
+
+- (+) single decision point and test surface
+- (+) fail-closed defaults where OQ-025 leaves inputs unreadable
+- (−) Vektra depends on Moodle WS availability
+- (−) the plugin still needs a two-version hook matrix
+- (−) most expensive decision to reverse (SA)
+
+*Related*: REQ-067, REQ-068, REQ-070, REQ-075, REQ-079, REQ-086, REQ-093, BR-006, BR-012, NFR-014, ADR-0003
+
+#### ARCH-066: Process and secret isolation: WS credential only in the assess worker; all untrusted parsing in a network-less, secret-less sidecar
+
+**Context**:
+
+The service-account WS token can read every attempt, override and correct answer on the site.
+Student files (PDF, DOCX, ODT) are untrusted input (REQ-101). In P, both sat in processes
+shared with public widget endpoints and ingest parsers. All four speakers flagged this as a
+dormant capability.
+
+**Decision**:
+
+- The public API process never holds the WS credential, its decryption key or the SMTP
+  credentials. A startup check in the API FAILS if a WS key file is present in its container
+  (dormant-capability guard).
+- Secrets are per-service Docker secret files (/run/secrets/...), never the shared .env and
+  never the DB.
+- The WS-holding process (vektra-assess-worker) exposes NO listening socket. API-to-worker
+  traffic goes only through Postgres. Egress is allowlisted to the registered Moodle host(s),
+  the SMTP relay, the LLM endpoint and Postgres.
+- Postgres role separation: the API role and the worker role each have least-privilege
+  grants. The exact grants depend on CONF-007.
+- The parser sidecar (vektra-assess-parser) has network_mode none, a read-only root, runs as
+  non-root, uses tmpfs with a size cap, has mem/pids/CPU limits and NO secrets. It runs one
+  process per item under rlimits and is killed on timeout. It is reached over a unix socket on
+  a dedicated volume mounted ONLY into the worker (never the API, never the secrets volume).
+- The sidecar parses ALL untrusted input: submission files AND review-HTML-to-text
+  sanitization (TeX/MathML/code/tables preserved, no media fetched).
+- Limits are checked before parsing. XML is parsed with defusedxml, with zip-bomb guards,
+  using pure-Python libraries only.
+- NO degraded in-process parsing mode. A running sidecar is a REQ-079 setup-check
+  prerequisite, and the feature is unavailable without it.
+- The undeployed CMD_TARGET=worker entrypoint (ingest + analytics) is never reused for assess.
+
+**Rationale**:
+
+Converged 4/4 after the rebuttal. SEC's objection to the degraded mode was adopted: an env={} child still shares the filesystem with /run/secrets. Refusing the feature instead of introducing a file status outside the REQ-101 vocabulary is a facilitator decision.
+
+**Options considered**:
+
+- **Separate process holds WS credential + parser sidecar (network none)** — pros: a parser RCE or API-side SSRF cannot reach the grade-book credential; no CAP_SYS_ADMIN needed; same image; cons: one or two extra Compose services; an extra hop in pre-flight latency
+- **P as written (in-process subprocess with unshare, shared worker)** — pros: no extra services; cons: unshare blocked by Docker's default seccomp; subprocess inherits secrets; co-resident with ingest parsers
+
+**Consequences**:
+
+- (+) contains the blast radius of the highest-value secret
+- (+) makes REQ-101 isolation deployable
+- (−) more services on an 8 GB / 4 CPU VM; memory budget needed before K is fixed (OQ-026)
+
+*Related*: REQ-079, REQ-101, NFR-014, CONF-003, CONF-007
+
+#### ARCH-067: Discussion token contract: one format, two binding states; separate key and aud; site-bound narrow scopes; positive login-as; epoch revocation; no v1 preview
+
+**Context**:
+
+Today the plugin mints widget tokens (HS256, shared secret, 1-24 h, no audience) with an
+ADMIN-scope API key. That key can mint tokens for any student and can patch namespace config.
+For discussions this would make a plugin config leak equivalent to impersonating every
+student and forging oral-exam evidence. P3's "reject if loginas flag present" fails open.
+
+**Decision**:
+
+Approved content stands. Additions:
+- TRANSCRIPT DOWNLOAD TOKEN: POST /api/v1/assess/transcripts/{tid}/download-token, minted
+  server-side by the plugin under assess:mint (owner) or assess:teacher (graders).
+  aud=transcript, single-use jti, TTL <= 2 min, bound to tid and sub. Session tokens are never
+  kept alive for downloads.
+- A minimum plugin_version is enforced at mint.
+- Mint-to-Start audit correlation detects tokens not originating from the site's mint key
+  (accepted residual risk: the API is the token issuer).
+
+**Rationale**:
+
+CONF-006 resolved by SEC's concession. The single format keeps the pre-Start single-use property. TL showed that a launch-stage WS check would put WS on the API path.
+
+**Options considered**:
+
+- **Separate key/audience + narrow scopes (adopted direction)** — pros: no cross-audience acceptance by construction; widget key rotation does not kill exam sessions; a plugin leak no longer gives Vektra admin; cons: one more secret with a rotation runbook; coordinated plugin and Vektra release
+- **Reuse the widget mint path, key and admin scope (P3 as written)** — pros: zero new plumbing; cons: admin key becomes the identity root; cross-audience risk; login-as fails open
+
+**Consequences**:
+
+- (+) NFR-014 binding with immediate revocation
+- (+) REQ-084 fail-closed
+- (−) new auth scope in the ADR-0010 layer
+- (−) XSS on the results page still exposes the short-lived token (limited by TTL and binding)
+
+*Related*: REQ-088, REQ-076, NFR-014
+
+#### ARCH-068: DB-enforced lifecycle, async Start, transactional outbox, on a Postgres-native leased job loop
+
+**Context**:
+
+REQ-067 requires exactly one session under concurrent starts. REQ-071 requires that a client
+disconnect never rolls back and that no content leaks before commit. REQ-070 and REQ-086
+require client-less closes and outage exits. REQ-075 requires durable delivery, and NFR-021
+generation within 60 s at p99.
+
+**Decision**:
+
+Round-1 content stands, with these amendments:
+- The Start transaction INSERTS an assess_jobs row and sends NOTIFY (the outbox pattern
+  applied to Start).
+- Jobs are claimed with UPDATE ... lease_until WHERE id IN (SELECT ... FOR UPDATE SKIP
+  LOCKED). Leases are about 2x the handler budget (about 90 s for pre-flight). Handlers are
+  idempotent per session id or per (transcript, recipient).
+- NOTIFY is a wake-up hint only. A 1 s poll fallback plus the periodic ticks are the
+  correctness backstop.
+- Ticks run under pg_try_advisory_lock:
+  * sweeper 10-15 s;
+  * STARTING reaper 15 s, lease about 90 s (NOT the ADR-0006 5-min rule);
+  * outage probe 5-10 s per provider;
+  * enrolment re-check 60 s;
+  * delivery retries by not_before;
+  * gate-input refresh;
+  * daily purge and setup check.
+- On startup, a full reconciliation pass runs before new claims.
+- The API lazily enforces deadline, C cap AND STARTING expiry on every request. Per-turn
+  enrolment is a FRESHNESS check: the turn is rejected if the last enrolment re-check is older
+  than 150 s. No WS call happens on the API path.
+- Liveness: an assess_heartbeat row per tick, exposed through GET /health/assess on the API.
+  Alerts on heartbeat age > 60 s and oldest ready job age > 30 s.
+- Chaos tests (kill -9 mid-pre-flight, mid-generation, mid-SMTP; Postgres restart) are
+  verified by row counts.
+- The API NEVER takes over worker duties in-process.
+- Handlers sit behind a small JobRunner interface, so a later move to arq/Redis (Phase 2) is
+  mechanical.
+
+**Rationale**:
+
+OQ-028 resolved 4/4. Correctness already rests on Postgres, and Redis would add a non-authoritative second store and a dual write.
+
+**Options considered**:
+
+- **DB invariants + async Start + outbox** — pros: exactly-one by constraint; REQ-071 holds by construction; survives worker restarts; fail closed when workers are down; cons: UI needs polling or SSE on state; race tests required
+- **Synchronous Start inside the HTTP request** — pros: simpler UI; cons: disconnect semantics tangled with REQ-071; no isolation from API process load
+
+**Consequences**:
+
+- (+) no new stateful technology
+- (+) REQ-070/REQ-086/NFR-021/REQ-071 met with margin while the worker is up
+- (+) fail closed while it is down
+- (−) hand-rolled loop to own and test (about 5-6 dev-days)
+- (−) side-effect SLAs bounded by one worker's availability
+- (−) LISTEN/NOTIFY and advisory locks need direct Postgres connections (no transaction-mode pgbouncer)
+
+*Related*: REQ-067, REQ-070, REQ-071, REQ-086, NFR-021, OQ-028, ADR-0006, ADR-0004
+
+#### ARCH-069: BR-011 disclosure boundary enforced at snapshot capture and in a single typed assemble_context
+
+> Amended 2026-11-04 (ADR-0032 amendment): on the structured-only path the sidecar extracts, by
+> allowlist, the question text and the student's response from the review HTML; every other block is
+> dropped. See BR-011.
+
+**Context**:
+
+BR-011 and NFR-017: 'a prompt instruction is not a control'. Excluded data must be provably absent from model input, from any later code path, and from preview.
+
+**Decision**:
+
+LAYER 1, capture-time minimisation: with "mostra soluzione" OFF, the WS side neither fetches
+nor stores the following:
+- the solution text;
+- correct answers, marks or feedback hidden by review options;
+- unreleased grades;
+- rubric descriptors that are not visible to students, or whose visibility is unreadable.
+The snapshot stores only the permitted projection, which is safe because it is immutable.
+LAYER 2: one pure function, assemble_context(snapshot, frozen_policy), returns a ContextBundle.
+The discussion LLM adapter accepts ONLY that type, and an import-linter rule forbids any other
+caller.
+VERIFICATION: canary fixtures cover every forbidden field, question type and assignment shape.
+They are checked on the exact request bytes captured at a recording LLMProvider, plus logs,
+QueryTrace, transcripts and the audit store, in CI and in the NFR-023 gate. An "exclusion
+applied" audit event records the excluded-field-set hash, never content.
+
+**Rationale**:
+
+Converged (SA, SEC explicit; TL a fail-closed field allowlist; DevOps a log-canary test).
+
+**Options considered**:
+
+- **Capture-time + single typed assembly** — pros: data never present cannot leak via injection, logs or preview; one verifiable choke point; cons: toggle changes after Start cannot widen the context (consistent with BR-008)
+- **Assembly-time filtering only** — pros: simpler capture; cons: excluded fields persist in the snapshot, a dormant leak
+
+**Consequences**:
+
+- (+) GDPR Art. 25 minimisation
+- (+) NFR-017 verifiable on bytes
+- (−) the canary fixture matrix is a maintained asset (OQ-027 owner)
+
+*Related*: BR-008, BR-011, BR-015, REQ-090, REQ-095, REQ-101, NFR-017, NFR-022, NFR-023, OQ-027
+
+#### ARCH-070: OQ-025 conditionality as a probed per-site/per-release capability matrix (default UNREADABLE)
+
+**Context**:
+
+The gate inputs and the HTML filterability depend on the unfinished WS spike. The design must stay valid whatever the spike result.
+
+**Decision**:
+
+- Typed WS readers return Readable(value) | Unreadable(reason).
+- The REQ-079 setup check probes each reader against seeded fixtures and persists
+  moodle_site_capabilities(site, release from core_webservice_get_site_info, flag,
+  readable|partial|unreadable, evidence hash, checked_at).
+- Flags: quiz_overrides, assign_extensions, assign_cutoff, quiz_grace, attempt_state,
+  per_student_timelimit, review_html_filterable, rubric_display_settings,
+  module_visibility_per_student, assign_user_overrides (added 2026-11-01).
+- **Spike results (OQ-025, 2026-11-01; Moodle 4.3.11+ and 5.2.4+; report: vektra-moodle-discuss `spike/oq025/REPORT.md`)**:
+  * readable on both: assign_cutoff (`mod_assign_get_assignments` with
+    `includenotenrolledcourses=1`), assign_extensions (`mod_assign_get_user_flags`),
+    assign_user_overrides (`mod_assign_get_participant` returns the EFFECTIVE per-student dates),
+    attempt_state (`mod_quiz_get_user_attempts`); per-student review options
+    (`mod_quiz_get_combined_review_options`, readable after close).
+  * quiz_overrides, per_student_timelimit: readable on 5.2 (`mod_quiz_get_overrides`), UNREADABLE
+    on 4.3 (no WS function). On 4.3, REQ-091 is the normal path for quizzes with overrides.
+  * quiz_grace: readable ONLY while the quiz is open for the caller (access-manager gated);
+    the gate-input refresh must capture it before close, else unreadable (REQ-091).
+  * review_html_filterable: NO on both (service-account review HTML contains hidden feedback and
+    the right answer). The BR-011 structured-only path is the normal path.
+  * rubric_display_settings, module_visibility_per_student, login-as cross-check: UNREADABLE on
+    both (no WS surface). Rubric descriptors are therefore excluded (BR-011 fail closed, OQ-035).
+  * Reader rules: a `warnings[]` entry for a requested item, or a caller-relative `null`, maps to
+    Unreadable; release state comes from `gradereport_user_get_grade_items.gradeishidden` and
+    `mod_assign_get_submission_status.gradingstatus`, never from `mod_quiz_get_user_best_grade` or
+    `mod_assign_get_grades` (both return unreleased values); `site_info.userprivateaccesskey` and
+    tokenised file URLs are never logged or stored.
+- Never-probed, partial or unreadable on any close-time flag means NOT_AVAILABLE unless an
+  attested teacher date exists, with gate = max(auto, attested) (REQ-091).
+  review_html_filterable not readable selects the structured-only path (BR-011). Both
+  fallbacks are audited.
+- The check re-runs daily and on any release change. A release change invalidates all flags
+  and blocks Starts until re-probed.
+- The WS client is built first against the 4.3 and 5.2 Docker environments, so spike results
+  arrive as setup-check output.
+
+**Rationale**:
+
+Converged 4/4.
+
+**Options considered**:
+
+- **Probed capability matrix** — pros: spike result becomes data, no redeploy; fail closed after upgrades; cons: fixture seeding per site
+- **Static configuration by operator** — pros: simple; cons: stale flags after an upgrade are a dormant fail-open
+
+**Consequences**:
+
+- (+) REQ-091 and the BR-011 fallback reachable by data
+- (−) if quiz overrides or assignment extensions prove unreadable, REQ-091 becomes the normal path
+
+*Related*: OQ-025, REQ-079, REQ-091, BR-006, BR-007, BR-011, REQ-078
+
+#### ARCH-071: Dedicated encrypted assess stores; no in-memory fallback; stable subject key; separated encryption keys
+
+**Context**:
+
+The existing conversations store falls back to in-memory when VEKTRA_CONVERSATION_KEY is unset (fail open), and has different retention semantics and no turn-hash integrity.
+
+**Decision**:
+
+Round-2 content stands. KEY MATRIX (each key versioned by kid; each process refuses to start if
+it is missing a key it needs or holds one it must not have):
+- Worker only: KEK; WS token(s); SMTP credentials; teacher-config private key.
+- API only: token signing key; X25519 hand-off private key.
+- Both: transcript key (the worker writes; the API reads for download and REQ-093 export).
+  Per-transcript DEKs are preferred so that transcripts can also be crypto-shredded.
+- Per session: the DEK (see the envelope-encryption ARCH).
+- Parser and ingest: none of the above.
+- Teacher config (solution, pasted rubric) is WRITE-ONLY from the API: sealed to the worker's
+  public key, so the API cannot read stored solutions back. The settings form shows "impostata
+  / non impostata, sostituisci?" (product confirmation pending; see the new OQ).
+- Keys are backed up offline, separately from DB dumps, with a restore drill and rotation
+  runbooks (KEK re-wrap job, re-sealing of at most K hand-off rows).
+
+**Rationale**:
+
+Converged 4/4.
+
+**Options considered**:
+
+- **Dedicated tables, fail closed** — pros: integrity hashes; own retention/purge; no silent plaintext or volatile mode; cons: no reuse of conversation code
+- **Reuse the conversations store** — pros: less code; cons: inherits the fail-open fallback and widget semantics
+
+**Consequences**:
+
+- (+) REQ-089 purge verifiable
+- (+) REQ-102 hashes anchored
+- (−) rekeying the subject key later would touch every historical row (decide now)
+
+*Related*: CONF-007, REQ-077, REQ-093, BR-013
+
+#### ARCH-072: Discussion retrieval isolation and RAG activation preconditions
+
+**Context**:
+
+FEAT-026 keeps hidden chunks retrievable and in the prompt. Moodle WS visibility is relative
+to the caller (the service account), not the student. Solution tagging is a denylist, so
+untagged chunks pass. NFR-015 requires exclusion before ranking, evaluated at query time.
+
+**Decision**:
+
+Round-1 mechanism stands (no VectorStoreProvider reference with RAG OFF; separate retrieval
+function with a mandatory per-student cmid allowlist; unbound chunks excluded; FEAT-026 and
+raw_filters forbidden; canaries proved in QueryTrace on pgvector and Qdrant). Amendments:
+- Visibility is read UNCACHED on every RAG turn (TTL 0), per NFR-015's "next query".
+- ACTIVATION (CONF-005): the REQ-077 field ships. A teacher may save RAG ON only if ALL of the
+  following hold:
+  (1) the operator feature flag is ON;
+  (2) the per-student visibility reader is READABLE in the ARCH-070 matrix (OQ-031(1));
+  (3) the canary suite passes on that site's active provider AND active index_version;
+  (4) the target namespace is dedicated, has a cmid binding on every chunk, and contains no
+      FEAT-026 and no unbound chunks.
+- Otherwise BR-013 validation REJECTS the save with a reason. ON is never silently run as OFF.
+- If a precondition later becomes false (new index_version, Moodle release change, failed
+  canary re-run), RAG is disabled for new turns and the change is audited. Canaries re-run on
+  every index_version activation.
+- Shipped and default state: OFF. In practice the pilot runs RAG OFF.
+
+**Rationale**:
+
+CONF-005 resolved 4/4. No scope change, because REQ-077's field and its default OFF are preserved.
+
+**Options considered**:
+
+- **Allowlist per-student visibility** — pros: untagged and legacy chunks excluded by construction; respects ADR-0026; cons: one WS call per RAG turn; depends on per-student availability readability
+- **P7 as written (service-account visibility + solution tag denylist)** — pros: simple; cons: caller-relative visibility and denylist both fail open
+
+**Consequences**:
+
+- (+) NFR-015 verifiable in QueryTrace
+- (−) RAG ON may stay unavailable if per-student visibility proves unreadable
+
+*Related*: REQ-077, NFR-015, BR-013, OQ-031, ADR-0026, CONF-005
+
+#### ARCH-073: Top-level vektra_assess module with stable external names and import-linter contracts
+
+**Context**:
+
+CONF-001. After ARCH-067, the sub-package option reuses nothing it may use. The costly-to-reverse items are the names: a route baked into the deployed plugin, table names under encrypted, hash-anchored data, settings and error codes.
+
+**Decision**:
+
+- A new top-level package vektra_assess, wired only by vektra_app.
+- Names: route /api/v1/assess, tables assess_*, owned revision files in the single root Alembic
+  chain (0009+), settings VEKTRA_ASSESS_*, error codes ERR-ASSESS-*, its own test package.
+- import-linter contracts in CI:
+  (a) vektra_learn and vektra_assess are independent;
+  (b) vektra_assess may import only vektra_shared, the vektra_core public API (LLMProvider,
+      SafeguardHook) and the vektra_analytics public write API;
+  (c) only vektra_assess.worker.* may import vektra_assess.moodle (WS client) and the parser
+      client;
+  (d) only vektra_assess.context may construct ContextBundle.
+- The worker entrypoint must not import sentence_transformers, torch, qdrant_client, vektra_index
+  or vektra_ingest. This is checked by a sys.modules startup assertion plus a CI idle-RSS
+  ceiling test (about 300 MB).
+
+**Rationale**:
+
+Resolved 4/4 (SA and DevOps shifted on the evidence; SEC prefers it).
+
+**Options considered**:
+
+- **Top-level vektra_assess** — pros: stable non-'learn' names from the pilot on; a minimal worker import graph is easier to keep honest; widget shortcuts become import errors; cons: 1-2 days of scaffolding; JWT helpers moved to vektra_shared
+- **vektra_learn.discussion sub-package** — pros: no new top-level package; cons: names embed 'learn'; risk of the learn __init__ pulling the ML stack into the worker
+
+**Consequences**:
+
+- (+) extraction or rename never needed after the pilot
+- (−) a small amount of duplicated plumbing
+
+*Related*: CONF-001, ADR-0003, ADR-0005
+
+#### ARCH-074: Direct DiscussionTurnRunner (not a QueryPipeline), emitting QueryTrace, with an evaluation adapter
+
+**Context**:
+
+CONF-002. QueryPipeline.execute(QueryRequest) -> (QueryResponse, QueryTrace) is question-centred. Carrying a ContextBundle there breaks Liskov (SimpleQueryPipeline would silently run RAG), weakens ARCH-069 to a runtime check, and creates a registrable dormant route from /api/v1/learn/query.
+
+**Decision**:
+
+- vektra_assess.llm.DiscussionTurnRunner provides run(bundle: ContextBundle, turn: StudentTurn)
+  -> (TurnResult, QueryTrace) and run_stream(...). It uses LLMProvider.stream with SafeguardHook
+  pre_query/pre_response and the sentence-buffered REQ-096/REQ-097 post-check.
+  post_retrieval is called only on the RAG-ON branch.
+- It is NOT a QueryPipeline and NOT registered in the ProviderRegistry.
+- It writes an existing-model QueryTrace (pipeline='assess-discussion', retrieval fields
+  explicit, content-free) through the vektra_analytics write API. A 0.5-day spike checks that
+  the QueryTrace retrieval fields are optional; if not, add nullable fields in the root chain,
+  with no new trace type.
+- NFR-015 evidence: the structural absence of a VectorStoreProvider reference, plus a
+  recording VectorStoreProvider and a recording LLMProvider (exact request bytes) in CI and
+  in the NFR-023 gate. The trace's self-reported counts are never the evidence.
+- The NFR-023 harness drives the runner through tests/eval/assess_adapter.py, which builds
+  bundles from seeded snapshots via assemble_context. If a Protocol is wanted later, it is a
+  NEW Protocol in vektra_shared, never the query_pipeline slot.
+
+**Rationale**:
+
+Resolved 4/4 (TL conceded on the real signature; SA conceded the trace).
+
+**Options considered**:
+
+- **Direct typed runner + trace + eval adapter** — pros: ARCH-069 choke point stays static; no dormant registry route; traced and evaluable; cons: one adapter in the eval harness
+- **DiscussionPipeline under QueryPipeline** — pros: harness reuse unchanged; cons: Liskov failure; runtime type check; registrable from /query; or an ADR-0014 change
+
+**Consequences**:
+
+- (+) single typed path, verifiable on bytes
+- (−) possible additive QueryTrace schema change
+
+*Related*: CONF-002, NFR-015, NFR-022, NFR-023, REQ-096, REQ-097, ADR-0014, ADR-0019, ARCH-069
+
+#### ARCH-075: Deployment topology: 'assess' Compose profile adding vektra-assess-worker and vektra-assess-parser, no Redis
+
+**Context**:
+
+OQ-028. The deployed stack is postgres + vektra only, with arq in-process (ADR-0006) and no Redis.
+
+**Decision**:
+
+- Base stack unchanged (ADR-0004 shape, MVP 30-minute criterion unaffected).
+- The 'assess' profile adds two services, built from the SAME image:
+  * vektra-assess-worker: CMD_TARGET=assess-worker; one asyncio process (job loop, ticks, WS
+    client, pre-flight, transcript, delivery, purge, setup check); no ports; limit about
+    512M; secrets per ARCH-066.
+  * vektra-assess-parser: per ARCH-066; limit about 512-768M; a pool of about 3 with
+    per-process RLIMIT_AS.
+- Pre-flight concurrency is capped at K by a per-kind semaphore.
+- Record this in ADR-0027 (an ADR-0004 addendum for the profile) and in a new ADR for the
+  Postgres-native assess job loop, stating that ingest stays on ADR-0006 in-process arq and
+  that the two converge if Phase-2 Redis lands.
+
+**Rationale**:
+
+Resolved 4/4.
+
+**Consequences**:
+
+- (+) only sites enabling the feature pay for it
+- (+) no new technology
+- (−) about 1-1.3 GB of added limits; co-locating Ollama overcommits 8 GB (new OQ)
+
+*Related*: OQ-028, ADR-0004, ADR-0006, ARCH-064, NFR-020, OQ-026
+
+#### ARCH-076: Discussion UI as a Vektra-origin page in a cross-origin iframe on a distinct origin
+
+**Context**:
+
+CONF-004. A bundle in the Moodle DOM shares the results-page origin (teacher-authored HTML, filters, third-party plugins). An XSS there could read the token and rewrite the REQ-098 core sentences.
+
+**Decision**:
+
+Approved content stands. Amendment, fixing a defect: native EventSource cannot send the
+Authorization header. The iframe therefore consumes the event stream with fetch() and a
+ReadableStream, sending the bearer header, with the SSE wire format unchanged. No route ever
+accepts a token from the query string, which is asserted in CI.
+
+**Rationale**:
+
+Resolved (TL, SA, SEC; DevOps no objection).
+
+**Consequences**:
+
+- (+) token, bot output and core sentences are off the Moodle origin
+- (+) no Moodle session lock in the streaming path
+- (−) per-site frame-ancestors configuration
+- (−) a TLS Vektra origin reachable from student browsers is required
+
+*Related*: INT-001, ARCH-067
+
+#### ARCH-077: Assess data model and data flow
+
+**Context**:
+
+The data-flow topic. Entities have been implied across ARCH-067..008 and need consolidating.
+
+**Decision**:
+
+Round-2 entities and flows stand. Amendments:
+- Add assess_session_keys (kek_wrapped, key_version), assess_session_handoff (sealed_dek,
+  epoch; deleted in the CLOSED transaction), assess_transcript_download_tokens (consumed jti),
+  and erasure records.
+- Flow 3 (Turn) runs in the API under the live DEK. Turn chunks are never persisted in
+  plaintext, and there are no chunk-relay tables. Only completed turns plus their hash are
+  persisted. A reply cut off by an API crash is reconciled by the worker into a marked
+  "risposta interrotta" turn.
+- Flow 4: close deletes the hand-off row in the same transaction as the outbox row.
+- Flow 5: purge is crypto-shredding plus row deletion, verified by count. Erasure is per the
+  new privacy OQ.
+- Done jobs are cleaned up by a tick, with autovacuum tuning on assess_jobs.
+
+**Rationale**:
+
+Facilitator consolidation of material converged in rounds 1-2. For ratification at closing.
+
+*Related*: CONF-007, REQ-074, REQ-089, REQ-093
+
+#### ARCH-078: Technology choices for assess
+
+**Decision**:
+
+Round-2 content stands. Amendments:
+- Add cryptography (AES-256-GCM, X25519, HKDF) for app-side envelope encryption.
+- The HTML sanitizer in the sidecar is html5lib (pure Python) by preference; lxml only if it
+  passes the baseline check.
+- httpx with follow_redirects=False pinned by policy.
+- `cryptography` is a hard dependency with no fallback (ARCH-079 amendment, 2026-11-01).
+- The dependency rule changes from "pure Python" to "MUST pass the BUG-027 qemu x86-64
+  baseline CI check in week 1".
+- The postgres service runs with log_statement=none and no parameter logging (defence in
+  depth for any residual pgcrypto use).
+- Revised effort: backend 10-14 dev-weeks, plugin 3-5 dev-weeks.
+
+**Rationale**:
+
+Proposed by the participants across rounds 1-2. For ratification.
+
+*Related*: ARCH-064, CONF-007
+
+#### ARCH-079: Envelope encryption with live-session key hand-off: turns in the API, KEK only in the worker
+
+**Context**:
+
+CONF-007. Turns need the decrypted snapshot. Option A (the API holds the snapshot key) exposes every retained snapshot on an API compromise. Option B (turns in the worker) couples every live turn to the worker and still needs an API key to relay content.
+
+**Decision**:
+
+- Each session gets a random 256-bit DEK, generated by the worker at pre-flight. The snapshot
+  and turns are encrypted under it with application-side AES-256-GCM (the cryptography
+  package). Key material is never passed in SQL.
+- assess_session_keys(session_id, kek_wrapped, key_version) holds the DEK wrapped by the KEK.
+  The KEK lives only in the worker, as a Docker secret.
+- The commit-ACTIVE transaction writes assess_session_handoff(session_id, epoch, sealed_dek,
+  key_version): the DEK sealed to the API's X25519 public key (HPKE-style). The row persists
+  while the session is ACTIVE or OUTAGE. API restarts, rolling deploys and resumes re-read it
+  with no worker involvement.
+- The API role has no SELECT on snapshots, turns, wrapped DEKs or hand-off rows. It reads
+  them only through SECURITY DEFINER functions with a fixed search_path:
+  get_session_material(sid, epoch) returns rows only when the state is ACTIVE or OUTAGE and
+  the epoch matches; assess_append_turn(sid, epoch, ciphertext, hash) enforces epoch and
+  serialization. If the function returns nothing, the turn is refused (fail closed).
+- The hand-off row is DELETED in the same transaction that sets CLOSED, on every close path
+  (the six reasons plus the API lazy close). An AFTER UPDATE trigger on the transition to
+  CLOSED does the same as defence in depth.
+- A CHECK and trigger forbid writing hand-off rows for non-live sessions. No endpoint or job
+  may re-wrap a DEK for a CLOSED session. Resuming a CLOSED session returns 409.
+- The API caches the DEK in memory per (session_id, epoch) and evicts it on epoch bump, on
+  CLOSED, or when TTL > deadline.
+- The worker uses the KEK copy for Part B, transcript generation and purge. Purge deletes
+  kek_wrapped (crypto-shredding, which also covers ciphertext in backups and WAL), then the
+  rows, verified by row count.
+- ~~Fallback: if the cryptography wheels fail the BUG-027 baseline check, use pgcrypto~~
+  Amended 2026-11-01 (coordinator decision): `cryptography` is a HARD dependency. The image is
+  ours and built for the on-prem target, so the wheel ships in it. There is NO pgcrypto path
+  and no weaker crypto path of any kind. If AES-GCM or X25519 is unavailable at startup, the
+  assess API and worker refuse to start (fail closed). Falling back to B is not allowed.
+
+**Rationale**:
+
+Resolved 4/4 in closing. The X25519 sealing variant is the 3/4 majority. The persisted hand-off row follows TL and DevOps.
+
+**Options considered**:
+
+- **A: the API holds the snapshot/turn keys** — pros: simplest; best latency; cons: an API compromise exposes every retained snapshot, including extracted files (GDPR Art. 32/33 scale)
+- **B: turns in the worker, relayed through Postgres** — pros: the API holds only the transcript key; cons: every live turn depends on worker availability; head-of-line blocking with the ticks; the relay still needs an API key, so it degenerates into C; chunk-table churn
+- **C: envelope encryption + live hand-off (chosen)** — pros: latency identical to A; API exposure bounded to live sessions (<= K + OUTAGE); turns survive a worker outage; crypto-shredding purge; cons: about 1.5-2 dev-weeks including tests; the KEK and API sealing-key rotation runbooks; an offline KEK backup and restore drill; an attacker resident in the API still sees sessions that become live
+
+**Consequences**:
+
+- (+) historical snapshots, turns and teacher config are unreachable from the API
+- (+) erasure that holds against backups
+- (−) the SECURITY DEFINER functions become the access-control boundary; grant drift or a missed predicate silently restores A
+- (−) a lost KEK means all snapshots are lost
+
+*Related*: CONF-007, ARCH-066, ARCH-071, BR-015, REQ-089, NFR-018, ADR-0011
+
+### B.3 Building blocks
+
+```mermaid
+flowchart LR
+  COMP001["COMP-001: local_vektradiscuss (Moodle local plugin)"]
+  COMP002["COMP-002: vektra_assess API (in the vektra API process)"]
+  COMP003["COMP-003: vektra-assess-worker (job loop and ticks)"]
+  COMP004["COMP-004: vektra_assess.moodle"]
+  COMP005["COMP-005: vektra_assess.context"]
+  COMP006["COMP-006: vektra_assess.llm"]
+  COMP007["COMP-007: vektra_assess.transcript and vektra_assess.deliv"]
+  COMP008["COMP-008: vektra-assess-parser (sidecar)"]
+```
+
+#### COMP-001: local_vektradiscuss (Moodle local plugin)
+
+**Responsibility**: Amended:
+- The mint AJAX endpoint requires require_login, sesskey and require_capability on the cm
+  context, and sends the positive login-as assertion plus plugin_version.
+- No token or state caching, including Moodle MUC.
+- The download proxy STREAMS bytes only (never the File API or pluginfile) and sets
+  attachment, nosniff, the CSP sandbox and Cache-Control: no-store itself.
+- The Privacy provider implements export plus delete_data_for_user/users via the erasure
+  endpoint, or a DPO-recorded exemption (new OQ).
+
+**Provides**:
+- Moodle page hooks
+- AJAX mint endpoint (sesskey, require_login)
+- Privacy API provider
+
+**Requires**:
+- Assess REST API (assess:mint, assess:teacher, assess:privacy-export, assess:privacy-erase
+  scopes; one narrow, non-inheriting key per scope, never the block_vektra admin key)
+
+**Dependencies**: own HTTP client (no code dependency on block_vektra's client); block_vektra as a
+declared Moodle dependency for the apiurl/publicurl settings only; Moodle 4.3 / 5.2 core APIs
+
+**Repository**: vektralabs/vektra-moodle-discuss (amended 2026-11-01)
+
+**Technology**: PHP, Moodle plugin APIs (hooks 4.3+ or legacy callbacks), Mustache
+
+#### COMP-002: vektra_assess API (in the vektra API process)
+
+**Responsibility**: Amended:
+- Turns execute here under the live DEK (CONF-007), using SECURITY DEFINER access only.
+- Fixed gate order, all before any decrypt: signature/kid/aud -> binding claims -> live row
+  under lock (sid, seq, epoch, owner, site) -> state -> deadline and C -> enrolment freshness.
+- Per-token rate limits on turns and flags.
+- Holds: token signing key, X25519 hand-off key, transcript key, teacher-config PUBLIC key.
+  Startup fails if the KEK, WS or SMTP secrets are present.
+- /health/assess is READINESS for assess routes only (worker heartbeat, parser and SMTP
+  status from worker-written rows). API LIVENESS never depends on the worker.
+- GET /state dedupes render_check per (user, cmid) and is rate-limited per token.
+
+**Provides**:
+- /api/v1/assess REST + SSE
+- GET /api/v1/assess/ui
+
+**Requires**:
+- Postgres (API role)
+- vektra_shared auth/JWT
+- DiscussionTurnRunner (if CONF-007 places turns in the API)
+
+**Dependencies**: vektra_shared; vektra_core public API; vektra_analytics write API
+
+**Technology**: FastAPI, Pydantic v2, SQLAlchemy async
+
+#### COMP-003: vektra-assess-worker (job loop and ticks)
+
+**Responsibility**: Amended:
+- Holds the KEK, WS token(s), SMTP credentials and teacher-config private key. Generates the
+  DEK, writes kek_wrapped and the sealed hand-off at commit, and uses the KEK for Part B,
+  transcripts and purge. Runs no student-turn LLM calls.
+- Separate concurrency pools and hard timeouts per job kind, so WS or SMTP stalls never starve
+  the sweeper or probe.
+- Re-validates every job against authoritative rows and never acts on job args alone.
+- A global Start breaker per site; mint-to-Start correlation.
+- mem_limit 512M (idle-RSS CI ceiling about 300 MB); healthcheck by heartbeat file mtime
+  (< 30 s); restart unless-stopped; stop_grace_period 30 s with lease release on SIGTERM;
+  a single replica for the pilot.
+
+**Provides**:
+- Postgres-mediated job handlers (no network listener)
+
+**Requires**:
+- Moodle WS client
+- parser sidecar (unix socket)
+- SMTP relay
+- LLM endpoint
+- Postgres (worker role)
+
+**Dependencies**: vektra_assess.moodle; vektra_assess.context; vektra_assess.llm; vektra_assess.transcript; vektra_assess.delivery
+
+**Technology**: Python asyncio, asyncpg, same image, CMD_TARGET=assess-worker
+
+#### COMP-004: vektra_assess.moodle: Moodle WS anti-corruption layer and capability matrix
+
+**Responsibility**: Amended:
+- follow_redirects=False; TLS verification against the configured CA; response-size caps;
+  per-call timeouts.
+- A per-site circuit breaker (open means Unreadable, which fails closed) and a global WS rate
+  cap that covers render checks and bursts.
+- Strict per-version models: an unknown shape becomes Unreadable. Response bodies are never
+  logged.
+- The login-as cross-check is recorded as a capability row, defaulting to Unreadable.
+
+**Provides**:
+- typed reader API
+- setup-check report
+
+**Requires**:
+- Moodle REST web services (service-account token)
+
+**Dependencies**: httpx; assess_sites / assess_site_capabilities
+
+**Technology**: Python, httpx, Pydantic models per Moodle version
+
+#### COMP-005: vektra_assess.context: snapshot capture and assemble_context
+
+**Responsibility**: Amended:
+- Snapshot encrypted under the session DEK (app-side AEAD).
+- Split import-linter contracts: vektra_assess.context.capture is importable by the worker
+  only; assemble_context is importable by the API (turns) and the worker (Part B); the
+  ContextBundle constructor stays private.
+
+**Provides**:
+- capture_snapshot()
+- assemble_context() -> ContextBundle
+- render_part_a()
+
+**Requires**:
+- moodle readers
+- parser sidecar output
+
+**Dependencies**: vektra_shared types
+
+**Technology**: Python, Pydantic (private ContextBundle constructor)
+
+#### COMP-006: vektra_assess.llm: DiscussionTurnRunner
+
+**Responsibility**: Amended:
+- Imported by both processes (Part B in the worker, turns in the API).
+- No byte reaches the client before the sentence-buffered post-check.
+- Only completed turns plus their hash are persisted. Cut-off replies are reconciled as
+  "risposta interrotta".
+
+**Provides**:
+- run()
+- run_stream()
+
+**Requires**:
+- LLMProvider
+- SafeguardHook
+- vektra_analytics trace write
+
+**Dependencies**: vektra_core public API
+
+**Technology**: Python async, litellm via LLMProvider
+
+#### COMP-007: vektra_assess.transcript and vektra_assess.delivery
+
+**Responsibility**: Amended:
+- The template has NO raw-markup slots, and the post-render check validates against an
+  ALLOWLIST of the template's element and attribute set. It explicitly rejects script, on*,
+  style injection, @import, data: and javascript: URIs, srcset, base, meta refresh,
+  form/action, iframe/object/embed, svg/foreignObject and annotation-xml.
+- Math is rendered as escaped TeX, or as MathML rebuilt from a presentation-only allowlist
+  (no href, xlink, maction or semantics/annotation-xml).
+- Email: a plain-text body plus the transcript as an attachment (text/html; charset=utf-8;
+  neutral filename). CR/LF are stripped from every header-bound value.
+- Configurable backoff (1 m, 5 m, 15 m, 1 h, then hourly up to 72 h). Concurrent SMTP
+  connections are capped. Alerts on FAILED and on TLS failures.
+- Generation reads through the KEK copy.
+
+**Provides**:
+- generate_transcript(session_id)
+- deliver(delivery_id)
+
+**Requires**:
+- SMTP relay
+- moodle graders reader
+
+**Dependencies**: Jinja2; aiosmtplib
+
+**Technology**: Python, Jinja2 autoescape, aiosmtplib
+
+#### COMP-008: vektra-assess-parser (sidecar)
+
+**Responsibility**: Amended:
+- mem_limit 768M for a pool of about 3 (RLIMIT_AS 192-256M per process); pool size and
+  per-file budget set by the burst skeleton.
+- Healthcheck via a local socket ping. Core dumps disabled. The socket volume is 0700, owned
+  by the worker user.
+- Library stderr is reduced to codes and included in the log-canary grep.
+- The worker treats parser output as untrusted (size cap, UTF-8 and status-enum validation).
+  An unavailable parser means a pre-flight rollback and a failed setup check.
+
+**Provides**:
+- unix-socket request/response (bytes in, text + status out)
+
+**Dependencies**: pdfplumber/pdfminer; python-docx; zipfile + defusedxml (ODT); HTML sanitizer
+
+**Technology**: Same image, network_mode none, read-only, rlimits
+
+### B.4 Interfaces
+
+#### INT-001: Assess REST API (plugin and iframe to Vektra) ()
+
+Ratified endpoint set, amended:
+- Event streaming is fetch-based with a bearer header. No token is ever read from a query
+  parameter.
+- Add POST /api/v1/assess/transcripts/{tid}/download-token (ARCH-067).
+- Add DELETE /api/v1/assess/privacy/subjects/{userid} (scope assess:privacy-erase,
+  site-bound; behaviour per the new privacy OQ).
+- Every {sid}, {tid}, {cmid} and {userid} is resolved server-side against the site binding,
+  with cross-site, cross-course and cross-user negative IDOR tests in CI.
+- Resuming a CLOSED session returns 409 ERR-ASSESS-*. No endpoint re-wraps a DEK for a
+  non-live session.
+- Teacher endpoints re-verify the capability through fresh worker-written gate_inputs, or fail
+  closed.
+- Amended 2026-11-01 (coordinator decision): added GET activity config (settings-form
+  re-display; secrets returned only as set/unset, OQ-034), GET setup-check result, and the
+  per-activity Privacy API endpoints (subject listing and erasure) required by the plugin's
+  get_users_in_context / delete_data_for_all_users_in_context. Scope assess:privacy-erase is
+  held by the plugin (COMP-001).
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/v1/assess/tokens` | Mint a pre-session token (assess:mint key, site-bound; requires loginas=false and realuser_id=null) |
+| GET | `/api/v1/assess/state` | Advisory button state for (token sub, cmid): enum + reason code |
+| POST | `/api/v1/assess/sessions` | Start (consumes the jti); 202 + session id; re-minted session token |
+| GET | `/api/v1/assess/sessions/{sid}` | State, deadline, turns (owner only); resume re-mints the token |
+| POST | `/api/v1/assess/sessions/{sid}/turns` | Send a student turn (serialized per session) |
+| GET | `/api/v1/assess/sessions/{sid}/events` | SSE: commit, reply stream, warnings, outage, close |
+| POST | `/api/v1/assess/sessions/{sid}/retry` | Student 'Riprova' (triggers a retry; never ends OUTAGE) |
+| POST | `/api/v1/assess/sessions/{sid}/finish` | Fine -> CLOSED(finished) |
+| POST | `/api/v1/assess/sessions/{sid}/turns/{tid}/flag` | REQ-103 marker (ACTIVE/OUTAGE only) |
+| GET | `/api/v1/assess/transcripts/{tid}` | Download (owner or grader); attachment + CSP sandbox + nosniff |
+| GET | `/api/v1/assess/activities/{cmid}/config` | Teacher config for the settings form (assess:teacher); solution and pasted rubric returned only as set/unset (write-only, OQ-034) |
+| PUT | `/api/v1/assess/activities/{cmid}/config` | Teacher config (assess:teacher; BR-013; audited) |
+| GET | `/api/v1/assess/activities/{cmid}/sessions` | Teacher list (graders of that activity) |
+| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | Grant session #N+1 (mandatory reason) |
+| POST | `/api/v1/assess/activities/{cmid}/terminate` | Termina subito (mandatory reason, N stated) |
+| PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | REQ-078 extra time (before start) |
+| POST | `/api/v1/assess/transcripts/{tid}/resend` | Resend to re-resolved recipients (no recipient parameter) |
+| GET | `/api/v1/assess/privacy/subjects/{userid}/transcripts` | Privacy export for one subject (assess:privacy-export, site-bound, rate-limited) |
+| POST | `/api/v1/assess/sites/{site}/setup-check` | Operator or site admin: trigger the REQ-079 check (enqueues; returns report_id) |
+| GET | `/api/v1/assess/sites/{site}/setup-check/{report_id}` | REQ-079 result: per-item OK/MISSING by name, checked_at, Moodle release (no secrets, no response bodies) |
+| GET | `/api/v1/assess/privacy/activities/{cmid}/subjects` | Privacy API: list userids with assess data for one activity (assess:privacy-export, site-bound) |
+| DELETE | `/api/v1/assess/privacy/subjects/{userid}` | Privacy API erasure for one subject (assess:privacy-erase, site-bound; OQ-033) |
+| DELETE | `/api/v1/assess/privacy/activities/{cmid}/subjects` | Privacy API per-activity erasure, optionally limited to a userid list (assess:privacy-erase, site-bound; OQ-033) |
+| GET | `/api/v1/assess/ui` | Iframe page (strict CSP, frame-ancestors per site) |
+| GET | `/health/assess` | Worker heartbeat age, queue ages (content-free) |
+
+#### INT-002: API to worker channel via Postgres (jobs, render checks, NOTIFY) ()
+
+Amended:
+- Add assess_session_keys, assess_session_handoff, the SECURITY DEFINER functions
+  (get_session_material, assess_append_turn) and the CLOSED trigger.
+- A written per-role grant matrix, asserted in CI against pg_catalog:
+  * API role: INSERT jobs and render_check; SELECT render_state and gate_inputs; EXECUTE on
+    the functions; no SELECT on snapshots, turns, keys or the WS credential columns.
+  * Only the worker writes render_state, gate_inputs and enrolment_checks.
+- NOTIFY payloads are EMPTY.
+- LISTEN runs on a dedicated persistent asyncpg connection outside the pool.
+- Connection budget against max_connections 100: API pool about 15, worker about 5 + 1.
+
+#### INT-003: Worker to external systems (Moodle WS, parser socket, SMTP relay) ()
+
+Amended:
+- WS: follow_redirects=False and size caps.
+- SMTP: AUTH only after TLS is established; graders' address syntax validated; the probe
+  never sends.
+
+### B.5 Resolved design conflicts (session record)
+
+- **CONF-001** Module placement: vektra_learn.discussion sub-package vs new top-level vektra_assess module — Top-level vektra_assess (/api/v1/assess, assess_ tables in the root Alembic chain, VEKTRA_ASSESS_*, ERR-ASSESS-*), with import-linter contracts and a minimal worker import graph. The JWT helpers move to vektra_shared.
+- **CONF-002** LLM path: DiscussionPipeline under the QueryPipeline Protocol vs a direct LLMProvider + SafeguardHook adapter taking only ContextBundle — A direct DiscussionTurnRunner taking only ContextBundle. It is not a QueryPipeline and not in the ProviderRegistry. It writes a QueryTrace via the analytics API and is driven by an eval adapter. NFR-015 evidence is structural plus recording providers.
+- **CONF-003** Holder of the service-account WS credential: dedicated moodle-gateway container vs discussion worker process — No gateway container. vektra-assess-worker is the sole holder of the WS and SMTP credentials (per-service secret files), with no listening socket. The API reaches it only through Postgres. Egress is allowlisted, review-HTML sanitization runs in the sidecar, and DB roles are separated.
+- **CONF-004** Chat UI embedding: backend-served bundle in the Moodle DOM vs Vektra-origin page in a sandboxed iframe — A Vektra-origin page in a cross-origin iframe on a distinct origin (allow-same-origin safe across origins; no CORS null), with frame-ancestors per site, postMessage origin checks, and a setup check that refuses same-origin deployments.
+- **CONF-005** RAG ON for discussions in v1: canary-gated activation vs forbidden in v1 — The REQ-077 RAG field ships, locked OFF by an operator flag. Saving ON requires: the flag, per-student visibility READABLE, canaries passing on the active provider and index_version, and a dedicated cmid-bound namespace without FEAT-026 or unbound chunks. Otherwise the save is rejected. Visibility is read uncached.
+- **CONF-006** Token shape: single short-lived session token vs two-stage launch-to-session exchange — One token format with two binding states. Pre-session: TTL <= 2 min, jti consumed by Start. Session-bound tokens are re-minted at Start or resume, bound to session_id/seq/epoch.
+- **CONF-007** Turn execution locus and snapshot/turn key holder: API process vs assess worker — Option C: turns run in the API under a per-session DEK. The KEK is held only by the worker. A persisted hand-off row (sealed to the API's X25519 key) is readable only via a state- and epoch-checked SECURITY DEFINER function and is deleted in the CLOSED transaction (plus a trigger). Encryption is app-side AES-GCM. Purge is crypto-shredding. Option A is rejected (blast radius) and option B is rejected (availability coupling, and it degenerates into C).
+
+### B.6 Open questions (design)
+
+- ~~**OQ-028**: Background execution substrate: the deployed stack has no Redis and no separate arq worker~~ — resolved: Facilitator codebase check: docker-compose.yml deploys only postgres + vektra (plus the optional ollama, qdrant and tei). ADR-0006 chose arq IN-PROCESS mode, with the worker inside the vektra container and job state in a PostgreSQL jobs table. The compose comment says "Phase 2: add redis + vektra-worker". vektra_app/worker.py exposes a CMD_TARGET=worker factory that is not deployed. All four speakers assumed a second arq worker on a dedicated queue. That requires adding Redis, which is new infrastructure and contradicts "no new technology". The alternative is a Postgres-native job loop: a dedi
+- **OQ-029**: REQ-075 'exactly once' vs the SMTP crash window — A crash after the relay's 250 and before the SENT commit yields one duplicate. The proposed reading is 'exactly one SENT record per recipient; at most one known, audited duplicate on crash; deterministic Message-ID for dedupe'. This needs product-owner or QA confirmation that it satisfies the REQ-075 acceptance criterion ('delivered exactly once on a test mail sink'). *Needs human/ops/spike input; design default recorded.*
+- ~~**OQ-030**: Pre-extraction at the pre-session screen vs BR-015 rollback deletion and data minimisation~~ — resolved: TL proposes starting file extraction when the student opens the pre-session screen (cache keyed by Moodle contenthash, encrypted, short TTL, deleted on rollback or expiry), so that 20-40 concurrent Starts fit T = 60 s and NFR-018. Open: is the cache snapshot data under BR-015? Does processing before Start conflict with REQ-068 ('dismissing consumes nothing') or with the privacy notice (REQ-089)? This needs a spec and DPO-facing ruling.
+- ~~**OQ-031**~~ — resolved 2026-11-01 by the spike: (1) per-student module visibility is UNREADABLE (no WS function takes a target user) → RAG stays OFF (ARCH-072, BACKLOG FEAT-028); (2) no log-reading WS function exists → login-as cross-check UNREADABLE → trust-the-plugin is the accepted residual risk (REQ-084). Original text: OQ-025 scope extension: per-student module availability and independent login-as cross-check — Two items to add to the WS spike: (1) Can the service account obtain per-STUDENT module visibility, including availability conditions and group restrictions? Required for any RAG ON (NFR-015); unreadable means RAG stays off. (2) Can Vektra independently confirm that no login-as is active for the sub (e.g. via user_loggedinas log events), as defence in depth for REQ-084? If not, trust-the-plugin is documented as an accepted residual risk. *Needs human/ops/spike input; design default recorded.*
+- ~~**OQ-032**: Hardware envelope~~ — resolved 2026-11-01 (coordinator): the assess bot uses the
+  normal multi-provider LLM configuration (litellm via LLMProvider); the choice is which provider
+  per deployment. The hardware constraint is real only for a local model that cannot sustain the
+  expected parallelism (~200 concurrent): then cap concurrency (K / admission limit, NFR-020) or
+  size the hardware. A remote provider carries the load, but data egress depends on the DPO
+  (OQ-020). Does not block design or implementation. Original text: Hardware envelope: co-located on-prem LLM overcommits the 8 GB / 4 CPU VM — - Memory limits: postgres 0.5-0.75G + API 3G + assess-worker about 0.5G + parser 0.5-0.77G + Ollama 4G = about 8.5-8.8 GB, plus the host OS. That is over 8 GB. - CPU: CPU-only inference on 4 cores at K = 10 is not credible against NFR-018 (all four participants flagged this). Options: an off-VM or dedicated-hardware LLM; a larger VM; trimming the API limit (the assess path loads no embedding model); a smaller K. This is an operator and product decision that feeds OQ-026 and NFR-020. It does not change the architecture. *Needs human/ops/spike input; design default recorded.*
+- **OQ-033**: Privacy erasure (Moodle delete_data_for_user) vs exam-evidence retention — The Moodle Privacy API expects deletion as well as export, and REQ-093 covers export only. Design default: build the site-bound erasure endpoint (scope assess:privacy-erase), which crypto-shreds and deletes the subject's sessions, snapshots, turns and transcripts, verified by row count. The DPO decides whether transcripts are retained as exam evidence under a legal-basis exemption (OQ-020). Whatever the outcome, an unhandled delete request must never pass silently. *Needs human/ops/spike input; design default recorded.*
+- **OQ-034**: Teacher config re-display: may the settings form show the stored solution text back? — Design default: write-only. The API seals the solution text and pasted rubric to the worker's public key, and the form shows "impostata / non impostata, sostituisci?". This leaves API compromises unable to read any course's solutions. If product requires re-display, the API must hold a symmetric teacher-config key: a documented exposure, about 1 day of change. *Needs human/ops/spike input; design default recorded.*
+- **OQ-035** (new, 2026-11-01, from the OQ-025 spike): Rubric descriptors in the model context — rubric display settings (whether students see criterion/level descriptions) are unreadable through WS on 4.3 and 5.2. Design default (BR-011 fail closed): descriptors are always excluded; the bot can use scores, levels by number and the teacher's remarks, not the descriptor texts. Alternative: a per-activity teacher attestation that descriptors are student-visible (more teacher work, an attested input like REQ-091). Related fact needed: which Moodle version the pilot sites run (on 4.3, quiz overrides are unreadable and REQ-091 becomes the normal path). *Needs product input; design default recorded.*
+
+Feature-level open items from specs remain: OQ-020 (DPO), OQ-025 (WS readability resolved 2026-11-01; math/qtype fidelity still open), OQ-026 (reference model/hardware), OQ-027 (eval-suite owner).
+

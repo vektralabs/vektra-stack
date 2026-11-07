@@ -11,6 +11,9 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from vektra_learn.service import (
+    TOKEN_ISSUER,
+    WIDGET_AUDIENCE,
+    WIDGET_KID,
     ContentIngestRequest,
     EnrollmentRequest,
     LearnService,
@@ -18,6 +21,28 @@ from vektra_learn.service import (
 )
 
 JWT_SECRET = "test-secret-key-for-unit-tests!!x"  # 33 bytes for HS256
+
+
+def _bound_token(claims: dict, secret: str = JWT_SECRET) -> str:
+    """A token as the service mints it: aud, iss, iat and the kid header set."""
+    payload = {
+        "aud": WIDGET_AUDIENCE,
+        "iss": TOKEN_ISSUER,
+        "iat": datetime.now(UTC) - timedelta(minutes=1),
+        **claims,
+    }
+    return pyjwt.encode(payload, secret, algorithm="HS256", headers={"kid": WIDGET_KID})
+
+
+def _decode_bound(token: str) -> dict:
+    assert pyjwt.get_unverified_header(token)["kid"] == WIDGET_KID
+    return pyjwt.decode(
+        token,
+        JWT_SECRET,
+        algorithms=["HS256"],
+        audience=WIDGET_AUDIENCE,
+        issuer=TOKEN_ISSUER,
+    )
 
 
 def _make_service() -> LearnService:
@@ -175,7 +200,7 @@ class TestGenerateToken:
         assert result.expires_at > datetime.now(UTC)
 
         # Decode and verify
-        payload = pyjwt.decode(result.token, JWT_SECRET, algorithms=["HS256"])
+        payload = _decode_bound(result.token)
         assert payload["sub"] == "student-1"
         assert payload["course_id"] == "CS101"
         assert "exp" in payload
@@ -219,7 +244,7 @@ class TestGenerateToken:
         req = TokenRequest(student_id="s1", course_id="CS101", namespace="shared-ns")
         result = await svc.generate_token(session, req)
 
-        payload = pyjwt.decode(result.token, JWT_SECRET, algorithms=["HS256"])
+        payload = _decode_bound(result.token)
         assert payload["namespace"] == "shared-ns"
         assert payload["course_id"] == "CS101"
 
@@ -232,21 +257,20 @@ class TestGenerateToken:
         req = TokenRequest(student_id="s1", course_id="CS101")
         result = await svc.generate_token(session, req)
 
-        payload = pyjwt.decode(result.token, JWT_SECRET, algorithms=["HS256"])
+        payload = _decode_bound(result.token)
         assert "namespace" not in payload
 
 
 class TestValidateToken:
     async def test_validates_valid_token(self):
         svc = _make_service()
-        token = pyjwt.encode(
+        token = _bound_token(
             {
                 "sub": "s1",
                 "course_id": "CS101",
                 "exp": datetime.now(UTC) + timedelta(hours=1),
             },
             JWT_SECRET,
-            algorithm="HS256",
         )
         payload = await svc.validate_token(token)
         assert payload["sub"] == "s1"
@@ -254,28 +278,26 @@ class TestValidateToken:
 
     async def test_rejects_expired_token(self):
         svc = _make_service()
-        token = pyjwt.encode(
+        token = _bound_token(
             {
                 "sub": "s1",
                 "course_id": "CS101",
                 "exp": datetime.now(UTC) - timedelta(hours=1),
             },
             JWT_SECRET,
-            algorithm="HS256",
         )
         with pytest.raises(pyjwt.ExpiredSignatureError):
             await svc.validate_token(token)
 
     async def test_rejects_wrong_secret(self):
         svc = _make_service()
-        token = pyjwt.encode(
+        token = _bound_token(
             {
                 "sub": "s1",
                 "course_id": "CS101",
                 "exp": datetime.now(UTC) + timedelta(hours=1),
             },
             "wrong-secret-that-is-32-bytes!!x",
-            algorithm="HS256",
         )
         with pytest.raises(pyjwt.InvalidSignatureError):
             await svc.validate_token(token)

@@ -1,0 +1,20 @@
+{
+ "fixture": "wf",
+ "params": {
+  "assignmentids": [
+   9
+  ]
+ },
+ "response": {
+  "assignments": [],
+  "warnings": [
+   {
+    "item": "assignment",
+    "itemid": 9,
+    "message": "No access rights in module context",
+    "warningcode": "1"
+   }
+  ]
+ },
+ "wsfunction": "mod_assign_get_user_flags"
+}

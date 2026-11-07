@@ -32,8 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vektra_admin import health as _health
 from vektra_admin.models import ApiKeyOrm, AuditLogOrm, NamespaceOrm
-from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider
+from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider, scope_set_error
 from vektra_shared.db import get_session
+from vektra_shared.namespace import is_reserved
 
 log = structlog.get_logger(__name__)
 
@@ -281,6 +282,19 @@ async def keys_page(
     return _render(request, "keys.html", active="keys", keys=keys)
 
 
+def _key_row(row: ApiKeyOrm) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "key_preview": row.key_preview,
+        "label": row.label,
+        "scopes": row.scopes,
+        "created_at": row.created_at,
+        "last_used_at": row.last_used_at,
+        "revoked": row.revoked_at is not None,
+        "expires_at": row.expires_at,
+    }
+
+
 @ui_router.post("/keys/create", response_class=HTMLResponse)
 async def keys_create(
     request: Request,
@@ -292,7 +306,20 @@ async def keys_create(
     form = await request.form()
 
     label = form.get("label", "") or None
-    scopes = form.getlist("scopes") or ["admin"]
+    scopes = [str(s) for s in form.getlist("scopes")] or ["admin"]
+    scope_error = scope_set_error(scopes)
+    if scope_error is not None:
+        result = await session.execute(select(ApiKeyOrm))
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/keys_table.html",
+            context={
+                "keys": [_key_row(row) for row in result.scalars().all()],
+                "flash": {"type": "error", "message": scope_error},
+            },
+            # 200, not 422: htmx does not swap error responses, so the message
+            # would never reach the page. Nothing was created.
+        )
 
     from vektra_admin.keys import generate_key
 
@@ -325,19 +352,7 @@ async def keys_create(
     # Reload keys for table
     result = await session.execute(select(ApiKeyOrm))
     rows = result.scalars().all()
-    keys = [
-        {
-            "id": str(row.id),
-            "key_preview": row.key_preview,
-            "label": row.label,
-            "scopes": row.scopes,
-            "created_at": row.created_at,
-            "last_used_at": row.last_used_at,
-            "revoked": row.revoked_at is not None,
-            "expires_at": row.expires_at,
-        }
-        for row in rows
-    ]
+    keys = [_key_row(row) for row in rows]
 
     return templates.TemplateResponse(
         request=request,
@@ -447,6 +462,8 @@ async def namespaces_create(
 
     if not name:
         raise HTTPException(status_code=422, detail="Namespace name is required")
+    if is_reserved(name):
+        raise HTTPException(status_code=403, detail="Namespace name is reserved")
 
     ns = NamespaceOrm(id=name, display_name=display_name)
     session.add(ns)
@@ -490,6 +507,10 @@ async def namespaces_delete(
 ) -> HTMLResponse:
     """Delete a namespace, return updated table partial."""
 
+    if is_reserved(ns_id):
+        # assess-discussion anchors the assess traces' FK: deleting it would make every later
+        # trace insert fail (plan assess-llm-runner, revision 0019)
+        raise HTTPException(status_code=403, detail="Namespace name is reserved")
     result = await session.execute(select(NamespaceOrm).where(NamespaceOrm.id == ns_id))
     ns = result.scalar_one_or_none()
     if ns is None:

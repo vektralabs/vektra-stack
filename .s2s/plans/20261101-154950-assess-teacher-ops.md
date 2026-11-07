@@ -1,0 +1,244 @@
+# Implementation Plan: Assess teacher operations (config, session list, reset, terminate, extra time, opening fallback)
+
+**ID**: 20261101-154950-assess-teacher-ops
+**Status**: active
+**Branch**: N/A
+**Created**: 2026-11-01T14:49:50Z
+**Updated**: 2026-11-01T20:58:19Z
+**Approved**: 2026-11-01 (coordinator)
+
+## Traceability
+
+**Source**: COMP-002 (teacher endpoints of INT-001), ARCH-071 (write-only teacher config), ARCH-072 (RAG activation preconditions)
+**Source Type**: architecture
+
+## References
+
+### Requirements
+- REQ-076: Teacher in-Moodle session list and transcript download @.s2s/requirements.md
+- REQ-077: Teacher configuration in the activity settings page @.s2s/requirements.md
+- REQ-078: Per-student extra time (accommodations) @.s2s/requirements.md
+- REQ-081: Teacher disables discussion, or terminates active sessions @.s2s/requirements.md
+- REQ-082: Transcript recipients (graders only in v1) @.s2s/requirements.md
+- REQ-085: Minimum audit event set for discussions (teacher events) @.s2s/requirements.md
+- REQ-087: Teacher reset: grant a new session #N (with continuity rule) @.s2s/requirements.md
+- REQ-090: Teacher preview mode (could) @.s2s/requirements.md
+- REQ-091: Manual opening-date fallback when the effective close cannot be read @.s2s/requirements.md
+- REQ-092: Student notification when a reset is granted (should) @.s2s/requirements.md
+- BR-013: Teacher input validation @.s2s/requirements.md
+
+### Architecture
+- INT-001: Assess REST API (teacher endpoints; capability re-verified via gate_inputs or fail closed) @.s2s/architecture.md
+- COMP-002: vektra_assess API @.s2s/architecture.md
+- ARCH-071: Dedicated encrypted stores; teacher config write-only (sealed to worker key) @.s2s/architecture.md
+- ARCH-072: Discussion retrieval isolation and RAG activation preconditions @.s2s/architecture.md
+- ARCH-070: Capability matrix (readability of overrides/extensions drives REQ-091) @.s2s/architecture.md
+
+### Decisions
+- ADR-0030: Site-bound narrow scopes (assess:teacher) @.s2s/decisions/ADR-0030-discussion-token-contract-and-ui-embedding-separat.md
+- ADR-0031: Envelope encryption; worker-only teacher-config private key @.s2s/decisions/ADR-0031-envelope-encryption-with-live-session-key-hand-off.md
+- ADR-0032: LLM context boundary at capture time @.s2s/decisions/ADR-0032-llm-context-boundary-capture-time-minimisation-typ.md
+
+### Dependencies
+- 20261101-154950-assess-session-lifecycle (state model, START-gate evaluator, single close path, epoch bump)
+- 20261101-154950-assess-transcript-delivery (`authz/graders.py`, delivery outbox with `kind=reset_notice`, delivery status)
+- 20261101-154950-assess-moodle-ws (worker-written gate_inputs: graders, editors, activity facts, readability matrix)
+- 20261101-154950-assess-data-crypto (sealed-box helper to the worker public key)
+
+## Overview
+
+Teachers act through the plugin (P3), which calls Vektra server-to-server with a site-bound
+`assess:teacher` key and names the acting Moodle user. Vektra never trusts that claim on its own:
+every teacher endpoint re-verifies the actor's role for that activity against fresh
+worker-written `gate_inputs` and fails closed when they are missing or stale.
+
+This plan delivers the configuration endpoint with BR-013 validation done in Vektra (the plugin
+form is a convenience, not the authority), write-only sealed storage for the solution and the
+pasted rubric, the session list, reset, terminate/disable, per-student extra time and the
+REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
+
+## Design Notes
+
+- **Auth.** `require_exact_scope("assess:teacher")` (non-inheriting: an admin key gets 403) +
+  site binding of the key. The actor is `actor_userid` in the body (or header
+  `X-Assess-Actor` for GET), resolved against `gate_inputs` for `(site, cmid)`: `editors` for
+  config endpoints (REQ-077 "activity editors only"), `graders` for list/reset/terminate/extra
+  time/attestation. Freshness bound `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` (default 120 s);
+  stale or absent → 403 `ERR_ASSESS_TEACHER_UNVERIFIED`, and a `gate_refresh` job is enqueued so
+  a retry can succeed. `{cmid}`, `{sid}`, `{userid}` are resolved server-side against the site and
+  course (IDOR tests). Reuse `authz/graders.py` from plan 10, extended with `require_fresh_editor`.
+- **Config storage (next revision).** `assess_activity_config(site_id, cmid, version, enabled, cap_minutes, rubric_source, show_solution, solution_set, pasted_rubric_set, recipients JSONB, rag_enabled BOOLEAN NOT NULL DEFAULT false CHECK (rag_enabled = false), available_until, opening_fallback_at, opening_attested_by, opening_attested_at, updated_by, updated_at)`
+  with optimistic concurrency (`expected_version` in the request; mismatch → 409).
+  `assess_activity_config_sealed(site_id, cmid, version, field ENUM(solution, pasted_rubric), sealed_blob, key_version)`:
+  the API role has INSERT only, never SELECT (grant matrix); the worker SELECTs and opens the box
+  at snapshot capture. Sessions record the `config_version` they started under, so changes apply
+  only to sessions not yet started.
+- **Write-only semantics (OQ-034 default).** Request field absent = unchanged; `null` = clear;
+  string = replace. Responses expose only `solution_state` / `pasted_rubric_state` ∈
+  {`impostata`, `non impostata`}. Text is normalised (NFC, control characters except `\n`/`\t`
+  removed), length counted in code points after normalisation (the plugin's live counter must use
+  the same rule), then sealed with the worker's X25519 public key. Never logged, never in audit.
+- **BR-013 / REQ-077 validation in Vektra.** Field-level errors return 400
+  `ERR_ASSESS_CONFIG_INVALID` with `details.fields=[{field, code, range}]` (explicit envelope; not
+  the 422 path that bypasses it, DEBT-035). Rules: cap 5-120; solution and pasted rubric ≤ 20,000;
+  pasted source with empty rubric → error; total duration ≤ 240 min; `available_until` > effective
+  opening; recipients 1-3 graders of the course (default: the configuring teacher). Enable is
+  refused when: quiz without close date / assignment without cut-off (BR-007), Moodle-rubric
+  source without a rubric, team submission, marking-guide grading (EX-023), privacy settings
+  unset (`vektra_assess.privacy.is_configured(site)` from plan 12; until it lands a stub returns
+  False, i.e. fail closed), setup check not green. Moodle facts come from fresh gate_inputs; stale
+  → refuse enable with `gate_inputs_stale`.
+- **RAG locked OFF (ARCH-072).** `rag_enabled=true` → field error `rag_unavailable` with reason
+  `operator_flag_off`. The DB CHECK makes ON unrepresentable. The operator flag
+  `VEKTRA_ASSESS_RAG_ENABLED` exists only so that setting it is REFUSED at startup ("not
+  available in this release"): no dormant path. Real enablement (preconditions 2-4) is a future
+  BACKLOG item.
+- **Recipients.** v1 offers Moodle-resolved graders only; any free-text address → field error
+  `free_text_not_available` listing the (empty) allowed domains. Changes audited old/new as user
+  ids.
+- **Session list (REQ-076).** `GET /activities/{cmid}/sessions?cursor=` returns per student
+  (Moodle userid only; names are resolved by the plugin): sessions #1..#N with state, close reason,
+  delivery status per recipient (incl. FAILED/bounce), transcript id, reset count and reasons,
+  extra time, `reset_notice` status or "studente non avvisato via email"; activity-level gate
+  panel: effective opening date, the override holder's userid only if the actor has the
+  override-viewing capability in gate_inputs (never the reason), C7 fallback reason
+  "Vektra non può verificare proroghe/override per questa attività", should-hint for
+  suspended/unenrolled holders, and "N sessioni attive".
+- **Reset reasons and terminate reasons** are teacher-entered text: stored in `assess_resets`
+  / `assess_terminations` encrypted under the transcript key (API-readable for the list), never
+  in transcripts, metrics or operator-visible audit. Audit rows reference `reset_id` only. This
+  deviates slightly from REQ-085 ("reason stored in audit"): the reason is reachable from the
+  audit entry but kept outside the operator-readable audit table.
+- **Reset (REQ-087).** Only when the latest session is CLOSED (else 409); mandatory reason
+  (1-1000 chars); re-runs all START gates via plan 8's evaluator including the end date (refusal
+  points to `available_until`); creates `assess_resets(record_id, session_no, reason_ct, include_previous_turns, created_by)`
+  with UNIQUE `(record_id, session_no)` so concurrent resets yield one. `include_previous_turns`
+  defaults OFF; auto-ON when the previous close reason is `service_failure`. Enforcement of the
+  continuity boundary (c)-(e) lives in plan 6's `assemble_context`; this plan only stores the
+  choice and tests the end-to-end outcome.
+- **REQ-092 notice (should).** `VEKTRA_ASSESS_RESET_NOTICE_ENABLED` default false (gated on
+  OQ-020 DPO approval). When true, the reset transaction inserts a `kind=reset_notice` delivery
+  row (plan 10 outbox); the worker resolves the student's address and language at send time; body
+  contains the activity name and the plain Moodle results-page URL from gate_inputs, no token,
+  no reason. Failure never reverts the reset. `reset_notice_sent` audited on SENT.
+- **Terminate (REQ-081).** `POST /activities/{cmid}/terminate {actor_userid, reason, expected_active_count, also_disable}`.
+  One transaction: lock the activity's live sessions; if their count ≠ `expected_active_count` →
+  409 with the current N; else close each ACTIVE/OUTAGE session through plan 8's single close
+  path as CLOSED(terminated_by_teacher) (handoff deleted, epoch bumped, transcript job queued);
+  STARTING sessions are rolled back to ELIGIBLE (not consumed) and, when `also_disable`, cannot
+  restart. Disable alone is `PUT config enabled=false`; mint and Start check `enabled` (plan 8
+  gates) so the effect is immediate. Re-enable never reopens CLOSED.
+- **Extra time (REQ-078).** `PUT /activities/{cmid}/students/{userid}/extra-time {minutes|percent, confirm_over_100}`.
+  0-200% or 0-240 min, total ≤ 240 prevails, > +100% requires `confirm_over_100=true`. No reason
+  field exists. Refused when the student's current session is STARTING/ACTIVE/OUTAGE/CLOSED
+  without a pending reset. Plan 8 reads it at Start to compute the deadline.
+- **Opening fallback (REQ-091).** `PUT /activities/{cmid}/opening-fallback {opening_at, attestation:true}`.
+  Accepted only when the readability matrix marks any BR-006(d) input unreadable (partial =
+  unreadable); `opening_at` ≥ activity close/cut-off; after any session of this cmid started,
+  only later moves; attestation required on every edit; audited with teacher and attestation text
+  version. The BR-006(d) evaluator (plan 8) gains `gate = max(effective_close_or_NOT_AVAILABLE, teacher_date)`;
+  no teacher date in fallback → NOT_AVAILABLE; readable instance → `max(automatic, teacher_date)`.
+- **Preview (REQ-090, could).** Not built in v1. The documented alternative is a Moodle
+  test-student account with REQ-087 resets. A route-inventory test asserts no preview route
+  exists, so the capability cannot appear dormant.
+
+## Tasks
+
+### Foundation
+- [ ] Migration (next revision): `assess_activity_config`, `assess_activity_config_sealed`, `assess_resets`, `assess_terminations`, `assess_extra_time`; CHECK `rag_enabled = false`; grants (API: no SELECT on `_sealed`); extend plan 2's grant assertion
+- [ ] `vektra_assess/authz/teachers.py`: `require_fresh_editor` / `require_fresh_grader` / `can_view_overrides` over gate_inputs with max age, fail closed + `gate_refresh` enqueue
+- [ ] `vektra_assess/teacher/schemas.py`: Pydantic models (`extra="forbid"`), write-only field tri-state, field-error envelope builder; error codes `ERR_ASSESS_CONFIG_INVALID`, `ERR_ASSESS_TEACHER_UNVERIFIED`, `ERR_ASSESS_CONFIG_CONFLICT`, `ERR_ASSESS_RESET_REFUSED`, `ERR_ASSESS_TERMINATE_COUNT_MISMATCH` in `vektra_shared/errors.py` + `docs/reference/error-codes.md`
+- [ ] Startup step: refuse `VEKTRA_ASSESS_RAG_ENABLED=true`; refuse `VEKTRA_ASSESS_RESET_NOTICE_ENABLED=true` unless `VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION` is set (records the DPO-approved text)
+
+### Config
+- [ ] `teacher/validation.py`: BR-013 + REQ-077 rules as pure functions over (request, gate_inputs facts, privacy status, setup-check status); one test per boundary (20,000/20,001; cap 4/5/120/121; total 240/241; +100/+101 confirm; empty pasted rubric; end date ≤ opening)
+- [ ] `PUT /api/v1/assess/activities/{cmid}/config`: editor check, validation, seal secret fields, versioned insert, audit old/new (flags/values; secret fields as `replaced|cleared` only); `GET` (ratified in INT-001 on 2026-11-01) returns the computed opening condition, end date, review-options warning, `N sessioni attive`, `impostata/non impostata`
+- [ ] Wire `rag_enabled` rejection and the free-text recipient rejection with their field codes
+- [ ] Worker side: snapshot capture (plan 6) opens the sealed blobs for the session's `config_version`; add a test that the API process cannot `SELECT` `_sealed` (permission denied asserted)
+
+### Teacher operations
+- [ ] `GET /activities/{cmid}/sessions`: list per Design Notes, cursor pagination, decrypt reset/terminate reasons for the grader view only
+- [ ] `POST /activities/{cmid}/sessions/{sid}/reset`: CLOSED check, reason, START-gate re-run, unique session_no, continuity flag, audit `reset`; REQ-092 notice row when enabled
+- [ ] `POST /activities/{cmid}/terminate`: count check, single-close-path loop in one transaction, STARTING rollback, optional disable, audit with `termination_id`
+- [ ] `PUT /activities/{cmid}/students/{userid}/extra-time`: validation, state check, audit
+- [ ] `PUT /activities/{cmid}/opening-fallback`: readability check, bounds, later-only rule, attestation, audit; extend plan 8's BR-006(d) evaluator with the max() rule
+- [ ] Route-inventory test: no preview route; every teacher route declares `require_exact_scope("assess:teacher")`
+
+### Tests, docs
+- [ ] IDOR matrix (integration, testcontainers): other-course teacher, non-grader, grader of another cmid in the same course, cross-site key, admin key → 403 on every teacher route, with audit rows counted
+- [ ] Reset tests: no reason / ACTIVE → refused; after end date refused, after moving date accepted; #1..#N-1 transcript bytes unchanged (hash) and #N created; service_failure → previous turns in context, other reason unticked → 0 previous-turn canaries in the captured LLM request bytes (with plan 6/7 recording provider); narrowed boundary → 0; reset reason canary → 0 in transcripts and metrics
+- [ ] Terminate tests: N=3 ACTIVE → 3 CLOSED(terminated_by_teacher), 3 transcript rows, 0 handoff rows, audit with reason reference; N mismatch → 409, 0 state changes; after disable, mint and Start on an ELIGIBLE record refused; disable without terminate → ACTIVE sessions still accept turns and close normally; re-enable → CLOSED stays CLOSED
+- [ ] Extra-time tests: +50% on 30 min → deadline exactly 45 min after commit (plus outage credit); change while ACTIVE/CLOSED refused; reason absent from every response and transcript
+- [ ] REQ-091 tests across the readability matrix fixtures (quiz overrides readable + assignment extensions unreadable → fallback active)
+- [ ] REQ-092 tests (flag on): one notice per reset on the mail sink, no reason/token in body or link; sink down → reset effective, state (10); flag off → 0 notices and list shows "studente non avvisato via email"
+- [ ] Docs: `docs/reference/api.md` teacher endpoints; `docs/reference/configuration.md` + `.env.example` (`VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, `VEKTRA_ASSESS_RAG_ENABLED` documented as refused, `VEKTRA_ASSESS_RESET_NOTICE_*`); `CHANGELOG.md` [Unreleased]
+
+## State & Data Lifecycle
+
+| State element | Created by | Updated by | Invalidated/Deleted by |
+|---------------|-----------|------------|------------------------|
+| `assess_activity_config` versions | `PUT config` (first save) | each `PUT config` / opening-fallback (new version row) | plan 12 erasure removes actor ids where required; kept for audit while any session references the version; purge of the activity's sessions then old versions by plan 12 |
+| `assess_activity_config_sealed` blobs | `PUT config` with solution/rubric | replace = new version row; clear = no row for the new version | rows for versions no longer referenced by a retained session deleted by plan 12 purge |
+| `assess_resets` (reason ciphertext) | reset endpoint | never | plan 12 purge/erasure with the subject's sessions |
+| `assess_terminations` | terminate endpoint | never | plan 12 purge when no referenced session remains |
+| `assess_extra_time` | extra-time endpoint | extra-time endpoint (before start only) | consumed at Start (copied into the session); deleted with the subject by plan 12 |
+| `reset_notice` delivery rows | reset transaction | plan 10 delivery handler | plan 12 purge |
+| gate_inputs freshness (read only) | worker (plan 4) | worker refresh tick / `gate_refresh` job | superseded by next refresh |
+
+## Acceptance Criteria
+
+- [ ] Non-grader, other-course teacher, cross-site key and admin key each get 403 on every teacher route, with an audit row per rejection (REQ-076, INT-001)
+- [ ] Stale or missing gate_inputs → 403 `ERR_ASSESS_TEACHER_UNVERIFIED`, 0 state change (INT-001)
+- [ ] New activity: RAG OFF, mostra soluzione OFF, end date empty; saving RAG ON → field error with reason; startup with the RAG flag ON refuses (REQ-077, ARCH-072)
+- [ ] BR-013 boundary set passes exactly as specified; each error names the range (BR-013, REQ-077)
+- [ ] Enable refused with a field error for: no quiz close date, no assignment cut-off, team submission, marking guide, empty pasted rubric, privacy unset, setup check red (REQ-077)
+- [ ] After saving a solution, the API role's `SELECT` on the sealed table fails with permission denied and GET shows only "impostata" (ARCH-071, OQ-034)
+- [ ] Changing the cap after a session started leaves its deadline unchanged; every change has an audit row old/new with 0 secret content (REQ-077, REQ-085)
+- [ ] Reset criteria of REQ-087 pass, including canary counts on the captured LLM request bytes (REQ-087)
+- [ ] Terminate moves exactly N sessions to CLOSED(terminated_by_teacher) with N transcripts and 0 remaining handoff rows; disable blocks mint/Start immediately; re-enable never reopens (REQ-081)
+- [ ] +50% on 30 min → 45 min server deadline; extra time immutable once ACTIVE/CLOSED; no reason anywhere (REQ-078)
+- [ ] REQ-091 acceptance set passes including later-only moves and max() once readable (REQ-091)
+- [ ] With notice flag ON: exactly one notice per reset, no reason/token in it, failure does not revert; OFF: 0 notices and the list flag shown (REQ-092)
+- [ ] No preview route exists (REQ-090 not built; dormant-capability rule)
+
+## Testing Approach
+
+Validation rules are pure functions tested at every boundary. Endpoints are tested against a
+real Postgres with the restricted API and worker roles (so "API cannot read the solution" is a
+permission-denied error, not a code path that happens not to read). Moodle facts are supplied by
+seeding gate_inputs rows as the worker would; one end-to-end run per Moodle version (4.3, 5.2)
+uses plan 4's dev envs. Anti-leak outcomes (reset continuity, sealed solution) are asserted on
+the recording LLM provider's captured request bytes, not on bot replies.
+
+### Test Infrastructure
+
+- **Required**: testcontainers pg16 with the assess roles; gate_inputs seeding helpers; recording `LLMProvider`; mail sink (REQ-092); Moodle 4.3 / 5.2 dev envs for the e2e pass
+- **Provided by**: roles/grants from 20261101-154950-assess-data-crypto; gate_inputs writer and dev envs from 20261101-154950-assess-moodle-ws; recording provider from 20261101-154950-assess-llm-runner; mail sink from 20261101-154950-assess-transcript-delivery
+- **False-pass guard**: integration tests connect with the restricted API role and fail if the connection role is a superuser (asserted at fixture setup); the IDOR matrix asserts the number of executed cases equals the declared matrix size; Moodle e2e reports BLOCKED (not passed) when a dev env is unavailable
+
+## Integration Notes
+
+- Plugin P3 renders the settings section, list, dialogs and the live counter; it must send
+  `actor_userid`, `expected_version` and `expected_active_count`, and handle field-level errors by
+  `field` code. It never caches solution text after save.
+- Plan 8 must read `enabled`, `available_until`, extra time and the opening fallback in its gate
+  evaluator and at mint; plan 6 must honour `include_previous_turns` and the BR-011 narrowing rule.
+- Plan 12 provides `privacy.is_configured(site)` and purges the tables listed above.
+
+## Notes
+
+- **OQ-025 spike (2026-11-01)**: on Moodle 4.3, quiz overrides and per-student time limits are unreadable, so the REQ-091 attested-date UI is the EXPECTED path for any quiz with user/group overrides; the teacher page must explain why (not an error). On 5.2 they are readable. Grace is readable only while the quiz is open; enabling the discussion after close also lands on REQ-091. Rubric descriptor attestation is a possible addition pending OQ-035.
+
+- OQ-034: write-only default implemented; if product requires re-display, the API needs a
+  symmetric teacher-config key (about 1 day, documented exposure).
+- OQ-020: REQ-092 notice ships disabled until DPO approval of the flow and text.
+- Future BACKLOG items (not created here): RAG-ON enablement per ARCH-072 preconditions 2-4;
+  free-text recipients with a site-admin domain allowlist; site-admin emergency stop (REQ-081
+  should); REQ-090 preview (must pass the full START-gate, NFR-015/NFR-017 and audit suites).
+- Risk: the actor is asserted by the plugin and only role-checked by Vektra; a leaked
+  `assess:teacher` key can act as any grader of that site. Mitigated by site binding, narrow
+  scope and audit; residual risk accepted in ARCH-067.
+- Dependency risk: editors/graders/override-capability sets must be in plan 4's gate_inputs; if
+  not, this plan adds them to the refresh step.
+
+> Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.

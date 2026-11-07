@@ -30,6 +30,13 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from vektra_app import __version__
+from vektra_app.assess_llm import step_13_assess_llm_check
+from vektra_app.assess_wiring import (
+    include_assess_router,
+    start_assess_background,
+    step_12_assess_check,
+    stop_assess_background,
+)
 from vektra_shared.config import QueryPipelineConfig, VektraSettings
 from vektra_shared.db import init_db
 from vektra_shared.errors import ERR_CONFIG_001, ErrorCategory, ErrorResponse
@@ -73,21 +80,22 @@ def _pii_redactor(
 
 def configure_structlog() -> None:
     """Configure structlog with JSON output, timestamps, and PII redaction."""
+    # The assess allowlist runs first and only touches vektra_assess.* loggers (it needs the
+    # logger name, hence the named factory); _pii_redactor keeps its behaviour for the rest.
+    from vektra_shared.log_safety import (
+        NamedPrintLoggerFactory,
+        install_assess_stdlib_handler,
+        structlog_processors,
+    )
+
     structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            _pii_redactor,
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.JSONRenderer(),
-        ],
+        processors=structlog_processors(extra=[_pii_redactor]),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=NamedPrintLoggerFactory(),
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
         cache_logger_on_first_use=True,
     )
+    install_assess_stdlib_handler()
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +231,10 @@ async def _step_5_register_providers(
     # --- Event emitter ---
     from vektra_shared.config import WebhookConfig
     from vektra_shared.events import NoOpEventEmitter, WebhookEventEmitter
+    from vektra_shared.protocols import EventEmitter, QueryPipeline
 
     webhook_config = WebhookConfig()
+    event_emitter: EventEmitter
     if webhook_config.url:
         event_emitter = WebhookEventEmitter(config=webhook_config)
         log.info(
@@ -288,6 +298,7 @@ async def _step_5_register_providers(
     )
     renderer = TemplateRenderer(templates_dir=templates_dir)
 
+    pipeline: QueryPipeline
     if settings.query_pipeline == "advanced":
         from vektra_core.advanced_pipeline import AdvancedQueryPipeline
 
@@ -327,7 +338,12 @@ async def _step_5_register_providers(
     registry.register("analytics", "default", analytics_service)
 
     # --- Learn service (conditional) ---
-    if settings.learn_jwt_secret:
+    # A secret shorter than 32 bytes is left unregistered here so that step 10
+    # (learn_check) reports it as a structured [STARTUP ERROR], not a traceback.
+    if (
+        settings.learn_jwt_secret
+        and len(settings.learn_jwt_secret.encode("utf-8")) >= 32
+    ):
         from vektra_learn.service import LearnService
 
         learn_service = LearnService(jwt_secret=settings.learn_jwt_secret)
@@ -436,17 +452,18 @@ async def _step_10_learn_check(
         log.info("startup_step", step="learn_check", status="skipped")
         return
 
+    secret_bytes = len(settings.learn_jwt_secret.encode("utf-8"))
+    if secret_bytes < 32:
+        raise StartupValidationError(
+            step="learn_check",
+            detail="VEKTRA_LEARN_JWT_SECRET must be at least 32 bytes.",
+            remediation="Set a longer JWT secret for production security.",
+        )
     if not registry.has("learn", "default"):
         raise StartupValidationError(
             step="learn_check",
             detail="VEKTRA_LEARN_JWT_SECRET is set but LearnService failed to register.",
             remediation="Check logs for LearnService initialization errors.",
-        )
-    if len(settings.learn_jwt_secret) < 32:
-        raise StartupValidationError(
-            step="learn_check",
-            detail="VEKTRA_LEARN_JWT_SECRET must be at least 32 characters.",
-            remediation="Set a longer JWT secret for production security.",
         )
     log.info("startup_step", step="learn_check", status="ok")
 
@@ -492,7 +509,7 @@ async def _step_11_qdrant_check(
 
 
 async def _run_startup(app: FastAPI) -> None:
-    """Run the ARCH-057 11-step validation and assemble application state.
+    """Run the ARCH-057 12-step validation and assemble application state.
 
     Raises StartupValidationError if a hard step fails. The two callers decide
     how that failure is surfaced: main() (the container path) logs it and exits
@@ -538,6 +555,11 @@ async def _run_startup(app: FastAPI) -> None:
         ("analytics_check", lambda: _step_9_analytics_check(registry)),
         ("learn_check", lambda: _step_10_learn_check(settings, registry)),
         ("qdrant_check", lambda: _step_11_qdrant_check(settings, registry)),
+        (
+            "assess_check",
+            lambda: step_12_assess_check(app, settings.database_url, registry),
+        ),
+        ("assess_llm_check", lambda: step_13_assess_llm_check(app)),
     ]
 
     step_1_ms = int((time.monotonic() - start_time) * 1000)
@@ -579,10 +601,14 @@ async def _run_startup(app: FastAPI) -> None:
         app.state.learn_service = registry.get("learn", "default")
         app.state.learn_require_enrollment = settings.learn_require_enrollment
 
+    # the assess PendingTurnDriver (plan 8 M4.3): after every step passed, in both serving paths
+    start_assess_background(app)
+
 
 async def _run_shutdown(app: FastAPI) -> None:
     """Best-effort teardown: close remote provider clients and the DB engine."""
     log.info("shutdown_started")
+    await stop_assess_background(app)
     registry: ProviderRegistry = app.state.registry
     # Close remote provider HTTP clients (TEI, FEAT-024) best-effort
     for category in ("embedding", "reranker"):
@@ -596,6 +622,9 @@ async def _run_shutdown(app: FastAPI) -> None:
                 await aclose()
             except Exception as exc:
                 log.warning("provider_close_failed", category=category, error=str(exc))
+    assess_engine = getattr(app.state, "assess_engine", None)
+    if assess_engine is not None:
+        await assess_engine.dispose()
     from vektra_shared.db import get_engine
 
     engine = get_engine()
@@ -717,6 +746,8 @@ def create_app() -> FastAPI:
     app.include_router(reindex_router)
     app.include_router(analytics_router)
     app.include_router(learn_router)
+    # Dormant by default: mounted only with VEKTRA_ASSESS_ENABLED=true (6.1b)
+    include_assess_router(app)
 
     # Chatbot widget static files (served at /static/learn/vektra-chat.js)
     from fastapi.staticfiles import StaticFiles

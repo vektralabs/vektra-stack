@@ -1,0 +1,10 @@
+{
+ "fixture": "abandoned",
+ "params": {
+  "quizid": 11
+ },
+ "response": {
+  "overrides": []
+ },
+ "wsfunction": "mod_quiz_get_overrides"
+}

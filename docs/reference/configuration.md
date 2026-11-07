@@ -164,6 +164,150 @@ Three things to know before turning it on:
 | `VEKTRA_LEARN_REQUIRE_ENROLLMENT` | bool | `true` | Require enrollment record for learn queries. Set to false when LMS manages enrollment externally. |
 | `VEKTRA_LEARN_SHOW_SOURCES` | bool | `true` | Default visibility of the source-citations section in the widget (FEAT-014). Per-namespace override via `PATCH /api/v1/admin/namespaces/{id}/config` > `show_sources`. Per-widget override via the `data-show-sources` script-tag attribute. The API always returns the full sources list; the flag only instructs the widget whether to render them. |
 
+## Assessment discussion (vektra-assess)
+
+Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
+`assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
+`make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
+Until every job handler of the feature is bound (later plans), a production worker refuses to start; for development and CI add
+`-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development` for the worker only.
+These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
+process environment, never from an env file.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `VEKTRA_ASSESS_ENABLED` | bool | `false` | Master switch (see above). |
+| `VEKTRA_ASSESS_API_DATABASE_URL` | str | - | DSN of the `vektra_assess_api` role, **without a password** (read from the `assess_db_api_password` secret). A DSN with a password, or one that logs in as the `VEKTRA_DATABASE_URL` user, is refused at startup. |
+| `VEKTRA_ASSESS_WORKER_DATABASE_URL` | str | - | DSN of the `vektra_assess_worker` role, without a password (`assess_db_worker_password` secret). Worker only. |
+| `VEKTRA_ASSESS_SECRETS_DIR` | path | `/run/secrets` | Directory holding the assess secret files. |
+| `VEKTRA_ASSESS_API_POOL_SIZE` | int | `15` | Connection pool of the assess API engine. |
+| `VEKTRA_ASSESS_WORKER_POOL_SIZE` | int | `5` | Connection pool of the worker engine. |
+| `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. Minimum `30` (three beat intervals). |
+| `VEKTRA_ASSESS_MOODLE_CA_FILE` | path | - | CA bundle for verifying the Moodle TLS certificate (on-prem CA); the system store when unset. |
+| `VEKTRA_ASSESS_WS_TIMEOUT_CONNECT_S` | float | `3` | Connect timeout of one Moodle web-service call. |
+| `VEKTRA_ASSESS_WS_TIMEOUT_READ_S` | float | `10` | Read timeout of one Moodle web-service call. |
+| `VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S` | float | `30` | Overall deadline of one Moodle call including the body; a server dripping bytes under the byte cap cannot hold it open (`Unreadable(timeout)`). |
+| `VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES` | int | `8388608` | Byte cap of a JSON response; the stream is aborted on overflow (`Unreadable(size_cap)`). |
+| `VEKTRA_ASSESS_WS_MAX_FILE_BYTES` | int | `10485760` | Byte cap of one downloaded submission file (REQ-101). |
+| `VEKTRA_ASSESS_WS_RPS` | float | `10` | Cap on Moodle calls per second, shared by every caller in the worker **process** (one replica, COMP-003: running several worker replicas multiplies it). |
+| `VEKTRA_ASSESS_BREAKER_THRESHOLD` | int | `5` | Consecutive transport/5xx failures that open the per-site circuit breaker (in memory, per worker process). |
+| `VEKTRA_ASSESS_BREAKER_COOLDOWN_S` | float | `30` | Seconds the breaker stays open before one half-open probe. |
+| `VEKTRA_ASSESS_MOODLE_ALLOW_HTTP` | bool | `false` | Plain http to Moodle. Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set in any other environment. |
+| `VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS` | str | - | Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network, e.g. `10.20.0.0/16`). Empty: private addresses are refused. Metadata, link-local and multicast addresses are always refused. |
+| `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | str | - | Username of the ingestion web-service account. The setup check refuses an assess token that belongs to it; when unset that item is `UNVERIFIABLE` (not OK). |
+| `VEKTRA_ASSESS_UI_ORIGIN` | str | - | Origin (`https://host[:port]`) the chat UI is served from. The setup check item `ui_not_same_origin` refuses a UI origin that is the same host or the same site as the Moodle `base_url` or as the API public origin (CONF-004). Same-site is judged without the public-suffix list: the last two host labels are compared, which can refuse a legitimate pair under a multi-label suffix (e.g. two `*.co.uk` hosts) but never accepts a same-site pair. Unset: that item is `UNVERIFIABLE` (not OK). |
+| `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` | str | - | Public origin of the assess API, compared with the UI origin by `ui_not_same_origin`. Unset while the UI origin is set: the item is `UNVERIFIABLE`. |
+| `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` (container healthcheck). |
+| `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` | float | `5` | Seconds between worker heartbeats (row upsert and file touch). At most 10, so `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` (minimum 30) always spans at least three beats. |
+| `VEKTRA_ASSESS_JOB_POLL_INTERVAL_S` | float | `1` | Claim-loop poll when no `NOTIFY` arrives. The poll is the correctness backstop; `NOTIFY` is only a latency hint. |
+| `VEKTRA_ASSESS_JOB_BACKOFF_BASE_S` / `_CAP_S` | float | `5` / `300` | Retry backoff of a failed job attempt: exponential from the base, jittered to 50-100 % of the step, capped. |
+| `VEKTRA_ASSESS_JOB_DONE_RETENTION_H` | int | `24` | Hours a `done` job row is kept before the hourly cleanup deletes it. `dead` rows are kept for the purge plan. |
+| `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` | bool | `false` | Development and CI only: start the worker while some job kinds or ticks have no handler yet. Unbound slots stay unbound and a job of that kind fails with `handler_not_bound`, never completing silently. Honoured only with `VEKTRA_ENV=development`; set in any other environment the worker refuses to start. The shipped overlay does **not** set it; the dev-only `docker-compose.assess.dev.yml` does. Default: a worker with an unbound slot refuses to start and names each slot and the plan that owns it. |
+| `VEKTRA_ASSESS_WORKER_DB_COMMAND_TIMEOUT_S` | float | `30` | Upper bound on any single worker database statement (pool). A restart or a dropped network can leave a connection half-open: no error, only silence; without a bound the worker would wait on it. The control connection uses a fixed 5 s bound. |
+| `VEKTRA_ASSESS_WORKER_WEDGE_EXIT_S` | float | `60` | Liveness watchdog (10-600): if the heartbeat row has not been written for this long while the worker should be ready, it exits with code 70 and the supervisor (`restart: unless-stopped`) starts a fresh process, which reconciles on startup. Backstop for any wedge the timeouts do not catch. |
+| `VEKTRA_ASSESS_WORKER_DRAIN_S` | float | `20` | On SIGTERM, seconds to wait for in-flight handlers before cancelling them and releasing their leases. At most 25, under the Compose `stop_grace_period` of 30 s. |
+| `VEKTRA_ASSESS_POOL_<POOL>_CONCURRENCY` | int | `preflight` 10, `ws` 2, `transcript` 2, `delivery` 2, `setup` 1, `maintenance` 1 | Concurrent jobs of a pool. `VEKTRA_ASSESS_PREFLIGHT_CONCURRENCY` is an accepted alias for the pre-flight pool (the NFR-020 admission number K; 10 is a placeholder until the reference hardware is decided). |
+| `VEKTRA_ASSESS_JOB_<KIND>_BUDGET_S` / `_LEASE_S` / `_MAX_ATTEMPTS` | float / float / int | per kind (for example `ws` kinds 20 / 40 / 5, `setup_check` 120 / 240 / 5, `preflight` derived from `VEKTRA_ASSESS_START_T_S` = T: budget T − 15 s, lease max(2 × budget, budget + 30 s), 2 attempts, so 45 / 90 / 2 at the default T of 60; an override must keep budget ≤ T − 5 s and lease ≥ budget + 30 s, or the worker refuses to start. A pre-flight cancelled at its budget is rolled back at once (`start_timeout`)) | Hard timeout, lease and attempts of a job kind, e.g. `VEKTRA_ASSESS_JOB_PURGE_BUDGET_S`. The lease must be at least twice the budget (no renewal exists); setting only the budget sets the lease to twice it. `_MAX_ATTEMPTS` can **lower** the attempts a job row allows (the row's own `max_attempts`, default 5, is the ceiling: an enqueuer that wants more passes it); the effective value is written back on claim. The write-back is one-way: raising the setting again does not restore the attempts of rows already claimed under the lower value. Lowering it does not retroactively kill rows that are already `ready` at or above the new limit; such a row is no longer claimed and stays `ready` until an operator deletes or re-enqueues it. A wrong name, a non-number, a value above the ceiling (10000 for attempts and concurrency, 86400 s for budget and lease) or a lease under that rule makes the worker refuse to start. |
+| `VEKTRA_ASSESS_PARSER_SOCKET` | path | `/run/vektra-assess-parser/parser.sock` | Unix socket of the parser sidecar (worker and parser only). |
+| `VEKTRA_ASSESS_PARSER_POOL` | int | `3` | Concurrent child processes of the parser sidecar (one item per fresh process). Sized with the container `mem_limit` (768M): pool 3 within the measured per-child peak. |
+| `VEKTRA_ASSESS_PARSER_TIMEOUT_S` | float | `10` | Wall-clock budget per file in the sidecar; the child is SIGKILLed at the deadline and the file becomes `non letto: file danneggiato o non elaborabile`. The worker client waits this plus a 15 s queue allowance before treating the sidecar as unavailable. |
+| `VEKTRA_ASSESS_PARSER_MAX_CHARS` | int | `200000` | Character cap of the text returned per file; beyond it the file is `letto parzialmente`. |
+| `VEKTRA_ASSESS_PARSER_MAX_FILE_BYTES` | int | `10485760` | Largest file the sidecar accepts (REQ-101: 10 MB); larger is `non letto: troppo grande` with no child forked. The sidecar also holds at most four such payloads in memory at once and answers `BUSY` beyond that (the client retries). |
+| `VEKTRA_ASSESS_LLM_MODEL` | str | - | Dedicated discussion model (litellm id). Required when assess is enabled. No fallback model is ever used: `VEKTRA_LLM_FALLBACK_MODEL` is ignored for assess, because a fallback would answer students with a model that never passed the NFR-023 activation. |
+| `VEKTRA_ASSESS_LLM_API_BASE` | str | - | API base of the discussion model (Ollama or OpenAI-compatible endpoint). A cloud key is read by litellm from its own provider variable. |
+| `VEKTRA_LLM_API_KEY` (assess use) | secret str | - | The discussion model's endpoint key is the SAME variable the RAG pipeline uses (OQ-026 decision of 2026-11-06: one key for the on-prem vLLM, no separate assess secret). The API reads it from `.env`; the worker, which has no `env_file`, gets it through its `environment` in `docker-compose.assess.yml`. Empty means no key. Never logged (SecretStr). |
+| `VEKTRA_ASSESS_LLM_EXTRA_BODY` | JSON object | - | Passed as `extra_body` on every discussion-model call, in the API and in the worker (Part B). For Qwen3 on vLLM: `{"chat_template_kwargs": {"enable_thinking": false}}`. Empty or unset: none. The RAG's `VEKTRA_LLM_EXTRA_BODY` is never used for assess. Invalid JSON or a non-object refuses startup. |
+| `VEKTRA_ASSESS_LLM_TEMPERATURE` | float | `0.2` | Sampling temperature of the discussion model (REQ-100 determinism). |
+| `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. |
+| `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). |
+| `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. |
+| `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. |
+| `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one `max_tokens=1` call while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
+| `VEKTRA_ASSESS_RETRY_RPM` | int | `6` | `POST /sessions/{sid}/retry` calls per minute per session; above it 429 (`retry_rate`). The retry only makes the API try the pending turn now; it never ends an OUTAGE or changes the state. |
+| `VEKTRA_ASSESS_FLAG_RPM` | int | `10` | REQ-103: `POST /sessions/{sid}/turns/{turn_no}/flag` calls per minute per session; above it 429 `flag_rate`. |
+| `VEKTRA_ASSESS_MESSAGES_PER_MIN` | int | `4` | REQ-083: student messages per minute per session; above it 429 `ERR-ASSESS-012` ("Attendi qualche secondo"), before any model call, deadline unchanged. Sized in plan 8 M5.1 (see below). |
+| `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET` | int | `500000` | REQ-083: estimated tokens (prompt + completion, from `TurnUsage`) one session may use; `budget_warning` at 80%, close `budget_exhausted` at 100% (one transcript job). Outage retries and earlier sessions do not count. Sized in plan 8 M5.1 (see below). |
+| `VEKTRA_ASSESS_START_RATE_PER_HOUR` | int | `5` | REQ-071: Start attempts per (student, activity) per hour; the next is refused 429 `start_rate_cap` with `retry_after` ("Riprova tra X minuti"), nothing consumed, audited `assess_start_rate_cap_hit`. |
+| `VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER` | int | `3` | REQ-071: this many consecutive SYSTEM rollbacks (start_timeout, capture_failed, part_b_rejected, provider_unavailable, internal_error, commit_failed) of one (student, activity) enqueue `teacher_notify` and `operator_notify` once (audited `assess_rollback_cap_hit`); the student reads `technical_problem_persistent` ("Problema tecnico persistente") while the streak lasts. Worker and API. |
+| `VEKTRA_ASSESS_START_BREAKER_ROLLBACKS` | int | `10` | Per-site Start breaker: this many system rollbacks of one site within the window open it (worker-written `assess_start_breaker`, audited `assess_start_breaker_open`); the API then refuses Starts 503 `start_breaker_open` without consuming anything. |
+| `VEKTRA_ASSESS_START_BREAKER_WINDOW_S` | int | `300` | The breaker's counting window. |
+| `VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S` | int | `120` | Seconds the breaker stays fully open; then half-open (one Start at a time goes through). A commit closes it (`assess_start_breaker_close`); another system rollback re-opens it. |
+| `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. |
+| `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Safeguard of the discussion runner in the API. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
+| `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
+| `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request. |
+| `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED` | bool | `false` | Development and CI only: serve discussions while the (model, prompt_version) has no passing NFR-023 activation (without it the API starts degraded and refuses discussions). Honoured only with `VEKTRA_ENV=development`; refused at startup otherwise. |
+| `VEKTRA_ASSESS_TOKEN_ISSUER` | str | `vektra-assess` | `iss` claim of every discussion token; `aud` is always `discussion` (ARCH-067). |
+| `VEKTRA_ASSESS_PRESESSION_TTL_S` | int | `120` | Lifetime of a pre-session token minted by `POST /tokens`, 10-120 s; a value above 120 refuses startup. |
+| `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` | int | `900` | Upper bound of a session-bound token's lifetime; it also never outlives the session deadline plus `VEKTRA_ASSESS_REPLY_GRACE_S`. Resume (`GET /sessions/{sid}` with a fresh pre-session token) re-mints it. |
+| `VEKTRA_ASSESS_REPLY_GRACE_S` | int | `60` | Seconds after the deadline an in-flight reply may still finish (REQ-070); session tokens expire at deadline plus this grace at the latest. |
+| `VEKTRA_ASSESS_MIN_PLUGIN_VERSION` | str | `0.1.0` | Lowest `local_vektradiscuss` release accepted at mint (ARCH-067). A site's own `assess_sites.min_plugin_version` applies when it is higher. |
+| `VEKTRA_ASSESS_START_T_S` | int | `60` | REQ-071 commit window T: a Start not committed within T of the request is rolled back (pre-flight guard, budget cancellation and STARTING reaper). The pre-flight job's budget and lease are derived from it. The worker reads it too: `docker-compose.assess.yml` passes the `.env` value (default 60) to the worker's environment, as it does for `VEKTRA_ASSESS_ADMISSION_K`, `VEKTRA_ASSESS_RENDER_FRESH_S` and the model parameters. |
+| `VEKTRA_ASSESS_ADMISSION_K` | int | `10` | NFR-020 admission limit: live sessions (ACTIVE, OUTAGE, and STARTING sessions already in pre-flight) admitted at once. The API refuses a Start at or over K before writing anything; the worker pre-flight re-checks under a lock and is authoritative. 10 until the burst test sets it with evidence. |
+| `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION` | str | `1` | Version of the privacy notice shown before Start, recorded on the session row and on the `start` audit event. |
+| `VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S` | int | `150` | Gate step 6: a student turn needs an `enrolled` re-check no older than this (database clock). The worker re-checks every live session every 60 s (`enrolment_recheck` jobs, WS pool); a student no longer enrolled is closed `access_revoked`; an unreadable enrolment or a worker stopped longer than this rejects turns with 503 (fail closed, nothing closed). |
+| `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` | int | `2000` | Longest student message accepted (REQ-083). A longer message, or one made only of whitespace, is refused with 400 `ERR-ASSESS-014` (`details.reason` `message_too_long` / `message_empty`) before any model call; the deadline is unchanged. Sized in plan 8 M5.1 (see below). |
+| `VEKTRA_ASSESS_RENDER_FRESH_S` | int | `300` | Age under which a worker-computed button state is fresh for `GET /state`. Older or missing: `/state` answers `unavailable` (reason `checking`) and queues one render check per student and activity. A Start is refused before writing anything only on a FRESH negative state of a Moodle-side gate; otherwise the pre-flight decides (authoritative). The gate-refresh tick re-queues stale pairs asked about in the last day. |
+| `VEKTRA_ASSESS_STATE_RPM` | int | `30` | `GET /state` calls per minute per site, student and activity (a pre-session token changes on every page view, so it is not the key). Assess-local limiter whose empty windows the housekeeping sweep removes; the global per-key limiter stays dormant. |
+| `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET` | bool | `false` | Development and CI only: let the Start gate BR-006 (h) pass while the REQ-089 privacy configuration does not exist yet (its store arrives with plan assess-privacy-retention). Without it every Start is rolled back with `privacy_not_configured` (fail closed). Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set elsewhere. The dev overlay `docker-compose.assess.dev.yml` sets it. |
+| `VEKTRA_ASSESS_JUDGE_MODEL` / `VEKTRA_ASSESS_JUDGE_API_BASE` | str | - | Judge model of `make eval-assess` only (never read by the API or the worker). |
+| `VEKTRA_ASSESS_JUDGE_LOCALITY` | str | `cloud` | `make eval-assess` only: where the judge runs. A non-synthetic dataset is refused before any request unless it is `onprem`. |
+| `VEKTRA_ASSESS_PARSER_MAX_PAGES` | int | `50` | PDF page cap (REQ-101: 50); a caller cannot ask for more. |
+| `VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB` | int | `256` | Address-space limit (RLIMIT_AS) of each parsing child, in MiB. A file that needs more dies in its own process, not in the sidecar. |
+
+#### Connection budget (assess)
+
+Postgres `max_connections` is 100. The shipped defaults add up to 65, and a test
+(`vektra-app/tests/test_connection_budget.py`) fails above 85, so a changed pool default cannot
+silently exhaust the server:
+
+| Holder | Connections | Setting |
+|---|---|---|
+| Main API pool | 30 (10 + 20 overflow) | `vektra_shared.db` defaults, not changed by assess |
+| Assess API pool | 25 (15 + 10 overflow) | `VEKTRA_ASSESS_API_POOL_SIZE` |
+| Assess worker pool | 5 (no overflow) | `VEKTRA_ASSESS_WORKER_POOL_SIZE` |
+| Assess worker control connection | 1 | fixed (LISTEN and advisory locks, outside the pool) |
+| `migrate` (Alembic) | 1 | while it runs |
+| Reserved | 3 | Postgres `superuser_reserved_connections` |
+| **Total** | **65** | ceiling 85 |
+
+The worker's 5 + 1 is the INT-002 budget: its single pool serves the job SQL and the handlers'
+transactions. INT-002 assumed about 15 for the API; the main API pool alone is larger by default,
+which is why the margin is tracked here.
+
+### Secret files and the key matrix
+
+Each secret is a Docker secret file. Keys are JSON keyrings, `{"active": "<kid>", "keys": {"<kid>":
+"<base64 of 32 bytes>"}}`: rotation adds a kid and flips `active`. `assess_ws_tokens` and `assess_smtp`
+are JSON objects (credentials); the two role passwords are one line of text (at least 24 characters).
+Every file must be a regular file (no symlink), owned by the process uid or root, mode at most `0440`.
+`make assess-keys` writes a complete generated set to `./secrets/assess/` (mode `0400`, never
+overwrites; `secrets/` is gitignored).
+
+Each process checks the matrix at start, in both directions, and refuses to start naming every key that
+is missing (required) or present (forbidden). A forbidden key counts as present when its file exists OR
+when an environment variable carries its name. The API applies the forbidden column even with assess
+disabled (ARCH-066).
+
+| Secret | API | Worker | Parser |
+|---|---|---|---|
+| `assess_token_signing` | required | forbidden | forbidden |
+| `assess_handoff_private` (X25519) | required | forbidden | forbidden |
+| `assess_handoff_public` | allowed | required | forbidden |
+| `assess_transcript_kek` | required | required | forbidden |
+| `assess_teacher_config_public` | required | allowed | forbidden |
+| `assess_teacher_config_private` | forbidden | required | forbidden |
+| `assess_kek` | forbidden | required | forbidden |
+| `assess_ws_tokens` | forbidden | required | forbidden |
+| `assess_smtp` | forbidden | required | forbidden |
+| `assess_db_api_password` | required | forbidden | forbidden |
+| `assess_db_worker_password` | forbidden | required | forbidden |
+
+The one-shot `vektra-assess-db-init` service holds only the two role passwords; it sets `LOGIN` and the
+passwords of `vektra_assess_api` and `vektra_assess_worker` (re-run it to rotate a password). The parser
+holds no secret, no DSN and has no network. Postgres runs with `log_statement=none` and no parameter
+logging (ARCH-078).
+
 ## Observability
 
 | Variable | Type | Default | Description |
@@ -193,7 +337,7 @@ Three things to know before turning it on:
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `CMD_TARGET` | str | `server` | Container entrypoint target: `server` (default) or `migrate` |
+| `CMD_TARGET` | str | `server` | Container entrypoint target: `server` (default), `migrate`, `assess-worker` or `assess-parser`. The assess targets never run migrations. |
 
 ## Variable count summary
 
@@ -203,6 +347,51 @@ Three things to know before turning it on:
 | VEKTRA_* variables read directly from env (`VEKTRA_CORS_ORIGINS`) | 1 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
-| **Total documented** | **71** |
+| VEKTRA_ASSESS_* variables in `VektraAssessSettings` (assess processes only) | 9 |
+| **Total documented** | **80** |
 
 The 66 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
+
+### Assess key purposes and rotation
+
+Every secret is a JSON keyring `{"active": "<kid>", "keys": {"<kid>": "<base64>"}}` (the role passwords are one-line files). Each ciphertext stores the kid it was written under, so rotation adds a kid and flips `active`; older kids keep opening older data until nothing references them.
+
+| Secret | Held by | Protects |
+|---|---|---|
+| `assess_kek` | worker only | per-session DEKs (`assess_session_keys.kek_wrapped`) |
+| `assess_handoff_public` / `assess_handoff_private` | worker seals with the public key, API opens with the private key | the DEK of a LIVE session (`assess_session_handoff.sealed_dek`) |
+| `assess_transcript_kek` | API and worker | per-transcript DEKs |
+| `assess_teacher_config_public` / `_private` | API seals with the public key, only the worker holds the private key | the solution or pasted rubric: the API can write it, never read it |
+
+Rotation order (each step is idempotent and resumable; the helper returns what is left):
+
+1. add the new kid to the keyring and make it `active`; deploy;
+2. `rewrap_session_keys`, `rewrap_transcript_deks`, `reseal_handoffs` and `reseal_teacher_configs` (worker): each returns how many rows still carry the old key, so loop until it returns 0;
+3. remove the old kid from the keyring only after every helper returned 0.
+
+The envelope AAD binds each ciphertext to its row (`snapshot` to the session, `turn` to session and turn number, and so on), so a ciphertext copied to another row fails authentication.
+
+### Sizing of the REQ-083 limits (plan 8 M5.1)
+
+Reference: a scripted 120-minute session (`vektra-assess/tests/test_limits_sizing.py`), one
+student message every 2 minutes (60 turns), each message 400 characters (the eval set's
+questions are 38-76 characters; 400 stands for an argued answer), replies of about 350
+characters, the default model window (8192 tokens, 600 completion), token estimates at
+3.5 characters per token, through the real `DiscussionTurnRunner`. It uses about 373,000
+tokens: the history fills the window after a few dozen turns, then every turn costs about one
+window.
+
+- `VEKTRA_ASSESS_MAX_MESSAGE_CHARS` = 2000: about 25 times the longest eval question; about 570
+  tokens, so one message can never crowd the bundle out of the prompt.
+- `VEKTRA_ASSESS_MESSAGES_PER_MIN` = 4: twice the pace of the reference session; one reply at a
+  time already bounds a real student below it.
+- `VEKTRA_ASSESS_SESSION_TOKEN_BUDGET` = 500,000: 1.34 times the reference session, and above
+  60 full windows (491,520), so a normal 120-minute session never reaches it. A scripted
+  client sending at the rate limit (4 messages a minute, which needs replies faster than 15 s)
+  with a full window per turn (about 8,200 tokens) uses about 33,000 tokens a minute and reaches
+  it in roughly 15-20 minutes; slower replies or shorter prompts stretch that.
+
+The test fails if a default drifts below these margins. A different model window changes the
+reference: re-run the test with the deployment's `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` before
+changing the budget.
+

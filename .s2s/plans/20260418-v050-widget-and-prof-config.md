@@ -1,10 +1,12 @@
 # Plan: v0.5.0 - Widget production-ready + instructor configuration
 
-**Status**: active
+**Status**: closed
 **Plan ID**: 20260418-v050-widget-and-prof-config
 **Branch**: feat/v050-widget-and-prof-config
 **Created**: 2026-04-18T12:40:00Z
-**Updated**: 2026-04-18T12:40:00Z
+**Updated**: 2026-11-01T15:51:53Z
+**Closed**: 2026-11-01T15:51:53Z
+**Closure note**: closed by coordinator request (2026-11-01) as stale. Work shipped in earlier releases; checkboxes were never ticked, so the 0/N count is not evidence of incomplete work.
 **Source**: v0.5.0 milestone scoping discussion (2026-04-18)
 **Source type**: milestone
 

@@ -1,0 +1,261 @@
+# Implementation Plan: Assess transcript generation, safe serving and durable SMTP delivery
+
+**ID**: 20261101-154950-assess-transcript-delivery
+**Status**: active
+**Branch**: N/A
+**Created**: 2026-11-01T14:49:50Z
+**Updated**: 2026-11-01T20:58:19Z
+**Approved**: 2026-11-01 (coordinator)
+
+## Traceability
+
+**Source**: COMP-007 (vektra_assess.transcript, vektra_assess.delivery), ARCH-067 (transcript download token)
+**Source Type**: architecture
+
+## References
+
+### Requirements
+- REQ-074: Transcript content and integrity @.s2s/requirements.md
+- REQ-075: Durable transcript delivery by Vektra SMTP @.s2s/requirements.md
+- REQ-082: Transcript recipients: course graders, optional allowlisted free text @.s2s/requirements.md
+- REQ-088: Student access to own transcript @.s2s/requirements.md
+- REQ-102: Student in-session controls (turn-hash re-verification at generation) @.s2s/requirements.md
+- BR-016: Transcript format, naming and safe serving @.s2s/requirements.md
+- NFR-016: Accessibility of the discussion UI and transcript (transcript part) @.s2s/requirements.md
+- NFR-021: Transcript availability and delivery timing @.s2s/requirements.md
+
+### Architecture
+- COMP-007: vektra_assess.transcript and vektra_assess.delivery @.s2s/architecture.md
+- ARCH-067: Discussion token contract (transcript download token) @.s2s/architecture.md
+- ARCH-068: Transactional outbox on the leased job loop @.s2s/architecture.md
+- ARCH-071: Key matrix (transcript key in both processes; SMTP credentials worker-only) @.s2s/architecture.md
+- ARCH-077: Assess data model (assess_transcript_download_tokens) @.s2s/architecture.md
+- INT-003: Worker to SMTP relay (AUTH only after TLS; probe never sends) @.s2s/architecture.md
+
+### Decisions
+- ADR-0029: Postgres-native leased job loop with DB invariants and outbox @.s2s/decisions/ADR-0029-postgres-native-leased-job-loop-for-assess-with-db.md
+- ADR-0030: Token contract (download token, aud=transcript) @.s2s/decisions/ADR-0030-discussion-token-contract-and-ui-embedding-separat.md
+- ADR-0031: Envelope encryption with live-session key hand-off @.s2s/decisions/ADR-0031-envelope-encryption-with-live-session-key-hand-off.md
+
+### Dependencies
+- 20261101-154950-assess-job-loop (job claim/lease, ticks, NOTIFY, per-kind pools and timeouts)
+- 20261101-154950-assess-session-lifecycle (single close path inserting the `generate_transcript` job; persisted turns with per-turn hash; Part B "Punti contestati" output)
+- 20261101-154950-assess-data-crypto (AES-256-GCM helpers, key loading by kid, grant matrix test)
+- 20261101-154950-assess-moodle-ws (graders reader, address resolution, worker-written gate_inputs)
+
+## Overview
+
+When a session reaches CLOSED, the close transaction (plan 8) enqueues `generate_transcript`.
+This plan builds that handler and everything downstream: an inert-by-construction HTML transcript
+encrypted under its own DEK, one outbox row per recipient written in the same transaction, a
+worker-only SMTP sender with mandatory TLS and a 72 h backoff, and the API endpoints that let the
+owner or a grader download the exact same bytes through a single-use download token.
+
+The rule from `.claude/CLAUDE.md` applies with full force: a delivery that "succeeded" is
+evidence of nothing until the mail sink holds the message, and a transcript that was
+"generated" is evidence of nothing until its bytes re-hash to the stored value.
+
+## Design Notes
+
+- **Package layout.** `vektra_assess/transcript/` (`render.py`, `templates/transcript.html.j2`,
+  `allowlist.py`, `mathml.py`, `naming.py`, `hashing.py`, `store.py`, `handler.py`) and
+  `vektra_assess/delivery/` (`outbox.py`, `message.py`, `smtp.py`, `backoff.py`, `handler.py`,
+  `probe.py`). The worker imports both; the API imports only `transcript.store` (decrypt + serve)
+  and `delivery.outbox` (resend enqueue). Import-linter contract: the API side never imports
+  `delivery.smtp` (so `aiosmtplib` stays out of the API process).
+- **Tables (next revision in the chain).**
+  `assess_transcripts(id, session_id UNIQUE, ciphertext, nonce, dek_wrapped, key_version, content_sha256, turns_digest, filename, byte_size, generated_at)` —
+  the per-transcript DEK is wrapped by the transcript key (held by both processes, ARCH-071),
+  so purge can crypto-shred a transcript by deleting `dek_wrapped`.
+  `assess_deliveries(id, transcript_id NULL, kind ENUM(transcript, reset_notice), round, recipient_kind ENUM(grader, student), recipient_userid, status ENUM(PENDING, RETRYING, SENT, FAILED, ABANDONED, REPLACED), attempts, not_before, attempt_started_at, last_error_class, smtp_code, message_id, sent_at, created_at, UNIQUE(transcript_id, round, recipient_userid))`.
+  `kind=reset_notice` is the hook plan 11 uses for REQ-092. Addresses are NOT stored: they are
+  re-resolved from Moodle at send time (REQ-082).
+  `assess_transcript_download_tokens(jti PK, transcript_id, sub, audience_role ENUM(owner, grader), expires_at, consumed_at)`.
+  Grants: worker writes transcripts and deliveries; API SELECTs transcripts and delivery status
+  columns, INSERTs/UPDATEs download tokens and INSERTs resend rounds through a SECURITY DEFINER
+  `assess_enqueue_resend(tid, actor)`. Add these rows to plan 2's pg_catalog grant assertion.
+- **Generation handler** (idempotent per `session_id`; the UNIQUE constraint makes a second run a
+  no-op). Reads snapshot + turns with the KEK copy; recomputes every turn hash and compares with
+  the hash persisted at turn time (REQ-102); any mismatch → no transcript, job FAILED with
+  `integrity_mismatch`, audit + alert (never deliver a transcript that does not match its
+  turns). Renders, runs the allowlist check, encrypts, then in ONE transaction inserts the
+  transcript row, one PENDING delivery per configured recipient (≤ 3), the
+  `transcript_generated` audit event, and NOTIFY (empty payload).
+- **Template.** Jinja2 `Environment(autoescape=True, undefined=StrictUndefined)`; no `|safe`, no
+  `Markup`, no macros taking markup; a test greps the template for `safe`/`Markup`. Header fields
+  (REQ-074) come only from session/snapshot rows, never from LLM output: course, activity,
+  student identifier, "Sessione #N di M" with earlier sessions, "tentativo #k di M" + method,
+  grade at start, grade at close only if released (else the neutral notice), cap + extra (no
+  reason), timestamps, close reason (6-value vocabulary), outage intervals + credited total,
+  failed start attempts, the BR-009 statement, config flags, per-file status list, conversation
+  language(s). Body: `<ol>` of turns with role label, timestamp, `lang`, markers
+  "[risposta sostituita dal sistema]", post-check replacement marker, "segnalato dallo studente".
+  "PUNTI CONTESTATI" section labelled "Riepilogo generato dall'assistente", rendered as escaped
+  text from plan 8's Part B output. Footer: SHA-256 turns digest.
+- **Post-render allowlist check** (`allowlist.py`, stdlib `html.parser`): every start tag and
+  attribute must be in the template's own set; exactly one `<style>` in `<head>` whose content
+  hash equals the template constant; no attribute value may contain a URL scheme. Explicit
+  rejection tests for `script`, `on*`, `style=`, `@import`, `data:`/`javascript:` URIs, `srcset`,
+  `base`, `meta http-equiv=refresh`, `form`/`action`, `iframe`/`object`/`embed`,
+  `svg`/`foreignObject`, `annotation-xml`. A failure aborts generation (fail closed). A test-only
+  differential run with `html5lib` (dev dependency) catches parser-differential gaps.
+- **Math.** TeX segments are converted with `latex2mathml` (pure Python, must pass the BUG-027
+  baseline) and the result is re-parsed and filtered against a presentation-only MathML
+  allowlist (`math mrow mi mn mo ms mtext mspace mfrac msqrt mroot msub msup msubsup munder mover munderover mtable mtr mtd mstyle`;
+  attributes `display mathvariant stretchy fence separator accent columnalign`); no `href`,
+  `xlink:*`, `maction`, `semantics`, `annotation(-xml)`. Any conversion or filter failure →
+  escaped TeX in `<code>` with `aria-label`. If the dependency fails BUG-027, ship escaped TeX
+  only and record it.
+- **Naming (BR-016).** `<course-shortname>_<activity-id>_<user-id>_s<N>_<yyyymmdd>.html`;
+  shortname folded to `[A-Za-z0-9-]` (others → `-`), date of CLOSED in the site timezone
+  (default `Europe/Rome`); never the full name (OQ-020). `Content-Disposition` uses both
+  `filename=` (ASCII) and `filename*=UTF-8''`.
+- **Email.** `email.message.EmailMessage` with `policy=SMTP`; plain-text body (no transcript
+  content) + the transcript bytes as attachment `text/html; charset=utf-8`; subject carries
+  course shortname, activity and the student identifier (REQ-075; full name pending OQ-020).
+  CR/LF and other C0 controls stripped from every header-bound value before assignment.
+  Deterministic `Message-ID: <sha256(tid|round|recipient_userid)[:32]@VEKTRA_ASSESS_MESSAGE_ID_DOMAIN>`.
+- **SMTP** (`aiosmtplib`, worker only): `start_tls=True` (or implicit TLS on 465 by setting),
+  `validate_certs=True`, AUTH only after TLS; a server without STARTTLS → TLS failure class, never
+  plaintext. Concurrency capped by a semaphore `VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS` (default 2) in
+  the delivery pool, hard timeout per send (30 s).
+- **Exactly-once reading (OQ-029 design default).** Before connecting, the handler commits
+  `attempt_started_at`; after the relay's final 250 it commits SENT. On reconciliation a row with
+  `attempt_started_at` older than the lease and no outcome is resent with the SAME Message-ID
+  and an audited `delivery_possible_duplicate` event. Result: exactly one SENT row per recipient;
+  at most one known, audited duplicate after a crash in the window.
+- **Backoff.** `VEKTRA_ASSESS_SMTP_RETRY_SCHEDULE=1m,5m,15m,1h` then hourly until
+  `VEKTRA_ASSESS_SMTP_RETRY_WINDOW_HOURS=72` → FAILED. 4xx and connection/TLS errors → RETRYING;
+  synchronous 5xx recipient rejection → FAILED immediately (shown as bounce in REQ-076). TLS
+  failures and every FAILED raise an alert (ERROR log event `assess.delivery.alert` with class
+  only + status row read by plan 12's metrics). Asynchronous DSN bounces are out of scope for v1.
+- **Recipients (REQ-082).** v1 ships Moodle-resolved graders only; free-text overrides are not
+  built (allowed by REQ-082 when they slip). At send time the worker re-resolves the address and
+  checks the recipient still holds the grading capability; if not, the row becomes REPLACED and
+  rows for current course graders not already recipients are inserted (total ≤ 3), audited.
+- **Download path (API).** `POST /api/v1/assess/transcripts/{tid}/download-token`: key with
+  `assess:mint` (owner: body `sub`, must equal the transcript's subject) or `assess:teacher`
+  (grader: actor re-verified as grader of that cmid via fresh worker-written gate_inputs, fail
+  closed). Token via `vektra_shared/tokens.py`: `aud=transcript`, `jti`, `sub`, `tid`, `site`,
+  TTL ≤ 120 s; jti row inserted at mint. `GET /api/v1/assess/transcripts/{tid}`: bearer download
+  token only; atomic `UPDATE … SET consumed_at=now() WHERE jti=… AND consumed_at IS NULL AND expires_at>now() AND transcript_id=… RETURNING`;
+  re-checks ownership/grader on the request; decrypts, verifies `content_sha256`, serves with
+  `Content-Disposition: attachment`, `Content-Type: text/html; charset=utf-8`,
+  `Content-Security-Policy: sandbox; default-src 'none'`, `X-Content-Type-Options: nosniff`,
+  `Cache-Control: no-store`, `Referrer-Policy: no-referrer`. Audit `student_download` /
+  `teacher_download`; mismatches audit `ownership_mismatch`. The 410 "expired" branch is added
+  by plan 12 (purge tombstones).
+- **Resend.** `POST /api/v1/assess/transcripts/{tid}/resend` (grader via `assess:teacher`, or
+  operator via admin key; neither can name a recipient): request model `extra="forbid"` and an
+  explicit check of query params; any recipient-like field → 400 `ERR_ASSESS_RESEND_RECIPIENT_FORBIDDEN`
+  (explicit envelope, not the 422 path of DEBT-035). Creates round n+1 rows for re-resolved
+  recipients.
+
+## Tasks
+
+### Transcript
+- [ ] Migration (next revision): `assess_transcripts`, `assess_deliveries`, `assess_transcript_download_tokens`, enums, indexes `(status, not_before)`; add grants + SECURITY DEFINER `assess_enqueue_resend`; extend plan 2's grant-matrix CI assertion
+- [ ] `transcript/hashing.py`: canonical turn serialisation shared with plan 8's turn-time hash (single function, imported by both), `turns_digest`
+- [ ] `transcript/templates/transcript.html.j2` + `render.py`: header/body/footer per Design Notes with semantic headings, lists, `lang`, a single static `<style>`; `StrictUndefined`; template grep test for `safe|Markup`
+- [ ] `transcript/allowlist.py`: post-render validator + rejection test corpus (one test per listed vector) + html5lib differential test
+- [ ] `transcript/mathml.py`: latex2mathml + presentation allowlist + escaped-TeX fallback; add dependency to `vektra-assess/pyproject.toml` and the BUG-027 module list (drop and record if it fails)
+- [ ] `transcript/naming.py`: BR-016 file name + RFC 6266 header builder; unit tests for unicode/space/slash shortnames
+- [ ] `transcript/store.py`: per-transcript DEK generate/wrap/unwrap with the transcript key (kid), encrypt/decrypt, sha256 verification
+- [ ] `transcript/handler.py`: `generate_transcript(session_id)` job handler (idempotent, turn-hash re-verification, allowlist, one-transaction insert of transcript + deliveries + audit + NOTIFY); register with plan 3's JobRunner under the generation pool
+
+### Delivery
+- [ ] `delivery/message.py`: EmailMessage builder, header sanitiser (CR/LF/C0 strip), deterministic Message-ID, plain-text body template (Italian, content-free)
+- [ ] `delivery/smtp.py`: aiosmtplib client with mandatory TLS, AUTH after TLS, cert validation, semaphore cap, timeout, error classification (`tls`, `connect`, `temp_4xx`, `perm_5xx`, `auth`)
+- [ ] `delivery/backoff.py`: schedule parser + `next_not_before(attempts, first_attempt_at)`; window expiry → FAILED
+- [ ] `delivery/handler.py`: claim due rows (`status IN (PENDING, RETRYING) AND not_before<=now()`), re-resolve recipient + capability via the graders reader, REPLACED fan-out, attempt-start commit, send, outcome commit, audit per attempt and result (REQ-085), alerts; reconciliation of in-window crashes per OQ-029 default
+- [ ] `delivery/probe.py`: EHLO + STARTTLS + AUTH + QUIT, never sends; result written to a worker status row for `/health/assess` (plan 12 reads it)
+- [ ] Settings in the worker settings class: `VEKTRA_ASSESS_SMTP_HOST|PORT|TLS_MODE|FROM|USERNAME_FILE|PASSWORD_FILE|MAX_CONNECTIONS|RETRY_SCHEDULE|RETRY_WINDOW_HOURS`, `VEKTRA_ASSESS_MESSAGE_ID_DOMAIN`; API startup refuses if SMTP credential files are present (ARCH-071 matrix)
+
+### API endpoints
+- [ ] `vektra_assess/api/transcripts.py`: download-token mint (owner via `assess:mint`, grader via `assess:teacher` with `require_exact_scope` + site binding + fresh grader check helper `authz/graders.py` reused by plan 11)
+- [ ] `GET /transcripts/{tid}`: single-use consumption, ownership re-check, decrypt + hash verify, headers, audit; per-token rate limit using plan 1's generalised `RateLimiter`
+- [ ] `POST /transcripts/{tid}/resend` with recipient-parameter rejection and audit
+- [ ] Add `ERR_ASSESS_TRANSCRIPT_NOT_FOUND`, `ERR_ASSESS_DOWNLOAD_TOKEN_INVALID`, `ERR_ASSESS_RESEND_RECIPIENT_FORBIDDEN`, `ERR_ASSESS_TRANSCRIPT_INTEGRITY` to `vektra_shared/errors.py` with `_CODE_STATUS_OVERRIDE` entries and `docs/reference/error-codes.md`
+
+### Tests, CI, docs
+- [ ] Mail-sink fixture `vektra-assess/tests/fixtures/mailsink.py` (aiosmtpd, dev dependency): STARTTLS with a self-signed CA trusted by the test client, toggles for down / 4xx / 5xx / no-STARTTLS / drop-after-DATA, message store queried by Message-ID
+- [ ] Integration tests (testcontainers pg16, `@pytest.mark.integration`): generation idempotence (two concurrent jobs → 1 row); tampered turn → no transcript + alert; XSS / markdown-image / remote-URL / header-like turn payloads → allowlist passes, Playwright opens the file with network logging and records 0 requests and 0 script executions; copies byte-identical (download bytes == attachment bytes)
+- [ ] Delivery tests with injected clock: SMTP down for a simulated 2 h then up → each recipient exactly one message on the sink; no-STARTTLS sink → 0 messages, RETRYING + TLS alert; crash between 250 and SENT commit → one SENT row, ≤ 1 duplicate on the sink with identical Message-ID, audit event present; 72 h expiry → FAILED + alert; header injection payload in course shortname → single header on the wire
+- [ ] API tests: student B's token for A's transcript → 403 + audit; replayed token → 401; expired token (clock) → 401; non-grader teacher → 403; admin key on download-token mint → 403 (non-inheriting); resend with `recipient` in body or query → 400; response headers asserted
+- [ ] NFR-021 benchmark `tests/nfr/test_assess_transcript_timing.py`: 50 sessions closed concurrently on the compose stack with the mail sink; measure `generated_at - closed_at` and `sent_at - closed_at`
+- [ ] Accessibility: axe-core scan of a rendered transcript (quiz + assignment fixtures with math) and HTML validation (`html5validator` or `vnu` container) for UTF-8 and `lang`
+- [ ] CI: add the new modules to the BUG-027 import list (worker side), `aiosmtplib`/`latex2mathml` declared explicitly in `vektra-assess/pyproject.toml`; mypy path list; `test-assess` job picks the new tests up
+- [ ] Docs: `docs/reference/api.md` transcript endpoints; `docs/reference/configuration.md` + `.env.example` SMTP settings; `CHANGELOG.md` [Unreleased] Added
+
+## State & Data Lifecycle
+
+| State element | Created by | Updated by | Invalidated/Deleted by |
+|---------------|-----------|------------|------------------------|
+| `assess_transcripts` row + per-transcript DEK (`dek_wrapped`) | `transcript/handler.py` in the generation transaction | never (immutable; copies identical by construction) | plan 12 purge/erasure: delete `dek_wrapped` then row, verified by count |
+| `assess_deliveries` rows | generation transaction (round 1); resend (round n+1); REPLACED fan-out; plan 11 `reset_notice` | `delivery/handler.py` on every attempt (status, attempts, not_before, attempt_started_at) | plan 12 purge (RETRYING → ABANDONED, audited, then deleted with the transcript) |
+| `assess_transcript_download_tokens` | download-token mint | `GET /transcripts/{tid}` sets `consumed_at` | expired/consumed rows deleted by a cleanup tick (daily, plan 3 tick framework); purge with the transcript |
+| SMTP probe status row | `delivery/probe.py` tick | each probe run | overwritten; stale age reported by `/health/assess` |
+| In-process SMTP semaphore | worker start | — | worker stop |
+
+## Acceptance Criteria
+
+- [ ] Transcript row count == CLOSED session count after the chaos/integration suite; download bytes and email attachment bytes hash-equal (REQ-074)
+- [ ] Canary strings for system prompt, solution, pasted rubric and reset reason → 0 occurrences in decrypted transcript bytes; unreleased regrade → 0 occurrences of the new grade (REQ-074)
+- [ ] Every safeguard/post-check replacement and every student flag is marked; header lists every file with exactly one status and the language(s) (REQ-074)
+- [ ] Re-hashing every turn at generation matches 100%; a tampered turn yields 0 transcripts and an alert (REQ-102)
+- [ ] Transcripts with XSS, markdown-image and remote-URL payloads execute 0 scripts and make 0 network requests when opened; served responses carry `Content-Disposition: attachment` and `CSP: sandbox`; file name matches the BR-016 pattern with 0 full-name occurrences (BR-016)
+- [ ] SMTP down 2 h then restored → every pending transcript delivered exactly once per recipient on the mail sink; no row is SENT without a sink-recorded message; crash-window duplicate ≤ 1 and audited (REQ-075, OQ-029)
+- [ ] A recipient who lost the grading capability is replaced by current graders (≤ 3) and audited; a 4th recipient never exists (REQ-082)
+- [ ] Student B requesting A's transcript gets 403 and an audit event; the student copy is hash-equal to the teacher copy; a download token works exactly once and expires ≤ 120 s (REQ-088, ARCH-067)
+- [ ] Resend carrying a recipient parameter (body or query) is rejected with 400 (REQ-080 via REQ-082)
+- [ ] Generation p99 ≤ 60 s after CLOSED and SENT p95 ≤ 5 min with SMTP healthy; ≥ 99% SENT or downloadable within 15 min (NFR-021, REQ-075)
+- [ ] Transcript passes the automated accessibility check and validates as UTF-8 HTML with correct `lang` (NFR-016, BR-016)
+
+## Testing Approach
+
+Unit tests cover rendering, allowlist, naming, header sanitising and backoff as pure functions.
+Integration tests run against a real Postgres (testcontainers) and an in-process TLS mail sink
+whose stored messages are the only accepted evidence of delivery: every "SENT" assertion is
+paired with a sink lookup by Message-ID, every "generated" assertion with a decrypt + re-hash.
+Time-dependent behaviour (2 h outage, 72 h window, token TTL) uses an injected clock; one short
+real-time run guards against clock-injection bugs.
+
+### Test Infrastructure
+
+- **Required**: testcontainers Postgres pg16; aiosmtpd mail sink with STARTTLS and fault toggles; Playwright Chromium for the "0 requests / 0 scripts" check; vnu/html5validator; compose stack with assess profile for NFR-021
+- **Provided by**: this plan (mail sink, fault toggles, timing benchmark); Postgres fixtures and roles from 20261101-154950-assess-data-crypto; closed-session fixtures from 20261101-154950-assess-session-lifecycle; graders-reader fake from 20261101-154950-assess-moodle-ws
+- **False-pass guard**: delivery tests fail if the mail sink did not start (fixture asserts a listening socket and a successful STARTTLS handshake before yielding); the Playwright inertness test fails if fewer than the declared number of payload files were opened; the NFR benchmark fails when fewer than 50 sessions reached CLOSED rather than reporting percentiles over a smaller set
+
+### NFR Verification
+
+| NFR | Dataset/Load | Tool | Environment | Pass criterion |
+|-----|--------------|------|-------------|----------------|
+| NFR-021 | 50 sessions closed concurrently, 2 grader recipients each, healthy mail sink | `tests/nfr/test_assess_transcript_timing.py` reading `closed_at`, `generated_at`, `sent_at` from DB + sink timestamps | compose stack (CI integration) and target VM (plan 13) | p99(generated − closed) ≤ 60 s; p95(sent − closed) ≤ 5 min |
+| NFR-016 | rendered quiz and assignment transcripts with math, markers, Punti contestati | axe-core (Playwright) + vnu + manual screen-reader read-through | CI + manual | 0 WCAG 2.1 AA violations; valid UTF-8 HTML with `lang`; reads end-to-end with NVDA |
+
+## Integration Notes
+
+- Plan 8's close path must enqueue `generate_transcript` inside the CLOSED transaction and expose
+  Part B "Punti contestati" output in a typed field; the canonical turn-hash function lives in
+  `transcript/hashing.py` and plan 8 imports it (or vice versa) — one implementation only.
+- Plan 11 reuses `authz/graders.py`, the delivery outbox with `kind=reset_notice`, and reads
+  delivery status for the REQ-076 list. Plan 12 adds purge tombstones (410 branch), ABANDONED
+  handling, metrics over delivery status, and the operator test-send.
+- Plugin P2/P3 mint download tokens server-side and never cache them; the iframe (plan 9) fetches
+  with the bearer header.
+
+## Notes
+
+- OQ-029 (exactly-once vs crash window): the design default is implemented; product/QA
+  confirmation is still needed for the REQ-075 criterion. Blocker for pilot sign-off, not for
+  implementation.
+- OQ-020: subject line and file name use identifiers only until the DPO rules on full names;
+  REQ-075 "student in the subject" is satisfied by the identifier.
+- Free-text recipients (REQ-082 SHOULD) are not built; add a BACKLOG item (domain allowlist +
+  audit) for a later release.
+- Risk: `latex2mathml` and `aiosmtplib` are new dependencies; both must pass the BUG-027 qemu
+  baseline in week 1 (ARCH-078). `aiosmtpd` is dev-only.
+- Drift: the existing `_pii_redactor` only redacts at WARNING+ by key name; delivery code must
+  never log addresses or bodies at any level (plan 12 adds the assess log allowlist processor).
+
+> Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.

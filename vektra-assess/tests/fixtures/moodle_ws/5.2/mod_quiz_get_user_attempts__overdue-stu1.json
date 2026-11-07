@@ -1,0 +1,33 @@
+{
+ "fixture": "overdue-stu1",
+ "params": {
+  "quizid": 10,
+  "status": "all",
+  "userid": 7
+ },
+ "response": {
+  "attempts": [
+   {
+    "attempt": 1,
+    "currentpage": 0,
+    "gradednotificationsenttime": null,
+    "gradeitemmarks": [],
+    "id": 27,
+    "layout": "1,2,0",
+    "preview": 0,
+    "quiz": 10,
+    "state": "overdue",
+    "sumgrades": null,
+    "timecheckstate": 1793836071,
+    "timefinish": 0,
+    "timemodified": 1793835170,
+    "timemodifiedoffline": 0,
+    "timestart": 1793835171,
+    "uniqueid": 27,
+    "userid": 7
+   }
+  ],
+  "warnings": []
+ },
+ "wsfunction": "mod_quiz_get_user_attempts"
+}

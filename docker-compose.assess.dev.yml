@@ -1,0 +1,34 @@
+# Development and CI only. NOT part of a deployment.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.assess.yml \
+#     -f docker-compose.assess.dev.yml --profile assess up -d
+#
+# Most job handlers of the assess feature arrive with later plans, and the shipped overlay
+# (docker-compose.assess.yml) is deliberately fail-closed: a worker with an unbound handler refuses
+# to start. This file lets the stack run meanwhile: the unbound kinds stay unbound and a job of such
+# a kind fails with handler_not_bound (and one audit event), never completing silently.
+#
+# It is honoured only with VEKTRA_ENV=development, which this file sets explicitly instead of relying
+# on the default; with any other VEKTRA_ENV the worker refuses to start. Drop this file from the CI
+# job and from local stacks once every handler is bound.
+services:
+  vektra-assess-worker:
+    environment:
+      VEKTRA_ENV: development
+      VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND: "true"
+      # the pre-flight builds the Part B model at start: the same dev model and bypass as the API
+      VEKTRA_ASSESS_LLM_MODEL: ${VEKTRA_ASSESS_LLM_MODEL:-ollama/dev-unactivated}
+      VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED: "true"
+      # BR-006 (h): the REQ-089 privacy store arrives with plan assess-privacy-retention
+      VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET: "true"
+  # The discussion runner (plan assess-llm-runner): the API refuses to start without a model or with
+  # a safeguard that fell open, and without an NFR-023 activation it starts degraded (no
+  # discussion served). Dev and CI have neither Presidio nor an activated model: the explicit dev
+  # settings below let discussions run, and VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED is refused outside
+  # development.
+  vektra:
+    environment:
+      VEKTRA_ENV: development
+      VEKTRA_ASSESS_LLM_MODEL: ${VEKTRA_ASSESS_LLM_MODEL:-ollama/dev-unactivated}
+      VEKTRA_ASSESS_SAFEGUARD_MODE: none
+      VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED: "true"

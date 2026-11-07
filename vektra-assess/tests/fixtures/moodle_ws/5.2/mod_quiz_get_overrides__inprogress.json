@@ -1,0 +1,10 @@
+{
+ "fixture": "inprogress",
+ "params": {
+  "quizid": 9
+ },
+ "response": {
+  "overrides": []
+ },
+ "wsfunction": "mod_quiz_get_overrides"
+}

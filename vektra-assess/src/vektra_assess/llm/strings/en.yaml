@@ -1,0 +1,35 @@
+# Vektra-shipped English strings of the discussion (REQ-098, BR-009). Moodle strings never override
+# them. Final wording is by UX and is validated in the moderated student pilot. Any change here
+# changes prompt_version and requires a new NFR-023 activation.
+br009: "Recorded grade: {grade} (read on {date}). The grade has NOT been changed by this discussion; the oral decides"
+classes:
+  R-SOL:
+    core: "I cannot solve, check or compare the options of this question."
+    alternative: "You can discuss it with your teacher at the oral."
+  R-OTHER:
+    core: "I can only talk about the data of this attempt."
+    alternative: "For other information, ask your teacher."
+  R-OFFTOPIC:
+    core: "This discussion is only about your attempt."
+    alternative: "For other questions you can ask the course tutor or your teacher."
+  R-INJECT:
+    core: "I can only help you understand the assessment of this attempt."
+    alternative: "Tell me which item you want to discuss."
+  R-GHOST:
+    core: "I cannot write a text for you to submit."
+    alternative: "We can prepare the points to review together instead."
+  R-GRADE:
+    core: "I cannot make predictions or estimates about the grade or the oral."
+    alternative: "I can help you prepare the points to discuss at the oral."
+  W-DISTRESS:
+    core: "I am sorry you feel this way: it is normal for an assessment to weigh on you."
+    alternative: "{support_text}"
+missing:
+  value_unverified: "[value not verified: see the review page]"
+  quote_unverified: "[teacher comment not verified: see the review page]"
+  replaced_by_system: "[reply replaced by the system]"
+unsupported_language: "I am replying in Italian: this discussion supports only Italian and English."
+default_support_text: "If you need it, talk to your teacher."
+# REQ-099 (b) / REQ-077: the D3 disclosure of the solution-oracle limitation, shown in the
+# teacher help text by plan 11 (read through shipped.get(lang).oracle_disclosure)
+oracle_disclosure: "With this option off the assistant does not receive the solution and must not provide it, but for questions a model can solve on its own this cannot be guaranteed 100%: avoid enabling the discussion on questions you will reuse. Remember also that the student receives a copy of the transcript."

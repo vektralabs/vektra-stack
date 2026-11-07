@@ -1,0 +1,197 @@
+# ==========================================================================
+# Vektra assess (assessment discussion chatbot) - Compose overlay
+# ARCH-075, ADR-0028, plan assess-foundations section 7
+#
+# Usage (generate the secrets once with `make assess-keys`):
+#   docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d
+#
+# Why an overlay and not only a profile: the API service `vektra` is always on, and
+# Compose has no optional secrets, so mounting the assess secrets into it from the
+# base file would make every deployment without ./secrets/assess fail to start. The
+# three assess processes are additionally gated by the `assess` profile.
+#
+# Trust domains (ARCH-066, ARCH-071): each service mounts exactly the secrets its
+# column of KEY_MATRIX (vektra_assess/keys.py) allows, and each process re-checks
+# that at start. tests/test_compose_assess_profile.py asserts both against the
+# rendered `docker compose config`, so this file and the matrix cannot diverge.
+# ==========================================================================
+
+x-secret: &secret
+  uid: "1000"
+  gid: "1000"
+  mode: 0400
+
+services:
+  # API: signing key, hand-off private key, transcript KEK, teacher-config public
+  # key, its own DB password. Never the KEK, WS tokens, SMTP or the socket volume.
+  vektra:
+    environment:
+      VEKTRA_ASSESS_ENABLED: "true"
+      VEKTRA_ASSESS_API_DATABASE_URL: postgresql+asyncpg://vektra_assess_api@postgres:5432/vektra
+    secrets:
+      - { source: assess_token_signing, <<: *secret }
+      - { source: assess_handoff_private, <<: *secret }
+      - { source: assess_handoff_public, <<: *secret }
+      - { source: assess_transcript_kek, <<: *secret }
+      - { source: assess_teacher_config_public, <<: *secret }
+      - { source: assess_db_api_password, <<: *secret }
+    depends_on:
+      vektra-assess-db-init:
+        condition: service_completed_successfully
+
+  # One-shot: sets LOGIN and the passwords of the two assess roles. Holds only the
+  # two role passwords (and the superuser password it already needs to connect).
+  vektra-assess-db-init:
+    image: pgvector/pgvector:pg16
+    profiles: [assess]
+    environment:
+      PGHOST: postgres
+      PGUSER: vektra
+      PGDATABASE: vektra
+      PGPASSWORD: ${POSTGRES_PASSWORD:-vektra}
+    command: ["psql", "-X", "-q", "-f", "/assess/assess-roles.sql"]
+    volumes:
+      - ./deploy/postgres/assess-roles.sql:/assess/assess-roles.sql:ro
+    secrets:
+      - { source: assess_db_api_password, uid: "0", gid: "0", mode: 0400 }
+      - { source: assess_db_worker_password, uid: "0", gid: "0", mode: 0400 }
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Worker: the only holder of the KEK, WS tokens and SMTP. No listener, no ports.
+  vektra-assess-worker:
+    image: vektra-stack
+    profiles: [assess]
+    environment:
+      CMD_TARGET: assess-worker
+      VEKTRA_ASSESS_ENABLED: "true"
+      VEKTRA_ASSESS_WORKER_DATABASE_URL: postgresql+asyncpg://vektra_assess_worker@postgres:5432/vektra
+      VEKTRA_ASSESS_PARSER_SOCKET: /run/vektra-assess-parser/parser.sock
+      VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE: /run/assess-worker/heartbeat
+      # The discussion model, for Part B of the Start pre-flight (plan assess-session-lifecycle).
+      # The worker has no env_file: it gets the same values the API reads from .env. The key is the
+      # RAG's VEKTRA_LLM_API_KEY on purpose (one key for the on-prem vLLM, OQ-026); the extra body
+      # is the assess one, never VEKTRA_LLM_EXTRA_BODY. Empty means unset; no model refuses start.
+      VEKTRA_ASSESS_LLM_MODEL: ${VEKTRA_ASSESS_LLM_MODEL:-}
+      VEKTRA_ASSESS_LLM_API_BASE: ${VEKTRA_ASSESS_LLM_API_BASE:-}
+      VEKTRA_LLM_API_KEY: ${VEKTRA_LLM_API_KEY:-}
+      VEKTRA_ASSESS_LLM_EXTRA_BODY: ${VEKTRA_ASSESS_LLM_EXTRA_BODY:-}
+      VEKTRA_ASSESS_LLM_TEMPERATURE: ${VEKTRA_ASSESS_LLM_TEMPERATURE:-0.2}
+      VEKTRA_ASSESS_LLM_MAX_TOKENS: ${VEKTRA_ASSESS_LLM_MAX_TOKENS:-600}
+      VEKTRA_ASSESS_LLM_CONTEXT_WINDOW: ${VEKTRA_ASSESS_LLM_CONTEXT_WINDOW:-8192}
+      VEKTRA_ASSESS_OUTAGE_TIMEOUT_S: ${VEKTRA_ASSESS_OUTAGE_TIMEOUT_S:-45}
+      VEKTRA_ASSESS_OUTAGE_G_S: ${VEKTRA_ASSESS_OUTAGE_G_S:-20}
+      VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER: ${VEKTRA_ASSESS_ROLLBACK_NOTIFY_AFTER:-3}
+      VEKTRA_ASSESS_START_BREAKER_ROLLBACKS: ${VEKTRA_ASSESS_START_BREAKER_ROLLBACKS:-10}
+      VEKTRA_ASSESS_START_BREAKER_WINDOW_S: ${VEKTRA_ASSESS_START_BREAKER_WINDOW_S:-300}
+      VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S: ${VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S:-120}
+      # the session lifecycle settings the API's Start also reads (same .env values, same
+      # defaults as the code): T, admission K and the render freshness must agree in both
+      VEKTRA_ASSESS_START_T_S: ${VEKTRA_ASSESS_START_T_S:-60}
+      VEKTRA_ASSESS_ADMISSION_K: ${VEKTRA_ASSESS_ADMISSION_K:-10}
+      VEKTRA_ASSESS_RENDER_FRESH_S: ${VEKTRA_ASSESS_RENDER_FRESH_S:-300}
+      VEKTRA_ASSESS_REPLY_GRACE_S: ${VEKTRA_ASSESS_REPLY_GRACE_S:-60}
+    secrets:
+      - { source: assess_handoff_public, <<: *secret }
+      - { source: assess_transcript_kek, <<: *secret }
+      - { source: assess_teacher_config_public, <<: *secret }
+      - { source: assess_teacher_config_private, <<: *secret }
+      - { source: assess_kek, <<: *secret }
+      - { source: assess_ws_tokens, <<: *secret }
+      - { source: assess_smtp, <<: *secret }
+      - { source: assess_db_worker_password, <<: *secret }
+    # The heartbeat file lives on tmpfs, owned by the image's user: it only advances while the event
+    # loop runs, and nothing the worker writes there survives a restart.
+    tmpfs:
+      - /run/assess-worker:size=1m,uid=1000,gid=1000,mode=0700
+    volumes:
+      - assess_parser_sock:/run/vektra-assess-parser
+    mem_limit: 512m
+    stop_grace_period: 30s
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,sys,time; p=os.environ['VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 30 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      vektra-assess-db-init:
+        condition: service_completed_successfully
+      vektra-assess-parser:
+        condition: service_started
+
+  # Parser sidecar: parses untrusted files. No network, no secrets, no DSN, no env_file,
+  # read-only root, unprivileged, bounded memory/pids/cpu. Talks only over the socket.
+  # Each item is parsed in a fresh child process under rlimits (plan assess-parser).
+  vektra-assess-parser:
+    image: vektra-stack
+    profiles: [assess]
+    network_mode: none
+    read_only: true
+    user: "1000:1000"
+    environment:
+      CMD_TARGET: assess-parser
+      VEKTRA_ASSESS_ENABLED: "true"
+      VEKTRA_ASSESS_PARSER_SOCKET: /run/vektra-assess-parser/parser.sock
+      # Non-secret limits only (the parser refuses to start with a DSN or a key in env).
+      VEKTRA_ASSESS_PARSER_POOL: ${VEKTRA_ASSESS_PARSER_POOL:-3}
+      VEKTRA_ASSESS_PARSER_TIMEOUT_S: ${VEKTRA_ASSESS_PARSER_TIMEOUT_S:-10}
+      VEKTRA_ASSESS_PARSER_MAX_CHARS: ${VEKTRA_ASSESS_PARSER_MAX_CHARS:-200000}
+      VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB: ${VEKTRA_ASSESS_PARSER_RLIMIT_AS_MB:-256}
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - assess_parser_sock:/run/vektra-assess-parser
+    mem_limit: 768m
+    memswap_limit: 768m
+    pids_limit: 64
+    cpus: 1.5
+    ulimits:
+      core: 0
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    # The image HEALTHCHECK probes the API on :8000 with curl, which this container
+    # neither serves nor can reach: answer a deep ping over the socket instead (one child
+    # forked under rlimits on an embedded page, so the pool is proven, not only the socket).
+    healthcheck:
+      test: [CMD, python, -m, vektra_assess.parser_sidecar.ping, --deep]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  assess_parser_sock:
+
+secrets:
+  assess_token_signing:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_token_signing
+  assess_handoff_private:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_handoff_private
+  assess_handoff_public:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_handoff_public
+  assess_transcript_kek:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_transcript_kek
+  assess_teacher_config_public:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_teacher_config_public
+  assess_teacher_config_private:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_teacher_config_private
+  assess_kek:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_kek
+  assess_ws_tokens:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_ws_tokens
+  assess_smtp:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_smtp
+  assess_db_api_password:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_db_api_password
+  assess_db_worker_password:
+    file: ${VEKTRA_ASSESS_SECRETS_PATH:-./secrets/assess}/assess_db_worker_password

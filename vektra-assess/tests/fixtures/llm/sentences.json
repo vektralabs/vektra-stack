@@ -1,0 +1,22 @@
+[
+  {"text": "La risposta vale 3.5 punti. Vedi la domanda 2.", "expect": ["La risposta vale 3.5 punti.", "Vedi la domanda 2."]},
+  {"text": "Hai ottenuto 3.5/10 [Domanda 3]. Il criterio è diverso.", "expect": ["Hai ottenuto 3.5/10 [Domanda 3].", "Il criterio è diverso."]},
+  {"text": "Come scrivi a p.12 della consegna, il limite è 0. Poi continui.", "expect": ["Come scrivi a p.12 della consegna, il limite è 0.", "Poi continui."]},
+  {"text": "Lo trovi a pag. 4 [Consegna p.4]. Bene?", "expect": ["Lo trovi a pag. 4 [Consegna p.4].", "Bene?"]},
+  {"text": "La matrice [[1, 2], [3, 4]] ha determinante -2. Controlla.", "expect": ["La matrice [[1, 2], [3, 4]] ha determinante -2.", "Controlla."]},
+  {"text": "La formula è f(x) = 2.0x + 1.25. Il coefficiente pesa.", "expect": ["La formula è f(x) = 2.0x + 1.25.", "Il coefficiente pesa."]},
+  {"text": "Commento del docente: \"Manca la dimostrazione. Rivedi il passo 2.\" Ne parliamo?", "expect": ["Commento del docente: \"Manca la dimostrazione. Rivedi il passo 2.\"", "Ne parliamo?"]},
+  {"text": "Il docente scrive «Buona l'idea. Incompleta.» e basta.", "expect": ["Il docente scrive «Buona l'idea. Incompleta.» e basta."]},
+  {"text": "Davvero?! Sì.", "expect": ["Davvero?!", "Sì."]},
+  {"text": "Primo punto\nSecondo punto.", "expect": ["Primo punto", "Secondo punto."]},
+  {"text": "Vedi es. il caso 2, cfr. sez. 3. Fine.", "expect": ["Vedi es. il caso 2, cfr. sez. 3.", "Fine."]},
+  {"text": "Il valore è 1.000.000 di euro. Ok.", "expect": ["Il valore è 1.000.000 di euro.", "Ok."]},
+  {"text": "[[CLASS R-SOL]] Non posso dirtelo. Puoi chiedere al docente.", "expect": ["[[CLASS R-SOL]] Non posso dirtelo.", "Puoi chiedere al docente."]},
+  {"text": "Il sito www.esempio.it spiega. Leggilo.", "expect": ["Il sito www.esempio.it spiega.", "Leggilo."]},
+  {"text": "See p. 12 and Fig. 3. It is the same.", "expect": ["See p. 12 and Fig. 3.", "It is the same."]},
+  {"text": "The mark is 2.5/4 [Domanda 1]. That is all.", "expect": ["The mark is 2.5/4 [Domanda 1].", "That is all."]},
+  {"text": "La risposta è no. Riprova.", "expect": ["La risposta è no.", "Riprova."]},
+  {"text": "x = 3. y = 4.", "expect": ["x = 3.", "y = 4."]},
+  {"text": "Intervallo [0.5, 1.5]. Fine.", "expect": ["Intervallo [0.5, 1.5].", "Fine."]},
+  {"text": "Sono 12.5 punti su 20 (livello 3). Questo è il dato.", "expect": ["Sono 12.5 punti su 20 (livello 3).", "Questo è il dato."]}
+]

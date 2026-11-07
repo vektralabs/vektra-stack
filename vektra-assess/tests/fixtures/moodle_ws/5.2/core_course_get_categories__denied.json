@@ -1,0 +1,10 @@
+{
+ "fixture": "denied",
+ "params": {},
+ "response": {
+  "errorcode": "accessexception",
+  "exception": "webservice_access_exception",
+  "message": "Access control exception"
+ },
+ "wsfunction": "core_course_get_categories"
+}

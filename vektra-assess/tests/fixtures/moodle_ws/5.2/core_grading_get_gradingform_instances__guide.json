@@ -1,0 +1,12 @@
+{
+ "fixture": "guide",
+ "params": {
+  "definitionid": 1,
+  "since": 0
+ },
+ "response": {
+  "instances": [],
+  "warnings": []
+ },
+ "wsfunction": "core_grading_get_gradingform_instances"
+}

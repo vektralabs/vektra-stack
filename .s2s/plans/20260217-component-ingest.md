@@ -7,10 +7,12 @@ provides_requires:
 # Implementation Plan: vektra-ingest - Document processing pipeline and async jobs
 
 **ID**: 20260217-component-ingest
-**Status**: active
+**Status**: closed
 **Branch**: N/A
 **Created**: 2026-02-17T22:42:39Z
-**Updated**: 2026-02-17T22:42:39Z
+**Updated**: 2026-11-01T15:51:53Z
+**Closed**: 2026-11-01T15:51:53Z
+**Closure note**: closed by coordinator request (2026-11-01) as stale. Work shipped in earlier releases; checkboxes were never ticked, so the 0/N count is not evidence of incomplete work.
 
 ## Traceability
 

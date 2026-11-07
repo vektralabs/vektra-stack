@@ -109,6 +109,22 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-INDEX-004 | vektra-index | 404 | Reindex job not found |
 | ERR-ANALYTICS-001 | vektra-analytics | 503 | Analytics service or database session not available (starting up, or none configured) |
 | ERR-ANALYTICS-002 | vektra-analytics | 404 | Trace not found for the given `response_id` |
+| ERR-ASSESS-001 | vektra-assess | 503 | Assessment discussion service unavailable; the remediation names the failing readiness item (see `GET /health/assess`) |
+| ERR-ASSESS-002 | vektra-assess | 429 | Setup check requested too soon (one per site per 5 minutes); `Retry-After` gives the wait |
+| ERR-ASSESS-003 | vektra-assess | 404 | Site or setup-check report not found (also returned for a key bound to another site) |
+| ERR-ASSESS-004 | vektra-assess | 422 | Model activation refused: the eval report does not pass the NFR-023 gate (hash, HARD classes, judge calibration, data basis); the remediation lists the failing check codes |
+| ERR-ASSESS-005 | vektra-assess | 401 | Discussion token missing, malformed, expired, of the wrong stage, already used, or revoked (the session's epoch moved on) |
+| ERR-ASSESS-006 | vektra-assess | 403 | Refused: the request comes from a Moodle "login as" session, or does not assert `loginas: false` and `realuser_id: null` (REQ-084). Audited `loginas_rejected`, nothing written |
+| ERR-ASSESS-007 | vektra-assess | 403 | The API key is not bound to an assess site for this purpose (`assess_site_keys`) |
+| ERR-ASSESS-008 | vektra-assess | 404 | Session not found: unknown, rolled back, or belonging to another student, activity or site (the cases are indistinguishable on purpose) |
+| ERR-ASSESS-009 | vektra-assess | 409 | The session is CLOSED: no further action, and no token is re-minted for it |
+| ERR-ASSESS-010 | vektra-assess | 409 | A reply to the previous message is still pending ("attendi la risposta") |
+| ERR-ASSESS-011 | vektra-assess | 409 | The session's state does not allow this action (for example a turn while the session is STARTING or in OUTAGE) |
+| ERR-ASSESS-012 | vektra-assess | 429 | Too many requests: a per-token or per-session rate limit, or the Start cap; `retry_after` gives the wait |
+| ERR-ASSESS-013 | vektra-assess | 503 | Capacity reached (NFR-020 admission limit K): the Start was refused and nothing was consumed |
+| ERR-ASSESS-014 | vektra-assess | 400 | Malformed or over-length request body; the explicit envelope, never the framework 422 (DEBT-035) |
+| ERR-ASSESS-015 | vektra-assess | 409 | Start refused: the discussion is not available for this student and activity now (`details.reason` carries the content-free reason code) |
+| ERR-ASSESS-016 | vektra-assess | 403 | The plugin version sent at mint is below the required minimum (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION` or the site's own minimum) |
 
 ### Deliberately not listed
 
@@ -128,3 +144,9 @@ Follow this procedure (REQ-011 convention):
 5. **Write a test** that triggers the error via HTTP and asserts the response matches the REQ-010 envelope.
 
 Convention: define the code in the registry *before* implementing the handler.
+
+**`ERR-ASSESS-NNN` namespace.** Assess codes (`vektra_assess`, the assessment discussion feature) are
+numbered in the order they are added: a new code takes the next free number, whichever plan adds
+it, and a code is never reused or renumbered, even after the condition it named is removed (a
+Moodle plugin release in the field may still branch on it). The constant lives in
+`vektra_shared/errors.py`; `vektra_assess.errors` only re-exports it.

@@ -433,6 +433,47 @@ async def _login_cookie(client, bootstrap_key: str) -> str:
     return admin_key
 
 
+async def test_assess_scopes_create_and_exclusivity(client, bootstrap_key, session):
+    """assess:* keys can be created alone; mixing with admin/ingest/query is refused
+    with ERR-ADMIN-001 before the insert, by the API and by the UI (plan
+    assess-foundations 4.4, ARCH-067)."""
+    from sqlalchemy import text
+
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    auth = {"Authorization": f"Bearer {admin_key}"}
+
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"label": "moodle-site", "scopes": ["assess:mint", "assess:teacher"]},
+        headers=auth,
+    )
+    assert resp.status_code == 201, resp.text
+    assert sorted(resp.json()["scopes"]) == ["assess:mint", "assess:teacher"]
+
+    before = (await session.execute(text("SELECT count(*) FROM api_keys"))).scalar()
+    for mixed in (["admin", "assess:mint"], ["query", "assess:privacy-erase"]):
+        resp = await client.post(
+            "/api/v1/api-keys", json={"label": "mixed", "scopes": mixed}, headers=auth
+        )
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert body["error"]["code"] == "ERR-ADMIN-001"
+        assert "ck_api_keys_assess_scope_exclusive" in body["error"]["message"]
+
+    resp = await client.post(
+        "/admin/login", data={"token": admin_key}, follow_redirects=False
+    )
+    client.cookies.set(_COOKIE, admin_key)
+    resp = await client.post(
+        "/admin/keys/create",
+        data={"label": "ui-mixed", "scopes": ["admin", "assess:mint"]},
+    )
+    assert resp.status_code == 200
+    assert "flash-error" in resp.text and "Key created" not in resp.text
+    after = (await session.execute(text("SELECT count(*) FROM api_keys"))).scalar()
+    assert after == before, "a refused request must not create a key"
+
+
 async def test_ui_health_page(client, bootstrap_key):
     """GET /admin/ renders health dashboard with auto-refresh markup."""
     admin_key = await _login_cookie(client, bootstrap_key)
@@ -502,6 +543,17 @@ async def test_ui_namespaces_crud(client, bootstrap_key, session):
     resp = await client.request("DELETE", "/admin/namespaces/test-ns")
     assert resp.status_code == 200
     assert "deleted" in resp.text.lower()
+
+    # The reserved assess namespace cannot be created nor deleted (its row anchors the assess
+    # traces' FK; plan assess-llm-runner)
+    resp = await client.post(
+        "/admin/namespaces/create", data={"name": "assess-discussion"}
+    )
+    assert resp.status_code == 403
+    resp = await client.request("DELETE", "/admin/namespaces/assess-discussion")
+    assert resp.status_code == 403
+    resp = await client.get("/admin/namespaces")
+    assert "assess-discussion" in resp.text
 
 
 async def test_ui_audit_page(client, bootstrap_key, session):
@@ -1031,3 +1083,20 @@ async def test_namespace_config_patch_rejects_citations_enabled_non_bool(
     assert resp.status_code == 400, resp.text
     err = resp.json()["error"]
     assert err["code"] == "ERR-ADMIN-007"
+
+
+async def test_namespace_config_patch_refuses_the_reserved_assess_namespace(
+    client, bootstrap_key, fresh_engine
+):
+    """assess-discussion (revision 0019) holds assess traces only: its config is not writable."""
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    before = await _read_namespace_config(fresh_engine, "assess-discussion")
+    resp = await client.patch(
+        "/api/v1/admin/namespaces/assess-discussion/config",
+        json={"grounding_mode": "hybrid"},
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["code"] == "ERR-NAMESPACE-001"
+    await asyncio.sleep(0.2)
+    assert await _read_namespace_config(fresh_engine, "assess-discussion") == before

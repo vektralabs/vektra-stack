@@ -101,6 +101,20 @@ class TestStoreTrace:
         assert len(orm.steps) == 3
         assert len(orm.chunks_retrieved) == 2
 
+    async def test_store_trace_persists_the_pipeline(self):
+        """RAG traces keep pipeline NULL; an assess trace carries its pipeline (revision 0019)."""
+        from dataclasses import replace
+
+        from vektra_analytics.service import AnalyticsService
+
+        svc = AnalyticsService()
+        session = AsyncMock()
+        await svc.store_trace(session, _make_trace(), namespace="test-ns")
+        assert session.add.call_args[0][0].pipeline is None
+        trace = replace(_make_trace(), pipeline="assess-discussion")
+        await svc.store_trace(session, trace, namespace="assess-discussion")
+        assert session.add.call_args[0][0].pipeline == "assess-discussion"
+
     async def test_store_trace_requires_namespace(self):
         """namespace has no default - callers must provide it explicitly."""
         import inspect

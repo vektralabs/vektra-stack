@@ -22,6 +22,10 @@ from __future__ import annotations
 
 from typing import Any
 
+#: same marker as ``vektra_shared.testing_recorders.TEST_DOUBLE_MARKER`` (not imported: the
+#: registry is product code and the recorders are a test asset)
+_TEST_DOUBLE_MARKER = "__vektra_test_double__"
+
 
 class ProviderRegistry:
     """Dict-based registry for pluggable provider instances.
@@ -31,14 +35,26 @@ class ProviderRegistry:
     available names when an unknown entry is requested.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, allow_test_doubles: bool = False) -> None:
         self._store: dict[str, dict[str, Any]] = {}
+        # The Recording* doubles in vektra_shared.testing_recorders ship in the package but are
+        # test assets: a production registry refuses them (plan assess-context). Only a test
+        # that builds its own registry may opt in.
+        self._allow_test_doubles = allow_test_doubles
 
     def register(self, category: str, name: str, instance: Any) -> None:
         """Register a provider instance under (category, name).
 
-        Overwrites any existing registration for the same key without error.
+        Overwrites any existing registration for the same key without error. Refuses a
+        recording test double unless the registry was built with ``allow_test_doubles``.
         """
+        if not self._allow_test_doubles and getattr(
+            type(instance), _TEST_DOUBLE_MARKER, False
+        ):
+            raise ValueError(
+                f"refusing to register test double {type(instance).__name__} as "
+                f"{category}/{name}: recorders are test assets"
+            )
         if category not in self._store:
             self._store[category] = {}
         self._store[category][name] = instance

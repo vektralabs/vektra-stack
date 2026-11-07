@@ -127,6 +127,9 @@ ERR_AUTH_004 = "ERR-AUTH-004"  # Rate limit exceeded
 # Quota errors (ARCH-047)
 ERR_QUOTA_001 = "ERR-QUOTA-001"  # Namespace quota exceeded
 
+# Namespace errors
+ERR_NAMESPACE_001 = "ERR-NAMESPACE-001"  # Reserved namespace: no content may be written
+
 # Analytics errors (ARCH-041)
 ERR_ANALYTICS_001 = "ERR-ANALYTICS-001"  # Analytics service not available
 ERR_ANALYTICS_002 = "ERR-ANALYTICS-002"  # Trace not found
@@ -152,6 +155,34 @@ ERR_INDEX_002 = "ERR-INDEX-002"  # Invalid index version (< 1)
 ERR_INDEX_003 = "ERR-INDEX-003"  # Reindex target equals the active version
 ERR_INDEX_004 = "ERR-INDEX-004"  # Reindex job not found
 
+# Assess errors (vektra_assess). Namespace rule: each plan takes the next free
+# number, codes are never reused (docs/reference/error-codes.md).
+ERR_ASSESS_001 = "ERR-ASSESS-001"  # Assess unavailable: a readiness item failed
+ERR_ASSESS_002 = (
+    "ERR-ASSESS-002"  # Setup check requested too soon (1 per 5 min per site)
+)
+ERR_ASSESS_003 = (
+    "ERR-ASSESS-003"  # Site or setup-check report not found (also cross-site)
+)
+ERR_ASSESS_004 = (
+    "ERR-ASSESS-004"  # Model activation refused: the eval report does not pass NFR-023
+)
+# Student session lifecycle (plan assess-session-lifecycle)
+ERR_ASSESS_005 = (
+    "ERR-ASSESS-005"  # Discussion token missing, invalid, expired or revoked
+)
+ERR_ASSESS_006 = "ERR-ASSESS-006"  # Refused: Moodle 'login as' session (REQ-084)
+ERR_ASSESS_007 = "ERR-ASSESS-007"  # Key not bound to a site for this purpose
+ERR_ASSESS_008 = "ERR-ASSESS-008"  # Session not found (unknown, or not the caller's)
+ERR_ASSESS_009 = "ERR-ASSESS-009"  # Session closed: no action, no re-mint
+ERR_ASSESS_010 = "ERR-ASSESS-010"  # A reply is still pending: wait for it
+ERR_ASSESS_011 = "ERR-ASSESS-011"  # Session state does not allow this action
+ERR_ASSESS_012 = "ERR-ASSESS-012"  # Too many requests (rate limit or Start cap)
+ERR_ASSESS_013 = "ERR-ASSESS-013"  # Capacity reached: no Start admitted now
+ERR_ASSESS_014 = "ERR-ASSESS-014"  # Malformed or over-length request body
+ERR_ASSESS_015 = "ERR-ASSESS-015"  # Start refused: the discussion is not available
+ERR_ASSESS_016 = "ERR-ASSESS-016"  # Plugin version below the required minimum
+
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
 ERR_ADMIN_008 = "ERR-ADMIN-008"  # Deep-health auth: registry/key store not yet ready
@@ -174,6 +205,7 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_AUTH_003: 403,
     ERR_AUTH_004: 429,
     ERR_QUOTA_001: 422,
+    ERR_NAMESPACE_001: 403,
     ERR_INGEST_002: 413,  # Payload Too Large
     ERR_QUERY_003: 422,
     ERR_ANALYTICS_002: 404,
@@ -189,6 +221,22 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_INDEX_002: 400,
     ERR_INDEX_003: 400,  # Bad Request: target must differ from the active version
     ERR_INDEX_004: 404,
+    ERR_ASSESS_001: 503,
+    ERR_ASSESS_002: 429,
+    ERR_ASSESS_003: 404,
+    ERR_ASSESS_004: 422,
+    ERR_ASSESS_005: 401,
+    ERR_ASSESS_006: 403,
+    ERR_ASSESS_007: 403,
+    ERR_ASSESS_008: 404,
+    ERR_ASSESS_009: 409,
+    ERR_ASSESS_010: 409,
+    ERR_ASSESS_011: 409,
+    ERR_ASSESS_012: 429,
+    ERR_ASSESS_013: 503,
+    ERR_ASSESS_014: 400,  # explicit envelope, never the 422 validation path (DEBT-035)
+    ERR_ASSESS_015: 409,
+    ERR_ASSESS_016: 403,
 }
 
 
@@ -330,4 +378,13 @@ def service_initializing(request_id: UUID | None = None) -> ErrorResponse:
         message="The service is still initializing.",
         remediation="Retry shortly; the service is starting up.",
         request_id=request_id or uuid4(),
+    )
+
+
+def namespace_reserved(namespace: str) -> ErrorResponse:
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_NAMESPACE_001,
+        message=f"Namespace '{namespace}' is reserved and cannot hold content or be configured.",
+        remediation="Use a different namespace; reserved namespaces are managed by Vektra.",
     )

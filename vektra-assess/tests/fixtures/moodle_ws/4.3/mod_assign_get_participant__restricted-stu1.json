@@ -1,0 +1,21 @@
+{
+ "fixture": "restricted-stu1",
+ "params": {
+  "assignid": 13,
+  "userid": 7
+ },
+ "response": {
+  "allowsubmissionsfromdate": 1793144056,
+  "blindmarking": false,
+  "cutoffdate": 0,
+  "duedate": 1794180856,
+  "duedatestr": "8 November 2026, 11:34 PM",
+  "fullname": "Alice Alpha",
+  "grantedextension": false,
+  "id": 7,
+  "requiregrading": false,
+  "submissionstatus": "new",
+  "submitted": false
+ },
+ "wsfunction": "mod_assign_get_participant"
+}

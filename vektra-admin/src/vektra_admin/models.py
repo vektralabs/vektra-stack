@@ -112,9 +112,17 @@ class ApiKeyOrm(Base):
     )
 
     __table_args__ = (
+        # Mirrors migration 0009 (vektra_shared.auth.ALL_SCOPES / ASSESS_SCOPES).
         CheckConstraint(
-            "scopes <@ ARRAY['admin','ingest','query']::text[]",
+            "scopes <@ ARRAY['admin','ingest','query','assess:mint','assess:teacher',"
+            "'assess:privacy-export','assess:privacy-erase']::text[]",
             name="ck_api_keys_scopes",
+        ),
+        CheckConstraint(
+            "NOT (scopes && ARRAY['assess:mint','assess:teacher',"
+            "'assess:privacy-export','assess:privacy-erase']::text[]) "
+            "OR NOT (scopes && ARRAY['admin','ingest','query']::text[])",
+            name="ck_api_keys_assess_scope_exclusive",
         ),
     )
 

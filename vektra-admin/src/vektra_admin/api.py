@@ -35,7 +35,13 @@ from vektra_admin import audit as _audit
 from vektra_admin import bootstrap as _bootstrap
 from vektra_admin import health as _health
 from vektra_admin.keys import generate_key
-from vektra_shared.auth import ApiKeyInfo, KeyStoreProvider, require_scope
+from vektra_shared.auth import (
+    ALL_SCOPES,
+    ApiKeyInfo,
+    KeyStoreProvider,
+    require_scope,
+    scope_set_error,
+)
 from vektra_shared.db import get_session
 from vektra_shared.errors import (
     ErrorCategory,
@@ -49,6 +55,7 @@ from vektra_shared.errors import (
     provider_registry_unavailable,
     service_initializing,
 )
+from vektra_shared.namespace import refuse_reserved_namespace
 
 # ---------------------------------------------------------------------------
 # Namespace config whitelist (WI-3)
@@ -330,15 +337,17 @@ async def create_api_key(
             raise HTTPException(status_code=403, detail=err.to_envelope())
 
     # --- Validate scopes ---
-    valid_scopes = {"admin", "ingest", "query"}
     requested_scopes = body.scopes if body.scopes is not None else ["admin"]
-    invalid = set(requested_scopes) - valid_scopes
-    if invalid:
+    scope_error = scope_set_error(requested_scopes)
+    if scope_error is not None:
         err = ErrorResponse(
             category=ErrorCategory.PERMANENT,
             code="ERR-ADMIN-001",
-            message=f"Invalid scopes: {sorted(invalid)}",
-            remediation=f"Use only valid scopes: {sorted(valid_scopes)}.",
+            message=scope_error,
+            remediation=(
+                f"Use only valid scopes: {sorted(ALL_SCOPES)}; a key with an "
+                "assess:* scope holds no admin, ingest or query scope."
+            ),
         )
         raise HTTPException(status_code=422, detail=err.to_envelope())
 
@@ -710,6 +719,7 @@ async def patch_namespace_config(
       - Unknown keys are rejected with 400 (not silently ignored) to surface
         typos from upstream clients (e.g. Moodle plugin) during development.
     """
+    refuse_reserved_namespace(namespace_id)
     from vektra_admin.models import NamespaceOrm  # late import
 
     # --- Validate body: unknown keys rejected (ERR-ADMIN-006) ---

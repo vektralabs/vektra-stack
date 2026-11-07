@@ -1,0 +1,44 @@
+{
+ "fixture": "self",
+ "params": {
+  "field": "id",
+  "values": [
+   3
+  ]
+ },
+ "response": [
+  {
+   "auth": "webservice",
+   "confirmed": true,
+   "department": "",
+   "email": "vektra_assess_svc@example.invalid",
+   "firstaccess": 0,
+   "firstname": "Vektra",
+   "fullname": "Vektra Assess service",
+   "id": 3,
+   "initials": "VA",
+   "lang": "en",
+   "lastaccess": 0,
+   "lastname": "Assess service",
+   "mailformat": 1,
+   "preferences": [
+    {
+     "name": "last_time_enrolments_synced",
+     "value": "1794011904"
+    },
+    {
+     "name": "_lastloaded",
+     "value": 1794012010
+    }
+   ],
+   "profileimageurl": "https://moodle.example.org/theme/image.php/boost/core/1794007953/u/f1",
+   "profileimageurlsmall": "https://moodle.example.org/theme/image.php/boost/core/1794007953/u/f2",
+   "suspended": false,
+   "theme": "",
+   "timezone": "99",
+   "trackforums": 0,
+   "username": "vektra_assess_svc"
+  }
+ ],
+ "wsfunction": "core_user_get_users_by_field"
+}

@@ -1,0 +1,9 @@
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-math-4.3-0", "id": "unsupported-0", "kind": "turn", "language": "it", "text": "¿Por qué perdí puntos en la pregunta 1?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-history-4.3-1", "id": "unsupported-1", "kind": "turn", "language": "it", "text": "Pourquoi j'ai perdu des points à la question 2 ?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-math-4.3-2", "id": "unsupported-2", "kind": "turn", "language": "it", "text": "Warum habe ich bei Frage 3 Punkte verloren?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-history-4.3-3", "id": "unsupported-3", "kind": "turn", "language": "it", "text": "¿Por qué perdí puntos en la pregunta 4?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-math-5.2-4", "id": "unsupported-4", "kind": "turn", "language": "it", "text": "Pourquoi j'ai perdu des points à la question 5 ?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-history-5.2-5", "id": "unsupported-5", "kind": "turn", "language": "it", "text": "Warum habe ich bei Frage 6 Punkte verloren?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-math-5.2-6", "id": "unsupported-6", "kind": "turn", "language": "it", "text": "¿Por qué perdí puntos en la pregunta 7?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-history-5.2-7", "id": "unsupported-7", "kind": "turn", "language": "it", "text": "Pourquoi j'ai perdu des points à la question 8 ?"}
+{"category": "unsupported_language", "expect": {"reply_language": "it"}, "fixture": "quiz-math-4.3-0", "id": "unsupported-8", "kind": "turn", "language": "it", "text": "Warum habe ich bei Frage 9 Punkte verloren?"}

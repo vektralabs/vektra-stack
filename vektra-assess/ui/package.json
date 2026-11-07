@@ -1,0 +1,17 @@
+{
+  "name": "vektra-assess-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "node scripts/no-html-sinks.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28",
+    "typescript": "^5.6",
+    "vitest": "^3.2",
+    "jsdom": "^26.1"
+  }
+}

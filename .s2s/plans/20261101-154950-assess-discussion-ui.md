@@ -122,7 +122,7 @@ impossible (the nginx example sends `X-Frame-Options: DENY` on every response).
 - [x] Route-inventory test `vektra-assess/tests/test_route_inventory.py`: enumerate `app.routes`; assert no assess route declares a query/cookie parameter named `token|access_token|jwt|bearer`; assert `GET .../events?token=<valid>` without header → 401; assert REQ-102 inventory: no regenerate, edit, delete-turn or upload route under `/api/v1/assess`
 
 ### Client bundle (`vektra-assess/ui/`)
-- [ ] Scaffold `package.json`, `esbuild.config.mjs`, `tsconfig.json`, `src/main.ts`; `npm run build` writes hashed assets + manifest; commit `package-lock.json`
+- [x] Scaffold `package.json`, `esbuild.config.mjs`, `tsconfig.json`, `src/main.ts`; `npm run build` writes hashed assets + manifest; commit `package-lock.json`
 - [ ] `src/sse.ts`: incremental SSE parser + `fetch`/`ReadableStream` consumer with bearer header, `Last-Event-ID`, backoff and terminal-status handling
 - [ ] `src/bridge.ts`: postMessage protocol v1 with origin + source checks and explicit `targetOrigin`; `ResizeObserver` → `resize` messages
 - [ ] `src/state.ts`: explicit state machine — `awaiting_handoff` → `preparing` (Start 202; "Preparazione della discussione…" announced once) → `active` ⇄ `outage` → `closed(reason)`; plus `capacity_refused`, `start_rolled_back`, `unavailable` (non-technical texts, REQ-071/REQ-068 state 7), `resume`; one pure reducer unit-tested per transition

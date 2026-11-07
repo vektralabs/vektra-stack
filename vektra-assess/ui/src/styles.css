@@ -1,0 +1,4 @@
+:root { --fg: #1a1a1a; --bg: #ffffff; --muted: #595959; --accent: #0b57d0; --border: #8a8a8a; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+main { max-width: 48rem; margin: 0 auto; padding: 1rem; }

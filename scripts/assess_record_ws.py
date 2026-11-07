@@ -24,18 +24,27 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 
 SCRUBBED_ROOT = "https://moodle.example.org"
 DEV_RELEASE = re.compile(r"^(4\.3|5\.2)\.\d+\+ \(Build: \d+\)$")
-LOCAL_URL = re.compile(r"^http://(localhost|127\.0\.0\.1):\d{2,5}$")
+#: the hosts a dev site may live on; the base-URL rule and the downloaded-file scan both use them
+DEV_HOSTS = ("localhost", "127.0.0.1")
+#: the ports of the two dev sites (vektra-moodle docker/env.43, env.52)
+DEV_PORTS = (8080, 8082)
+LOCAL_URL = re.compile(
+    r"^http://(" + "|".join(re.escape(h) for h in DEV_HOSTS) + r"):\d{2,5}$"
+)
 DEFAULT_OUT = (
     Path(__file__).resolve().parent.parent
     / "vektra-assess"
@@ -112,6 +121,54 @@ def assert_clean(
         r'"userprivateaccesskey": "REDACTED"', blob
     ):
         raise RecorderRefused("refused: userprivateaccesskey not redacted")
+
+
+#: what must never appear in a recorded submission file, matched case-insensitively
+FILE_NEEDLES = (
+    "wstoken",
+    "privatetoken",
+    "token=",
+    *DEV_HOSTS,
+    *(f":{p}" for p in DEV_PORTS),
+)
+_ZIP_SUFFIXES = {".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".zip"}
+_PDF_STREAM = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.S)
+
+
+def _file_layers(name: str, data: bytes) -> list[tuple[str, bytes]]:
+    """The raw bytes, plus every zip member (docx/pptx/odt...) and every inflatable PDF stream."""
+    layers = [(name, data)]
+    if Path(name).suffix.lower() in _ZIP_SUFFIXES or data[:4] == b"PK\x03\x04":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                layers += [(f"{name}!{m}", zf.read(m)) for m in zf.namelist()]
+        except zipfile.BadZipFile:
+            layers.append((f"{name}!unreadable-zip", b"unreadable-zip"))
+    if data[:5] == b"%PDF-":
+        for i, m in enumerate(_PDF_STREAM.finditer(data)):
+            try:
+                layers.append((f"{name}!stream{i}", zlib.decompress(m.group(1))))
+            except zlib.error:
+                pass  # not Flate-encoded: its raw bytes are already in the first layer
+    return layers
+
+
+def file_secret_hits(
+    name: str, data: bytes, *, extra: tuple[str, ...] = ()
+) -> list[str]:
+    """``"<file>[!member]: <needle>"`` for every needle found; empty when the file is clean.
+
+    An unreadable zip counts as a hit: what cannot be inspected is not recorded.
+    """
+    needles = [n.lower().encode() for n in (*FILE_NEEDLES, *extra) if n]
+    hits = []
+    for where, blob in _file_layers(name, data):
+        if where.endswith("!unreadable-zip"):
+            hits.append(f"{where}: cannot inspect")
+            continue
+        low = blob.lower()
+        hits += [f"{where}: {n.decode()}" for n in needles if n in low]
+    return hits
 
 
 # --- transport ---------------------------------------------------------------------------
@@ -328,6 +385,14 @@ def record(
 
     for blob in staged.values():
         assert_clean(blob.decode(), base_url=base, token=token)
+    # a submission file is written as downloaded: scan its bytes (and zip members, PDF
+    # streams) for the token, token-bearing names and the dev host before anything is written
+    hostport = urllib.parse.urlsplit(base).netloc
+    for name, data in files.items():
+        if file_secret_hits(name, data, extra=(token, base, hostport)):
+            raise RecorderRefused(
+                "refused: a downloaded file carries a secret or the dev host"
+            )
 
     target = out_dir / branch
     (target / "files").mkdir(parents=True, exist_ok=True)

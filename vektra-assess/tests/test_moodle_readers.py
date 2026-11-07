@@ -6,7 +6,12 @@ what Moodle answered. A request with no recording fails the test (``Replay.unmat
 
 from __future__ import annotations
 
+import importlib.util
+import io
 import json
+import zipfile
+import zlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -52,6 +57,15 @@ from vektra_assess.moodle.readers import (
 from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
 
 pytestmark = pytest.mark.parametrize("branch", BRANCHES)
+
+# the recorder's own file scan (scripts/ is not a package): the test checks what it checks
+_SPEC = importlib.util.spec_from_file_location(
+    "assess_record_ws",
+    Path(__file__).resolve().parents[2] / "scripts" / "assess_record_ws.py",
+)
+assert _SPEC and _SPEC.loader
+_REC = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_REC)
 
 
 def env(branch: str) -> tuple[Replay, Any, SiteRef, dict[str, Any]]:
@@ -659,6 +673,74 @@ def test_recordings_are_scrubbed(branch: str) -> None:
     assert "localhost" not in blob and "127.0.0.1" not in blob
     assert '"userprivateaccesskey": "REDACTED"' in blob
     assert "token=" not in blob.replace("token=REDACTED", "")
+
+
+def _scan(path: Path) -> list[str]:
+    hits: list[str] = _REC.file_secret_hits(path.name, path.read_bytes())
+    return hits
+
+
+def test_recorded_files_are_scrubbed(branch: str) -> None:
+    """The submission files are written as downloaded: scan raw bytes and zip members too."""
+    files = sorted((FIXTURES / branch / "files").iterdir())
+    assert files, "no recorded submission files: the scan would be vacuous"
+    members = sum(
+        len(_REC._file_layers(f.name, f.read_bytes())) - 1
+        for f in files
+        if f.suffix in {".docx", ".pptx", ".odt"}
+    )
+    assert members > 0, "no zip member was inspected"
+    assert [h for f in files for h in _scan(f)] == []
+
+
+def _zip(member: str, text: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", "<Types/>")
+        zf.writestr(member, text)
+    return buf.getvalue()
+
+
+def _flate_pdf(text: str) -> bytes:
+    body = zlib.compress(text.encode())
+    return (
+        b"%PDF-1.4\n4 0 obj\n<< /Length "
+        + str(len(body)).encode()
+        + b" /Filter /FlateDecode >>\nstream\n"
+        + body
+        + b"\nendstream\nendobj\n%%EOF\n"
+    )
+
+
+@pytest.mark.parametrize("needle", _REC.FILE_NEEDLES)
+@pytest.mark.parametrize("shape", ["txt", "docx", "pdf"])
+def test_the_file_scan_fails_on_a_contaminated_file(
+    branch: str, needle: str, shape: str, tmp_path: Path
+) -> None:
+    text = f"VISIBLE text {needle.upper()} more text"  # case-insensitive match
+    data = {
+        "txt": text.encode(),
+        "docx": _zip("word/document.xml", f"<w:t>{text}</w:t>"),  # deflated: not in raw
+        "pdf": _flate_pdf(f"BT ({text}) Tj ET"),  # inflated stream only
+    }[shape]
+    path = tmp_path / f"stu1__synthetic.{shape}"
+    path.write_bytes(data)
+    if shape != "txt":
+        assert needle.upper().encode() not in data, (
+            "the needle must be hidden by compression"
+        )
+    assert any(needle in h for h in _scan(path))
+
+
+def test_the_file_scan_passes_a_clean_file_and_refuses_an_unreadable_zip(
+    branch: str, tmp_path: Path
+) -> None:
+    clean = tmp_path / "stu1__clean.docx"
+    clean.write_bytes(_zip("word/document.xml", "<w:t>CANARY-DOCX ok</w:t>"))
+    assert _scan(clean) == []
+    broken = tmp_path / "stu1__broken.docx"
+    broken.write_bytes(b"PK\x03\x04 not really a zip")
+    assert _scan(broken) != []
 
 
 async def test_readers_log_no_body_param_or_url(branch: str) -> None:

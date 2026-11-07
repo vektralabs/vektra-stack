@@ -557,3 +557,28 @@ async def test_a_grader_read_timeout_keeps_the_course_and_grade_already_read(
             )
         )[0][0]
         assert name.startswith("PARTIAL-COURSE_")
+
+
+async def test_the_header_shows_the_extra_time_granted_at_start(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4503138706: a session granted 10 extra minutes at start (duration 40 min on
+    a 30 min cap) shows the frozen cap and the extra, even after the cap was raised."""
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        await pg.run(
+            "super",
+            "UPDATE assess_sessions SET duration_s = 2400 WHERE id = :s",
+            {"s": s.session_id},
+        )
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET cap_minutes = 60 WHERE site_id = :s AND cmid = :c",
+            {"s": w.site, "c": s.cmid},
+        )
+        deps = GenerationDeps(
+            kek=s.kek, transcript_kek=ring, facts=Facts(facts=CloseFacts())
+        )
+        await generate_transcript(deps, worker.connect, s.session_id)
+        html = (await _open(pg, ring, s.session_id)).decode()
+        assert "<dt>Durata massima</dt><dd>30 min</dd>" in html
+        assert "<dt>Tempo aggiuntivo</dt><dd>10 min</dd>" in html

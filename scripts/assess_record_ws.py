@@ -137,7 +137,17 @@ _ZIP_SUFFIXES = {".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".zip"}
 #: an indirect object's header + dictionary, then its stream body (the dictionary has /Filter)
 _PDF_STREAM = re.compile(rb"\bobj\b(.*?)\bstream\r?\n(.*?)\r?\n?endstream", re.S)
 _PDF_OBJ = re.compile(rb"\bobj\b")
-_PDF_FILTER = re.compile(rb"/Filter\s*(\[[^\]]*\]|/[A-Za-z0-9]+)")
+#: a PDF name ends at white space or a delimiter; any other byte extends it
+_NAME_END = rb"(?![^\x00\t\n\x0c\r ()<>\[\]{}/%])"
+_PDF_FILTER_KEY = re.compile(rb"/Filter" + _NAME_END)
+#: the only /Filter values the scan accepts: one direct name, or an array of direct names
+_PDF_FILTER_VALUE = re.compile(
+    rb"\s*(?:(/[A-Za-z0-9]+)"
+    + _NAME_END
+    + rb"|\[((?:\s*/[A-Za-z0-9]+"
+    + _NAME_END
+    + rb")*)\s*\])"
+)
 _PDF_NAME = re.compile(rb"/([A-Za-z0-9]+)")
 #: a layer whose name ends with this could not be read: it is a hit, never a pass
 UNINSPECTABLE = "!uninspectable"
@@ -181,8 +191,17 @@ def _pdf_stream(dictionary: bytes, body: bytes) -> bytes | None:
     """
     if b"/DecodeParms" in dictionary or b"/DP" in dictionary:
         return None
-    found = _PDF_FILTER.search(dictionary)
-    for filter_name in _PDF_NAME.findall(found.group(1)) if found else []:
+    keys = list(_PDF_FILTER_KEY.finditer(dictionary))
+    if len(keys) > 1:
+        return None  # which /Filter a reader applies is not ours to guess
+    names: list[bytes] = []
+    if keys:
+        # an indirect reference (``5 0 R``), alone or inside the array, is not resolved here
+        value = _PDF_FILTER_VALUE.match(dictionary, keys[0].end())
+        if value is None:
+            return None
+        names = _PDF_NAME.findall(value.group(1) or value.group(2))
+    for filter_name in names:
         decode = _PDF_DECODERS.get(filter_name)
         if decode is None:
             return None

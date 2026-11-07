@@ -759,6 +759,12 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
             b" /DecodeParms << /Predictor 12 >>",
         ),
         b"%PDF-1.4\nstream\rwstoken\rendstream\n",  # a stream the scan cannot delimit
+        # CodeRabbit 4499897034: an indirect /Filter (alone or in a chain) cannot be resolved
+        _pdf(zlib.compress(b"wstoken"), b"5 0 R"),
+        _pdf(
+            base64.a85encode(zlib.compress(b"wstoken")) + b"~>",
+            b"[/ASCII85Decode 6 0 R]",
+        ),
     ],
     ids=[
         "unknown",
@@ -767,6 +773,8 @@ def test_the_file_scan_decodes_a_pdf_filter_chain(branch: str, tmp_path: Path) -
         "bad_a85",
         "predictor",
         "undelimited",
+        "indirect_filter",
+        "indirect_in_chain",
     ],
 )
 def test_the_file_scan_refuses_an_uninspectable_pdf_stream(

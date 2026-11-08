@@ -32,10 +32,14 @@ no fallback and no second copy in the database. The same is true, for transcript
 ## Re-wrap the KEK
 
 1. Add a new kid to `assess_kek`, make it `active`, redeploy the worker. For
-   `assess_transcript_kek` the API writes under it too (the teachers' reset and termination
-   reasons): deploy the new active kid to EVERY API instance and the worker, and drain the old
-   instances, before the final sweep below; an old instance still running could write a reason
-   under the old kid after the helpers returned 0.
+   `assess_transcript_kek` the API reads AND writes under it too (the teachers' reset and
+   termination reasons), so roll it out in two phases:
+   1. add the new kid as an INACTIVE key and deploy it to EVERY API instance and the worker
+      (every process can now read what the new kid will write; nothing writes it yet);
+   2. make it `active` and deploy again everywhere, draining the old instances, before the
+      final sweep below. Activating in one step would let an updated instance write a reason
+      that a not yet updated one cannot read, and an old instance still running could write
+      under the old kid after the helpers returned 0.
 2. Run `rewrap_session_keys(conn, keyring, from_kid)` in a loop (commit between batches) until it
    returns 0. Do the same with `rewrap_transcript_deks` for `assess_transcript_kek` AND with
    `rewrap_teacher_reasons(conn, keyring, from_kid)` for the same key (the teachers' reset and

@@ -41,6 +41,12 @@ EXPECTED = {
     # plan 11 (11a)
     ("GET", "/api/v1/assess/activities/{cmid}/config"),
     ("PUT", "/api/v1/assess/activities/{cmid}/config"),
+    # plan 11 (11b)
+    ("GET", "/api/v1/assess/activities/{cmid}/sessions"),
+    ("POST", "/api/v1/assess/activities/{cmid}/sessions/{sid}/reset"),
+    ("POST", "/api/v1/assess/activities/{cmid}/terminate"),
+    ("PUT", "/api/v1/assess/activities/{cmid}/students/{userid}/extra-time"),
+    ("PUT", "/api/v1/assess/activities/{cmid}/opening-fallback"),
 }
 
 
@@ -123,6 +129,7 @@ async def test_no_route_accepts_a_query_string_or_cookie_credential(pg) -> None:
                 "turn_no": "1",
                 "tid": str(s.session_id),
                 "cmid": str(s.cmid),
+                "userid": str(s.sub),
             }
             before = (
                 await pg.run(

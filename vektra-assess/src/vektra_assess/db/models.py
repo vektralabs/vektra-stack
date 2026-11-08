@@ -183,11 +183,42 @@ class ResetGrantOrm(Base):
     )
     cmid: Mapped[int] = mapped_column(BIGINT)
     student_userid: Mapped[int] = mapped_column(BIGINT)
-    granted_by: Mapped[str | None] = mapped_column(TEXT)
+    granted_by: Mapped[str] = mapped_column(TEXT)  # revision 0038: mandatory
     granted_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=_NOW
     )
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # revision 0038 (plan 11b, REQ-087): the CLOSED session the reset follows, the teacher's
+    # reason (transcript KEK), the continuity choice
+    session_no: Mapped[int] = mapped_column(INTEGER)
+    reason_ct: Mapped[bytes] = mapped_column(LargeBinary)
+    reason_kid: Mapped[str] = mapped_column(TEXT)
+    include_previous_turns: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false")
+    )
+
+
+class TerminationOrm(Base):
+    """Revision 0038 (plan 11b, REQ-081): one teacher termination of an activity's sessions."""
+
+    __tablename__ = "assess_terminations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=_GEN_UUID
+    )
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE")
+    )
+    cmid: Mapped[int] = mapped_column(BIGINT)
+    reason_ct: Mapped[bytes] = mapped_column(LargeBinary)
+    reason_kid: Mapped[str] = mapped_column(TEXT)
+    closed_count: Mapped[int] = mapped_column(INTEGER)
+    rolled_back_count: Mapped[int] = mapped_column(INTEGER)
+    also_disable: Mapped[bool] = mapped_column(Boolean)
+    created_by: Mapped[str] = mapped_column(TEXT)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=_NOW
+    )
 
 
 def _ts(nullable: bool = False, default: bool = False) -> Mapped[Any]:
@@ -425,6 +456,10 @@ class DeliveryOrm(Base):
     message_id: Mapped[str | None] = mapped_column(TEXT)
     sent_at: Mapped[datetime | None] = _ts(nullable=True)
     created_at: Mapped[datetime] = _ts(default=True)
+    # revision 0038 (plan 11b, REQ-092): the reset a ``reset_notice`` row announces
+    reset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("assess_reset_grants.id", ondelete="CASCADE")
+    )
 
 
 class TurnNoteOrm(Base):

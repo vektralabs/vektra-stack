@@ -54,6 +54,7 @@ TABLES: tuple[str, ...] = (
     "assess_snapshots",
     "assess_start_attempts",
     "assess_teacher_gate",  # revision 0036 (plan 11): worker-written activity-level facts
+    "assess_terminations",  # revision 0038 (plan 11b): one row per teacher termination
     "assess_token_jti",
     "assess_transcript_download_tokens",
     "assess_transcripts",
@@ -124,7 +125,11 @@ _DELIVERY_API_READ = (
     "id", "transcript_id", "kind", "round", "recipient_kind", "recipient_userid", "status",
     "attempts", "not_before", "attempt_started_at", "last_error_class", "smtp_code",
     "sent_at", "created_at",
+    "reset_id",  # revision 0038 (plan 11b): the reset a ``reset_notice`` row announces
 )  # fmt: skip
+#: revision 0038 (plan 11b, REQ-092): the reset transaction queues the student's notice; the
+#: worker resolves the address at send time, so the API names the student, never an address
+_DELIVERY_API_INSERT = ("kind", "recipient_kind", "recipient_userid", "reset_id")
 _ALL: None = None
 
 MATRIX: Mapping[str, Mapping[str, Privs]] = {
@@ -179,7 +184,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         # the teacher endpoints verify the actor against these fresh facts (plan 11)
         "assess_teacher_gate": {"SELECT": _ALL},
         "assess_extra_time": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},
-        "assess_reset_grants": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},
+        # revision 0038 (plan 11b): a reset is granted once and never rewritten (its reason and
+        # continuity choice are what the teacher signed): no UPDATE
+        "assess_reset_grants": {"SELECT": _ALL, "INSERT": _ALL},
+        "assess_terminations": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_consumed_jtis": {
             "SELECT": _ALL,
             "INSERT": _ALL,
@@ -194,7 +202,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         # read for the delivery status; resend rounds go through assess_enqueue_resend (0034).
         # Revision 0035: never ``recipient_ref`` (a hash of an address the API must not be able
         # to confirm by guessing, REQ-082 as amended)
-        "assess_deliveries": {"SELECT": _DELIVERY_API_READ},
+        "assess_deliveries": {
+            "SELECT": _DELIVERY_API_READ,
+            "INSERT": _DELIVERY_API_INSERT,
+        },
         # revision 0034 (plan 10): the post-check marks and contest entries of a bot turn,
         # written in the turn's own transaction, never updated
         "assess_turn_notes": {"INSERT": _ALL},
@@ -285,7 +296,12 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "DELETE": _ALL,
         },
         "assess_extra_time": {"SELECT": _ALL},
-        "assess_reset_grants": {"SELECT": _ALL, "UPDATE": ("consumed_at",)},
+        # revision 0038: the transcript-KEK rotation re-encrypts the teacher's reasons
+        "assess_reset_grants": {
+            "SELECT": _ALL,
+            "UPDATE": ("consumed_at", "reason_ct", "reason_kid"),
+        },
+        "assess_terminations": {"SELECT": _ALL, "UPDATE": ("reason_ct", "reason_kid")},
         # session data. Snapshots and turns are never UPDATEd (BR-015); the worker reads
         # them to build the opening turn and the transcript and deletes them on purge.
         "assess_sessions": {
@@ -334,6 +350,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
     DEFINER: {
         "assess_sessions": {
             "SELECT": _ALL,
+            # revision 0038 (plan 11b): assess_rollback_starting deletes a STARTING row only
+            "DELETE": _ALL,
             "UPDATE": (
                 "seq",
                 "last_activity_at",
@@ -359,6 +377,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_turns": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_jobs": {"INSERT": _ALL},
         "assess_audit_events": {"INSERT": _ALL},
+        # revision 0038: the teacher's rollback of a STARTING session records its attempt
+        "assess_start_attempts": {"INSERT": _ALL},
         # revision 0034 (plan 10): assess_enqueue_resend reads the transcript and the last
         # round, and inserts round n+1; it never updates or deletes a delivery
         "assess_transcripts": {"SELECT": _ALL},
@@ -381,6 +401,7 @@ SEQUENCE_USAGE: Mapping[str, tuple[str, ...]] = {
         "assess_audit_events_id_seq",
         "assess_jobs_id_seq",
         "assess_outage_incidents_id_seq",  # revision 0026
+        "assess_start_attempts_id_seq",  # revision 0038
     ),
 }
 
@@ -419,6 +440,9 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     # REQ-082 resend (revision 0034): a new round for the transcript's current recipients; the
     # caller can never name a recipient
     "assess_enqueue_resend(uuid,text,integer)": (API,),
+    # revision 0038 (plan 11b, REQ-081): a teacher's terminate rolls a STARTING session back to
+    # ELIGIBLE (deleted, nothing consumed); it refuses any other state
+    "assess_rollback_starting(uuid)": (API,),
     # revision 0036 (plan 11): the trigger that audits a sealed teacher-config change old/new
     # from the row itself (the API cannot read the old recipient refs). Nobody EXECUTEs it.
     "assess_audit_sealed_change()": (),

@@ -316,3 +316,131 @@ def test_an_end_date_outside_the_representable_range_is_a_field_error() -> None:
 
     late = datetime(9999, 12, 31, 23, 30, tzinfo=timezone(timedelta(hours=-1)))
     assert codes(v.check_end_date(late, 2_000)) == [("available_until", "out_of_range")]
+
+
+# --- 11b: reasons, reset, extra time stored, opening fallback ---------------------------------
+
+
+def test_reason_is_required_and_bounded_at_1000_code_points() -> None:
+    for blank in ("", "   ", "\x07\n\t"):
+        _, errs = v.check_reason(blank)
+        assert field_errors(errs) == [
+            {"field": "reason", "code": "required", "range": "1-1000"}
+        ]
+    ok, errs = v.check_reason(" " + "è" * 1000 + " ")
+    assert errs == [] and ok == "è" * 1000
+    _, errs = v.check_reason("è" * 1001)  # NFC: 1001 code points after composing
+    assert codes(errs) == [("reason", "too_long")]
+
+
+@pytest.mark.parametrize(
+    ("close", "requested", "expected"),
+    [
+        ("service_failure", None, True),  # REQ-087 (b): auto ON
+        ("finished", None, False),  # default OFF
+        ("timed_out", True, True),  # the teacher's opt-in
+        ("service_failure", False, False),  # an explicit choice is kept
+    ],
+)
+def test_previous_turns_default_follows_the_close_reason(
+    close: str, requested: bool | None, expected: bool
+) -> None:
+    assert v.include_previous_turns(close, requested) is expected
+
+
+def _gate(**over: object) -> str | None:
+    args: dict[str, object] = {
+        "now": 1_000,
+        "enabled": True,
+        "cap_set": True,
+        "end_at": None,
+        "privacy_configured": True,
+        "moodle_reasons": [],
+        **over,
+    }
+    return v.reset_gate(**args)  # type: ignore[arg-type]
+
+
+def test_reset_gate_rechecks_the_database_half_live_and_the_moodle_half_as_rendered() -> (
+    None
+):
+    assert _gate() is None
+    assert _gate(enabled=False) == "not_enabled"
+    assert _gate(cap_set=False) == "not_enabled"
+    assert _gate(end_at=1_000) == "end_date_passed"  # at the end date: refused
+    assert _gate(end_at=1_001) is None  # the date moved later: accepted
+    assert _gate(privacy_configured=False) == "privacy_not_configured"
+    assert _gate(moodle_reasons=["not_released"]) == "not_released"
+    # the session gate is what the reset lifts: a stored "already discussed" is not a refusal
+    assert _gate(moodle_reasons=["already_discussed", "session_open"]) is None
+    assert _gate(moodle_reasons=["bogus"]) == "unreadable"  # fail closed
+    # order: the end date before any Moodle reason
+    assert _gate(end_at=10, moodle_reasons=["not_released"]) == "end_date_passed"
+
+
+def test_extra_time_is_stored_in_seconds_of_the_current_cap() -> None:
+    assert v.extra_seconds(30, percent=50) == 15 * 60  # +50 % of 30 min -> 45 min total
+    assert v.extra_seconds(30, minutes=20) == 20 * 60
+
+
+@pytest.mark.parametrize(
+    ("kind", "readable", "needed"),
+    [
+        ("quiz", {"quiz_overrides": True, "quiz_grace": True}, False),
+        ("quiz", {"quiz_overrides": True, "quiz_grace": False}, True),  # partial grace
+        ("quiz", {"quiz_overrides": False, "quiz_grace": True}, True),  # Moodle 4.3
+        ("quiz", {}, True),  # not probed
+        # assignment extensions / overrides of all participants are never listable
+        ("assign", {"quiz_overrides": True, "quiz_grace": True}, True),
+    ],
+)
+def test_fallback_is_needed_only_when_a_close_input_is_unreadable(
+    kind: str, readable: dict[str, bool], needed: bool
+) -> None:
+    assert v.fallback_needed(kind, readable) is needed
+
+
+CLOSE = 1_900_000_000
+
+
+def _fallback(at: int, **over: object) -> list[tuple[str, str]]:
+    args: dict[str, object] = {
+        "attestation": True,
+        "needed": True,
+        "close_at": CLOSE,
+        "current_at": None,
+        "started": False,
+        **over,
+    }
+    return codes(
+        v.check_opening_fallback(datetime.fromtimestamp(at, UTC), **args)  # type: ignore[arg-type]
+    )
+
+
+def test_opening_fallback_bounds_attestation_and_later_only() -> None:
+    assert _fallback(CLOSE) == []  # >= the close
+    assert _fallback(CLOSE - 1) == [("opening_at", "before_close")]
+    assert _fallback(CLOSE, attestation=False) == [("attestation", "required")]
+    assert _fallback(CLOSE, needed=False) == [("opening_at", "fallback_not_needed")]
+    assert _fallback(CLOSE, close_at=0) == [("opening_at", "no_close_date")]  # BR-007
+    assert _fallback(CLOSE, close_at=None) == [
+        ("opening_at", "moodle_facts_unreadable")
+    ]
+    # before any session started, an earlier move is allowed; after, only later
+    assert _fallback(CLOSE + 10, current_at=CLOSE + 20) == []
+    assert _fallback(CLOSE + 10, current_at=CLOSE + 20, started=True) == [
+        ("opening_at", "only_later")
+    ]
+    assert _fallback(CLOSE + 20, current_at=CLOSE + 20, started=True) == [
+        ("opening_at", "only_later")
+    ]
+    assert _fallback(CLOSE + 21, current_at=CLOSE + 20, started=True) == []
+    naive = v.check_opening_fallback(
+        datetime(2030, 1, 1),
+        attestation=True,
+        needed=True,
+        close_at=CLOSE,
+        current_at=None,
+        started=False,
+    )
+    assert codes(naive) == [("opening_at", "timezone_required")]

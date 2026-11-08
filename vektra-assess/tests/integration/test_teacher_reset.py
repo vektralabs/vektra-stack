@@ -1,0 +1,378 @@
+"""REQ-087 reset and the REQ-092 notice row through the real route (plan assess-teacher-ops 11b).
+
+Real Postgres, the restricted API role, sessions through the real Start and pre-flight, the
+student's render evaluation seeded as the worker writes it. Outcomes are counted on rows and
+bytes: the reset row and its encrypted reason, the earlier transcript's stored bytes (hash), the
+new session #N, the notice rows, and the reason canary in every place it must not reach.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+from typing import Any
+
+import pytest
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import create_async_engine
+from support.recipients import configure_recipients
+from support.sessions import seed_session
+from support.teacher_ops import (
+    body,
+    close,
+    count,
+    list_headers,
+    live_sessions,
+    seed_render,
+    seed_teacher_gate,
+    teacher,
+    with_transcript_key,
+)
+from support.world import default_settings, err, world
+
+from integration.test_session_preflight import _reset
+from vektra_assess.crypto.teacher_reason import decrypt_reason
+from vektra_assess.transcript.facts import CloseFacts
+from vektra_assess.worker.transcript_gen import GenerationDeps, generate_transcript
+
+pytestmark = pytest.mark.integration
+
+CANARY = "CANARY-RESET-REASON-2718 certificato medico"
+
+
+class Facts:
+    async def close_facts(self, **_: Any) -> CloseFacts:
+        return CloseFacts(course_shortname="EA 2026/27")
+
+
+@pytest.fixture
+async def worker(pg):  # type: ignore[no-untyped-def]
+    await _reset(pg)
+    engine = create_async_engine(pg.url("worker"))
+    yield engine
+    await engine.dispose()
+
+
+def url(cmid: int, sid: Any) -> str:
+    return f"/api/v1/assess/activities/{cmid}/sessions/{sid}/reset"
+
+
+async def reset(w, cmid, sid, **over: Any):  # type: ignore[no-untyped-def]
+    return await w.client.post(
+        url(cmid, sid), json=body(**{"reason": CANARY, **over}), headers=teacher()
+    )
+
+
+async def grants(pg, site) -> int:  # type: ignore[no-untyped-def]
+    return await count(
+        pg, "SELECT count(*) FROM assess_reset_grants WHERE site_id = :s", s=site
+    )
+
+
+async def test_reset_refusals_then_a_new_session_with_earlier_bytes_unchanged(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        ring = with_transcript_key(w)
+        s = await seed_session(w, worker, "ACTIVE")
+        await seed_teacher_gate(pg, w.site, s.cmid)
+        await seed_render(pg, w.site, s.sub, s.cmid, moodle_reasons=[])
+
+        # an ACTIVE session: refused (terminate first)
+        r = await reset(w, s.cmid, s.session_id)
+        assert r.status_code == 409 and err(r)["details"]["reason"] == "not_closed"
+        await close(worker, s.session_id)
+        # no reason: refused
+        for blank in ("", "   "):
+            r = await reset(w, s.cmid, s.session_id, reason=blank)
+            assert r.status_code == 400, r.text
+            assert err(r)["details"]["fields"] == [
+                {"field": "reason", "code": "required", "range": "1-1000"}
+            ]
+        assert await grants(pg, w.site) == 0
+
+        # transcript #1, its stored bytes hashed before the reset
+        recipients = await configure_recipients(pg, w.site, s.cmid)
+        got = await generate_transcript(
+            GenerationDeps(
+                kek=s.kek, transcript_kek=ring, facts=Facts(), recipients=recipients
+            ),
+            worker.connect,
+            s.session_id,
+        )
+        assert got is not None and got.created
+
+        async def stored_hash() -> str:
+            (row,) = await pg.run(
+                "super",
+                "SELECT ciphertext, content_hash FROM assess_transcripts "
+                "WHERE session_id = :s",
+                {"s": s.session_id},
+            )
+            return hashlib.sha256(bytes(row[0])).hexdigest() + row[1]
+
+        before = await stored_hash()
+
+        # after the end date: refused with a pointer to the date field
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET end_at = now() - interval '1 minute' "
+            "WHERE site_id = :s AND cmid = :c",
+            {"s": w.site, "c": s.cmid},
+        )
+        r = await reset(w, s.cmid, s.session_id)
+        assert r.status_code == 409, r.text
+        assert err(r)["code"] == "ERR-ASSESS-024"
+        assert err(r)["details"] == {
+            "reason": "gate",
+            "gate": "end_date_passed",
+            "field": "available_until",
+        }
+        assert await grants(pg, w.site) == 0
+        # the date moved: accepted
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET end_at = now() + interval '1 day' "
+            "WHERE site_id = :s AND cmid = :c",
+            {"s": w.site, "c": s.cmid},
+        )
+        r = await reset(w, s.cmid, s.session_id)
+        assert r.status_code == 201, r.text
+        granted = r.json()
+        assert granted["session_no_next"] == 2 and granted["student_userid"] == s.sub
+        assert (
+            granted["include_previous_turns"] is False
+        )  # closed as "finished": default OFF
+        assert granted["student_notice"] == "not_sent"  # REQ-092 flag off by default
+        assert CANARY not in r.text
+        # a second reset of the same session: one grant only
+        r = await reset(w, s.cmid, s.session_id)
+        assert r.status_code == 409 and err(r)["details"]["reason"] == "already_reset"
+        assert await grants(pg, w.site) == 1
+        # REQ-092 off: 0 notice rows
+        assert (
+            await count(
+                pg, "SELECT count(*) FROM assess_deliveries WHERE kind = 'reset_notice'"
+            )
+            == 0
+        )
+
+        # session #2 starts through the real Start and pre-flight; #1 is untouched
+        s2 = await seed_session(w, worker, "ACTIVE")
+        rows = await pg.run(
+            "super",
+            "SELECT session_no, state FROM assess_sessions WHERE site_id = :s "
+            "AND student_userid = :u ORDER BY session_no",
+            {"s": w.site, "u": s.sub},
+        )
+        assert [tuple(x) for x in rows] == [(1, "CLOSED"), (2, "ACTIVE")]
+        assert s2.session_id != s.session_id
+        assert await stored_hash() == before
+
+        # the reason: in the grants table encrypted, in the grader list readable, nowhere else
+        (g,) = await pg.run(
+            "super",
+            "SELECT id, reason_ct FROM assess_reset_grants WHERE site_id = :s",
+            {"s": w.site},
+        )
+        assert decrypt_reason(ring, "assess_reset_grants", g[0], bytes(g[1])) == CANARY
+        assert CANARY.encode() not in bytes(g[1])
+        audit = await pg.run(
+            "super",
+            "SELECT event, data FROM assess_audit_events WHERE site_id = :s",
+            {"s": w.site},
+        )
+        resets = [a[1] for a in audit if a[0] == "assess_teacher_reset"]
+        assert len(resets) == 1 and resets[0]["reset_id"] == str(g[0])
+        jobs = await pg.run("super", "SELECT args::text FROM assess_jobs")
+        await close(worker, s2.session_id)
+        got2 = await generate_transcript(
+            GenerationDeps(
+                kek=s2.kek, transcript_kek=ring, facts=Facts(), recipients=recipients
+            ),
+            worker.connect,
+            s2.session_id,
+        )
+        assert got2 is not None and got2.created
+        from vektra_assess.transcript import store
+
+        texts = []
+        for sid in (s.session_id, s2.session_id):
+            (t,) = await pg.run(
+                "super",
+                "SELECT id, ciphertext, dek_wrapped, content_hash FROM assess_transcripts "
+                "WHERE session_id = :s",
+                {"s": sid},
+            )
+            texts.append(
+                store.open_verified(ring, t[0], bytes(t[1]), bytes(t[2]), t[3]).decode()
+            )
+        turns = await pg.run(
+            "super",
+            "SELECT ciphertext FROM assess_turns WHERE session_id = :s",
+            {"s": s2.session_id},
+        )
+        for place in (
+            json.dumps([a[1] for a in audit]),
+            json.dumps([j[0] for j in jobs]),
+            *texts,
+        ):
+            assert CANARY not in place and "2718" not in place
+        assert all(CANARY.encode() not in bytes(t[0]) for t in turns)
+        # the grader list shows it (and only there)
+        r = await w.client.get(
+            f"/api/v1/assess/activities/{s.cmid}/sessions", headers=list_headers()
+        )
+        assert r.status_code == 200, r.text
+        (student,) = r.json()["students"]
+        assert [x["reason"] for x in student["resets"]] == [CANARY]
+        assert (
+            student["resets"][0]["student_notice"] == "studente non avvisato via email"
+        )
+
+
+async def test_service_failure_ticks_the_previous_turns_and_an_explicit_choice_wins(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [7001, 7002, 7003])
+        await seed_teacher_gate(pg, w.site, cmid)
+        for student, reason in (
+            (7001, "service_failure"),
+            (7002, "timed_out"),
+            (7003, "service_failure"),
+        ):
+            await close(worker, seeded[student][0], reason)
+            await seed_render(pg, w.site, student, cmid, moodle_reasons=[])
+        r1 = await reset(w, cmid, seeded[7001][0])
+        r2 = await reset(w, cmid, seeded[7002][0])
+        r3 = await reset(w, cmid, seeded[7003][0], include_previous_turns=False)
+        assert [r.json()["include_previous_turns"] for r in (r1, r2, r3)] == [
+            True,
+            False,
+            False,
+        ]
+        stored = await pg.run(
+            "super",
+            "SELECT student_userid, include_previous_turns FROM assess_reset_grants "
+            "WHERE site_id = :s ORDER BY student_userid",
+            {"s": w.site},
+        )
+        assert [tuple(x) for x in stored] == [
+            (7001, True),
+            (7002, False),
+            (7003, False),
+        ]
+
+
+async def test_the_moodle_half_comes_from_a_fresh_render_or_is_refreshed(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [7101])
+        sid = seeded[7101][0]
+        await seed_teacher_gate(pg, w.site, cmid)
+        await close(worker, sid)
+        # no render evaluation yet: refused, a render check queued, retry later
+        r = await reset(w, cmid, sid)
+        assert (
+            r.status_code == 409 and err(r)["details"]["reason"] == "gate_inputs_stale"
+        )
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_jobs WHERE kind = 'render_check' "
+                "AND (args->>'student_userid')::bigint = 7101",
+            )
+            == 1
+        )
+        # a stale one, or one computed without the Moodle half: the same
+        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=[], age="1 hour")
+        r = await reset(w, cmid, sid)
+        assert err(r)["details"]["reason"] == "gate_inputs_stale"
+        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=None)
+        r = await reset(w, cmid, sid)
+        assert err(r)["details"]["reason"] == "gate_inputs_stale"
+        # no longer eligible (the grade was hidden again): refused with the gate
+        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=["not_released"])
+        r = await reset(w, cmid, sid)
+        assert r.status_code == 409
+        assert err(r)["details"] == {"reason": "gate", "gate": "not_released"}
+        assert await grants(pg, w.site) == 0
+        await seed_render(pg, w.site, 7101, cmid, moodle_reasons=[])
+        r = await reset(w, cmid, sid)
+        assert r.status_code == 201, r.text
+
+
+async def test_concurrent_resets_of_one_session_yield_one(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [7201])
+        sid = seeded[7201][0]
+        await seed_teacher_gate(pg, w.site, cmid)
+        await close(worker, sid)
+        await seed_render(pg, w.site, 7201, cmid, moodle_reasons=[])
+        got = await asyncio.gather(*(reset(w, cmid, sid) for _ in range(4)))
+        assert sorted(r.status_code for r in got) == [201, 409, 409, 409]
+        assert await grants(pg, w.site) == 1
+
+
+async def test_a_session_of_another_activity_or_an_older_one_is_not_reset(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [7301])
+        sid = seeded[7301][0]
+        await seed_teacher_gate(pg, w.site, cmid)
+        await seed_teacher_gate(pg, w.site, cmid + 1000)
+        await close(worker, sid)
+        await seed_render(pg, w.site, 7301, cmid, moodle_reasons=[])
+        # the session named under another activity the teacher grades: 404, nothing written
+        r = await reset(w, cmid + 1000, sid)
+        assert r.status_code == 404 and err(r)["code"] == "ERR-ASSESS-008"
+        r = await reset(w, cmid, "not-a-uuid")
+        assert r.status_code == 400
+        assert await grants(pg, w.site) == 0
+
+
+async def test_the_notice_flag_on_queues_exactly_one_student_notice(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """REQ-092 with the flag ON: one ``reset_notice`` row per reset, addressed to the student
+    by user id and naming the reset; the row carries no reason (it has no such column) and no
+    address. The sender is not part of this plan (see the plan's Notes): the row is the queue."""
+    settings = default_settings(
+        VEKTRA_ASSESS_RESET_NOTICE_ENABLED=True,
+        VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION="dpo-2026-1",
+    )
+    async with world(pg, settings) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [7401])
+        sid = seeded[7401][0]
+        await seed_teacher_gate(pg, w.site, cmid)
+        await close(worker, sid)
+        await seed_render(pg, w.site, 7401, cmid, moodle_reasons=[])
+        r = await reset(w, cmid, sid)
+        assert r.status_code == 201 and r.json()["student_notice"] == "queued"
+        rows = await pg.run(
+            "super",
+            "SELECT d.recipient_kind, d.recipient_userid, d.recipient_ref, d.status, "
+            "d.reset_id = g.id FROM assess_deliveries d JOIN assess_reset_grants g "
+            "ON g.id = d.reset_id WHERE d.kind = 'reset_notice'",
+        )
+        assert [tuple(x) for x in rows] == [("student", 7401, None, "PENDING", True)]
+        r = await w.client.get(
+            f"/api/v1/assess/activities/{cmid}/sessions", headers=list_headers()
+        )
+        (student,) = r.json()["students"]
+        assert student["resets"][0]["student_notice"] == "PENDING"
+        # a reset_notice row without a reset (or a transcript row with one) is refused
+        with pytest.raises(DBAPIError) as exc:
+            await pg.run(
+                "api",
+                "INSERT INTO assess_deliveries (kind, recipient_kind, recipient_userid) "
+                "VALUES ('reset_notice', 'student', 7401)",
+            )
+        assert exc.value.orig.sqlstate == "23514"  # ck_assess_deliveries_reset

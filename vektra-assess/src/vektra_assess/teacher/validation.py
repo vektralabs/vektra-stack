@@ -19,6 +19,7 @@ from typing import Any
 
 from vektra_assess.delivery.address import normalize_address
 from vektra_assess.delivery.recipients import MAX_RECIPIENTS, domain_allowed
+from vektra_assess.gates import DB_SIDE, Code
 from vektra_assess.teacher.schemas import FieldError
 
 MAX_TEXT_CHARS = 20_000
@@ -27,11 +28,13 @@ MAX_TOTAL_MINUTES = 240
 MAX_EXTRA_PERCENT = 200
 MAX_EXTRA_MINUTES = 240
 CONFIRM_ABOVE_PERCENT = 100
+MAX_REASON_CHARS = 1000
 
 TEXT_RANGE = f"0-{MAX_TEXT_CHARS}"
 RUBRIC_RANGE = f"1-{MAX_TEXT_CHARS}"
 CAP_RANGE = f"{CAP_MIN}-{CAP_MAX}"
 RECIPIENTS_RANGE = f"1-{MAX_RECIPIENTS}"
+REASON_RANGE = f"1-{MAX_REASON_CHARS}"
 
 #: rubric sources a type may use (REQ-077: Moodle rubric for assignments, pasted text for quizzes)
 SOURCES = {"quiz": ("none", "pasted"), "assign": ("none", "pasted", "moodle")}
@@ -202,7 +205,7 @@ def check_recipients(
     return tuple(out), errors
 
 
-# --- extra time (BR-013 / REQ-078; the endpoint arrives with 11b) -----------------------------
+# --- extra time (BR-013 / REQ-078) -----------------------------------------------------------
 
 
 def check_extra_time(
@@ -240,6 +243,129 @@ def check_extra_time(
             FieldError("extra_time", "confirm_over_100", f"<= {CONFIRM_ABOVE_PERCENT}%")
         ]
     return []
+
+
+def extra_seconds(
+    cap_minutes: int, *, minutes: int | None = None, percent: int | None = None
+) -> int:
+    """The stored extra time, in seconds, of a request ``check_extra_time`` accepted: a
+    percentage is of the cap configured NOW (a later cap change does not rescale it)."""
+    if percent is not None:
+        return cap_minutes * 60 * percent // 100
+    return int(minutes or 0) * 60
+
+
+# --- teacher reasons (REQ-087 reset, REQ-081 terminate) ---------------------------------------
+
+
+def check_reason(value: str) -> tuple[str | None, list[FieldError]]:
+    """Mandatory, 1..1000 code points after ``normalize_text`` and trimming; the text itself is
+    never echoed in an error."""
+    norm = normalize_text(value).strip()
+    if not norm:
+        return None, [FieldError("reason", "required", REASON_RANGE)]
+    if len(norm) > MAX_REASON_CHARS:
+        return None, [FieldError("reason", "too_long", REASON_RANGE)]
+    return norm, []
+
+
+# --- reset (REQ-087) ---------------------------------------------------------------------------
+
+
+def include_previous_turns(close_reason: str | None, requested: bool | None) -> bool:
+    """REQ-087 (b): earlier turns are included by default only after a ``service_failure``
+    close; otherwise only when the teacher ticks the box (default OFF). An explicit choice is
+    kept either way. Whether they reach the model is decided at Start by the BR-011 boundary
+    rule (REQ-087 (c)), never here."""
+    if requested is not None:
+        return requested
+    return close_reason == "service_failure"
+
+
+def reset_gate(
+    *,
+    now: int,
+    enabled: bool,
+    cap_set: bool,
+    end_at: int | None,
+    privacy_configured: bool,
+    moodle_reasons: Sequence[str],
+) -> str | None:
+    """The START gates a reset re-runs (REQ-087), in the evaluator's order: the ones Vektra
+    decides from its own rows, checked live (the activity enabled and configured, the end date,
+    privacy), then the Moodle-side failures of the student's fresh render evaluation. The
+    session gate (g) is the reset's own precondition (the latest session CLOSED) and the very
+    thing a reset lifts. Returns the first refusing code, or None."""
+    if not enabled or not cap_set:
+        return Code.NOT_ENABLED.value
+    if end_at is not None and now >= end_at:
+        return Code.END_DATE_PASSED.value
+    if not privacy_configured:
+        return Code.PRIVACY_NOT_CONFIGURED.value
+    for raw in moodle_reasons:
+        try:
+            code = Code(raw)
+        except ValueError:
+            return Code.UNREADABLE.value  # an unknown stored code is not a pass
+        if code not in DB_SIDE and code is not Code.OK:
+            return code.value
+    return None
+
+
+# --- opening fallback (REQ-091) ---------------------------------------------------------------
+
+#: the BR-006(d) inputs of a quiz the matrix must mark readable for the automatic close; an
+#: assignment's participant extensions and overrides are never listable (OQ-025), so for an
+#: assignment the fallback always applies (as the Start gate does)
+QUIZ_CLOSE_FLAGS = ("quiz_overrides", "quiz_grace")
+
+
+def fallback_needed(activity_type: str, readable: Mapping[str, bool]) -> bool:
+    """REQ-091: the fallback date may be set only when some BR-006(d) input is unreadable
+    (partial counts as unreadable). ``readable``: flag -> whether the capability matrix holds a
+    fresh ``readable`` row for it on the site's current release."""
+    if activity_type != "quiz":
+        return True
+    return not all(readable.get(flag) is True for flag in QUIZ_CLOSE_FLAGS)
+
+
+def check_opening_fallback(
+    opening_at: datetime,
+    *,
+    attestation: bool,
+    needed: bool,
+    close_at: int | None,
+    current_at: int | None,
+    started: bool,
+) -> list[FieldError]:
+    """REQ-091: an attestation on every edit; only while the fallback applies; on or after the
+    activity's own close / cut-off (the fallback never replaces a missing one, BR-007); once any
+    session of the activity started, only a later date."""
+    errors: list[FieldError] = []
+    if attestation is not True:
+        errors.append(FieldError("attestation", "required"))
+    if not needed:
+        errors.append(FieldError("opening_at", "fallback_not_needed"))
+    if opening_at.tzinfo is None:
+        return [*errors, FieldError("opening_at", "timezone_required")]
+    try:
+        at = int(opening_at.timestamp())
+        datetime.fromtimestamp(at, UTC)
+    except (OverflowError, ValueError, OSError):
+        return [*errors, FieldError("opening_at", "out_of_range")]
+    if close_at is None:
+        errors.append(FieldError("opening_at", "moodle_facts_unreadable"))
+    elif close_at <= 0:
+        errors.append(FieldError("opening_at", "no_close_date"))
+    elif at < close_at:
+        errors.append(
+            FieldError("opening_at", "before_close", extra={"close_at": close_at})
+        )
+    if started and current_at is not None and at <= current_at:
+        errors.append(
+            FieldError("opening_at", "only_later", extra={"current_at": current_at})
+        )
+    return errors
 
 
 # --- enable (REQ-077) ------------------------------------------------------------------------

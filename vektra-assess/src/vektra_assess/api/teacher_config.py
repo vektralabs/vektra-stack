@@ -33,7 +33,7 @@ from sqlalchemy import text
 from vektra_assess import privacy
 from vektra_assess.api.common import engine_of, fail, parse_body, site_of_key
 from vektra_assess.api.deps import settings_of
-from vektra_assess.api.teachers import TeacherCheck, TeacherGate, check_fresh_editor
+from vektra_assess.api.teachers import TeacherGate, header_int, path_id, verify_teacher
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.crypto.teacher_config import (
     PASTED_RUBRIC,
@@ -47,7 +47,6 @@ from vektra_assess.errors import (
     bad_request,
     config_conflict,
     config_invalid,
-    teacher_unverified,
 )
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.teacher import validation as v
@@ -122,62 +121,6 @@ _REVIEW = text(
 )
 
 
-def _ascii_id(raw: str) -> int | None:
-    """A positive BIGINT written in ASCII digits only (``str.isdigit`` also accepts "²" or
-    Arabic-Indic digits, which ``int`` then rejects or reinterprets)."""
-    if not 0 < len(raw) <= 19 or not all("0" <= ch <= "9" for ch in raw):
-        return None
-    value = int(raw)
-    return value if 0 < value < 2**63 else None
-
-
-def _cmid(raw: str) -> int:
-    value = _ascii_id(raw)
-    if value is None:
-        raise fail(bad_request("cmid"))
-    return value
-
-
-async def _verify(
-    conn: Any,
-    site: UUID,
-    cmid: int,
-    actor: int,
-    courseid: int | None,
-    kind: str | None,
-    max_age_s: int,
-    route: str,
-) -> TeacherGate:
-    gate = await check_fresh_editor(
-        conn,
-        site=site,
-        cmid=cmid,
-        actor_userid=actor,
-        max_age_s=max_age_s,
-        courseid_hint=courseid,
-        kind_hint=kind,
-    )
-    if not gate.ok:
-        await write_event(
-            conn,
-            AssessAuditEvent.TEACHER_UNVERIFIED,
-            actor="api",
-            site_id=site,
-            reason_code=gate.check.value,
-            data={"cmid": cmid, "actor": actor, "route": route, "role": "editor"},
-        )
-    return gate
-
-
-def _refusal(gate: TeacherGate) -> Any:
-    if gate.check is TeacherCheck.HINT_MISSING:
-        # nothing was queued: name the missing hint, never "retry in a few seconds"
-        return fail(bad_request("teacher_gate_hint"))
-    return fail(
-        teacher_unverified(stale=gate.check is TeacherCheck.STALE, role="editor")
-    )
-
-
 def _facts(gate: TeacherGate) -> v.ActivityFacts:
     """The worker-written facts, typed; a missing or mistyped one is None (unreadable)."""
     f = gate.facts
@@ -220,7 +163,7 @@ def _iso(epoch: int | None) -> str | None:
 async def put_config(
     cmid: str, request: Request, key: ApiKeyInfo = Depends(_guard)
 ) -> JSONResponse:
-    c = _cmid(cmid)
+    c = path_id(cmid, "cmid")
     body = await parse_body(request, ConfigPut, max_bytes=MAX_CONFIG_BODY_BYTES)
     settings = settings_of(request)
     secrets_given = [
@@ -232,13 +175,12 @@ async def put_config(
     refused: Any = None
     async with engine_of(request).begin() as conn:
         site = await site_of_key(conn, key, "teacher")
-        gate = await _verify(
-            conn, site, c, body.actor_userid, body.courseid, body.activity_type,
-            settings.teacher_gate_max_age_s, "put_config",
+        gate, refused = await verify_teacher(
+            conn, site=site, cmid=c, actor=body.actor_userid, courseid=body.courseid,
+            kind=body.activity_type, max_age_s=settings.teacher_gate_max_age_s,
+            route="put_config", role="editor",
         )  # fmt: skip
-        if not gate.ok:
-            refused = _refusal(gate)
-        else:
+        if refused is None:
             view = await _save(conn, site, c, body, gate, settings, public)
     if refused is not None:
         raise refused  # after commit: the refusal stays audited, the refresh queued
@@ -496,31 +438,25 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
     }
 
 
-def _header_int(request: Request, name: str) -> int | None:
-    return _ascii_id(request.headers.get(name, ""))
-
-
 @router.get("/activities/{cmid}/config")
 async def get_config(
     cmid: str, request: Request, key: ApiKeyInfo = Depends(_guard)
 ) -> JSONResponse:
-    c = _cmid(cmid)
-    actor = _header_int(request, "X-Assess-Actor")
+    c = path_id(cmid, "cmid")
+    actor = header_int(request, "X-Assess-Actor")
     if actor is None:
         raise fail(bad_request("x_assess_actor"))
-    courseid = _header_int(request, "X-Assess-Course")
+    courseid = header_int(request, "X-Assess-Course")
     kind = request.headers.get("X-Assess-Activity-Type")
     settings = settings_of(request)
     refused: Any = None
     async with engine_of(request).begin() as conn:
         site = await site_of_key(conn, key, "teacher")
-        gate = await _verify(
-            conn, site, c, actor, courseid, kind if kind in v.SOURCES else None,
-            settings.teacher_gate_max_age_s, "get_config",
+        gate, refused = await verify_teacher(
+            conn, site=site, cmid=c, actor=actor, courseid=courseid, kind=kind,
+            max_age_s=settings.teacher_gate_max_age_s, route="get_config", role="editor",
         )  # fmt: skip
-        if not gate.ok:
-            refused = _refusal(gate)
-        else:
+        if refused is None:
             view = await _view(conn, site, c, gate)
     if refused is not None:
         raise refused

@@ -4,7 +4,10 @@
 hint) evaluate the SAME ``evaluate_start_gates`` the pre-flight uses, on fresh reads, and upsert:
 
 - ``assess_render_state``: the advisory REQ-068 state and the content-free reason code;
-- ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 10)
+- ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 11b)
+  ``moodle_reasons``: every failing gate code that needs Moodle facts (``gates.DB_SIDE``
+  excluded), present only when the Moodle half was actually evaluated, which a teacher reset
+  (REQ-087) re-checks against; plus (plan 10)
   ``graders`` (the course's grader user ids, for the API's fresh grader check) when Moodle could
   be read, and ``recipients`` (``{role: "recipient", name: "m***@domain"}``: the transcript
   recipients of the sealed teacher config, local part masked, REQ-082 as amended) when the config
@@ -32,7 +35,13 @@ from sqlalchemy import text
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.delivery.recipients import ConfigRecipients, GraderLike, state_view
-from vektra_assess.gates import ButtonState, Code, GateDecision, evaluate_start_gates
+from vektra_assess.gates import (
+    DB_SIDE,
+    ButtonState,
+    Code,
+    GateDecision,
+    evaluate_start_gates,
+)
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
 from vektra_assess.worker.preflight import (
     DbGateFacts,
@@ -199,6 +208,12 @@ async def store_render(
         "opens_at": decision.opens_at,
         "session_no_next": decision.session_no_next,
     }
+    # the full evaluation ran (not the disabled / open-session short cut): an OK decision, or a
+    # failing one with its reasons. The Moodle-side ones are what a reset re-checks (REQ-087).
+    if decision.code is Code.OK or decision.reasons:
+        inputs["moodle_reasons"] = [
+            c.value for c in decision.reasons if c not in DB_SIDE
+        ]
     if graders is not None:
         # user ids for the grader check (plan 10 authz)
         inputs["graders"] = list(graders.graders)

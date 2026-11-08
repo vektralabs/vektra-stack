@@ -16,6 +16,8 @@ from vektra_assess.moodle.result import Readable, Reading, Unreadable, Unreadabl
 GRADE_CAPABILITY = "mod/assign:grade"
 #: REQ-077 "activity editors only": who may change the discussion configuration (plan 11)
 EDIT_CAPABILITY = "moodle/course:manageactivities"
+#: REQ-076 gate panel (plan 11b): who may see which participant holds a quiz override
+OVERRIDE_CAPABILITY = "mod/quiz:manageoverrides"
 
 
 @reader
@@ -140,3 +142,14 @@ async def read_editors(
     and the same ``moodle/role:review`` as ``read_graders``: no new capability for the service
     account (REQ-079)."""
     return await _with_capability(client, site, courseid, EDIT_CAPABILITY)
+
+
+@reader
+async def read_override_managers(
+    client: MoodleWsClient, site: SiteRef, courseid: int
+) -> Reading[GraderList]:
+    """Users holding ``mod/quiz:manageoverrides`` in the course: the teachers who may see which
+    participant holds an override (REQ-076 gate panel, plan assess-teacher-ops 11b). Same WS
+    function and ``moodle/role:review`` as ``read_graders``: no new service-account capability
+    (REQ-079)."""
+    return await _with_capability(client, site, courseid, OVERRIDE_CAPABILITY)

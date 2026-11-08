@@ -197,3 +197,45 @@ async def rewrap_transcript_deks(
         )
     ).scalar_one()
     return int(result)
+
+
+async def rewrap_teacher_reasons(
+    conn: AsyncConnection, keyring: AssessKeyring, from_kid: str, batch: int = 100
+) -> int:
+    """Re-encrypt up to ``batch`` teacher reasons (resets and terminations, plan 11b) from
+    ``from_kid`` to the active transcript KEK, per table. Returns the remaining count."""
+    from vektra_assess.crypto.teacher_reason import (
+        TABLES,
+        decrypt_reason,
+        encrypt_reason,
+    )
+
+    remaining = 0
+    for table in TABLES:  # a closed list of table names, never input
+        rows = (
+            await conn.execute(
+                text(
+                    f"SELECT id, reason_ct FROM {table} WHERE reason_kid = :k "
+                    "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
+                ),
+                {"k": from_kid, "n": batch},
+            )
+        ).all()
+        for rid, blob in rows:
+            plain = decrypt_reason(keyring, table, rid, bytes(blob))
+            fresh, kid = encrypt_reason(keyring, table, rid, plain)
+            await conn.execute(
+                text(
+                    f"UPDATE {table} SET reason_ct = :b, reason_kid = :k WHERE id = :i"
+                ),
+                {"b": fresh, "k": kid, "i": rid},
+            )
+        remaining += int(
+            (
+                await conn.execute(
+                    text(f"SELECT count(*) FROM {table} WHERE reason_kid = :k"),
+                    {"k": from_kid},
+                )
+            ).scalar_one()
+        )
+    return remaining

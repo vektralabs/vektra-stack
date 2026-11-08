@@ -58,6 +58,11 @@ ELSEWHERE = {
     # plan assess-teacher-ops 11a
     E.TEACHER_UNVERIFIED: "test_teacher_config_api.py",
     E.TEACHER_CONFIG_CHANGED: "test_teacher_config_api.py",
+    # plan assess-teacher-ops 11b
+    E.TEACHER_RESET: "test_teacher_reset.py",
+    E.TEACHER_TERMINATE: "test_teacher_terminate.py",
+    E.TEACHER_EXTRA_TIME: "test_teacher_extra_time.py",
+    E.TEACHER_OPENING_ATTESTED: "test_teacher_extra_time.py",
 }
 NOT_DRIVABLE = {E.ATTEMPT_MISMATCH_REJECTED}
 

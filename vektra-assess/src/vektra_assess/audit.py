@@ -80,6 +80,12 @@ class AssessAuditEvent(enum.StrEnum):
     # and recipient refs, never content.
     TEACHER_UNVERIFIED = "assess_teacher_unverified"
     TEACHER_CONFIG_CHANGED = "assess_teacher_config_changed"
+    # plan assess-teacher-ops 11b (REQ-085 teacher events): ids, counts and codes only. The
+    # teacher's reason is reachable through ``reset_id`` / ``termination_id``, never copied here.
+    TEACHER_RESET = "assess_teacher_reset"
+    TEACHER_TERMINATE = "assess_teacher_terminate"
+    TEACHER_EXTRA_TIME = "assess_teacher_extra_time"
+    TEACHER_OPENING_ATTESTED = "assess_teacher_opening_attested"
 
 
 class Conn(Protocol):

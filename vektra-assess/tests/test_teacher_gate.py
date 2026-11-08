@@ -2,10 +2,11 @@
 
 ``MoodleStartSource.teacher_facts`` resolves the cmid INSIDE the hinted course and reads its
 editors, graders and the REQ-077 enable facts (close date, team submission, grading method,
-Moodle rubric). Expectations come from the seed manifest. The editors request is SYNTHETIC: the
+Moodle rubric) and, for a quiz, the override facts of the REQ-076 gate panel (11b). Expectations
+come from the seed manifest. The editors and override-managers requests are SYNTHETIC: the
 recordings asked ``core_enrol_get_enrolled_users_with_capability`` for ``mod/assign:grade`` only,
-so it is served from that recording with the capability renamed (the live read is BLOCKED in
-11a, see the plan's Notes).
+so they are served from that recording with the capability renamed (the live reads are BLOCKED,
+see the plan's Notes).
 """
 
 from __future__ import annotations
@@ -72,12 +73,14 @@ def _source(branch: str) -> tuple[Replay, MoodleStartSource, dict[str, Any], lis
         if "core_enrol_get_enrolled_users_with_capability" in k
         and "mod/assign:grade" in k
     ]:
-        body = copy.deepcopy(replay.responses[key])
-        for row in body:
-            row["capability"] = "moodle/course:manageactivities"
-        replay.responses[
-            key.replace("mod/assign:grade", "moodle/course:manageactivities")
-        ] = body
+        for capability in (
+            "moodle/course:manageactivities",
+            "mod/quiz:manageoverrides",
+        ):
+            body = copy.deepcopy(replay.responses[key])
+            for row in body:
+                row["capability"] = capability
+            replay.responses[key.replace("mod/assign:grade", capability)] = body
     sink: list[Any] = []
 
     @asynccontextmanager
@@ -102,9 +105,10 @@ async def test_assignment_facts(branch: str) -> None:
     assert team["team_submission"] is True
     assert team["close_at"] == m["assigns"]["team"]["expected"]["cutoffdate"]
     assert team["editors"] == _graders(branch, m)  # synthetic: the graders recording
-    # review 10: nothing in 11a reads the graders here (11b adds them with their consumer)
-    assert "graders" not in team
-    assert not [c for c in replay.calls if "mod/assign:grade" in c[1].values()]
+    # 11b: the graders (the list, reset, terminate, extra time, opening fallback) are read
+    assert team["graders"] == _graders(branch, m)
+    # an assignment's participant closes are never listable (OQ-025): no holder, no viewers
+    assert team["override_holder"] is None and team["override_viewers"] is None
     nocut = await src.teacher_facts(
         SITE, int(m["assigns"]["nocutoff"]["cmid"]), course, "assign"
     )
@@ -134,6 +138,32 @@ async def test_quiz_facts(branch: str) -> None:
     assert got["resolved"] is True and got["activity_type"] == "quiz"
     assert got["close_at"] == q["expected"]["timeclose"]
     assert got["team_submission"] is False and got["grading_method"] is None
+    assert got["graders"] == _graders(branch, m)
+    assert got["override_viewers"] == _graders(
+        branch, m
+    )  # synthetic: renamed recording
+    assert got["override_holder"] is None  # no override later than the quiz's own close
+
+
+async def test_the_override_holder_is_read_only_where_overrides_are(
+    branch: str,
+) -> None:
+    """REQ-076 gate panel: on 5.2 the user override that sets the latest close names its holder
+    (``review_all``: stu2's override beats the G2 group override); on 4.3 the overrides are
+    unreadable and nobody is named."""
+    _replay, src, m, _ = _source(branch)
+    q = m["quizzes"]["review_all"]
+    got = await src.teacher_facts(SITE, int(q["cmid"]), int(m["courseid"]), "quiz")
+    if m["ws_get_overrides_available"]:
+        assert got["override_holder"] == uid(branch, "stu2")
+    else:
+        assert got["override_holder"] is None
+    # ids and flags only: never an override's reason, a name or a date of another student
+    assert set(got) == {
+        "resolved", "courseid", "activity_type", "editors", "graders", "close_at",
+        "team_submission", "grading_method", "moodle_rubric", "override_holder",
+        "override_viewers",
+    }  # fmt: skip
 
 
 async def test_a_wrong_type_hint_never_resolves(branch: str) -> None:

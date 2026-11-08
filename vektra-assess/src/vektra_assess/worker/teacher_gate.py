@@ -10,7 +10,11 @@ site id, cmid, course id hint, activity type hint) resolves the cmid INSIDE the 
   ``[courseid, type]`` this row answers;
 - ``courseid``, ``activity_type``;
 - ``editors``: user ids holding ``moodle/course:manageactivities`` in the course (None when
-  unreadable: the API fails closed); the graders are added by 11b with the routes that read them;
+  unreadable: the API fails closed); ``graders``: user ids holding ``mod/assign:grade`` (11b:
+  the session list, reset, terminate, extra time, opening fallback);
+- for a quiz, ``override_holder`` (the participant whose user override sets the latest close,
+  when the overrides are readable) and ``override_viewers`` (``mod/quiz:manageoverrides``): the
+  REQ-076 gate panel names the holder only to a viewer; never the override's reason;
 - the REQ-077 enable facts: ``close_at`` (quiz ``timeclose`` / assignment ``cutoffdate``, 0 = none
   configured: BR-007), ``team_submission``, ``grading_method``, ``moodle_rubric`` (a rubric is
   defined for the Moodle-rubric source); each None when unreadable.

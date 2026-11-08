@@ -5,7 +5,7 @@ only re-exports them and builds the assess envelopes. Owning plans:
 .s2s/plans/20261101-154950-assess-foundations (001-004),
 .s2s/plans/20261101-154950-assess-session-lifecycle (005-016) and
 .s2s/plans/20261101-154950-assess-transcript-delivery (017-021) and
-.s2s/plans/20261101-154950-assess-teacher-ops (022-023).
+.s2s/plans/20261101-154950-assess-teacher-ops (022-025).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
 carries a student's text, a Moodle value or a row of another student.
@@ -37,6 +37,8 @@ from vektra_shared.errors import (
     ERR_ASSESS_021,
     ERR_ASSESS_022,
     ERR_ASSESS_023,
+    ERR_ASSESS_024,
+    ERR_ASSESS_025,
     ErrorCategory,
     ErrorResponse,
 )
@@ -65,6 +67,8 @@ __all__ = [
     "ERR_ASSESS_021",
     "ERR_ASSESS_022",
     "ERR_ASSESS_023",
+    "ERR_ASSESS_024",
+    "ERR_ASSESS_025",
     "activation_refused",
     "assess_unavailable",
     "bad_request",
@@ -395,4 +399,35 @@ def config_conflict(current_version: int) -> ErrorResponse:
         message="The discussion configuration was changed meanwhile.",
         remediation="Reload the settings page and save again.",
         details={"current_version": int(current_version)},
+    )
+
+
+# --- teacher operations (plan assess-teacher-ops 11b) ---------------------------------------
+
+
+def reset_refused(reason: str, **details: object) -> ErrorResponse:
+    """409 (REQ-087). ``reason``: ``no_session``, ``not_closed``, ``already_reset`` or ``gate``
+    (with ``gate``: the START-gate code, and ``field`` when a teacher setting must change
+    first, e.g. ``available_until`` after the end date)."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_024,
+        message="The new session was not granted.",
+        remediation=(
+            "Terminate an active session first; after the end date, move "
+            "'Discussione disponibile fino al' and grant the reset again."
+        ),
+        details={"reason": reason, **details},
+    )
+
+
+def terminate_count_mismatch(current: int) -> ErrorResponse:
+    """409 (REQ-081): the teacher confirmed another number of active sessions than there are
+    now; nothing was changed."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_025,
+        message="The number of active sessions changed since the confirmation.",
+        remediation="Confirm again with the current number of active sessions.",
+        details={"current": int(current)},
     )

@@ -109,3 +109,65 @@ def test_an_unbound_teacher_key_is_told_to_use_a_teacher_key() -> None:
         error = exc.value.detail["error"]  # type: ignore[index]
         assert error["code"] == "ERR-ASSESS-007"
         assert scope in error["remediation"]
+
+
+def test_teacher_operation_bodies_are_strict() -> None:
+    """11b: the reset / terminate / extra-time / fallback bodies forbid unknown fields (a
+    ``reason`` on extra time is refused: REQ-078 has none)."""
+    import pydantic
+
+    from vektra_assess.teacher.schemas import (
+        ExtraTimePut,
+        OpeningFallbackPut,
+        ResetPost,
+        TerminatePost,
+    )
+
+    base = {"actor_userid": 5, "courseid": 7, "activity_type": "quiz"}
+    ResetPost.model_validate({**base, "reason": "x"})
+    TerminatePost.model_validate({**base, "reason": "x", "expected_active_count": 0})
+    ExtraTimePut.model_validate({**base, "percent": 50})
+    OpeningFallbackPut.model_validate(
+        {
+            **base,
+            "opening_at": "2030-01-01T00:00:00+00:00",
+            "attestation": True,
+            "attestation_text_version": "it-1",
+        }
+    )
+    for model, body in (
+        (ExtraTimePut, {**base, "percent": 50, "reason": "dsa"}),
+        (ResetPost, {**base}),  # the reason is mandatory
+        (TerminatePost, {**base, "reason": "x", "expected_active_count": -1}),
+        (ResetPost, {**base, "reason": "x", "include_previous_turns": "yes"}),
+        (
+            OpeningFallbackPut,
+            {
+                **base,
+                "opening_at": "2030-01-01T00:00:00+00:00",
+                "attestation": True,
+                "attestation_text_version": "bad version!",
+            },
+        ),
+    ):
+        with pytest.raises(pydantic.ValidationError):
+            model.model_validate(body)
+
+
+def test_reset_and_terminate_refusals_are_409_with_their_codes() -> None:
+    from vektra_assess import errors as e
+    from vektra_shared.errors import http_status_for
+
+    r = e.reset_refused("gate", gate="end_date_passed", field="available_until")
+    assert (r.code, http_status_for(r)) == ("ERR-ASSESS-024", 409)
+    assert r.details == {
+        "reason": "gate",
+        "gate": "end_date_passed",
+        "field": "available_until",
+    }
+    t = e.terminate_count_mismatch(3)
+    assert (t.code, http_status_for(t), t.details) == (
+        "ERR-ASSESS-025",
+        409,
+        {"current": 3},
+    )

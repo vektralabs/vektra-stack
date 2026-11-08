@@ -454,6 +454,17 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
 - Plan 12 (privacy-retention): `/health/assess` reads the `smtp` row of `assess_heartbeat` (and its age); metrics over delivery status and `assess.delivery.alert`; a shredded transcript's live rows go ABANDONED (the handler now just skips a transcript without ciphertext).
 - Plugin (vektra-moodle-discuss, owned by the other session): nothing beyond the P3 request in "Decision REVISED"; the site admin's allowlist copy must equal `VEKTRA_ASSESS_RECIPIENT_DOMAINS`, documented in `docs/guides/assess-moodle-service-account.md`.
 
+### CodeRabbit round 1 on PR #168 (2026-11-08), decisions
+
+- Recipient re-check (additional, handler.py:361): BOTH. The fan-out reads the configuration after taking the per-transcript lock (a job never reconciles to an older snapshot), and every row re-reads it right before its claim, after the relay-session wait; an address removed meanwhile is left unclaimed and REPLACED by the next pass (`test_an_address_removed_while_waiting_for_a_session_is_not_mailed`).
+- Retry window: live rows created more than window + lease ago are FAILED `window_expired` before any claim (the lease is the grace for the final attempt scheduled at the window's end).
+- The Message-ID is stored at the first claim and reused; the API role reads neither `recipient_ref` nor `message_id` (both hash the ref).
+- The unresolved-recipients path only moves rows with no attempt marker: a crash marker survives until a real resend audits the possible duplicate.
+- By design (recipients.py:38, role `grader` -> `recipient`): the agreed contract of "Decision REVISED", already sent to the plugin as part of the P3 request; P3 renders `role: "recipient"` with the masked address.
+- By design (4504362592, "at most 3 successful deliveries per round"): the coordinator's review #3 rule stands: the cap counts the refs configured now; SENT rows of removed addresses are history and do not block a configured one.
+- Won't fix (4504362599, `/health/assess` reading the `smtp` row): plan 12 owns `/health/assess` (request recorded in "Requests from 10b").
+- Won't fix (4504362602, stop scanning after 3 addresses): same result; the list is written by plan 11's validated PUT (1..3).
+
 ### Code review of 10a (2026-11-07), decisions
 
 - Resend limits (review #6): at most one delivery round per transcript per

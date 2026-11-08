@@ -623,3 +623,42 @@ async def test_the_header_shows_the_extra_time_granted_at_start(pg, worker) -> N
         html = (await _open(pg, ring, s.session_id)).decode()
         assert "<dt>Durata massima</dt><dd>30 min</dd>" in html
         assert "<dt>Tempo aggiuntivo</dt><dd>10 min</dd>" in html
+
+
+async def test_a_config_that_does_not_open_still_generates(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (round 1): a reader whose key does not open the sealed config
+    raises nothing out of generation: the transcript is made, `config_unreadable` is
+    audited, no delivery row exists."""
+    from support.recipients import config_pair
+
+    from vektra_assess.delivery.recipients import ConfigRecipients
+
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        await configure_recipients(pg, w.site, s.cmid)  # sealed to another key pair
+        _, wrong_priv = config_pair("other")
+        deps = GenerationDeps(
+            kek=s.kek,
+            transcript_kek=ring,
+            facts=Facts(facts=CloseFacts()),
+            recipients=ConfigRecipients(wrong_priv),
+        )
+        got = await generate_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.created and got.recipients == 0
+        await _open(pg, ring, s.session_id)
+        audit = await pg.run(
+            "super",
+            "SELECT reason_code FROM assess_audit_events WHERE session_id = :s "
+            "AND event = 'assess_transcript_recipients_unresolved'",
+            {"s": s.session_id},
+        )
+        assert [a[0] for a in audit] == ["config_unreadable"]
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_deliveries WHERE transcript_id = :t",
+                t=s.session_id,
+            )
+            == 0
+        )

@@ -16,6 +16,7 @@ from support.recipients import TEACHERS, config_pair, configure_recipients
 from support.world import configure_activity, make_site
 
 from vektra_assess.crypto import rotation
+from vektra_assess.delivery.recipients import ConfigRecipients
 from vektra_assess.worker.preflight import StartTarget
 from vektra_assess.worker.start_source import MoodleStartSource
 
@@ -60,6 +61,9 @@ async def test_capture_and_delivery_read_the_same_sealed_object(pg) -> None:  # 
         src2 = MoodleStartSource(None, None, engine.connect, teacher_private=new_priv)  # type: ignore[arg-type]
         got = await src2._context(_target(site, 11, show=True))
         assert got is not None and got[2] == SOLUTION
+        # and the recipients survive the rotation too (CodeRabbit nitpick, round 1)
+        async with engine.connect() as conn:
+            assert await ConfigRecipients(new_priv).read(conn, site, 11) == TEACHERS
     finally:
         await engine.dispose()
 

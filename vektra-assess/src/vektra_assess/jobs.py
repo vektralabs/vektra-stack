@@ -50,7 +50,7 @@ class JobKind(enum.StrEnum):
     SETUP_CHECK = "setup_check"
     GATE_REFRESH = "gate_refresh"
     RENDER_CHECK = "render_check"
-    SESSION_DEADLINE = "session_deadline"
+    # ``session_deadline`` was dropped in 0037: the sweeper tick and the lazy close enforce it
     TRANSCRIPT_GENERATE = "transcript_generate"
     TRANSCRIPT_DELIVER = "transcript_deliver"
     ENROLMENT_RECHECK = "enrolment_recheck"

@@ -36,7 +36,6 @@ TEACHER = "20261101-154950-assess-teacher-ops"
 HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.PREFLIGHT: SESSION,
     JobKind.RECONCILE_REPLY: SESSION,
-    JobKind.SESSION_DEADLINE: SESSION,
     JobKind.ENROLMENT_RECHECK: SESSION,
     JobKind.GATE_REFRESH: SESSION,
     JobKind.RENDER_CHECK: SESSION,
@@ -81,10 +80,6 @@ PENDING_OWNER_PLANS: frozenset[str] = frozenset({PRIVACY, HARDENING})
 #: slots whose owner plan IS completed but whose behaviour is not specified anywhere: a decision is
 #: needed (recorded as an open item in the owner plan's Notes), not an invented body
 OPEN_DECISIONS: dict[str, str] = {
-    "job:session_deadline": (
-        "no enqueuer and no body in any plan; deadlines are enforced by the sweeper tick and the "
-        "API's lazy close (session-lifecycle Notes, 2026-11-08)"
-    ),
     "job:teacher_notify": (
         "queued by service_failure closes and the rollback cap; channel, content and recipients "
         "are not specified (transcript-delivery Notes, 2026-11-08)"

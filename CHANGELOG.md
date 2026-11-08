@@ -31,8 +31,11 @@ Convention (Keep a Changelog 1.1.0):
 
 - **assess**: the production worker left job and tick `setup_check` unbound. The binding had been carried over from plan moodle-ws to plan job-loop and was done by neither, so the worker refused to start (`SlotsNotBound`) without the development override, and no site ever got a capability matrix. The handler (pool `setup`, 120 s, re-validates the report row, keeps the last 30 reports per site) and the daily tick (also on startup, one deduplicated job per enabled site) are now bound. The parser's `parser_sidecar_running` setup-check item is registered too.
 - **assess**: no code ever wrote `assess_sites.release`, which the render check and the pre-flight read, so every site rendered `unavailable/unreadable` and `/state` never left "checking". A setup-check run whose probes are persisted now sets it, in the same transaction as the capability matrix. A site that has never passed a check stays unreadable (fail closed).
-- **assess**: the `capability_probe` job kind is removed (revision `0036`). It had no enqueuer and no body, because the setup check's probes write the matrix, so the slot could never be bound.
-- **assess**: a guard test composes the real worker and requires the unbound slots to be exactly the documented allowlist (`worker/slots.py`). Those are the slots of the still-pending privacy and hardening plans plus three open decisions: `session_deadline`, `teacher_notify` and `operator_notify`. Until those three are decided and bound, a production worker still refuses to start.
+- **assess**: the `capability_probe` and `session_deadline` job kinds are removed (revision `0037`). Neither had an enqueuer or a body, so neither slot could ever be bound. The setup check's probes write the capability matrix, and the sweeper tick plus the API's lazy close enforce deadlines.
+- **assess**: the setup-check items `smtp_probe` and `db_log_statement_none` had no contributor, so every report had them MISSING and no site could be ready. Both are now registered by the worker:
+  - `smtp_probe` is OK when the probe tick's `smtp` heartbeat row is `ok` and at most 900 s old (3 tick intervals). Otherwise it is MISSING, with the error class as the reason code.
+  - `db_log_statement_none` is OK when `log_statement` = `none` and `log_parameter_max_length` = `0` (ARCH-078). Otherwise it is MISSING, naming the setting.
+- **assess**: a guard test composes the real worker and requires the unbound slots to be exactly the documented allowlist (`worker/slots.py`). Those are the slots of the still-pending privacy and hardening plans plus two open product decisions, `teacher_notify` and `operator_notify`. Until those two are decided and bound, a production worker still refuses to start.
 
 ## [0.8.0] - 2026-11-07
 

@@ -124,7 +124,7 @@ async def test_a_duplicate_job_is_skipped_without_an_error_or_a_savepoint(pg) ->
         event.listen(
             engine.sync_engine,
             "before_cursor_execute",
-            lambda *a: seen.append(str(a[2]).upper()),
+            lambda *a, seen=seen: seen.append(str(a[2]).upper()),
         )
         key = f"transcript_deliver:{uuid.uuid4()}:retry"
         try:

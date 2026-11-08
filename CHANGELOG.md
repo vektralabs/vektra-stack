@@ -34,8 +34,15 @@ Convention (Keep a Changelog 1.1.0):
 - **assess**: no code ever wrote `assess_sites.release`, which the render check and the pre-flight read, so every site rendered `unavailable/unreadable` and `/state` never left "checking". A setup-check run whose probes are persisted now sets it, in the same transaction as the capability matrix. A site that has never passed a check stays unreadable (fail closed).
 - **assess**: the `capability_probe` and `session_deadline` job kinds are removed (revision `0037`). Neither had an enqueuer or a body, so neither slot could ever be bound. The setup check's probes write the capability matrix, and the sweeper tick plus the API's lazy close enforce deadlines.
 - **assess**: the setup-check items `smtp_probe` and `db_log_statement_none` had no contributor, so every report had them MISSING and no site could be ready. Both are now registered by the worker:
-  - `smtp_probe` is OK when the probe tick's `smtp` heartbeat row is `ok` and at most 900 s old (3 tick intervals). Otherwise it is MISSING, with the error class as the reason code.
-  - `db_log_statement_none` is OK when `log_statement` = `none` and `log_parameter_max_length` = `0` (ARCH-078). Otherwise it is MISSING, naming the setting.
+  - `smtp_probe` judges the probe tick's `smtp` heartbeat row. It is OK when the row is `ok` and at most 900 s old (3 tick intervals).
+    - With no row, or a stale one, the item runs one probe itself. The probe never sends and is capped at 30 s.
+    - A `busy` row (every relay session in use) is judged by the last real result it carries, while that result is at most 900 s old.
+    - A failed probe is MISSING, with the error class as the reason code. No relay configured is MISSING `smtp_not_configured`.
+    - A relay still busy with no usable history is UNVERIFIABLE `smtp_busy`; a probe that hits the 30 s cap is UNVERIFIABLE `smtp_probe_timeout`.
+  - `db_log_statement_none` (ARCH-078) is OK when `log_statement` = `none` and `log_parameter_max_length` = `0` hold for every assess role.
+    - Each role's value is resolved from the server value and any `ALTER ROLE`/`ALTER DATABASE` defaults.
+    - A value other than `none`/`0` is MISSING, naming the setting.
+    - It is UNVERIFIABLE `server_log_settings_masked` when a default on the worker's own role hides a server value that another assess role inherits.
 - **assess**: a guard test composes the real worker and requires the unbound slots to be exactly the documented allowlist (`worker/slots.py`). Those are the slots of the still-pending privacy and hardening plans plus two open product decisions, `teacher_notify` and `operator_notify`. Until those two are decided and bound, a production worker still refuses to start.
 
 ## [0.8.0] - 2026-11-07

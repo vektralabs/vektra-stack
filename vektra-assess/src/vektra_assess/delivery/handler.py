@@ -179,14 +179,14 @@ _EXPIRE = text(
     "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
     "RETURNING id, round, recipient_ref"
 )
-_CLAIM = text(
-    "WITH due AS (SELECT id, attempt_started_at AS prev FROM assess_deliveries "
-    "WHERE transcript_id = :t AND kind = 'transcript' AND status IN ('PENDING', 'RETRYING') "
-    "AND not_before <= :now AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
-    "FOR UPDATE SKIP LOCKED) "
-    "UPDATE assess_deliveries d SET attempt_started_at = :now, attempts = d.attempts + 1 "
-    "FROM due WHERE d.id = due.id "
-    "RETURNING d.id, d.round, d.recipient_ref, d.attempts, d.created_at, due.prev"
+#: the unresolved path takes only rows with no attempt in flight or crashed: a crash marker
+#: stays until a real resend audits the possible duplicate (CodeRabbit 4504367050)
+_CLAIM_IDLE = text(
+    "UPDATE assess_deliveries SET attempt_started_at = :now, attempts = attempts + 1 "
+    "WHERE id IN (SELECT id FROM assess_deliveries WHERE transcript_id = :t "
+    "AND kind = 'transcript' AND status IN ('PENDING', 'RETRYING') AND not_before <= :now "
+    "AND attempt_started_at IS NULL FOR UPDATE SKIP LOCKED) "
+    "RETURNING id, round, recipient_ref, attempts, created_at"
 )
 _SENT = text(
     "UPDATE assess_deliveries SET status = 'SENT', sent_at = :now, smtp_code = :code, "
@@ -329,10 +329,7 @@ async def _unresolved(
 ) -> None:
     """No readable recipient: due rows wait (RETRYING, backoff) or end FAILED past the window."""
     out.unresolved = True
-    stale = now - deps.stale_after
-    claimed = (
-        await conn.execute(_CLAIM, {"t": t.id, "now": now, "stale": stale})
-    ).all()
+    claimed = (await conn.execute(_CLAIM_IDLE, {"t": t.id, "now": now})).all()
     for c in claimed:
         nb = next_not_before(
             int(c.attempts), c.created_at, now, deps.schedule, deps.window

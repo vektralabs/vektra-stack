@@ -709,3 +709,51 @@ async def test_the_final_attempt_at_the_window_end_still_runs(pg, worker, sink) 
         got = await h.deliver_transcript(deps, worker.connect, s.session_id)
         assert got is not None and got.sent == 2
         await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
+
+
+async def test_an_unreadable_config_keeps_the_crash_marker(
+    pg, worker, sink, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504367050: a crash after the 250, then the config cannot be opened. The
+    rows wait WITHOUT losing their attempt marker, so the resend, once the config is back, is
+    still audited as a possible duplicate."""
+    clock = Clock()
+    real_settle = h._settle
+
+    async def crash_after_relay(*args: Any, **kw: Any) -> None:
+        if args[4].ok:
+            raise RuntimeError("worker killed before the outcome commit")
+        await real_settle(*args, **kw)
+
+    async with world(pg) as w:
+        s, ring, config, pair = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        monkeypatch.setattr(h, "_settle", crash_after_relay)
+        with pytest.raises(RuntimeError):
+            await h.deliver_transcript(deps, worker.connect, s.session_id)
+        monkeypatch.setattr(h, "_settle", real_settle)
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET teacher_config_sealed = NULL, "
+            "teacher_config_kid = NULL WHERE site_id = :s AND cmid = :c",
+            {"s": w.site, "c": s.cmid},
+        )
+        clock.now += STALE + timedelta(seconds=1)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.unresolved
+        assert all(
+            r.attempt_started_at is not None for r in await rows(pg, s.session_id)
+        )
+        await configure_recipients(pg, w.site, s.cmid, pair=pair)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 2 and got.duplicates == 2
+        dup = await events(pg, s.session_id, "assess_delivery_possible_duplicate")
+        assert len(dup) == 2
+        attempts = await events(pg, s.session_id, "assess_delivery_attempt")
+        assert [
+            a.data["duplicate"] for a in attempts if a.data["outcome"] == "sent"
+        ] == [
+            True,
+            True,
+        ]

@@ -88,3 +88,24 @@ def test_states_and_error_envelopes() -> None:
 def test_privacy_is_not_configured_until_plan_12() -> None:
     """Fail closed: the REQ-089 store does not exist yet."""
     assert asyncio.run(privacy.is_configured(None, uuid.uuid4())) is False
+
+
+def test_an_unbound_teacher_key_is_told_to_use_a_teacher_key() -> None:
+    """CodeRabbit 4505511216: the 403 of an unbound key names the scope of its route."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from vektra_assess.api.common import site_of_key
+
+    class Conn:
+        async def execute(self, *_a: object) -> SimpleNamespace:
+            return SimpleNamespace(scalar=lambda: None)
+
+    key = SimpleNamespace(key_id=uuid.uuid4())
+    for purpose, scope in (("teacher", "assess:teacher"), ("mint", "assess:mint")):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(site_of_key(Conn(), key, purpose))
+        error = exc.value.detail["error"]  # type: ignore[index]
+        assert error["code"] == "ERR-ASSESS-007"
+        assert scope in error["remediation"]

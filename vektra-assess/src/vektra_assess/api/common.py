@@ -36,7 +36,7 @@ async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
     when it is bound to none (one rule for every site-bound route)."""
     site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": purpose})).scalar()
     if site is None:
-        raise fail(key_not_bound())
+        raise fail(key_not_bound(purpose))
     return site
 
 

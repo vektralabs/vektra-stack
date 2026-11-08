@@ -170,12 +170,17 @@ def loginas_refused() -> ErrorResponse:
     )
 
 
-def key_not_bound() -> ErrorResponse:
+def key_not_bound(purpose: str = "mint") -> ErrorResponse:
+    """403: the key is not bound to an enabled site for ``purpose`` (``mint`` | ``teacher``);
+    the remediation names the scope the route needs."""
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_007,
         message="This API key is not bound to an assess site for this purpose.",
-        remediation="Use the site's own assess:mint key (assess_site_keys, purpose 'mint').",
+        remediation=(
+            f"Use the site's own assess:{purpose} key, bound to an enabled site "
+            f"(assess_site_keys, purpose '{purpose}')."
+        ),
     )
 
 

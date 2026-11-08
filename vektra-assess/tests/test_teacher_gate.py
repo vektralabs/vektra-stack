@@ -162,7 +162,7 @@ async def test_the_override_holder_is_read_only_where_overrides_are(
     assert set(got) == {
         "resolved", "courseid", "activity_type", "editors", "graders", "close_at",
         "team_submission", "grading_method", "moodle_rubric", "override_holder",
-        "override_viewers",
+        "override_viewers", "automatic_close_at",
     }  # fmt: skip
 
 
@@ -212,3 +212,26 @@ async def test_the_handler_stores_the_facts_with_their_hint(branch: str) -> None
             JobContext(2, JobKind.TEACHER_GATE, bad, 1, acquire, logging.getLogger())
         )
     assert not [p for sql, p in sink if "assess_teacher_gate" in sql]
+
+
+def test_the_automatic_close_is_the_start_gates_formula(branch: str) -> None:
+    """CodeRabbit 4506916932: the teacher pages show the opening Start waits for: the latest of
+    the quiz close and every override, plus grace; None unless all of it is readable."""
+    from vektra_assess.moodle.domain import GracePolicy, QuizOverride
+    from vektra_assess.readable import Readable, Unreadable, UnreadableReason
+    from vektra_assess.worker.start_source import _automatic_close
+
+    def quiz(overrides: Any, grace: Any, close: int = 1000) -> Any:
+        return SimpleNamespace(timeclose=close, overrides=overrides, grace=grace)
+
+    def ov(close: int, user: int | None = 5) -> QuizOverride:
+        return QuizOverride(user, None if user else 3, None, close, None, None)
+
+    grace = Readable(GracePolicy(graceperiod_s=60, overduehandling="graceperiod"))
+    no_grace = Readable(GracePolicy(graceperiod_s=600, overduehandling="autosubmit"))
+    gone = Unreadable(UnreadableReason.PARTIAL)
+    assert _automatic_close(quiz(Readable((ov(1500), ov(1200, None))), grace)) == 1560
+    assert _automatic_close(quiz(Readable(()), no_grace)) == 1000
+    assert _automatic_close(quiz(gone, grace)) is None  # Moodle 4.3: no overrides
+    assert _automatic_close(quiz(Readable(()), gone)) is None  # closed quiz: partial
+    assert _automatic_close(quiz(Readable(()), grace, close=0)) is None  # BR-007

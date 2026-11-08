@@ -127,10 +127,13 @@ async def _gate_panel(
 ) -> dict[str, Any]:
     facts = gate.facts
     kind = str(facts.get("activity_type"))
-    close = facts.get("close_at")
-    close_at = close if isinstance(close, int) and not isinstance(close, bool) else None
+    close_at = v.gate_close(
+        v.epoch_fact(facts, "close_at"), v.epoch_fact(facts, "automatic_close_at")
+    )
     attested = (await conn.execute(_CONFIG, {"s": site, "c": cmid})).scalar()
     fallback = v.fallback_needed(kind, await readable_close_flags(conn, site))
+    # the opening Start actually waits for: the automatic close (participants' overrides and
+    # grace included) when readable; the holder's id stays behind can_view_overrides
     opening, source = v.opening_view(close_at, attested)
     holder = facts.get("override_holder")
     panel: dict[str, Any] = {

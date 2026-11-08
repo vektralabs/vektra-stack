@@ -129,16 +129,14 @@ def _facts(gate: TeacherGate) -> v.ActivityFacts:
         value = f.get(name)
         return value if isinstance(value, bool) else None
 
-    close = f.get("close_at")
     method = f.get("grading_method")
     return v.ActivityFacts(
         activity_type=str(f.get("activity_type")),
-        close_at=close
-        if isinstance(close, int) and not isinstance(close, bool)
-        else None,
+        close_at=v.epoch_fact(f, "close_at"),
         team_submission=flag("team_submission"),
         grading_method=method if isinstance(method, str) else None,
         moodle_rubric=flag("moodle_rubric"),
+        automatic_close_at=v.epoch_fact(f, "automatic_close_at"),
     )
 
 
@@ -238,7 +236,8 @@ async def _save(
         new["available_until"] = None
         if end is not None:
             opening = v.effective_opening(
-                facts.close_at, row.attested_at if row is not None else None
+                v.gate_close(facts.close_at, facts.automatic_close_at),
+                row.attested_at if row is not None else None,
             )
             end_errors = v.check_end_date(end, opening)
             errors += end_errors
@@ -395,7 +394,9 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
     flags = dict(row.flags or {}) if row is not None else {}
     attested = row.attested_at if row is not None else None
     end_at = row.end_at if row is not None else None
-    opening, source = v.opening_view(facts.close_at, attested)
+    opening, source = v.opening_view(
+        v.gate_close(facts.close_at, facts.automatic_close_at), attested
+    )
     rec_set, rec_n = sealed.get(TRANSCRIPT_RECIPIENTS, (False, None))
     review = (await conn.execute(_REVIEW, {"s": site})).scalar()
     active = int((await conn.execute(_ACTIVE, {"s": site, "c": cmid})).scalar() or 0)

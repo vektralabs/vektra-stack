@@ -266,6 +266,7 @@ class MoodleStartSource:
             "moodle_rubric": None,
             "override_holder": None,
             "override_viewers": None,
+            "automatic_close_at": None,
         }
         if kind == "quiz":
             editors, graders, close, viewers = await asyncio.gather(
@@ -277,6 +278,7 @@ class MoodleStartSource:
             if isinstance(close, Readable):
                 out["close_at"] = int(close.value.timeclose or 0)
                 out["override_holder"] = _override_holder(close.value)
+                out["automatic_close_at"] = _automatic_close(close.value)
             out["team_submission"] = False
             if isinstance(viewers, Readable):
                 out["override_viewers"] = sorted(
@@ -587,3 +589,19 @@ def _override_holder(q: Any) -> int | None:
         return None
     top = max(later, key=lambda o: o.timeclose)
     return int(top.userid) if top.userid else None
+
+
+def _automatic_close(q: Any) -> int | None:
+    """BR-006(d) automatic close of a quiz for the teacher pages (CodeRabbit 4506916932): the
+    latest of the quiz close and every participant's override close, plus the grace period,
+    the same formula the Start gate uses (``gates._effective_gate``); None unless the close,
+    every override and the grace are readable (the gate then takes the REQ-091 fallback path,
+    whose inputs the API already has)."""
+    if not q.timeclose or not isinstance(q.overrides, Readable):
+        return None
+    if not isinstance(q.grace, Readable):
+        return None
+    g = q.grace.value
+    grace = g.graceperiod_s if g.overduehandling == "graceperiod" else 0
+    closes = [o.timeclose for o in q.overrides.value if o.timeclose]
+    return int(max([q.timeclose, *closes]) + grace)

@@ -457,3 +457,25 @@ async def test_an_unreadable_reason_does_not_take_the_list_down(pg, worker) -> N
             "readable",
         )
         assert (got[9402]["reason"], got[9402]["reason_state"]) == (None, "unreadable")
+
+
+async def test_the_panel_shows_the_opening_start_waits_for(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506916932: with a readable automatic close (an override past the quiz
+    close, plus grace) the panel and the config view show it, not the quiz's own close; the
+    holder's id stays hidden from a non-viewer."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        await configure_activity(pg, w.site, 908, kind="quiz", attested=False)
+        await seed_teacher_gate(
+            pg, w.site, 908, kind="quiz", close_at=1_900_000_000,
+            automatic_close_at=1_900_007_260, override_holder=9501,
+            override_viewers=[], editors=[GRADER],
+        )  # fmt: skip
+        headers = {**list_headers(), "X-Assess-Activity-Type": "quiz"}
+        panel = (await w.client.get(list_url(908), headers=headers)).json()["gate"]
+        config = (
+            await w.client.get("/api/v1/assess/activities/908/config", headers=headers)
+        ).json()
+        expected = {"at": "2030-03-17T19:47:40+00:00", "source": "activity_close"}
+        assert panel["opening"] == config["opening"] == expected
+        assert "override_holder" not in panel

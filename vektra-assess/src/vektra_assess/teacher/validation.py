@@ -130,6 +130,19 @@ def effective_opening(close_at: int | None, attested_at: int | None) -> int | No
     return max(known) if known else None
 
 
+def epoch_fact(facts: Mapping[str, Any], name: str) -> int | None:
+    """An epoch fact of the worker-written teacher facts, or None when absent or mistyped."""
+    value = facts.get(name)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def gate_close(close_at: int | None, automatic_close_at: int | None) -> int | None:
+    """The close the Start gate opens after (BR-006(d)): the automatic close (quiz close, every
+    participant's override, grace) when the worker could read all of it, else the activity's
+    own close (the REQ-091 fallback path, where the teacher date then decides with it)."""
+    return automatic_close_at if automatic_close_at is not None else close_at
+
+
 def opening_view(
     close_at: int | None, attested_at: int | None
 ) -> tuple[int | None, str]:
@@ -410,6 +423,8 @@ class ActivityFacts:
     team_submission: bool | None = None
     grading_method: str | None = None
     moodle_rubric: bool | None = None
+    #: BR-006(d) automatic close when every close input was readable (a quiz on 5.2 while open)
+    automatic_close_at: int | None = None
 
 
 @dataclass(frozen=True)

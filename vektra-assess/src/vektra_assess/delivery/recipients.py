@@ -16,9 +16,10 @@ render worker's ``/state`` view:
   shows.
 - ``domain_allowed``: exact match against ``VEKTRA_ASSESS_RECIPIENT_DOMAINS``; an empty list
   refuses every address.
-- ``ConfigRecipients``: opens the sealed config of one activity (binding field ``config``) and
-  returns its recipients, or ``None`` when there is no config, it does not open, or it is not a
-  JSON object (unreadable is never guessed).
+- ``ConfigRecipients``: opens the activity's sealed ``transcript_recipients`` field (revision 0036:
+  one sealed row per field, binding ``[site_id, cmid, "transcript_recipients"]``) and returns its
+  recipients, or ``None`` when the field is unset, does not open, or is not a JSON list of
+  strings (unreadable is never guessed).
 """
 
 from __future__ import annotations
@@ -28,16 +29,17 @@ import json
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
-from sqlalchemy import text
-
-from vektra_assess.crypto.teacher_config import CONFIG_FIELD, open_teacher_config
+from vektra_assess.crypto.teacher_config import (
+    TRANSCRIPT_RECIPIENTS,
+    read_teacher_config,
+)
 from vektra_assess.delivery.address import normalize_address
 from vektra_assess.keys import AssessKeyring
 
 MAX_RECIPIENTS = 3
 ROLE_RECIPIENT = "recipient"
-#: the key of the sealed teacher config that lists the transcript recipients (plan 11 writes it)
-RECIPIENTS_KEY = "transcript_recipients"
+#: the sealed teacher-config field that lists the transcript recipients (plan 11's PUT writes it)
+RECIPIENTS_KEY = TRANSCRIPT_RECIPIENTS
 
 
 class GraderLike(Protocol):
@@ -52,17 +54,19 @@ class GraderLike(Protocol):
     def fullname(self) -> str: ...
 
 
-def configured_recipients(config: Mapping[str, Any] | str | None) -> tuple[str, ...]:
-    """The configured addresses, normalised, unique, at most ``MAX_RECIPIENTS``."""
+def configured_recipients(
+    config: Mapping[str, Any] | Sequence[Any] | str | None,
+) -> tuple[str, ...]:
+    """The configured addresses, normalised, unique, at most ``MAX_RECIPIENTS``. ``config`` is the
+    opened field (a list of addresses), its JSON text, or a mapping holding it under
+    ``transcript_recipients``."""
     if isinstance(config, str):
         try:
             config = json.loads(config)
         except json.JSONDecodeError:
             return ()
-    if not isinstance(config, Mapping):
-        return ()
-    raw = config.get(RECIPIENTS_KEY)
-    if not isinstance(raw, list):
+    raw = config.get(RECIPIENTS_KEY) if isinstance(config, Mapping) else config
+    if not isinstance(raw, (list, tuple)):
         return ()
     out: list[str] = []
     for item in raw:
@@ -107,14 +111,8 @@ class Conn(Protocol):
     async def execute(self, statement: Any, parameters: Any = ..., /) -> Any: ...
 
 
-_SEALED = text(
-    "SELECT teacher_config_sealed FROM assess_activity_config "
-    "WHERE site_id = :s AND cmid = :c"
-)
-
-
 class ConfigRecipients:
-    """Worker side: reads the activity's sealed teacher config with the worker's private key."""
+    """Worker side: reads the activity's sealed recipients with the worker's private key."""
 
     def __init__(self, private: AssessKeyring) -> None:
         self._private = private
@@ -122,18 +120,11 @@ class ConfigRecipients:
     async def read(
         self, conn: Conn, site_id: object, cmid: int
     ) -> tuple[str, ...] | None:
-        """The configured recipients; ``None`` when unreadable (no config, a seal that does not
-        open, not a JSON object). ``()``: readable, nobody configured."""
-        blob = (await conn.execute(_SEALED, {"s": site_id, "c": int(cmid)})).scalar()
-        if blob is None:
+        """The configured recipients; ``None`` when unreadable (unset, a seal that does not
+        open, not a JSON list of strings). ``()``: readable, nobody configured."""
+        opened = await read_teacher_config(
+            conn, self._private, site_id, int(cmid), (TRANSCRIPT_RECIPIENTS,)
+        )
+        if opened.transcript_recipients is None:
             return None
-        try:
-            plain = open_teacher_config(
-                self._private, bytes(blob), site_id, int(cmid), CONFIG_FIELD
-            )
-            doc = json.loads(plain)
-        except Exception:  # InvalidTag, unknown kid, not UTF-8, not JSON: unreadable
-            return None
-        if not isinstance(doc, dict):
-            return None
-        return configured_recipients(doc)
+        return configured_recipients(list(opened.transcript_recipients))

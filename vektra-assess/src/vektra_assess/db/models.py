@@ -126,19 +126,35 @@ class ActivityConfigOrm(Base):
         TIMESTAMP(timezone=True)
     )
     attested_by: Mapped[str | None] = mapped_column(TEXT)
-    recipients_extra: Mapped[list[str]] = mapped_column(
-        ARRAY(TEXT), server_default=text("'{}'")
-    )
-    teacher_config_sealed: Mapped[bytes | None] = mapped_column(LargeBinary)
-    teacher_config_kid: Mapped[str | None] = mapped_column(TEXT)
-    teacher_config_set: Mapped[bool] = mapped_column(
-        Boolean, Computed("teacher_config_sealed IS NOT NULL", persisted=True)
-    )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=_NOW
     )
     # revision 0022: the session cap BR-013 (5-120 min); NULL = activity not configured yet
     cap_minutes: Mapped[int | None] = mapped_column(INTEGER)
+    # revision 0036 (plan 11): optimistic concurrency of the config PUT, last editor (Moodle id)
+    version: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
+    updated_by: Mapped[int | None] = mapped_column(BIGINT)
+
+
+class ActivityConfigSealedOrm(Base):
+    """Revision 0036: one sealed teacher-config field per row (ARCH-071, OQ-034)."""
+
+    __tablename__ = "assess_activity_config_sealed"
+
+    site_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    cmid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    field: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    sealed_blob: Mapped[bytes | None] = mapped_column(LargeBinary)
+    kid: Mapped[str | None] = mapped_column(TEXT)
+    is_set: Mapped[bool] = mapped_column(
+        Boolean, Computed("sealed_blob IS NOT NULL", persisted=True)
+    )
+    refs: Mapped[list[str] | None] = mapped_column(ARRAY(TEXT))
+    item_count: Mapped[int | None] = mapped_column(INTEGER)
+    updated_by: Mapped[int | None] = mapped_column(BIGINT)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=_NOW
+    )
 
 
 class ExtraTimeOrm(Base):

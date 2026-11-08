@@ -508,8 +508,8 @@ async def test_recipients_configured_after_the_close_are_fanned_out(
         )
         await pg.run(
             "super",
-            "UPDATE assess_activity_config SET teacher_config_sealed = NULL, "
-            "teacher_config_kid = NULL WHERE site_id = :s AND cmid = :c",
+            "UPDATE assess_activity_config_sealed SET sealed_blob = NULL, kid = NULL, "
+            "refs = NULL, item_count = NULL WHERE site_id = :s AND cmid = :c",
             {"s": w.site, "c": s.cmid},
         )
         got = await h.deliver_transcript(deps, worker.connect, s.session_id)
@@ -735,8 +735,8 @@ async def test_an_unreadable_config_keeps_the_crash_marker(
         monkeypatch.setattr(h, "_settle", real_settle)
         await pg.run(
             "super",
-            "UPDATE assess_activity_config SET teacher_config_sealed = NULL, "
-            "teacher_config_kid = NULL WHERE site_id = :s AND cmid = :c",
+            "UPDATE assess_activity_config_sealed SET sealed_blob = NULL, kid = NULL, "
+            "refs = NULL, item_count = NULL WHERE site_id = :s AND cmid = :c",
             {"s": w.site, "c": s.cmid},
         )
         clock.now += STALE + timedelta(seconds=1)
@@ -912,8 +912,8 @@ async def test_a_crash_marked_row_past_its_window_ends_while_unresolved(
         monkeypatch.setattr(h, "_settle", real_settle)
         await pg.run(
             "super",
-            "UPDATE assess_activity_config SET teacher_config_sealed = NULL, "
-            "teacher_config_kid = NULL WHERE site_id = :s AND cmid = :c",
+            "UPDATE assess_activity_config_sealed SET sealed_blob = NULL, kid = NULL, "
+            "refs = NULL, item_count = NULL WHERE site_id = :s AND cmid = :c",
             {"s": w.site, "c": s.cmid},
         )
         clock.advance(hours=72, seconds=60)  # window over, still inside the lease grace

@@ -54,6 +54,9 @@ def test_configured_recipients_dedupes_and_caps_at_three() -> None:
     want = ("a@unical.it", "b@unical.it", "c@unical.it")
     assert r.configured_recipients(doc) == want
     assert r.configured_recipients(json.dumps(doc)) == want
+    # revision 0036: the opened ``transcript_recipients`` field is the list itself
+    assert r.configured_recipients(doc[r.RECIPIENTS_KEY]) == want
+    assert r.configured_recipients(json.dumps(doc[r.RECIPIENTS_KEY])) == want
     for empty in (None, "", "not json", "[]", {}, {r.RECIPIENTS_KEY: "a@unical.it"}):
         assert r.configured_recipients(empty) == ()  # type: ignore[arg-type]
 

@@ -2,7 +2,7 @@
 
 **ID**: 20261101-154950-assess-teacher-ops
 **Status**: active
-**Branch**: N/A
+**Branch**: feat/assess-teacher-ops (11a)
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
 **Approved**: 2026-11-01 (coordinator)
@@ -67,12 +67,20 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
   stale or absent → 403 `ERR_ASSESS_TEACHER_UNVERIFIED`, and a `gate_refresh` job is enqueued so
   a retry can succeed. `{cmid}`, `{sid}`, `{userid}` are resolved server-side against the site and
   course (IDOR tests). Reuse `authz/graders.py` from plan 10, extended with `require_fresh_editor`.
-- **Config storage (next revision).** `assess_activity_config(site_id, cmid, version, enabled, cap_minutes, rubric_source, show_solution, solution_set, pasted_rubric_set, recipients JSONB, rag_enabled BOOLEAN NOT NULL DEFAULT false CHECK (rag_enabled = false), available_until, opening_fallback_at, opening_attested_by, opening_attested_at, updated_by, updated_at)`
-  with optimistic concurrency (`expected_version` in the request; mismatch → 409).
-  `assess_activity_config_sealed(site_id, cmid, version, field ENUM(solution, pasted_rubric), sealed_blob, key_version)`:
-  the API role has INSERT only, never SELECT (grant matrix); the worker SELECTs and opens the box
-  at snapshot capture. Sessions record the `config_version` they started under, so changes apply
-  only to sessions not yet started.
+- **Config storage (revision 0036, as built in 11a).** `assess_activity_config` keeps its existing
+  columns (`enabled`, `flags` with `show_solution` / `rubric_source`, `rag_enabled`, `end_at` = the
+  end date "disponibile fino al", `attested_opening_at` / `attested_by`, `cap_minutes`) and gains
+  `version` (optimistic concurrency: `expected_version` in the request; mismatch → 409) and
+  `updated_by`; `CHECK (rag_enabled = false)`; the composite `teacher_config_sealed` / `_kid` /
+  `_set` and the dormant `recipients_extra` are dropped.
+  `assess_activity_config_sealed(site_id, cmid, field ∈ {solution, pasted_rubric, transcript_recipients}, sealed_blob, kid, is_set, refs, item_count, updated_by, updated_at)`:
+  one row per field, each sealed under the binding `[site_id, cmid, field]`; a cleared field keeps
+  its row with a NULL blob. The API role has INSERT/UPDATE and SELECT on the key columns, `is_set`
+  and `item_count` only, never `sealed_blob`, `kid` or `refs` (grant matrix); the worker SELECTs and
+  opens the fields at snapshot capture and delivery. A SECURITY DEFINER trigger audits each write
+  of a sealed field old/new (set / replaced / cleared; recipient refs), since the API cannot read
+  the old refs. Sessions copy what they need at Start (`duration_s`, `cap_s`, the snapshot), so a
+  change applies only to sessions not yet started; no per-session `config_version` is needed.
 - **Write-only semantics (OQ-034 default).** Request field absent = unchanged; `null` = clear;
   string = replace. Responses expose only `solution_state` / `pasted_rubric_state` ∈
   {`impostata`, `non impostata`}. Text is normalised (NFC, control characters except `\n`/`\t`
@@ -93,9 +101,14 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
   `VEKTRA_ASSESS_RAG_ENABLED` exists only so that setting it is REFUSED at startup ("not
   available in this release"): no dormant path. Real enablement (preconditions 2-4) is a future
   BACKLOG item.
-- **Recipients.** v1 offers Moodle-resolved graders only; any free-text address → field error
-  `free_text_not_available` listing the (empty) allowed domains. Changes audited old/new as user
-  ids.
+- **Recipients (REQ-082 as amended 2026-11-07; supersedes "Moodle-resolved graders only").**
+  `transcript_recipients` in the PUT body is 1..3 free-text addresses, validated in Vektra with
+  `delivery/address.normalize_address` and the mandatory allowlist `VEKTRA_ASSESS_RECIPIENT_DOMAINS`
+  (empty refuses all): an address outside it is the field error `domain_not_allowed` naming the
+  allowed domains; duplicates (case-insensitive) collapse. Sealed as a JSON list in the
+  `transcript_recipients` row. Changes are audited old/new as `recipient_ref`s
+  (`sha256(site_id|address)`), never an address. GET returns only `transcript_recipients_state`
+  (`impostata` / `non impostata`) and a count. Enable requires at least one recipient.
 - **Session list (REQ-076).** `GET /activities/{cmid}/sessions?cursor=` returns per student
   (Moodle userid only; names are resolved by the plugin): sessions #1..#N with state, close reason,
   delivery status per recipient (incl. FAILED/bounce), transcript id, reset count and reasons,
@@ -145,6 +158,7 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
 ## Tasks
 
 ### Foundation
+- [x] (added, 11a) Sealed storage per field: revision 0036 `assess_activity_config_sealed` (one row per `solution` / `pasted_rubric` / `transcript_recipients`, binding `[site_id, cmid, field]`), `crypto/teacher_config.py` `store_sealed_field` (API) / `read_teacher_config` (worker), `start_source.py`, `delivery/recipients.py`, `crypto/rotation.py` switched; composite `teacher_config_*` and dormant `recipients_extra` dropped; `version`, `updated_by`, `CHECK (rag_enabled = false)`; DEFINER trigger auditing sealed writes old/new (`test_teacher_config_schema.py`, `test_teacher_config_format.py`, `test_shred_rotation.py`, `test_grant_matrix.py`)
 - [ ] Migration (next revision): `assess_activity_config`, `assess_activity_config_sealed`, `assess_resets`, `assess_terminations`, `assess_extra_time`; CHECK `rag_enabled = false`; grants (API: no SELECT on `_sealed`); extend plan 2's grant assertion
 - [ ] `vektra_assess/authz/teachers.py`: `require_fresh_editor` / `require_fresh_grader` / `can_view_overrides` over gate_inputs with max age, fail closed + `gate_refresh` enqueue
 - [ ] `vektra_assess/teacher/schemas.py`: Pydantic models (`extra="forbid"`), write-only field tri-state, field-error envelope builder; error codes `ERR_ASSESS_CONFIG_INVALID`, `ERR_ASSESS_TEACHER_UNVERIFIED`, `ERR_ASSESS_CONFIG_CONFLICT`, `ERR_ASSESS_RESET_REFUSED`, `ERR_ASSESS_TERMINATE_COUNT_MISMATCH` in `vektra_shared/errors.py` + `docs/reference/error-codes.md`
@@ -242,3 +256,15 @@ the recording LLM provider's captured request bytes, not on bot replies.
   not, this plan adds them to the refresh step.
 
 > Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.
+
+### Design decisions taken in 11a (one line each, with the reason)
+
+- 11a = Foundation + Config on `feat/assess-teacher-ops`; 11b = Teacher operations (sessions list, reset, terminate, extra time, opening fallback, route inventory), next PR.
+- Sealed storage per field, not one composite blob (coordinator, 2026-11-08; supersedes the 10b "Requests from 10b" format): a PUT changes one field (absent / null / string, OQ-034) and the API can never read the others back to merge them, and the plugin never caches the solution. One row per field in `assess_activity_config_sealed`, each under the binding `[site_id, cmid, field]`; the composite columns are dropped (dormant-path rule).
+- Clearing a field is an UPDATE to a NULL blob (the row stays, `is_set` false), not a DELETE: the API needs no DELETE grant, and the row keeps the clearing actor (`updated_by`) for the audit.
+- The API's upsert repeats the bound parameters in `DO UPDATE SET` instead of `EXCLUDED.col`: verified on pg16 that an `EXCLUDED` reference needs SELECT on that target column (permission denied for `sealed_blob`), so `EXCLUDED` would force the very grant ARCH-071 forbids.
+- Sealed-field changes are audited by a SECURITY DEFINER trigger (`assess_audit_sealed_change`, nobody may EXECUTE it; it fires for the API role without EXECUTE, verified) from OLD/NEW: the API cannot read the old recipient refs it must audit (REQ-085 old/new); it fires on `UPDATE OF updated_at`, which a key rotation never sets, and skips a re-sent identical recipient list. Non-secret fields are audited by the API in Python.
+- Existing columns reused: `enabled`, `flags.show_solution` / `flags.rubric_source` (the capture and gates already read them from `flags`), `rag_enabled`, `end_at` (= "disponibile fino al"), `attested_opening_at` / `attested_by`, `cap_minutes`; added only `version` and `updated_by`. `recipients_extra` was never read: dropped.
+- No per-session `config_version`: a session copies at Start what the config gives it (`duration_s`, `cap_s` from plan 10, the snapshot with the solution), so a later change cannot reach a started session (tested on the deadline).
+- The 0036 upgrade refuses a database holding a composite sealed config instead of dropping it: no release wrote one (no writer existed), and it cannot be split without the worker's private key.
+

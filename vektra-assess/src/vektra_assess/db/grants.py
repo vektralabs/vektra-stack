@@ -27,6 +27,7 @@ Privs = Mapping[str, tuple[str, ...] | None]
 #: every assess_* table; a test fails if the database has one that is not listed here.
 TABLES: tuple[str, ...] = (
     "assess_activity_config",
+    "assess_activity_config_sealed",  # revision 0036 (plan 11): one sealed row per field
     "assess_audit_events",
     "assess_consumed_jtis",
     "assess_deliveries",
@@ -73,7 +74,9 @@ SEQUENCES: tuple[str, ...] = (
     "assess_start_attempts_id_seq",
 )
 
-#: columns of assess_activity_config the API may read: everything but the sealed config.
+#: columns of assess_activity_config the API may read and write (revision 0036: the sealed
+#: teacher config moved to assess_activity_config_sealed, so nothing here is secret any more;
+#: the list stays explicit so a future secret column is never readable by default)
 _CONFIG_READ = (
     "id",
     "site_id",
@@ -85,21 +88,30 @@ _CONFIG_READ = (
     "end_at",
     "attested_opening_at",
     "attested_by",
-    "recipients_extra",
-    "teacher_config_kid",
-    "teacher_config_set",
     "updated_at",
     "cap_minutes",
+    "version",
+    "updated_by",
 )
-#: columns the API may write: it may SEAL teacher config, never read it back (OQ-034).
-_CONFIG_WRITE = (
-    *(c for c in _CONFIG_READ if c != "teacher_config_set"),
-    "teacher_config_sealed",
-)
+_CONFIG_WRITE = _CONFIG_READ
 #: columns the API may UPDATE on an existing config row (never its identity columns)
 _CONFIG_UPDATE = tuple(
     c for c in _CONFIG_WRITE if c not in ("id", "site_id", "cmid", "activity_type")
 )
+#: assess_activity_config_sealed (revision 0036, ARCH-071 / OQ-034): the API seals and writes a
+#: field, it may read only WHICH fields are set (and how many recipients), never ``sealed_blob``
+#: nor ``refs`` (the recipient refs, hashes of guessable addresses: REQ-082 as amended). Clearing
+#: a field is an UPDATE to a NULL blob, so the API has no DELETE.
+_SEALED_API_READ = (
+    "site_id", "cmid", "field", "is_set", "item_count", "updated_by", "updated_at",
+)  # fmt: skip
+_SEALED_API_INSERT = (
+    "site_id", "cmid", "field", "sealed_blob", "kid", "refs", "item_count", "updated_by",
+    "updated_at",
+)  # fmt: skip
+_SEALED_API_UPDATE = (
+    "sealed_blob", "kid", "refs", "item_count", "updated_by", "updated_at",
+)  # fmt: skip
 _SITES_API_READ = (
     "id", "moodle_site_uuid", "base_url", "release", "min_plugin_version", "created_at",
     "disabled_at", "last_seen_release",
@@ -157,6 +169,11 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "SELECT": _CONFIG_READ,
             "INSERT": _CONFIG_WRITE,
             "UPDATE": _CONFIG_UPDATE,
+        },
+        "assess_activity_config_sealed": {
+            "SELECT": _SEALED_API_READ,
+            "INSERT": _SEALED_API_INSERT,
+            "UPDATE": _SEALED_API_UPDATE,
         },
         "assess_extra_time": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},
         "assess_reset_grants": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},
@@ -251,9 +268,11 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "UPDATE": _ALL,
             "DELETE": _ALL,
         },
-        "assess_activity_config": {
+        "assess_activity_config": {"SELECT": _ALL},
+        # opens the sealed fields at capture and delivery; the rotation re-seals blob and kid
+        "assess_activity_config_sealed": {
             "SELECT": _ALL,
-            "UPDATE": ("teacher_config_sealed", "teacher_config_kid"),
+            "UPDATE": ("sealed_blob", "kid"),
         },
         "assess_extra_time": {"SELECT": _ALL},
         "assess_reset_grants": {"SELECT": _ALL, "UPDATE": ("consumed_at",)},
@@ -390,6 +409,9 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     # REQ-082 resend (revision 0034): a new round for the transcript's current recipients; the
     # caller can never name a recipient
     "assess_enqueue_resend(uuid,text,integer)": (API,),
+    # revision 0036 (plan 11): the trigger that audits a sealed teacher-config change old/new
+    # from the row itself (the API cannot read the old recipient refs). Nobody EXECUTEs it.
+    "assess_audit_sealed_change()": (),
 }
 
 

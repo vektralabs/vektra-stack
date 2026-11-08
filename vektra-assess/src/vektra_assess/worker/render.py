@@ -77,10 +77,15 @@ _UPSERT_STATE = text(
     "DO UPDATE SET status = EXCLUDED.status, reason_code = EXCLUDED.reason_code, "
     "computed_at = now()"
 )
+#: ``refreshed_at`` is the database clock read BEFORE the Moodle reads (``_CLOCK``), as the
+#: teacher_gate job does: a slow read never makes its facts look fresher than they are (a reset
+#: and the grader checks compare it with the same clock; CodeRabbit 4506916946)
+_CLOCK = text("SELECT clock_timestamp()")
 _UPSERT_INPUTS = text(
     "INSERT INTO assess_gate_inputs (site_id, student_userid, cmid, inputs, refreshed_at) "
-    "VALUES (:s, :u, :c, CAST(:i AS jsonb), now()) ON CONFLICT (site_id, student_userid, cmid) "
-    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = now()"
+    "VALUES (:s, :u, :c, CAST(:i AS jsonb), coalesce(:t, now())) "
+    "ON CONFLICT (site_id, student_userid, cmid) "
+    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at"
 )
 _DONE = text(
     "UPDATE assess_render_checks SET done_at = now() WHERE site_id = :s "
@@ -201,6 +206,7 @@ async def store_render(
     decision: GateDecision,
     graders: GradersRead | None = None,
     recipients: list[dict[str, str]] | None = None,
+    observed_at: Any = None,
 ) -> None:
     inputs: dict[str, Any] = {
         "code": decision.code.value,
@@ -228,7 +234,8 @@ async def store_render(
                 {**params, "st": decision.state.value, "r": decision.code.value},
             )
             await conn.execute(
-                _UPSERT_INPUTS, {**params, "i": json.dumps(inputs, sort_keys=True)}
+                _UPSERT_INPUTS,
+                {**params, "i": json.dumps(inputs, sort_keys=True), "t": observed_at},
             )
             await conn.execute(_DONE, params)
 
@@ -243,6 +250,9 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
             return  # a malformed job is a stale no-op
         hint = ctx.args.get("courseid")
         course = int(hint) if hint else None
+        async with ctx.acquire() as conn:
+            observed_at = (await conn.execute(_CLOCK)).scalar()
+            await conn.rollback()
         decision, target = await evaluate_render(
             deps, ctx.acquire, site_id, userid, cmid, course
         )
@@ -255,7 +265,14 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
                 forget(target.session_id)
         recipients = await read_recipients(deps, ctx.acquire, site_id, cmid)
         await store_render(
-            ctx.acquire, site_id, userid, cmid, decision, graders, recipients
+            ctx.acquire,
+            site_id,
+            userid,
+            cmid,
+            decision,
+            graders,
+            recipients,
+            observed_at=observed_at,
         )
 
     return handle

@@ -401,3 +401,52 @@ async def test_a_session_rolled_back_while_the_reset_waits_is_not_found(
         assert r.status_code == 404, r.text
         assert err(r)["code"] == "ERR-ASSESS-008"
         assert await grants(pg, w.site) == 0
+
+
+async def test_a_slow_render_is_dated_when_its_reads_began(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506916946: ``assess_gate_inputs.refreshed_at`` is the database clock read
+    BEFORE the Moodle reads (as the teacher_gate job does), so a reset never takes facts older
+    than the bound for fresh ones."""
+    import logging
+
+    from integration.test_session_state import moodle_source
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.worker.render import RenderDeps, make_render_handler
+    from vektra_assess.worker.runner import JobContext
+
+    class Slow:
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        async def gate_facts(self, target: Any) -> Any:
+            await asyncio.sleep(1.5)
+            return await self.inner.gate_facts(target)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+    async with world(pg) as w:
+        s = await seed_session(w, worker, "CLOSED")
+        (before,) = (await pg.run("super", "SELECT clock_timestamp()"))[0]
+        handler = make_render_handler(
+            RenderDeps(settings=w.settings, source=Slow(moodle_source(worker)))
+        )
+        await handler(
+            JobContext(
+                1,
+                JobKind.RENDER_CHECK,
+                {"site_id": str(w.site), "student_userid": s.sub, "cmid": s.cmid},
+                1,
+                worker.connect,
+                logging.getLogger("t"),
+            )
+        )
+        (lag,) = (
+            await pg.run(
+                "super",
+                "SELECT extract(epoch FROM refreshed_at - :b) FROM assess_gate_inputs "
+                "WHERE site_id = :s AND student_userid = :u AND cmid = :c",
+                {"b": before, "s": w.site, "u": s.sub, "c": s.cmid},
+            )
+        )[0]
+        assert 0 <= float(lag) < 1.0  # dated before the 1.5 s of reads, not after

@@ -185,9 +185,10 @@ class SmtpSender:
             raise _Failure(ErrorClass.AUTH, exc.code) from None
         except aiosmtplib.SMTPResponseException as exc:
             client.close()
-            fallback = {"auth": ErrorClass.AUTH, "tls": ErrorClass.TLS}.get(
-                phase, ErrorClass.CONNECT
-            )
+            if phase == "tls":
+                # STARTTLS refused (e.g. 454): the relay will not encrypt, whatever the code
+                raise _Failure(ErrorClass.TLS, exc.code) from None
+            fallback = ErrorClass.AUTH if phase == "auth" else ErrorClass.CONNECT
             raise _Failure(_code_class(exc.code, fallback), exc.code) from None
         except (aiosmtplib.SMTPException, OSError, TimeoutError) as exc:
             client.close()

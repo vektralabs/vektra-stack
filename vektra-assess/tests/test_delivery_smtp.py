@@ -261,3 +261,39 @@ async def test_a_cancelled_connect_closes_the_connection() -> None:
         for w in writers:  # never wait on a connection the client left open
             w.close()
         server.close()
+
+
+async def test_a_refused_starttls_is_tls_with_its_code() -> None:
+    """CodeRabbit 4504362612: STARTTLS offered, then refused with 454: a TLS failure
+    (alerting), not a plain temporary error; the code is kept."""
+    writers: list[asyncio.StreamWriter] = []
+
+    async def refuses(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        writers.append(writer)
+        writer.write(b"220 relay ready\r\n")
+        while line := await reader.readline():
+            cmd = line.strip().upper()
+            if cmd.startswith(b"EHLO"):
+                writer.write(b"250-relay\r\n250 STARTTLS\r\n")
+            elif cmd == b"STARTTLS":
+                writer.write(b"454 4.7.0 TLS not available\r\n")
+            elif cmd == b"QUIT":
+                writer.write(b"221 bye\r\n")
+                break
+            else:
+                writer.write(b"502 no\r\n")
+            await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(refuses, HOST, 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        cfg = sink_config(SimpleNamespace(port=port, ca_file=None), timeout_s=3.0)  # type: ignore[arg-type]
+        res = await SmtpSender(cfg).send(_msg(), "prof@unical.it")
+        assert (res.error_class, res.smtp_code) == (ErrorClass.TLS, 454)
+    finally:
+        for w in writers:
+            w.close()
+        server.close()

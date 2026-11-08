@@ -100,7 +100,7 @@ async def _ready(w, worker, addresses=TEACHERS, *, pair=None, course="EA-2026"):
     return s, ring, config, pair
 
 
-def _deps(ring, config, sink, clock, *, domains=("unical.it",), sender=None):  # type: ignore[no-untyped-def]
+def _deps(ring, config, sink, clock, *, domains=("uni.example",), sender=None):  # type: ignore[no-untyped-def]
     return h.DeliveryDeps(
         transcript_kek=ring,
         recipients=config,
@@ -376,7 +376,7 @@ async def test_a_removed_address_is_replaced_and_a_fourth_never_exists(
 ) -> None:  # type: ignore[no-untyped-def]
     """REQ-082 as amended: re-read at send time. Removed -> REPLACED (old ref audited), added
     -> its own row (new ref audited), never more than 3 rows per round that are not REPLACED."""
-    a, b, c, d, e, f = (f"{x}@unical.it" for x in "abcdef")
+    a, b, c, d, e, f = (f"{x}@uni.example" for x in "abcdef")
     clock = Clock()
     async with world(pg) as w:
         s, ring, config, pair = await _ready(w, worker, (a, b, c))
@@ -412,7 +412,7 @@ async def test_a_removed_address_is_replaced_and_a_fourth_never_exists(
 async def test_an_address_outside_the_domain_allowlist_gets_nothing(
     pg, worker, sink, canary_log_capture
 ) -> None:  # type: ignore[no-untyped-def]
-    inside, outside = "prof@unical.it", "prof@gmail.example"
+    inside, outside = "prof@uni.example", "prof@gmail.example"
     clock = Clock()
     async with world(pg) as w:
         s, ring, config, _ = await _ready(w, worker, (inside, outside))
@@ -554,7 +554,7 @@ async def test_the_subject_carries_the_real_course_short_name(pg, worker, sink) 
 async def test_a_recipient_removed_and_added_back_is_mailed(pg, worker, sink) -> None:  # type: ignore[no-untyped-def]
     """Review #2: removed -> REPLACED; configured again in the same round -> the same row goes
     back to PENDING (audited as re-added) and is delivered."""
-    a, b = "a@unical.it", "b@unical.it"
+    a, b = "a@uni.example", "b@uni.example"
     clock = Clock()
     async with world(pg) as w:
         s, ring, config, pair = await _ready(w, worker, (a, b))
@@ -586,7 +586,7 @@ async def test_a_failed_address_no_longer_configured_frees_its_slot(
 ) -> None:  # type: ignore[no-untyped-def]
     """Review #3: the cap counts the refs configured NOW. A FAILED row of an address the
     teacher removed stays as history and does not keep the corrected address out."""
-    a, bad, b, c = "a@unical.it", "x@gmail.example", "b@unical.it", "c@unical.it"
+    a, bad, b, c = "a@uni.example", "x@gmail.example", "b@uni.example", "c@uni.example"
     clock = Clock()
     async with world(pg) as w:
         s, ring, config, pair = await _ready(w, worker, (a, bad, b))
@@ -828,7 +828,7 @@ async def test_an_address_removed_while_waiting_for_a_session_is_not_mailed(
     a relay session is not mailed (its row is left for the next fan-out to REPLACE)."""
     import asyncio
 
-    a, b = "a@unical.it", "b@unical.it"
+    a, b = "a@uni.example", "b@uni.example"
     clock = Clock()
     async with world(pg) as w:
         s, ring, config, pair = await _ready(w, worker, (a, b))

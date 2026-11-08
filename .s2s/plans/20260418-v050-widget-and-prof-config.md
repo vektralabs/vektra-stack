@@ -262,7 +262,7 @@ Three layers:
    - Runs a query against a namespace with no ingested content
    - Asserts the response is non-null (hybrid fallback engaged) — proves end-to-end persistence → read path works
 3. **Manual smoke test before PR** (documented in PR description):
-   - Kalypso Docker stack up, Moodle + Vektra reachable
+   - Dev Docker stack up, Moodle + Vektra reachable
    - Open a course page with the widget
    - Set a custom title + color via data-attrs (hardcoded in test Moodle block for now)
    - Send a message, refresh, verify history returns

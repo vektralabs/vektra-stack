@@ -210,7 +210,7 @@ the bundle and a manual smoke in the Moodle dev stack.
 ### Test Infrastructure
 
 - **Required**: running stack (vektra + postgres + qdrant profile), eval corpus in
-  namespace `default`, reachable LLM (local vLLM via Tailscale IP), `VEKTRA_API_URL`
+  namespace `default`, reachable LLM (a local vLLM), `VEKTRA_API_URL`
   + `VEKTRA_API_KEY` env for the harness
 - **Provided by**: `docker compose --profile qdrant up -d`; corpus reingest task in
   items 2-3; existing `.env` (Combo D)

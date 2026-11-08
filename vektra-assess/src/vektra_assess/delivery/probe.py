@@ -31,6 +31,21 @@ _UPSERT = text(
 )
 
 
+_PREVIOUS = text("SELECT details FROM assess_heartbeat WHERE component = :c FOR UPDATE")
+
+
+async def _last_real_result(conn: Any) -> dict[str, Any] | None:
+    """The previous non-busy outcome ``{state, ok, error_class}`` (carried over a busy row's
+    own ``last``), or None when there is none yet."""
+    prev = (await conn.execute(_PREVIOUS, {"c": COMPONENT})).scalar()
+    if not isinstance(prev, dict):
+        return None
+    if prev.get("state") == "busy":
+        last = prev.get("last")
+        return last if isinstance(last, dict) else None
+    return {k: prev.get(k) for k in ("state", "ok", "error_class")}
+
+
 class Prober(Protocol):
     async def probe(self) -> SendResult: ...
 
@@ -63,6 +78,10 @@ async def run_probe(
         "smtp_code": result.smtp_code,
     }
     async with acquire() as conn, conn.begin():
+        if state == "busy":
+            # busy says nothing about the relay (every session was in use by deliveries): keep
+            # the last real result next to it, so a reader can still judge the relay
+            details["last"] = await _last_real_result(conn)
         await conn.execute(_UPSERT, {"c": COMPONENT, "d": json.dumps(details)})
     if result.ok:
         return result

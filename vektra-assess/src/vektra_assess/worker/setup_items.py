@@ -31,6 +31,7 @@ from vektra_assess.moodle.setup_check import (
     Outcome,
     missing,
     ok,
+    unverifiable,
 )
 from vektra_assess.moodle.setup_check import _code as reason_code
 from vektra_assess.worker.runner import AcquireDb
@@ -91,15 +92,34 @@ def smtp_probe_item(
             row = await read()
         if row is None:
             return missing("smtp_never_probed")
-        details = row.details if isinstance(row.details, dict) else {}
         if float(row.age) > SMTP_PROBE_MAX_AGE_S:
             return missing("smtp_probe_stale")
-        if details.get("ok") is not True:
-            cause = details.get("error_class") or details.get("state")
-            return missing(f"smtp_{_code(cause)}")
-        return ok()
+        verdict = _judge(row.details)
+        if verdict is None and probe is not None:
+            # busy with no earlier result to go by: probe once more (finding 2)
+            await probe()
+            row = await read()
+            if row is not None and float(row.age) <= SMTP_PROBE_MAX_AGE_S:
+                verdict = _judge(row.details)
+        # still busy: not a relay failure (never MISSING), but nothing vouches for it either
+        return verdict or unverifiable("smtp_busy")
 
     return check
+
+
+def _judge(raw: Any) -> Outcome | None:
+    """OK / MISSING from one probe row; ``busy`` is judged by the last real result it carries
+    (review finding 2), None when there is none."""
+    details = raw if isinstance(raw, dict) else {}
+    if details.get("state") == "busy":
+        last = details.get("last")
+        if not isinstance(last, dict):
+            return None
+        details = last
+    if details.get("ok") is True:
+        return ok()
+    cause = details.get("error_class") or details.get("state")
+    return missing(f"smtp_{_code(cause)}")
 
 
 def db_log_statement_item(acquire: AcquireDb) -> ItemCheck:

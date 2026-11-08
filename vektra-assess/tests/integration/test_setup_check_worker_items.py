@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from vektra_assess.delivery.probe import run_probe
 from vektra_assess.delivery.smtp import SmtpSender
-from vektra_assess.moodle.setup_check import MISSING, OK, Outcome, builtin_registry
+from vektra_assess.moodle.setup_check import (
+    MISSING,
+    OK,
+    UNVERIFIABLE,
+    Outcome,
+    builtin_registry,
+)
 from vektra_assess.worker import setup_items
 from vektra_assess.worker.slots import SMTP_PROBE_INTERVAL_S
 
@@ -127,15 +133,64 @@ async def test_a_stale_probe_fails(pg) -> None:  # type: ignore[no-untyped-def]
             {"state": "timeout", "ok": False, "error_class": None, "smtp_code": None},
             "smtp_timeout",
         ),
-        (
-            {"state": "busy", "ok": False, "error_class": None, "smtp_code": None},
-            "smtp_busy",
-        ),
     ],
 )
 async def test_a_failed_probe_fails_naming_its_error_class(pg, details, reason) -> None:  # type: ignore[no-untyped-def]
     await _smtp_row(pg, details, age_s=10)
     assert await smtp(pg) == Outcome(MISSING, reason)
+
+
+BUSY = {"state": "busy", "ok": False, "error_class": None, "smtp_code": None}
+
+
+@pytest.mark.parametrize(
+    ("last", "expected"),
+    [
+        ({"state": "ok", "ok": True, "error_class": None}, Outcome(OK)),
+        (
+            {"state": "failed", "ok": False, "error_class": "tls"},
+            Outcome(MISSING, "smtp_tls"),
+        ),
+        # no earlier result and nothing to probe with: not a relay failure, and not OK
+        (None, Outcome(UNVERIFIABLE, "smtp_busy")),
+    ],
+)
+async def test_a_busy_relay_is_judged_by_its_last_real_result(
+    pg, last, expected
+) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 2: ``busy`` means every relay session was in use by deliveries, not that
+    the relay failed: the item judges the last non-busy result, never MISSING for busy itself."""
+    await _smtp_row(pg, BUSY | ({"last": last} if last else {}), age_s=10)
+    assert await smtp(pg) == expected
+
+
+async def test_a_busy_row_without_history_is_probed_again(pg, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    await _smtp_row(pg, BUSY, age_s=10)
+    sink = MailSink(tmp_path / "ok").start()
+    try:
+        assert await smtp(pg, prober=SmtpSender(sink_config(sink))) == Outcome(OK)
+    finally:
+        sink.stop()
+
+
+async def test_a_busy_probe_keeps_the_last_real_result(pg) -> None:  # type: ignore[no-untyped-def]
+    """``run_probe`` writes ``last`` on a busy outcome, carried across several busy ones."""
+    from vektra_assess.delivery.smtp import SlotBusy
+
+    class Busy:
+        async def probe(self) -> Any:
+            raise SlotBusy
+
+    await _smtp_row(pg, OK_ROW, age_s=10)
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        for _ in range(2):
+            await run_probe(Busy(), engine.connect, timeout_s=1)
+            details = await _smtp_details(pg)
+            assert details["state"] == "busy"
+            assert details["last"] == {"state": "ok", "ok": True, "error_class": None}
+    finally:
+        await engine.dispose()
 
 
 async def test_a_non_ascii_error_class_is_not_a_reason_code(pg) -> None:  # type: ignore[no-untyped-def]

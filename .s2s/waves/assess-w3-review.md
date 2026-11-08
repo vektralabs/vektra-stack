@@ -19,7 +19,7 @@ delivery). Plugin side (vektra-moodle-discuss, owned by the other session): P2a 
 |-----------|--------|----------|
 | Burst test repeated on the integrated stack | **BLOCKED** | No integrated target: API + mint key + DSN + dev Moodle + reference model (OQ-026). The in-process variant passes: `test_session_burst_inprocess.py` (40 Starts, K=10: 10 commits, 30 capacity refusals, 0 rows left). The BLOCKED result file is `tests/nfr/results/assess-burst-20261106T201527Z.json`. No NFR-018 latency or NFR-020 K evidence exists yet. |
 | Six close reasons plus rollback by row counts | PASS | `tests/chaos/assess/test_lifecycle_chaos.py::test_each_close_reason_by_row_count` and `::test_kill9_mid_preflight_commit_leaves_the_student_eligible`. CI job "Assess chaos" ran green on PR #168 head `79b8188` and runs again on the `develop` merge. |
-| IDOR negative tests | PASS on recordings, live **BLOCKED** | `vektra-assess/tests/test_idor.py::test_idor_matrix` on the recorded 4.3 and 5.2 responses: every case is rejected and audited, with 0 cross-student bytes. The live variant `test_idor_live` skips because the dev Moodle URLs are unset in this gate. |
+| IDOR negative tests | PASS (recordings and live) | `vektra-assess/tests/test_idor.py::test_idor_matrix` on the recorded 4.3 and 5.2 responses (every case rejected and audited, 0 cross-student bytes), and `test_idor_live.py::test_idor_matrix_live` on the live 4.3 and 5.2 dev sites: 2/2. The live subset (`-m moodle`) was run after the gate, on 2026-11-08 at `9534fef` (develop `b6a1515` + plan 11a): 86 passed, 0 skipped. That subset includes REQ-073 byte-identity: `test_req073_live.py`, 4/4. The first version of this review marked live IDOR BLOCKED; that was wrong, because the dev sites were up. |
 | No token accepted in a query string | PASS | `test_route_credentials.py::test_no_route_accepts_a_query_string_or_cookie_credential` |
 | Login-as refused end to end | PASS on each side, joined run **BLOCKED** | Vektra: `test_session_loginas.py` (pre-session and session tokens without `loginas:false` start, read and write nothing; `loginas_rejected` audited). Plugin (4.3 and 5.2 CI): Behat `student_loginas.feature` (2 scenarios: the button is disabled and the Vektra stub receives 0 requests) and PHPUnit `test_loginas_makes_no_call_and_mints_nothing`. A run of the plugin against a real Vektra needs the local F1 stack (https UI origin, `moodle_origin`), which is not set up yet. |
 | NFR-016 accessibility (axe) | PASS (automated), manual **BLOCKED** | UI: `test_ui_e2e.py` runs `a11y.e2e.ts`, with 0 WCAG 2.1 A/AA violations in every state, reflow at 320 px and at 200% zoom, and a keyboard-only flow. Transcript: `test_transcript_a11y.py`, with 0 axe violations and 0 Nu errors, plus a broken control document. The manual NVDA/VoiceOver read-through needs a person with a screen reader. |
@@ -49,7 +49,7 @@ No run has gone from a student on a real Moodle results page, through a real mod
 
 ## Deliberately open
 
-- **Integrated-stack runs** (burst, live IDOR, REQ-073 byte-identity, login-as joined, NFR-021): all need
+- **Integrated-stack runs** (burst, login-as joined, NFR-021): all need
   the same environment, which is the target VM / compose stack with dev Moodles, a model and a recording mail
   sink. Plan 13 (hardening-release) owns the NFR campaign. The local F1 stack for the plugin session is still
   queued.

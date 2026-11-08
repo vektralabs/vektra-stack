@@ -55,6 +55,10 @@ async def test_idle_rss_of_a_fully_bound_worker_is_under_the_ceiling(
         chaos_dir=tmp_path / "chaos",
         CHAOS_BIND_ALL="1",
         VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="false",  # the real fail-closed path must pass
+        # plan 10b: a fully bound worker has a relay configured, or it refuses to start;
+        # the delivery slots are stubs here, so nothing ever connects to it
+        VEKTRA_ASSESS_SMTP_HOST="relay.example.org",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@example.org",
     )
     try:
         await wait_until(lambda: worker_ready(pg), 120, "fully bound worker ready", w)

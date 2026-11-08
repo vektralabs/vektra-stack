@@ -117,3 +117,28 @@ def test_an_unknown_site_timezone_blocks_only_an_enabled_assess() -> None:
         {"VEKTRA_ASSESS_ENABLED": True, "VEKTRA_ASSESS_SITE_TIMEZONE": "Europe/Rome"}
     )
     assert ok.site_timezone == "Europe/Rome"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "Vektra <vektra@unical.it>",
+        "<vektra@unical.it>",
+        "vektra @unical.it",
+        "vektra@unical.it\r\nBcc: x@evil.example",
+        "vektra@unical.it, other@unical.it",
+        "vektra",
+    ],
+)
+def test_the_smtp_from_is_a_bare_address(bad: str) -> None:
+    """Plan 10b review #10: the From is an addr-spec, never a display name or a header."""
+    from pydantic import ValidationError
+
+    from vektra_assess.config import VektraAssessSettings
+
+    with pytest.raises(ValidationError, match="VEKTRA_ASSESS_SMTP_FROM"):
+        VektraAssessSettings.model_validate({"VEKTRA_ASSESS_SMTP_FROM": bad})
+    ok = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_SMTP_FROM": " Vektra@Unical.IT "}
+    )
+    assert ok.smtp_from == "Vektra@unical.it"

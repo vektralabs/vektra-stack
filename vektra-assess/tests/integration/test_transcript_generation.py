@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.recipients import configure_recipients, refs
 from support.sessions import seed_session
 from support.world import world
 
@@ -89,7 +90,10 @@ async def test_a_closed_session_gets_one_verified_transcript_and_recipient_rows(
     async with world(pg) as w:
         s = await _closed(w, worker)
         deps = GenerationDeps(
-            kek=s.kek, transcript_kek=ring, facts=Facts(moodle_source(worker))
+            kek=s.kek,
+            transcript_kek=ring,
+            facts=Facts(moodle_source(worker)),
+            recipients=await configure_recipients(pg, w.site, s.cmid),
         )
         got = await generate_transcript(deps, worker.connect, s.session_id)
         assert got is not None and got.created and got.transcript_id == s.session_id
@@ -114,17 +118,19 @@ async def test_a_closed_session_gets_one_verified_transcript_and_recipient_rows(
             f"EAASSESS_{s.cmid}_{s.sub}_s1_"
         )
         assert row.byte_size == len(doc) and row.turns_digest in html
-        # the course's graders (fixtures: 2, the student excluded), PENDING, round 1
+        # the two configured addresses (REQ-082 as amended), by ref only, PENDING, round 1
         rows = await pg.run(
             "super",
-            "SELECT recipient_userid, status, round, recipient_kind FROM assess_deliveries "
-            "WHERE transcript_id = :t ORDER BY recipient_userid",
+            "SELECT recipient_ref, recipient_userid, status, round, recipient_kind "
+            "FROM assess_deliveries WHERE transcript_id = :t",
             {"t": s.session_id},
         )
         assert len(rows) == 2 and {r.status for r in rows} == {"PENDING"}
+        assert {r.recipient_ref for r in rows} == refs(w.site)
         assert {r.round for r in rows} == {1} and {r.recipient_kind for r in rows} == {
-            "grader"
+            "address"
         }
+        assert {r.recipient_userid for r in rows} == {None}
         assert (
             await count(
                 pg,
@@ -223,7 +229,7 @@ async def test_a_tampered_turn_yields_no_transcript_and_an_alert(pg, worker) -> 
         ]
 
 
-async def test_unreadable_graders_still_generate_without_delivery_rows(
+async def test_unreadable_recipients_still_generate_without_delivery_rows(
     pg, worker
 ) -> None:  # type: ignore[no-untyped-def]
     ring = transcript_ring()
@@ -244,15 +250,13 @@ async def test_unreadable_graders_still_generate_without_delivery_rows(
             )
             == 0
         )
-        assert (
-            await count(
-                pg,
-                "SELECT count(*) FROM assess_audit_events WHERE session_id = :s "
-                "AND event = 'assess_transcript_recipients_unresolved'",
-                s=s.session_id,
-            )
-            == 1
+        audit = await pg.run(
+            "super",
+            "SELECT reason_code FROM assess_audit_events WHERE session_id = :s "
+            "AND event = 'assess_transcript_recipients_unresolved'",
+            {"s": s.session_id},
         )
+        assert [a[0] for a in audit] == ["config_unreadable"]
         assert (
             await count(
                 pg,
@@ -421,23 +425,19 @@ async def test_close_facts_read_the_course_list_once(pg, worker) -> None:  # typ
 
 async def test_graders_resolve_after_the_student_left_the_course(pg, worker) -> None:  # type: ignore[no-untyped-def]
     """CodeRabbit 4503025969: the student is no longer enrolled anywhere, yet the course's
-    graders are read through the session's course hint, accepted because the cmid is found
-    in that course; a hint naming a course without the cmid resolves nothing."""
-    from assess_moodle_support import Replay, make_client, manifest
+    graders (who may download and resend) are read through the session's course hint,
+    accepted because the cmid is found in that course; a hint naming a course without the
+    cmid resolves nothing."""
+    from assess_moodle_support import Replay, make_client, manifest, uid
     from test_context_capture import InProcessParser
 
+    from vektra_assess.worker.preflight import StartTarget
     from vektra_assess.worker.start_source import MoodleStartSource
 
-    ring = transcript_ring()
     course = int(manifest("4.3")["courseid"])
-    for hint, expect_rows in ((course, 2), (course + 999, 0)):
+    for hint, expect in ((course, 2), (course + 999, None)):
         async with world(pg) as w:
             s = await _closed(w, worker)
-            await pg.run(
-                "super",
-                "UPDATE assess_sessions SET courseid_hint = :c WHERE id = :s",
-                {"c": hint, "s": s.session_id},
-            )
             replay = Replay("4.3")
             replay.mutate = lambda fn, body: (
                 [] if fn == "core_enrol_get_users_courses" else body
@@ -445,16 +445,57 @@ async def test_graders_resolve_after_the_student_left_the_course(pg, worker) -> 
             src = MoodleStartSource(
                 make_client(replay), InProcessParser(), worker.connect
             )
-            deps = GenerationDeps(kek=s.kek, transcript_kek=ring, facts=src)
-            assert await generate_transcript(deps, worker.connect, s.session_id)
-            assert (
-                await count(
-                    pg,
-                    "SELECT count(*) FROM assess_deliveries WHERE transcript_id = :t",
-                    t=s.session_id,
-                )
-                == expect_rows
+            target = StartTarget(
+                session_id=uuid.uuid4(),
+                site_id=w.site,
+                cmid=s.cmid,
+                student_userid=s.sub,
+                courseid_hint=hint,
+                activity_type="assign",
+                session_no=1,
+                flags={},
             )
+            got = await src.graders(target)
+            if expect is None:
+                assert got is None
+            else:
+                assert got is not None and {g.userid for g in got} == {
+                    uid("4.3", "grader1"),
+                    uid("4.3", "grader2"),
+                }
+
+
+async def test_four_configured_addresses_make_three_rows(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """REQ-082: a 4th recipient never exists; malformed entries are dropped, never repaired,
+    and a duplicate (domain case aside) is one recipient."""
+    ring = transcript_ring()
+    addresses = [
+        "a@unical.it",
+        "A@UNICAL.IT ",  # a different local part (case kept), the domain lowercased
+        "not an address",
+        "a@unical.it",  # duplicate
+        "Display <x@unical.it>",
+        "b@unical.it",
+        "c@unical.it",  # the 4th valid one: never a recipient
+    ]
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        deps = GenerationDeps(
+            kek=s.kek,
+            transcript_kek=ring,
+            facts=Facts(facts=CloseFacts()),
+            recipients=await configure_recipients(pg, w.site, s.cmid, addresses),
+        )
+        got = await generate_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.recipients == 3
+        rows = await pg.run(
+            "super",
+            "SELECT recipient_ref FROM assess_deliveries WHERE transcript_id = :t",
+            {"t": s.session_id},
+        )
+        assert {r[0] for r in rows} == refs(
+            w.site, ["a@unical.it", "A@unical.it", "b@unical.it"]
+        )
 
 
 async def test_the_header_shows_the_cap_frozen_at_start(pg, worker) -> None:  # type: ignore[no-untyped-def]
@@ -582,3 +623,42 @@ async def test_the_header_shows_the_extra_time_granted_at_start(pg, worker) -> N
         html = (await _open(pg, ring, s.session_id)).decode()
         assert "<dt>Durata massima</dt><dd>30 min</dd>" in html
         assert "<dt>Tempo aggiuntivo</dt><dd>10 min</dd>" in html
+
+
+async def test_a_config_that_does_not_open_still_generates(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (round 1): a reader whose key does not open the sealed config
+    raises nothing out of generation: the transcript is made, `config_unreadable` is
+    audited, no delivery row exists."""
+    from support.recipients import config_pair
+
+    from vektra_assess.delivery.recipients import ConfigRecipients
+
+    ring = transcript_ring()
+    async with world(pg) as w:
+        s = await _closed(w, worker)
+        await configure_recipients(pg, w.site, s.cmid)  # sealed to another key pair
+        _, wrong_priv = config_pair("other")
+        deps = GenerationDeps(
+            kek=s.kek,
+            transcript_kek=ring,
+            facts=Facts(facts=CloseFacts()),
+            recipients=ConfigRecipients(wrong_priv),
+        )
+        got = await generate_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.created and got.recipients == 0
+        await _open(pg, ring, s.session_id)
+        audit = await pg.run(
+            "super",
+            "SELECT reason_code FROM assess_audit_events WHERE session_id = :s "
+            "AND event = 'assess_transcript_recipients_unresolved'",
+            {"s": s.session_id},
+        )
+        assert [a[0] for a in audit] == ["config_unreadable"]
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_deliveries WHERE transcript_id = :t",
+                t=s.session_id,
+            )
+            == 0
+        )

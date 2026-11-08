@@ -5,8 +5,10 @@ hint) evaluate the SAME ``evaluate_start_gates`` the pre-flight uses, on fresh r
 
 - ``assess_render_state``: the advisory REQ-068 state and the content-free reason code;
 - ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 10)
-  ``graders`` (the course's grader user ids, for the API's fresh grader check) and ``recipients``
-  (``{role, name}`` of the transcript recipients, REQ-082) when Moodle could be read. ``opens_at``
+  ``graders`` (the course's grader user ids, for the API's fresh grader check) when Moodle could
+  be read, and ``recipients`` (``{role: "recipient", name: "m***@domain"}``: the transcript
+  recipients of the sealed teacher config, local part masked, REQ-082 as amended) when the config
+  could be opened. The API never sees a full address. ``opens_at``
   is set only when the date may be shown to THIS student (the activity's own close or the
   student's own override): the latest close of the cohort, which may be another student's
   extension, is never stored here, so ``GET /state`` cannot leak it.
@@ -29,12 +31,7 @@ import structlog
 from sqlalchemy import text
 
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.delivery.recipients import (
-    GraderLike,
-    Recipient,
-    select_recipients,
-    state_view,
-)
+from vektra_assess.delivery.recipients import ConfigRecipients, GraderLike, state_view
 from vektra_assess.gates import ButtonState, Code, GateDecision, evaluate_start_gates
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
 from vektra_assess.worker.preflight import (
@@ -91,15 +88,16 @@ class RenderDeps:
     settings: VektraAssessSettings
     source: StartSource
     privacy: PrivacyCheck = privacy_not_configured
-    #: the course's graders (plan 10): ``graders`` (user ids, for the API's grader check) and
-    #: ``recipients`` (``{role, name}``, the pre-session screen) in gate_inputs; None = not read
+    #: the course's graders (plan 10): ``graders`` (user ids, for the API's grader check) in
+    #: gate_inputs; None = not read
     graders: GradersSource | None = None
+    #: the configured transcript recipients (sealed teacher config): ``recipients``, masked
+    recipients: ConfigRecipients | None = None
 
 
 @dataclass(frozen=True)
 class GradersRead:
     graders: tuple[int, ...]
-    recipients: tuple[Recipient, ...]
 
 
 async def evaluate_render(
@@ -154,10 +152,10 @@ async def evaluate_render(
 
 
 async def read_graders(deps: RenderDeps, target: StartTarget) -> GradersRead | None:
-    """The course's graders and the recipients the transcript will go to (REQ-082), for the
-    activity's REAL type (a quiz's cmid is resolved among the course's quizzes). Read even when
-    the activity is disabled or a session is open: a teacher still downloads earlier
-    transcripts. None when no source is configured or Moodle could not be read."""
+    """The course's graders (who may download and resend), for the activity's REAL type (a
+    quiz's cmid is resolved among the course's quizzes). Read even when the activity is disabled
+    or a session is open: a teacher still downloads earlier transcripts. None when no source is
+    configured or Moodle could not be read."""
     if deps.graders is None:
         return None
     try:
@@ -167,9 +165,23 @@ async def read_graders(deps: RenderDeps, target: StartTarget) -> GradersRead | N
         return None
     if graders is None:
         return None
-    ids = tuple(sorted({g.userid for g in graders}))
-    chosen = select_recipients(graders, student_userid=target.student_userid)
-    return GradersRead(ids, chosen)
+    return GradersRead(tuple(sorted({g.userid for g in graders})))
+
+
+async def read_recipients(
+    deps: RenderDeps, acquire: AcquireDb, site_id: UUID, cmid: int
+) -> list[dict[str, str]] | None:
+    """The configured recipients as ``/state`` shows them (masked); None when unreadable."""
+    if deps.recipients is None:
+        return None
+    try:
+        async with acquire() as conn:
+            got = await deps.recipients.read(conn, site_id, cmid)
+            await conn.rollback()
+    except Exception as exc:
+        log.warning("assess_render_recipients_error", error_type=type(exc).__name__)
+        return None
+    return state_view(got) if got is not None else None
 
 
 async def store_render(
@@ -179,6 +191,7 @@ async def store_render(
     cmid: int,
     decision: GateDecision,
     graders: GradersRead | None = None,
+    recipients: list[dict[str, str]] | None = None,
 ) -> None:
     inputs: dict[str, Any] = {
         "code": decision.code.value,
@@ -187,10 +200,11 @@ async def store_render(
         "session_no_next": decision.session_no_next,
     }
     if graders is not None:
-        # user ids for the grader check (plan 10 authz) and role + name for the pre-session
-        # screen: never an address (none is read)
+        # user ids for the grader check (plan 10 authz)
         inputs["graders"] = list(graders.graders)
-        inputs["recipients"] = state_view(graders.recipients)
+    if recipients is not None:
+        # role + masked address for the pre-session screen: never a full address
+        inputs["recipients"] = recipients
     params = {"s": site_id, "u": userid, "c": cmid}
     async with acquire() as conn:
         async with conn.begin():
@@ -224,7 +238,10 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
             forget = getattr(deps.source, "forget", None)
             if target is not None and callable(forget):
                 forget(target.session_id)
-        await store_render(ctx.acquire, site_id, userid, cmid, decision, graders)
+        recipients = await read_recipients(deps, ctx.acquire, site_id, cmid)
+        await store_render(
+            ctx.acquire, site_id, userid, cmid, decision, graders, recipients
+        )
 
     return handle
 

@@ -66,6 +66,14 @@ class AssessAuditEvent(enum.StrEnum):
     TRANSCRIPT_RESEND = (
         "assess_transcript_resend"  # written by assess_enqueue_resend (0034)
     )
+    # plan assess-transcript-delivery 10b: every attempt and result per recipient (REQ-085),
+    # recipient changes old/new (REQ-082), the OQ-029 crash-window resend. Refs, never addresses.
+    DELIVERY_ATTEMPT = "assess_delivery_attempt"
+    DELIVERY_SENT = "assess_delivery_sent"
+    DELIVERY_FAILED = "assess_delivery_failed"
+    DELIVERY_POSSIBLE_DUPLICATE = "assess_delivery_possible_duplicate"
+    DELIVERY_RECIPIENT_REPLACED = "assess_delivery_recipient_replaced"
+    DELIVERY_RECIPIENT_ADDED = "assess_delivery_recipient_added"
 
 
 class Conn(Protocol):

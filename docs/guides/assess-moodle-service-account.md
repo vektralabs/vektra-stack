@@ -133,3 +133,27 @@ served by Vektra (`GET /api/v1/assess/ui?site=<site id>`) on its own origin,
   `FORWARDED_ALLOW_IPS`). A deployment that copied an older example serves the page on the API
   origin, where it is now 503.
 
+
+## Transcript recipients and the domain allowlist (plan 10b)
+
+The service account is NOT given any capability that exposes email addresses
+(`moodle/course:useremail`, `moodle/site:viewuseridentity`, `moodle/user:viewalldetails`): a
+site-level grant would let it read every enrolled user's address, which REQ-079's minimal role
+forbids. Transcripts are mailed instead to the addresses the teacher enters in the plugin's
+activity form (REQ-082 as amended on 2026-11-07):
+
+- 1 to 3 addresses, prefilled with the teacher's own Moodle address; they travel to Vektra
+  inside the sealed teacher config (`transcript_recipients`), which only the worker can open.
+  Vektra stores no address: delivery rows and audit events carry `sha256(site|address)` only,
+  and `GET /state` shows them masked (`m***@unical.it`).
+- The site admin keeps the domain allowlist in the plugin settings; the operator sets the same
+  list in `VEKTRA_ASSESS_RECIPIENT_DOMAINS` (exact domains, comma separated). The plugin refuses
+  an address outside it with a field error naming the allowed domains; the worker re-checks at
+  send time and marks a refused address `FAILED` (`domain_not_allowed`) with an alert. **An
+  empty list refuses every address**, so set it before enabling the feature, and keep the two
+  copies equal: a domain the plugin accepts but Vektra does not ends in a `FAILED` delivery
+  (the transcript stays downloadable from the activity page).
+- Changing the addresses after a session closed takes effect at the next send attempt: a removed
+  address is `REPLACED` (no mail), an added one gets its own delivery, never more than 3.
+- Who may DOWNLOAD a transcript or ask a resend is unchanged: the course's graders, re-checked by
+  Moodle user id (`core_enrol_get_enrolled_users_with_capability`, no email field read).

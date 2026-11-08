@@ -10,6 +10,12 @@ from vektra_assess.crypto.envelope import Purpose
 from vektra_assess.crypto.seal import open_sealed, seal
 from vektra_assess.keys import AssessKeyring
 
+#: The ONE binding field of ``assess_activity_config.teacher_config_sealed``: the column holds a
+#: single JSON object, ``{"solution"?: str, "transcript_recipients": [str, ...]}``, sealed under
+#: this field (decided 2026-11-08, plan assess-transcript-delivery 10b review #4). Every writer
+#: (plan 11's config PUT), reader (snapshot capture, delivery) and the rotation use it.
+CONFIG_FIELD = "config"
+
 
 def _binding(site_id: object, cmid: int, field: str) -> list[object]:
     return [site_id, cmid, field]

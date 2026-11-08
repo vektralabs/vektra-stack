@@ -316,3 +316,26 @@ def test_permitted_overrides_are_undone_to_the_base_value() -> None:
     # a non-permitted change survives and is caught by the comparison
     changed = {**dev, "KEEP": "2"}
     assert _without_permitted_overrides(changed, base, permitted) != base
+
+
+def test_the_worker_gets_every_smtp_setting(
+    rendered: dict,  # type: ignore[type-arg]
+) -> None:
+    """Plan 10b (CodeRabbit 4504362548): every relay setting the worker reads is forwarded,
+    the CA file of an on-prem relay included; the account is a secret, never a variable."""
+    from vektra_assess.config import VektraAssessSettings
+
+    worker = rendered["services"]["vektra-assess-worker"]["environment"]
+    smtp = {
+        f.alias
+        for name, f in VektraAssessSettings.model_fields.items()
+        if f.alias
+        and (
+            name.startswith("smtp_")
+            or name in ("message_id_domain", "recipient_domains")
+        )
+    }
+    assert "VEKTRA_ASSESS_SMTP_CA_FILE" in smtp
+    missing = sorted(k for k in smtp if k not in worker)
+    assert missing == [], missing
+    assert not any("USERNAME" in k or "PASSWORD" in k for k in worker)

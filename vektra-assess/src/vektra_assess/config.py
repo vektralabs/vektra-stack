@@ -11,12 +11,65 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 from __future__ import annotations
 
 import json
+import re
 import warnings
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# --- pure rules shared with vektra_assess.delivery (plan transcript-delivery 10b) -------------
+# They live HERE, not in vektra_assess.delivery: validating the settings must not import a
+# module outside the parser's import ceiling (the parser sidecar loads this class too).
+
+MAX_ADDRESS_BYTES = 254
+
+_LOCAL = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$"
+)
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_DOMAIN = re.compile(rf"^{_LABEL}(?:\.{_LABEL})+$")
+
+
+def normalize_address(raw: object) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:  # a lone surrogate: not text an SMTP server can carry
+        return None
+    if not value or size > MAX_ADDRESS_BYTES:
+        return None
+    if value.count("@") != 1:
+        return None
+    local, domain = value.split("@")
+    domain = domain.lower()
+    # fullmatch: ``$`` alone also matches before a trailing newline
+    if len(local) > 64 or not _LOCAL.fullmatch(local) or not _DOMAIN.fullmatch(domain):
+        return None
+    return f"{local}@{domain}"
+
+
+_STEP = re.compile(r"^\s*(\d+)\s*([smh]?)\s*$")
+_UNIT = {"": 1, "s": 1, "m": 60, "h": 3600}
+
+
+def parse_schedule(text: str) -> tuple[timedelta, ...]:
+    steps: list[timedelta] = []
+    for part in str(text).split(","):
+        match = _STEP.match(part)
+        if match is None:
+            raise ValueError(f"not a duration: {part.strip()!r} (use e.g. 30s, 5m, 1h)")
+        seconds = int(match.group(1)) * _UNIT[match.group(2)]
+        if seconds <= 0:
+            raise ValueError("every step of the retry schedule must be positive")
+        steps.append(timedelta(seconds=seconds))
+    if not steps:
+        raise ValueError("the retry schedule is empty")
+    return tuple(steps)
 
 
 class VektraAssessSettings(BaseSettings):
@@ -668,6 +721,104 @@ class VektraAssessSettings(BaseSettings):
             "against; older or absent -> 403 and a refresh is queued (fail closed)."
         ),
     )
+    # --- transcript delivery by SMTP (plan assess-transcript-delivery 10b; worker only) -------
+    # The account is the worker-only secret ``assess_smtp`` ({"username", "password"}, ARCH-071
+    # key matrix: the API refuses to start when it is mounted or named in its environment).
+    smtp_host: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_SMTP_HOST",
+        description="SMTP relay host of the transcript emails (worker only). Unset: delivery is not bound and the worker refuses to start unless VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND is set (development).",
+    )
+    smtp_port: int = Field(
+        587,
+        ge=1,
+        le=65535,
+        alias="VEKTRA_ASSESS_SMTP_PORT",
+        description="Relay port: 587 with STARTTLS, 465 with implicit TLS.",
+    )
+    smtp_tls_mode: Literal["starttls", "implicit"] = Field(
+        "starttls",
+        alias="VEKTRA_ASSESS_SMTP_TLS_MODE",
+        description="'starttls' (STARTTLS required: a relay that does not offer it gets nothing) or 'implicit' (TLS from the first byte). There is no plaintext mode.",
+    )
+    smtp_from: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_SMTP_FROM",
+        description="From address (and envelope sender) of the transcript emails.",
+    )
+    smtp_ca_file: Path | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_SMTP_CA_FILE",
+        description="CA bundle that verifies the relay's certificate (an on-prem relay with its own CA); the system store when unset. Certificates are always verified.",
+    )
+    smtp_max_connections: int = Field(
+        2,
+        ge=1,
+        le=20,
+        alias="VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS",
+        description="Concurrent sessions to the relay per worker.",
+    )
+    smtp_timeout_s: float = Field(
+        30.0,
+        ge=1,
+        le=60,
+        alias="VEKTRA_ASSESS_SMTP_TIMEOUT_S",
+        description="Hard timeout of one send (connect, TLS, AUTH, DATA) or one probe.",
+    )
+    smtp_retry_schedule: str = Field(
+        "1m,5m,15m,1h",
+        alias="VEKTRA_ASSESS_SMTP_RETRY_SCHEDULE",
+        description="Waits after the 1st, 2nd, ... failed attempt (s, m, h); the last one repeats until the window closes.",
+    )
+    smtp_retry_window_hours: int = Field(
+        72,
+        ge=1,
+        le=168,
+        alias="VEKTRA_ASSESS_SMTP_RETRY_WINDOW_HOURS",
+        description="Hours a delivery row is retried (from its creation) before it is FAILED (REQ-075: 24 to 72 h proposed).",
+    )
+    message_id_domain: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_MESSAGE_ID_DOMAIN",
+        description="Right-hand side of the deterministic Message-ID; the domain of VEKTRA_ASSESS_SMTP_FROM when unset.",
+    )
+    recipient_domains: str = Field(
+        "",
+        alias="VEKTRA_ASSESS_RECIPIENT_DOMAINS",
+        description="Comma list of the domains a transcript may be mailed to (exact match, REQ-082 as amended). Empty refuses every address: the delivery row is FAILED (domain_not_allowed) with an alert. The plugin validates the teacher's form against the same list.",
+    )
+
+    @field_validator("smtp_retry_schedule")
+    @classmethod
+    def _valid_schedule(cls, value: str) -> str:
+        parse_schedule(value)  # raises ValueError: refused at startup, never replaced
+        return value
+
+    @field_validator("smtp_host", "smtp_from", "message_id_domain", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("smtp_from")
+    @classmethod
+    def _bare_from(cls, value: str | None) -> str | None:
+        """A bare addr-spec (no display name, no <>, no whitespace or CR/LF): it goes to
+        the From header and to MAIL FROM as is."""
+        if value is None:
+            return None
+        address = normalize_address(value)
+        if address is None:
+            raise ValueError(
+                "VEKTRA_ASSESS_SMTP_FROM must be a bare e-mail address "
+                "(name@domain, no display name, no <>, no spaces)"
+            )
+        return address
+
+    @field_validator("smtp_ca_file", mode="before")
+    @classmethod
+    def _blank_path_is_unset(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
+
     llm_allow_unactivated: bool = Field(
         False,
         alias="VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED",

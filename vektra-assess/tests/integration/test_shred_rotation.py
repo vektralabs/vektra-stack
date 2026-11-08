@@ -210,7 +210,7 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
     )
     old_pub, old_priv = x_ring("w1")
     blob, kid = teacher_config.seal_teacher_config(
-        old_pub, site, 3, rotation.TEACHER_CONFIG_FIELD, "solution: 42"
+        old_pub, site, 3, rotation.TEACHER_CONFIG_FIELD, '{"solution": "42"}'
     )
     await pg.run(
         "super",
@@ -242,7 +242,7 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
             3,
             rotation.TEACHER_CONFIG_FIELD,
         )
-        == "solution: 42"
+        == '{"solution": "42"}'
     )
 
     kek1 = sym("t1")

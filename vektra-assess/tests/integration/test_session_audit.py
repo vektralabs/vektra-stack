@@ -48,6 +48,13 @@ ELSEWHERE = {
     E.STUDENT_DOWNLOAD: "test_transcript_api.py",
     E.TEACHER_DOWNLOAD: "test_transcript_api.py",
     E.TRANSCRIPT_RESEND: "test_transcript_schema.py",
+    # plan assess-transcript-delivery 10b
+    E.DELIVERY_ATTEMPT: "test_delivery_handler.py",
+    E.DELIVERY_SENT: "test_delivery_handler.py",
+    E.DELIVERY_FAILED: "test_delivery_handler.py",
+    E.DELIVERY_POSSIBLE_DUPLICATE: "test_delivery_handler.py",
+    E.DELIVERY_RECIPIENT_REPLACED: "test_delivery_handler.py",
+    E.DELIVERY_RECIPIENT_ADDED: "test_delivery_handler.py",
 }
 NOT_DRIVABLE = {E.ATTEMPT_MISMATCH_REJECTED}
 

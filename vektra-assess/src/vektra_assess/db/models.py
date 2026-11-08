@@ -377,10 +377,15 @@ class TranscriptOrm(Base):
     turns_digest: Mapped[str | None] = mapped_column(TEXT)
     filename: Mapped[str | None] = mapped_column(TEXT)
     byte_size: Mapped[int | None] = mapped_column(INTEGER)
+    # revision 0035: the course short name read at close (email subject)
+    course_shortname: Mapped[str | None] = mapped_column(TEXT)
 
 
 class DeliveryOrm(Base):
-    """The delivery outbox (revision 0034): one row per (transcript, round, recipient)."""
+    """The delivery outbox (revision 0034): one row per (transcript, round, recipient).
+
+    Revision 0035: a configured address is named by ``recipient_ref`` (``sha256(site|address)``),
+    never stored; ``recipient_userid`` stays for the user-addressed kinds."""
 
     __tablename__ = "assess_deliveries"
 
@@ -393,7 +398,8 @@ class DeliveryOrm(Base):
     kind: Mapped[str] = mapped_column(TEXT, server_default=text("'transcript'"))
     round: Mapped[int] = mapped_column(INTEGER, server_default=text("1"))
     recipient_kind: Mapped[str] = mapped_column(TEXT)
-    recipient_userid: Mapped[int] = mapped_column(BIGINT)
+    recipient_userid: Mapped[int | None] = mapped_column(BIGINT)
+    recipient_ref: Mapped[str | None] = mapped_column(TEXT)
     status: Mapped[str] = mapped_column(TEXT, server_default=text("'PENDING'"))
     attempts: Mapped[int] = mapped_column(INTEGER, server_default=text("0"))
     not_before: Mapped[datetime] = _ts(default=True)

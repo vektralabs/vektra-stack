@@ -63,6 +63,11 @@ EXPECTED_UNRUN: dict[str, str] = {
         "measures query latency against a live LLM, which GitHub Actions does not "
         "have; run manually on Kalypso (see the note in integration.yml)"
     ),
+    "tests/nfr/test_assess_transcript_timing.py": (
+        "NFR-021 needs a stack run (assess profile, 50 sessions closed concurrently, the "
+        "worker's relay a recording TLS mail sink) that no workflow provides; operator run, "
+        "BLOCKED in plan assess-transcript-delivery until then"
+    ),
 }
 
 

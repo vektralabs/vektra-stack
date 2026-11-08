@@ -61,6 +61,7 @@ TICK_OWNERS: dict[str, str] = {
     "enrolment_recheck": SESSION,
     "gate_refresh": SESSION,
     "delivery_retry": TRANSCRIPT,
+    "smtp_probe": TRANSCRIPT,
     "purge": PRIVACY,
     "setup_check": MOODLE_WS,
 }
@@ -86,6 +87,16 @@ class Slots:
     def unbound(self) -> list[str]:
         out = [f"job:{h.kind.value}" for h in self.handlers if not h.bound]
         return out + [f"tick:{t.name}" for t in self.ticks if not t.bound]
+
+
+#: QUIT's own bound after a session (``delivery.smtp.QUIT_TIMEOUT_S``) and room for the row write
+PROBE_QUIT_S = 5.0
+PROBE_ROW_MARGIN_S = 10.0
+
+
+def probe_tick_timeout_s(smtp_timeout_s: float) -> float:
+    """The smtp_probe tick's timeout: slot wait (= the SMTP timeout) + session + QUIT + row."""
+    return 2 * smtp_timeout_s + PROBE_QUIT_S + PROBE_ROW_MARGIN_S
 
 
 def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
@@ -117,6 +128,16 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
         t("enrolment_recheck", 60, 40, locks.ENROLMENT_RECHECK, jitter_s=10),
         t("gate_refresh", 300, 60, locks.GATE_REFRESH, jitter_s=30),  # design default
         t("delivery_retry", 30, 30, locks.DELIVERY_RETRY, jitter_s=5),  # design default
+        # INT-003 readiness of the relay for /health/assess; never sends (design default). The
+        # timeout covers a whole probe (bounded slot wait + session + QUIT) plus the row write
+        t(
+            "smtp_probe",
+            300,
+            probe_tick_timeout_s(s.smtp_timeout_s),
+            locks.SMTP_PROBE,
+            jitter_s=30,
+            run_on_startup=True,
+        ),
         t("purge", 86_400, 600, locks.PURGE, jitter_s=3600),  # daily
         t(
             "setup_check",

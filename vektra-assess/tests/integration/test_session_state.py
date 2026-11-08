@@ -11,6 +11,7 @@ import pytest
 from assess_moodle_support import manifest, uid
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.preflight import PASSING_FACTS, FakeSource
+from support.recipients import TEACHERS, configure_recipients
 from support.sessions import seed_session
 from support.world import configure_activity, default_settings, err, world
 
@@ -53,12 +54,15 @@ async def state(w, token: str):  # type: ignore[no-untyped-def]
     )
 
 
-async def render(w, worker, sub: int, cm: int, source=None, graders=None) -> None:  # type: ignore[no-untyped-def]
+async def render(
+    w, worker, sub: int, cm: int, source=None, graders=None, recipients=None
+) -> None:  # type: ignore[no-untyped-def]
     handler = make_render_handler(
         RenderDeps(
             settings=w.settings,
             source=source or moodle_source(worker),
             graders=graders,
+            recipients=recipients,
         )
     )
     await handler(
@@ -407,11 +411,12 @@ async def test_transcripts_list_generated_and_shredded_ones(pg, worker) -> None:
         ]
 
 
-async def test_eligible_names_the_recipients_from_the_course_graders(
+async def test_eligible_names_the_recipients_masked_from_the_teacher_config(
     pg, worker
 ) -> None:  # type: ignore[no-untyped-def]
-    """REQ-082: the render check reads the course's graders; /state names the recipients by
-    role and name and never carries an address or another user's id."""
+    """REQ-082 as amended: the render check reads the course's graders (who may download) and
+    the configured recipients (sealed teacher config); /state names the recipients with the
+    local part masked and never carries a full address."""
     async with world(pg) as w:
         cm = cmid("rubric_vis")
         await configure_activity(pg, w.site, cm, cap_minutes=30)
@@ -421,7 +426,16 @@ async def test_eligible_names_the_recipients_from_the_course_graders(
             {"r": M["release"], "b": "https://moodle.example.org", "s": w.site},
         )
         src = moodle_source(worker)
-        await render(w, worker, STU1, cm, FakeSource(facts=PASSING_FACTS), graders=src)
+        config = await configure_recipients(pg, w.site, cm)
+        await render(
+            w,
+            worker,
+            STU1,
+            cm,
+            FakeSource(facts=PASSING_FACTS),
+            graders=src,
+            recipients=config,
+        )
         inputs = (
             await pg.run(
                 "super",
@@ -433,11 +447,13 @@ async def test_eligible_names_the_recipients_from_the_course_graders(
         graders = [uid("4.3", g) for g in ("grader1", "grader2")]
         assert inputs["graders"] == sorted(graders)
         view = (await state(w, await w.presession(sub=STU1, cmid=cm))).json()
-        recipients = view["pre_session"]["recipients"]
-        assert recipients and len(recipients) <= 3
-        assert {r["role"] for r in recipients} == {"grader"}
-        assert all(set(r) == {"role", "name"} for r in recipients)
-        assert "@" not in json.dumps(view)
+        assert view["pre_session"]["recipients"] == [
+            {"role": "recipient", "name": "p***@unical.it"},
+            {"role": "recipient", "name": "m***@unical.it"},
+        ]
+        dumped = json.dumps(view) + json.dumps(inputs)
+        for address in TEACHERS:
+            assert address not in dumped and address.split("@")[0] not in dumped
 
 
 async def test_eligible_carries_the_pre_session_data(pg, worker) -> None:  # type: ignore[no-untyped-def]

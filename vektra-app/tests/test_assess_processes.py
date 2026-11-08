@@ -284,6 +284,9 @@ async def test_worker_checks_against_postgres(
             "VEKTRA_ASSESS_WORKER_DATABASE_URL": worker_url.render_as_string(
                 hide_password=False
             ),
+            # plan 10b: a production worker needs its relay (checked before the database)
+            "VEKTRA_ASSESS_SMTP_HOST": "relay.example.org",
+            "VEKTRA_ASSESS_SMTP_FROM": "vektra@example.org",
         }
         res = subprocess.run(
             [sys.executable, "-c", code],
@@ -551,3 +554,154 @@ async def test_startup_that_never_finishes_is_refused_with_a_structured_error(
         await assess_worker._serve(  # type: ignore[arg-type]
             SimpleNamespace(settings=settings), asyncio.Event()
         )
+
+
+# --- transcript delivery (plan assess-transcript-delivery 10b) ----------------------------
+
+
+def test_the_worker_refuses_to_run_without_a_relay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_assess.config import VektraAssessSettings
+
+    with pytest.raises(StartupValidationError, match="VEKTRA_ASSESS_SMTP_HOST"):
+        assess_worker.assert_smtp_configured(VektraAssessSettings())
+    assess_worker.assert_smtp_configured(
+        VektraAssessSettings.model_validate(
+            {
+                "VEKTRA_ASSESS_SMTP_HOST": "relay.unical.it",
+                "VEKTRA_ASSESS_SMTP_FROM": "vektra@unical.it",
+            }
+        )
+    )
+    # development override: the delivery slots stay unbound instead
+    assess_worker.assert_smtp_configured(
+        VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": True}
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"username": "u"},
+        {"password": "p"},
+        {"username": "", "password": "p"},
+        {"username": 1, "password": "p"},
+    ],
+)
+def test_the_smtp_account_is_both_fields_or_none(data: dict[str, object]) -> None:
+    from vektra_assess.config import VektraAssessSettings
+    from vektra_assess.keys import Credentials
+
+    settings = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_SMTP_HOST": "relay", "VEKTRA_ASSESS_SMTP_FROM": "v@unical.it"}
+    )
+    with pytest.raises(StartupValidationError, match="assess_smtp"):
+        assess_worker.smtp_config(settings, Credentials("assess_smtp", data))
+    none = assess_worker.smtp_config(settings, Credentials("assess_smtp", {}))
+    assert none.username is None and none.port == 587 and none.tls_mode == "starttls"
+    both = assess_worker.smtp_config(
+        settings,
+        Credentials("assess_smtp", {"username": "u", "password": "s3cr3t-relay-pw"}),
+    )
+    assert (both.username, both.password) == ("u", "s3cr3t-relay-pw")
+    assert "s3cr3t-relay-pw" not in repr(both)
+
+
+def test_a_configured_relay_binds_the_delivery_handler_and_ticks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.keys import AssessKeyring, Credentials
+
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {
+        "assess_transcript_kek": ring,
+        "assess_teacher_config_private": ring,
+        "assess_smtp": Credentials("assess_smtp", {}),
+    }
+    keyed = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    runtime, scheduler, *_ = assess_worker._compose(keyed)
+    assert runtime._handlers[JobKind.TRANSCRIPT_DELIVER].bound
+    bound = {t.name for t in scheduler._ticks if t.bound}
+    assert {"delivery_retry", "smtp_probe"} <= bound
+    # no relay configured: nothing of the delivery is bound
+    runtime, scheduler, *_ = assess_worker._compose(checked)
+    assert not runtime._handlers[JobKind.TRANSCRIPT_DELIVER].bound
+    assert not {"delivery_retry", "smtp_probe"} & {
+        t.name for t in scheduler._ticks if t.bound
+    }
+
+
+def test_the_delivery_budget_must_cover_the_worst_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review #5: bounded slot wait + send timeout + QUIT bound + a DB margin must fit the
+    transcript_deliver budget, or the worker refuses to compose."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
+        VEKTRA_ASSESS_SMTP_TIMEOUT_S="30",
+        VEKTRA_ASSESS_JOB_TRANSCRIPT_DELIVER_BUDGET_S="60",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {
+        "assess_transcript_kek": ring,
+        "assess_teacher_config_private": ring,
+        "assess_smtp": Credentials("assess_smtp", {}),
+    }
+    keyed = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    with pytest.raises(StartupValidationError, match="transcript_deliver budget 60 s"):
+        assess_worker._compose(keyed)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"VEKTRA_ASSESS_SMTP_FROM": "vektra@unical.it"}],
+    ids=["defaults", "smtp-from-set"],
+)
+def test_the_parser_loads_its_settings_under_the_ceiling(
+    tmp_path: Path, extra: dict[str, str]
+) -> None:
+    """CodeRabbit round 2 (config.py): validating the settings must not import a module the
+    parser's ceiling refuses (the delivery schedule and address rules)."""
+    code = (
+        "from vektra_app import assess_parser as p; p.check_environment(); "
+        "from vektra_assess.parser_sidecar import server; "
+        "p.assert_import_ceiling(); print('ceiling ok')"
+    )
+    env = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
+        "VEKTRA_ASSESS_ENABLED": "true",
+        "VEKTRA_ASSESS_SECRETS_DIR": str(tmp_path / "absent"),
+        **extra,
+    }
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert out.stdout.strip() == "ceiling ok", out.stderr[-600:]

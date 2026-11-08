@@ -1063,6 +1063,22 @@ Modular open-source platform for Retrieval-Augmented Generation (RAG) with speci
   - [ ] Each change audited old/new
   - [ ] Build without free-text overrides -> the form offers only Moodle-resolved graders
 - **Related**: REQ-075, REQ-077, REQ-080
+- **Amendment (2026-11-07, product owner)**: v1 ships the free-text path, not Moodle-resolved
+  graders. The service account gets no capability that exposes email addresses (a site-level
+  `moodle/course:useremail` would let it read every enrolled user's address, against REQ-079).
+  - The teacher enters 1 to 3 addresses when configuring the activity in the plugin, prefilled
+    with the teacher's own Moodle address (the default above). They travel to Vektra inside the
+    sealed teacher config (INT-001), so only the worker can read them.
+  - The domain allowlist is MUST: `VEKTRA_ASSESS_RECIPIENT_DOMAINS`, maintained by the operator
+    for the site admin. An empty list refuses every address. The plugin validates the form against
+    the same list (field-level error naming the allowed domains); the worker re-checks it at send
+    time, where a refused address becomes FAILED with an audit event and an alert.
+  - "Re-resolved at send time" means re-reading the current config: an address the teacher
+    removed is REPLACED, an added one gets its own row, at most 3 per round, every change audited.
+  - The pre-session screen names the recipients through the plugin, which holds the config;
+    Vektra's `/state` shows them with the local part masked.
+  - Not applicable in this form: "a recipient who lost the capability -> course graders" and
+    "the form offers only Moodle-resolved graders".
 
 #### REQ-083: Per-session abuse and cost limits
 - **Priority**: must

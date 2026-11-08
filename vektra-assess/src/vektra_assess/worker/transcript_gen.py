@@ -12,15 +12,17 @@ session: an existing transcript makes the job a no-op, and the insert is ``ON CO
    broken turn only), an ERROR ``assess.transcript.alert`` log line, and the job goes dead at
    once (``PermanentJobError("integrity_mismatch")``): a transcript that does not match its
    turns is never generated, let alone delivered.
-3. Read the close facts from Moodle (course short name, the grade as the student sees it now,
-   the course's graders), outside any transaction; each part may be unreadable.
+3. Read the close facts from Moodle (course short name, the grade as the student sees it now),
+   outside any transaction; each part may be unreadable. Read the transcript recipients from the
+   activity's sealed teacher config (REQ-082 as amended: 1..3 teacher-entered addresses).
 4. Render, run the allowlist (a violation is permanent too: fail closed), seal under a fresh DEK
    wrapped by the transcript key.
 5. ONE transaction: the transcript row (its id IS the session id, so the discussion UI, which
-   knows only its session, can name it), one PENDING delivery per recipient (<= 3), the
-   ``assess_transcript_generated`` audit row, and a deduped ``transcript_deliver`` job (whose
-   NOTIFY wakes the worker). Graders unreadable: the transcript is still generated
-   (downloadable, NFR-021) with no delivery row, audited ``recipients_unresolved`` + alert.
+   knows only its session, can name it), one PENDING delivery per recipient (<= 3, keyed by
+   ``recipient_ref``, never the address), the ``assess_transcript_generated`` audit row, and a
+   deduped ``transcript_deliver`` job (whose NOTIFY wakes the worker). Recipients unreadable or
+   none configured: the transcript is still generated (downloadable, NFR-021) with no delivery
+   row, audited ``recipients_unresolved`` + alert; the delivery tick fans them out later.
 
 The worker holds the session KEK; this module never logs content and never touches SMTP.
 """
@@ -43,7 +45,7 @@ from vektra_assess.context.capture.store import Mismatch, verify_snapshot_integr
 from vektra_assess.context.regrade import compare_grade
 from vektra_assess.crypto import envelope
 from vektra_assess.crypto.kek import KeyNotAvailable, unwrap_dek
-from vektra_assess.delivery.recipients import ROLE_GRADER, select_recipients
+from vektra_assess.delivery.recipients import ConfigRecipients, recipient_ref
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.language import detect
@@ -80,6 +82,8 @@ class GenerationDeps:
     kek: AssessKeyring  # assess_kek: unwraps the session DEK (worker only)
     transcript_kek: AssessKeyring  # assess_transcript_kek: seals the transcript
     facts: CloseFactsSource | None = None
+    #: the activity's configured recipients (sealed teacher config, worker private key)
+    recipients: ConfigRecipients | None = None
     tz: str = "Europe/Rome"
     br009_template: str = render.BR009_TEMPLATE
     #: Moodle's share of the 30 s job budget (review #4): past it the header says "non
@@ -129,12 +133,13 @@ _EARLIER = text(
 )
 _INSERT = text(
     "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, transcript_kid, "
-    "content_hash, turns_digest, filename, byte_size) VALUES (:id, :sid, :ct, :dek, :kid, :h, "
-    ":digest, :name, :size) ON CONFLICT (session_id) DO NOTHING RETURNING id"
+    "content_hash, turns_digest, filename, byte_size, course_shortname) VALUES (:id, :sid, :ct, "
+    ":dek, :kid, :h, :digest, :name, :size, :course) ON CONFLICT (session_id) DO NOTHING "
+    "RETURNING id"
 )
 _DELIVERY = text(
     "INSERT INTO assess_deliveries (transcript_id, kind, round, recipient_kind, "
-    "recipient_userid, status) VALUES (:t, 'transcript', 1, :rk, :u, 'PENDING')"
+    "recipient_ref, status) VALUES (:t, 'transcript', 1, 'address', :ref, 'PENDING')"
 )
 
 
@@ -290,11 +295,14 @@ async def generate_transcript(
         row.closed_at,
         deps.tz,
     )
-    recipients = (
-        select_recipients(facts.graders, student_userid=int(row.student_userid))
-        if facts.graders is not None
-        else ()
-    )
+    configured: tuple[str, ...] | None = None
+    if deps.recipients is not None:
+        async with acquire() as conn:
+            configured = await deps.recipients.read(conn, row.site_id, int(row.cmid))
+            await conn.rollback()
+    refs = [recipient_ref(row.site_id, a) for a in configured or ()]
+    unresolved = "config_unreadable" if configured is None else "no_recipients"
+    del configured  # only the refs leave this point
     async with acquire() as conn, conn.begin():
         got = (
             await conn.execute(
@@ -309,13 +317,14 @@ async def generate_transcript(
                     "digest": inp.digest,
                     "name": name,
                     "size": sealed.byte_size,
+                    "course": facts.course_shortname,
                 },
             )
         ).scalar()
         if got is None:
             return Generated(tid, 0, False)  # a concurrent job won: one row per session
-        for r in recipients:
-            await conn.execute(_DELIVERY, {"t": tid, "rk": ROLE_GRADER, "u": r.userid})
+        for ref in refs:
+            await conn.execute(_DELIVERY, {"t": tid, "ref": ref})
         await write_event(
             conn,
             AssessAuditEvent.TRANSCRIPT_GENERATED,
@@ -325,34 +334,34 @@ async def generate_transcript(
             data={
                 "turns": len(chain),
                 "bytes": sealed.byte_size,
-                "recipients": len(recipients),
+                "recipients": len(refs),
             },
         )
-        if facts.graders is None:
+        if not refs:
             await write_event(
                 conn,
                 AssessAuditEvent.TRANSCRIPT_RECIPIENTS_UNRESOLVED,
                 actor="worker",
                 site_id=row.site_id,
                 session_id=sid,
-                reason_code="graders_unreadable",
+                reason_code=unresolved,
             )
-        if recipients:
+        if refs:
             await enqueue_job(
                 conn,
                 JobKind.TRANSCRIPT_DELIVER,
                 {"transcript_id": str(tid)},
                 dedupe_key=f"transcript_deliver:{tid}:1",
             )
-    if facts.graders is None:
-        _alert("recipients_unresolved", session_id=str(sid))
+    if not refs:
+        _alert("recipients_unresolved", session_id=str(sid), reason_code=unresolved)
     log.info(
         "assess_transcript_generated",
         session_id=str(sid),
-        recipients=len(recipients),
+        count=len(refs),
         bytes=sealed.byte_size,
     )
-    return Generated(tid, len(recipients), True)
+    return Generated(tid, len(refs), True)
 
 
 def _record(t: Any, text_: str) -> render.TurnRecord:
@@ -400,9 +409,7 @@ async def _close_facts(deps: GenerationDeps, row: Any) -> CloseFacts:
     except Exception as exc:
         log.warning("assess_transcript_facts_error", error_type=type(exc).__name__)
         return CloseFacts(
-            course_shortname=sink.get("course_shortname"),
-            grade=sink.get("grade"),
-            graders=sink.get("graders"),
+            course_shortname=sink.get("course_shortname"), grade=sink.get("grade")
         )
 
 

@@ -14,11 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from vektra_assess.crypto import envelope
 from vektra_assess.crypto.kek import unwrap_dek, wrap_dek
 from vektra_assess.crypto.seal import open_sealed, seal
+from vektra_assess.crypto.teacher_config import CONFIG_FIELD
 from vektra_assess.crypto.transcript import unwrap_transcript_dek
 from vektra_assess.keys import AssessKeyring
 
 #: the single field name under which an activity's teacher config is sealed
-TEACHER_CONFIG_FIELD = "config"
+TEACHER_CONFIG_FIELD = CONFIG_FIELD
 
 
 async def rewrap_session_keys(

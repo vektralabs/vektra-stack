@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import subprocess
 import uuid
 
@@ -255,19 +254,23 @@ async def test_no_plaintext_canary_in_any_table_dump_or_log(pg):
     kek, (api_pub, _) = sym("k1"), x_ring("a1")
     site = await make_site(pg)
     worker_pub, _ = x_ring("w1")
-    blob, kid = teacher_config.seal_teacher_config(
-        worker_pub,
-        site,
-        9,
-        teacher_config.CONFIG_FIELD,
-        json.dumps({"solution": TEACHER_CANARY}),
-    )
     await pg.run(
         "api",
-        "INSERT INTO assess_activity_config (site_id, cmid, activity_type, "
-        "teacher_config_sealed, teacher_config_kid) VALUES (:s, 9, 'quiz', :b, :k)",
-        {"s": site, "b": blob, "k": kid},
+        "INSERT INTO assess_activity_config (site_id, cmid, activity_type) "
+        "VALUES (:s, 9, 'quiz')",
+        {"s": site},
     )
+    async with pg.conn("api") as c:
+        await teacher_config.store_sealed_field(
+            c,
+            worker_pub,
+            site,
+            9,
+            teacher_config.SOLUTION,
+            TEACHER_CANARY,
+            actor_userid=5,
+        )
+        await c.commit()
     await make_real_session(pg, kek, api_pub)
 
     tables = [

@@ -224,8 +224,11 @@ def test_the_latest_grants_revision_is_the_rendered_matrix():
         "SELECT 1 FROM assess_snapshots",
         "SELECT 1 FROM assess_session_keys",
         "SELECT 1 FROM assess_session_handoff",
-        "SELECT teacher_config_sealed FROM assess_activity_config",
-        "SELECT * FROM assess_activity_config",
+        "SELECT sealed_blob FROM assess_activity_config_sealed",
+        "SELECT refs FROM assess_activity_config_sealed",
+        "SELECT kid FROM assess_activity_config_sealed",
+        "SELECT * FROM assess_activity_config_sealed",
+        "DELETE FROM assess_activity_config_sealed",
         "SELECT 1 FROM api_keys",
         "CREATE TABLE public.assess_evil (x int)",
         "TRUNCATE assess_sessions",
@@ -239,7 +242,10 @@ async def test_api_role_is_denied_with_sqlstate_42501(pg, sql):
 
 
 async def test_api_role_can_use_what_it_is_granted(pg):
-    await pg.run("api", "SELECT id, teacher_config_set FROM assess_activity_config")
+    await pg.run("api", "SELECT id, version FROM assess_activity_config")
+    await pg.run(
+        "api", "SELECT field, is_set, item_count FROM assess_activity_config_sealed"
+    )
     await pg.run("api", "SELECT count(*) FROM assess_sessions")
     sid = await make_session(pg)
     await pg.run(

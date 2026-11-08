@@ -63,6 +63,17 @@ class JobKind(enum.StrEnum):
     TEACHER_NOTIFY = "teacher_notify"
     # 3 consecutive system rollbacks (revision 0028); delivered by plan transcript-delivery
     OPERATOR_NOTIFY = "operator_notify"
+    # the activity-level teacher facts (editors, graders, REQ-077 enable facts) a teacher request
+    # is verified against (revision 0036, plan assess-teacher-ops)
+    TEACHER_GATE = "teacher_gate"
+
+
+def teacher_gate_dedupe_key(
+    site_id: object, cmid: int, courseid: int, activity_type: str
+) -> str:
+    """One pending teacher-gate refresh per (site, cmid, course hint, type hint): a pending job
+    for a wrong hint never swallows the refresh a correct hint asks for."""
+    return f"teacher_gate:{site_id}:{cmid}:{courseid}:{activity_type}"
 
 
 def render_dedupe_key(site_id: object, userid: int, cmid: int) -> str:

@@ -269,6 +269,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     from vektra_assess.worker.render import RenderDeps, make_render_handler
     from vektra_assess.worker.reply_reconcile import make_reconcile_handler
     from vektra_assess.worker.start_source import MoodleStartSource
+    from vektra_assess.worker.teacher_gate import make_teacher_gate_handler
     from vektra_assess.worker.transcript_gen import (
         GenerationDeps,
         make_generate_handler,
@@ -323,6 +324,8 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
         JobKind.RECONCILE_REPLY: make_reconcile_handler(
             checked.keys["assess_kek"], settings.outage_timeout_s
         ),
+        # plan assess-teacher-ops: the editors / graders / enable facts of one activity
+        JobKind.TEACHER_GATE: make_teacher_gate_handler(source),
     }
 
 

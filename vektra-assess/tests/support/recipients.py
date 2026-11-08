@@ -1,8 +1,8 @@
-"""Transcript recipients as plan 11's config PUT will store them (plan 10b test support).
+"""Transcript recipients as plan 11's config PUT stores them (plan 10b test support).
 
-The teacher config is sealed with the worker's X25519 PUBLIC key by the API role (it may write the
-column, never read it back) under the binding field ``config``; the worker opens it with the
-private key through ``ConfigRecipients``.
+Each teacher-config field is sealed with the worker's X25519 PUBLIC key by the API role (it may
+write the row, never read the blob back) under its own binding ``[site, cmid, field]`` (revision
+0036); the worker opens it with the private key through ``ConfigRecipients``.
 """
 
 from __future__ import annotations
@@ -13,12 +13,13 @@ import uuid
 from typing import Any
 
 from vektra_assess.crypto.seal import public_from_private
-from vektra_assess.crypto.teacher_config import CONFIG_FIELD, seal_teacher_config
-from vektra_assess.delivery.recipients import (
-    RECIPIENTS_KEY,
-    ConfigRecipients,
-    recipient_ref,
+from vektra_assess.crypto.teacher_config import (
+    PASTED_RUBRIC,
+    SOLUTION,
+    TRANSCRIPT_RECIPIENTS,
+    store_sealed_field,
 )
+from vektra_assess.delivery.recipients import ConfigRecipients, recipient_ref
 from vektra_assess.keys import AssessKeyring
 
 TEACHERS = ("prof.rossi@unical.it", "m.bianchi@unical.it")
@@ -43,17 +44,30 @@ async def configure_recipients(
     pair: tuple[AssessKeyring, AssessKeyring] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> ConfigRecipients:
-    """Seal ``{"transcript_recipients": addresses, **extra}`` into the activity's config row
-    (which must exist) as the API role; return the worker-side reader."""
+    """Seal ``addresses`` as the activity's ``transcript_recipients`` field (the config row must
+    exist) as the API role, plus any ``extra`` text field (``solution``, ``pasted_rubric``);
+    return the worker-side reader. The addresses are sealed as given (a test may plant bad ones);
+    the refs are those of the strings."""
     pub, priv = pair or config_pair()
-    doc = {RECIPIENTS_KEY: list(addresses), **(extra or {})}
-    blob, kid = seal_teacher_config(pub, site, cmid, CONFIG_FIELD, json.dumps(doc))
-    await pg.run(
-        "api",
-        "UPDATE assess_activity_config SET teacher_config_sealed = :b, "
-        "teacher_config_kid = :k WHERE site_id = :s AND cmid = :c",
-        {"b": blob, "k": kid, "s": site, "c": cmid},
-    )
+    items = [a for a in addresses if isinstance(a, str)]
+    async with pg.conn("api") as conn:
+        await store_sealed_field(
+            conn,
+            pub,
+            site,
+            cmid,
+            TRANSCRIPT_RECIPIENTS,
+            json.dumps(list(addresses)),
+            actor_userid=1,
+            refs=[recipient_ref(site, a) for a in items][:3] or None,
+            item_count=min(len(items), 3) or None,
+        )
+        for field in (SOLUTION, PASTED_RUBRIC):
+            if extra and field in extra:
+                await store_sealed_field(
+                    conn, pub, site, cmid, field, extra[field], actor_userid=1
+                )
+        await conn.commit()
     return ConfigRecipients(priv)
 
 

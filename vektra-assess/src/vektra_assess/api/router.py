@@ -20,6 +20,7 @@ from vektra_assess.api import (
     setup_check,
     start,
     state,
+    teacher_config,
     transcripts,
     turns,
 )
@@ -44,3 +45,5 @@ router.include_router(finish.router)
 router.include_router(retry.router)
 router.include_router(flag.router)
 router.include_router(transcripts.router)
+# plan assess-teacher-ops: the activity configuration (editors only, write-only secrets)
+router.include_router(teacher_config.router)

@@ -14,12 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from vektra_assess.crypto import envelope
 from vektra_assess.crypto.kek import unwrap_dek, wrap_dek
 from vektra_assess.crypto.seal import open_sealed, seal
-from vektra_assess.crypto.teacher_config import CONFIG_FIELD
 from vektra_assess.crypto.transcript import unwrap_transcript_dek
 from vektra_assess.keys import AssessKeyring
-
-#: the single field name under which an activity's teacher config is sealed
-TEACHER_CONFIG_FIELD = CONFIG_FIELD
 
 
 async def rewrap_session_keys(
@@ -113,21 +109,23 @@ async def reseal_teacher_configs(
     new_worker_pub: AssessKeyring,
     batch: int = 100,
 ) -> int:
-    """Re-seal up to ``batch`` teacher configs to the new worker public key. Returns how
-    many still carry another kid (0 means done)."""
+    """Re-seal up to ``batch`` sealed teacher-config fields to the new worker public key, each
+    under its own binding ``[site_id, cmid, field]`` (revision 0036). Returns how many still
+    carry another kid (0 means done). Only ``sealed_blob`` and ``kid`` change: the database's
+    change audit skips the worker's login role, so a rotation is never audited as a change."""
     new_kid = new_worker_pub.active
     rows = (
         await conn.execute(
             text(
-                "SELECT id, site_id, cmid, teacher_config_sealed FROM assess_activity_config "
-                "WHERE teacher_config_sealed IS NOT NULL AND teacher_config_kid <> :k "
-                "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
+                "SELECT site_id, cmid, field, sealed_blob FROM assess_activity_config_sealed "
+                "WHERE sealed_blob IS NOT NULL AND kid <> :k "
+                "ORDER BY site_id, cmid, field LIMIT :n FOR UPDATE SKIP LOCKED"
             ),
             {"k": new_kid, "n": batch},
         )
     ).all()
-    for row_id, site_id, cmid, sealed in rows:
-        binding = [site_id, cmid, TEACHER_CONFIG_FIELD]
+    for site_id, cmid, field, sealed in rows:
+        binding = [site_id, cmid, field]
         plain = open_sealed(
             old_worker_priv,
             bytes(sealed),
@@ -143,16 +141,16 @@ async def reseal_teacher_configs(
         )
         await conn.execute(
             text(
-                "UPDATE assess_activity_config SET teacher_config_sealed = :b, "
-                "teacher_config_kid = :k WHERE id = :i"
+                "UPDATE assess_activity_config_sealed SET sealed_blob = :b, kid = :k "
+                "WHERE site_id = :s AND cmid = :c AND field = :f"
             ),
-            {"b": fresh, "k": new_kid, "i": row_id},
+            {"b": fresh, "k": new_kid, "s": site_id, "c": cmid, "f": field},
         )
     remaining = (
         await conn.execute(
             text(
-                "SELECT count(*) FROM assess_activity_config "
-                "WHERE teacher_config_sealed IS NOT NULL AND teacher_config_kid <> :k"
+                "SELECT count(*) FROM assess_activity_config_sealed "
+                "WHERE sealed_blob IS NOT NULL AND kid <> :k"
             ),
             {"k": new_kid},
         )

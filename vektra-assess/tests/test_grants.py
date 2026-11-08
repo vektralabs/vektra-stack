@@ -18,9 +18,23 @@ def test_api_has_no_privilege_on_session_material():
 
 
 def test_api_cannot_read_the_sealed_teacher_config():
-    config = g.MATRIX[g.API]["assess_activity_config"]
-    assert "teacher_config_sealed" not in (config["SELECT"] or ())
-    assert "teacher_config_sealed" in (config["INSERT"] or ())  # it may seal, not read
+    """Revision 0036: one sealed row per field; the API seals and writes, never reads back the
+    blob or the recipient refs, and never deletes (clearing is a NULL blob)."""
+    sealed = g.MATRIX[g.API]["assess_activity_config_sealed"]
+    for secret in ("sealed_blob", "refs", "kid"):
+        assert secret not in (sealed["SELECT"] or ())
+    assert sealed["SELECT"] is not None  # column-level, never the whole table
+    assert {"sealed_blob", "refs"} <= set(sealed["INSERT"] or ())
+    assert {"sealed_blob", "refs"} <= set(sealed["UPDATE"] or ())
+    assert "DELETE" not in sealed
+    # the composite column is gone: nothing secret is left in assess_activity_config
+    for priv in g.MATRIX[g.API]["assess_activity_config"].values():
+        assert not any("sealed" in c for c in (priv or ()))
+    # the worker opens the fields and re-seals blob + kid on rotation, nothing else
+    assert g.MATRIX[g.WORKER]["assess_activity_config_sealed"] == {
+        "SELECT": None,
+        "UPDATE": ("sealed_blob", "kid"),
+    }
 
 
 def test_nobody_may_update_snapshots_turns_or_audit():

@@ -1,0 +1,318 @@
+"""BR-013 / REQ-077 rules, one test per boundary (plan assess-teacher-ops 11a)."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+
+from vektra_assess.teacher import validation as v
+from vektra_assess.teacher.schemas import FieldError, field_errors
+
+UNICAL = frozenset({"unical.it"})
+
+
+def codes(errors: list[FieldError]) -> list[tuple[str, str]]:
+    return [(e.field, e.code) for e in errors]
+
+
+# --- text: 20,000 / 20,001, counted in code points after NFC and control removal ----------------
+
+
+def test_text_boundary_20000_accepted_20001_refused_and_named() -> None:
+    ok, errs = v.check_text("solution", "a" * 20_000)
+    assert errs == [] and ok == "a" * 20_000
+    _, errs = v.check_text("solution", "a" * 20_001)
+    assert field_errors(errs) == [
+        {"field": "solution", "code": "too_long", "range": "0-20000"}
+    ]
+    _, errs = v.check_text("pasted_rubric", "b" * 20_001)
+    assert errs[0].field == "pasted_rubric"
+
+
+def test_text_is_counted_after_nfc_and_control_removal() -> None:
+    decomposed = "é"  # e + combining acute: one code point after NFC
+    assert v.text_length(decomposed * 20_000) == 20_000
+    assert v.check_text("solution", decomposed * 20_000)[1] == []
+    # control characters do not count (and are removed), newline and tab do
+    assert v.normalize_text("a\x00b\x07c​d") == "abcd"
+    assert v.normalize_text("riga 1\r\nriga\t2\rfine") == "riga 1\nriga\t2\nfine"
+    padded = "a" * 20_000 + "\x00" * 50
+    assert v.check_text("solution", padded)[1] == []
+
+
+def test_blank_text_counts_as_cleared() -> None:
+    assert v.check_text("solution", " \n\t\x00 ") == (None, [])
+
+
+# --- cap: 4 / 5 / 120 / 121 -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cap", "ok"), [(4, False), (5, True), (120, True), (121, False)]
+)
+def test_cap_boundaries(cap: int, ok: bool) -> None:
+    errs = v.check_cap(cap)
+    assert (errs == []) is ok
+    if not ok:
+        assert field_errors(errs) == [
+            {"field": "cap_minutes", "code": "out_of_range", "range": "5-120"}
+        ]
+
+
+# --- extra time: total 240 / 241, +100 % / +101 % confirmation ---------------------------------
+
+
+def test_total_duration_240_accepted_241_refused() -> None:
+    assert v.check_extra_time(120, minutes=120) == []
+    assert codes(v.check_extra_time(120, minutes=121)) == [
+        ("extra_time", "total_too_long")
+    ]
+    assert v.check_extra_time(120, minutes=121)[0].range == "<= 240 min"
+    assert v.check_extra_time(120, percent=100) == []
+    assert codes(v.check_extra_time(120, percent=101)) == [
+        ("extra_time", "total_too_long")
+    ]
+
+
+def test_over_100_percent_needs_confirmation() -> None:
+    assert v.check_extra_time(30, percent=100) == []
+    assert codes(v.check_extra_time(30, percent=101)) == [
+        ("extra_time", "confirm_over_100")
+    ]
+    assert v.check_extra_time(30, percent=101, confirm_over_100=True) == []
+    # the same rule in minutes: +30 on a 30-minute cap is +100 %, +31 is over
+    assert v.check_extra_time(30, minutes=30) == []
+    assert codes(v.check_extra_time(30, minutes=31)) == [
+        ("extra_time", "confirm_over_100")
+    ]
+
+
+def test_extra_time_ranges_are_named() -> None:
+    assert field_errors(v.check_extra_time(30, percent=201)) == [
+        {"field": "extra_time", "code": "out_of_range", "range": "0-200%"}
+    ]
+    assert v.check_extra_time(5, minutes=241)[0].range == "0-240 min"
+    assert codes(v.check_extra_time(30)) == [("extra_time", "minutes_or_percent")]
+    assert codes(v.check_extra_time(30, minutes=1, percent=1)) == [
+        ("extra_time", "minutes_or_percent")
+    ]
+
+
+# --- pasted rubric, rubric source, RAG -------------------------------------------------------
+
+
+def test_empty_pasted_rubric_with_source_pasted_is_refused() -> None:
+    assert field_errors(v.check_pasted_rubric("pasted", False)) == [
+        {"field": "pasted_rubric", "code": "empty", "range": "1-20000"}
+    ]
+    assert v.check_pasted_rubric("pasted", True) == []
+    assert v.check_pasted_rubric("none", False) == []
+
+
+def test_rubric_source_per_activity_type() -> None:
+    assert v.check_rubric_source("moodle", "assign") == []
+    assert codes(v.check_rubric_source("moodle", "quiz")) == [
+        ("rubric_source", "not_for_activity_type")
+    ]
+    assert v.check_rubric_source("pasted", "quiz") == []
+
+
+def test_rag_on_is_a_field_error_with_its_reason() -> None:
+    assert v.check_rag(False) == []
+    assert field_errors(v.check_rag(True)) == [
+        {
+            "field": "rag_enabled",
+            "code": "rag_unavailable",
+            "reason": "operator_flag_off",
+        }
+    ]
+
+
+# --- end date after the effective opening -----------------------------------------------------
+
+
+def _at(ts: int) -> datetime:
+    return datetime.fromtimestamp(ts, UTC)
+
+
+def test_end_date_must_follow_the_effective_opening() -> None:
+    opening = v.effective_opening(1_000, 2_000)
+    assert opening == 2_000  # the later of the activity close and the attested date
+    assert codes(v.check_end_date(_at(2_000), opening)) == [
+        ("available_until", "not_after_opening")
+    ]
+    assert codes(v.check_end_date(_at(1_999), opening)) == [
+        ("available_until", "not_after_opening")
+    ]
+    assert v.check_end_date(_at(2_001), opening) == []
+    assert codes(v.check_end_date(_at(5_000), None)) == [
+        ("available_until", "opening_unknown")
+    ]
+    assert codes(v.check_end_date(datetime(2030, 1, 1), opening)) == [
+        ("available_until", "timezone_required")
+    ]
+    # an activity with no close configured (0) and no attestation has no opening
+    assert v.effective_opening(0, None) is None
+
+
+# --- recipients --------------------------------------------------------------------------------
+
+
+def test_recipients_are_validated_deduped_and_capped() -> None:
+    got, errs = v.check_recipients(
+        ["Prof.Rossi@UNICAL.it", "prof.rossi@unical.it", "m.bianchi@unical.it"], UNICAL
+    )
+    assert errs == [] and got == ("Prof.Rossi@unical.it", "m.bianchi@unical.it")
+    _, errs = v.check_recipients(
+        ["a@unical.it", "b@unical.it", "c@unical.it", "d@unical.it"], UNICAL
+    )
+    assert field_errors(errs) == [
+        {"field": "transcript_recipients", "code": "too_many", "range": "1-3"}
+    ]
+    _, errs = v.check_recipients([], UNICAL)
+    assert codes(errs) == [("transcript_recipients", "empty")]
+
+
+def test_a_recipient_outside_the_allowlist_names_the_allowed_domains() -> None:
+    _, errs = v.check_recipients(
+        ["a@unical.it", "x@gmail.com"], frozenset({"unical.it", "b.it"})
+    )
+    assert field_errors(errs) == [
+        {
+            "field": "transcript_recipients",
+            "code": "domain_not_allowed",
+            "index": 1,
+            "allowed_domains": ["b.it", "unical.it"],
+        }
+    ]
+    assert "gmail" not in str(field_errors(errs))  # the address never comes back
+    # an empty allowlist refuses every address
+    _, errs = v.check_recipients(["a@unical.it"], frozenset())
+    assert (
+        errs[0].code == "domain_not_allowed" and errs[0].extra["allowed_domains"] == []
+    )
+    _, errs = v.check_recipients(["Name <a@unical.it>", "a b@unical.it"], UNICAL)
+    assert codes(errs) == [("transcript_recipients", "invalid_address")] * 2
+
+
+# --- enable refusals (REQ-077) -------------------------------------------------------------------
+
+GOOD = v.Proposed(
+    enabled=True, cap_minutes=30, rubric_source="moodle", pasted_rubric_set=False,
+    recipients_count=1,
+)  # fmt: skip
+FACTS = v.ActivityFacts(
+    "assign", close_at=1_900_000_000, team_submission=False, grading_method="rubric",
+    moodle_rubric=True,
+)  # fmt: skip
+
+
+def refusals(
+    p: v.Proposed = GOOD, f: v.ActivityFacts = FACTS, **kw: bool
+) -> list[tuple[str, str]]:
+    status = {"privacy_configured": True, "setup_green": True, **kw}
+    return codes(v.enable_refusals(p, f, **status))
+
+
+def test_a_complete_activity_may_be_enabled_and_disable_is_never_refused() -> None:
+    assert refusals() == []
+    off = v.Proposed(False, None, "pasted", False, 0)
+    assert refusals(off, v.ActivityFacts("quiz"), privacy_configured=False) == []
+
+
+@pytest.mark.parametrize(
+    ("facts", "want"),
+    [
+        (v.ActivityFacts("quiz", close_at=0), "quiz_without_close_date"),
+        (
+            v.ActivityFacts("assign", 0, False, "rubric", True),
+            "assignment_without_cutoff",
+        ),
+        (v.ActivityFacts("assign", 1, True, "rubric", True), "team_submission"),
+        (v.ActivityFacts("assign", 1, False, "guide", False), "marking_guide"),
+        (v.ActivityFacts("assign", None, None, None, None), "moodle_facts_unreadable"),
+    ],
+)
+def test_enable_is_refused_for_each_moodle_fact(
+    facts: v.ActivityFacts, want: str
+) -> None:
+    p = (
+        GOOD
+        if facts.activity_type == "assign"
+        else v.Proposed(True, 30, "none", False, 1)
+    )
+    got = refusals(p, facts)
+    assert ("enabled", want) in got
+
+
+def test_enable_is_refused_for_each_configuration_gap() -> None:
+    assert ("enabled", "privacy_unset") in refusals(privacy_configured=False)
+    assert ("enabled", "setup_check_red") in refusals(setup_green=False)
+    no_rubric = v.ActivityFacts("assign", 1, False, "simple", False)
+    assert refusals(GOOD, no_rubric) == [("rubric_source", "moodle_rubric_missing")]
+    assert refusals(v.Proposed(True, None, "none", False, 1)) == [
+        ("cap_minutes", "required")
+    ]
+    assert refusals(v.Proposed(True, 30, "none", False, 0)) == [
+        ("transcript_recipients", "empty")
+    ]
+
+
+def test_a_save_of_an_enabled_activity_rechecks_only_what_it_can_break() -> None:
+    """Already enabled, not switching on: Moodle facts, privacy and setup are not re-gated here
+    (the Start gates re-check the facts), the configuration gaps still are."""
+    stale_facts = v.ActivityFacts("assign", 0, True, "guide", True)
+    kw = {"privacy_configured": False, "setup_green": False, "turning_on": False}
+    assert codes(v.enable_refusals(GOOD, stale_facts, **kw)) == []
+    assert codes(
+        v.enable_refusals(v.Proposed(True, 30, "moodle", False, 0), stale_facts, **kw)
+    ) == [("transcript_recipients", "empty")]
+
+
+def test_null_on_an_always_valued_setting_is_named() -> None:
+    assert field_errors(v.check_not_null(["enabled", "show_solution"])) == [
+        {"field": "enabled", "code": "null_not_allowed"},
+        {"field": "show_solution", "code": "null_not_allowed"},
+    ]
+
+
+@pytest.mark.parametrize("kind", ["quiz", "assign"])
+@pytest.mark.parametrize("stored", [None, "none", "pasted", "moodle", "html", 3])
+def test_the_api_and_the_capture_read_the_same_rubric_source(
+    kind: str, stored: object
+) -> None:
+    """Review 9: one function decides the effective rubric source, for the config view and for
+    the snapshot capture; a quiz never reads "moodle" (REQ-077)."""
+    from vektra_assess.worker import start_source
+
+    flags = {} if stored is None else {"rubric_source": stored}
+    want = (
+        stored
+        if stored in v.SOURCES[kind]
+        else ("moodle" if kind == "assign" else "none")
+    )
+    assert v.rubric_source_of(flags, kind) == want
+    view = start_source.teacher_view(flags, kind, None, "griglia incollata")
+    assert view.rubric_source == want
+    # CodeRabbit nitpick (PR 170): the pasted rubric reaches the capture view only with the
+    # source "pasted" (the capture copies TeacherConfigView.pasted_rubric into the snapshot)
+    assert view.pasted_rubric == ("griglia incollata" if want == "pasted" else None)
+
+
+def test_the_end_date_is_compared_at_the_second_it_is_stored() -> None:
+    """CodeRabbit 4505511242: the end date is stored in whole seconds; 0.5 s after the opening
+    truncates TO the opening and must be refused."""
+    assert codes(v.check_end_date(datetime.fromtimestamp(2_000.5, UTC), 2_000)) == [
+        ("available_until", "not_after_opening")
+    ]
+    assert v.check_end_date(datetime.fromtimestamp(2_001.0, UTC), 2_000) == []
+
+
+def test_an_end_date_outside_the_representable_range_is_a_field_error() -> None:
+    """CodeRabbit 4505511246: 9999-12-31T23:30-01:00 is year 10000 in UTC; it must be a field
+    error, not a failure when the stored value is rebuilt."""
+    from datetime import timedelta, timezone
+
+    late = datetime(9999, 12, 31, 23, 30, tzinfo=timezone(timedelta(hours=-1)))
+    assert codes(v.check_end_date(late, 2_000)) == [("available_until", "out_of_range")]

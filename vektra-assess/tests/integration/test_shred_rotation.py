@@ -6,6 +6,7 @@ import os
 import uuid
 
 import pytest
+from cryptography.exceptions import InvalidTag
 from sqlalchemy import text
 
 from vektra_assess.crypto import envelope, rotation, shred, teacher_config, transcript
@@ -209,14 +210,35 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
         {"i": site, "u": str(site)},
     )
     old_pub, old_priv = x_ring("w1")
-    blob, kid = teacher_config.seal_teacher_config(
-        old_pub, site, 3, rotation.TEACHER_CONFIG_FIELD, '{"solution": "42"}'
-    )
     await pg.run(
         "super",
-        "INSERT INTO assess_activity_config (site_id, cmid, activity_type, "
-        "teacher_config_sealed, teacher_config_kid) VALUES (:s, 3, 'quiz', :b, :k)",
-        {"s": site, "b": blob, "k": kid},
+        "INSERT INTO assess_activity_config (site_id, cmid, activity_type) "
+        "VALUES (:s, 3, 'quiz')",
+        {"s": site},
+    )
+    async with pg.conn("api") as c:
+        for field in teacher_config.FIELDS:
+            plain = (
+                '["a@unical.it"]'
+                if field == teacher_config.TRANSCRIPT_RECIPIENTS
+                else "42"
+            )
+            await teacher_config.store_sealed_field(
+                c,
+                old_pub,
+                site,
+                3,
+                field,
+                plain,
+                actor_userid=5,
+                refs=["0" * 64] if plain.startswith("[") else None,
+                item_count=1 if plain.startswith("[") else None,
+            )
+        await c.commit()
+    audits = await pg.run(
+        "super",
+        "SELECT count(*) FROM assess_audit_events WHERE site_id=:s",
+        {"s": site},
     )
     new_pub, new_priv = x_ring("w2")
     async with pg.conn("worker") as c:
@@ -225,25 +247,38 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
         assert (
             await rotation.reseal_teacher_configs(c, old_priv, new_pub) == 0
         )  # nothing left
-    row = (
+    rows = await pg.run(
+        "super",
+        "SELECT field, sealed_blob, kid FROM assess_activity_config_sealed WHERE site_id=:s",
+        {"s": site},
+    )
+    assert {r.kid for r in rows} == {"w2"} and len(rows) == 3
+    # each field re-sealed under its OWN binding: opening it under another field fails
+    solution = next(r for r in rows if r.field == teacher_config.SOLUTION)
+    with pytest.raises(InvalidTag):
+        teacher_config.open_teacher_config(
+            new_priv, bytes(solution.sealed_blob), site, 3, teacher_config.PASTED_RUBRIC
+        )
+    for row in rows:
+        want = (
+            '["a@unical.it"]'
+            if row.field == teacher_config.TRANSCRIPT_RECIPIENTS
+            else "42"
+        )
+        assert (
+            teacher_config.open_teacher_config(
+                new_priv, bytes(row.sealed_blob), site, 3, row.field
+            )
+            == want
+        )
+    # a rotation is not a teacher's change: no audit row
+    assert (
         await pg.run(
             "super",
-            "SELECT teacher_config_sealed, teacher_config_kid FROM assess_activity_config "
-            "WHERE site_id=:s",
+            "SELECT count(*) FROM assess_audit_events WHERE site_id=:s",
             {"s": site},
         )
-    )[0]
-    assert row.teacher_config_kid == "w2"
-    assert (
-        teacher_config.open_teacher_config(
-            new_priv,
-            bytes(row.teacher_config_sealed),
-            site,
-            3,
-            rotation.TEACHER_CONFIG_FIELD,
-        )
-        == '{"solution": "42"}'
-    )
+    )[0][0] == audits[0][0]
 
     kek1 = sym("t1")
     sid = await make_real_session(pg, sym("k1"), x_ring("a1")[0], close=True)

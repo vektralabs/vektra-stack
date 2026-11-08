@@ -4,7 +4,8 @@ Codes are defined in ``vektra_shared.errors`` (the single registry, REQ-011); th
 only re-exports them and builds the assess envelopes. Owning plans:
 .s2s/plans/20261101-154950-assess-foundations (001-004),
 .s2s/plans/20261101-154950-assess-session-lifecycle (005-016) and
-.s2s/plans/20261101-154950-assess-transcript-delivery (017-021).
+.s2s/plans/20261101-154950-assess-transcript-delivery (017-021) and
+.s2s/plans/20261101-154950-assess-teacher-ops (022-023).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
 carries a student's text, a Moodle value or a row of another student.
@@ -34,6 +35,8 @@ from vektra_shared.errors import (
     ERR_ASSESS_019,
     ERR_ASSESS_020,
     ERR_ASSESS_021,
+    ERR_ASSESS_022,
+    ERR_ASSESS_023,
     ErrorCategory,
     ErrorResponse,
 )
@@ -60,10 +63,14 @@ __all__ = [
     "ERR_ASSESS_019",
     "ERR_ASSESS_020",
     "ERR_ASSESS_021",
+    "ERR_ASSESS_022",
+    "ERR_ASSESS_023",
     "activation_refused",
     "assess_unavailable",
     "bad_request",
     "capacity_reached",
+    "config_conflict",
+    "config_invalid",
     "deadline_passed",
     "download_token_invalid",
     "key_not_bound",
@@ -163,12 +170,17 @@ def loginas_refused() -> ErrorResponse:
     )
 
 
-def key_not_bound() -> ErrorResponse:
+def key_not_bound(purpose: str = "mint") -> ErrorResponse:
+    """403: the key is not bound to an enabled site for ``purpose`` (``mint`` | ``teacher``);
+    the remediation names the scope the route needs."""
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_007,
         message="This API key is not bound to an assess site for this purpose.",
-        remediation="Use the site's own assess:mint key (assess_site_keys, purpose 'mint').",
+        remediation=(
+            f"Use the site's own assess:{purpose} key, bound to an enabled site "
+            f"(assess_site_keys, purpose '{purpose}')."
+        ),
     )
 
 
@@ -338,18 +350,49 @@ def transcript_integrity() -> ErrorResponse:
     )
 
 
-def teacher_unverified(*, stale: bool) -> ErrorResponse:
-    """403. ``stale``: the grader list was absent or too old and a refresh WAS queued (retry);
-    otherwise the fresh list does not name the teacher (no refresh, no point retrying)."""
+def teacher_unverified(*, stale: bool, role: str = "grader") -> ErrorResponse:
+    """403. ``stale``: the worker-written role list was absent, too old or unreadable and a
+    refresh WAS queued (retry); otherwise the fresh list does not name the teacher (no refresh,
+    no point retrying). ``role``: ``grader`` (download, resend) or ``editor`` (configuration,
+    REQ-077 "activity editors only")."""
+    what = "an editor" if role == "editor" else "a grader"
+    refused = what.replace(" ", "_")  # not_a_grader | not_an_editor
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_021,
-        message="The teacher could not be verified as a grader of this activity.",
+        message=f"The teacher could not be verified as {what} of this activity.",
         remediation=(
             "A fresh check has been queued: retry in a few seconds."
             if stale
-            else "Moodle does not list this user as a grader of the activity's course; "
+            else f"Moodle does not list this user as {what} of the activity's course; "
             "a retry will not succeed until that changes in Moodle."
         ),
-        details={"reason": "grader_check_stale" if stale else "not_a_grader"},
+        details={"reason": f"{role}_check_stale" if stale else f"not_{refused}"},
+    )
+
+
+# --- teacher configuration (plan assess-teacher-ops) ----------------------------------------
+
+
+def config_invalid(fields: list[dict[str, object]]) -> ErrorResponse:
+    """400 with every field-level error (BR-013, REQ-077). Each item is ``{field, code}`` plus
+    the rule's bounds (``range``, ``allowed_domains``...): codes and limits only, never the
+    submitted value."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_022,
+        message="The discussion configuration was not saved: some fields are invalid.",
+        remediation="Correct the fields listed in details.fields and save again.",
+        details={"fields": fields},
+    )
+
+
+def config_conflict(current_version: int) -> ErrorResponse:
+    """409: another save landed since this form was loaded (optimistic concurrency)."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_023,
+        message="The discussion configuration was changed meanwhile.",
+        remediation="Reload the settings page and save again.",
+        details={"current_version": int(current_version)},
     )

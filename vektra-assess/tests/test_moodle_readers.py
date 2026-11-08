@@ -7,6 +7,7 @@ what Moodle answered. A request with no recording fails the test (``Replay.unmat
 from __future__ import annotations
 
 import base64
+import copy
 import importlib.util
 import io
 import json
@@ -36,6 +37,7 @@ from vektra_assess.moodle.readers import (
     read_assign_settings,
     read_attempt_review,
     read_course_participants,
+    read_editors,
     read_enrolment,
     read_grade_release,
     read_graders,
@@ -624,6 +626,45 @@ async def test_graders(branch: str) -> None:
     # Moodle returns no email to the service account: never invented
     assert all(g.email is None for g in got.graders)
     assert not replay.unmatched
+
+
+async def test_editors_ask_for_manageactivities_with_the_graders_function(
+    branch: str,
+) -> None:
+    """SYNTHETIC (plan assess-teacher-ops 11a): the recordings asked for ``mod/assign:grade``
+    only, so the editors request is served from the graders recording with the capability
+    renamed. It proves the request shape and the parsing; the live read on 4.3 / 5.2 is
+    ``test_moodle_live`` territory (BLOCKED in 11a, see the plan's Notes)."""
+    replay, client, site, m = env(branch)
+    grader_keys = [
+        k
+        for k in replay.responses
+        if "core_enrol_get_enrolled_users_with_capability" in k
+        and "mod/assign:grade" in k
+    ]
+    assert grader_keys
+    for key in grader_keys:
+        body = copy.deepcopy(replay.responses[key])
+        for row in body:
+            row["capability"] = "moodle/course:manageactivities"
+        replay.responses[
+            key.replace("mod/assign:grade", "moodle/course:manageactivities")
+        ] = body
+    got = ok(await read_editors(client, site, m["courseid"]))
+    assert {g.userid for g in got.graders} == {uid(branch, k) for k in m["graders"]}
+    assert all(g.email is None for g in got.graders)
+    ((fn, params),) = replay.calls
+    assert fn == "core_enrol_get_enrolled_users_with_capability"
+    assert "moodle/course:manageactivities" in params.values()
+    assert "mod/assign:grade" not in params.values()
+    assert not replay.unmatched
+    # a row for another capability is not an answer
+    replay.calls.clear()
+    replay.mutate = lambda fn, body: [
+        {**row, "capability": "mod/assign:grade"} for row in body
+    ]
+    gone = await read_editors(client, site, m["courseid"])
+    assert isinstance(gone, Unreadable) and gone.detail_code == "capability_row_missing"
 
 
 async def test_expected_unreadable_readers(branch: str) -> None:

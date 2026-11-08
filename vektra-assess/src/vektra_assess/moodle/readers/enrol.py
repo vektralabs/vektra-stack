@@ -14,6 +14,8 @@ from vektra_assess.moodle.readers._support import fetch, reader
 from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
 
 GRADE_CAPABILITY = "mod/assign:grade"
+#: REQ-077 "activity editors only": who may change the discussion configuration (plan 11)
+EDIT_CAPABILITY = "moodle/course:manageactivities"
 
 
 @reader
@@ -88,6 +90,34 @@ async def read_enrolment(
     )
 
 
+async def _with_capability(
+    client: MoodleWsClient, site: SiteRef, courseid: int, capability: str
+) -> Reading[GraderList]:
+    res = await fetch(
+        client,
+        site,
+        "core_enrol_get_enrolled_users_with_capability",
+        {"coursecapabilities": [{"courseid": courseid, "capabilities": [capability]}]},
+    )
+    if isinstance(res, Unreadable):
+        return res
+    rows = [
+        r for r in res.value if r.courseid == courseid and r.capability == capability
+    ]
+    if len(rows) != 1:
+        return Unreadable(UnreadableReason.PARTIAL, "capability_row_missing")
+    users = tuple(
+        GraderView(
+            userid=u.id,
+            fullname=u.fullname,
+            email=None,
+            roles=tuple(r.shortname for r in u.roles),
+        )
+        for u in rows[0].users
+    )
+    return Readable(GraderList(courseid, users), res.evidence)
+
+
 @reader
 async def read_graders(
     client: MoodleWsClient, site: SiteRef, courseid: int
@@ -98,32 +128,15 @@ async def read_graders(
     has no ``moodle/user:viewalldetails``), so ``GraderView.email`` is None: the delivery
     address has to come from somewhere else.
     """
-    res = await fetch(
-        client,
-        site,
-        "core_enrol_get_enrolled_users_with_capability",
-        {
-            "coursecapabilities": [
-                {"courseid": courseid, "capabilities": [GRADE_CAPABILITY]}
-            ]
-        },
-    )
-    if isinstance(res, Unreadable):
-        return res
-    rows = [
-        r
-        for r in res.value
-        if r.courseid == courseid and r.capability == GRADE_CAPABILITY
-    ]
-    if len(rows) != 1:
-        return Unreadable(UnreadableReason.PARTIAL, "capability_row_missing")
-    graders = tuple(
-        GraderView(
-            userid=u.id,
-            fullname=u.fullname,
-            email=None,
-            roles=tuple(r.shortname for r in u.roles),
-        )
-        for u in rows[0].users
-    )
-    return Readable(GraderList(courseid, graders), res.evidence)
+    return await _with_capability(client, site, courseid, GRADE_CAPABILITY)
+
+
+@reader
+async def read_editors(
+    client: MoodleWsClient, site: SiteRef, courseid: int
+) -> Reading[GraderList]:
+    """Users holding ``moodle/course:manageactivities`` in the course: the activity editors who
+    may change the discussion configuration (REQ-077, plan assess-teacher-ops). Same WS function
+    and the same ``moodle/role:review`` as ``read_graders``: no new capability for the service
+    account (REQ-079)."""
+    return await _with_capability(client, site, courseid, EDIT_CAPABILITY)

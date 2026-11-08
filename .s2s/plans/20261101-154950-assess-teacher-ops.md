@@ -2,7 +2,7 @@
 
 **ID**: 20261101-154950-assess-teacher-ops
 **Status**: active
-**Branch**: N/A
+**Branch**: feat/assess-teacher-ops (11a)
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-01T20:58:19Z
 **Approved**: 2026-11-01 (coordinator)
@@ -67,12 +67,20 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
   stale or absent → 403 `ERR_ASSESS_TEACHER_UNVERIFIED`, and a `gate_refresh` job is enqueued so
   a retry can succeed. `{cmid}`, `{sid}`, `{userid}` are resolved server-side against the site and
   course (IDOR tests). Reuse `authz/graders.py` from plan 10, extended with `require_fresh_editor`.
-- **Config storage (next revision).** `assess_activity_config(site_id, cmid, version, enabled, cap_minutes, rubric_source, show_solution, solution_set, pasted_rubric_set, recipients JSONB, rag_enabled BOOLEAN NOT NULL DEFAULT false CHECK (rag_enabled = false), available_until, opening_fallback_at, opening_attested_by, opening_attested_at, updated_by, updated_at)`
-  with optimistic concurrency (`expected_version` in the request; mismatch → 409).
-  `assess_activity_config_sealed(site_id, cmid, version, field ENUM(solution, pasted_rubric), sealed_blob, key_version)`:
-  the API role has INSERT only, never SELECT (grant matrix); the worker SELECTs and opens the box
-  at snapshot capture. Sessions record the `config_version` they started under, so changes apply
-  only to sessions not yet started.
+- **Config storage (revision 0036, as built in 11a).** `assess_activity_config` keeps its existing
+  columns (`enabled`, `flags` with `show_solution` / `rubric_source`, `rag_enabled`, `end_at` = the
+  end date "disponibile fino al", `attested_opening_at` / `attested_by`, `cap_minutes`) and gains
+  `version` (optimistic concurrency: `expected_version` in the request; mismatch → 409) and
+  `updated_by`; `CHECK (rag_enabled = false)`; the composite `teacher_config_sealed` / `_kid` /
+  `_set` and the dormant `recipients_extra` are dropped.
+  `assess_activity_config_sealed(site_id, cmid, field ∈ {solution, pasted_rubric, transcript_recipients}, sealed_blob, kid, is_set, refs, item_count, updated_by, updated_at)`:
+  one row per field, each sealed under the binding `[site_id, cmid, field]`; a cleared field keeps
+  its row with a NULL blob. The API role has INSERT/UPDATE and SELECT on the key columns, `is_set`
+  and `item_count` only, never `sealed_blob`, `kid` or `refs` (grant matrix); the worker SELECTs and
+  opens the fields at snapshot capture and delivery. A SECURITY DEFINER trigger audits each write
+  of a sealed field old/new (set / replaced / cleared; recipient refs), since the API cannot read
+  the old refs. Sessions copy what they need at Start (`duration_s`, `cap_s`, the snapshot), so a
+  change applies only to sessions not yet started; no per-session `config_version` is needed.
 - **Write-only semantics (OQ-034 default).** Request field absent = unchanged; `null` = clear;
   string = replace. Responses expose only `solution_state` / `pasted_rubric_state` ∈
   {`impostata`, `non impostata`}. Text is normalised (NFC, control characters except `\n`/`\t`
@@ -93,9 +101,14 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
   `VEKTRA_ASSESS_RAG_ENABLED` exists only so that setting it is REFUSED at startup ("not
   available in this release"): no dormant path. Real enablement (preconditions 2-4) is a future
   BACKLOG item.
-- **Recipients.** v1 offers Moodle-resolved graders only; any free-text address → field error
-  `free_text_not_available` listing the (empty) allowed domains. Changes audited old/new as user
-  ids.
+- **Recipients (REQ-082 as amended 2026-11-07; supersedes "Moodle-resolved graders only").**
+  `transcript_recipients` in the PUT body is 1..3 free-text addresses, validated in Vektra with
+  `delivery/address.normalize_address` and the mandatory allowlist `VEKTRA_ASSESS_RECIPIENT_DOMAINS`
+  (empty refuses all): an address outside it is the field error `domain_not_allowed` naming the
+  allowed domains; duplicates (case-insensitive) collapse. Sealed as a JSON list in the
+  `transcript_recipients` row. Changes are audited old/new as `recipient_ref`s
+  (`sha256(site_id|address)`), never an address. GET returns only `transcript_recipients_state`
+  (`impostata` / `non impostata`) and a count. Enable requires at least one recipient.
 - **Session list (REQ-076).** `GET /activities/{cmid}/sessions?cursor=` returns per student
   (Moodle userid only; names are resolved by the plugin): sessions #1..#N with state, close reason,
   delivery status per recipient (incl. FAILED/bounce), transcript id, reset count and reasons,
@@ -145,18 +158,24 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
 ## Tasks
 
 ### Foundation
-- [ ] Migration (next revision): `assess_activity_config`, `assess_activity_config_sealed`, `assess_resets`, `assess_terminations`, `assess_extra_time`; CHECK `rag_enabled = false`; grants (API: no SELECT on `_sealed`); extend plan 2's grant assertion
-- [ ] `vektra_assess/authz/teachers.py`: `require_fresh_editor` / `require_fresh_grader` / `can_view_overrides` over gate_inputs with max age, fail closed + `gate_refresh` enqueue
-- [ ] `vektra_assess/teacher/schemas.py`: Pydantic models (`extra="forbid"`), write-only field tri-state, field-error envelope builder; error codes `ERR_ASSESS_CONFIG_INVALID`, `ERR_ASSESS_TEACHER_UNVERIFIED`, `ERR_ASSESS_CONFIG_CONFLICT`, `ERR_ASSESS_RESET_REFUSED`, `ERR_ASSESS_TERMINATE_COUNT_MISMATCH` in `vektra_shared/errors.py` + `docs/reference/error-codes.md`
-- [ ] Startup step: refuse `VEKTRA_ASSESS_RAG_ENABLED=true`; refuse `VEKTRA_ASSESS_RESET_NOTICE_ENABLED=true` unless `VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION` is set (records the DPO-approved text)
+- [x] (added, 11a) Sealed storage per field: revision 0036 `assess_activity_config_sealed` (one row per `solution` / `pasted_rubric` / `transcript_recipients`, binding `[site_id, cmid, field]`), `crypto/teacher_config.py` `store_sealed_field` (API) / `read_teacher_config` (worker), `start_source.py`, `delivery/recipients.py`, `crypto/rotation.py` switched; composite `teacher_config_*` and dormant `recipients_extra` dropped; `version`, `updated_by`, `CHECK (rag_enabled = false)`; DEFINER trigger auditing sealed writes old/new (`test_teacher_config_schema.py`, `test_teacher_config_format.py`, `test_shred_rotation.py`, `test_grant_matrix.py`)
+- [x] Migration (next revision): `assess_activity_config`, `assess_activity_config_sealed`, `assess_resets`, `assess_terminations`, `assess_extra_time`; CHECK `rag_enabled = false`; grants (API: no SELECT on `_sealed`); extend plan 2's grant assertion (11a: revision 0036 with `assess_activity_config` changes, `_sealed`, `assess_teacher_gate`, job kind `teacher_gate`, the CHECK, the re-rendered matrix and its catalog/behaviour tests; `assess_extra_time` already exists (revision 0010); `assess_resets` / `assess_terminations` are created by 11b with their endpoints, task below, so no table sits dormant)
+- [x] (added, 11a) Activity-level teacher facts: `assess_teacher_gate(site_id, cmid, inputs, refreshed_at)` (revision 0036, API SELECT, worker writes) filled by the new `teacher_gate` job (`worker/teacher_gate.py`, `MoodleStartSource.teacher_facts`): the cmid resolved inside the hinted course only, editors (`moodle/course:manageactivities`, new `read_editors`, same WS function as the graders; read concurrently with the facts; the graders are NOT read in 11a, nothing consumes them: 11b adds them with `require_fresh_grader`), close date, team submission, grading method, Moodle rubric; ids and flags only (`test_teacher_gate.py`; editors request SYNTHETIC from the graders recording, live read BLOCKED, see Notes)
+- [x] `vektra_assess/authz/teachers.py`: `require_fresh_editor` / `require_fresh_grader` / `can_view_overrides` over gate_inputs with max age, fail closed + `gate_refresh` enqueue (11a: `check_fresh_editor` in `api/teachers.py` over `assess_teacher_gate`, stale / absent / unreadable -> 403 `ERR-ASSESS-021` `editor_check_stale` and a `teacher_gate` job per hint, `test_teacher_authz.py`; `require_fresh_grader` / `can_view_overrides` moved to the 11b task below)
+- [x] `vektra_assess/teacher/schemas.py`: Pydantic models (`extra="forbid"`), write-only field tri-state, field-error envelope builder; error codes `ERR_ASSESS_CONFIG_INVALID`, `ERR_ASSESS_TEACHER_UNVERIFIED`, `ERR_ASSESS_CONFIG_CONFLICT`, `ERR_ASSESS_RESET_REFUSED`, `ERR_ASSESS_TERMINATE_COUNT_MISMATCH` in `vektra_shared/errors.py` + `docs/reference/error-codes.md` (11a: `ConfigPut` strict, `FieldError`; CONFIG_INVALID = `ERR-ASSESS-022` 400 with `details.fields`, CONFIG_CONFLICT = `ERR-ASSESS-023` 409, TEACHER_UNVERIFIED = the existing `ERR-ASSESS-021`; `test_teacher_schemas.py`. RESET_REFUSED and TERMINATE_COUNT_MISMATCH arrive with their 11b routes, task below)
+- [x] Startup step: refuse `VEKTRA_ASSESS_RAG_ENABLED=true`; refuse `VEKTRA_ASSESS_RESET_NOTICE_ENABLED=true` unless `VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION` is set (records the DPO-approved text) (a settings validator: both the API (step 12, assess on and off) and the worker refuse; `test_config.py`, `test_assess_startup.py::test_the_api_refuses_the_rag_flag`)
+- [x] (added, 11a) Privacy precondition stub: `vektra_assess/privacy.py` `is_configured(conn, site)` returns False (fail closed) until plan 12 binds the REQ-089 store; the Start gate's `privacy_not_configured` delegates to it (`test_teacher_schemas.py::test_privacy_is_not_configured_until_plan_12`)
 
 ### Config
-- [ ] `teacher/validation.py`: BR-013 + REQ-077 rules as pure functions over (request, gate_inputs facts, privacy status, setup-check status); one test per boundary (20,000/20,001; cap 4/5/120/121; total 240/241; +100/+101 confirm; empty pasted rubric; end date ≤ opening)
-- [ ] `PUT /api/v1/assess/activities/{cmid}/config`: editor check, validation, seal secret fields, versioned insert, audit old/new (flags/values; secret fields as `replaced|cleared` only); `GET` (ratified in INT-001 on 2026-11-01) returns the computed opening condition, end date, review-options warning, `N sessioni attive`, `impostata/non impostata`
-- [ ] Wire `rag_enabled` rejection and the free-text recipient rejection with their field codes
-- [ ] Worker side: snapshot capture (plan 6) opens the sealed blobs for the session's `config_version`; add a test that the API process cannot `SELECT` `_sealed` (permission denied asserted)
+- [x] `teacher/validation.py`: BR-013 + REQ-077 rules as pure functions over (request, gate_inputs facts, privacy status, setup-check status); one test per boundary (20,000/20,001; cap 4/5/120/121; total 240/241; +100/+101 confirm; empty pasted rubric; end date ≤ opening) (`test_teacher_validation.py`; also recipients 1..3 + allowlist, RAG, rubric source per type, the enable refusals; `check_extra_time` is ready for the 11b endpoint)
+- [x] `PUT /api/v1/assess/activities/{cmid}/config`: editor check, validation, seal secret fields, versioned insert, audit old/new (flags/values; secret fields as `replaced|cleared` only); `GET` (ratified in INT-001 on 2026-11-01) returns the computed opening condition, end date, review-options warning, `N sessioni attive`, `impostata/non impostata` (`api/teacher_config.py`; `test_teacher_config_api.py`: defaults, save + worker opens the fields + audit old/new with 0 secret content, absent/null tri-state, 409 on a stale version with 0 change, field errors naming ranges with 0 change, enable refusals, 403 stale / not-an-editor / admin / mint / other site, audited and 0 change)
+- [x] Wire `rag_enabled` rejection and the free-text recipient rejection with their field codes (superseded for recipients by REQ-082 as amended: free text IS v1; an address outside `VEKTRA_ASSESS_RECIPIENT_DOMAINS` is `domain_not_allowed` with `allowed_domains`, never the address; RAG ON is `rag_unavailable` / `operator_flag_off`)
+- [x] Worker side: snapshot capture (plan 6) opens the sealed blobs for the session's `config_version`; add a test that the API process cannot `SELECT` `_sealed` (permission denied asserted) (no `config_version`: the capture runs in the Start's pre-flight and opens the current fields, solution only with the toggle ON, pasted rubric only with the source "pasted", `test_teacher_config_format.py`; SQLSTATE 42501 on `sealed_blob`, `kid`, `refs`, `SELECT *` and a predicate on the blob, `test_teacher_config_schema.py`, `test_teacher_config_api.py`)
 
 ### Teacher operations
+- [ ] (moved from Foundation, 11b) migration: `assess_resets`, `assess_terminations` (and their grants) with the reset / terminate routes
+- [ ] (moved from Foundation, 11b) error codes RESET_REFUSED and TERMINATE_COUNT_MISMATCH (next free `ERR-ASSESS-0NN`) with their routes
+- [ ] (moved from Foundation, 11b) `require_fresh_grader` / `can_view_overrides` in `api/teachers.py` over `assess_teacher_gate` (graders and the override-viewing capability of the activity), with their routes
 - [ ] `GET /activities/{cmid}/sessions`: list per Design Notes, cursor pagination, decrypt reset/terminate reasons for the grader view only
 - [ ] `POST /activities/{cmid}/sessions/{sid}/reset`: CLOSED check, reason, START-gate re-run, unique session_no, continuity flag, audit `reset`; REQ-092 notice row when enabled
 - [ ] `POST /activities/{cmid}/terminate`: count check, single-close-path loop in one transaction, STARTING rollback, optional disable, audit with `termination_id`
@@ -171,7 +190,7 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
 - [ ] Extra-time tests: +50% on 30 min → deadline exactly 45 min after commit (plus outage credit); change while ACTIVE/CLOSED refused; reason absent from every response and transcript
 - [ ] REQ-091 tests across the readability matrix fixtures (quiz overrides readable + assignment extensions unreadable → fallback active)
 - [ ] REQ-092 tests (flag on): one notice per reset on the mail sink, no reason/token in body or link; sink down → reset effective, state (10); flag off → 0 notices and list shows "studente non avvisato via email"
-- [ ] Docs: `docs/reference/api.md` teacher endpoints; `docs/reference/configuration.md` + `.env.example` (`VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, `VEKTRA_ASSESS_RAG_ENABLED` documented as refused, `VEKTRA_ASSESS_RESET_NOTICE_*`); `CHANGELOG.md` [Unreleased]
+- [ ] Docs: `docs/reference/api.md` teacher endpoints; `docs/reference/configuration.md` + `.env.example` (`VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S`, `VEKTRA_ASSESS_RAG_ENABLED` documented as refused, `VEKTRA_ASSESS_RESET_NOTICE_*`); `CHANGELOG.md` [Unreleased] (11a done: the config routes in api.md, the three settings and the gate bound in configuration.md and `.env.example`, error codes 022/023, the service-account guide line on editors, CHANGELOG Added + Changed; 11b adds its routes)
 
 ## State & Data Lifecycle
 
@@ -188,12 +207,12 @@ REQ-091 attestation, all audited content-free. The RAG field ships locked OFF.
 ## Acceptance Criteria
 
 - [ ] Non-grader, other-course teacher, cross-site key and admin key each get 403 on every teacher route, with an audit row per rejection (REQ-076, INT-001)
-- [ ] Stale or missing gate_inputs → 403 `ERR_ASSESS_TEACHER_UNVERIFIED`, 0 state change (INT-001)
-- [ ] New activity: RAG OFF, mostra soluzione OFF, end date empty; saving RAG ON → field error with reason; startup with the RAG flag ON refuses (REQ-077, ARCH-072)
-- [ ] BR-013 boundary set passes exactly as specified; each error names the range (BR-013, REQ-077)
-- [ ] Enable refused with a field error for: no quiz close date, no assignment cut-off, team submission, marking guide, empty pasted rubric, privacy unset, setup check red (REQ-077)
-- [ ] After saving a solution, the API role's `SELECT` on the sealed table fails with permission denied and GET shows only "impostata" (ARCH-071, OQ-034)
-- [ ] Changing the cap after a session started leaves its deadline unchanged; every change has an audit row old/new with 0 secret content (REQ-077, REQ-085)
+- [x] Stale or missing gate_inputs → 403 `ERR_ASSESS_TEACHER_UNVERIFIED`, 0 state change (INT-001) (11a, config routes: `ERR-ASSESS-021` `editor_check_stale`, a `teacher_gate` refresh queued, the refusal audited, 0 config / sealed rows, `test_teacher_config_api.py::test_unverified_teachers_are_refused_audited_and_change_nothing`, `test_teacher_authz.py`; each 11b route must show the same with its own test)
+- [x] New activity: RAG OFF, mostra soluzione OFF, end date empty; saving RAG ON → field error with reason; startup with the RAG flag ON refuses (REQ-077, ARCH-072) (`test_a_new_activity_reads_safe_defaults`, `test_field_errors_name_their_range_and_change_nothing`, `test_config.py`, `test_assess_startup.py`; `CHECK (rag_enabled = false)` in `test_teacher_config_schema.py`)
+- [x] BR-013 boundary set passes exactly as specified; each error names the range (BR-013, REQ-077) (`test_teacher_validation.py`: 20,000/20,001, cap 4/5/120/121, total 240/241, +100/+101 confirm, empty pasted rubric, end date; through the route: 20,001 / cap 121 / cap 4 refused naming the range, 20,000 / 120 / 5 accepted)
+- [x] Enable refused with a field error for: no quiz close date, no assignment cut-off, team submission, marking guide, empty pasted rubric, privacy unset, setup check red (REQ-077) (each in `test_teacher_validation.py`; through the route `test_enable_is_refused_with_field_errors`, which also enables once every precondition is met)
+- [x] After saving a solution, the API role's `SELECT` on the sealed table fails with permission denied and GET shows only "impostata" (ARCH-071, OQ-034) (SQLSTATE 42501 asserted after a real PUT; the worker opens the same field: `test_save_seals_each_field_audits_old_new_and_never_returns_a_secret`)
+- [x] Changing the cap after a session started leaves its deadline unchanged; every change has an audit row old/new with 0 secret content (REQ-077, REQ-085) (`test_a_cap_change_never_moves_a_started_sessions_deadline`: deadline, duration, cap_s identical after the PUT; audit rows old/new per field, the secret, the addresses and the domain absent from every audit `data`)
 - [ ] Reset criteria of REQ-087 pass, including canary counts on the captured LLM request bytes (REQ-087)
 - [ ] Terminate moves exactly N sessions to CLOSED(terminated_by_teacher) with N transcripts and 0 remaining handoff rows; disable blocks mint/Start immediately; re-enable never reopens (REQ-081)
 - [ ] +50% on 30 min → 45 min server deadline; extra time immutable once ACTIVE/CLOSED; no reason anywhere (REQ-078)
@@ -227,6 +246,8 @@ the recording LLM provider's captured request bytes, not on bot replies.
 
 ## Notes
 
+- Follow-up (code review of 11a, 2026-11-08): `str.isdigit()` accepts Unicode digits ('²') that `int()` rejects, a 500 instead of a 400. Fixed on the 11a config routes; the same pattern remains in earlier code at `api/common.py` (Content-Length), `api/events.py`, `api/deps.py` and `api/download_tokens.py`. Fix it in 11b with ASCII-digit checks and a test per site.
+
 - **OQ-025 spike (2026-11-01)**: on Moodle 4.3, quiz overrides and per-student time limits are unreadable, so the REQ-091 attested-date UI is the EXPECTED path for any quiz with user/group overrides; the teacher page must explain why (not an error). On 5.2 they are readable. Grace is readable only while the quiz is open; enabling the discussion after close also lands on REQ-091. Rubric descriptor attestation is a possible addition pending OQ-035.
 
 - OQ-034: write-only default implemented; if product requires re-display, the API needs a
@@ -242,3 +263,37 @@ the recording LLM provider's captured request bytes, not on bot replies.
   not, this plan adds them to the refresh step.
 
 > Note (independent review of W1, PR 146, 2026-11-03): the review-HTML sanitiser output (`SanitizeResult.text`, type `PlainText`, `vektra_assess.parser_protocol`) is TEXT, not markup, and is NOT escaped: it can contain literal `<img onerror=...>` (decoded entities) or `<math>...</math>` source. **Every consumer of `PlainText` in this plan must HTML-escape it at the render site** (`parser_protocol.html_escape`, or a contextual escaper) **and must have a test that proves it** (feed `&lt;img src=x onerror=alert(1)&gt;`, assert nothing in the rendered output parses as an element). The same holds for file text returned by `parse_file` (`ParseResult.text`) when it is rendered.
+
+### Design decisions taken in 11a (one line each, with the reason)
+
+- 11a = Foundation + Config on `feat/assess-teacher-ops`; 11b = Teacher operations (sessions list, reset, terminate, extra time, opening fallback, route inventory), next PR.
+- Sealed storage per field, not one composite blob (coordinator, 2026-11-08; supersedes the 10b "Requests from 10b" format): a PUT changes one field (absent / null / string, OQ-034) and the API can never read the others back to merge them, and the plugin never caches the solution. One row per field in `assess_activity_config_sealed`, each under the binding `[site_id, cmid, field]`; the composite columns are dropped (dormant-path rule).
+- Clearing a field is an UPDATE to a NULL blob (the row stays, `is_set` false), not a DELETE: the API needs no DELETE grant, and the row keeps the clearing actor (`updated_by`) for the audit.
+- The API's upsert repeats the bound parameters in `DO UPDATE SET` instead of `EXCLUDED.col`: verified on pg16 that an `EXCLUDED` reference needs SELECT on that target column (permission denied for `sealed_blob`), so `EXCLUDED` would force the very grant ARCH-071 forbids.
+- Sealed-field changes are audited by a SECURITY DEFINER trigger (`assess_audit_sealed_change`, nobody may EXECUTE it; it fires for the API role without EXECUTE, verified) from OLD/NEW: the API cannot read the old recipient refs it must audit (REQ-085 old/new); it fires on every INSERT / UPDATE except an UPDATE by the worker's login role (`session_user`, the key rotation: CodeRabbit 4505511235, an API write that does not name `updated_at` is audited too), and skips a re-sent identical recipient list. Non-secret fields are audited by the API in Python.
+- Existing columns reused: `enabled`, `flags.show_solution` / `flags.rubric_source` (the capture and gates already read them from `flags`), `rag_enabled`, `end_at` (= "disponibile fino al"), `attested_opening_at` / `attested_by`, `cap_minutes`; added only `version` and `updated_by`. `recipients_extra` was never read: dropped.
+- No per-session `config_version`: a session copies at Start what the config gives it (`duration_s`, `cap_s` from plan 10, the snapshot with the solution), so a later change cannot reach a started session (tested on the deadline).
+- Editors and the enable facts come from a new activity-level `assess_teacher_gate` (site, cmid), not `assess_gate_inputs`: the latter is keyed per student (render check), and a config request names no student (the plan's "dependency risk" note foresaw adding them). The worker resolves the cmid only inside the course the plugin hints (`resolve_in_course`), so a hint of another course verifies nobody; the row records the hint it answers, and a request with another hint queues its own refresh (dedupe per hint), so a wrong hint cannot block a right one for long.
+- Authz lives in `api/teachers.py` next to `api/graders.py`, not in a new `authz/` package (same reason as 10a: a new top-level child changes the designed layout and every import-contract list); `ERR-ASSESS-021` is reused for the editor check (`details.reason` `not_an_editor` / `editor_check_stale`) rather than a new code: same meaning, same retry semantics.
+- `teacher/` is a new top-level package (the plan's own layout: pure, API-importable, added to the import-contract lists and the scaffold's expected set); `privacy.py` is top-level too because plan 12 owns `vektra_assess.privacy` and the worker's Start gate now calls the same stub.
+- Field errors are `ERR-ASSESS-022` with `details.fields=[{field, code, range?, ...}]`, never the value; the schema keeps BR-013 ranges OUT of the Pydantic model (a cap of 121 must reach the rule that names "5-120"), while wrong types and unknown fields stay the `ERR-ASSESS-014` 400 of `parse_body`.
+- Text that is empty after normalisation counts as cleared (an empty string is not a "set" solution); quiz + rubric source `moodle` is a field error (REQ-077: Moodle rubric for assignments, pasted text for quizzes); the empty pasted rubric is refused on every save, not only on enable (BR-013).
+- The end date is checked against the effective opening = the later of the activity's own close (worker fact) and the attested REQ-091 date; unknown opening is `opening_unknown`. Participant overrides are not in the teacher facts: the Start gate's BR-006(d) evaluation stays authoritative.
+- PUT re-checks the Moodle facts, privacy and setup check only when the request itself switches `enabled` on; a save of an already enabled activity re-checks what it can break (cap, rubric source, pasted rubric, recipients). The Start gates re-check the Moodle facts at every Start.
+- GET takes the actor and the hints as headers (`X-Assess-Actor`, `X-Assess-Course`, `X-Assess-Activity-Type`); no query parameters on teacher routes. The review-options warning is `review_options_hide_content` = a quiz on a site whose `review_html_filterable` capability is not readable (ARCH-070: quiz detail reduced); per-quiz review options are per-student WS reads and are not in the teacher facts.
+- The config body cap (`MAX_CONFIG_BODY_BYTES`, 607,056 bytes) is computed from the worst VALID body (review 6): PHP's `json_encode` escapes every non-ASCII code point, 12 bytes for an astral one, so two 20,000-code-point texts plus the recipients list at its schema bounds (20 items of at most 512 chars) plus 4 KiB; a text within the limit always gets the field-level `too_long`, never `body_too_large`.
+- `null` in the PUT (review 8): it clears the write-only fields, `cap_minutes` and `available_until` (they can be empty); on `enabled`, `show_solution`, `rag_enabled` and `rubric_source` it is the field error `null_not_allowed`, chosen over "unchanged" because an explicit null on a setting that always has a value is a client bug the plugin should see, and "absent" already means unchanged. Documented in `api.md`.
+- The 0036 upgrade refuses a database holding a composite sealed config instead of dropping it: no release wrote one (no writer existed), and it cannot be split without the worker's private key.
+
+### 11a state, BLOCKED items and requests
+
+- **11a = Foundation + Config on `feat/assess-teacher-ops`; 11b = Teacher operations, next PR.** 11b starts from the unchecked tasks above (sessions list, reset, terminate, extra time with `teacher.validation.check_extra_time`, opening fallback, route inventory, `require_fresh_grader` / `can_view_overrides`, `assess_resets` / `assess_terminations`, their error codes) and the open acceptance criteria.
+- BLOCKED (11a): the live read of the activity editors (`core_enrol_get_enrolled_users_with_capability` for `moodle/course:manageactivities`) on the Moodle 4.3 / 5.2 dev envs. The unit test serves it from the graders recording with the capability renamed (SYNTHETIC, labelled in `test_teacher_gate.py` and `test_moodle_readers.py`); a recording or a `test_moodle_live` run needs the dev envs, which this session did not run. Same WS function and capability (`moodle/role:review`) as the graders read, so no new service-account capability is expected.
+- The enable path cannot succeed in a real deployment until plan 12 binds `privacy.is_configured` (fail closed by design): the route test enables only with it monkeypatched.
+- Plugin request (vektra-moodle-discuss P3, owned by the other session; supersedes the "sealed teacher config" wording of the 10b P3 request, the plugin never seals anything): the settings section calls `PUT /api/v1/assess/activities/{cmid}/config` with the `assess:teacher` key and the body `{actor_userid, courseid, activity_type, expected_version, ...fields}` (absent = unchanged; `solution`, `pasted_rubric`, `transcript_recipients` are plaintext in the body, `null` clears, never re-sent unless changed, never cached), and `GET` the same path with headers `X-Assess-Actor`, `X-Assess-Course`, `X-Assess-Activity-Type` to render `version`, `*_state`, `transcript_recipients_count`, `opening`, `warnings`, `active_sessions`. Field errors: `400 ERR-ASSESS-022` `details.fields[{field, code, range?, allowed_domains?, index?, reason?}]`; `409 ERR-ASSESS-023` -> reload; `403 ERR-ASSESS-021` with `editor_check_stale` -> retry after a few seconds (a refresh was queued), `not_an_editor` -> no retry. The live counter of the two texts counts code points after NFC with control characters other than newline and tab removed. `rubric_source` `moodle` only for assignments. Documented in `docs/reference/api.md`.
+
+### CodeRabbit review on PR #170 (2026-11-08), decisions
+
+- Won't fix (4505511240, non-enrolled managers): `read_editors` lists only users ENROLLED in the course with `moodle/course:manageactivities` (`core_enrol_get_enrolled_users_with_capability`). A category or site manager who edits the activity without an enrolment is refused (fail closed, `not_an_editor`), never wrongly accepted. Checking an arbitrary user's capability without an enrolment needs a WS function outside the REQ-079 service list; adding one is a REQ-079 / ARCH-070 change for the coordinator. Workaround: enrol the manager (any role carrying the capability). Pilot impact to confirm with the product owner.
+- Won't fix (4505511251, activity-level prohibit): the editors are read at COURSE context; a role override that prohibits `moodle/course:manageactivities` on one activity is not seen by the Vektra check. No WS function in the REQ-079 list evaluates another user's capability at module context. The plugin only shows the settings section to users with the capability in the module context (Moodle's own check of the settings page), so the residual case is a plugin-key holder forging `actor_userid` for a course editor prohibited on that one activity: inside ARCH-067's accepted residual risk (a leaked `assess:teacher` key acts as any editor of the site). Recorded for the coordinator with the item above.
+

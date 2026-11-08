@@ -74,6 +74,12 @@ class AssessAuditEvent(enum.StrEnum):
     DELIVERY_POSSIBLE_DUPLICATE = "assess_delivery_possible_duplicate"
     DELIVERY_RECIPIENT_REPLACED = "assess_delivery_recipient_replaced"
     DELIVERY_RECIPIENT_ADDED = "assess_delivery_recipient_added"
+    # plan assess-teacher-ops: a teacher refused by the fresh role check (REQ-076, INT-001), and
+    # a configuration change old/new (REQ-077, REQ-085). Sealed fields are audited by the
+    # database trigger of revision 0036 under the same event name, with ``set|replaced|cleared``
+    # and recipient refs, never content.
+    TEACHER_UNVERIFIED = "assess_teacher_unverified"
+    TEACHER_CONFIG_CHANGED = "assess_teacher_config_changed"
 
 
 class Conn(Protocol):

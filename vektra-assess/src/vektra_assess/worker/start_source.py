@@ -3,9 +3,10 @@
 For one STARTING session it reads, fresh and server-side only:
 
 - the site (base URL, release) and its two ARCH-070 capability flags from the database;
-- the teacher configuration view: ``flags.show_solution`` / ``flags.rubric_source`` (plan 11 owns
-  the form that writes them; until then the defaults are the safe ones, solution OFF), and the
-  solution text only when the toggle is ON and a sealed value exists (OQ-034);
+- the teacher configuration view: ``flags.show_solution`` / ``flags.rubric_source`` (plan 11's
+  config PUT writes them; absent, the defaults are the safe ones, solution OFF), the solution
+  text only when the toggle is ON and a sealed value exists (OQ-034), and the pasted rubric only
+  when the rubric source is ``pasted`` (each sealed field opened on its own, revision 0036);
 - the activity's course and instance, resolved from the cmid inside the student's own courses
   (``resolve_activity``; the plugin's course id is only a hint, REQ-095);
 
@@ -16,7 +17,7 @@ this path at all.
 
 from __future__ import annotations
 
-import json
+import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -42,7 +43,11 @@ from vektra_assess.context.capture.capture import (
 from vektra_assess.context.capture.readers import MoodleCaptureReaders
 from vektra_assess.context.regrade import GradeReading
 from vektra_assess.context.snapshot import mark_str
-from vektra_assess.crypto.teacher_config import CONFIG_FIELD, open_teacher_config
+from vektra_assess.crypto.teacher_config import (
+    PASTED_RUBRIC,
+    SOLUTION,
+    read_teacher_config,
+)
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.moodle import readers as r
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
@@ -53,30 +58,19 @@ from vektra_assess.moodle.readers.resolve import (
     resolve_in_course,
 )
 from vektra_assess.moodle.result import Readable, Unreadable
+from vektra_assess.teacher.validation import rubric_source_of
 from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.preflight import MoodleGateFacts, StartTarget
 
 _SITE = text("SELECT base_url, release FROM assess_sites WHERE id = :s")
+_SET_FIELDS = text(
+    "SELECT count(*) FROM assess_activity_config_sealed WHERE site_id = :s AND cmid = :c "
+    "AND field = ANY(:f) AND sealed_blob IS NOT NULL"
+)
 _CAPS = text(
     "SELECT flag, state FROM assess_site_capabilities WHERE site_id = :s "
     "AND flag IN ('review_html_filterable', 'rubric_display_settings')"
 )
-_SEALED = text(
-    "SELECT teacher_config_sealed FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
-)
-#: the teacher config is ONE JSON object sealed under binding ``config`` (rotation re-seals it the
-#: same way): ``{"solution"?: str, "transcript_recipients": [...]}``; plan 11's PUT writes it
-SOLUTION_KEY = "solution"
-
-
-def solution_of(plain: str) -> str | None:
-    """The ``solution`` text of the opened config object; None when absent or not a string."""
-    try:
-        doc = json.loads(plain)
-    except json.JSONDecodeError:
-        return None
-    value = doc.get(SOLUTION_KEY) if isinstance(doc, dict) else None
-    return value if isinstance(value, str) and value else None
 
 
 class _BoundedCache:
@@ -119,16 +113,18 @@ class _BoundedCache:
 
 
 def teacher_view(
-    flags: dict[str, Any], kind: str, solution_text: str | None
+    flags: dict[str, Any],
+    kind: str,
+    solution_text: str | None,
+    pasted_rubric: str | None = None,
 ) -> TeacherConfigView:
     show = flags.get("show_solution") is True
-    source = flags.get("rubric_source")
-    if source not in ("none", "pasted", "moodle"):
-        source = "moodle" if kind == "assign" else "none"
+    source = rubric_source_of(flags, kind)
     return TeacherConfigView(
         show_solution=show,
-        rubric_source=str(source),
+        rubric_source=source,
         solution_text=solution_text if show else None,
+        pasted_rubric=pasted_rubric if source == "pasted" else None,
     )
 
 
@@ -152,12 +148,12 @@ class MoodleStartSource:
         # Bounded: a render check, or a Start a gate refused, never reaches ``capture``.
         self._resolved = _BoundedCache(resolved_max, resolved_ttl_s, clock)
 
-    async def _site(self, target: StartTarget) -> SiteRef | None:
+    async def _site(self, site_id: UUID) -> SiteRef | None:
         async with self._acquire() as conn:
-            site = (await conn.execute(_SITE, {"s": target.site_id})).first()
+            site = (await conn.execute(_SITE, {"s": site_id})).first()
         if site is None or not site.release:
             return None
-        return SiteRef(str(target.site_id), str(site.base_url), str(site.release))
+        return SiteRef(str(site_id), str(site.base_url), str(site.release))
 
     async def _resolve(
         self, site: SiteRef, target: StartTarget
@@ -185,7 +181,7 @@ class MoodleStartSource:
     async def enrolled(self, target: StartTarget) -> bool | None:
         """The enrolment re-check (M3.7): the activity inside the student's ACTIVE courses and the
         student role there. Not found in those courses is False; unreadable is None."""
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return None
         ref, not_found = await self._resolve(site, target)
@@ -226,7 +222,7 @@ class MoodleStartSource:
 
     async def graders(self, target: StartTarget) -> tuple[GraderView, ...] | None:
         """The course's current graders (REQ-082); None when unreadable (never a guess)."""
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return None
         ref = await self._course_ref(site, target)
@@ -234,6 +230,64 @@ class MoodleStartSource:
             return None
         res = await r.read_graders(self._client, site, ref.courseid)
         return res.value.graders if isinstance(res, Readable) else None
+
+    async def teacher_facts(
+        self, site_id: UUID, cmid: int, courseid: int, kind: str
+    ) -> dict[str, Any]:
+        """The activity-level facts of ``assess_teacher_gate`` (plan assess-teacher-ops): the
+        cmid resolved INSIDE the hinted course only, then, concurrently, its editors and the
+        REQ-077 enable facts. Anything unreadable is None (the API fails closed on it). The
+        graders are not read here: nothing in 11a consumes them (11b adds them with its
+        routes)."""
+        site = await self._site(site_id)
+        if site is None:
+            return {"resolved": False, "reason": "site_release_unknown"}
+        res = await resolve_in_course(
+            self._client,
+            site,
+            cmid=cmid,
+            kind="quiz" if kind == "quiz" else "assign",
+            courseid=courseid,
+        )
+        if isinstance(res, Unreadable):
+            return {"resolved": False, "reason": res.detail_code or "unreadable"}
+        ref, c = res.value, self._client
+        out: dict[str, Any] = {
+            "resolved": True,
+            "courseid": ref.courseid,
+            "activity_type": kind,
+            "editors": None,
+            "close_at": None,
+            "team_submission": None,
+            "grading_method": None,
+            "moodle_rubric": None,
+        }
+        if kind == "quiz":
+            editors, close = await asyncio.gather(
+                r.read_editors(c, site, ref.courseid),
+                r.read_quiz_close_inputs(c, site, ref.courseid, ref.instanceid),
+            )
+            if isinstance(close, Readable):
+                out["close_at"] = int(close.value.timeclose or 0)
+            out["team_submission"] = False
+        else:
+            editors, settings, grading = await asyncio.gather(
+                r.read_editors(c, site, ref.courseid),
+                r.read_assign_settings(c, site, ref.courseid, ref.instanceid),
+                r.read_grading_view(c, site, cmid),
+            )
+            if isinstance(settings, Readable):
+                out["close_at"] = int(settings.value.cutoffdate or 0)
+                out["team_submission"] = bool(settings.value.teamsubmission)
+            if isinstance(grading, Readable):
+                out["grading_method"] = grading.value.method
+                out["moodle_rubric"] = (
+                    grading.value.method == "rubric"
+                    and grading.value.rubric is not None
+                )
+        if isinstance(editors, Readable):
+            out["editors"] = sorted({u.userid for u in editors.value.graders})
+        return out
 
     async def close_facts(
         self,
@@ -260,7 +314,7 @@ class MoodleStartSource:
             session_no=1,
             flags={},
         )
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return CloseFacts()
         ref = await self._course_ref(site, target)
@@ -303,7 +357,7 @@ class MoodleStartSource:
 
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
         """The Moodle half of the START gates, read fresh; anything unreadable stays None."""
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return MoodleGateFacts()
         ref, not_found = await self._resolve(site, target)
@@ -421,7 +475,9 @@ class MoodleStartSource:
 
     async def _context(
         self, target: StartTarget
-    ) -> tuple[SiteRef, Capabilities, str | None] | None:
+    ) -> tuple[SiteRef, Capabilities, str | None, str | None, bool] | None:
+        """(site, capabilities, solution, pasted rubric, whether a NEEDED sealed field failed to
+        open); None when the site is unknown."""
         async with self._acquire() as conn:
             site = (await conn.execute(_SITE, {"s": target.site_id})).first()
             if site is None or not site.release:
@@ -430,43 +486,57 @@ class MoodleStartSource:
                 r.flag: r.state
                 for r in (await conn.execute(_CAPS, {"s": target.site_id})).all()
             }
-            solution = None
-            if (
-                target.flags.get("show_solution") is True
-                and self._teacher_private is not None
-            ):
-                sealed = (
-                    await conn.execute(_SEALED, {"s": target.site_id, "c": target.cmid})
-                ).scalar()
-                if sealed is not None:
-                    solution = solution_of(
-                        open_teacher_config(
-                            self._teacher_private,
-                            bytes(sealed),
-                            target.site_id,
-                            target.cmid,
-                            CONFIG_FIELD,
-                        )
+            # only the fields this capture may see are fetched at all: the solution with the
+            # toggle ON, the pasted rubric with the source "pasted"
+            kind = "quiz" if target.activity_type == "quiz" else "assign"
+            wanted = []
+            if target.flags.get("show_solution") is True:
+                wanted.append(SOLUTION)
+            if rubric_source_of(target.flags, kind) == "pasted":
+                wanted.append(PASTED_RUBRIC)
+            solution = pasted = None
+            unreadable = False
+            if wanted and self._teacher_private is not None:
+                opened = await read_teacher_config(
+                    conn, self._teacher_private, target.site_id, target.cmid, wanted
+                )
+                solution, pasted = opened.solution, opened.pasted_rubric
+                # a field the activity needs that does not open fails closed (never a session
+                # silently started without its solution or pasted rubric)
+                unreadable = bool(opened.unreadable & set(wanted))
+            elif wanted:
+                # no key to open them: a STORED needed field fails closed like one that does not
+                # open; an unset one keeps the safe default (nothing to show)
+                stored = (
+                    await conn.execute(
+                        _SET_FIELDS,
+                        {"s": target.site_id, "c": target.cmid, "f": wanted},
                     )
+                ).scalar()
+                unreadable = bool(stored)
         ref = SiteRef(str(target.site_id), str(site.base_url), str(site.release))
         capabilities = Capabilities(
             review_html_filterable=caps.get("review_html_filterable", "unreadable"),
             rubric_display_settings=caps.get("rubric_display_settings", "unreadable"),
         )
-        return ref, capabilities, solution
+        return ref, capabilities, solution, pasted, unreadable
 
     async def capture(self, target: StartTarget) -> CaptureResult:
         ctx = await self._context(target)
         if ctx is None:
             return Failed(FailReason.POLICY_INPUT_UNREADABLE, "site_release_unknown")
-        site, caps, solution = ctx
+        site, caps, solution, pasted, unreadable = ctx
+        if unreadable:
+            return Failed(
+                FailReason.POLICY_INPUT_UNREADABLE, "teacher_config_unreadable"
+            )
         kind = "quiz" if target.activity_type == "quiz" else "assign"
         ref, _not_found = await self._resolve(site, target)
         self._resolved.pop(target.session_id)
         if ref is None:
             return Failed(FailReason.POLICY_INPUT_UNREADABLE, "activity_unresolved")
         readers = MoodleCaptureReaders(self._client, site)
-        teacher = teacher_view(target.flags, kind, solution)
+        teacher = teacher_view(target.flags, kind, solution, pasted)
         release = str(site.release)
         if kind == "quiz":
             return await capture_quiz(

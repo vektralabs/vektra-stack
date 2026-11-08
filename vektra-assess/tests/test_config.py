@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.errors import ERR_ASSESS_001, assess_unavailable
@@ -142,3 +143,31 @@ def test_the_smtp_from_is_a_bare_address(bad: str) -> None:
         {"VEKTRA_ASSESS_SMTP_FROM": " Vektra@Unical.IT "}
     )
     assert ok.smtp_from == "Vektra@unical.it"
+
+
+# --- plan assess-teacher-ops: startup refusals ------------------------------------------------
+
+
+def test_rag_flag_on_is_refused_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ARCH-072: no dormant RAG path; the flag exists only to be refused."""
+    assert VektraAssessSettings().rag_enabled is False
+    monkeypatch.setenv("VEKTRA_ASSESS_RAG_ENABLED", "true")
+    with pytest.raises(ValidationError, match="not available in this release"):
+        VektraAssessSettings()
+
+
+def test_reset_notice_needs_its_approved_text_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OQ-020 / REQ-092: the notice is off by default and on only with the DPO-approved text."""
+    s = VektraAssessSettings()
+    assert s.reset_notice_enabled is False and s.reset_notice_text_version is None
+    monkeypatch.setenv("VEKTRA_ASSESS_RESET_NOTICE_ENABLED", "true")
+    with pytest.raises(ValidationError, match="RESET_NOTICE_TEXT_VERSION"):
+        VektraAssessSettings()
+    monkeypatch.setenv("VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION", "  ")
+    with pytest.raises(ValidationError, match="RESET_NOTICE_TEXT_VERSION"):
+        VektraAssessSettings()
+    monkeypatch.setenv("VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION", "dpo-2026-12-01")
+    s = VektraAssessSettings()
+    assert s.reset_notice_enabled and s.reset_notice_text_version == "dpo-2026-12-01"

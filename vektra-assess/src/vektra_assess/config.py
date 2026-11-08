@@ -717,10 +717,56 @@ class VektraAssessSettings(BaseSettings):
         ge=10,
         alias="VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S",
         description=(
-            "Freshness bound of the worker-written grader list a teacher request is checked "
-            "against; older or absent -> 403 and a refresh is queued (fail closed)."
+            "Freshness bound of the worker-written grader / editor lists a teacher request is "
+            "checked against; older or absent -> 403 and a refresh is queued (fail closed)."
         ),
     )
+    # --- teacher operations (plan assess-teacher-ops) -----------------------------------------
+    rag_enabled: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_RAG_ENABLED",
+        description=(
+            "Course-material retrieval in discussions (ARCH-072). NOT AVAILABLE in this release: "
+            "setting it to true is refused at startup, and a teacher's RAG ON is a field error. "
+            "It exists only so that a deployment that sets it learns that at once."
+        ),
+    )
+    reset_notice_enabled: bool = Field(
+        False,
+        alias="VEKTRA_ASSESS_RESET_NOTICE_ENABLED",
+        description=(
+            "REQ-092: email the student when a teacher grants a new session. Off until the DPO "
+            "approves the flow and the text (OQ-020); true is refused at startup unless "
+            "VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION records the approved text."
+        ),
+    )
+    reset_notice_text_version: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION",
+        description="Version label of the DPO-approved REQ-092 notice text (required with the notice on).",
+    )
+
+    @field_validator("reset_notice_text_version", mode="before")
+    @classmethod
+    def _blank_version_is_unset(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def _teacher_ops_refusals(self) -> Self:
+        """Startup refusals (plan assess-teacher-ops): no dormant path for RAG, no notice
+        without the record of its approved text."""
+        if self.rag_enabled:
+            raise ValueError(
+                "VEKTRA_ASSESS_RAG_ENABLED=true is not available in this release: discussion "
+                "retrieval stays off (ARCH-072). Unset it."
+            )
+        if self.reset_notice_enabled and not self.reset_notice_text_version:
+            raise ValueError(
+                "VEKTRA_ASSESS_RESET_NOTICE_ENABLED=true needs "
+                "VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION (the DPO-approved text, OQ-020)"
+            )
+        return self
+
     # --- transcript delivery by SMTP (plan assess-transcript-delivery 10b; worker only) -------
     # The account is the worker-only secret ``assess_smtp`` ({"username", "password"}, ARCH-071
     # key matrix: the API refuses to start when it is mounted or named in its environment).

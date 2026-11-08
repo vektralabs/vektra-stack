@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from vektra_assess.errors import assess_unavailable, bad_request
+from vektra_assess.errors import assess_unavailable, bad_request, key_not_bound
 from vektra_shared.errors import ErrorResponse, http_status_for
 
 #: no assess request body is legitimately larger than this (a turn is capped far below it)
@@ -29,6 +29,15 @@ SITE_OF_KEY = text(
     "JOIN assess_sites s ON s.id = k.site_id "
     "WHERE k.api_key_id = :k AND k.purpose = :p AND s.disabled_at IS NULL"
 )
+
+
+async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
+    """The enabled site the caller's key is bound to for ``purpose``; 403 ``ERR-ASSESS-007``
+    when it is bound to none (one rule for every site-bound route)."""
+    site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": purpose})).scalar()
+    if site is None:
+        raise fail(key_not_bound(purpose))
+    return site
 
 
 def fail(err: ErrorResponse, headers: dict[str, str] | None = None) -> HTTPException:

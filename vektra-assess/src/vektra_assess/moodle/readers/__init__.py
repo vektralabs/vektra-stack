@@ -11,6 +11,7 @@ from vektra_assess.moodle.readers.assign import (
 )
 from vektra_assess.moodle.readers.enrol import (
     read_course_participants,
+    read_editors,
     read_enrolment,
     read_graders,
     read_user_courses,
@@ -48,6 +49,7 @@ __all__ = [
     "read_assign_settings",
     "read_attempt_review",
     "read_course_participants",
+    "read_editors",
     "read_enrolment",
     "read_grade_release",
     "read_graders",

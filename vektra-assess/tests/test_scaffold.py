@@ -25,6 +25,7 @@ EXPECTED_SUBPACKAGES = {
     "crypto",
     "db",
     "ui",  # the discussion UI page, its headers and origins (plan 9)
+    "teacher",  # the config request models and BR-013 rules, pure (plan 11)
 }
 EXPECTED_MODULES = {"config", "keys", "errors", "health", "parser_protocol"}
 

@@ -130,7 +130,9 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ASSESS-018 | vektra-assess | 401 | Download token missing, invalid, expired, already used or minted for another transcript (one envelope for every case) |
 | ERR-ASSESS-019 | vektra-assess | 400 | Resend refused: the body or the query names a recipient; recipients are the course's graders only (REQ-082). Explicit envelope, never the framework 422 |
 | ERR-ASSESS-020 | vektra-assess | 500 | The stored transcript does not decrypt or does not re-hash to its stored SHA-256: it is not served and the operator is alerted |
-| ERR-ASSESS-021 | vektra-assess | 403 | The teacher is not a grader of the activity according to a fresh worker check (absent or stale: a refresh is queued, retry) |
+| ERR-ASSESS-021 | vektra-assess | 403 | The teacher is not a grader (download, resend) or an editor (configuration) of the activity according to a fresh worker check (`details.reason`: `not_a_grader`, `not_an_editor`; absent or stale, `*_check_stale`: a refresh is queued, retry) |
+| ERR-ASSESS-022 | vektra-assess | 400 | Teacher configuration refused (BR-013, REQ-077): `details.fields` lists `{field, code, ...}` per invalid field (with `range` or `allowed_domains` where the rule has one). Explicit envelope, never the framework 422 |
+| ERR-ASSESS-023 | vektra-assess | 409 | Teacher configuration changed since it was read: `expected_version` is not the current `details.current_version`; reload and save again |
 
 ### Deliberately not listed
 

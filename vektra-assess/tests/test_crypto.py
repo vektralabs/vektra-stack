@@ -369,3 +369,28 @@ def test_seal_validates_the_kid_before_doing_any_crypto():
 
 def x_ring_for_test():
     return x25519_rings()
+
+
+def test_deeply_nested_recipient_json_reads_as_unreadable():
+    """CodeRabbit 4505511222: a sealed recipients value nested deep enough to exhaust the JSON
+    decoder's recursion is unreadable (None + named), never a raised RecursionError."""
+    import asyncio
+    from types import SimpleNamespace
+
+    worker_pub, worker_priv = x25519_rings()
+    deep = "[" * 200_000 + "]" * 200_000
+    blob, _ = teacher_config.seal_teacher_config(
+        worker_pub, "site-1", 7, teacher_config.TRANSCRIPT_RECIPIENTS, deep
+    )
+
+    class Conn:
+        async def execute(self, *_a):
+            return SimpleNamespace(
+                all=lambda: [(teacher_config.TRANSCRIPT_RECIPIENTS, blob)]
+            )
+
+    got = asyncio.run(
+        teacher_config.read_teacher_config(Conn(), worker_priv, "site-1", 7)
+    )
+    assert got.transcript_recipients is None
+    assert got.unreadable == {teacher_config.TRANSCRIPT_RECIPIENTS}

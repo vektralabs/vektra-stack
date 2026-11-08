@@ -171,6 +171,7 @@ async def test_the_facts_are_dated_when_they_were_read_not_when_stored(
     site = await make_site(pg)
     if existing:
         await seed_gate(pg, site, 57, age="1 day")
+    t0 = (await pg.run("super", "SELECT clock_timestamp()"))[0][0]
     engine = create_async_engine(pg.url("worker"))
     try:
         await refresh_teacher_gate(Slow(), engine.connect, site, 57, COURSE, "assign")
@@ -183,6 +184,7 @@ async def test_the_facts_are_dated_when_they_were_read_not_when_stored(
             {"s": site},
         )
     )[0]
-    # dated no later than the moment the Moodle read began, and (update) not the old stamp
-    assert stamp <= began[0], (stamp, began[0])
-    assert (began[0] - stamp).total_seconds() < 1.0
+    # within database-clock bounds (CodeRabbit 4505893722: no wall-time limit): not before the
+    # refresh was called (so the old stamp of an existing row was replaced), not after the
+    # Moodle read began (so the 2 s read is not counted as fresh)
+    assert t0 <= stamp <= began[0], (t0, stamp, began[0])

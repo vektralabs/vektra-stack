@@ -435,6 +435,12 @@ def test_opening_fallback_bounds_attestation_and_later_only() -> None:
         ("opening_at", "only_later")
     ]
     assert _fallback(CLOSE + 21, current_at=CLOSE + 20, started=True) == []
+    # review 11b-2: the end date must stay after the opening (the rule of check_end_date)
+    assert _fallback(CLOSE + 10, end_at=CLOSE + 11) == []
+    assert _fallback(CLOSE + 10, end_at=CLOSE + 10) == [
+        ("opening_at", "not_before_end")
+    ]
+    assert _fallback(CLOSE + 10, end_at=CLOSE + 5) == [("opening_at", "not_before_end")]
     naive = v.check_opening_fallback(
         datetime(2030, 1, 1),
         attestation=True,

@@ -337,10 +337,13 @@ def check_opening_fallback(
     close_at: int | None,
     current_at: int | None,
     started: bool,
+    end_at: int | None = None,
 ) -> list[FieldError]:
     """REQ-091: an attestation on every edit; only while the fallback applies; on or after the
     activity's own close / cut-off (the fallback never replaces a missing one, BR-007); once any
-    session of the activity started, only a later date."""
+    session of the activity started, only a later date; and before the end date ``end_at``
+    ("disponibile fino al" must stay after the effective opening, as ``check_end_date`` requires
+    when the end date is saved: otherwise no Start could ever happen)."""
     errors: list[FieldError] = []
     if attestation is not True:
         errors.append(FieldError("attestation", "required"))
@@ -364,6 +367,12 @@ def check_opening_fallback(
     if started and current_at is not None and at <= current_at:
         errors.append(
             FieldError("opening_at", "only_later", extra={"current_at": current_at})
+        )
+    if end_at is not None and at >= end_at:
+        errors.append(
+            FieldError(
+                "opening_at", "not_before_end", extra={"available_until": end_at}
+            )
         )
     return errors
 

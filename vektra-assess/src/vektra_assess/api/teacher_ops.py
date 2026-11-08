@@ -548,6 +548,7 @@ async def put_opening_fallback(
             close_at=close_at,
             current_at=cfg.attested_at,
             started=started,
+            end_at=cfg.end_at,
         )
         if errors:
             raise _Refused(_invalid(errors))

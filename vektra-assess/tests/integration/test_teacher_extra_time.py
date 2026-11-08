@@ -327,3 +327,37 @@ async def test_the_start_gate_takes_the_later_of_close_and_teacher_date() -> Non
         GateInputs(**base, participant_closes=(now + 60,), teacher_opening_at=CLOSE)  # type: ignore[arg-type]
     )
     assert (readable.code, readable.gate_at) == (Code.CLOSE_NOT_PASSED, now + 60)
+
+
+async def test_the_fallback_date_must_stay_before_the_end_date(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-2: an opening at or after "disponibile fino al" would make every Start
+    impossible: refused on ``opening_at``, nothing stored."""
+    async with world(pg) as w:
+        await configure_activity(
+            pg, w.site, 904, attested=False, end_at_sql=f"to_timestamp({CLOSE + 100})"
+        )
+        await seed_teacher_gate(pg, w.site, 904, close_at=CLOSE)
+        r = await w.client.put(
+            fallback_url(904), json=fb(CLOSE + 100), headers=teacher()
+        )
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {
+                "field": "opening_at",
+                "code": "not_before_end",
+                "available_until": CLOSE + 100,
+            }
+        ]
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_activity_config WHERE site_id = :s "
+                "AND attested_opening_at IS NOT NULL",
+                s=w.site,
+            )
+            == 0
+        )
+        r = await w.client.put(
+            fallback_url(904), json=fb(CLOSE + 99), headers=teacher()
+        )
+        assert r.status_code == 200, r.text

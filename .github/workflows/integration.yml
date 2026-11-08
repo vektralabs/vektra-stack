@@ -161,6 +161,7 @@ jobs:
               # Teacher operations (plan teacher-ops 11a): the fresh editor check and the
               # worker job that reads the activity facts it checks against.
               "vektra_assess.api.teachers", "vektra_assess.worker.teacher_gate",
+              "vektra_assess.api.teacher_config", "vektra_assess.teacher.validation",
           ):
               importlib.import_module(name)
               print("imported", name, flush=True)

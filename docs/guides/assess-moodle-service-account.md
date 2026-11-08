@@ -47,7 +47,9 @@ during verification and broke at least one read:
 
 `webservice/rest:use`, `moodle/course:view`, `mod/quiz:viewreports`, `mod/quiz:viewoverrides`
 (5.2 only), `mod/assign:viewgrades`, `moodle/grade:viewall`, `moodle/grade:managegradingforms`
-(rubric *fillings*), `moodle/role:review` (graders).
+(rubric *fillings*), `moodle/role:review` (graders, and the activity editors who may change the
+discussion configuration: the same function asked for `moodle/course:manageactivities`, no
+additional capability).
 
 Also granted for coverage: `moodle/course:viewparticipants`, `moodle/course:viewhiddenactivities`,
 `moodle/course:viewhiddencourses`, `moodle/site:accessallgroups`, `moodle/user:viewdetails`,

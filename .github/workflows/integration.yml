@@ -152,8 +152,9 @@ jobs:
               "vektra_assess.transcript.mathml", "vektra_assess.transcript.store",
               "latex2mathml.converter", "vektra_assess.worker.transcript_gen",
               "vektra_assess.api.transcripts",
-              # Delivery (plan transcript-delivery 10b): the worker's SMTP client (aiosmtplib),
-              # the email builder, the backoff, the recipients and the probe.
+              # Delivery (plan transcript-delivery 10b): the SMTP client of the worker
+              # (aiosmtplib), the email builder, the backoff, the recipients and the probe.
+              # No apostrophes in this block: it sits inside a single-quoted shell string.
               "vektra_assess.delivery.message", "vektra_assess.delivery.smtp",
               "vektra_assess.delivery.backoff", "vektra_assess.delivery.recipients",
               "vektra_assess.delivery.handler", "vektra_assess.delivery.probe",

@@ -137,6 +137,39 @@ async def test_an_unresolved_hint_refuses_and_another_hint_asks_again(pg) -> Non
     assert len(await jobs(pg, site)) == 1
 
 
+@pytest.mark.parametrize(
+    "stored_hint",
+    [[COURSE, "quiz"], None],
+    ids=["same_course_other_kind", "no_stored_hint"],
+)
+async def test_an_unresolved_row_for_another_or_no_hint_asks_for_this_one(  # type: ignore[no-untyped-def]
+    pg, stored_hint
+) -> None:
+    """CodeRabbit round 4 nitpick: the stored hint must match on course AND kind. A definitive
+    unresolved answer for the same course as a quiz, or one with no stored hint, says nothing
+    about this (course, assign) request: refresh, and the job carries the requested pair."""
+    site = await make_site(pg)
+    await seed_gate(
+        pg,
+        site,
+        58,
+        resolved=False,
+        reason="activity_not_in_course",
+        editors=None,
+        hint=stored_hint,
+        courseid=None,
+    )
+    assert (
+        await check(pg, site, 58, hint=(COURSE, "assign"))
+    ).check is TeacherCheck.STALE
+    (job,) = await jobs(pg, site)
+    assert (job.args["courseid"], job.args["activity_type"], job.args["cmid"]) == (
+        COURSE,
+        "assign",
+        58,
+    )
+
+
 @pytest.mark.parametrize("reason", ["site_release_unknown", "error", "http_5xx", None])
 async def test_a_transient_unresolved_row_is_stale_and_asks_again(pg, reason) -> None:  # type: ignore[no-untyped-def]
     """Review 3: only "the cmid is not in that course" is definitive; a site, reader or Moodle

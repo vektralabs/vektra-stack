@@ -18,6 +18,7 @@ jobs:
       contents: read
       pull-requests: read  # dorny/paths-filter reads PR files on pull_request events
     outputs:
+      deps:      ${{ steps.filter.outputs.deps }}
       shared:    ${{ steps.filter.outputs.shared }}
       core:      ${{ steps.filter.outputs.core }}
       ingest:    ${{ steps.filter.outputs.ingest }}
@@ -32,6 +33,10 @@ jobs:
         id: filter
         with:
           filters: |
+            deps:
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - '.github/workflows/ci-unit.yml'
             shared:
               - 'vektra-shared/**'
             core:
@@ -59,7 +64,7 @@ jobs:
   test-shared:
     name: Test vektra-shared
     needs: detect-changes
-    if: needs.detect-changes.outputs.shared == 'true'
+    if: needs.detect-changes.outputs.shared == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -76,7 +81,7 @@ jobs:
   test-core:
     name: Test vektra-core
     needs: detect-changes
-    if: needs.detect-changes.outputs.core == 'true'
+    if: needs.detect-changes.outputs.core == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -93,7 +98,7 @@ jobs:
   test-ingest:
     name: Test vektra-ingest
     needs: detect-changes
-    if: needs.detect-changes.outputs.ingest == 'true'
+    if: needs.detect-changes.outputs.ingest == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -110,7 +115,7 @@ jobs:
   test-index:
     name: Test vektra-index
     needs: detect-changes
-    if: needs.detect-changes.outputs.index == 'true'
+    if: needs.detect-changes.outputs.index == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -127,7 +132,7 @@ jobs:
   test-admin:
     name: Test vektra-admin
     needs: detect-changes
-    if: needs.detect-changes.outputs.admin == 'true'
+    if: needs.detect-changes.outputs.admin == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -144,7 +149,7 @@ jobs:
   test-analytics:
     name: Test vektra-analytics
     needs: detect-changes
-    if: needs.detect-changes.outputs.analytics == 'true'
+    if: needs.detect-changes.outputs.analytics == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -161,7 +166,7 @@ jobs:
   test-learn:
     name: Test vektra-learn
     needs: detect-changes
-    if: needs.detect-changes.outputs.learn == 'true'
+    if: needs.detect-changes.outputs.learn == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -182,7 +187,7 @@ jobs:
   test-app:
     name: Test vektra-app
     needs: detect-changes
-    if: needs.detect-changes.outputs.app == 'true'
+    if: needs.detect-changes.outputs.app == 'true' || needs.detect-changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -248,4 +253,24 @@ jobs:
               exit 1
             fi
           done
+
+          # Negative control check: Ensure PRs don't silently skip all unit tests
+          DEPS="${{ needs.detect-changes.outputs.deps }}"
+          SHARED="${{ needs.detect-changes.outputs.shared }}"
+          CORE="${{ needs.detect-changes.outputs.core }}"
+          INGEST="${{ needs.detect-changes.outputs.ingest }}"
+          INDEX="${{ needs.detect-changes.outputs.index }}"
+          ADMIN="${{ needs.detect-changes.outputs.admin }}"
+          ANALYTICS="${{ needs.detect-changes.outputs.analytics }}"
+          LEARN="${{ needs.detect-changes.outputs.learn }}"
+          APP="${{ needs.detect-changes.outputs.app }}"
+
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            if [[ "$DEPS" != "true" && "$SHARED" != "true" && "$CORE" != "true" && "$INGEST" != "true" && "$INDEX" != "true" && "$ADMIN" != "true" && "$ANALYTICS" != "true" && "$LEARN" != "true" && "$APP" != "true" ]]; then
+              echo "Guard Check Failed: PR changed files but zero package unit test suites were selected!"
+              echo "If this PR intentionally changes files outside test coverage, ensure manifest files or affected packages are updated."
+              exit 1
+            fi
+          fi
+
           echo "All tests passed or were skipped (no relevant changes detected)."

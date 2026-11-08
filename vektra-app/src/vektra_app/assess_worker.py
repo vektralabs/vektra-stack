@@ -465,7 +465,9 @@ class SetupCheckParts:
     registry: Any | None = None  # the item registry the handler runs (None: not bound)
 
 
-def _setup_check_parts(checked: Checked, ws: Any | None = None) -> SetupCheckParts:
+def _setup_check_parts(
+    checked: Checked, ws: Any | None = None, smtp_probe: Any | None = None
+) -> SetupCheckParts:
     """The REQ-079 ``setup_check`` handler and its daily tick (plan assess-moodle-ws F4, carried
     over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the WS
     token keyring); otherwise both stay unbound and ``assert_all_bound`` refuses to start.
@@ -495,6 +497,8 @@ def _setup_check_parts(checked: Checked, ws: Any | None = None) -> SetupCheckPar
         registry,
         engine.connect,
         smtp_configured=bool(settings.smtp_host and settings.smtp_from),
+        # the item probes itself when the tick's row is missing or stale (finding 1)
+        smtp_probe=smtp_probe,
     )
     client = ws if ws is not None else _moodle_client(checked)
 
@@ -657,7 +661,7 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     delivery = _delivery_parts(checked)
     # one WS client for every WS caller: one rate cap, one breaker registry, one pool
     ws = _moodle_client(checked) if bindings is None else None
-    setup = _setup_check_parts(checked, ws)
+    setup = _setup_check_parts(checked, ws, delivery.ticks.get("smtp_probe"))
     extra = bindings or Bindings(
         handlers={
             **_session_handlers(checked, audit, ws),

@@ -5,7 +5,8 @@
   the ``smtp_probe`` tick upserts into ``assess_heartbeat`` (component ``smtp``, details
   ``{state, ok, error_class, smtp_code}``, ``beat_at`` = check time). OK when the row is there,
   ``ok`` is true and ``beat_at`` is at most ``SMTP_PROBE_MAX_AGE_S`` old (3 tick intervals: one
-  missed or slow probe is tolerated, two are not). The check itself never talks to the relay.
+  missed or slow probe is tolerated, two are not). With no row or a stale one, the item runs
+  the probe itself (bounded, never sends) and judges that fresh result.
 - ``db_log_statement_none`` (ARCH-078, plan assess-foundations): ``SHOW log_statement`` is
   ``none`` and ``SHOW log_parameter_max_length`` is ``0`` on the worker's own connection, AND
   no ``ALTER ROLE/DATABASE ... SET`` override (``pg_db_role_setting``) gives any assess role, or
@@ -18,6 +19,7 @@ reports ``UNVERIFIABLE/check_error``.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import text
@@ -65,12 +67,28 @@ def _code(value: Any) -> str:
     return reason_code(str(value or "unknown"), "unknown")
 
 
-def smtp_probe_item(acquire: AcquireDb, *, configured: bool) -> ItemCheck:
+def smtp_probe_item(
+    acquire: AcquireDb,
+    *,
+    configured: bool,
+    probe: Callable[[], Awaitable[Any]] | None = None,
+) -> ItemCheck:
+    """``probe``: one whole bounded probe (``delivery.probe.run_probe``, which writes the row
+    and never sends). Without a fresh row, the item runs it and judges what it wrote (review
+    finding 1): at startup a setup check queued earlier can be claimed before the probe tick has
+    written its first row, and a long-stopped worker finds only a stale one."""
+
+    async def read() -> Any:
+        async with acquire() as conn:
+            return (await conn.execute(_SMTP_ROW)).first()
+
     async def check(_ctx: CheckContext) -> Outcome:
         if not configured:
             return missing("smtp_not_configured")
-        async with acquire() as conn:
-            row = (await conn.execute(_SMTP_ROW)).first()
+        row = await read()
+        if probe is not None and (row is None or float(row.age) > SMTP_PROBE_MAX_AGE_S):
+            await probe()
+            row = await read()
         if row is None:
             return missing("smtp_never_probed")
         details = row.details if isinstance(row.details, dict) else {}
@@ -111,9 +129,14 @@ def db_log_statement_item(acquire: AcquireDb) -> ItemCheck:
 
 
 def register_worker_items(
-    registry: ItemRegistry, acquire: AcquireDb, *, smtp_configured: bool
+    registry: ItemRegistry,
+    acquire: AcquireDb,
+    *,
+    smtp_configured: bool,
+    smtp_probe: Callable[[], Awaitable[Any]] | None = None,
 ) -> None:
     registry.register(
-        "smtp_probe", smtp_probe_item(acquire, configured=smtp_configured)
+        "smtp_probe",
+        smtp_probe_item(acquire, configured=smtp_configured, probe=smtp_probe),
     )
     registry.register("db_log_statement_none", db_log_statement_item(acquire))

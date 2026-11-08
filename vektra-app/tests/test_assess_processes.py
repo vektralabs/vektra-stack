@@ -625,6 +625,47 @@ def test_one_moodle_client_serves_every_ws_handler(
     assert len(made) == 1
 
 
+def test_the_smtp_item_gets_the_probe_tick_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review finding 1: the setup-check item ``smtp_probe`` can run the same bounded probe the
+    tick runs, so a missing or stale row is probed instead of failing for a day."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+    from vektra_assess.worker import setup_items
+
+    got: dict[str, object] = {}
+    real = setup_items.register_worker_items
+
+    def spy(*a: object, **k: object) -> None:
+        got.update(k)
+        real(*a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(setup_items, "register_worker_items", spy)
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {
+        "assess_transcript_kek": ring,
+        "assess_teacher_config_private": ring,
+        "assess_smtp": Credentials("assess_smtp", {}),
+        "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
+    }
+    full = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    _runtime, scheduler, *_ = assess_worker._compose(full)
+    tick = next(t for t in scheduler._ticks if t.name == "smtp_probe")
+    assert got["smtp_configured"] is True
+    assert got["smtp_probe"] is tick.body is not None
+
+
 def _plan_statuses() -> dict[str, str]:
     """plan file stem -> status cell, from the plan table of .s2s/plans/INDEX-ASSESS.md."""
     import re

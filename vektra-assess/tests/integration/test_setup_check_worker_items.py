@@ -13,9 +13,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
+from fixtures.mailsink import MailSink, sink_config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from vektra_assess.delivery.probe import run_probe
+from vektra_assess.delivery.smtp import SmtpSender
 from vektra_assess.moodle.setup_check import MISSING, OK, Outcome, builtin_registry
 from vektra_assess.worker import setup_items
 from vektra_assess.worker.slots import SMTP_PROBE_INTERVAL_S
@@ -36,13 +39,60 @@ async def _smtp_row(pg, details: dict[str, Any] | None, age_s: float = 0) -> Non
         )
 
 
-async def smtp(pg, *, configured: bool = True) -> Outcome:  # type: ignore[no-untyped-def]
+async def smtp(pg, *, configured: bool = True, prober: Any = None) -> Outcome:  # type: ignore[no-untyped-def]
+    """``prober`` given: the item may run the real probe (``run_probe``) against it."""
     engine = create_async_engine(pg.url("worker"))
     try:
-        check = setup_items.smtp_probe_item(engine.connect, configured=configured)
+
+        async def probe() -> None:
+            await run_probe(prober, engine.connect, timeout_s=10)
+
+        check = setup_items.smtp_probe_item(
+            engine.connect,
+            configured=configured,
+            probe=probe if prober is not None else None,
+        )
         return await check(CTX)
     finally:
         await engine.dispose()
+
+
+async def _smtp_details(pg) -> dict[str, Any] | None:  # type: ignore[no-untyped-def]
+    rows = await pg.run(
+        "super", "SELECT details FROM assess_heartbeat WHERE component = 'smtp'"
+    )
+    return rows[0][0] if rows else None
+
+
+@pytest.mark.parametrize("before", ["none", "stale"])
+async def test_a_missing_or_stale_probe_is_run_by_the_item_itself(  # type: ignore[no-untyped-def]
+    pg, tmp_path, before: str
+) -> None:
+    """Review finding 1: at startup a queued setup check can be claimed before the probe tick
+    has written its row (or after a long outage, a stale one); the item then probes itself
+    (never sends) instead of reporting MISSING until the next daily run."""
+    await _smtp_row(
+        pg,
+        None if before == "none" else OK_ROW,
+        age_s=setup_items.SMTP_PROBE_MAX_AGE_S + 60,
+    )
+    sink = MailSink(tmp_path / "ok").start()
+    try:
+        out = await smtp(pg, prober=SmtpSender(sink_config(sink)))
+    finally:
+        sink.stop()
+    assert out == Outcome(OK)
+    assert (await _smtp_details(pg))["state"] == "ok"
+    assert sink.messages == []
+
+
+async def test_a_fresh_probe_row_is_not_probed_again(pg) -> None:  # type: ignore[no-untyped-def]
+    class Never:
+        async def probe(self) -> Any:
+            raise AssertionError("a fresh row must be judged, not re-probed")
+
+    await _smtp_row(pg, OK_ROW, age_s=10)
+    assert await smtp(pg, prober=Never()) == Outcome(OK)
 
 
 OK_ROW = {"state": "ok", "ok": True, "error_class": None, "smtp_code": 221}

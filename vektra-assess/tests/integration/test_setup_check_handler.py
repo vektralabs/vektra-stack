@@ -250,6 +250,43 @@ async def test_a_disabled_site_is_never_checked(pg, with_report: bool) -> None: 
     assert await reports(pg, site) == ([(rid, "failed")] if rid else [])
 
 
+async def test_a_site_disabled_during_the_check_gets_nothing_written(  # type: ignore[no-untyped-def]
+    pg, monkeypatch
+) -> None:
+    """CodeRabbit 4506450163: the site is disabled after the handler's own check, while the
+    Moodle calls run. Nothing is persisted (no matrix, no item rows, no release) and the
+    report is closed ``failed``; the job completes as stale."""
+    from vektra_assess.moodle import setup_check as sc
+
+    real = sc.evaluate
+    site = await make_site(pg)
+
+    async def then_disable(*a: Any, **k: Any) -> Any:
+        out = await real(*a, **k)
+        await pg.run(
+            "super",
+            "UPDATE assess_sites SET disabled_at = now() WHERE id = :s",
+            {"s": site},
+        )
+        return out
+
+    monkeypatch.setattr(sc, "evaluate", then_disable)
+    rid = await queued_report(pg, site)
+    await handle(pg, {"site_id": str(site), "report_id": str(rid)})  # no raise
+    assert await reports(pg, site) == [(rid, "failed")]
+    for table in ("assess_site_capabilities", "assess_setup_checks"):
+        assert (
+            await count(pg, f"SELECT count(*) FROM {table} WHERE site_id=:s", s=site)
+            == 0
+        )
+    release = await pg.run(
+        "super",
+        "SELECT release, last_seen_release FROM assess_sites WHERE id = :s",
+        {"s": site},
+    )
+    assert tuple(release[0]) == (None, None)
+
+
 async def _report(pg, site, status: str, age_s: float) -> uuid.UUID:  # type: ignore[no-untyped-def]
     return (
         await pg.run(

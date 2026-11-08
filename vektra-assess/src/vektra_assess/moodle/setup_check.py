@@ -662,60 +662,28 @@ async def run_setup_check(
             moodle_origin=moodle_origin,
         )
         async with engine.begin() as conn:
-            release = outcome.release or last_seen
-            if outcome.release is not None:
-                await observe_release(conn, site_id, outcome.release)
-                if outcome.flags:
-                    # also moves ``assess_sites.release`` when the matrix was probed
-                    await persist_matrix(conn, site_id, outcome.release, outcome.flags)
-            for item in outcome.items:
-                await conn.execute(
-                    text(
-                        "INSERT INTO assess_setup_checks (site_id, item, result) "
-                        "VALUES (:s, :i, :r)"
-                    ),
-                    # UNVERIFIABLE is stored as 'missing': the table only knows ok | missing
-                    {
-                        "s": site_id,
-                        "i": item.name,
-                        "r": "ok" if item.result == OK else "missing",
-                    },
-                )
-            if outcome.token_rejected:
-                await conn.execute(
-                    text(
-                        "INSERT INTO assess_audit_events "
-                        "(site_id, event, reason_code, actor_kind) "
-                        "VALUES (:s, :e, :c, 'worker')"
-                    ),
-                    {
-                        "s": site_id,
-                        "e": TOKEN_REJECTED_EVENT,
-                        "c": outcome.token_reason,
-                    },
-                )
-            await conn.execute(
-                text(
-                    "UPDATE assess_setup_check_reports SET status = 'done', "
-                    "moodle_release = :rel, items = CAST(:items AS jsonb), "
-                    "finished_at = now() WHERE id = :r"
-                ),
-                {
-                    "rel": release,
-                    "items": json.dumps([i.as_json() for i in outcome.items]),
-                    "r": report_id,
-                },
-            )
+            # a site disabled while the network part ran gets nothing written (CodeRabbit
+            # 4506450163): FOR SHARE holds off a concurrent disable until this commits, and a
+            # disable that committed first is seen here
+            if (await conn.execute(_SITE_ENABLED, {"s": site_id})).scalar() is not True:
+                await conn.execute(_FAIL_RUNNING, {"r": report_id})
+                abandoned = True
+            else:
+                abandoned = False
+                await _persist(conn, site_id, report_id, outcome, last_seen)
+        if abandoned:
+            raise SetupCheckStale("site disabled during the check")
+    except SetupCheckStale:
+        log.info(
+            "assess_setup_check_stale",
+            site_id=str(site_id),
+            reason_code="site_disabled",
+        )
+        raise
     except BaseException as exc:
         try:
             async with engine.begin() as conn:
-                await conn.execute(
-                    text(
-                        "UPDATE assess_setup_check_reports SET status = 'failed', "
-                        "finished_at = now() WHERE id = :r AND status = 'running'"
-                    ),
-                    {"r": report_id},
-                )
+                await conn.execute(_FAIL_RUNNING, {"r": report_id})
         finally:
             log.error(
                 "setup_check_failed", site_id=str(site_id), error=type(exc).__name__
@@ -736,3 +704,62 @@ async def run_setup_check(
         not_ok=sum(1 for i in outcome.items if i.result != OK),
     )
     return outcome
+
+
+_SITE_ENABLED = text(
+    "SELECT disabled_at IS NULL FROM assess_sites WHERE id = :s FOR SHARE"
+)
+_FAIL_RUNNING = text(
+    "UPDATE assess_setup_check_reports SET status = 'failed', "
+    "finished_at = now() WHERE id = :r AND status = 'running'"
+)
+
+
+async def _persist(
+    conn: Any, site_id: UUID, report_id: Any, outcome: CheckOutcome, last_seen: Any
+) -> None:
+    """Step 3 of ``run_setup_check``: everything a run writes, in the caller's transaction."""
+    release = outcome.release or last_seen
+    if outcome.release is not None:
+        await observe_release(conn, site_id, outcome.release)
+        if outcome.flags:
+            # also moves ``assess_sites.release`` when the matrix was probed
+            await persist_matrix(conn, site_id, outcome.release, outcome.flags)
+    for item in outcome.items:
+        await conn.execute(
+            text(
+                "INSERT INTO assess_setup_checks (site_id, item, result) "
+                "VALUES (:s, :i, :r)"
+            ),
+            # UNVERIFIABLE is stored as 'missing': the table only knows ok | missing
+            {
+                "s": site_id,
+                "i": item.name,
+                "r": "ok" if item.result == OK else "missing",
+            },
+        )
+    if outcome.token_rejected:
+        await conn.execute(
+            text(
+                "INSERT INTO assess_audit_events "
+                "(site_id, event, reason_code, actor_kind) "
+                "VALUES (:s, :e, :c, 'worker')"
+            ),
+            {
+                "s": site_id,
+                "e": TOKEN_REJECTED_EVENT,
+                "c": outcome.token_reason,
+            },
+        )
+    await conn.execute(
+        text(
+            "UPDATE assess_setup_check_reports SET status = 'done', "
+            "moodle_release = :rel, items = CAST(:items AS jsonb), "
+            "finished_at = now() WHERE id = :r"
+        ),
+        {
+            "rel": release,
+            "items": json.dumps([i.as_json() for i in outcome.items]),
+            "r": report_id,
+        },
+    )

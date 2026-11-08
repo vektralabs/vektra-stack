@@ -406,9 +406,11 @@ def config_conflict(current_version: int) -> ErrorResponse:
 
 
 def reset_refused(reason: str, **details: object) -> ErrorResponse:
-    """409 (REQ-087). ``reason``: ``no_session``, ``not_closed``, ``already_reset`` or ``gate``
-    (with ``gate``: the START-gate code, and ``field`` when a teacher setting must change
-    first, e.g. ``available_until`` after the end date)."""
+    """409 (REQ-087). ``reason``: ``not_closed``, ``not_latest``, ``already_reset``,
+    ``gate_inputs_stale`` (a render check was queued: retry in a few seconds) or ``gate`` (with
+    ``gate``: the START-gate code, and ``field`` when a teacher setting must change first, e.g.
+    ``available_until`` after the end date). A session not in the activity is
+    ``session_not_found`` (404), never this code."""
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_024,

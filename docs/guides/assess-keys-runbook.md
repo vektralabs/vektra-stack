@@ -33,7 +33,9 @@ no fallback and no second copy in the database. The same is true, for transcript
 
 1. Add a new kid to `assess_kek`, make it `active`, redeploy the worker.
 2. Run `rewrap_session_keys(conn, keyring, from_kid)` in a loop (commit between batches) until it
-   returns 0. Do the same with `rewrap_transcript_deks` for `assess_transcript_kek`, and with
+   returns 0. Do the same with `rewrap_transcript_deks` for `assess_transcript_kek` AND with
+   `rewrap_teacher_reasons(conn, keyring, from_kid)` for the same key (the teachers' reset and
+   termination reasons are encrypted directly under it: both must return 0), and with
    `reseal_teacher_configs(conn, old_private, new_public)` when the teacher-config key pair
    rotates (each returns the rows still on the old key, never the rows it just touched).
 3. Only now remove the old kid from the keyring.

@@ -210,7 +210,7 @@ plugin owns every text.
 omitted while it has not recorded them. `recipients` (REQ-082 as amended) are the transcript recipients
 the teacher configured for the activity (1 to 3 addresses in the sealed teacher config), as the
 render worker read them: `role` is `recipient` and `name` the address with its local part masked
-(`m***@unical.it`). `/state` never carries a full address or another user's id; the plugin, which
+(`m***@uni.example`). `/state` never carries a full address or another user's id; the plugin, which
 holds the configuration, may show the full addresses on its own pre-session screen.
 
 **Tokens** (HS256, `aud=discussion`). Pre-session: `sub`, `site`, `cmid`, `stage: "pre"`, `jti`,

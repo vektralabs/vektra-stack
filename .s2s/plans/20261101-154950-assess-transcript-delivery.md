@@ -340,7 +340,7 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
   `recipients_unresolved`, alert; the transcript stays downloadable.
 - **Generation** (10a code) switches from graders to `configured_recipients`; a transcript with
   none still generates (audit `assess_transcript_recipients_unresolved` as today).
-- **/state** `pre_session.recipients`: `[{role: "recipient", name: "m***@unical.it"}]` (first char
+- **/state** `pre_session.recipients`: `[{role: "recipient", name: "m***@uni.example"}]` (first char
   of the local part, then `***`), written by the render worker into gate_inputs as today. The API
   never sees a full address.
 - **Grader download/resend authz unchanged** (fresh grader list from Moodle user ids).

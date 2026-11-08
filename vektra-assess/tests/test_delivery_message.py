@@ -20,7 +20,7 @@ DOC = '<!DOCTYPE html><html lang="it"><body><p>Citt\u00e0 \u2013 \u2211</p></bod
 def _mail(**over: object) -> m.TranscriptMail:
     base: dict[str, object] = {
         "sender": "vektra@example.org",
-        "recipient": "prof@unical.it",
+        "recipient": "prof@uni.example",
         "course": "EAASSESS",
         "cmid": 501,
         "student_userid": 101,
@@ -98,7 +98,7 @@ def test_the_body_is_plain_italian_and_content_free() -> None:
     subject = str(parsed["Subject"])
     assert "EAASSESS" in subject and "501" in subject and "101" in subject
     assert parsed["Message-ID"] == m.message_id(TID, 1, REF, "vektra.example.org")
-    assert parsed["To"] == "prof@unical.it"
+    assert parsed["To"] == "prof@uni.example"
 
 
 def test_a_long_course_never_pushes_the_ids_out_of_the_subject() -> None:

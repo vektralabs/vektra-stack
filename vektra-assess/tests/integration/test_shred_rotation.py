@@ -219,7 +219,7 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
     async with pg.conn("api") as c:
         for field in teacher_config.FIELDS:
             plain = (
-                '["a@unical.it"]'
+                '["a@uni.example"]'
                 if field == teacher_config.TRANSCRIPT_RECIPIENTS
                 else "42"
             )
@@ -261,7 +261,7 @@ async def test_reseal_teacher_configs_and_rewrap_transcript_deks(pg):
         )
     for row in rows:
         want = (
-            '["a@unical.it"]'
+            '["a@uni.example"]'
             if row.field == teacher_config.TRANSCRIPT_RECIPIENTS
             else "42"
         )

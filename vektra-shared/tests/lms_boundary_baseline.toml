@@ -159,9 +159,3 @@ file = "migrations/versions/0036_assess_teacher_config.py"
 mentions = 3
 since = "2026-11-08"
 reason = "Assessment schema migration. Clears when the assessment migrations move with the package being separated (own version location or branch)."
-
-[[entry]]
-file = "migrations/versions/0038_assess_teacher_ops.py"
-mentions = 2
-since = "2026-11-08"
-reason = "Assessment schema migration. Clears when the assessment migrations move with the package being separated (own version location or branch)."

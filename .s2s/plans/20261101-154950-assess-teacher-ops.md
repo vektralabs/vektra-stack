@@ -246,6 +246,8 @@ the recording LLM provider's captured request bytes, not on bot replies.
 
 ## Notes
 
+- Follow-up (code review of 11a, 2026-11-08): `str.isdigit()` accepts Unicode digits ('²') that `int()` rejects, a 500 instead of a 400. Fixed on the 11a config routes; the same pattern remains in earlier code at `api/common.py` (Content-Length), `api/events.py`, `api/deps.py` and `api/download_tokens.py`. Fix it in 11b with ASCII-digit checks and a test per site.
+
 - **OQ-025 spike (2026-11-01)**: on Moodle 4.3, quiz overrides and per-student time limits are unreadable, so the REQ-091 attested-date UI is the EXPECTED path for any quiz with user/group overrides; the teacher page must explain why (not an error). On 5.2 they are readable. Grace is readable only while the quiz is open; enabling the discussion after close also lands on REQ-091. Rubric descriptor attestation is a possible addition pending OQ-035.
 
 - OQ-034: write-only default implemented; if product requires re-display, the API needs a

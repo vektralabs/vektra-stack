@@ -202,6 +202,7 @@ GRANT_STATEMENTS = (
     "GRANT UPDATE (ended_at, credited_s) ON assess_outage_incidents TO vektra_assess_definer",
     "GRANT DELETE ON assess_session_handoff TO vektra_assess_definer",
     "GRANT SELECT ON assess_session_handoff TO vektra_assess_definer",
+    "GRANT SELECT (session_id) ON assess_session_keys TO vektra_assess_definer",
     "GRANT DELETE ON assess_sessions TO vektra_assess_definer",
     "GRANT SELECT ON assess_sessions TO vektra_assess_definer",
     "GRANT UPDATE (seq, last_activity_at, state, close_reason, closed_at, pending_reply_since, epoch, credited_outage_s, deadline_at) ON assess_sessions TO vektra_assess_definer",
@@ -248,6 +249,7 @@ ROLLBACK_FN = """
         -- verified by count, never assumed from the cascade (as the worker's rollback does)
         SELECT (SELECT count(*) FROM public.assess_sessions WHERE id = p_sid)
              + (SELECT count(*) FROM public.assess_snapshots WHERE session_id = p_sid)
+             + (SELECT count(*) FROM public.assess_session_keys WHERE session_id = p_sid)
              + (SELECT count(*) FROM public.assess_turns WHERE session_id = p_sid)
              + (SELECT count(*) FROM public.assess_session_handoff WHERE session_id = p_sid)
           INTO v_left;

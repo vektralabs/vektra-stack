@@ -366,6 +366,9 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "UPDATE": ("ended_at", "credited_s"),
         },
         "assess_session_handoff": {"SELECT": _ALL, "DELETE": _ALL},
+        # revision 0038: assess_rollback_starting counts a STARTING session's key rows (the id
+        # only: never the wrapped key)
+        "assess_session_keys": {"SELECT": ("session_id",)},
         "assess_snapshots": {"SELECT": _ALL},
         "assess_turns": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_jobs": {"INSERT": _ALL},

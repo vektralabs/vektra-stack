@@ -377,3 +377,22 @@ async def test_the_start_rechecks_the_activity_under_its_lock(pg, worker) -> Non
             )
             == 0
         )
+
+
+async def test_the_starting_rollback_verifies_every_child_table(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-6: the survival count covers the same tables as the worker's rollback
+    (``preflight._LEFT``): sessions, snapshots, session keys, turns, hand-off."""
+    (src,) = (
+        await pg.run(
+            "super",
+            "SELECT pg_get_functiondef('public.assess_rollback_starting(uuid)'::regprocedure)",
+        )
+    )[0]
+    for table in (
+        "assess_sessions",
+        "assess_snapshots",
+        "assess_session_keys",
+        "assess_turns",
+        "assess_session_handoff",
+    ):
+        assert f"public.{table} WHERE" in src, table

@@ -34,9 +34,9 @@ pytestmark = pytest.mark.integration
 BRANCH = "5.2"
 
 
-def _ctx(engine: Any, args: dict[str, str | int]) -> JobContext:
+def _ctx(engine: Any, args: dict[str, str | int], job_id: int = 0) -> JobContext:
     return JobContext(
-        job_id=0,  # never a real id (BIGSERIAL starts at 1)
+        job_id=job_id,  # 0: never a real id (BIGSERIAL starts at 1)
         kind=JobKind.SETUP_CHECK,
         args=args,
         attempt=1,
@@ -45,7 +45,9 @@ def _ctx(engine: Any, args: dict[str, str | int]) -> JobContext:
     )
 
 
-async def handle(pg, args: dict[str, str | int], replay: Replay | None = None) -> None:  # type: ignore[no-untyped-def]
+async def handle(  # type: ignore[no-untyped-def]
+    pg, args: dict[str, str | int], replay: Replay | None = None, job_id: int = 0
+) -> None:
     replay = replay or Replay(BRANCH)
     serve_files(replay)
     engine = create_async_engine(pg.url("worker"))
@@ -57,7 +59,7 @@ async def handle(pg, args: dict[str, str | int], replay: Replay | None = None) -
             registry=full_registry(),
             now=lambda: now(BRANCH),
         )
-        await h(_ctx(engine, args))
+        await h(_ctx(engine, args, job_id))
     finally:
         await engine.dispose()
 
@@ -380,6 +382,27 @@ async def test_an_old_running_report_with_a_live_lease_is_left_alone(pg) -> None
             "DELETE FROM assess_jobs WHERE kind = 'setup_check' AND args->>'site_id' = :s",
             {"s": str(site)},
         )
+
+
+async def test_the_current_jobs_own_lease_does_not_shield_an_orphan(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (round 2): as in production, the running job holds a live lease on
+    its own row. That lease is excluded, so an old orphan of the same site is still failed."""
+    site = await make_site(pg)
+    orphan = await _report(pg, site, "running", handler_mod.ORPHAN_AFTER_S + 60)
+    job = (
+        await pg.run(
+            "super",
+            "INSERT INTO assess_jobs (kind, args, state, lease_until, leased_by, attempts) "
+            "VALUES ('setup_check', jsonb_build_object('site_id', CAST(:s AS text)), "
+            "'leased', now() + interval '3 minutes', 'this-worker', 1) RETURNING id",
+            {"s": str(site)},
+        )
+    )[0][0]
+    try:
+        await handle(pg, {"site_id": str(site)}, job_id=int(job))
+        assert dict(await reports(pg, site))[orphan] == "failed"
+    finally:
+        await pg.run("super", "DELETE FROM assess_jobs WHERE id = :j", {"j": job})
 
 
 async def test_a_report_orphaned_running_by_a_crash_is_failed(pg) -> None:  # type: ignore[no-untyped-def]

@@ -37,6 +37,9 @@ class _Result:
     def first(self) -> Any:
         return self._row
 
+    def scalar(self) -> Any:
+        return "2026-11-08T00:00:00+00:00"  # the clock read before the Moodle reads
+
 
 class _Conn:
     def __init__(self, release: str, sink: list[Any]) -> None:
@@ -48,6 +51,9 @@ class _Conn:
         return _Result(
             SimpleNamespace(base_url="https://moodle.example.org", release=self.release)
         )
+
+    async def rollback(self) -> None:
+        return None
 
     def begin(self) -> Any:
         @asynccontextmanager

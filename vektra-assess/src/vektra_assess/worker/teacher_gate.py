@@ -42,10 +42,13 @@ class TeacherGateSource(Protocol):
     ) -> dict[str, Any]: ...
 
 
+# ``refreshed_at`` is the database clock read BEFORE the Moodle reads (the API compares it with
+# the same clock): a slow read never makes its list look fresher than it is
+_CLOCK = text("SELECT clock_timestamp()")
 _UPSERT = text(
     "INSERT INTO assess_teacher_gate (site_id, cmid, inputs, refreshed_at) "
-    "VALUES (:s, :c, CAST(:i AS jsonb), now()) ON CONFLICT (site_id, cmid) "
-    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = now()"
+    "VALUES (:s, :c, CAST(:i AS jsonb), :t) ON CONFLICT (site_id, cmid) "
+    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at"
 )
 
 
@@ -57,7 +60,11 @@ async def refresh_teacher_gate(
     courseid: int,
     kind: str,
 ) -> dict[str, Any]:
-    """Read the facts fresh and store them; returns what was stored."""
+    """Read the facts fresh and store them, dated when the reads began; returns what was
+    stored."""
+    async with acquire() as conn:
+        observed_at = (await conn.execute(_CLOCK)).scalar()
+        await conn.rollback()
     try:
         facts = await source.teacher_facts(site_id, cmid, courseid, kind)
     except Exception as exc:  # a reader bug is "unreadable", never a guess
@@ -69,7 +76,12 @@ async def refresh_teacher_gate(
         async with conn.begin():
             await conn.execute(
                 _UPSERT,
-                {"s": site_id, "c": int(cmid), "i": json.dumps(facts, sort_keys=True)},
+                {
+                    "s": site_id,
+                    "c": int(cmid),
+                    "i": json.dumps(facts, sort_keys=True),
+                    "t": observed_at,
+                },
             )
     return facts
 

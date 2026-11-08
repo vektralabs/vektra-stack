@@ -146,3 +146,32 @@ async def test_a_transient_unresolved_row_is_stale_and_asks_again(pg, reason) ->
     )
     assert (await check(pg, site, 56)).check is TeacherCheck.STALE
     assert len(await jobs(pg, site)) == 1
+
+
+async def test_the_facts_are_dated_when_they_were_read_not_when_stored(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4505511259: freshness must count from before the Moodle reads; a slow read
+    stored at the end would look fresher than the list it carries."""
+    import asyncio
+
+    from vektra_assess.worker.teacher_gate import refresh_teacher_gate
+
+    class Slow:
+        async def teacher_facts(self, *_a, **_k):  # type: ignore[no-untyped-def]
+            await asyncio.sleep(2.0)
+            return {"resolved": True, "editors": [EDITOR]}
+
+    site = await make_site(pg)
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        t0 = (await pg.run("super", "SELECT clock_timestamp()"))[0][0]
+        await refresh_teacher_gate(Slow(), engine.connect, site, 57, COURSE, "assign")
+    finally:
+        await engine.dispose()
+    (stamp,) = (
+        await pg.run(
+            "super",
+            "SELECT refreshed_at FROM assess_teacher_gate WHERE site_id = :s AND cmid = 57",
+            {"s": site},
+        )
+    )[0]
+    assert (stamp - t0).total_seconds() < 1.0, (stamp, t0)

@@ -63,6 +63,10 @@ from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.preflight import MoodleGateFacts, StartTarget
 
 _SITE = text("SELECT base_url, release FROM assess_sites WHERE id = :s")
+_SET_FIELDS = text(
+    "SELECT count(*) FROM assess_activity_config_sealed WHERE site_id = :s AND cmid = :c "
+    "AND field = ANY(:f) AND sealed_blob IS NOT NULL"
+)
 _CAPS = text(
     "SELECT flag, state FROM assess_site_capabilities WHERE site_id = :s "
     "AND flag IN ('review_html_filterable', 'rubric_display_settings')"
@@ -500,6 +504,16 @@ class MoodleStartSource:
                 # a field the activity needs that does not open fails closed (never a session
                 # silently started without its solution or pasted rubric)
                 unreadable = bool(opened.unreadable & set(wanted))
+            elif wanted:
+                # no key to open them: a STORED needed field fails closed like one that does not
+                # open; an unset one keeps the safe default (nothing to show)
+                stored = (
+                    await conn.execute(
+                        _SET_FIELDS,
+                        {"s": target.site_id, "c": target.cmid, "f": wanted},
+                    )
+                ).scalar()
+                unreadable = bool(stored)
         ref = SiteRef(str(target.site_id), str(site.base_url), str(site.release))
         capabilities = Capabilities(
             review_html_filterable=caps.get("review_html_filterable", "unreadable"),

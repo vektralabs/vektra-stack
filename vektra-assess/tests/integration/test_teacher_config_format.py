@@ -156,3 +156,24 @@ async def test_a_needed_field_that_does_not_open_fails_the_capture_closed(  # ty
         )
     finally:
         await engine.dispose()
+
+
+async def test_without_the_private_key_a_stored_needed_field_fails_closed(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4505511253: a worker built without the teacher-config key cannot open a stored
+    solution; it must not start without it. An unset field keeps the old behaviour."""
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        site = await make_site(pg)
+        await configure_activity(pg, site, 15)
+        await configure_activity(pg, site, 16)
+        pub, priv = config_pair()
+        await configure_recipients(
+            pg, site, 15, pair=(pub, priv), extra={"solution": "x"}
+        )
+        src = MoodleStartSource(None, None, engine.connect, teacher_private=None)  # type: ignore[arg-type]
+        stored = await src._context(_target(site, 15, show=True))
+        assert stored is not None and stored[4] is True
+        unset = await src._context(_target(site, 16, show=True))
+        assert unset is not None and unset[4] is False and unset[2] is None
+    finally:
+        await engine.dispose()

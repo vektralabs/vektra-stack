@@ -44,8 +44,8 @@ def _ctx(engine: Any, args: dict[str, str | int]) -> JobContext:
     )
 
 
-async def handle(pg, args: dict[str, str | int]) -> None:  # type: ignore[no-untyped-def]
-    replay = Replay(BRANCH)
+async def handle(pg, args: dict[str, str | int], replay: Replay | None = None) -> None:  # type: ignore[no-untyped-def]
+    replay = replay or Replay(BRANCH)
     serve_files(replay)
     engine = create_async_engine(pg.url("worker"))
     try:
@@ -225,3 +225,26 @@ async def test_a_report_taken_by_another_run_is_stale_not_an_error(  # type: ign
         pg, {"site_id": str(site), "report_id": str(rid)}
     )  # completes, no raise
     assert await reports(pg, site) == [(rid, "queued")]
+
+
+@pytest.mark.parametrize("with_report", [True, False])
+async def test_a_disabled_site_is_never_checked(pg, with_report: bool) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 7: no Moodle call, no matrix, no item rows for a disabled site. A report
+    the API queued before the site was disabled is closed as failed (it would stay queued)."""
+    site = await make_site(pg)
+    rid = await queued_report(pg, site) if with_report else None
+    await pg.run(
+        "super",
+        "UPDATE assess_sites SET disabled_at = now() WHERE id = :s",
+        {"s": site},
+    )
+    replay = Replay(BRANCH)
+    args = {"site_id": str(site)} | ({"report_id": str(rid)} if rid else {})
+    await handle(pg, args, replay)
+    assert replay.calls == []
+    for table in ("assess_site_capabilities", "assess_setup_checks"):
+        assert (
+            await count(pg, f"SELECT count(*) FROM {table} WHERE site_id=:s", s=site)
+            == 0
+        )
+    assert await reports(pg, site) == ([(rid, "failed")] if rid else [])

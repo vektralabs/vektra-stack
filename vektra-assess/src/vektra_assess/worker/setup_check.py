@@ -6,7 +6,8 @@ the job loop needs around it:
 
 - **handler** (kind ``setup_check``, pool ``setup``, hard timeout 120 s from ``worker/policy.py``):
   ids only in ``args`` (``site_id``, optional ``report_id``). It re-validates the rows before
-  acting: an unknown site, or a report that is unknown, of another site or already finished
+  acting: an unknown or disabled site (its queued report is closed ``failed``), or a report
+  that is unknown, of another site or already finished
   (a retry after the run marked it ``failed``) is a stale job, completed without acting. A job
   without ``report_id`` (the daily tick, ``observe_release`` on a release change) writes its own
   report. After a run the site keeps its last ``KEEP_REPORTS`` reports (plan data lifecycle);
@@ -44,7 +45,13 @@ log = structlog.get_logger(__name__)
 KEEP_REPORTS = 30
 
 _SITES = text("SELECT id FROM assess_sites WHERE disabled_at IS NULL ORDER BY id")
-_SITE = text("SELECT 1 FROM assess_sites WHERE id = :s")
+_SITE = text(
+    "SELECT disabled_at IS NOT NULL AS disabled FROM assess_sites WHERE id = :s"
+)
+_CLOSE_REPORT = text(
+    "UPDATE assess_setup_check_reports SET status = 'failed', finished_at = now() "
+    "WHERE id = :r AND site_id = :s AND status IN ('queued', 'running')"
+)
 _REPORT = text(
     "SELECT 1 FROM assess_setup_check_reports "
     "WHERE id = :r AND site_id = :s AND status IN ('queued', 'running')"
@@ -104,8 +111,16 @@ def make_setup_check_handler(
             log.warning("assess_setup_check_stale", reason_code="malformed_args")
             return
         async with ctx.acquire() as conn:
-            if (await conn.execute(_SITE, {"s": site_id})).first() is None:
+            site = (await conn.execute(_SITE, {"s": site_id})).first()
+            if site is None:
                 stale = "unknown_site"
+            elif site.disabled:
+                # never a Moodle call, an audit row or a matrix write for a disabled site; a
+                # report the API queued before the site was disabled is closed, not left queued
+                stale = "site_disabled"
+                if report_id is not None:
+                    await conn.execute(_CLOSE_REPORT, {"r": report_id, "s": site_id})
+                    await conn.commit()
             elif (
                 report_id is not None
                 and (

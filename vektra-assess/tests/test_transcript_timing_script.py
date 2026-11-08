@@ -226,3 +226,27 @@ async def test_a_database_failure_while_reading_is_blocked(
     doc, path = await t.amain(cfg, out_dir=tmp_path)
     assert doc["status"] == "BLOCKED" and "ConnectionRefusedError" in doc["blockers"][0]
     assert path.is_file()
+
+
+async def test_a_close_that_times_out_never_masks_the_query_result(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504755691: the rows were read; a close that then hangs must not turn
+    the run into a timeout."""
+    import asyncio
+    import sys
+    import types
+
+    class Conn:
+        async def fetch(self, *_a, **_kw):  # type: ignore[no-untyped-def]
+            return []
+
+        async def close(self) -> None:
+            await asyncio.sleep(30)
+
+    async def connect(*_a, **_kw):  # type: ignore[no-untyped-def]
+        return Conn()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    monkeypatch.setattr(t, "CLOSE_TIMEOUT_S", 0.2)
+    async with asyncio.timeout(3):
+        got = await t.fetch("postgresql://x@h/db", T0)
+    assert got == []

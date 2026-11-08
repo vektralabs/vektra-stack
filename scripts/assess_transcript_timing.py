@@ -245,7 +245,11 @@ async def fetch(dsn: str, since: datetime) -> list[Sample]:
     try:
         rows = await conn.fetch(_QUERY, since, timeout=QUERY_TIMEOUT_S)
     finally:
-        await asyncio.wait_for(conn.close(), CLOSE_TIMEOUT_S)
+        # bounded, and never in the way of the query's own outcome (rows or error)
+        try:
+            await asyncio.wait_for(conn.close(), CLOSE_TIMEOUT_S)
+        except Exception:
+            pass
     out = []
     for r in rows:
         ds = r["deliveries"]

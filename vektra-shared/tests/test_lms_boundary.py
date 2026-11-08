@@ -1,8 +1,9 @@
 """The platform must not name a specific LMS product.
 
-Vektra has declared itself general RAG infrastructure with an *LMS-agnostic* e-learning
-vertical since its first commit (`.s2s/CONTEXT.md`): "vektra-learn is LMS-agnostic", and
-the Moodle-specific adapter lives in its own repository, `vektra-moodle`. That boundary
+Vektra describes itself as general RAG infrastructure with an *LMS-agnostic* e-learning
+vertical: `.s2s/CONTEXT.md` has listed the Moodle adapter as a separate repository,
+`vektra-moodle`, since it was written (2026-01-28), and has said "vektra-learn is
+LMS-agnostic" since the next day. That boundary
 held for as long as it was only ever exercised by people who knew it: across the whole
 history of `vektra-learn/src`, no commit has ever touched the string "moodle".
 
@@ -27,12 +28,14 @@ violations recorded in a data file that may only shrink. Two kinds of entry:
 
 Removing the last entry is the definition of "the separation is done".
 
-**Perimeter.** Source code of the platform: every tracked file under a `src/` directory of
-a workspace member (read from the root `pyproject.toml`, not listed here), which includes
-`vektra-learn/widget/src`. Not tests: an adapter's integration test may legitimately use
-Moodle as data. Not `docs/`, the CHANGELOG or anything outside the members, where naming
-the adapter repositories is the point. Not vendored minified assets (`*.min.css`,
-`*.min.js`): third-party code such as Pico CSS uses `canvas` as the HTML element.
+**Perimeter.** What the platform ships: every tracked file under a `src/` directory of a
+workspace member (read from the root `pyproject.toml`, not listed here), which includes
+`vektra-learn/widget/src` and data such as prompt strings in YAML, plus the Alembic
+migrations (their location read from `alembic.ini`), which are the platform's schema and
+are copied into the image. Not tests: an adapter's integration test may legitimately use
+Moodle as data. Not `docs/` or the CHANGELOG, where naming the adapter repositories is the
+point. Not vendored minified assets (`*.min.css`, `*.min.js`): third-party code such as
+Pico CSS uses `canvas` as the HTML element.
 
 The perimeter is read from `git ls-files`, so an untracked scratch file cannot make the
 guard pass or fail, and a missing git is a failure, never a silent pass.
@@ -40,6 +43,7 @@ guard pass or fail, and a missing git is a failure, never a silent pass.
 
 from __future__ import annotations
 
+import configparser
 import re
 import subprocess
 import tomllib
@@ -53,7 +57,7 @@ BASELINE = Path(__file__).with_name("lms_boundary_baseline.toml")
 # 2026-11-08) plus Schoology and Totara, which it omits. Only distinctive tokens: a name
 # that is also an ordinary word or an HTML element ("canvas", "blackboard", "classroom")
 # is matched in its product form only, or the guard would fail on Pico CSS on day one.
-# To add a product: append its distinctive token, lower case.
+# To add a product: append its name, lower case; separators are normalised (below).
 LMS_NAMES: tuple[str, ...] = (
     "moodle",
     "totara",
@@ -89,20 +93,41 @@ SOURCE_SUFFIXES = {
     ".jinja",
     ".j2",
     ".css",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".txt",
+    ".md",
 }
 _VENDORED = re.compile(r"\.min\.(css|js)$")
 
-# CamelCase is split (lower to upper only, so `D2L` stays whole) before matching, so
-# `MoodleClient` and `VektraMoodle` are seen. The left boundary always applies; the right
-# one only to short tokens, where "d2l" inside a longer word would be noise, while
-# `moodlews` or `sakaimodule` must still be caught.
-_CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
-_PATTERNS = [
-    re.compile(
-        r"(?<![a-z0-9])" + re.escape(name) + (r"(?![a-z0-9])" if len(name) < 5 else ""),
-    )
-    for name in LMS_NAMES
-]
+# Each line is normalised before matching, so every way code spells a name is the same
+# string: CamelCase is split, including after an acronym (`MoodleClient`, `VektraMoodle`,
+# `LMSMoodle`, `D2LClient`), then everything that is not a letter or digit becomes one
+# space (`canvas_lms`, `CANVAS-LMS`, `open_edx`). A multi-word name is also matched written
+# together (`canvaslms`). Names of six letters or more are matched anywhere, so a compound
+# like `getmoodleclient` is caught; shorter ones need a left boundary ("ilias" is inside
+# "familias"), and the shortest also a right one ("d2l").
+_CAMEL = re.compile(r"(?<=[A-Z0-9])(?=[A-Z][a-z])|(?<=[a-z])(?=[A-Z])")
+_NOT_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def _normalise(text: str) -> str:
+    return _NOT_ALNUM.sub(" ", _CAMEL.sub(" ", text).lower())
+
+
+def _pattern(form: str) -> re.Pattern[str]:
+    if len(form.replace(" ", "")) >= 6:
+        return re.compile(re.escape(form))
+    right = r"(?![a-z0-9])" if len(form) < 5 else ""
+    return re.compile(r"(?<![a-z0-9])" + re.escape(form) + right)
+
+
+_FORMS: list[tuple[str, re.Pattern[str]]] = []
+for _name in LMS_NAMES:
+    _spaced = _normalise(_name).strip()
+    for _form in dict.fromkeys((_spaced, _spaced.replace(" ", ""))):
+        _FORMS.append((_name, _pattern(_form)))
 
 
 @dataclass(frozen=True)
@@ -124,21 +149,23 @@ class Baseline:
 def mentions_in(path: str, text: str) -> list[Mention]:
     found: list[Mention] = []
     for number, line in enumerate(text.splitlines(), start=1):
-        folded = _CAMEL.sub(" ", line).lower()
-        for name, pattern in zip(LMS_NAMES, _PATTERNS, strict=True):
+        folded = _normalise(line)
+        for name, pattern in _FORMS:
             found.extend(Mention(path, number, name) for _ in pattern.finditer(folded))
     return found
 
 
-def in_perimeter(path: str, members: list[str]) -> bool:
+def in_perimeter(path: str, members: list[str], migrations: str = "migrations") -> bool:
     parts = PurePosixPath(path).parts
+    if PurePosixPath(path).suffix not in SOURCE_SUFFIXES or _VENDORED.search(path):
+        return False
+    if path.startswith(migrations.rstrip("/") + "/"):
+        return PurePosixPath(path).suffix == ".py"
     return (
         len(parts) > 1
         and parts[0] in members
         and "src" in parts
         and "tests" not in parts
-        and PurePosixPath(path).suffix in SOURCE_SUFFIXES
-        and not _VENDORED.search(path)
     )
 
 
@@ -147,14 +174,17 @@ def _covered_by_directory(path: str, directories: tuple[str, ...]) -> str | None
 
 
 def violations(
-    tree: dict[str, str], members: list[str], baseline: Baseline
+    tree: dict[str, str],
+    members: list[str],
+    baseline: Baseline,
+    migrations: str = "migrations",
 ) -> list[str]:
     """Everything wrong with `tree` (path -> text) against `baseline`, as messages."""
     problems: list[str] = []
     per_file: dict[str, list[Mention]] = {}
     per_directory: dict[str, int] = {d: 0 for d in baseline.directories}
     for path, text in tree.items():
-        if not in_perimeter(path, members):
+        if not in_perimeter(path, members, migrations):
             continue
         found = mentions_in(path, text)
         if not found:
@@ -211,9 +241,19 @@ def workspace_members() -> list[str]:
     return list(root["tool"]["uv"]["workspace"]["members"])
 
 
-def tracked_tree(members: list[str]) -> dict[str, str]:
+def migrations_dir() -> str:
+    """The Alembic script location, from `alembic.ini` rather than a literal."""
+    parser = (
+        configparser.RawConfigParser()
+    )  # the value uses %(here)s, Alembic's own key
+    parser.read(REPO_ROOT / "alembic.ini")
+    location = parser["alembic"]["script_location"].strip().rstrip("/")
+    return location.removeprefix("%(here)s/")
+
+
+def tracked_tree(members: list[str], migrations: str) -> dict[str, str]:
     out = subprocess.run(
-        ["git", "ls-files", "-z", "--", *members],
+        ["git", "ls-files", "-z", "--", *members, migrations],
         cwd=REPO_ROOT,
         capture_output=True,
         check=True,
@@ -221,7 +261,7 @@ def tracked_tree(members: list[str]) -> dict[str, str]:
     return {
         p: (REPO_ROOT / p).read_text(errors="replace")
         for p in out.split("\0")
-        if p and in_perimeter(p, members)
+        if p and in_perimeter(p, members, migrations)
     }
 
 
@@ -265,7 +305,11 @@ def test_legitimate_platform_vocabulary_is_not_matched() -> None:
 
 
 def test_every_spelling_of_a_product_is_matched() -> None:
-    text = "MoodleClient\nmoodle_ws\nVektraMoodle\nmoodlews\nMOODLE_URL\nCanvas LMS\nD2L\nsakaimodule\n"
+    text = (
+        "MoodleClient\nmoodle_ws\nVektraMoodle\nmoodlews\nMOODLE_URL\nCanvas LMS\n"
+        "D2L\nsakaimodule\nCANVAS_LMS\ncanvas-lms\ncanvaslms\nopen_edx\nLON_CAPA\n"
+        "LMSMoodle\nD2LClient\ngetmoodleclient\n"
+    )
     assert [m.name for m in mentions_in("vektra-core/src/x.py", text)] == [
         "moodle",
         "moodle",
@@ -275,6 +319,14 @@ def test_every_spelling_of_a_product_is_matched() -> None:
         "canvas lms",
         "d2l",
         "sakai",
+        "canvas lms",
+        "canvas lms",
+        "canvas lms",
+        "open edx",
+        "lon-capa",
+        "moodle",
+        "d2l",
+        "moodle",
     ]
 
 
@@ -282,6 +334,9 @@ def test_the_perimeter_excludes_only_tests_vendored_assets_and_non_members() -> 
     assert in_perimeter("vektra-core/src/vektra_core/x.py", MEMBERS)
     assert in_perimeter("vektra-learn/widget/src/chat-ui.js", MEMBERS)
     assert in_perimeter("vektra-core/src/vektra_core/static/site.css", MEMBERS)
+    assert in_perimeter("vektra-core/src/vektra_core/strings/en.yaml", MEMBERS)
+    assert in_perimeter("migrations/versions/0042_x.py", MEMBERS)
+    assert not in_perimeter("migrations/README", MEMBERS)
     assert not in_perimeter("vektra-core/tests/test_x.py", MEMBERS)
     assert not in_perimeter("vektra-core/src/vektra_core/static/pico.min.css", MEMBERS)
     assert not in_perimeter("docs/reference/api.md", MEMBERS)
@@ -310,14 +365,17 @@ def test_an_exempt_directory_that_names_no_lms_must_be_deleted() -> None:
 # ---------------------------------------------------------------------------
 def test_the_perimeter_reads_the_real_platform_sources() -> None:
     """A perimeter that found nothing would make the real check vacuous."""
-    tree = tracked_tree(workspace_members())
+    migrations = migrations_dir()
+    tree = tracked_tree(workspace_members(), migrations)
     assert "vektra-learn/src/vektra_learn/api.py" in tree
+    assert any(p.startswith(migrations + "/versions/") for p in tree)
     assert "vektra-learn/widget/src/chat-ui.js" in tree
     assert not any("/tests/" in p for p in tree)
     assert not any(_VENDORED.search(p) for p in tree)
 
 
 def test_the_platform_names_no_lms_beyond_the_baseline() -> None:
-    members = workspace_members()
-    problems = violations(tracked_tree(members), members, load_baseline())
+    members, migrations = workspace_members(), migrations_dir()
+    tree = tracked_tree(members, migrations)
+    problems = violations(tree, members, load_baseline(), migrations)
     assert not problems, "\n".join(problems)

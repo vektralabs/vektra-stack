@@ -186,3 +186,22 @@ async def test_the_upgrade_refuses_a_composite_config_it_cannot_split(pg) -> Non
         assert (
             await c.execute(text("SELECT count(*) FROM assess_activity_config_sealed"))
         ).scalar() is not None
+
+
+async def test_a_direct_api_write_that_skips_updated_at_is_still_audited(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4505511235: the API role may UPDATE the blob without naming ``updated_at``;
+    that clear must be audited too. Only the worker's key rotation is exempt."""
+    site = await make_site(pg)
+    await configure_activity(pg, site, 40)
+    pub, _priv = config_pair()
+    await _store(pg, pub, site, SOLUTION, SECRET, 9)
+    before = len(await _audits(pg, site))
+    await pg.run(
+        "api",
+        "UPDATE assess_activity_config_sealed SET sealed_blob = NULL, kid = NULL "
+        "WHERE site_id = :s AND cmid = 40 AND field = 'solution'",
+        {"s": site},
+    )
+    rows = await _audits(pg, site)
+    assert len(rows) == before + 1
+    assert (rows[-1].reason_code, rows[-1].data["action"]) == (SOLUTION, "cleared")

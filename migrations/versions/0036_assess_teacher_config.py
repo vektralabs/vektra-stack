@@ -10,7 +10,8 @@
 - ``assess_audit_sealed_change()``: SECURITY DEFINER trigger (nobody may EXECUTE it) that writes
   ``assess_teacher_config_changed`` for a teacher's write of a sealed field, old/new from the row
   itself: set / replaced / cleared, and for the recipients the old and new refs (the API cannot
-  read the old ones). It fires on ``UPDATE OF updated_at``, which a key rotation never sets.
+  read the old ones). It fires on every INSERT and UPDATE whatever columns it names, except an
+  UPDATE by the worker's login role (the key rotation, which may only touch blob and kid).
 - ``assess_teacher_gate(site_id, cmid, inputs, refreshed_at)``: the activity-level facts the
   ``teacher_gate`` job (new job kind) writes: the editors and the REQ-077 enable facts. The
   teacher endpoints accept them only while fresh (the API reads, the worker writes).
@@ -247,6 +248,12 @@ AUDIT_FN = """
         v_new text[] := coalesce(NEW.refs, '{}');
         i integer;
     BEGIN
+        -- the worker's key rotation re-seals blob and kid (its only UPDATE columns): not a
+        -- teacher's change. Decided by the login role, which a SECURITY DEFINER function keeps
+        -- in session_user; every other write, whatever columns it names, is audited.
+        IF TG_OP = 'UPDATE' AND session_user = 'vektra_assess_worker' THEN
+            RETURN NULL;
+        END IF;
         IF TG_OP = 'INSERT' THEN
             IF NEW.sealed_blob IS NULL THEN
                 RETURN NULL;  -- clearing a field that was never set: nothing changed
@@ -366,7 +373,7 @@ def upgrade() -> None:
     op.execute(f"ALTER FUNCTION {SIG_AUDIT} OWNER TO {DEFINER}")
     op.execute(f"REVOKE EXECUTE ON FUNCTION {SIG_AUDIT} FROM PUBLIC")
     op.execute(
-        "CREATE TRIGGER trg_assess_audit_sealed_change AFTER INSERT OR UPDATE OF updated_at "
+        "CREATE TRIGGER trg_assess_audit_sealed_change AFTER INSERT OR UPDATE "
         "ON assess_activity_config_sealed FOR EACH ROW "
         "EXECUTE FUNCTION public.assess_audit_sealed_change()"
     )

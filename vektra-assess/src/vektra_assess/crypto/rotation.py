@@ -112,7 +112,7 @@ async def reseal_teacher_configs(
     """Re-seal up to ``batch`` sealed teacher-config fields to the new worker public key, each
     under its own binding ``[site_id, cmid, field]`` (revision 0036). Returns how many still
     carry another kid (0 means done). Only ``sealed_blob`` and ``kid`` change: the database's
-    change audit fires on a teacher's write (``updated_at``), never on a rotation."""
+    change audit skips the worker's login role, so a rotation is never audited as a change."""
     new_kid = new_worker_pub.active
     rows = (
         await conn.execute(

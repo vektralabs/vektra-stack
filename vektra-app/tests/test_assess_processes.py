@@ -556,6 +556,42 @@ async def test_startup_that_never_finishes_is_refused_with_a_structured_error(
         )
 
 
+def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan assess-moodle-ws F4 (carried over to assess-job-loop): kind ``setup_check`` in its
+    own pool with the 120 s hard timeout, plus the daily tick that also runs on startup; the
+    parser's ``parser_sidecar_running`` item is part of the registry the handler runs."""
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.keys import Credentials
+    from vektra_assess.moodle.setup_check import PLUGGABLE_ITEMS
+
+    checked = _checked(monkeypatch, VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true")
+    keyed = assess_worker.Checked(
+        checked.engine,
+        checked.settings,
+        checked.worker_url,
+        {"assess_ws_tokens": Credentials("assess_ws_tokens", {})},
+    )
+    runtime, scheduler, *_ = assess_worker._compose(keyed)
+    spec = runtime._handlers[JobKind.SETUP_CHECK]
+    assert spec.bound and spec.pool == "setup" and spec.budget_s == 120
+    assert spec.lease_s >= 2 * spec.budget_s
+    assert "setup" in runtime._pools
+    tick = next(t for t in scheduler._ticks if t.name == "setup_check")
+    assert tick.bound and tick.run_on_startup and tick.interval_s == 86_400
+    parts = assess_worker._setup_check_parts(keyed)
+    names = parts.registry.names()
+    assert "parser_sidecar_running" in names
+    assert {"smtp_probe", "db_log_statement_none"} <= set(PLUGGABLE_ITEMS) - set(names)
+    # two compositions do not register into one shared registry (it would raise)
+    assess_worker._setup_check_parts(keyed)
+    # without the key matrix nothing of the setup check is bound
+    runtime, scheduler, *_ = assess_worker._compose(checked)
+    assert not runtime._handlers[JobKind.SETUP_CHECK].bound
+    assert not next(t for t in scheduler._ticks if t.name == "setup_check").bound
+
+
 # --- transcript delivery (plan assess-transcript-delivery 10b) ----------------------------
 
 

@@ -447,6 +447,57 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SetupCheckParts:
+    handlers: Mapping[Any, Any]
+    ticks: Mapping[str, Any]
+    registry: Any | None = None  # the item registry the handler runs (None: not bound)
+
+
+def _setup_check_parts(checked: Checked) -> SetupCheckParts:
+    """The REQ-079 ``setup_check`` handler and its daily tick (plan assess-moodle-ws F4, carried
+    over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the WS
+    token keyring); otherwise both stay unbound and ``assert_all_bound`` refuses to start.
+
+    The item registry is built per composition (never the module-level default, which a second
+    composition would register into twice): the built-ins plus the parser's
+    ``parser_sidecar_running`` contributor (plan assess-parser, "aggregated via the plan 3
+    setup-check slot"). ``smtp_probe`` and ``db_log_statement_none`` have no contributor yet and
+    report MISSING (fail closed), see the moodle-ws plan Notes.
+    """
+    if "assess_ws_tokens" not in checked.keys:
+        return SetupCheckParts({}, {})
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.moodle.client import MoodleWsClient
+    from vektra_assess.moodle.setup_check import builtin_registry
+    from vektra_assess.moodle.tokens import secret_token_provider
+    from vektra_assess.worker.parser_client import ParserClient, register_parser_check
+    from vektra_assess.worker.setup_check import (
+        make_setup_check_handler,
+        queue_setup_checks,
+    )
+
+    settings, engine = checked.settings, checked.engine
+    registry = builtin_registry()
+    register_parser_check(ParserClient.from_settings(settings), registry)
+    client = MoodleWsClient(
+        settings, token_provider=secret_token_provider(settings.secrets_dir)
+    )
+
+    async def setup_check() -> None:
+        await queue_setup_checks(engine.connect)
+
+    return SetupCheckParts(
+        {
+            JobKind.SETUP_CHECK: make_setup_check_handler(
+                engine, client, settings, registry=registry
+            )
+        },
+        {"setup_check": setup_check},
+        registry,
+    )
+
+
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.enrolment import queue_rechecks
@@ -583,9 +634,14 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
     delivery = _delivery_parts(checked)
+    setup = _setup_check_parts(checked)
     extra = bindings or Bindings(
-        handlers={**_session_handlers(checked, audit), **delivery.handlers},
-        ticks={**_session_ticks(checked), **delivery.ticks},
+        handlers={
+            **_session_handlers(checked, audit),
+            **delivery.handlers,
+            **setup.handlers,
+        },
+        ticks={**_session_ticks(checked), **delivery.ticks, **setup.ticks},
     )
     slots = build_slots(
         policy,
@@ -718,7 +774,7 @@ def check_imports() -> None:
         importlib.import_module(f"vektra_assess.delivery.{name}")
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",
+        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "setup_check", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",
         "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip

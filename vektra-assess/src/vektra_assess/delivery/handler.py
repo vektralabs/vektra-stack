@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -54,7 +55,7 @@ from vektra_assess.delivery.recipients import (
     domain_allowed,
     recipient_ref,
 )
-from vektra_assess.delivery.smtp import ALERTING, SendResult
+from vektra_assess.delivery.smtp import ALERTING, SendResult, SlotBusy
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.transcript import store
@@ -69,7 +70,11 @@ TRANSCRIPT_KEY = "transcript_key"
 
 
 class Sender(Protocol):
-    async def send(self, msg: Any, recipient: str) -> SendResult: ...
+    def slot(self) -> AbstractAsyncContextManager[None]: ...
+
+    async def send(
+        self, msg: Any, recipient: str, *, slot_held: bool = False
+    ) -> SendResult: ...
 
 
 AcquireDb = Callable[[], Any]  # an async context manager yielding an AsyncConnection
@@ -99,6 +104,7 @@ class Delivered:
     replaced: int = 0
     added: int = 0
     duplicates: int = 0
+    busy: int = 0  # rows left due: no relay session within the bounded wait
     unresolved: bool = False
 
 
@@ -117,7 +123,7 @@ def _alert(event: str, **fields: Any) -> None:
 
 
 _TRANSCRIPT = text(
-    "SELECT t.id, t.ciphertext, t.dek_wrapped, t.content_hash, t.filename, "
+    "SELECT t.id, (t.ciphertext IS NOT NULL) AS live, t.filename, "
     "t.course_shortname, s.site_id, "
     "s.cmid, s.student_userid, s.session_no FROM assess_transcripts t "
     "JOIN assess_sessions s ON s.id = t.session_id WHERE t.id = :t"
@@ -143,6 +149,26 @@ _READD = text(
     "UPDATE assess_deliveries SET status = 'PENDING', not_before = :now, "
     "last_error_class = NULL, smtp_code = NULL, attempt_started_at = NULL "
     "WHERE id = :i AND status = 'REPLACED' RETURNING id"
+)
+#: the bytes, read only after a claim returned a row (review #8)
+_DOC = text(
+    "SELECT ciphertext, dek_wrapped, content_hash FROM assess_transcripts "
+    "WHERE id = :t AND ciphertext IS NOT NULL"
+)
+_DUE_IDS = text(
+    "SELECT id, recipient_ref FROM assess_deliveries WHERE transcript_id = :t "
+    "AND kind = 'transcript' AND status IN ('PENDING', 'RETRYING') AND not_before <= :now "
+    "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
+    "ORDER BY round, created_at"
+)
+_CLAIM_ONE = text(
+    "WITH due AS (SELECT id, attempt_started_at AS prev FROM assess_deliveries "
+    "WHERE id = :i AND status IN ('PENDING', 'RETRYING') AND not_before <= :now "
+    "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
+    "FOR UPDATE SKIP LOCKED) "
+    "UPDATE assess_deliveries d SET attempt_started_at = :now, attempts = d.attempts + 1 "
+    "FROM due WHERE d.id = due.id "
+    "RETURNING d.id, d.round, d.recipient_ref, d.attempts, d.created_at, due.prev"
 )
 _CLAIM = text(
     "WITH due AS (SELECT id, attempt_started_at AS prev FROM assess_deliveries "
@@ -316,136 +342,187 @@ async def _unresolved(
 async def deliver_transcript(
     deps: DeliveryDeps, acquire: AcquireDb, tid: UUID
 ) -> Delivered | None:
-    """Deliver the due rows of transcript ``tid``. None: no live transcript (stale job)."""
+    """Deliver the due rows of transcript ``tid``. None: no live transcript (stale job).
+
+    Each due row is claimed (attempt start committed) only once it holds a relay session
+    (bounded wait; a row that gets none stays untouched and due), and the transcript bytes
+    are read only after the first claim that returned a row.
+    """
     out = Delivered()
     now = deps.clock()
     async with acquire() as conn:
         t = (await conn.execute(_TRANSCRIPT, {"t": tid})).first()
         await conn.rollback()
-    if t is None or t.ciphertext is None:
+    if t is None or not t.live:
         return None  # never generated, or shredded: plan 12 owns ABANDONED
+    by_ref: dict[str, str] = {}
+    due: list[Any] = []
     async with acquire() as conn, conn.begin():
         configured = await deps.recipients.read(conn, t.site_id, int(t.cmid))
         await conn.execute(_LOCK, {"t": str(t.id)})
         if not configured:
             await _unresolved(conn, deps, t, now, out)
-            claimed_rows: list[Any] = []
         else:
             by_ref = {recipient_ref(t.site_id, a): a for a in configured}
             await _fan_out(conn, t, list(by_ref), now, out)
-            stale = now - deps.stale_after
-            claimed_rows = (
-                await conn.execute(_CLAIM, {"t": t.id, "now": now, "stale": stale})
+            due = (
+                await conn.execute(
+                    _DUE_IDS, {"t": t.id, "now": now, "stale": now - deps.stale_after}
+                )
             ).all()
-            for c in claimed_rows:
-                if c.prev is not None:
-                    # an attempt started and left no outcome: maybe the relay holds it already
-                    await _audit(
-                        conn,
-                        AssessAuditEvent.DELIVERY_POSSIBLE_DUPLICATE,
-                        t,
-                        round=int(c.round),
-                        ref=c.recipient_ref,
-                        delivery_id=str(c.id),
-                    )
-                    out.duplicates += 1
+    del configured  # the addresses stay in by_ref, local to this call
     if out.unresolved:
         if out.retrying or out.failed:
             _alert(RECIPIENTS_UNRESOLVED, session_id=str(t.id), count=out.retrying)
         return out
-    del configured  # the addresses stay in by_ref, local to this call
-    claimed = [
-        _Claimed(
-            c.id,
-            int(c.round),
-            c.recipient_ref,
-            int(c.attempts),
-            c.created_at,
-            now,
-            c.prev is not None,
-        )
-        for c in claimed_rows
-    ]
-    if not claimed:
+    if not due:
         return out
-    try:
-        doc = store.open_verified(
-            deps.transcript_kek,
-            t.id,
-            bytes(t.ciphertext),
-            bytes(t.dek_wrapped),
-            t.content_hash,
-        )
-    except store.TranscriptKeyUnavailable:
-        _alert(TRANSCRIPT_KEY, session_id=str(t.id))
-        await _all(
-            *(
-                _settle(
-                    deps, acquire, t, c, SendResult(False), TRANSCRIPT_KEY, None, out
-                )
-                for c in claimed
+    docs = _Doc(deps, acquire, t)
+    await _all(*(_row(deps, acquire, t, d, by_ref, docs, out) for d in due))
+    log.info(
+        "assess_delivery_round",
+        session_id=str(t.id),
+        count=len(due),
+        outcome=(
+            f"sent={out.sent},retrying={out.retrying},failed={out.failed},"
+            f"busy={out.busy}"
+        ),
+    )
+    return out
+
+
+class _Doc:
+    """The transcript bytes, read and re-hashed once, on the first claim that needs them."""
+
+    def __init__(self, deps: DeliveryDeps, acquire: AcquireDb, t: Any) -> None:
+        self._deps, self._acquire, self._t = deps, acquire, t
+        self._lock = asyncio.Lock()
+        self._doc: bytes | None = None
+        self._error: str | None = None
+
+    async def get(self) -> bytes | str:
+        """The bytes, or the error class (``transcript_key`` / ``transcript_integrity``)."""
+        async with self._lock:
+            if self._doc is None and self._error is None:
+                await self._load()
+            return self._doc if self._doc is not None else str(self._error)
+
+    async def _load(self) -> None:
+        t = self._t
+        async with self._acquire() as conn:
+            row = (await conn.execute(_DOC, {"t": t.id})).first()
+            await conn.rollback()
+        try:
+            if row is None:
+                raise store.TranscriptIntegrityError("shredded since")
+            self._doc = store.open_verified(
+                self._deps.transcript_kek,
+                t.id,
+                bytes(row.ciphertext),
+                bytes(row.dek_wrapped),
+                row.content_hash,
             )
+        except store.TranscriptKeyUnavailable:
+            self._error = TRANSCRIPT_KEY
+            _alert(TRANSCRIPT_KEY, session_id=str(t.id))
+        except store.TranscriptIntegrityError:
+            # never mail bytes that do not match their hash: final, audited, alerted
+            self._error = INTEGRITY
+            _alert(INTEGRITY, session_id=str(t.id))
+
+
+async def _claim(
+    deps: DeliveryDeps, acquire: AcquireDb, t: Any, row_id: UUID, out: Delivered
+) -> _Claimed | None:
+    """Commit the attempt start of ONE row (OQ-029); None when it is no longer due."""
+    now = deps.clock()
+    async with acquire() as conn, conn.begin():
+        c = (
+            await conn.execute(
+                _CLAIM_ONE, {"i": row_id, "now": now, "stale": now - deps.stale_after}
+            )
+        ).first()
+        if c is None:
+            return None  # another job took it, or it changed
+        if c.prev is not None:
+            # an attempt started and left no outcome: maybe the relay holds it already
+            await _audit(
+                conn,
+                AssessAuditEvent.DELIVERY_POSSIBLE_DUPLICATE,
+                t,
+                round=int(c.round),
+                ref=c.recipient_ref,
+                delivery_id=str(c.id),
+            )
+            out.duplicates += 1
+    return _Claimed(
+        c.id,
+        int(c.round),
+        c.recipient_ref,
+        int(c.attempts),
+        c.created_at,
+        now,
+        c.prev is not None,
+    )
+
+
+async def _row(
+    deps: DeliveryDeps,
+    acquire: AcquireDb,
+    t: Any,
+    due: Any,
+    by_ref: dict[str, str],
+    docs: _Doc,
+    out: Delivered,
+) -> None:
+    address = by_ref.get(due.recipient_ref or "")
+    if address is None or not domain_allowed(address, deps.domains):
+        # nothing to connect for: claimed and settled without a relay session
+        c = await _claim(deps, acquire, t, due.id, out)
+        if c is None:
+            return
+        if address is None:
+            # the row was in flight during the fan-out and its recipient is gone since
+            reason, final = RECIPIENTS_UNRESOLVED, False
+        else:
+            reason, final = DOMAIN_NOT_ALLOWED, True
+        await _settle(
+            deps, acquire, t, c, SendResult(False), reason, None, out, final=final
         )
-        return out
-    except store.TranscriptIntegrityError:
-        # never mail bytes that do not match their hash: final, audited, alerted
-        _alert(INTEGRITY, session_id=str(t.id))
-        await _all(
-            *(
-                _settle(
+        return
+    try:
+        async with deps.sender.slot():
+            c = await _claim(deps, acquire, t, due.id, out)
+            if c is None:
+                return
+            doc = await docs.get()
+            if isinstance(doc, str):
+                await _settle(
                     deps,
                     acquire,
                     t,
                     c,
                     SendResult(False),
-                    INTEGRITY,
+                    doc,
                     None,
                     out,
-                    final=True,
+                    final=doc == INTEGRITY,
                 )
-                for c in claimed
-            )
-        )
-        return out
-    await _all(*(_one(deps, acquire, t, c, by_ref, doc, out) for c in claimed))
-    log.info(
-        "assess_delivery_round",
-        session_id=str(t.id),
-        count=len(claimed),
-        outcome=f"sent={out.sent},retrying={out.retrying},failed={out.failed}",
-    )
-    return out
+                return
+            await _send(deps, acquire, t, c, address, doc, out)
+    except SlotBusy:
+        out.busy += 1  # no relay session in time: the row stays due, untouched
 
 
-async def _one(
+async def _send(
     deps: DeliveryDeps,
     acquire: AcquireDb,
     t: Any,
     c: _Claimed,
-    by_ref: dict[str, str],
+    address: str,
     doc: bytes,
     out: Delivered,
 ) -> None:
-    address = by_ref.get(c.ref or "")
-    if address is None:
-        # the row was in flight during the fan-out and its recipient is gone since
-        await _settle(
-            deps, acquire, t, c, SendResult(False), RECIPIENTS_UNRESOLVED, None, out
-        )
-        return
-    if not domain_allowed(address, deps.domains):
-        await _settle(
-            deps,
-            acquire,
-            t,
-            c,
-            SendResult(False),
-            DOMAIN_NOT_ALLOWED,
-            None,
-            out,
-            final=True,
-        )
-        return
     mid = mail.message_id(t.id, c.round, c.ref or "", deps.message_id_domain)
     # the short name read at close (sanitised for the header by ``message``)
     course = t.course_shortname or "corso non disponibile"
@@ -463,7 +540,7 @@ async def _one(
             date=deps.clock(),
         )
     )
-    result = await deps.sender.send(msg, address)
+    result = await deps.sender.send(msg, address, slot_held=True)
     del address, msg
     await _settle(deps, acquire, t, c, result, None, mid, out)
 

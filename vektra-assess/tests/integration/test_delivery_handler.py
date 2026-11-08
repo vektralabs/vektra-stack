@@ -595,3 +595,73 @@ async def test_a_failed_address_no_longer_configured_frees_its_slot(
             recipient_ref(w.site, bad): "FAILED",  # history, not a slot
         }
         assert [len(sink.to(x)) for x in (a, b, c, bad)] == [1, 1, 1, 0]
+
+
+async def test_a_job_with_nothing_due_never_loads_the_ciphertext(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #8: the transcript bytes are read only after a claim returned rows."""
+    import re
+
+    from sqlalchemy import event
+
+    reads: list[str] = []
+
+    def spy(_c, _cur, statement, *_a) -> None:  # type: ignore[no-untyped-def]
+        if re.search(r"ciphertext\s*,|ciphertext\s+FROM", statement, re.I):
+            reads.append(statement)
+
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        event.listen(worker.sync_engine, "before_cursor_execute", spy)
+        try:
+            got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+            assert got is not None and got.sent == 2 and reads  # bytes read to send
+            reads.clear()
+            got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+            assert got is not None and got.sent == 0
+            assert reads == []  # nothing due: the ciphertext was never selected
+        finally:
+            event.remove(worker.sync_engine, "before_cursor_execute", spy)
+
+
+async def test_no_free_relay_session_leaves_the_rows_unclaimed(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #5: a row is claimed (attempt start committed) only once a relay session is
+    held; waiting for one is bounded, and a row that could not get one stays untouched."""
+    import asyncio
+
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        sender = SmtpSender(sink_config(sink, max_connections=1))
+        sender.slot_wait_s = 0.3
+        deps = _deps(ring, config, sink, clock, sender=sender)
+        held, release = asyncio.Event(), asyncio.Event()
+
+        async def hog() -> None:
+            async with sender.slot():
+                held.set()
+                await release.wait()
+
+        task = asyncio.create_task(hog())
+        await held.wait()
+        try:
+            async with asyncio.timeout(5):
+                got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+            assert got is not None and got.sent == 0 and got.busy == 2
+            current = await rows(pg, s.session_id)
+            assert {(r.status, r.attempts, r.attempt_started_at) for r in current} == {
+                ("PENDING", 0, None)
+            }
+            assert sink.messages == []
+        finally:
+            release.set()
+            await task
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 2

@@ -644,3 +644,33 @@ def test_a_configured_relay_binds_the_delivery_handler_and_ticks(
     assert not {"delivery_retry", "smtp_probe"} & {
         t.name for t in scheduler._ticks if t.bound
     }
+
+
+def test_the_delivery_budget_must_cover_the_worst_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review #5: bounded slot wait + send timeout + QUIT bound + a DB margin must fit the
+    transcript_deliver budget, or the worker refuses to compose."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
+        VEKTRA_ASSESS_SMTP_TIMEOUT_S="30",
+        VEKTRA_ASSESS_JOB_TRANSCRIPT_DELIVER_BUDGET_S="60",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {
+        "assess_transcript_kek": ring,
+        "assess_teacher_config_private": ring,
+        "assess_smtp": Credentials("assess_smtp", {}),
+    }
+    keyed = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    with pytest.raises(StartupValidationError, match="transcript_deliver budget 60 s"):
+        assess_worker._compose(keyed)

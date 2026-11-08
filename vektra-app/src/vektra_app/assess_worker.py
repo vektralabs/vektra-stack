@@ -326,6 +326,10 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     }
 
 
+#: room for a delivery row's database statements (claim, read, outcome) inside the job budget
+DELIVERY_DB_MARGIN_S = 15.0
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveryParts:
     handlers: Mapping[Any, Any]
@@ -388,7 +392,24 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
     from vektra_assess.worker.policy import load_policy
 
     sender = SmtpSender(smtp_config(settings, checked.keys["assess_smtp"]))
-    lease = load_policy(os.environ).kinds[JobKind.TRANSCRIPT_DELIVER].lease_s
+    policy = load_policy(os.environ).kinds[JobKind.TRANSCRIPT_DELIVER]
+    lease = policy.lease_s
+    # every row of a job runs concurrently: one row's worst case (bounded slot wait + send
+    # timeout + QUIT bound) plus the DB statements must fit the job's hard budget
+    need = sender.worst_case_s() + DELIVERY_DB_MARGIN_S
+    if policy.budget_s < need:
+        raise StartupValidationError(
+            step=STEP,
+            detail=(
+                f"transcript_deliver budget {policy.budget_s:g} s is shorter than one "
+                f"delivery's worst case {need:g} s (slot wait + VEKTRA_ASSESS_SMTP_TIMEOUT_S "
+                "+ QUIT + database)"
+            ),
+            remediation=(
+                "Raise VEKTRA_ASSESS_JOB_TRANSCRIPT_DELIVER_BUDGET_S (the lease follows at "
+                "2x) or lower VEKTRA_ASSESS_SMTP_TIMEOUT_S."
+            ),
+        )
     domains = parse_domains(settings.recipient_domains)
     if not domains:
         log.warning(

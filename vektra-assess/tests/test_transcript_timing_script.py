@@ -187,7 +187,15 @@ async def test_a_connection_whose_close_hangs_does_not_hang_the_check(
         return Conn()
 
     monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
-    monkeypatch.setattr(t, "CLOSE_TIMEOUT_S", 0.2, raising=False)
+    monkeypatch.setattr(t, "CLOSE_TIMEOUT_S", 0.2)
+    deadlines: list[float] = []
+    real_wait_for = asyncio.wait_for
+
+    async def recording_wait_for(aw, timeout):  # type: ignore[no-untyped-def]
+        deadlines.append(timeout)
+        return await real_wait_for(aw, timeout)
+
+    monkeypatch.setattr(t.asyncio, "wait_for", recording_wait_for)
     cfg = t.Config.from_env(
         {
             "VEKTRA_NFR_ASSESS_DSN": "postgresql://x@h/db",
@@ -196,9 +204,10 @@ async def test_a_connection_whose_close_hangs_does_not_hang_the_check(
     )
     async with asyncio.timeout(3):
         reasons = await t.blockers(cfg)
-    assert reasons and all(
-        "unreachable" not in r for r in reasons
-    )  # only the sink is missing
+    # the sink is the only blocker (no "unreachable", no timeout reason), and the close ran
+    # under the configured deadline (CodeRabbit nitpick, round 3)
+    assert len(reasons) == 1 and "VEKTRA_NFR_ASSESS_SINK_IDS" in reasons[0], reasons
+    assert deadlines[-1] == t.CLOSE_TIMEOUT_S
 
 
 async def test_a_database_failure_while_reading_is_blocked(

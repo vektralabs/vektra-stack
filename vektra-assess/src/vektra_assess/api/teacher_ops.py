@@ -114,7 +114,7 @@ _CLOSE = text("SELECT assess_close_session(:sid, :epoch, 'terminated_by_teacher'
 _ROLLBACK = text("SELECT assess_rollback_starting(:sid)")
 _DISABLE = text(
     "UPDATE assess_activity_config SET enabled = false, version = version + 1, "
-    "updated_by = :u, updated_at = now() WHERE site_id = :s AND cmid = :c "
+    "updated_by = :u, updated_at = now() WHERE site_id = :s AND cmid = :c AND enabled "
     "RETURNING version"
 )
 _INSERT_TERMINATION = text(
@@ -346,7 +346,7 @@ async def terminate_sessions(
     async def action(conn: Any, site: UUID, gate: TeacherGate) -> tuple[int, Any]:
         # the activity row first: a Start holds it FOR SHARE until its STARTING row commits, so
         # an in-flight Start is either counted below (and rolled back) or sees the disable
-        cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
+        await conn.execute(_CONFIG, {"s": site, "c": c})
         live = (await conn.execute(_LIVE, {"s": site, "c": c})).all()
         active = [r for r in live if r.state in LIVE_STATES]
         if len(active) != body.expected_active_count:
@@ -363,9 +363,11 @@ async def terminate_sessions(
         for r in live:
             if r.state == "STARTING":
                 rolled += bool((await conn.execute(_ROLLBACK, {"sid": r.id})).scalar())
-        version = was_enabled = None
+        # ``version`` is set only when this request actually switched the activity off: an
+        # activity already disabled (or never configured) is not rewritten, re-versioned or
+        # re-audited, and the termination records what happened, not what was asked
+        version = None
         if body.also_disable:
-            was_enabled = bool(cfg.enabled) if cfg is not None else None
             version = (
                 await conn.execute(
                     _DISABLE, {"s": site, "c": c, "u": body.actor_userid}
@@ -383,7 +385,7 @@ async def terminate_sessions(
                 "kid": kid,
                 "closed": closed,
                 "rolled": rolled,
-                "dis": body.also_disable,
+                "dis": version is not None,
                 "by": str(body.actor_userid),
             },
         )
@@ -397,7 +399,7 @@ async def terminate_sessions(
                 reason_code="enabled",
                 data={
                     "field": "enabled",
-                    "old": was_enabled,
+                    "old": True,
                     "new": False,
                     "cmid": c,
                     "actor": body.actor_userid,
@@ -417,7 +419,7 @@ async def terminate_sessions(
                 "termination_id": str(term_id),
                 "closed": closed,
                 "rolled_back": rolled,
-                "also_disable": body.also_disable,
+                "also_disable": version is not None,
             },
         )
         log.info(

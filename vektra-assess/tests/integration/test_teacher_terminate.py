@@ -396,3 +396,42 @@ async def test_the_starting_rollback_verifies_every_child_table(pg) -> None:  # 
         "assess_session_handoff",
     ):
         assert f"public.{table} WHERE" in src, table
+
+
+async def test_disable_on_an_already_disabled_activity_records_what_happened(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-7: ``also_disable`` on an activity already off changes nothing: no version
+    bump, no config-change audit row, and the termination records ``also_disable = false``."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, _seeded = await live_sessions(w, worker, [6071])
+        await seed_teacher_gate(pg, w.site, cmid)
+        await configure_activity(pg, w.site, cmid, enabled=False)
+        version = "SELECT version FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
+        before = await count(pg, version, s=w.site, c=cmid)
+        r = await w.client.post(
+            url(cmid),
+            json=body(reason=REASON, expected_active_count=1, also_disable=True),
+            headers=teacher(),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["disabled"] is False
+        assert await count(pg, version, s=w.site, c=cmid) == before
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_audit_events WHERE site_id = :s "
+                "AND event = 'assess_teacher_config_changed'",
+                s=w.site,
+            )
+            == 0
+        )
+        rows = await pg.run(
+            "super",
+            "SELECT t.also_disable, (SELECT data->>'also_disable' FROM assess_audit_events "
+            "WHERE site_id = :s AND event = 'assess_teacher_terminate') "
+            "FROM assess_terminations t WHERE t.site_id = :s",
+            {"s": w.site},
+        )
+        assert [tuple(x) for x in rows] == [(False, "false")]

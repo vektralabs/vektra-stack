@@ -215,6 +215,9 @@ async def test_implicit_tls_sends_and_an_untrusted_certificate_is_tls(
             _msg(), "prof@unical.it"
         )
         assert ok.ok and len(sink.messages) == 1
+        # CodeRabbit 4504362617: the sink records implicit TLS as TLS, AUTH included
+        assert sink.messages[0].tls and sink.messages[0].authenticated
+        assert sink.auth_attempts and all(sink.auth_attempts)
         bad = await SmtpSender(
             sink_config(sink, tls_mode="implicit", ca_file=other.ca_file)
         ).send(_msg(1), "prof@unical.it")

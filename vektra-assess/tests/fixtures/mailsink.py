@@ -182,7 +182,7 @@ class _Handler:
                 rcpt=tuple(envelope.rcpt_tos),
                 raw=bytes(envelope.original_content or envelope.content),
                 received_at=time.time(),
-                tls=session.ssl is not None,
+                tls=self.sink._is_tls(session),
                 authenticated=bool(session.authenticated),
             )
         )
@@ -217,10 +217,14 @@ class MailSink:
         ctx.load_cert_chain(self._leaf, self._key)
         return ctx
 
+    def _is_tls(self, session: Any) -> bool:
+        """STARTTLS sets ``session.ssl``; an implicit-TLS listener encrypts every session."""
+        return self.implicit or session.ssl is not None
+
     def _authenticator(
         self, server: Any, session: Any, envelope: Any, mechanism: str, data: Any
     ) -> AuthResult:
-        self.auth_attempts.append(session.ssl is not None)
+        self.auth_attempts.append(self._is_tls(session))
         ok = (
             isinstance(data, LoginPassword)
             and data.login == USERNAME.encode()

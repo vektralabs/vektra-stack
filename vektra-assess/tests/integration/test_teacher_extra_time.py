@@ -424,3 +424,29 @@ async def test_zero_extra_time_clears_a_grant(pg) -> None:  # type: ignore[no-un
             assert r.status_code == 200, (over, r.text)
             assert r.json()["extra_seconds"] == await count(pg, stored, s=w.site)
         assert await count(pg, stored, s=w.site) == 0
+
+
+async def test_a_cap_raised_after_a_grant_never_gives_more_than_240_minutes(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506916939: 210 min granted at a 30-min cap, then the cap raised to 120:
+    the Start freezes 240 min (the total prevails), not 330."""
+    async with world(pg) as w:
+        _sub, cmid = fixture_target()
+        await site_release(w)
+        await configure_activity(pg, w.site, cmid, cap_minutes=30)
+        await seed_teacher_gate(pg, w.site, cmid)
+        r = await w.client.put(
+            extra_url(cmid, 8501),
+            json=body(minutes=210, confirm_over_100=True),
+            headers=teacher(),
+        )
+        assert r.status_code == 200 and r.json()["duration_s"] == 240 * 60, r.text
+        await live_sessions(w, worker, [8501], cap_minutes=120)
+        rows = await pg.run(
+            "super",
+            "SELECT duration_s, extract(epoch FROM deadline_at - committed_at)::int "
+            "FROM assess_sessions WHERE site_id = :s AND student_userid = 8501",
+            {"s": w.site},
+        )
+        assert [tuple(x) for x in rows] == [(240 * 60, 240 * 60)]

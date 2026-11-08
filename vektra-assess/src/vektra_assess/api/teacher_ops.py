@@ -66,6 +66,7 @@ from vektra_assess.teacher.schemas import (
     TerminatePost,
     field_errors,
 )
+from vektra_assess.timing import session_duration_s
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
 log = structlog.get_logger(__name__)
@@ -512,7 +513,7 @@ async def put_extra_time(
         return 200, {
             "student_userid": student,
             "extra_seconds": new,
-            "duration_s": cap * 60 + new,
+            "duration_s": session_duration_s(cap, new),
         }
 
     return await _run(request, key, c, body, "extra_time", action)

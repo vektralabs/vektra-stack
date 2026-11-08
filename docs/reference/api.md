@@ -234,7 +234,8 @@ Re-enabling never reopens a CLOSED session.
 Extra time (REQ-078): stored in seconds (a percentage is of the cap configured now, rounded up
 to whole minutes, so `pre_session.duration_min` is exact) and copied
 into the session at Start; refused while the student's current session is STARTING, ACTIVE or
-OUTAGE, or CLOSED without a pending reset.
+OUTAGE, or CLOSED without a pending reset. The total prevails: a grant accepted at a smaller cap stays stored when the cap is
+raised, and the duration frozen at Start never exceeds 240 minutes.
 
 Opening fallback (REQ-091): accepted only while a BR-006(d) input is unreadable in the capability
 matrix (an assignment always: participants' extensions are not listable; a quiz when

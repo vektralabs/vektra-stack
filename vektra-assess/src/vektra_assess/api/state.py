@@ -33,7 +33,7 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.gate import verify_assess_token_pre
 from vektra_assess.errors import assess_unavailable, rate_limited
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
-from vektra_assess.timing import minutes_left
+from vektra_assess.timing import minutes_left, session_duration_s
 from vektra_assess.tokens import PreClaims
 
 router = APIRouter()
@@ -244,7 +244,9 @@ async def enrich(
             if settings.privacy_notice_url:
                 privacy["notice_url"] = settings.privacy_notice_url
             pre_session: dict[str, Any] = {
-                "duration_min": (int(pre.cap_minutes or 0) * 60 + int(pre.extra_s))
+                "duration_min": session_duration_s(
+                    int(pre.cap_minutes or 0), int(pre.extra_s)
+                )
                 // 60,
                 "course_material_used": bool(pre.rag_enabled),
                 "limits": {

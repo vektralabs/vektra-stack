@@ -21,6 +21,17 @@ import math
 from collections.abc import Collection
 from datetime import datetime, timedelta
 
+#: BR-013: cap + extra time never exceeds 240 minutes ("the total prevails"); a grant accepted
+#: at a small cap stays stored when the cap is raised later, so the duration frozen at Start is
+#: capped here, the one place every reader of the duration goes through
+MAX_SESSION_S = 240 * 60
+
+
+def session_duration_s(cap_minutes: int, extra_s: int) -> int:
+    """The duration frozen at Start: cap + extra time, at most ``MAX_SESSION_S``."""
+    return min(int(cap_minutes) * 60 + int(extra_s), MAX_SESSION_S)
+
+
 #: the SQL form of ``deadline`` over the ``assess_sessions`` columns (no parameters)
 DEADLINE_SQL = "committed_at + make_interval(secs => duration_s + credited_outage_s)"
 

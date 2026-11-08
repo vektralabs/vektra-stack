@@ -347,7 +347,7 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
 - **Plugin request (P3, sent to vektra-moodle-cf):** form field "Destinatari della trascrizione"
   1..3 emails, prefilled with `$USER->email`, validated against the site-admin copy of the domain
   allowlist (error names the allowed domains), sent in the sealed teacher config as
-  `transcript_recipients`; the pre-session screen names them from the config.
+  `transcript_recipients`; the pre-session screen names them only from `/state.pre_session.recipients` (masked `{role:"recipient", name:"m***@domain"}`): the plugin never reads back or caches the addresses (amended 2026-11-08 with plan 11a, GET config returns no address).
 
 ### Design decisions taken in 10a (one line each, with the reason)
 

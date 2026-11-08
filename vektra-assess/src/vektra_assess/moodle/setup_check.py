@@ -603,7 +603,8 @@ async def run_setup_check(
     1. mark the report ``running`` (a queued report is re-validated, an unknown or finished one
        is refused) in its own transaction;
     2. network: site_info, items, probes;
-    3. ONE transaction: ``observe_release`` first, then every capability row, the item rows, the
+    3. ONE transaction: ``observe_release`` first, then every capability row with the site's
+       ``release`` (only when the probes ran), the item rows, the
        audit event of a rejected token, and the report ``done``. A crash anywhere in it leaves
        no partial matrix; the report is then marked ``failed`` and the error re-raised.
     """
@@ -660,6 +661,13 @@ async def run_setup_check(
                 await observe_release(conn, site_id, outcome.release)
                 if outcome.flags:
                     await persist_matrix(conn, site_id, outcome.release, outcome.flags)
+                    # ``release`` = the release whose capability matrix is valid (coordinator
+                    # decision 2026-11-08): the readers of the render check and the pre-flight
+                    # choose their model set from it, so it moves only with a persisted matrix
+                    await conn.execute(
+                        text("UPDATE assess_sites SET release = :r WHERE id = :s"),
+                        {"r": outcome.release, "s": site_id},
+                    )
             for item in outcome.items:
                 await conn.execute(
                     text(

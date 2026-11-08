@@ -613,3 +613,20 @@ async def test_null_on_a_setting_that_cannot_be_cleared_is_a_field_error(
         assert g.json()["show_solution"] is True
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_an_unrepresentable_end_date_is_a_400(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4505511246, through the route: never a 500 when the value is stored."""
+    ctx, w = await ready(pg, pair)
+    try:
+        r = await w.client.put(
+            url(60),
+            json=body(available_until="9999-12-31T23:30:00-01:00"),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": "available_until", "code": "out_of_range"}
+        ]
+    finally:
+        await ctx.__aexit__(None, None, None)

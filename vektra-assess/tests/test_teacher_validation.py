@@ -303,3 +303,12 @@ def test_the_end_date_is_compared_at_the_second_it_is_stored() -> None:
         ("available_until", "not_after_opening")
     ]
     assert v.check_end_date(datetime.fromtimestamp(2_001.0, UTC), 2_000) == []
+
+
+def test_an_end_date_outside_the_representable_range_is_a_field_error() -> None:
+    """CodeRabbit 4505511246: 9999-12-31T23:30-01:00 is year 10000 in UTC; it must be a field
+    error, not a failure when the stored value is rebuilt."""
+    from datetime import timedelta, timezone
+
+    late = datetime(9999, 12, 31, 23, 30, tzinfo=timezone(timedelta(hours=-1)))
+    assert codes(v.check_end_date(late, 2_000)) == [("available_until", "out_of_range")]

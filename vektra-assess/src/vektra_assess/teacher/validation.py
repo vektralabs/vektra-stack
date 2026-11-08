@@ -14,7 +14,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from vektra_assess.delivery.address import normalize_address
@@ -130,10 +130,15 @@ def effective_opening(close_at: int | None, attested_at: int | None) -> int | No
 def check_end_date(end_at: datetime, opening_at: int | None) -> list[FieldError]:
     if end_at.tzinfo is None:
         return [FieldError("available_until", "timezone_required")]
+    try:  # the value is stored as whole UTC seconds and rebuilt from them
+        stored = int(end_at.timestamp())
+        datetime.fromtimestamp(stored, UTC)
+    except (OverflowError, ValueError, OSError):
+        return [FieldError("available_until", "out_of_range")]
     if opening_at is None:
         return [FieldError("available_until", "opening_unknown")]
     # compared at the whole second it is stored at (``end_at`` is saved truncated)
-    if int(end_at.timestamp()) <= opening_at:
+    if stored <= opening_at:
         return [
             FieldError(
                 "available_until", "not_after_opening", extra={"opening_at": opening_at}

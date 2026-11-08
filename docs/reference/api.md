@@ -178,7 +178,7 @@ always, until plan assess-privacy-retention lands) and a setup check that is not
 `"0-20000"`, `"1-20000"`, `"1-3"`), `allowed_domains`, `index` (the recipient's position, never
 the address), `reason`, `opening_at`. Codes: `out_of_range`, `too_long`, `empty`, `required`,
 `invalid_address`, `domain_not_allowed`, `too_many`, `null_not_allowed`, `rag_unavailable`, `not_for_activity_type`,
-`timezone_required`, `opening_unknown`, `not_after_opening`, `moodle_rubric_missing`, and on
+`timezone_required`, `out_of_range` (also on `available_until`), `opening_unknown`, `not_after_opening`, `moodle_rubric_missing`, and on
 `enabled`: `quiz_without_close_date`, `assignment_without_cutoff`, `team_submission`,
 `marking_guide`, `moodle_facts_unreadable`, `privacy_unset`, `setup_check_red`.
 

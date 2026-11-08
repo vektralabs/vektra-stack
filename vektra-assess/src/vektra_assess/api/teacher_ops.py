@@ -41,7 +41,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from vektra_assess import privacy
-from vektra_assess.api.common import engine_of, fail, parse_body, site_of_key
+from vektra_assess.api.common import engine_of, fail, iso_time, parse_body, site_of_key
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teachers import TeacherGate, path_id, verify_teacher
 from vektra_assess.api.transcripts import transcript_key_of
@@ -524,10 +524,6 @@ async def readable_close_flags(conn: Any, site: UUID) -> dict[str, bool]:
     }
 
 
-def _epoch_iso(epoch: int | None) -> str | None:
-    return datetime.fromtimestamp(epoch, UTC).isoformat() if epoch else None
-
-
 @router.put("/activities/{cmid}/opening-fallback")
 async def put_opening_fallback(
     cmid: str, request: Request, key: ApiKeyInfo = Depends(_guard)
@@ -588,8 +584,8 @@ async def put_opening_fallback(
             },
         )
         return 200, {
-            "opening_at": _epoch_iso(at),
-            "previous": _epoch_iso(cfg.attested_at),
+            "opening_at": iso_time(at),
+            "previous": iso_time(cfg.attested_at),
             "version": int(version),
         }
 

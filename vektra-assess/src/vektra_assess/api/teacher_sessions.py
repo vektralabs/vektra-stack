@@ -19,7 +19,6 @@ actor allowed to see it (never its reason, which is never stored), and ``N sessi
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -27,7 +26,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from vektra_assess.api.common import engine_of, fail, site_of_key
+from vektra_assess.api.common import engine_of, fail, iso_time, site_of_key
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teacher_ops import readable_close_flags
 from vektra_assess.api.teachers import (
@@ -99,14 +98,6 @@ _ACTIVE = text(
 )
 
 
-def _iso(value: datetime | int | None) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return datetime.fromtimestamp(value, UTC).isoformat()
-    return value.isoformat()
-
-
 async def _gate_panel(
     conn: Any, site: UUID, cmid: int, gate: TeacherGate, actor: int
 ) -> dict[str, Any]:
@@ -125,7 +116,7 @@ async def _gate_panel(
         source = "activity_close"
     holder = facts.get("override_holder")
     panel: dict[str, Any] = {
-        "opening": {"at": _iso(opening), "source": source},
+        "opening": {"at": iso_time(opening), "source": source},
         # REQ-091: the fallback is active; without a teacher date the activity is not available
         "fallback_reason": FALLBACK_REASON if fallback else None,
         "fallback_date_missing": bool(fallback and attested is None),
@@ -175,7 +166,7 @@ async def _page(
                     "attempts": int(d.attempts),
                     "smtp_code": d.smtp_code,
                     "error_class": d.last_error_class,
-                    "sent_at": _iso(d.sent_at),
+                    "sent_at": iso_time(d.sent_at),
                 }
             )
     per: dict[int, dict[str, Any]] = {
@@ -189,8 +180,8 @@ async def _page(
                 "session_no": int(r.session_no),
                 "state": r.state,
                 "close_reason": r.close_reason,
-                "committed_at": _iso(r.committed_at),
-                "closed_at": _iso(r.closed_at),
+                "committed_at": iso_time(r.committed_at),
+                "closed_at": iso_time(r.closed_at),
                 "transcript_id": str(r.transcript_id) if r.transcript_id else None,
                 "deliveries": deliveries.get(r.transcript_id, [])
                 if r.transcript_id
@@ -207,7 +198,7 @@ async def _page(
                 ),
                 "include_previous_turns": bool(g.include_previous_turns),
                 "granted_by": ascii_id(str(g.granted_by)),
-                "granted_at": _iso(g.granted_at),
+                "granted_at": iso_time(g.granted_at),
                 "student_notice": NOT_NOTIFIED,
             }
         )
@@ -234,7 +225,7 @@ async def _terminations(
             "rolled_back": int(t.rolled_back_count),
             "also_disable": bool(t.also_disable),
             "by": ascii_id(str(t.created_by)),
-            "at": _iso(t.created_at),
+            "at": iso_time(t.created_at),
         }
         for t in (await conn.execute(_TERMINATIONS, {"s": site, "c": cmid})).all()
     ]

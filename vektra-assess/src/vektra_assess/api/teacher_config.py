@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from vektra_assess import privacy
-from vektra_assess.api.common import engine_of, fail, parse_body, site_of_key
+from vektra_assess.api.common import engine_of, fail, iso_time, parse_body, site_of_key
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teachers import TeacherGate, header_int, path_id, verify_teacher
 from vektra_assess.audit import AssessAuditEvent, write_event
@@ -153,10 +153,6 @@ async def _setup_green(conn: Any, site: UUID) -> bool:
 
 def _epoch(value: datetime | None) -> int | None:
     return int(value.timestamp()) if value is not None else None
-
-
-def _iso(epoch: int | None) -> str | None:
-    return datetime.fromtimestamp(epoch, UTC).isoformat() if epoch else None
 
 
 @router.put("/activities/{cmid}/config")
@@ -419,12 +415,12 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
         "rubric_source": v.rubric_source_of(flags, kind),
         "show_solution": flags.get("show_solution") is True,
         "rag_enabled": False,
-        "available_until": _iso(end_at),
+        "available_until": iso_time(end_at),
         "solution_state": state(sealed.get(SOLUTION, (False, None))[0]),
         "pasted_rubric_state": state(sealed.get(PASTED_RUBRIC, (False, None))[0]),
         "transcript_recipients_state": state(rec_set),
         "transcript_recipients_count": int(rec_n or 0) if rec_set else 0,
-        "opening": {"at": _iso(opening), "source": source},
+        "opening": {"at": iso_time(opening), "source": source},
         "warnings": {
             # REQ-077: the effective opening moved past the end date
             "available_until_not_after_opening": bool(

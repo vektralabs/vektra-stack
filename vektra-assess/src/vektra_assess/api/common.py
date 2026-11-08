@@ -8,6 +8,7 @@ or over-length body is a 400 ``ERR-ASSESS-014`` envelope and never FastAPI's def
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -38,6 +39,18 @@ async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
     if site is None:
         raise fail(key_not_bound(purpose))
     return site
+
+
+def iso_time(value: Any) -> str | None:
+    """The one epoch / datetime -> ISO 8601 rule of the assess views: epoch seconds as an
+    ``int`` (0 included: 1970-01-01T00:00:00+00:00, a value, not "absent"), or an aware
+    ``datetime``, as ISO 8601; ``None`` and anything else (a bool, a float, a string) is None.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, int) and not isinstance(value, bool):
+        return datetime.fromtimestamp(value, UTC).isoformat()
+    return None
 
 
 def fail(err: ErrorResponse, headers: dict[str, str] | None = None) -> HTTPException:

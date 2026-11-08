@@ -187,3 +187,21 @@ def test_turn_notes_cut_marks_at_32_bytes_and_dedupe_after_the_cut() -> None:
         content_hash="h",
     )
     assert turn_notes(result).marks == ("a" * 32, "00" + "\U0001d510" * 7, "b")
+
+
+def test_one_epoch_to_iso_rule_for_every_view() -> None:
+    """Review 11b-10: epoch 0 is a time (1970), not "absent"; None and non-numbers are None;
+    the copies in state, teacher_config, teacher_ops and teacher_sessions are gone."""
+    from datetime import UTC, datetime
+
+    from vektra_assess.api import state, teacher_config, teacher_ops, teacher_sessions
+    from vektra_assess.api.common import iso_time
+
+    assert iso_time(0) == "1970-01-01T00:00:00+00:00"
+    assert iso_time(1_900_000_000) == "2030-03-17T17:46:40+00:00"
+    aware = datetime(2030, 1, 1, tzinfo=UTC)
+    assert iso_time(aware) == aware.isoformat()
+    for absent in (None, True, False, 1.5, "0"):
+        assert iso_time(absent) is None
+    for module in (state, teacher_config, teacher_ops, teacher_sessions):
+        assert not hasattr(module, "_iso") and not hasattr(module, "_epoch_iso"), module

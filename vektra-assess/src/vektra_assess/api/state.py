@@ -21,7 +21,6 @@ per-key limiter (``app.state.rate_limiter``) stays unset.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, Request
@@ -29,7 +28,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from vektra_assess.api.common import engine_of, fail
+from vektra_assess.api.common import engine_of, fail, iso_time
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.gate import verify_assess_token_pre
 from vektra_assess.errors import assess_unavailable, rate_limited
@@ -112,12 +111,6 @@ async def queue_render_check(
     )
 
 
-def _iso(epoch: Any) -> str | None:
-    if not isinstance(epoch, int):
-        return None
-    return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
-
-
 def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
     if row is None:
         return {"state": "not_enabled", "reason": "not_enabled"}
@@ -146,7 +139,7 @@ def state_view(row: Any, fresh_s: int) -> dict[str, Any]:
     if row.reason_code == "close_not_passed" and isinstance(
         inputs.get("opens_at"), int
     ):
-        view["opens_at"] = _iso(
+        view["opens_at"] = iso_time(
             inputs["opens_at"]
         )  # the activity's own or the student's own
     if inputs.get("session_no_next", 1) > 1:

@@ -106,6 +106,7 @@ class Delivered:
     added: int = 0
     duplicates: int = 0
     busy: int = 0  # rows left due: no relay session within the bounded wait
+    withdrawn: int = 0  # rows left unclaimed: the address was removed meanwhile
     unresolved: bool = False
 
 
@@ -399,8 +400,10 @@ async def deliver_transcript(
     by_ref: dict[str, str] = {}
     due: list[Any] = []
     async with acquire() as conn, conn.begin():
-        configured = await deps.recipients.read(conn, t.site_id, int(t.cmid))
+        # under the per-transcript lock: a job never reconciles the rows to a configuration
+        # older than the one another job already applied
         await conn.execute(_LOCK, {"t": str(t.id)})
+        configured = await deps.recipients.read(conn, t.site_id, int(t.cmid))
         await _expire(conn, deps, t, now, out)
         if not configured:
             await _unresolved(conn, deps, t, now, out)
@@ -541,6 +544,10 @@ async def _row(
         return
     try:
         async with deps.sender.slot():
+            # the slot wait may have been long: the address must still be configured NOW
+            if not await _still_configured(deps, acquire, t, address):
+                out.withdrawn += 1  # left unclaimed; the next fan-out REPLACES it
+                return
             c = await _claim(deps, acquire, t, due, out)
             if c is None:
                 return
@@ -561,6 +568,15 @@ async def _row(
             await _send(deps, acquire, t, c, address, doc, out)
     except SlotBusy:
         out.busy += 1  # no relay session in time: the row stays due, untouched
+
+
+async def _still_configured(
+    deps: DeliveryDeps, acquire: AcquireDb, t: Any, address: str
+) -> bool:
+    async with acquire() as conn:
+        current = await deps.recipients.read(conn, t.site_id, int(t.cmid))
+        await conn.rollback()
+    return current is not None and address in current
 
 
 async def _send(

@@ -792,3 +792,47 @@ async def test_the_crash_resend_keeps_the_stored_message_id(
         assert {r.message_id for r in final} == first
         for mid in first:
             assert len(sink.by_message_id(mid)) == 2
+
+
+async def test_an_address_removed_while_waiting_for_a_session_is_not_mailed(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit round 1 (additional, handler.py:361): the configuration is read again
+    right before each row's claim; an address the teacher removed while the job waited for
+    a relay session is not mailed (its row is left for the next fan-out to REPLACE)."""
+    import asyncio
+
+    a, b = "a@unical.it", "b@unical.it"
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, pair = await _ready(w, worker, (a, b))
+        await clock.sync(pg)
+        sender = SmtpSender(sink_config(sink, max_connections=1))
+        sender.slot_wait_s = 10
+        deps = _deps(ring, config, sink, clock, sender=sender)
+        held, release = asyncio.Event(), asyncio.Event()
+
+        async def hog() -> None:
+            async with sender.slot():
+                held.set()
+                await release.wait()
+
+        hogging = asyncio.create_task(hog())
+        await held.wait()
+        job = asyncio.create_task(
+            h.deliver_transcript(deps, worker.connect, s.session_id)
+        )
+        await asyncio.sleep(0.5)  # the job has fanned out and waits for the session
+        await configure_recipients(pg, w.site, s.cmid, (a,), pair=pair)
+        release.set()
+        await hogging
+        got = await job
+        assert got is not None and got.sent == 1
+        assert len(sink.to(a)) == 1 and sink.to(b) == []
+        by = {r.recipient_ref: r for r in await rows(pg, s.session_id)}
+        left = by[recipient_ref(w.site, b)]
+        assert (left.status, left.attempts) == ("PENDING", 0)
+        clock.advance(minutes=1)
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        by = {r.recipient_ref: r.status for r in await rows(pg, s.session_id)}
+        assert by[recipient_ref(w.site, b)] == "REPLACED" and sink.to(b) == []

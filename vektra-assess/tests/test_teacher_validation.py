@@ -275,3 +275,22 @@ def test_null_on_an_always_valued_setting_is_named() -> None:
         {"field": "enabled", "code": "null_not_allowed"},
         {"field": "show_solution", "code": "null_not_allowed"},
     ]
+
+
+@pytest.mark.parametrize("kind", ["quiz", "assign"])
+@pytest.mark.parametrize("stored", [None, "none", "pasted", "moodle", "html", 3])
+def test_the_api_and_the_capture_read_the_same_rubric_source(
+    kind: str, stored: object
+) -> None:
+    """Review 9: one function decides the effective rubric source, for the config view and for
+    the snapshot capture; a quiz never reads "moodle" (REQ-077)."""
+    from vektra_assess.worker import start_source
+
+    flags = {} if stored is None else {"rubric_source": stored}
+    want = (
+        stored
+        if stored in v.SOURCES[kind]
+        else ("moodle" if kind == "assign" else "none")
+    )
+    assert v.rubric_source_of(flags, kind) == want
+    assert start_source.teacher_view(flags, kind, None).rubric_source == want

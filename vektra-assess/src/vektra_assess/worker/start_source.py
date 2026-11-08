@@ -57,6 +57,7 @@ from vektra_assess.moodle.readers.resolve import (
     resolve_in_course,
 )
 from vektra_assess.moodle.result import Readable, Unreadable
+from vektra_assess.teacher.validation import rubric_source_of
 from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.preflight import MoodleGateFacts, StartTarget
 
@@ -104,13 +105,6 @@ class _BoundedCache:
 
     def __len__(self) -> int:
         return len(self._items)
-
-
-def rubric_source_of(flags: dict[str, Any], kind: str) -> str:
-    source = flags.get("rubric_source")
-    if source not in ("none", "pasted", "moodle"):
-        source = "moodle" if kind == "assign" else "none"
-    return str(source)
 
 
 def teacher_view(

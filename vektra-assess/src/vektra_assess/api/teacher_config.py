@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from vektra_assess import privacy
-from vektra_assess.api.common import SITE_OF_KEY, engine_of, fail, parse_body
+from vektra_assess.api.common import engine_of, fail, parse_body, site_of_key
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.teachers import TeacherCheck, TeacherGate, check_fresh_editor
 from vektra_assess.audit import AssessAuditEvent, write_event
@@ -47,7 +47,6 @@ from vektra_assess.errors import (
     bad_request,
     config_conflict,
     config_invalid,
-    key_not_bound,
     teacher_unverified,
 )
 from vektra_assess.keys import AssessKeyring
@@ -139,13 +138,6 @@ def _cmid(raw: str) -> int:
     return value
 
 
-async def _site_of(conn: Any, key: ApiKeyInfo) -> UUID:
-    site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": "teacher"})).scalar()
-    if site is None:
-        raise fail(key_not_bound())
-    return site  # type: ignore[no-any-return]
-
-
 async def _verify(
     conn: Any,
     site: UUID,
@@ -207,15 +199,6 @@ def _facts(gate: TeacherGate) -> v.ActivityFacts:
     )
 
 
-def _default_source(kind: str) -> str:
-    return "moodle" if kind == "assign" else "none"
-
-
-def _rubric_source(flags: dict[str, Any], kind: str) -> str:
-    source = flags.get("rubric_source")
-    return str(source) if source in v.SOURCES.get(kind, ()) else _default_source(kind)
-
-
 async def _setup_green(conn: Any, site: UUID) -> bool:
     items = (await conn.execute(_SETUP, {"s": site})).scalar()
     return (
@@ -248,7 +231,7 @@ async def put_config(
         raise fail(assess_unavailable("teacher_config_key"))
     refused: Any = None
     async with engine_of(request).begin() as conn:
-        site = await _site_of(conn, key)
+        site = await site_of_key(conn, key, "teacher")
         gate = await _verify(
             conn, site, c, body.actor_userid, body.courseid, body.activity_type,
             settings.teacher_gate_max_age_s, "put_config",
@@ -285,7 +268,7 @@ async def _save(
     old: dict[str, Any] = {
         "enabled": bool(row.enabled) if row is not None else False,
         "cap_minutes": row.cap_minutes if row is not None else None,
-        "rubric_source": _rubric_source(flags, kind),
+        "rubric_source": v.rubric_source_of(flags, kind),
         "show_solution": flags.get("show_solution") is True,
         "available_until": row.end_at if row is not None else None,
     }
@@ -486,7 +469,7 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
         "configured": row is not None,
         "enabled": bool(row.enabled) if row is not None else False,
         "cap_minutes": row.cap_minutes if row is not None else None,
-        "rubric_source": _rubric_source(flags, kind),
+        "rubric_source": v.rubric_source_of(flags, kind),
         "show_solution": flags.get("show_solution") is True,
         "rag_enabled": False,
         "available_until": _iso(end_at),
@@ -525,7 +508,7 @@ async def get_config(
     settings = settings_of(request)
     refused: Any = None
     async with engine_of(request).begin() as conn:
-        site = await _site_of(conn, key)
+        site = await site_of_key(conn, key, "teacher")
         gate = await _verify(
             conn, site, c, actor, courseid, kind if kind in v.SOURCES else None,
             settings.teacher_gate_max_age_s, "get_config",

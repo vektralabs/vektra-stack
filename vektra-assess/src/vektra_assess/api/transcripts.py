@@ -35,12 +35,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from vektra_assess.api.common import (
-    SITE_OF_KEY,
     engine_of,
     fail,
     json_object,
     parse_body,
     read_capped_body,
+    site_of_key,
     validate_body,
 )
 from vektra_assess.api.deps import bearer_token, settings_of
@@ -52,7 +52,6 @@ from vektra_assess.errors import (
     assess_unavailable,
     bad_request,
     download_token_invalid,
-    key_not_bound,
     rate_limited,
     resend_recipient_forbidden,
     teacher_unverified,
@@ -174,13 +173,6 @@ def _limit(request: Request, key: Any) -> None:
         raise fail(rate_limited(60, "download_rate"))
 
 
-async def _site_of(conn: Any, key: ApiKeyInfo, purpose: str) -> UUID:
-    site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": purpose})).scalar()
-    if site is None:
-        raise fail(key_not_bound())
-    return site  # type: ignore[no-any-return]
-
-
 async def _grader_ok(
     conn: Any, row: Any, actor: int, settings: Any, *, grace_s: int = 0
 ) -> GraderCheck:
@@ -219,7 +211,7 @@ async def mint_download_token(
     _limit(request, (t, role, requester))
     refused: Any = None
     async with engine_of(request).begin() as conn:
-        site = await _site_of(conn, key, purpose)
+        site = await site_of_key(conn, key, purpose)
         row = (await conn.execute(_TRANSCRIPT, {"t": t})).first()
         if row is None or row.site_id != site or row.ciphertext is None:
             raise fail(transcript_not_found())
@@ -408,7 +400,7 @@ async def resend_transcript(
     async with engine_of(request).begin() as conn:
         row = (await conn.execute(_TRANSCRIPT, {"t": t})).first()
         if teacher:
-            site = await _site_of(conn, key, "teacher")
+            site = await site_of_key(conn, key, "teacher")
             if row is None or row.site_id != site:
                 raise fail(transcript_not_found())
             check = await _grader_ok(conn, row, int(body.actor_userid or 0), settings)

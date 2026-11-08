@@ -12,9 +12,10 @@ Text (solution, pasted rubric): normalised to NFC, control characters removed ex
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from vektra_assess.delivery.address import normalize_address
 from vektra_assess.delivery.recipients import MAX_RECIPIENTS, domain_allowed
@@ -89,6 +90,20 @@ def check_rag(value: bool) -> list[FieldError]:
             )
         ]
     return []
+
+
+def default_rubric_source(activity_type: str) -> str:
+    return "moodle" if activity_type == "assign" else "none"
+
+
+def rubric_source_of(flags: Mapping[str, Any], activity_type: str) -> str:
+    """The effective rubric source of a stored config (``flags.rubric_source``): the stored one
+    when this activity type may use it, else the type's default. The ONE rule the config view
+    and the snapshot capture share (a quiz never reads "moodle")."""
+    source = flags.get("rubric_source")
+    if isinstance(source, str) and source in SOURCES.get(activity_type, ()):
+        return source
+    return default_rubric_source(activity_type)
 
 
 def check_rubric_source(source: str, activity_type: str) -> list[FieldError]:

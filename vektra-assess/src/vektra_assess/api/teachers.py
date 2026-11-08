@@ -151,52 +151,6 @@ async def check_fresh_teacher(
     return TeacherGate(TeacherCheck.OK, facts)
 
 
-async def check_fresh_editor(
-    conn: Any,
-    *,
-    site: UUID,
-    cmid: int,
-    actor_userid: int,
-    max_age_s: int,
-    courseid_hint: int | None,
-    kind_hint: str | None,
-) -> TeacherGate:
-    return await check_fresh_teacher(
-        conn,
-        site=site,
-        cmid=cmid,
-        actor_userid=actor_userid,
-        max_age_s=max_age_s,
-        courseid_hint=courseid_hint,
-        kind_hint=kind_hint,
-        role="editor",
-    )
-
-
-async def check_fresh_grader(
-    conn: Any,
-    *,
-    site: UUID,
-    cmid: int,
-    actor_userid: int,
-    max_age_s: int,
-    courseid_hint: int | None,
-    kind_hint: str | None,
-) -> TeacherGate:
-    """REQ-076: the session list, reset, terminate, extra time and opening fallback are for the
-    activity's graders (``mod/assign:grade`` in its course), verified fresh like the editors."""
-    return await check_fresh_teacher(
-        conn,
-        site=site,
-        cmid=cmid,
-        actor_userid=actor_userid,
-        max_age_s=max_age_s,
-        courseid_hint=courseid_hint,
-        kind_hint=kind_hint,
-        role="grader",
-    )
-
-
 def can_view_overrides(gate: TeacherGate, actor_userid: int) -> bool:
     """REQ-076 gate panel: whether the actor may see WHO holds the override that sets the
     activity's opening (``override_viewers``: holders of the override-management capability,

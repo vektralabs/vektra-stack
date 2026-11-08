@@ -88,6 +88,13 @@ async def test_a_failed_probe_fails_naming_its_error_class(pg, details, reason) 
     assert await smtp(pg) == Outcome(MISSING, reason)
 
 
+async def test_a_non_ascii_error_class_is_not_a_reason_code(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 10: the reason code follows the setup check's own rule ([a-z0-9_])."""
+    bad = {"state": "failed", "ok": False, "error_class": "tlsé", "smtp_code": None}
+    await _smtp_row(pg, bad, age_s=10)
+    assert await smtp(pg) == Outcome(MISSING, "smtp_unknown")
+
+
 async def test_never_probed_fails(pg) -> None:  # type: ignore[no-untyped-def]
     await _smtp_row(pg, None)
     assert await smtp(pg) == Outcome(MISSING, "smtp_never_probed")

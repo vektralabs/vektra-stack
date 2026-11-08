@@ -28,6 +28,7 @@ from vektra_assess.moodle.setup_check import (
     missing,
     ok,
 )
+from vektra_assess.moodle.setup_check import _code as reason_code
 from vektra_assess.worker.runner import AcquireDb
 from vektra_assess.worker.slots import SMTP_PROBE_INTERVAL_S
 
@@ -43,8 +44,8 @@ _LOGGING = text(
 
 
 def _code(value: Any) -> str:
-    v = str(value or "unknown").lower()
-    return v if v.replace("_", "").isalnum() and len(v) <= 40 else "unknown"
+    """The setup check's own reason-code rule (``[a-z0-9_]{1,64}``), ``unknown`` otherwise."""
+    return reason_code(str(value or "unknown"), "unknown")
 
 
 def smtp_probe_item(acquire: AcquireDb, *, configured: bool) -> ItemCheck:

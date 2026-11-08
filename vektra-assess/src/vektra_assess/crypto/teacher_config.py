@@ -173,7 +173,10 @@ async def read_teacher_config(
         if field == TRANSCRIPT_RECIPIENTS:
             try:
                 doc = json.loads(plain)
-            except json.JSONDecodeError:
+            except (
+                json.JSONDecodeError,
+                RecursionError,
+            ):  # nesting past the decoder's depth
                 doc = None
             if not isinstance(doc, list) or not all(isinstance(a, str) for a in doc):
                 bad.add(field)

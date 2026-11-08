@@ -105,3 +105,61 @@ def test_round_trip_to_0034_and_back(pg) -> None:  # type: ignore[no-untyped-def
     assert down.returncode == 0, down.stderr
     up = _alembic(pg.super_url, "upgrade", "head")
     assert up.returncode == 0, up.stderr
+
+
+async def test_a_duplicate_job_is_skipped_without_an_error_or_a_savepoint(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review #8: the delivery tick re-offers due transcripts every 30 s. A duplicate dedupe
+    key is ON CONFLICT DO NOTHING (no unique-violation error, no savepoint, no NOTIFY), as
+    the API role too."""
+    import uuid
+
+    from sqlalchemy import event, text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from vektra_assess.jobs import JobKind, enqueue_job
+
+    for who in ("api", "worker"):
+        engine = create_async_engine(pg.url(who))
+        seen: list[str] = []
+        event.listen(
+            engine.sync_engine,
+            "before_cursor_execute",
+            lambda *a: seen.append(str(a[2]).upper()),
+        )
+        key = f"transcript_deliver:{uuid.uuid4()}:retry"
+        try:
+            async with engine.begin() as conn:
+                first = await enqueue_job(
+                    conn,
+                    JobKind.TRANSCRIPT_DELIVER,
+                    {"transcript_id": "t"},
+                    dedupe_key=key,
+                )
+                seen.clear()
+                again = await enqueue_job(
+                    conn,
+                    JobKind.TRANSCRIPT_DELIVER,
+                    {"transcript_id": "t"},
+                    dedupe_key=key,
+                )
+                assert (first, again) == (True, False)
+                assert not any("SAVEPOINT" in q for q in seen), seen
+                assert not any("PG_NOTIFY" in q for q in seen), seen
+                await conn.execute(text("SELECT 1"))  # the transaction is still usable
+        finally:
+            await engine.dispose()
+        got = await pg.run(
+            "super",
+            "SELECT count(*) FROM assess_jobs WHERE dedupe_key = :k",
+            {"k": key},
+        )
+        assert got[0][0] == 1
+
+
+async def test_the_fan_out_scan_has_an_index(pg) -> None:  # type: ignore[no-untyped-def]
+    got = await pg.run(
+        "super",
+        "SELECT indexdef FROM pg_indexes WHERE tablename = 'assess_transcripts' "
+        "AND indexname = 'ix_assess_transcripts_generated_live'",
+    )
+    assert got and "generated_at" in got[0][0] and "ciphertext IS NOT NULL" in got[0][0]

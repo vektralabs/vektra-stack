@@ -15,31 +15,23 @@ from vektra_assess.jobs import JobKind, enqueue_job
 SRC = Path(jobs.__file__).resolve().parents[0]
 
 
-class _Savepoint:
-    async def __aenter__(self) -> None:
-        return None
-
-    async def __aexit__(self, *exc: object) -> bool:
-        return False
+class _Result:
+    def __init__(self, rowcount: int) -> None:
+        self.rowcount = rowcount
 
 
 class _FakeConn:
-    """Records statements; ``duplicate=True`` makes the INSERT raise the dedupe violation."""
+    """Records statements; ``duplicate=True`` makes the INSERT skip (ON CONFLICT DO NOTHING
+    reports 0 rows)."""
 
     def __init__(self, duplicate: bool = False) -> None:
         self.duplicate = duplicate
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def begin_nested(self) -> _Savepoint:
-        return _Savepoint()
-
-    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> None:
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _Result:
         sql = str(stmt)
         self.calls.append((sql, params or {}))
-        if self.duplicate and sql.startswith("INSERT"):
-            raise IntegrityError(
-                sql, {}, Exception("violates unique constraint uq_assess_jobs_dedupe")
-            )
+        return _Result(0 if self.duplicate and sql.startswith("INSERT") else 1)
 
 
 async def test_insert_then_empty_notify_in_the_same_connection() -> None:
@@ -54,9 +46,10 @@ async def test_insert_then_empty_notify_in_the_same_connection() -> None:
     assert len(conn.calls) == 2
     insert_sql, params = conn.calls[0]
     assert insert_sql.startswith("INSERT INTO assess_jobs")
-    assert "ON CONFLICT" not in insert_sql and "RETURNING" not in insert_sql, (
-        "the API role cannot SELECT: no ON CONFLICT, no RETURNING"
-    )
+    # the API role cannot SELECT: no RETURNING and no conflict target (inference reads the
+    # table); a duplicate key is skipped by a target-less DO NOTHING (review #8 of plan 10b)
+    assert insert_sql.rstrip().endswith("ON CONFLICT DO NOTHING")
+    assert "RETURNING" not in insert_sql
     assert params["kind"] == "transcript_generate"
     assert params["args"] == '{"epoch":3,"session_id":"abc"}'
     notify_sql, _ = conn.calls[1]
@@ -76,7 +69,7 @@ async def test_other_integrity_errors_are_not_swallowed() -> None:
     class _Other(_FakeConn):
         async def execute(
             self, stmt: Any, params: dict[str, Any] | None = None
-        ) -> None:
+        ) -> _Result:
             raise IntegrityError(
                 str(stmt), {}, Exception("violates check ck_assess_jobs_kind")
             )

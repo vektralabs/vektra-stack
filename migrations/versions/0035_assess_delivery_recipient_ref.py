@@ -13,6 +13,8 @@ the sealed config; a delivery row names its recipient by ``recipient_ref``
 - the API role reads every delivery column but ``recipient_ref``: the matrix is re-rendered.
 - ``assess_transcripts.course_shortname``: the course short name read at close, written by the
   generation, used in the email subject (the file name holds only its folded form).
+- ``ix_assess_transcripts_generated_live``: the delivery tick's scan for recent live transcripts
+  with no delivery row.
 
 Revision ID: 0035
 Revises: 0034
@@ -289,6 +291,11 @@ def upgrade() -> None:
         "UNIQUE (transcript_id, round, recipient_ref)"
     )
     op.execute("ALTER TABLE assess_transcripts ADD COLUMN course_shortname TEXT NULL")
+    # the delivery tick's scan for live transcripts with no delivery row yet (every 30 s)
+    op.execute(
+        "CREATE INDEX ix_assess_transcripts_generated_live ON assess_transcripts "
+        "(generated_at) WHERE ciphertext IS NOT NULL"
+    )
     op.execute(RESEND)  # CREATE OR REPLACE: owner and EXECUTE privileges are kept
     for stmt in GRANT_STATEMENTS:
         op.execute(stmt)
@@ -317,6 +324,7 @@ def downgrade() -> None:
         "ALTER TABLE assess_deliveries ALTER COLUMN recipient_userid SET NOT NULL"
     )
     op.execute("ALTER TABLE assess_deliveries DROP COLUMN recipient_ref")
+    op.execute("DROP INDEX ix_assess_transcripts_generated_live")
     op.execute("ALTER TABLE assess_transcripts DROP COLUMN course_shortname")
     spec = util.spec_from_file_location(
         "rev_0034", Path(__file__).with_name("0034_assess_transcript_delivery.py")

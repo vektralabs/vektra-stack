@@ -20,7 +20,6 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 # The channel carries no payload, ever (INT-002): a payload would be content that can leak
@@ -33,9 +32,13 @@ NOTIFY_CHANNEL = "assess_jobs"
 _INSERT = text(
     "INSERT INTO assess_jobs (kind, args, dedupe_key, not_before, max_attempts) "
     "VALUES (:kind, CAST(:args AS jsonb), :dedupe_key, "
-    "COALESCE(:not_before, now()), COALESCE(:max_attempts, 5))"
+    "COALESCE(:not_before, now()), COALESCE(:max_attempts, 5)) "
+    # a duplicate dedupe key is skipped, not an error: no savepoint and no rollback per offer
+    # (the delivery tick re-offers due transcripts every 30 s). No conflict target: inferring
+    # the partial index would need SELECT on assess_jobs, which the API role does not have;
+    # the only other unique key is the generated id, which cannot collide.
+    "ON CONFLICT DO NOTHING"
 )
-_DEDUPE_INDEX = "uq_assess_jobs_dedupe"
 _NOTIFY = text(f"SELECT pg_notify('{NOTIFY_CHANNEL}', '')")
 
 
@@ -112,12 +115,8 @@ async def enqueue_job(
         "not_before": not_before,
         "max_attempts": max_attempts,
     }
-    try:
-        async with conn.begin_nested():
-            await conn.execute(_INSERT, params)
-    except IntegrityError as exc:
-        if _DEDUPE_INDEX in str(exc.orig):
-            return False
-        raise
+    inserted = (await conn.execute(_INSERT, params)).rowcount
+    if not inserted:
+        return False  # the pending job with this key covers it
     await conn.execute(_NOTIFY)
     return True

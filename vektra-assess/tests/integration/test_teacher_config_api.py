@@ -522,3 +522,31 @@ async def test_a_get_without_usable_hints_is_400_not_a_promised_refresh(
         assert r.status_code == 200, r.text
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_texts_at_the_limit_fit_the_body_even_fully_escaped(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    """Review 6: PHP's json_encode escapes every non-ASCII code point (6 bytes for BMP, 12 for an
+    astral one as a surrogate pair). Two texts at 20,000 code points must still reach the field
+    rules: accepted at the limit, ``too_long`` one past it, never ``body_too_large``."""
+    ctx, w = await ready(pg, pair)
+    try:
+        emoji, cjk = "\U0001f600", "漢"
+
+        async def put(**fields: Any) -> Any:
+            raw = json.dumps(body(**fields), ensure_ascii=True)
+            return await w.client.put(
+                url(60),
+                content=raw,
+                headers={**auth("teacher"), "Content-Type": "application/json"},
+            )
+
+        r = await put(solution=emoji * 20_000, pasted_rubric=cjk * 20_000)
+        assert r.status_code == 200, r.text
+        assert r.json()["solution_state"] == "impostata"
+        r = await put(expected_version=1, solution=emoji * 20_001)
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": "solution", "code": "too_long", "range": "0-20000"}
+        ]
+    finally:
+        await ctx.__aexit__(None, None, None)

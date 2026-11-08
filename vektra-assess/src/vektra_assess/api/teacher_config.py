@@ -53,6 +53,8 @@ from vektra_assess.errors import (
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.teacher import validation as v
 from vektra_assess.teacher.schemas import (
+    MAX_RECIPIENT_CHARS,
+    MAX_RECIPIENT_ITEMS,
     ConfigPut,
     FieldError,
     TriState,
@@ -66,8 +68,16 @@ router = APIRouter()
 
 _guard = require_exact_scope("assess:teacher")
 
-#: two 20,000-code-point texts of up to 4 UTF-8 bytes, JSON-escaped, plus the rest of the form
-MAX_CONFIG_BODY_BYTES = 256 * 1024
+#: the worst case of a VALID body: PHP's json_encode escapes every non-ASCII code point, an
+#: astral one as a surrogate pair (12 bytes, ``\uXXXX\uXXXX``), so two texts at the 20,000
+#: code-point limit, plus the recipients list at its schema bounds, plus the other fields. A text
+#: within the limit therefore always reaches the field rules (``too_long``), never body_too_large.
+_ESCAPED_CHAR = 12
+MAX_CONFIG_BODY_BYTES = (
+    2 * v.MAX_TEXT_CHARS * _ESCAPED_CHAR
+    + MAX_RECIPIENT_ITEMS * (MAX_RECIPIENT_CHARS * _ESCAPED_CHAR + 4)
+    + 4096
+)
 PUBLIC_KEY = "assess_teacher_config_public"
 
 _CONFIG = text(

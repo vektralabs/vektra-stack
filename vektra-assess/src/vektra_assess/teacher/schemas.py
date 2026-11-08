@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from dataclasses import field as dc_field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
@@ -26,6 +26,12 @@ STATE_UNSET = "non impostata"
 
 ActivityType = Literal["quiz", "assign"]
 RubricSource = Literal["none", "pasted", "moodle"]
+
+#: schema bounds of the recipients list (the rules allow 1..3 addresses of <= 254 bytes; these
+#: only bound the body: beyond them a request is malformed, below them it gets field errors)
+MAX_RECIPIENT_ITEMS = 20
+MAX_RECIPIENT_CHARS = 512
+RecipientStr = Annotated[StrictStr, Field(max_length=MAX_RECIPIENT_CHARS)]
 
 #: the write-only fields of a PUT, in their sealed-field names
 SECRET_FIELDS = ("solution", "pasted_rubric", "transcript_recipients")
@@ -60,7 +66,9 @@ class ConfigPut(BaseModel):
 
     solution: StrictStr | None = Field(None, max_length=200_000)
     pasted_rubric: StrictStr | None = Field(None, max_length=200_000)
-    transcript_recipients: list[StrictStr] | None = Field(None, max_length=20)
+    transcript_recipients: list[RecipientStr] | None = Field(
+        None, max_length=MAX_RECIPIENT_ITEMS
+    )
 
     def tri_state(self, name: str) -> TriState:
         """Absent / null / value of one optional field (OQ-034 write-only semantics)."""

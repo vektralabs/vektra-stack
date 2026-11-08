@@ -94,6 +94,8 @@ async def test_the_api_reads_the_status_but_never_the_ref(pg) -> None:  # type: 
     assert [tuple(r) for r in rows] == [("PENDING", 1, "address")]
     for sql in (
         "SELECT recipient_ref FROM assess_deliveries",
+        # CodeRabbit 4504362581: the Message-ID hashes the ref too
+        "SELECT message_id FROM assess_deliveries",
         "SELECT * FROM assess_deliveries",
     ):
         with pytest.raises(DBAPIError, match="permission denied"):

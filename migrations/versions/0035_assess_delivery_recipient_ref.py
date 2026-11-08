@@ -41,7 +41,7 @@ GRANT_STATEMENTS = (
     "GRANT INSERT ON assess_consumed_jtis TO vektra_assess_api",
     "GRANT SELECT ON assess_consumed_jtis TO vektra_assess_api",
     "GRANT UPDATE (consumed_at) ON assess_consumed_jtis TO vektra_assess_api",
-    "GRANT SELECT (id, transcript_id, kind, round, recipient_kind, recipient_userid, status, attempts, not_before, attempt_started_at, last_error_class, smtp_code, message_id, sent_at, created_at) ON assess_deliveries TO vektra_assess_api",
+    "GRANT SELECT (id, transcript_id, kind, round, recipient_kind, recipient_userid, status, attempts, not_before, attempt_started_at, last_error_class, smtp_code, sent_at, created_at) ON assess_deliveries TO vektra_assess_api",
     "GRANT SELECT ON assess_enrolment_checks TO vektra_assess_api",
     "GRANT INSERT ON assess_erasure_records TO vektra_assess_api",
     "GRANT INSERT ON assess_extra_time TO vektra_assess_api",

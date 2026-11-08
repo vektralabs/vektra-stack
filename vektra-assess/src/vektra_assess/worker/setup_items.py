@@ -30,6 +30,7 @@ from vektra_assess.moodle.setup_check import (
     ItemCheck,
     ItemRegistry,
     Outcome,
+    builtin_registry,
     missing,
     ok,
     unverifiable,
@@ -178,6 +179,12 @@ def db_log_statement_item(acquire: AcquireDb) -> ItemCheck:
         return missing("_and_".join(problems)) if problems else ok()
 
     return check
+
+
+def fresh_registry() -> ItemRegistry:
+    """A new registry with the built-in items, for one composition: never the module-level
+    default, which a second composition would register into twice."""
+    return builtin_registry()
 
 
 def register_worker_items(

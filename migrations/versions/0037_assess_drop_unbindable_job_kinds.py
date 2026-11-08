@@ -5,7 +5,7 @@ Neither kind had an enqueuer or a specified body, so each was a production slot 
 be bound, and the worker refuses to start with an unbound slot:
 
 - ``capability_probe``: the capability matrix is written by the probes of every setup-check run
-  (plan assess-moodle-ws, data lifecycle);
+  (the web-service plan, data lifecycle);
 - ``session_deadline``: deadlines are enforced by the sweeper tick and the API's lazy close (plan
   assess-session-lifecycle M3.4/M3.5).
 

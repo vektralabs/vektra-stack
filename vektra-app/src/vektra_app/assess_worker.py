@@ -248,7 +248,7 @@ SESSION_KEYS = (
 )
 
 
-def _moodle_client(checked: Checked) -> Any:
+def _ws_client(checked: Checked) -> Any:
     """The worker's ONE WS client (review finding 3): ``VEKTRA_ASSESS_WS_RPS`` is a per-worker
     cap only if one token bucket serves every WS caller, a site's breaker only protects it if
     every caller sees it, and each client opens its own connection pool. Nothing connects here."""
@@ -296,7 +296,7 @@ def _session_handlers(
         llm=build_assess_llm(settings),
     )
     source = MoodleStartSource(
-        ws if ws is not None else _moodle_client(checked),
+        ws if ws is not None else _ws_client(checked),
         ParserClient.from_settings(settings),
         engine.connect,
         teacher_private=checked.keys["assess_teacher_config_private"],
@@ -468,7 +468,7 @@ class SetupCheckParts:
 def _setup_check_parts(
     checked: Checked, ws: Any | None = None, smtp_probe: Any | None = None
 ) -> SetupCheckParts:
-    """The REQ-079 ``setup_check`` handler and its daily tick (plan assess-moodle-ws F4, carried
+    """The REQ-079 ``setup_check`` handler and its daily tick (the web-service plan, task F4, carried
     over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the WS
     token keyring); otherwise both stay unbound and ``assert_all_bound`` refuses to start.
 
@@ -481,17 +481,16 @@ def _setup_check_parts(
     if "assess_ws_tokens" not in checked.keys:
         return SetupCheckParts({}, {})
     from vektra_assess.jobs import JobKind
-    from vektra_assess.moodle.setup_check import builtin_registry
     from vektra_assess.worker.parser_client import ParserClient, register_parser_check
     from vektra_assess.worker.policy import load_policy
     from vektra_assess.worker.setup_check import (
         make_setup_check_handler,
         queue_setup_checks,
     )
-    from vektra_assess.worker.setup_items import register_worker_items
+    from vektra_assess.worker.setup_items import fresh_registry, register_worker_items
 
     settings, engine = checked.settings, checked.engine
-    registry = builtin_registry()
+    registry = fresh_registry()
     register_parser_check(ParserClient.from_settings(settings), registry)
     register_worker_items(
         registry,
@@ -500,7 +499,7 @@ def _setup_check_parts(
         # the item probes itself when the tick's row is missing or stale (finding 1)
         smtp_probe=smtp_probe,
     )
-    client = ws if ws is not None else _moodle_client(checked)
+    client = ws if ws is not None else _ws_client(checked)
 
     async def setup_check() -> None:
         """The daily tick body: queue one setup check per enabled site."""
@@ -661,7 +660,7 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
     delivery = _delivery_parts(checked)
     # one WS client for every WS caller: one rate cap, one breaker registry, one pool
-    ws = _moodle_client(checked) if bindings is None else None
+    ws = _ws_client(checked) if bindings is None else None
     setup = _setup_check_parts(checked, ws, delivery.ticks.get("smtp_probe"))
     extra = bindings or Bindings(
         handlers={

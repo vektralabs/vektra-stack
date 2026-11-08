@@ -450,7 +450,7 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
 
 ### Requests from 10b
 
-- Plan 11 (teacher-ops, config PUT): the format is decided, not open: write `teacher_config_sealed` as ONE JSON object `{"solution"?: str, "transcript_recipients": [...]}` sealed under `crypto.teacher_config.CONFIG_FIELD` (`config`); the readers already expect it. The addresses follow `delivery/address.normalize_address`; validate them against `VEKTRA_ASSESS_RECIPIENT_DOMAINS` at PUT (field error naming the domains) and audit old/new as refs.
+- (Superseded in plan 11a, coordinator 2026-11-08: one sealed row per field in `assess_activity_config_sealed`, revision 0036; see the teacher-ops plan's Notes.) Plan 11 (teacher-ops, config PUT): the format is decided, not open: write `teacher_config_sealed` as ONE JSON object `{"solution"?: str, "transcript_recipients": [...]}` sealed under `crypto.teacher_config.CONFIG_FIELD` (`config`); the readers already expect it. The addresses follow `delivery/address.normalize_address`; validate them against `VEKTRA_ASSESS_RECIPIENT_DOMAINS` at PUT (field error naming the domains) and audit old/new as refs.
 - Plan 12 (privacy-retention): `/health/assess` reads the `smtp` row of `assess_heartbeat` (and its age); metrics over delivery status and `assess.delivery.alert`; a shredded transcript's live rows go ABANDONED (the handler now just skips a transcript without ciphertext).
 - Plugin (vektra-moodle-discuss, owned by the other session): nothing beyond the P3 request in "Decision REVISED"; the site admin's allowlist copy must equal `VEKTRA_ASSESS_RECIPIENT_DOMAINS`, documented in `docs/guides/assess-moodle-service-account.md`.
 

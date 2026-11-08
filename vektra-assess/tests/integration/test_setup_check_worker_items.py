@@ -301,10 +301,42 @@ def _session(pg, *settings: str):  # type: ignore[no-untyped-def]
 
 
 async def test_both_settings_hold_is_ok(pg) -> None:  # type: ignore[no-untyped-def]
+    """The judgement alone, on a session whose values stand in for the server's."""
     check = setup_items.db_log_statement_item(
         _session(pg, "log_statement = 'none'", "log_parameter_max_length = 0")
     )
     assert await check(CTX) == Outcome(OK)
+
+
+async def test_server_settings_every_role_inherits_are_ok_as_the_worker(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4507557001: the end-to-end positive case. Both settings are configured where
+    every assess role inherits them (the server, as the compose file does), and the item runs
+    as the real worker role. With the stock server defaults the same worker run is not OK
+    (``test_the_worker_role_can_read_both_settings``)."""
+    engine = create_async_engine(pg.url("worker"))
+    admin = create_async_engine(pg.url("super"), isolation_level="AUTOCOMMIT")
+
+    async def run(*statements: str) -> None:
+        async with admin.connect() as c:
+            for s in statements:
+                await c.execute(text(s))
+
+    try:
+        await run(
+            "ALTER SYSTEM SET log_statement = 'none'",
+            "ALTER SYSTEM SET log_parameter_max_length = 0",
+            "SELECT pg_reload_conf()",
+        )
+        out = await setup_items.db_log_statement_item(engine.connect)(CTX)
+    finally:
+        await run(
+            "ALTER SYSTEM RESET log_statement",
+            "ALTER SYSTEM RESET log_parameter_max_length",
+            "SELECT pg_reload_conf()",
+        )
+        await admin.dispose()
+        await engine.dispose()
+    assert out == Outcome(OK)
 
 
 @pytest.mark.parametrize(

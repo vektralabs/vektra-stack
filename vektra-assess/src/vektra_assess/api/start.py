@@ -62,6 +62,14 @@ _HEARTBEAT = text(
 _ACTIVITY = text(
     "SELECT enabled, cap_minutes FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
 )
+#: the authoritative re-read of the activity inside the Start transaction, under a SHARE lock
+#: held until the STARTING row commits: a teacher's terminate / disable / extra time (which lock
+#: the row FOR UPDATE first) either sees this Start's row or runs before it and is seen by it
+#: (review 11b-3, 11b-5)
+ACTIVITY_LOCK = text(
+    "SELECT enabled, cap_minutes FROM assess_activity_config WHERE site_id = :s AND cmid = :c "
+    "FOR SHARE"
+)
 _BREAKER = text(
     "SELECT b.state, b.half_open_at <= now() AS half_open, "
     "extract(epoch FROM b.half_open_at - now()) AS wait_s, (SELECT count(*) FROM assess_sessions "
@@ -298,6 +306,11 @@ async def start_session(
                 # minted through /tokens for this (site, sub, cmid) by the site's CURRENT mint
                 # key, or was already used or expired
                 raise _Refused(token_invalid(), "mint_correlation")
+            activity = (
+                await conn.execute(ACTIVITY_LOCK, {"s": claims.site, "c": claims.cmid})
+            ).first()
+            if activity is None or not activity.enabled or activity.cap_minutes is None:
+                raise _Refused(start_refused("activity_not_configured"))
             hist = (
                 await conn.execute(
                     _HISTORY, {"s": claims.site, "u": claims.sub, "c": claims.cmid}

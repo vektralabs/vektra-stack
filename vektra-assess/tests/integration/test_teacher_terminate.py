@@ -283,3 +283,97 @@ async def test_starting_rollback_is_refused_for_any_other_state(pg, worker) -> N
             0
         ][0] is False
         assert await states(pg, w.site, cmid) == {"CLOSED:finished": 1}
+
+
+async def test_an_in_flight_start_and_a_terminate_with_disable_serialize(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-3: a Start holds the activity row FOR SHARE until its STARTING row commits;
+    terminate locks it FOR UPDATE first. So a Start in flight is waited for, then counted and
+    rolled back; a Start after the disable is refused. Two connections, real roles."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from vektra_assess.api import start as start_route
+
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, _seeded = await live_sessions(w, worker, [6051])
+        await seed_teacher_gate(pg, w.site, cmid)
+        params = {"s": w.site, "c": cmid}
+        async with w.engine.connect() as starting:
+            tx = await starting.begin()
+            got = (await starting.execute(start_route.ACTIVITY_LOCK, params)).first()
+            assert got.enabled is True
+            term = asyncio.create_task(
+                w.client.post(
+                    url(cmid),
+                    json=body(
+                        reason=REASON, expected_active_count=1, also_disable=True
+                    ),
+                    headers=teacher(),
+                )
+            )
+            await asyncio.sleep(0.5)
+            assert not term.done()  # waits for the Start's lock
+            sid = (
+                await starting.execute(
+                    text(
+                        "INSERT INTO assess_sessions (site_id, cmid, student_userid, state, "
+                        "starting_expires_at) VALUES (:s, :c, 6052, 'STARTING', "
+                        "now() + interval '30 seconds') RETURNING id"
+                    ),
+                    params,
+                )
+            ).scalar()
+            await tx.commit()
+        r = await asyncio.wait_for(term, 10)
+        assert r.status_code == 200, r.text
+        assert (r.json()["closed"], r.json()["rolled_back"]) == (1, 1)
+        assert (
+            await count(pg, "SELECT count(*) FROM assess_sessions WHERE id = :i", i=sid)
+            == 0
+        )
+        # a Start after the disable is refused inside its own transaction, nothing written
+        token = await w.presession(sub=6053, cmid=cmid)
+        r = await w.client.post(
+            "/api/v1/assess/sessions", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert r.status_code == 409
+        assert (
+            await count(
+                pg, "SELECT count(*) FROM assess_sessions WHERE student_userid = 6053"
+            )
+            == 0
+        )
+
+
+async def test_the_start_rechecks_the_activity_under_its_lock(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """The advisory pre-check reads the activity on another connection; a disable landing
+    between it and the Start transaction is still refused (the re-read under the lock)."""
+    from unittest.mock import patch
+
+    from vektra_assess.api import start as start_route
+
+    async with world(pg) as w:
+        cmid, _seeded = await live_sessions(w, worker, [6061])
+        original = start_route._advisory
+
+        async def advisory_then_disable(request, conn, claims):  # type: ignore[no-untyped-def]
+            await original(request, conn, claims)
+            await configure_activity(pg, w.site, cmid, enabled=False)
+
+        token = await w.presession(sub=6062, cmid=cmid)
+        with patch.object(start_route, "_advisory", advisory_then_disable):
+            r = await w.client.post(
+                "/api/v1/assess/sessions", headers={"Authorization": f"Bearer {token}"}
+            )
+        assert r.status_code == 409, r.text
+        assert err(r)["details"]["reason"] == "activity_not_configured"
+        assert (
+            await count(
+                pg, "SELECT count(*) FROM assess_sessions WHERE student_userid = 6062"
+            )
+            == 0
+        )

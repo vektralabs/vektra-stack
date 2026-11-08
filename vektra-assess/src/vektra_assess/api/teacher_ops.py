@@ -219,6 +219,8 @@ async def reset_session(
             raise _Refused(fail(session_not_found()))
         student = int(row.student_userid)
         params = {"s": site, "c": c, "u": student}
+        # lock order of every teacher operation and of Start: the activity row, then sessions
+        cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
         sessions = (await conn.execute(_STUDENT_SESSIONS, params)).all()
         if any(s.state in OPEN_STATES for s in sessions):
             raise _Refused(fail(reset_refused("not_closed")))
@@ -228,7 +230,6 @@ async def reset_session(
         grants = int((await conn.execute(_GRANTS, params)).scalar_one())
         if grants >= len(sessions):
             raise _Refused(fail(reset_refused("already_reset")))
-        cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
         if cfg is None:
             raise _Refused(fail(reset_refused("gate", gate="not_enabled")))
         allowed_unset = settings.privacy_allow_unset and settings.env == "development"
@@ -343,6 +344,9 @@ async def terminate_sessions(
     kek = transcript_key_of(request)
 
     async def action(conn: Any, site: UUID, gate: TeacherGate) -> tuple[int, Any]:
+        # the activity row first: a Start holds it FOR SHARE until its STARTING row commits, so
+        # an in-flight Start is either counted below (and rolled back) or sees the disable
+        cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
         live = (await conn.execute(_LIVE, {"s": site, "c": c})).all()
         active = [r for r in live if r.state in LIVE_STATES]
         if len(active) != body.expected_active_count:
@@ -361,7 +365,6 @@ async def terminate_sessions(
                 rolled += bool((await conn.execute(_ROLLBACK, {"sid": r.id})).scalar())
         version = was_enabled = None
         if body.also_disable:
-            cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
             was_enabled = bool(cfg.enabled) if cfg is not None else None
             version = (
                 await conn.execute(

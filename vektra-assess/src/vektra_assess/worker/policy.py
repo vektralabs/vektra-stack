@@ -76,7 +76,7 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.GATE_REFRESH: _WS,
     JobKind.RENDER_CHECK: _WS,
     # plan 11: re-derived from VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S by ``load_policy``
-    JobKind.TEACHER_GATE: KindPolicy("ws", 65, 130),
+    JobKind.TEACHER_GATE: KindPolicy("ws", 95, 190),
     JobKind.CAPABILITY_PROBE: _WS,
     JobKind.TRANSCRIPT_GENERATE: KindPolicy("transcript", 30, 60),
     # up to 3 recipients through at most VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS sessions, each with
@@ -130,9 +130,10 @@ def _number(
     return float(value)
 
 
-#: a teacher_gate refresh is two sequential Moodle stages (resolve the cmid, then the editors
-#: and the facts concurrently), each bounded by the WS call deadline, plus its DB statements
-TEACHER_GATE_STAGES = 2
+#: a teacher_gate refresh is at most three sequential Moodle calls (resolve the cmid; then,
+#: concurrently with the editors, the quiz settings followed by the quiz overrides inside
+#: ``read_quiz_close_inputs``), each bounded by the WS call deadline, plus its DB statements
+TEACHER_GATE_STAGES = 3
 TEACHER_GATE_DB_MARGIN_S = 5.0
 
 

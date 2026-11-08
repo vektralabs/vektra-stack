@@ -163,10 +163,12 @@ def test_the_teacher_gate_budget_covers_its_two_moodle_stages() -> None:
 
     default = load_policy({}).kinds[JobKind.TEACHER_GATE]
     total = float(VektraAssessSettings.model_fields["ws_total_timeout_s"].default)
-    assert default.budget_s >= 2 * total + 5 and default.lease_s >= 2 * default.budget_s
+    # CodeRabbit 4505705696: the quiz path is THREE sequential calls (resolve, the quiz
+    # settings, then its overrides inside read_quiz_close_inputs)
+    assert default.budget_s >= 3 * total + 5 and default.lease_s >= 2 * default.budget_s
     slow = load_policy({"VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S": "90"}).kinds[
         JobKind.TEACHER_GATE
     ]
-    assert slow.budget_s >= 2 * 90 + 5 and slow.lease_s >= 2 * slow.budget_s
+    assert slow.budget_s >= 3 * 90 + 5 and slow.lease_s >= 2 * slow.budget_s
     explicit = load_policy({"VEKTRA_ASSESS_JOB_TEACHER_GATE_BUDGET_S": "100"})
     assert explicit.kinds[JobKind.TEACHER_GATE].budget_s == 100

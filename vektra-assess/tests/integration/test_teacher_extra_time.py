@@ -361,3 +361,50 @@ async def test_the_fallback_date_must_stay_before_the_end_date(pg) -> None:  # t
             fallback_url(904), json=fb(CLOSE + 99), headers=teacher()
         )
         assert r.status_code == 200, r.text
+
+
+async def test_extra_time_waits_for_an_in_flight_start_and_then_refuses(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-5: a Start holds the activity row FOR SHARE until its STARTING row commits;
+    the extra-time PUT locks it FOR UPDATE first, then sees the STARTING row and refuses."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from vektra_assess.api import start as start_route
+
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, 905, cap_minutes=30)
+        await seed_teacher_gate(pg, w.site, 905)
+        params = {"s": w.site, "c": 905}
+        async with w.engine.connect() as starting:
+            tx = await starting.begin()
+            await starting.execute(start_route.ACTIVITY_LOCK, params)
+            put = asyncio.create_task(
+                w.client.put(
+                    extra_url(905, 8301), json=body(minutes=10), headers=teacher()
+                )
+            )
+            await asyncio.sleep(0.5)
+            assert not put.done()
+            await starting.execute(
+                text(
+                    "INSERT INTO assess_sessions (site_id, cmid, student_userid, state, "
+                    "starting_expires_at) VALUES (:s, :c, 8301, 'STARTING', "
+                    "now() + interval '30 seconds')"
+                ),
+                params,
+            )
+            await tx.commit()
+        r = await asyncio.wait_for(put, 10)
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": "extra_time", "code": "session_locked", "state": "STARTING"}
+        ]
+        assert (
+            await count(
+                pg,
+                "SELECT count(*) FROM assess_extra_time WHERE site_id = :s",
+                s=w.site,
+            )
+            == 0
+        )

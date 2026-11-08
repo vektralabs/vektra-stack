@@ -451,11 +451,13 @@ async def put_extra_time(
 
     async def action(conn: Any, site: UUID, gate: TeacherGate) -> tuple[int, Any]:
         params = {"s": site, "c": c, "u": student}
-        # the student's sessions first, then the configuration: the reset and the terminate
-        # take their locks in the same order (no deadlock between two teacher operations)
+        # the activity row first (FOR UPDATE): a Start holds it FOR SHARE until its STARTING
+        # row commits, so a Start in flight is either seen below as STARTING (refused) or reads
+        # the new extra time at admission; then the sessions (the lock order of every teacher
+        # operation: no deadlock with a reset or a terminate)
+        cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
         sessions = (await conn.execute(_STUDENT_SESSIONS, params)).all()
         grants = int((await conn.execute(_GRANTS, params)).scalar_one())
-        cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
         if cfg is None or cfg.cap_minutes is None:
             raise _Refused(_invalid([FieldError("extra_time", "cap_not_configured")]))
         cap = int(cfg.cap_minutes)

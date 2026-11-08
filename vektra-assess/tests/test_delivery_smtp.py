@@ -221,3 +221,43 @@ async def test_implicit_tls_sends_and_an_untrusted_certificate_is_tls(
         assert bad.error_class is ErrorClass.TLS and len(sink.messages) == 1
     finally:
         sink.stop()
+
+
+async def test_a_cancelled_connect_closes_the_connection() -> None:
+    """CodeRabbit 4504362607: a job cancelled (drain, budget) while the session is being
+    opened must not leave the socket open."""
+    closed = asyncio.Event()
+    writers: list[asyncio.StreamWriter] = []
+
+    async def silent(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        writers.append(writer)
+        writer.write(b"220 relay ready\r\n")  # the banner, then silence after EHLO
+        await writer.drain()
+        while await reader.read(1024):  # b"" once the client closes
+            pass
+        closed.set()
+        writer.close()
+
+    server = await asyncio.start_server(silent, HOST, 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        sender = SmtpSender(
+            sink_config(
+                SimpleNamespace(port=port, ca_file=None),  # type: ignore[arg-type]
+                timeout_s=10.0,
+            )
+        )
+        task = asyncio.create_task(sender.send(_msg(), "prof@unical.it"))
+        await asyncio.sleep(0.3)  # connected, EHLO sent, waiting for its reply
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        async with asyncio.timeout(2):
+            await closed.wait()
+        assert sender._slots.locked() is False  # the session slot came back too
+    finally:
+        for w in writers:  # never wait on a connection the client left open
+            w.close()
+        server.close()

@@ -176,7 +176,8 @@ class SmtpSender:
                 phase = "auth"
                 await client.login(cfg.username, cfg.password or "")
             return client
-        except _Failure:
+        except (_Failure, asyncio.CancelledError):
+            # a cancellation (job drain, budget) must not leave the socket open either
             client.close()
             raise
         except aiosmtplib.SMTPAuthenticationError as exc:

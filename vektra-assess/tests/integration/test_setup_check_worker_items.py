@@ -360,6 +360,38 @@ async def test_a_role_or_database_override_fails_the_item(  # type: ignore[no-un
     assert await check(CTX) == Outcome(OK)
 
 
+async def test_a_worker_override_that_masks_the_server_value_is_not_ok(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4507313007: the server logs every statement and only the worker role is set
+    to ``none``. The worker session then reads ``none``, but the API role inherits ``all``. The
+    worker cannot read the server value under its own override, so the item must not say OK."""
+    engine = create_async_engine(pg.url("worker"))
+    admin = create_async_engine(pg.url("super"), isolation_level="AUTOCOMMIT")
+
+    async def run(*statements: str) -> None:
+        async with admin.connect() as c:
+            for s in statements:
+                await c.execute(text(s))
+
+    try:
+        await run(
+            "ALTER SYSTEM SET log_statement = 'all'",
+            "ALTER SYSTEM SET log_parameter_max_length = 0",
+            "SELECT pg_reload_conf()",
+            "ALTER ROLE vektra_assess_worker SET log_statement = 'none'",
+        )
+        out = await setup_items.db_log_statement_item(engine.connect)(CTX)
+    finally:
+        await run(
+            "ALTER ROLE vektra_assess_worker RESET log_statement",
+            "ALTER SYSTEM RESET log_statement",
+            "ALTER SYSTEM RESET log_parameter_max_length",
+            "SELECT pg_reload_conf()",
+        )
+        await admin.dispose()
+        await engine.dispose()
+    assert out == Outcome(UNVERIFIABLE, "server_log_settings_masked")
+
+
 async def test_the_worker_role_can_read_both_settings(pg) -> None:  # type: ignore[no-untyped-def]
     """As the item runs in production: the worker role reads the server's own values (the test
     container keeps the stock ``log_parameter_max_length = -1``, so it is named, not unreadable)."""

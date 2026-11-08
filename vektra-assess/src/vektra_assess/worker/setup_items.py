@@ -10,7 +10,10 @@
 - ``db_log_statement_none`` (ARCH-078, plan assess-foundations): ``SHOW log_statement`` is
   ``none`` and ``SHOW log_parameter_max_length`` is ``0`` on the worker's own connection, AND
   no ``ALTER ROLE/DATABASE ... SET`` override (``pg_db_role_setting``) gives any assess role, or
-  this database, another value: the worker's session cannot see the API role's settings.
+  this database, another value: the worker's session cannot see the API role's settings. Each
+  assess role's effective value is resolved by PostgreSQL's precedence; when a default on the
+  worker's own role hides the server value that another assess role inherits, the item is
+  ``UNVERIFIABLE/server_log_settings_masked``, never OK.
 
 A failed item is ``MISSING`` with a reason code naming the cause (the check has no separate
 "failed" result, and the item table stores ok | missing). A database error raises and the runner
@@ -58,7 +61,7 @@ ASSESS_ROLES = ("vektra_assess_api", "vektra_assess_worker", "vektra_assess_defi
 #: per-role and per-database overrides (``ALTER ROLE/DATABASE ... SET``) that apply to an assess
 #: role in this database: the role alone, the database alone, or the pair
 _OVERRIDES = text(
-    "SELECT cfg FROM pg_db_role_setting s "
+    "SELECT r.rolname, s.setdatabase <> 0, cfg FROM pg_db_role_setting s "
     "LEFT JOIN pg_roles r ON r.oid = s.setrole "
     "CROSS JOIN LATERAL unnest(s.setconfig) AS cfg "
     "WHERE (s.setdatabase = 0 OR s.setdatabase = "
@@ -66,6 +69,7 @@ _OVERRIDES = text(
     "AND (s.setrole = 0 OR r.rolname = ANY(:roles)) "
     "AND (cfg LIKE 'log_statement=%' OR cfg LIKE 'log_parameter_max_length=%')"
 )
+_CURRENT_USER = text("SELECT current_user")
 _EXPECTED = {"log_statement": "none", "log_parameter_max_length": "0"}
 
 
@@ -159,26 +163,55 @@ def db_log_statement_item(acquire: AcquireDb) -> ItemCheck:
         """Judge the server and per-role logging settings."""
         async with acquire() as conn:
             statement, max_length = (await conn.execute(_LOGGING)).one()
-            overrides = [
-                str(c).split("=", 1)
-                for (c,) in (
-                    await conn.execute(_OVERRIDES, {"roles": list(ASSESS_ROLES)})
-                ).all()
-            ]
-        values = {
-            "log_statement": {statement},
-            "log_parameter_max_length": {max_length},
-        }
-        for name, value in overrides:
-            values[name].add(value.strip("'\""))
-        problems = [
-            f"{name}_not_{_EXPECTED[name]}"
-            for name in ("log_statement", "log_parameter_max_length")
-            if {str(v) for v in values[name]} != {_EXPECTED[name]}
-        ]
-        return missing("_and_".join(problems)) if problems else ok()
+            me = (await conn.execute(_CURRENT_USER)).scalar_one()
+            rows = (
+                await conn.execute(_OVERRIDES, {"roles": [*ASSESS_ROLES, me]})
+            ).all()
+        # (role or None for every role, this database only?) -> {setting: value}
+        levels: dict[tuple[str | None, bool], dict[str, str]] = {}
+        for role, per_db, cfg in rows:
+            name, _, value = str(cfg).partition("=")
+            levels.setdefault((role, bool(per_db)), {})[name] = value.strip("'\"")
+        session = {"log_statement": statement, "log_parameter_max_length": max_length}
+        problems: list[str] = []
+        unknown = False
+        for name in ("log_statement", "log_parameter_max_length"):
+            # what this session reads is the server value only when no role or database
+            # default applies to its own role (CodeRabbit 4507313007)
+            server = (
+                str(session[name]) if _effective(levels, me, name) is None else None
+            )
+            seen: set[str] = set()
+            for role in ASSESS_ROLES:
+                effective = _effective(levels, role, name)
+                if effective is None:
+                    effective = server
+                if effective is None:
+                    unknown = True
+                else:
+                    seen.add(effective)
+            seen.add(str(session[name]))
+            if seen != {_EXPECTED[name]}:
+                problems.append(f"{name}_not_{_EXPECTED[name]}")
+        if problems:
+            return missing("_and_".join(problems))
+        # a role or database default hides the server value from this session, and some
+        # assess role inherits it: nothing proves that role is not logged
+        return unverifiable("server_log_settings_masked") if unknown else ok()
 
     return check
+
+
+def _effective(
+    levels: dict[tuple[str | None, bool], dict[str, str]], role: str, name: str
+) -> str | None:
+    """A role's default for ``name`` in this database, by PostgreSQL's precedence (role in
+    this database, role, every role in this database, every role); None = the server value."""
+    for key in ((role, True), (role, False), (None, True), (None, False)):
+        value = levels.get(key, {}).get(name)
+        if value is not None:
+            return value
+    return None
 
 
 def fresh_registry() -> ItemRegistry:

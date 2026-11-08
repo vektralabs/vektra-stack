@@ -757,3 +757,38 @@ async def test_an_unreadable_config_keeps_the_crash_marker(
             True,
             True,
         ]
+
+
+async def test_the_crash_resend_keeps_the_stored_message_id(
+    pg, worker, sink, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504367056: the Message-ID is stored at the claim and reused, so a resend
+    after a crash carries the same id even if VEKTRA_ASSESS_MESSAGE_ID_DOMAIN changed."""
+    from dataclasses import replace
+
+    clock = Clock()
+    real_settle = h._settle
+
+    async def crash_after_relay(*args: Any, **kw: Any) -> None:
+        if args[4].ok:
+            raise RuntimeError("worker killed before the outcome commit")
+        await real_settle(*args, **kw)
+
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        monkeypatch.setattr(h, "_settle", crash_after_relay)
+        with pytest.raises(RuntimeError):
+            await h.deliver_transcript(deps, worker.connect, s.session_id)
+        monkeypatch.setattr(h, "_settle", real_settle)
+        first = {m.message_id for m in sink.messages}
+        assert len(first) == 2
+        clock.now += STALE + timedelta(seconds=1)
+        moved = replace(deps, message_id_domain="relay.other.example")
+        got = await h.deliver_transcript(moved, worker.connect, s.session_id)
+        assert got is not None and got.sent == 2
+        final = await rows(pg, s.session_id)
+        assert {r.message_id for r in final} == first
+        for mid in first:
+            assert len(sink.by_message_id(mid)) == 2

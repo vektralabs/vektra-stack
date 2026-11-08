@@ -157,7 +157,7 @@ _DOC = text(
     "WHERE id = :t AND ciphertext IS NOT NULL"
 )
 _DUE_IDS = text(
-    "SELECT id, recipient_ref FROM assess_deliveries WHERE transcript_id = :t "
+    "SELECT id, round, recipient_ref FROM assess_deliveries WHERE transcript_id = :t "
     "AND kind = 'transcript' AND status IN ('PENDING', 'RETRYING') AND not_before <= :now "
     "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
     "ORDER BY round, created_at"
@@ -167,9 +167,12 @@ _CLAIM_ONE = text(
     "WHERE id = :i AND status IN ('PENDING', 'RETRYING') AND not_before <= :now "
     "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
     "FOR UPDATE SKIP LOCKED) "
-    "UPDATE assess_deliveries d SET attempt_started_at = :now, attempts = d.attempts + 1 "
-    "FROM due WHERE d.id = due.id "
-    "RETURNING d.id, d.round, d.recipient_ref, d.attempts, d.created_at, due.prev"
+    # the Message-ID is fixed at the first claim and reused by every later attempt, a crash
+    # resend included, whatever VEKTRA_ASSESS_MESSAGE_ID_DOMAIN says by then
+    "UPDATE assess_deliveries d SET attempt_started_at = :now, attempts = d.attempts + 1, "
+    "message_id = COALESCE(d.message_id, :mid) FROM due WHERE d.id = due.id "
+    "RETURNING d.id, d.round, d.recipient_ref, d.attempts, d.created_at, due.prev, "
+    "d.message_id"
 )
 #: rows whose retry window (from creation) ended more than the lease ago: never attempted again
 _EXPIRE = text(
@@ -195,12 +198,13 @@ _SENT = text(
 )
 _RETRY = text(
     "UPDATE assess_deliveries SET status = 'RETRYING', not_before = :nb, "
-    "last_error_class = :cls, smtp_code = :code, message_id = :mid, attempt_started_at = NULL "
+    "last_error_class = :cls, smtp_code = :code, message_id = COALESCE(:mid, message_id), "
+    "attempt_started_at = NULL "
     "WHERE id = :i AND attempt_started_at = :started"
 )
 _FAIL = text(
     "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = :cls, "
-    "smtp_code = :code, message_id = :mid, attempt_started_at = NULL "
+    "smtp_code = :code, message_id = COALESCE(:mid, message_id), attempt_started_at = NULL "
     "WHERE id = :i AND attempt_started_at = :started"
 )
 
@@ -214,6 +218,7 @@ class _Claimed:
     created_at: datetime
     started: datetime
     duplicate: bool
+    message_id: str
 
 
 async def _audit(
@@ -469,14 +474,20 @@ class _Doc:
 
 
 async def _claim(
-    deps: DeliveryDeps, acquire: AcquireDb, t: Any, row_id: UUID, out: Delivered
+    deps: DeliveryDeps, acquire: AcquireDb, t: Any, due: Any, out: Delivered
 ) -> _Claimed | None:
-    """Commit the attempt start of ONE row (OQ-029); None when it is no longer due."""
+    """Commit the attempt start of ONE row (OQ-029) with its Message-ID (kept from an
+    earlier attempt when there is one); None when it is no longer due."""
     now = deps.clock()
+    row_id = due.id
+    mid = mail.message_id(
+        t.id, int(due.round), due.recipient_ref or "", deps.message_id_domain
+    )
     async with acquire() as conn, conn.begin():
         c = (
             await conn.execute(
-                _CLAIM_ONE, {"i": row_id, "now": now, "stale": now - deps.stale_after}
+                _CLAIM_ONE,
+                {"i": row_id, "now": now, "stale": now - deps.stale_after, "mid": mid},
             )
         ).first()
         if c is None:
@@ -500,6 +511,7 @@ async def _claim(
         c.created_at,
         now,
         c.prev is not None,
+        str(c.message_id),
     )
 
 
@@ -515,7 +527,7 @@ async def _row(
     address = by_ref.get(due.recipient_ref or "")
     if address is None or not domain_allowed(address, deps.domains):
         # nothing to connect for: claimed and settled without a relay session
-        c = await _claim(deps, acquire, t, due.id, out)
+        c = await _claim(deps, acquire, t, due, out)
         if c is None:
             return
         if address is None:
@@ -529,7 +541,7 @@ async def _row(
         return
     try:
         async with deps.sender.slot():
-            c = await _claim(deps, acquire, t, due.id, out)
+            c = await _claim(deps, acquire, t, due, out)
             if c is None:
                 return
             doc = await docs.get()
@@ -560,7 +572,7 @@ async def _send(
     doc: bytes,
     out: Delivered,
 ) -> None:
-    mid = mail.message_id(t.id, c.round, c.ref or "", deps.message_id_domain)
+    mid = c.message_id  # stored at the first claim (CodeRabbit 4504367056)
     # the short name read at close (sanitised for the header by ``message``)
     course = t.course_shortname or "corso non disponibile"
     msg = mail.build(

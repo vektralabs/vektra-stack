@@ -469,3 +469,18 @@ def test_one_opening_rule_for_the_config_view_and_the_gate_panel(
 ) -> None:
     """Review 11b-8: the config view and the session list's gate panel share it."""
     assert v.opening_view(close, attested) == expected
+
+
+def test_a_percentage_is_whole_minutes_rounded_up() -> None:
+    """CodeRabbit 4506916942: the session lasts whole minutes, so the pre-session screen's
+    ``duration_min`` is exact: +25 % of 30 min is 8 min (7.5 rounded up, never cut short)."""
+    assert v.extra_seconds(30, percent=25) == 8 * 60
+    assert v.extra_seconds(30, percent=50) == 15 * 60
+    assert v.extra_seconds(7, percent=10) == 1 * 60  # 0.7 min -> 1
+    assert v.extra_seconds(30, percent=0) == 0
+    # the total rule sees the same rounding: 115 + 5 % (5.75 -> 6) = 121 > 120 is checked
+    # against 240 like any other total
+    assert v.check_extra_time(120, percent=100, confirm_over_100=False) == []
+    assert codes(v.check_extra_time(120, percent=101, confirm_over_100=True)) == [
+        ("extra_time", "total_too_long")
+    ]

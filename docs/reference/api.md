@@ -231,7 +231,8 @@ consumed: the student may Start again unless the activity is disabled). `also_di
 `PUT config` with `enabled: false`, which blocks new Starts and lets running sessions finish.
 Re-enabling never reopens a CLOSED session.
 
-Extra time (REQ-078): stored in seconds (a percentage is of the cap configured now) and copied
+Extra time (REQ-078): stored in seconds (a percentage is of the cap configured now, rounded up
+to whole minutes, so `pre_session.duration_min` is exact) and copied
 into the session at Start; refused while the student's current session is STARTING, ACTIVE or
 OUTAGE, or CLOSED without a pending reset.
 

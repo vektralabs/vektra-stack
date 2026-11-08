@@ -237,7 +237,7 @@ def check_extra_time(
     if percent is not None:
         if not 0 <= percent <= MAX_EXTRA_PERCENT:
             return [FieldError("extra_time", "out_of_range", f"0-{MAX_EXTRA_PERCENT}%")]
-        extra_s = cap_minutes * 60 * percent // 100
+        extra_s = _percent_minutes(cap_minutes, percent) * 60
         pct_s = percent * 100
     else:
         assert minutes is not None
@@ -264,10 +264,16 @@ def extra_seconds(
     cap_minutes: int, *, minutes: int | None = None, percent: int | None = None
 ) -> int:
     """The stored extra time, in seconds, of a request ``check_extra_time`` accepted: a
-    percentage is of the cap configured NOW (a later cap change does not rescale it)."""
+    percentage is of the cap configured NOW (a later cap change does not rescale it), in whole
+    minutes rounded up (a session lasts whole minutes: the pre-session screen's
+    ``duration_min`` is exact, and the student is never cut short)."""
     if percent is not None:
-        return cap_minutes * 60 * percent // 100
+        return _percent_minutes(cap_minutes, percent) * 60
     return int(minutes or 0) * 60
+
+
+def _percent_minutes(cap_minutes: int, percent: int) -> int:
+    return -(-cap_minutes * percent // 100)  # ceil, in integers
 
 
 # --- teacher reasons (REQ-087 reset, REQ-081 terminate) ---------------------------------------

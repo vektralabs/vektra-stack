@@ -40,8 +40,8 @@ from vektra_assess.worker.slots import SMTP_PROBE_INTERVAL_S
 SMTP_PROBE_MAX_AGE_S = 3 * SMTP_PROBE_INTERVAL_S
 
 _SMTP_ROW = text(
-    "SELECT details, extract(epoch FROM now() - beat_at) AS age "
-    "FROM assess_heartbeat WHERE component = 'smtp'"
+    "SELECT details, extract(epoch FROM now() - beat_at) AS age, "
+    "extract(epoch FROM now()) AS now FROM assess_heartbeat WHERE component = 'smtp'"
 )
 _LOGGING = text(
     "SELECT current_setting('log_statement'), current_setting('log_parameter_max_length')"
@@ -94,26 +94,30 @@ def smtp_probe_item(
             return missing("smtp_never_probed")
         if float(row.age) > SMTP_PROBE_MAX_AGE_S:
             return missing("smtp_probe_stale")
-        verdict = _judge(row.details)
+        verdict = _judge(row.details, float(row.now))
         if verdict is None and probe is not None:
             # busy with no earlier result to go by: probe once more (finding 2)
             await probe()
             row = await read()
             if row is not None and float(row.age) <= SMTP_PROBE_MAX_AGE_S:
-                verdict = _judge(row.details)
+                verdict = _judge(row.details, float(row.now))
         # still busy: not a relay failure (never MISSING), but nothing vouches for it either
         return verdict or unverifiable("smtp_busy")
 
     return check
 
 
-def _judge(raw: Any) -> Outcome | None:
+def _judge(raw: Any, now: float) -> Outcome | None:
     """OK / MISSING from one probe row; ``busy`` is judged by the last real result it carries
-    (review finding 2), None when there is none."""
+    (review finding 2) while that result is itself at most ``SMTP_PROBE_MAX_AGE_S`` old
+    (CodeRabbit 4506450148); None when there is no such result."""
     details = raw if isinstance(raw, dict) else {}
     if details.get("state") == "busy":
         last = details.get("last")
         if not isinstance(last, dict):
+            return None
+        at = last.get("at")
+        if not isinstance(at, int | float) or now - float(at) > SMTP_PROBE_MAX_AGE_S:
             return None
         details = last
     if details.get("ok") is True:

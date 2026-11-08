@@ -8,6 +8,7 @@ item is MISSING with a reason code that names what failed.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -143,23 +144,42 @@ async def test_a_failed_probe_fails_naming_its_error_class(pg, details, reason) 
 BUSY = {"state": "busy", "ok": False, "error_class": None, "smtp_code": None}
 
 
+def _last(
+    state: str, ok_: bool, error_class: str | None, age_s: float = 10
+) -> dict[str, Any]:
+    return {
+        "state": state,
+        "ok": ok_,
+        "error_class": error_class,
+        "at": time.time() - age_s,
+    }
+
+
 @pytest.mark.parametrize(
     ("last", "expected"),
     [
-        ({"state": "ok", "ok": True, "error_class": None}, Outcome(OK)),
-        (
-            {"state": "failed", "ok": False, "error_class": "tls"},
-            Outcome(MISSING, "smtp_tls"),
-        ),
+        (_last("ok", True, None), Outcome(OK)),
+        (_last("failed", False, "tls"), Outcome(MISSING, "smtp_tls")),
         # no earlier result and nothing to probe with: not a relay failure, and not OK
         (None, Outcome(UNVERIFIABLE, "smtp_busy")),
+        # CodeRabbit 4506450148: a success older than the freshness bound vouches for nothing
+        (
+            _last("ok", True, None, age_s=setup_items.SMTP_PROBE_MAX_AGE_S + 60),
+            Outcome(UNVERIFIABLE, "smtp_busy"),
+        ),
+        # a ``last`` without its time is no history
+        (
+            {"state": "ok", "ok": True, "error_class": None},
+            Outcome(UNVERIFIABLE, "smtp_busy"),
+        ),
     ],
 )
 async def test_a_busy_relay_is_judged_by_its_last_real_result(
     pg, last, expected
 ) -> None:  # type: ignore[no-untyped-def]
     """Review finding 2: ``busy`` means every relay session was in use by deliveries, not that
-    the relay failed: the item judges the last non-busy result, never MISSING for busy itself."""
+    the relay failed: the item judges the last non-busy result, never MISSING for busy itself,
+    and only while that result is itself fresh."""
     await _smtp_row(pg, BUSY | ({"last": last} if last else {}), age_s=10)
     assert await smtp(pg) == expected
 
@@ -173,22 +193,32 @@ async def test_a_busy_row_without_history_is_probed_again(pg, tmp_path) -> None:
         sink.stop()
 
 
-async def test_a_busy_probe_keeps_the_last_real_result(pg) -> None:  # type: ignore[no-untyped-def]
-    """``run_probe`` writes ``last`` on a busy outcome, carried across several busy ones."""
+async def test_a_busy_probe_keeps_the_last_real_result_with_its_time(pg) -> None:  # type: ignore[no-untyped-def]
+    """``run_probe`` writes ``last`` on a busy outcome with the time of that real result,
+    carried unchanged across several busy ones (CodeRabbit 4506450148)."""
     from vektra_assess.delivery.smtp import SlotBusy
 
     class Busy:
         async def probe(self) -> Any:
             raise SlotBusy
 
-    await _smtp_row(pg, OK_ROW, age_s=10)
+    await _smtp_row(pg, OK_ROW, age_s=100)
     engine = create_async_engine(pg.url("worker"))
     try:
+        seen = []
         for _ in range(2):
             await run_probe(Busy(), engine.connect, timeout_s=1)
             details = await _smtp_details(pg)
             assert details["state"] == "busy"
-            assert details["last"] == {"state": "ok", "ok": True, "error_class": None}
+            last = details["last"]
+            assert {k: last[k] for k in ("state", "ok", "error_class")} == {
+                "state": "ok",
+                "ok": True,
+                "error_class": None,
+            }
+            seen.append(last["at"])
+        # the time of the real result (100 s ago), not of the busy rows
+        assert seen[0] == seen[1] and 80 < time.time() - seen[0] < 160
     finally:
         await engine.dispose()
 

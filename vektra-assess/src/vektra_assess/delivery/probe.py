@@ -31,19 +31,24 @@ _UPSERT = text(
 )
 
 
-_PREVIOUS = text("SELECT details FROM assess_heartbeat WHERE component = :c FOR UPDATE")
+_PREVIOUS = text(
+    "SELECT details, extract(epoch FROM beat_at) AS at FROM assess_heartbeat "
+    "WHERE component = :c FOR UPDATE"
+)
 
 
 async def _last_real_result(conn: Any) -> dict[str, Any] | None:
-    """The previous non-busy outcome ``{state, ok, error_class}`` (carried over a busy row's
-    own ``last``), or None when there is none yet."""
-    prev = (await conn.execute(_PREVIOUS, {"c": COMPONENT})).scalar()
-    if not isinstance(prev, dict):
+    """The previous non-busy outcome ``{state, ok, error_class, at}`` (``at``: epoch seconds of
+    that probe, so a reader can judge its age; CodeRabbit 4506450148), carried unchanged over
+    a busy row's own ``last``; None when there is none yet."""
+    prev = (await conn.execute(_PREVIOUS, {"c": COMPONENT})).first()
+    if prev is None or not isinstance(prev.details, dict):
         return None
-    if prev.get("state") == "busy":
-        last = prev.get("last")
+    if prev.details.get("state") == "busy":
+        last = prev.details.get("last")
         return last if isinstance(last, dict) else None
-    return {k: prev.get(k) for k in ("state", "ok", "error_class")}
+    out = {k: prev.details.get(k) for k in ("state", "ok", "error_class")}
+    return out | {"at": float(prev.at)}
 
 
 class Prober(Protocol):

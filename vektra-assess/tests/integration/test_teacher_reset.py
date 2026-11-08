@@ -363,3 +363,41 @@ async def test_a_disabled_activity_refuses_the_reset_without_waiting_for_a_rende
         assert err(r)["details"] == {"reason": "gate", "gate": "not_enabled"}
         assert await count(pg, renders) == before
         assert await grants(pg, w.site) == 0
+
+
+async def test_a_session_rolled_back_while_the_reset_waits_is_not_found(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506916908: a terminate holding the activity row deletes the student's only
+    (STARTING) session while the reset waits for that lock: 404, never an index error."""
+    from sqlalchemy import text
+    from support.teacher_ops import start
+
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, _seeded = await live_sessions(w, worker, [7601])
+        await seed_teacher_gate(pg, w.site, cmid)
+        sid, _token = await start(w, 7602, cmid)
+        async with w.engine.connect() as term:
+            tx = await term.begin()
+            await term.execute(
+                text(
+                    "SELECT 1 FROM assess_activity_config WHERE site_id = :s AND cmid = :c "
+                    "FOR UPDATE"
+                ),
+                {"s": w.site, "c": cmid},
+            )
+            task = asyncio.create_task(reset(w, cmid, sid))
+            await asyncio.sleep(0.5)
+            assert not task.done()
+            done = (
+                await term.execute(
+                    text("SELECT assess_rollback_starting(:s)"), {"s": sid}
+                )
+            ).scalar()
+            assert done is True
+            await tx.commit()
+        r = await asyncio.wait_for(task, 10)
+        assert r.status_code == 404, r.text
+        assert err(r)["code"] == "ERR-ASSESS-008"
+        assert await grants(pg, w.site) == 0

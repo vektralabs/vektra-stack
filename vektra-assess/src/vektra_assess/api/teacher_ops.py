@@ -222,6 +222,10 @@ async def reset_session(
         # lock order of every teacher operation and of Start: the activity row, then sessions
         cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
         sessions = (await conn.execute(_STUDENT_SESSIONS, params)).all()
+        if not any(s.id == row.id for s in sessions):
+            # rolled back (a terminate's STARTING rollback) while this reset waited for the
+            # activity lock: the session is gone (CodeRabbit 4506916908)
+            raise _Refused(fail(session_not_found()))
         if any(s.state in OPEN_STATES for s in sessions):
             raise _Refused(fail(reset_refused("not_closed")))
         latest = sessions[-1]

@@ -1,7 +1,7 @@
 # Implementation Plan: Assess transcript generation, safe serving and durable SMTP delivery
 
 **ID**: 20261101-154950-assess-transcript-delivery
-**Status**: active
+**Status**: completed
 **Branch**: feat/assess-transcript-delivery
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-08T00:30:00Z
@@ -215,7 +215,7 @@ evidence of nothing until the mail sink holds the message, and a transcript that
 - [x] An address removed from the activity config is REPLACED by the current configured ones (≤ 3), audited old/new; an address outside `VEKTRA_ASSESS_RECIPIENT_DOMAINS` (or any, with the list empty) gets 0 messages, FAILED + alert; a 4th recipient never exists (REQ-082 as amended 2026-11-07) — evidence: `test_delivery_handler.py::test_a_removed_address_is_replaced_and_a_fourth_never_exists` (old/new refs audited, 3 rows per round at most, 0 messages to removed or 4th), `test_an_address_outside_the_domain_allowlist_gets_nothing` (FAILED `domain_not_allowed` + alert, empty list refuses all), `test_transcript_generation.py::test_four_configured_addresses_make_three_rows`
 - [x] Student B requesting A's transcript gets 403 and an audit event; the student copy is hash-equal to the teacher copy; a download token works exactly once and expires ≤ 120 s (REQ-088, ARCH-067) — evidence: `test_transcript_api.py` (`test_student_b_cannot_get_a_token_for_a_transcript`, `test_a_grader_downloads_the_same_bytes_and_a_non_grader_is_refused`, `test_the_owner_downloads_the_exact_bytes_once`: second use 401, `test_expired_foreign_and_query_tokens_are_refused`), TTL <= 120 by the setting bound and the token check
 - [x] Resend carrying a recipient parameter (body or query) is rejected with 400 (REQ-080 via REQ-082) — evidence: `test_transcript_api.py::test_resend_never_takes_a_recipient` (body keys at any depth and query names, 0 rows written)
-- [ ] Generation p99 ≤ 60 s after CLOSED and SENT p95 ≤ 5 min with SMTP healthy; ≥ 99% SENT or downloadable within 15 min (NFR-021, REQ-075)
+- [ ] Generation p99 ≤ 60 s after CLOSED and SENT p95 ≤ 5 min with SMTP healthy; ≥ 99% SENT or downloadable within 15 min (NFR-021, REQ-075) — BLOCKED: `tests/nfr/test_assess_transcript_timing.py` is written and skips with a recorded BLOCKED result until a compose stack with a recording TLS mail sink as relay exists (target VM, plan 13)
 - [x] Transcript passes the automated accessibility check and validates as UTF-8 HTML with correct `lang` (NFR-016, BR-016) — evidence: `test_transcript_a11y.py` (0 axe violations, 0 Nu errors on quiz and assignment transcripts with math; a broken control proves the checker ran); manual NVDA read-through BLOCKED (Notes)
 
 ## Testing Approach

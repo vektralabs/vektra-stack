@@ -80,10 +80,12 @@ def smtp_probe_item(
     written its first row, and a long-stopped worker finds only a stale one."""
 
     async def read() -> Any:
+        """The relay probe row with its age and the database clock."""
         async with acquire() as conn:
             return (await conn.execute(_SMTP_ROW)).first()
 
     async def check(_ctx: CheckContext) -> Outcome:
+        """Judge the probe row, probing once when it is missing, stale or uninformative."""
         if not configured:
             return missing("smtp_not_configured")
         row = await read()
@@ -131,7 +133,10 @@ def _judge(raw: Any, now: float) -> Outcome | None:
 
 
 def db_log_statement_item(acquire: AcquireDb) -> ItemCheck:
+    """The ARCH-078 item: OK only when no assess statement or parameter can reach the logs."""
+
     async def check(_ctx: CheckContext) -> Outcome:
+        """Judge the server and per-role logging settings."""
         async with acquire() as conn:
             statement, max_length = (await conn.execute(_LOGGING)).one()
             overrides = [
@@ -163,6 +168,7 @@ def register_worker_items(
     smtp_configured: bool,
     smtp_probe: Callable[[], Awaitable[Any]] | None = None,
 ) -> None:
+    """Register the worker's own pluggable items into ``registry`` (one per composition)."""
     registry.register(
         "smtp_probe",
         smtp_probe_item(acquire, configured=smtp_configured, probe=smtp_probe),

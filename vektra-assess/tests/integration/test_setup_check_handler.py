@@ -8,6 +8,7 @@ side is the recorded 5.2 responses (no network).
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any
@@ -248,6 +249,44 @@ async def test_a_disabled_site_is_never_checked(pg, with_report: bool) -> None: 
             == 0
         )
     assert await reports(pg, site) == ([(rid, "failed")] if rid else [])
+
+
+async def test_a_report_finished_before_the_real_claim_is_left_as_it_is(  # type: ignore[no-untyped-def]
+    pg, monkeypatch
+) -> None:
+    """CodeRabbit nitpick (round 1): the report passes the handler's pre-check, then another
+    run finishes it before ``run_setup_check`` claims it. The REAL claim refuses it
+    (``SetupCheckStale``), the handler completes, and the finished report is untouched."""
+    real = handler_mod.run_setup_check
+    site = await make_site(pg)
+    rid = await queued_report(pg, site)
+    marker = '[{"name": "other_run", "result": "OK", "reason_code": null}]'
+
+    async def finished_meanwhile(*a: Any, **k: Any) -> Any:
+        await pg.run(
+            "super",
+            "UPDATE assess_setup_check_reports SET status = 'done', finished_at = now(), "
+            "items = CAST(:m AS jsonb) WHERE id = :r",
+            {"m": marker, "r": rid},
+        )
+        return await real(*a, **k)
+
+    monkeypatch.setattr(handler_mod, "run_setup_check", finished_meanwhile)
+    replay = Replay(BRANCH)
+    await handle(pg, {"site_id": str(site), "report_id": str(rid)}, replay)  # no raise
+    row = await pg.run(
+        "super",
+        "SELECT status, items FROM assess_setup_check_reports WHERE id = :r",
+        {"r": rid},
+    )
+    assert row[0][0] == "done" and row[0][1] == json.loads(marker)
+    assert replay.calls == []  # refused before any Moodle call
+    assert (
+        await count(
+            pg, "SELECT count(*) FROM assess_setup_checks WHERE site_id=:s", s=site
+        )
+        == 0
+    )
 
 
 async def test_a_site_disabled_during_the_check_gets_nothing_written(  # type: ignore[no-untyped-def]

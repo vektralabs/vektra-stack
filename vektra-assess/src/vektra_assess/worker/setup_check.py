@@ -114,6 +114,7 @@ async def queue_setup_checks(acquire: AcquireDb) -> int:
 
 
 def _uuid(value: object) -> UUID | None:
+    """A job argument as a UUID, None when it is not one (a malformed job is stale)."""
     try:
         return UUID(str(value))
     except ValueError:
@@ -132,6 +133,7 @@ def make_setup_check_handler(
     """``engine`` is the worker's engine: ``run_setup_check`` owns its transactions on it."""
 
     async def handle(ctx: JobContext) -> None:
+        """One setup-check job: re-validate the ids and rows, run, trim."""
         site_id = _uuid(ctx.args.get("site_id"))
         raw_report = ctx.args.get("report_id")
         report_id = None if raw_report is None else _uuid(raw_report)

@@ -503,6 +503,7 @@ def _setup_check_parts(
     client = ws if ws is not None else _moodle_client(checked)
 
     async def setup_check() -> None:
+        """The daily tick body: queue one setup check per enabled site."""
         await queue_setup_checks(engine.connect)
 
     return SetupCheckParts(

@@ -84,6 +84,12 @@ _NAME = re.compile(r"[a-z][a-z0-9_]{1,48}")
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
 
 
+class SetupCheckStale(LookupError):
+    """The site is unknown or the report is not runnable (finished, of another site, unknown):
+    a stale job, completed without acting. Dedicated, so a ``KeyError``/``IndexError`` from a
+    real bug is never mistaken for it."""
+
+
 @dataclass(frozen=True)
 class ItemResult:
     name: str
@@ -620,7 +626,7 @@ async def run_setup_check(
             )
         ).one_or_none()
         if site_row is None:
-            raise LookupError("unknown site")
+            raise SetupCheckStale("unknown site")
         if report_id is None:
             report_id = (
                 await conn.execute(
@@ -642,7 +648,7 @@ async def run_setup_check(
                 )
             ).rowcount
             if claimed != 1:
-                raise LookupError("setup-check report is not runnable")
+                raise SetupCheckStale("setup-check report is not runnable")
     base_url, manifest, last_seen, moodle_origin = site_row
 
     try:

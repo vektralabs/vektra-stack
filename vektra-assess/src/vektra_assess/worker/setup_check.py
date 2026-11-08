@@ -31,7 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.moodle.client import MoodleWsClient
-from vektra_assess.moodle.setup_check import ItemRegistry, run_setup_check
+from vektra_assess.moodle.setup_check import (
+    ItemRegistry,
+    SetupCheckStale,
+    run_setup_check,
+)
 from vektra_assess.worker.runner import AcquireDb, JobContext
 
 log = structlog.get_logger(__name__)
@@ -127,7 +131,7 @@ def make_setup_check_handler(
                 report_id=report_id,
                 now=None if now is None else now(),
             )
-        except LookupError:
+        except SetupCheckStale:
             # the site or the report changed between the check above and the claim inside
             log.info(
                 "assess_setup_check_stale",

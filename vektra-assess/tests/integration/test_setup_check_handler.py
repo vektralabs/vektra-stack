@@ -189,3 +189,39 @@ async def test_the_daily_tick_queues_one_job_per_enabled_site(pg) -> None:  # ty
     got = sorted(tuple(r) for r in rows)
     # the same dedupe key as the release-change enqueue (capabilities.observe_release)
     assert got == sorted((str(s), f"setup_check:{s}", False) for s in (a, b))
+
+
+async def test_a_real_lookup_error_fails_the_job_instead_of_completing_it(  # type: ignore[no-untyped-def]
+    pg, monkeypatch
+) -> None:
+    """Review finding 5: a KeyError from a bug is not "the report changed": it propagates (the
+    job fails and is retried) and the report is marked failed, never treated as stale."""
+    from vektra_assess.moodle import setup_check as sc
+
+    async def broken(*_a: Any, **_k: Any) -> Any:
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(sc, "evaluate", broken)
+    site = await make_site(pg)
+    rid = await queued_report(pg, site)
+    with pytest.raises(KeyError):
+        await handle(pg, {"site_id": str(site), "report_id": str(rid)})
+    assert await reports(pg, site) == [(rid, "failed")]
+
+
+async def test_a_report_taken_by_another_run_is_stale_not_an_error(  # type: ignore[no-untyped-def]
+    pg, monkeypatch
+) -> None:
+    """The dedicated exception still covers the race the handler's own check cannot see."""
+    from vektra_assess.moodle import setup_check as sc
+
+    async def raced(*_a: Any, **_k: Any) -> Any:
+        raise sc.SetupCheckStale("setup-check report is not runnable")
+
+    monkeypatch.setattr(handler_mod, "run_setup_check", raced)
+    site = await make_site(pg)
+    rid = await queued_report(pg, site)
+    await handle(
+        pg, {"site_id": str(site), "report_id": str(rid)}
+    )  # completes, no raise
+    assert await reports(pg, site) == [(rid, "queued")]

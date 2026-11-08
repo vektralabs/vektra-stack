@@ -422,3 +422,38 @@ async def test_the_config_view_and_the_gate_panel_show_the_same_opening(pg) -> N
             assert config.status_code == panel.status_code == 200
             assert config.json()["opening"] == panel.json()["gate"]["opening"]
             assert panel.json()["gate"]["opening"]["source"] == source
+
+
+async def test_an_unreadable_reason_does_not_take_the_list_down(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-4a: a reason under a retired kid (or tampered) shows as unreadable, the
+    others and the rest of the list still render."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [9401, 9402])
+        await seed_teacher_gate(pg, w.site, cmid)
+        for student in (9401, 9402):
+            sid = seeded[student][0]
+            await close(worker, sid)
+            await seed_render(pg, w.site, student, cmid, moodle_reasons=[])
+            r = await w.client.post(
+                f"/api/v1/assess/activities/{cmid}/sessions/{sid}/reset",
+                json=body(reason=f"motivo {student}"),
+                headers=teacher(),
+            )
+            assert r.status_code == 201, r.text
+        # 9401's reason moved onto 9402's row: authenticated against another row id, unreadable
+        await pg.run(
+            "super",
+            "UPDATE assess_reset_grants SET reason_ct = (SELECT reason_ct FROM "
+            "assess_reset_grants WHERE site_id = :s AND student_userid = 9401) "
+            "WHERE site_id = :s AND student_userid = 9402",
+            {"s": w.site},
+        )
+        r = await w.client.get(list_url(cmid), headers=list_headers())
+        assert r.status_code == 200, r.text
+        got = {s["userid"]: s["resets"][0] for s in r.json()["students"]}
+        assert (got[9401]["reason"], got[9401]["reason_state"]) == (
+            "motivo 9401",
+            "readable",
+        )
+        assert (got[9402]["reason"], got[9402]["reason_state"]) == (None, "unreadable")

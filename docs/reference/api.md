@@ -245,10 +245,12 @@ teacher date) once every input is readable.
 List: `students` (in user-id order, 50 per page; `next_cursor` or `null`), each
 `{userid, sessions[{session_id, session_no, state, close_reason, committed_at, closed_at,
 transcript_id, deliveries[{round, recipient_kind, status, attempts, smtp_code, error_class,
-sent_at}]}], resets[{reset_id, after_session_no, reason, include_previous_turns, granted_by,
-granted_at, student_notice}], reset_count, extra_seconds}`; `student_notice` is always
+sent_at}]}], resets[{reset_id, after_session_no, reason, reason_state, include_previous_turns,
+granted_by, granted_at, student_notice}], reset_count, extra_seconds}`; `student_notice` is always
 `studente non avvisato via email` (REQ-092 is out of v1). `terminations[{termination_id, reason,
-closed, rolled_back, also_disable, by, at}]` (first page only). `gate`: `opening {at, source}`,
+reason_state, closed, rolled_back, also_disable, by, at}]` (first page only). A reason that
+does not decrypt (a retired key, tampering) is `reason: null`, `reason_state: "unreadable"`
+(alert `assess.teacher.alert` `teacher_reason_unreadable`); the list still renders. `gate`: `opening {at, source}`,
 `fallback_reason` (`Vektra non può verificare proroghe/override per questa attività` when the
 REQ-091 fallback applies, else `null`), `fallback_date_missing`, `active_sessions`, and
 `override_holder` (a quiz participant's user id) only when the actor may manage overrides; never

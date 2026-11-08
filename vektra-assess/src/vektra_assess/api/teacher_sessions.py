@@ -22,6 +22,7 @@ from collections import defaultdict
 from typing import Any
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -38,12 +39,15 @@ from vektra_assess.api.teachers import (
     verify_teacher,
 )
 from vektra_assess.api.transcripts import transcript_key_of
-from vektra_assess.crypto.teacher_reason import decrypt_reason
+from vektra_assess.crypto.envelope import EnvelopeError, InvalidTag
+from vektra_assess.crypto.kek import KeyNotAvailable
+from vektra_assess.crypto.teacher_reason import Table, decrypt_reason
 from vektra_assess.errors import bad_request
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.teacher import validation as v
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
+log = structlog.get_logger(__name__)
 router = APIRouter()
 
 _guard = require_exact_scope("assess:teacher")
@@ -96,6 +100,26 @@ _ACTIVE = text(
     "SELECT count(*) FROM assess_sessions WHERE site_id = :s AND cmid = :c "
     "AND state IN ('ACTIVE', 'OUTAGE')"
 )
+
+
+def _reason(kek: AssessKeyring, table: Table, row_id: Any, blob: Any) -> dict[str, Any]:
+    """``{reason, reason_state}``: the decrypted reason, or ``None`` with ``unreadable`` when it
+    does not open (a retired kid, tampering): one row never takes the whole list down (review
+    11b-4). Alerted, content-free."""
+    try:
+        return {
+            "reason": decrypt_reason(kek, table, row_id, bytes(blob)),
+            "reason_state": "readable",
+        }
+    except (InvalidTag, KeyNotAvailable, EnvelopeError, UnicodeDecodeError) as exc:
+        log.error(
+            "assess.teacher.alert",
+            alert="teacher_reason_unreadable",
+            table=table,
+            row_id=str(row_id),
+            error_type=type(exc).__name__,
+        )
+        return {"reason": None, "reason_state": "unreadable"}
 
 
 async def _gate_panel(
@@ -187,9 +211,7 @@ async def _page(
             {
                 "reset_id": str(g.id),
                 "after_session_no": int(g.session_no),
-                "reason": decrypt_reason(
-                    kek, "assess_reset_grants", g.id, bytes(g.reason_ct)
-                ),
+                **_reason(kek, "assess_reset_grants", g.id, g.reason_ct),
                 "include_previous_turns": bool(g.include_previous_turns),
                 "granted_by": ascii_id(str(g.granted_by)),
                 "granted_at": iso_time(g.granted_at),
@@ -212,9 +234,7 @@ async def _terminations(
     return [
         {
             "termination_id": str(t.id),
-            "reason": decrypt_reason(
-                kek, "assess_terminations", t.id, bytes(t.reason_ct)
-            ),
+            **_reason(kek, "assess_terminations", t.id, t.reason_ct),
             "closed": int(t.closed_count),
             "rolled_back": int(t.rolled_back_count),
             "also_disable": bool(t.also_disable),

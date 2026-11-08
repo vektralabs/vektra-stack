@@ -297,12 +297,17 @@ async def _save(
         errors += v.check_rag(body.rag_enabled)
     if body.given("available_until"):
         end = body.available_until
-        new["available_until"] = _epoch(end) if end is not None else None
+        new["available_until"] = None
         if end is not None:
             opening = v.effective_opening(
                 facts.close_at, row.attested_at if row is not None else None
             )
-            errors += v.check_end_date(end, opening)
+            end_errors = v.check_end_date(end, opening)
+            errors += end_errors
+            # converted only once the rule accepted it (a naive or unrepresentable value is a
+            # field error, never a conversion failure)
+            if not end_errors:
+                new["available_until"] = _epoch(end)
 
     # write-only fields: absent = unchanged, null = clear, value = replace (OQ-034)
     texts: dict[str, str | None] = {}

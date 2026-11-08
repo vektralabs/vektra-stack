@@ -630,3 +630,22 @@ async def test_an_unrepresentable_end_date_is_a_400(pg, pair) -> None:  # type: 
         ]
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_a_naive_end_date_is_a_field_error_even_at_the_range_edge(
+    pg, pair
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4505705685: the field rule runs before any conversion; a naive
+    0001-01-01T00:00:00 is ``timezone_required`` (400), never a conversion failure (500)."""
+    ctx, w = await ready(pg, pair)
+    try:
+        for value in ("0001-01-01T00:00:00", "9999-12-31T23:59:00"):
+            r = await w.client.put(
+                url(60), json=body(available_until=value), headers=auth("teacher")
+            )
+            assert r.status_code == 400, r.text
+            assert err(r)["details"]["fields"] == [
+                {"field": "available_until", "code": "timezone_required"}
+            ]
+    finally:
+        await ctx.__aexit__(None, None, None)

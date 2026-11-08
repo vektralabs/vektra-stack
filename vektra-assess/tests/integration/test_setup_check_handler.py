@@ -219,7 +219,7 @@ async def test_a_report_taken_by_another_run_is_stale_not_an_error(  # type: ign
     from vektra_assess.moodle import setup_check as sc
 
     async def raced(*_a: Any, **_k: Any) -> Any:
-        raise sc.SetupCheckStale("setup-check report is not runnable")
+        raise sc.SetupCheckStale("report_not_runnable")
 
     monkeypatch.setattr(handler_mod, "run_setup_check", raced)
     site = await make_site(pg)
@@ -313,7 +313,13 @@ async def test_a_site_disabled_during_the_check_gets_nothing_written(  # type: i
 
     monkeypatch.setattr(sc, "evaluate", then_disable)
     rid = await queued_report(pg, site)
-    await handle(pg, {"site_id": str(site), "report_id": str(rid)})  # no raise
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        await handle(pg, {"site_id": str(site), "report_id": str(rid)})  # no raise
+    # one stale event, with the real reason (CodeRabbit 4507743863)
+    stale = [e for e in logs if e.get("event") == "assess_setup_check_stale"]
+    assert [e["reason_code"] for e in stale] == ["site_disabled"]
     assert await reports(pg, site) == [(rid, "failed")]
     for table in ("assess_site_capabilities", "assess_setup_checks"):
         assert (

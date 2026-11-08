@@ -87,7 +87,11 @@ _CODE = re.compile(r"[a-z0-9_]{1,64}")
 class SetupCheckStale(LookupError):
     """The site is unknown or the report is not runnable (finished, of another site, unknown):
     a stale job, completed without acting. Dedicated, so a ``KeyError``/``IndexError`` from a
-    real bug is never mistaken for it."""
+    real bug is never mistaken for it. ``reason_code`` is what the job loop logs, once."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
 
 
 @dataclass(frozen=True)
@@ -626,7 +630,7 @@ async def run_setup_check(
             )
         ).one_or_none()
         if site_row is None:
-            raise SetupCheckStale("unknown site")
+            raise SetupCheckStale("unknown_site")
         if report_id is None:
             report_id = (
                 await conn.execute(
@@ -648,7 +652,7 @@ async def run_setup_check(
                 )
             ).rowcount
             if claimed != 1:
-                raise SetupCheckStale("setup-check report is not runnable")
+                raise SetupCheckStale("report_not_runnable")
     base_url, manifest, last_seen, moodle_origin = site_row
 
     try:
@@ -674,14 +678,9 @@ async def run_setup_check(
                 abandoned = False
                 await _persist(conn, site_id, report_id, outcome, last_seen)
         if abandoned:
-            raise SetupCheckStale("site disabled during the check")
+            raise SetupCheckStale("site_disabled")
     except SetupCheckStale:
-        log.info(
-            "assess_setup_check_stale",
-            site_id=str(site_id),
-            reason_code="site_disabled",
-        )
-        raise
+        raise  # not a failure: the caller logs it once, with its reason_code
     except BaseException as exc:
         try:
             async with engine.begin() as conn:

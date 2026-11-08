@@ -187,12 +187,13 @@ def make_setup_check_handler(
                 report_id=report_id,
                 now=None if now is None else now(),
             )
-        except SetupCheckStale:
-            # the site or the report changed between the check above and the claim inside
+        except SetupCheckStale as exc:
+            # the site or the report changed between the check above and the claim inside,
+            # or the site was disabled while the check ran
             log.info(
                 "assess_setup_check_stale",
                 site_id=str(site_id),
-                reason_code="report_not_runnable",
+                reason_code=exc.reason_code,
             )
             return
         async with ctx.acquire() as conn:

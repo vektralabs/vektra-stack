@@ -150,6 +150,37 @@ async def test_a_logging_setting_fails_by_name(pg, settings, reason) -> None:  #
     assert await check(CTX) == Outcome(MISSING, reason)
 
 
+@pytest.mark.parametrize(
+    ("target", "setting", "reason"),
+    [
+        ("ROLE vektra_assess_api", "log_statement = 'all'", "log_statement_not_none"),
+        (
+            "ROLE vektra_assess_worker",
+            "log_parameter_max_length = 64",
+            "log_parameter_max_length_not_0",
+        ),
+        ("DATABASE {db}", "log_statement = 'mod'", "log_statement_not_none"),
+    ],
+)
+async def test_a_role_or_database_override_fails_the_item(  # type: ignore[no-untyped-def]
+    pg, target: str, setting: str, reason: str
+) -> None:
+    """Review finding 8: the worker session's own values miss an override that turns logging
+    on for another assess role (the API's statements) or for the whole database."""
+    db = (await pg.run("super", "SELECT current_database()"))[0][0]
+    target = target.format(db=f'"{db}"')
+    name = setting.split("=")[0].strip()
+    await pg.run("super", f"ALTER {target} SET {setting}")
+    try:
+        check = setup_items.db_log_statement_item(
+            _session(pg, "log_statement = 'none'", "log_parameter_max_length = 0")
+        )
+        assert await check(CTX) == Outcome(MISSING, reason)
+    finally:
+        await pg.run("super", f"ALTER {target} RESET {name}")
+    assert await check(CTX) == Outcome(OK)
+
+
 async def test_the_worker_role_can_read_both_settings(pg) -> None:  # type: ignore[no-untyped-def]
     """As the item runs in production: the worker role reads the server's own values (the test
     container keeps the stock ``log_parameter_max_length = -1``, so it is named, not unreadable)."""

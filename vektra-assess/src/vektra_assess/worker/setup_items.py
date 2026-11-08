@@ -7,7 +7,9 @@
   ``ok`` is true and ``beat_at`` is at most ``SMTP_PROBE_MAX_AGE_S`` old (3 tick intervals: one
   missed or slow probe is tolerated, two are not). The check itself never talks to the relay.
 - ``db_log_statement_none`` (ARCH-078, plan assess-foundations): ``SHOW log_statement`` is
-  ``none`` and ``SHOW log_parameter_max_length`` is ``0`` on the worker's own connection.
+  ``none`` and ``SHOW log_parameter_max_length`` is ``0`` on the worker's own connection, AND
+  no ``ALTER ROLE/DATABASE ... SET`` override (``pg_db_role_setting``) gives any assess role, or
+  this database, another value: the worker's session cannot see the API role's settings.
 
 A failed item is ``MISSING`` with a reason code naming the cause (the check has no separate
 "failed" result, and the item table stores ok | missing). A database error raises and the runner
@@ -41,6 +43,21 @@ _SMTP_ROW = text(
 _LOGGING = text(
     "SELECT current_setting('log_statement'), current_setting('log_parameter_max_length')"
 )
+#: the assess roles whose statements must not be logged (the other two sessions' settings are
+#: not visible from the worker's own session)
+ASSESS_ROLES = ("vektra_assess_api", "vektra_assess_worker", "vektra_assess_definer")
+#: per-role and per-database overrides (``ALTER ROLE/DATABASE ... SET``) that apply to an assess
+#: role in this database: the role alone, the database alone, or the pair
+_OVERRIDES = text(
+    "SELECT cfg FROM pg_db_role_setting s "
+    "LEFT JOIN pg_roles r ON r.oid = s.setrole "
+    "CROSS JOIN LATERAL unnest(s.setconfig) AS cfg "
+    "WHERE (s.setdatabase = 0 OR s.setdatabase = "
+    "(SELECT oid FROM pg_database WHERE datname = current_database())) "
+    "AND (s.setrole = 0 OR r.rolname = ANY(:roles)) "
+    "AND (cfg LIKE 'log_statement=%' OR cfg LIKE 'log_parameter_max_length=%')"
+)
+_EXPECTED = {"log_statement": "none", "log_parameter_max_length": "0"}
 
 
 def _code(value: Any) -> str:
@@ -71,11 +88,23 @@ def db_log_statement_item(acquire: AcquireDb) -> ItemCheck:
     async def check(_ctx: CheckContext) -> Outcome:
         async with acquire() as conn:
             statement, max_length = (await conn.execute(_LOGGING)).one()
-        problems = []
-        if statement != "none":
-            problems.append("log_statement_not_none")
-        if str(max_length) != "0":
-            problems.append("log_parameter_max_length_not_0")
+            overrides = [
+                str(c).split("=", 1)
+                for (c,) in (
+                    await conn.execute(_OVERRIDES, {"roles": list(ASSESS_ROLES)})
+                ).all()
+            ]
+        values = {
+            "log_statement": {statement},
+            "log_parameter_max_length": {max_length},
+        }
+        for name, value in overrides:
+            values[name].add(value.strip("'\""))
+        problems = [
+            f"{name}_not_{_EXPECTED[name]}"
+            for name in ("log_statement", "log_parameter_max_length")
+            if {str(v) for v in values[name]} != {_EXPECTED[name]}
+        ]
         return missing("_and_".join(problems)) if problems else ok()
 
     return check

@@ -31,24 +31,22 @@ _UPSERT = text(
 )
 
 
-_PREVIOUS = text(
-    "SELECT details, extract(epoch FROM beat_at) AS at FROM assess_heartbeat "
-    "WHERE component = :c FOR UPDATE"
+#: a busy outcome keeps the previous real result as ``last`` = ``{state, ok, error_class, at}``
+#: (``at``: epoch seconds of that probe, CodeRabbit 4506450148), carried unchanged over a busy
+#: row's own ``last``; null when there is none. Taken from the row the UPSERT conflicts with,
+#: in the same statement, so a result another probe writes concurrently is never dropped
+#: (CodeRabbit 4507743858).
+_UPSERT_BUSY = text(
+    "INSERT INTO assess_heartbeat (component, beat_at, details) "
+    "VALUES (:c, now(), CAST(:d AS jsonb) || jsonb_build_object('last', NULL)) "
+    "ON CONFLICT (component) DO UPDATE SET beat_at = now(), "
+    "details = EXCLUDED.details || jsonb_build_object('last', CASE "
+    "WHEN assess_heartbeat.details->>'state' = 'busy' THEN assess_heartbeat.details->'last' "
+    "ELSE jsonb_build_object('state', assess_heartbeat.details->'state', "
+    "'ok', assess_heartbeat.details->'ok', "
+    "'error_class', assess_heartbeat.details->'error_class', "
+    "'at', extract(epoch FROM assess_heartbeat.beat_at)) END)"
 )
-
-
-async def _last_real_result(conn: Any) -> dict[str, Any] | None:
-    """The previous non-busy outcome ``{state, ok, error_class, at}`` (``at``: epoch seconds of
-    that probe, so a reader can judge its age; CodeRabbit 4506450148), carried unchanged over
-    a busy row's own ``last``; None when there is none yet."""
-    prev = (await conn.execute(_PREVIOUS, {"c": COMPONENT})).first()
-    if prev is None or not isinstance(prev.details, dict):
-        return None
-    if prev.details.get("state") == "busy":
-        last = prev.details.get("last")
-        return last if isinstance(last, dict) else None
-    out = {k: prev.details.get(k) for k in ("state", "ok", "error_class")}
-    return out | {"at": float(prev.at)}
 
 
 class Prober(Protocol):
@@ -83,11 +81,10 @@ async def run_probe(
         "smtp_code": result.smtp_code,
     }
     async with acquire() as conn, conn.begin():
-        if state == "busy":
-            # busy says nothing about the relay (every session was in use by deliveries): keep
-            # the last real result next to it, so a reader can still judge the relay
-            details["last"] = await _last_real_result(conn)
-        await conn.execute(_UPSERT, {"c": COMPONENT, "d": json.dumps(details)})
+        # busy says nothing about the relay (every session was in use by deliveries): keep
+        # the last real result next to it, so a reader can still judge the relay
+        upsert = _UPSERT_BUSY if state == "busy" else _UPSERT
+        await conn.execute(upsert, {"c": COMPONENT, "d": json.dumps(details)})
     if result.ok:
         return result
     cls = details["error_class"] or state

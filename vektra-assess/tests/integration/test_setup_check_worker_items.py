@@ -237,6 +237,32 @@ async def test_the_item_probes_the_relay_at_most_once(pg) -> None:  # type: igno
     assert len(calls) == 1
 
 
+async def test_a_busy_probe_never_drops_a_result_written_concurrently(  # type: ignore[no-untyped-def]
+    pg,
+) -> None:
+    """CodeRabbit 4507743858: a busy probe that finds no row, while another probe (the tick and
+    the item's own) inserts a real result before the busy one writes, must not overwrite that
+    result's history with ``last = null``. The history is taken from the conflicting row."""
+    from vektra_assess.delivery import probe as probe_mod
+    from vektra_assess.delivery.smtp import SlotBusy
+
+    class Busy:
+        async def probe(self) -> Any:
+            # the other probe's ok row commits, on its own connection, while this one runs
+            await _smtp_row(pg, OK_ROW, age_s=0)
+            raise SlotBusy
+
+    await _smtp_row(pg, None)
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        await probe_mod.run_probe(Busy(), engine.connect, timeout_s=1)
+    finally:
+        await engine.dispose()
+    details = await _smtp_details(pg)
+    assert details["state"] == "busy"
+    assert isinstance(details["last"], dict) and details["last"]["ok"] is True
+
+
 async def test_a_busy_probe_keeps_the_last_real_result_with_its_time(pg) -> None:  # type: ignore[no-untyped-def]
     """``run_probe`` writes ``last`` on a busy outcome with the time of that real result,
     carried unchanged across several busy ones (CodeRabbit 4506450148)."""

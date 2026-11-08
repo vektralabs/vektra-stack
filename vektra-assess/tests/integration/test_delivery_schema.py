@@ -165,3 +165,38 @@ async def test_the_fan_out_scan_has_an_index(pg) -> None:  # type: ignore[no-unt
         "AND indexname = 'ix_assess_transcripts_generated_live'",
     )
     assert got and "generated_at" in got[0][0] and "ciphertext IS NOT NULL" in got[0][0]
+
+
+async def test_the_fan_out_scan_moves_past_transcripts_already_queued(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504362595: with a small batch, the tick must not offer the same
+    transcripts every time: one already holding a pending fan-out job is skipped."""
+    from datetime import timedelta
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from vektra_assess.delivery.handler import delivery_retry_tick
+
+    for _ in range(3):
+        await _transcript(pg)  # live transcripts with no delivery row
+    no_rows = (
+        "SELECT t.id FROM assess_transcripts t WHERE t.ciphertext IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM assess_deliveries d WHERE d.transcript_id = t.id)"
+    )
+    pending = [r[0] for r in await pg.run("super", no_rows)]
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        for _ in range(len(pending)):
+            await delivery_retry_tick(
+                engine.connect,
+                stale_after=timedelta(seconds=240),
+                window=timedelta(hours=72),
+                batch=1,
+            )
+    finally:
+        await engine.dispose()
+    queued = await pg.run(
+        "super",
+        "SELECT count(DISTINCT dedupe_key) FROM assess_jobs WHERE dedupe_key = ANY(:k)",
+        {"k": [f"transcript_deliver:{t}:fanout" for t in pending]},
+    )
+    assert queued[0][0] == len(pending)

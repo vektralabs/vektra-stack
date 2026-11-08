@@ -696,7 +696,13 @@ _DUE = text(
 _NO_ROWS = text(
     "SELECT t.id FROM assess_transcripts t WHERE t.ciphertext IS NOT NULL "
     "AND t.generated_at > :since AND NOT EXISTS (SELECT 1 FROM assess_deliveries d "
-    "WHERE d.transcript_id = t.id AND d.kind = 'transcript') LIMIT :n"
+    "WHERE d.transcript_id = t.id AND d.kind = 'transcript') "
+    # one already holding a pending fan-out job is skipped, so a batch always moves on to
+    # the next transcripts instead of offering the same ones every 30 s (uses the dedupe
+    # index); oldest first, the ones closest to leaving the window
+    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.state IN ('ready', 'leased') "
+    "AND j.dedupe_key = :pre || CAST(t.id AS text) || :post) "
+    "ORDER BY t.generated_at LIMIT :n"
 )
 #: a transcript with no recipient yet is looked at again at most this often
 FAN_OUT_EVERY = timedelta(minutes=5)
@@ -725,7 +731,12 @@ async def delivery_retry_tick(
                 {"transcript_id": str(row.transcript_id)},
                 dedupe_key=f"transcript_deliver:{row.transcript_id}:retry",
             )
-        none = (await conn.execute(_NO_ROWS, {"since": at - window, "n": batch})).all()
+        params = {"since": at - window, "n": batch}
+        none = (
+            await conn.execute(
+                _NO_ROWS, {**params, "pre": "transcript_deliver:", "post": ":fanout"}
+            )
+        ).all()
         for row in none:
             fanout += await enqueue_job(
                 conn,

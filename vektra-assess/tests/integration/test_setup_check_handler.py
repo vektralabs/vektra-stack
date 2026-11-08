@@ -248,3 +248,51 @@ async def test_a_disabled_site_is_never_checked(pg, with_report: bool) -> None: 
             == 0
         )
     assert await reports(pg, site) == ([(rid, "failed")] if rid else [])
+
+
+async def _report(pg, site, status: str, age_s: float) -> uuid.UUID:  # type: ignore[no-untyped-def]
+    return (
+        await pg.run(
+            "super",
+            "INSERT INTO assess_setup_check_reports (site_id, status, created_at) "
+            "VALUES (:s, :st, now() - make_interval(secs => :a)) RETURNING id",
+            {"s": site, "st": status, "a": age_s},
+        )
+    )[0][0]
+
+
+async def test_a_report_orphaned_running_by_a_crash_is_failed(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 6: a worker killed mid-run (no ``except`` runs) leaves its report
+    ``running``; the next run of the site closes it ``failed``. A recent one is left alone."""
+    site = await make_site(pg)
+    orphan = await _report(pg, site, "running", handler_mod.ORPHAN_AFTER_S + 60)
+    recent = await _report(pg, site, "running", 5)
+    await handle(pg, {"site_id": str(site)})
+    by_id = dict(await reports(pg, site))
+    assert by_id[orphan] == "failed" and by_id[recent] == "running"
+    finished = await count(
+        pg,
+        "SELECT count(*) FROM assess_setup_check_reports WHERE id=:r "
+        "AND finished_at IS NOT NULL",
+        r=orphan,
+    )
+    assert finished == 1
+
+
+async def test_the_keep_30_counts_finished_reports_only(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 6: queued reports newer than the finished ones must not take places in
+    the 30 kept, or fewer than 30 finished reports survive."""
+    site = await make_site(pg)
+    await pg.run(
+        "super",
+        "INSERT INTO assess_setup_check_reports (site_id, status, created_at, finished_at) "
+        "SELECT :s, 'done', now() - make_interval(days => g), now() - make_interval(days => g) "
+        "FROM generate_series(1, 40) g",
+        {"s": site},
+    )
+    for _ in range(3):
+        await _report(pg, site, "queued", 1)
+    await handle(pg, {"site_id": str(site)})
+    statuses = [s for _i, s in await reports(pg, site)]
+    assert statuses.count("done") == handler_mod.KEEP_REPORTS
+    assert statuses.count("queued") == 3

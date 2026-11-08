@@ -37,6 +37,7 @@ from vektra_assess.moodle.setup_check import (
     SetupCheckStale,
     run_setup_check,
 )
+from vektra_assess.worker.policy import KIND_DEFAULTS
 from vektra_assess.worker.runner import AcquireDb, JobContext
 
 log = structlog.get_logger(__name__)
@@ -56,12 +57,26 @@ _REPORT = text(
     "SELECT 1 FROM assess_setup_check_reports "
     "WHERE id = :r AND site_id = :s AND status IN ('queued', 'running')"
 )
+#: only finished reports count towards the 30 kept: a queued or running one never takes a place
 _TRIM = text(
     "DELETE FROM assess_setup_check_reports WHERE site_id = :s "
     "AND status IN ('done', 'failed') AND id NOT IN ("
     "SELECT id FROM assess_setup_check_reports WHERE site_id = :s "
-    "ORDER BY created_at DESC, id DESC LIMIT :n)"
+    "AND status IN ('done', 'failed') ORDER BY created_at DESC, id DESC LIMIT :n)"
 )
+#: a ``running`` report older than the job's lease belongs to a run that is dead: a worker killed
+#: mid-run (no ``except`` ran) leaves it so, and the retry of a job without ``report_id`` writes a
+#: new one. ``created_at`` is not the start of the run (an API report may wait queued first), so
+#: this relies on one setup check per site at a time: the ``setup`` pool runs one job (default
+#: concurrency 1) and the API admits one request per site per 5 minutes.
+_FAIL_ORPHANS = text(
+    "UPDATE assess_setup_check_reports SET status = 'failed', finished_at = now() "
+    "WHERE site_id = :s AND status = 'running' "
+    "AND created_at < now() - make_interval(secs => :after) "
+    "AND id IS DISTINCT FROM :own"
+)
+#: the default lease of the ``setup_check`` kind; the composition passes the loaded policy's
+ORPHAN_AFTER_S = KIND_DEFAULTS[JobKind.SETUP_CHECK].lease_s
 
 
 def dedupe_key(site_id: object) -> str:
@@ -100,6 +115,7 @@ def make_setup_check_handler(
     *,
     registry: ItemRegistry | None = None,
     now: Callable[[], int] | None = None,
+    orphan_after_s: float = ORPHAN_AFTER_S,
 ) -> Callable[[JobContext], Awaitable[None]]:
     """``engine`` is the worker's engine: ``run_setup_check`` owns its transactions on it."""
 
@@ -136,6 +152,12 @@ def make_setup_check_handler(
                 "assess_setup_check_stale", site_id=str(site_id), reason_code=stale
             )
             return
+        async with ctx.acquire() as conn:
+            async with conn.begin():
+                await conn.execute(
+                    _FAIL_ORPHANS,
+                    {"s": site_id, "after": orphan_after_s, "own": report_id},
+                )
         try:
             await run_setup_check(
                 engine,

@@ -472,6 +472,7 @@ def _setup_check_parts(checked: Checked) -> SetupCheckParts:
     from vektra_assess.moodle.setup_check import builtin_registry
     from vektra_assess.moodle.tokens import secret_token_provider
     from vektra_assess.worker.parser_client import ParserClient, register_parser_check
+    from vektra_assess.worker.policy import load_policy
     from vektra_assess.worker.setup_check import (
         make_setup_check_handler,
         queue_setup_checks,
@@ -496,7 +497,14 @@ def _setup_check_parts(checked: Checked) -> SetupCheckParts:
     return SetupCheckParts(
         {
             JobKind.SETUP_CHECK: make_setup_check_handler(
-                engine, client, settings, registry=registry
+                engine,
+                client,
+                settings,
+                registry=registry,
+                # a running report older than the job's lease is a dead run's (finding 6)
+                orphan_after_s=load_policy(os.environ)
+                .kinds[JobKind.SETUP_CHECK]
+                .lease_s,
             )
         },
         {"setup_check": setup_check},

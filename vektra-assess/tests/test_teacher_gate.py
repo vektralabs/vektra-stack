@@ -96,7 +96,9 @@ async def test_assignment_facts(branch: str) -> None:
     assert team["team_submission"] is True
     assert team["close_at"] == m["assigns"]["team"]["expected"]["cutoffdate"]
     assert team["editors"] == _graders(branch, m)  # synthetic: the graders recording
-    assert team["graders"] == _graders(branch, m)
+    # review 10: nothing in 11a reads the graders here (11b adds them with their consumer)
+    assert "graders" not in team
+    assert not [c for c in replay.calls if "mod/assign:grade" in c[1].values()]
     nocut = await src.teacher_facts(
         SITE, int(m["assigns"]["nocutoff"]["cmid"]), course, "assign"
     )

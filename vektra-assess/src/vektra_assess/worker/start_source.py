@@ -17,6 +17,7 @@ this path at all.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -143,12 +144,12 @@ class MoodleStartSource:
         # Bounded: a render check, or a Start a gate refused, never reaches ``capture``.
         self._resolved = _BoundedCache(resolved_max, resolved_ttl_s, clock)
 
-    async def _site(self, target: StartTarget) -> SiteRef | None:
+    async def _site(self, site_id: UUID) -> SiteRef | None:
         async with self._acquire() as conn:
-            site = (await conn.execute(_SITE, {"s": target.site_id})).first()
+            site = (await conn.execute(_SITE, {"s": site_id})).first()
         if site is None or not site.release:
             return None
-        return SiteRef(str(target.site_id), str(site.base_url), str(site.release))
+        return SiteRef(str(site_id), str(site.base_url), str(site.release))
 
     async def _resolve(
         self, site: SiteRef, target: StartTarget
@@ -176,7 +177,7 @@ class MoodleStartSource:
     async def enrolled(self, target: StartTarget) -> bool | None:
         """The enrolment re-check (M3.7): the activity inside the student's ACTIVE courses and the
         student role there. Not found in those courses is False; unreadable is None."""
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return None
         ref, not_found = await self._resolve(site, target)
@@ -217,7 +218,7 @@ class MoodleStartSource:
 
     async def graders(self, target: StartTarget) -> tuple[GraderView, ...] | None:
         """The course's current graders (REQ-082); None when unreadable (never a guess)."""
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return None
         ref = await self._course_ref(site, target)
@@ -230,19 +231,11 @@ class MoodleStartSource:
         self, site_id: UUID, cmid: int, courseid: int, kind: str
     ) -> dict[str, Any]:
         """The activity-level facts of ``assess_teacher_gate`` (plan assess-teacher-ops): the
-        cmid resolved INSIDE the hinted course only, then its editors, graders and the REQ-077
-        enable facts. Anything unreadable is None (the API fails closed on it)."""
-        target = StartTarget(
-            session_id=UUID(int=0),
-            site_id=site_id,
-            cmid=cmid,
-            student_userid=0,
-            courseid_hint=courseid,
-            activity_type=kind,
-            session_no=1,
-            flags={},
-        )
-        site = await self._site(target)
+        cmid resolved INSIDE the hinted course only, then, concurrently, its editors and the
+        REQ-077 enable facts. Anything unreadable is None (the API fails closed on it). The
+        graders are not read here: nothing in 11a consumes them (11b adds them with its
+        routes)."""
+        site = await self._site(site_id)
         if site is None:
             return {"resolved": False, "reason": "site_release_unknown"}
         res = await resolve_in_course(
@@ -254,43 +247,42 @@ class MoodleStartSource:
         )
         if isinstance(res, Unreadable):
             return {"resolved": False, "reason": res.detail_code or "unreadable"}
-        ref = res.value
-        c = self._client
-        editors = await r.read_editors(c, site, ref.courseid)
-        graders = await r.read_graders(c, site, ref.courseid)
+        ref, c = res.value, self._client
         out: dict[str, Any] = {
             "resolved": True,
             "courseid": ref.courseid,
             "activity_type": kind,
-            "editors": sorted({u.userid for u in editors.value.graders})
-            if isinstance(editors, Readable)
-            else None,
-            "graders": sorted({u.userid for u in graders.value.graders})
-            if isinstance(graders, Readable)
-            else None,
+            "editors": None,
             "close_at": None,
             "team_submission": None,
             "grading_method": None,
             "moodle_rubric": None,
         }
         if kind == "quiz":
-            close = await r.read_quiz_close_inputs(
-                c, site, ref.courseid, ref.instanceid
+            editors, close = await asyncio.gather(
+                r.read_editors(c, site, ref.courseid),
+                r.read_quiz_close_inputs(c, site, ref.courseid, ref.instanceid),
             )
             if isinstance(close, Readable):
                 out["close_at"] = int(close.value.timeclose or 0)
             out["team_submission"] = False
-            return out
-        settings = await r.read_assign_settings(c, site, ref.courseid, ref.instanceid)
-        if isinstance(settings, Readable):
-            out["close_at"] = int(settings.value.cutoffdate or 0)
-            out["team_submission"] = bool(settings.value.teamsubmission)
-        grading = await r.read_grading_view(c, site, cmid)
-        if isinstance(grading, Readable):
-            out["grading_method"] = grading.value.method
-            out["moodle_rubric"] = (
-                grading.value.method == "rubric" and grading.value.rubric is not None
+        else:
+            editors, settings, grading = await asyncio.gather(
+                r.read_editors(c, site, ref.courseid),
+                r.read_assign_settings(c, site, ref.courseid, ref.instanceid),
+                r.read_grading_view(c, site, cmid),
             )
+            if isinstance(settings, Readable):
+                out["close_at"] = int(settings.value.cutoffdate or 0)
+                out["team_submission"] = bool(settings.value.teamsubmission)
+            if isinstance(grading, Readable):
+                out["grading_method"] = grading.value.method
+                out["moodle_rubric"] = (
+                    grading.value.method == "rubric"
+                    and grading.value.rubric is not None
+                )
+        if isinstance(editors, Readable):
+            out["editors"] = sorted({u.userid for u in editors.value.graders})
         return out
 
     async def close_facts(
@@ -318,7 +310,7 @@ class MoodleStartSource:
             session_no=1,
             flags={},
         )
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return CloseFacts()
         ref = await self._course_ref(site, target)
@@ -361,7 +353,7 @@ class MoodleStartSource:
 
     async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
         """The Moodle half of the START gates, read fresh; anything unreadable stays None."""
-        site = await self._site(target)
+        site = await self._site(target.site_id)
         if site is None:
             return MoodleGateFacts()
         ref, not_found = await self._resolve(site, target)

@@ -12,7 +12,7 @@
   itself: set / replaced / cleared, and for the recipients the old and new refs (the API cannot
   read the old ones). It fires on ``UPDATE OF updated_at``, which a key rotation never sets.
 - ``assess_teacher_gate(site_id, cmid, inputs, refreshed_at)``: the activity-level facts the
-  ``teacher_gate`` job (new job kind) writes: editors, graders and the REQ-077 enable facts. The
+  ``teacher_gate`` job (new job kind) writes: the editors and the REQ-077 enable facts. The
   teacher endpoints accept them only while fresh (the API reads, the worker writes).
 - ``assess_activity_config``: ``version`` (optimistic concurrency of the config PUT),
   ``updated_by`` (Moodle user id of the last editor), ``CHECK (rag_enabled = false)`` (ARCH-072:
@@ -345,7 +345,7 @@ def upgrade() -> None:
         )
     """)
     # the worker-written activity-level facts a teacher request is verified against: editors,
-    # graders and the REQ-077 enable facts of (site, cmid), ids and flags only
+    # the REQ-077 enable facts of (site, cmid), ids and flags only
     op.execute("""
         CREATE TABLE assess_teacher_gate (
             site_id       UUID NOT NULL REFERENCES assess_sites(id) ON DELETE CASCADE,

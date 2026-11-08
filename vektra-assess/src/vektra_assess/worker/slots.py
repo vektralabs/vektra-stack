@@ -130,6 +130,8 @@ class Slots:
 #: QUIT's own bound after a session (``delivery.smtp.QUIT_TIMEOUT_S``) and room for the row write
 PROBE_QUIT_S = 5.0
 PROBE_ROW_MARGIN_S = 10.0
+#: the smtp_probe tick's interval; the setup-check item ``smtp_probe`` judges freshness from it
+SMTP_PROBE_INTERVAL_S = 300.0
 
 
 def probe_tick_timeout_s(smtp_timeout_s: float) -> float:
@@ -170,7 +172,7 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
         # timeout covers a whole probe (bounded slot wait + session + QUIT) plus the row write
         t(
             "smtp_probe",
-            300,
+            SMTP_PROBE_INTERVAL_S,
             probe_tick_timeout_s(s.smtp_timeout_s),
             locks.SMTP_PROBE,
             jitter_s=30,

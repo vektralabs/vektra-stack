@@ -581,9 +581,8 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
     tick = next(t for t in scheduler._ticks if t.name == "setup_check")
     assert tick.bound and tick.run_on_startup and tick.interval_s == 86_400
     parts = assess_worker._setup_check_parts(keyed)
-    names = parts.registry.names()
-    assert "parser_sidecar_running" in names
-    assert {"smtp_probe", "db_log_statement_none"} <= set(PLUGGABLE_ITEMS) - set(names)
+    # every pluggable item has its contributor (none is MISSING as not_registered)
+    assert set(PLUGGABLE_ITEMS) <= set(parts.registry.names())
     # two compositions do not register into one shared registry (it would raise)
     assess_worker._setup_check_parts(keyed)
     # without the key matrix nothing of the setup check is bound

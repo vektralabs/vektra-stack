@@ -462,8 +462,8 @@ def _setup_check_parts(checked: Checked) -> SetupCheckParts:
     The item registry is built per composition (never the module-level default, which a second
     composition would register into twice): the built-ins plus the parser's
     ``parser_sidecar_running`` contributor (plan assess-parser, "aggregated via the plan 3
-    setup-check slot"). ``smtp_probe`` and ``db_log_statement_none`` have no contributor yet and
-    report MISSING (fail closed), see the moodle-ws plan Notes.
+    setup-check slot"), and the worker's own ``smtp_probe`` and ``db_log_statement_none`` items
+    (``worker/setup_items.py``, coordinator decisions 2026-11-08).
     """
     if "assess_ws_tokens" not in checked.keys:
         return SetupCheckParts({}, {})
@@ -476,10 +476,16 @@ def _setup_check_parts(checked: Checked) -> SetupCheckParts:
         make_setup_check_handler,
         queue_setup_checks,
     )
+    from vektra_assess.worker.setup_items import register_worker_items
 
     settings, engine = checked.settings, checked.engine
     registry = builtin_registry()
     register_parser_check(ParserClient.from_settings(settings), registry)
+    register_worker_items(
+        registry,
+        engine.connect,
+        smtp_configured=bool(settings.smtp_host and settings.smtp_from),
+    )
     client = MoodleWsClient(
         settings, token_provider=secret_token_provider(settings.secrets_dir)
     )
@@ -774,7 +780,7 @@ def check_imports() -> None:
         importlib.import_module(f"vektra_assess.delivery.{name}")
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "setup_check", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",
+        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "setup_check", "setup_items", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",
         "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip

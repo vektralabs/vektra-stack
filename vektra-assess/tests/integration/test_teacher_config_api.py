@@ -25,11 +25,11 @@ from vektra_assess.delivery.recipients import ConfigRecipients, recipient_ref
 pytestmark = pytest.mark.integration
 
 SOLUTION = "Soluzione attesa: 42.\r\nPasso 2\x07 fine"
-A, B = "Prof.Rossi@unical.it", "m.bianchi@unical.it"
+A, B = "Prof.Rossi@uni.example", "m.bianchi@uni.example"
 
 
 def settings() -> Any:
-    return default_settings(VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it")
+    return default_settings(VEKTRA_ASSESS_RECIPIENT_DOMAINS="uni.example")
 
 
 def url(cmid: int) -> str:
@@ -123,7 +123,7 @@ async def test_save_seals_each_field_audits_old_new_and_never_returns_a_secret(
                 cap_minutes=30,
                 show_solution=True,
                 solution=SOLUTION,
-                transcript_recipients=[A, "prof.rossi@unical.it", B],
+                transcript_recipients=[A, "prof.rossi@uni.example", B],
             ),
             headers=auth("teacher"),
         )
@@ -136,7 +136,7 @@ async def test_save_seals_each_field_audits_old_new_and_never_returns_a_secret(
             got["transcript_recipients_count"] == 2
         )  # case-insensitive duplicate collapsed
         assert got["pasted_rubric_state"] == "non impostata"
-        for secret in ("Soluzione", "unical", "Rossi"):
+        for secret in ("Soluzione", "uni.example", "Rossi"):
             assert secret not in r.text
 
         # ARCH-071: the API role cannot read the sealed solution back
@@ -154,7 +154,7 @@ async def test_save_seals_each_field_audits_old_new_and_never_returns_a_secret(
                 opened = await read_teacher_config(conn, pair[1], w.site, 60)
                 assert opened.solution == "Soluzione attesa: 42.\nPasso 2 fine"
                 assert await ConfigRecipients(pair[1]).read(conn, w.site, 60) == (
-                    A.replace("UNICAL", "unical"),
+                    A.replace("UNI.EXAMPLE", "uni.example"),
                     B,
                 )
         finally:
@@ -176,11 +176,11 @@ async def test_save_seals_each_field_audits_old_new_and_never_returns_a_secret(
         )
         rec = next(r.data for r in rows if r.reason_code == "transcript_recipients")
         assert {rec["new_1"], rec["new_2"]} == {
-            recipient_ref(w.site, "Prof.Rossi@unical.it"),
+            recipient_ref(w.site, "Prof.Rossi@uni.example"),
             recipient_ref(w.site, B),
         }
         dumped = json.dumps([r.data for r in rows])
-        for secret in ("unical", "Rossi", "bianchi", "Soluzione", "Passo 2"):
+        for secret in ("uni.example", "Rossi", "bianchi", "Soluzione", "Passo 2"):
             assert secret not in dumped  # 0 secret content in the audit
 
         # write-only semantics: absent = unchanged, null = clear
@@ -254,7 +254,7 @@ async def test_field_errors_name_their_range_and_change_nothing(pg, pair) -> Non
                 "field": "transcript_recipients",
                 "code": "domain_not_allowed",
                 "index": 0,
-                "allowed_domains": ["unical.it"],
+                "allowed_domains": ["uni.example"],
             },
         ]
         assert "gmail" not in r.text
@@ -297,7 +297,7 @@ async def test_field_errors_name_their_range_and_change_nothing(pg, pair) -> Non
         # malformed (unknown field, wrong type) stays the generic 400, never 422
         r = await w.client.put(
             url(60),
-            json=body(recipients_extra=["a@unical.it"]),
+            json=body(recipients_extra=["a@uni.example"]),
             headers=auth("teacher"),
         )
         assert r.status_code == 400 and err(r)["code"] == "ERR-ASSESS-014"

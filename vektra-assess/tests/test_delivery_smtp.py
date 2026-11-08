@@ -28,7 +28,7 @@ def sink(tmp_path: Path) -> Iterator[MailSink]:
     s.stop()
 
 
-def _msg(n: int = 0, to: str = "prof@unical.it") -> EmailMessage:
+def _msg(n: int = 0, to: str = "prof@uni.example") -> EmailMessage:
     return m.build(
         m.TranscriptMail(
             sender="vektra@vektra.example.org",
@@ -48,11 +48,11 @@ def _msg(n: int = 0, to: str = "prof@unical.it") -> EmailMessage:
 async def test_a_healthy_send_is_on_the_sink_over_tls_with_auth(sink: MailSink) -> None:
     sender = SmtpSender(sink_config(sink))
     msg = _msg()
-    res = await sender.send(msg, "prof@unical.it")
+    res = await sender.send(msg, "prof@uni.example")
     assert res.ok and res.smtp_code == 250
     got = sink.by_message_id(str(msg["Message-ID"]))
     assert len(got) == 1 and got[0].tls and got[0].authenticated
-    assert got[0].rcpt == ("prof@unical.it",)
+    assert got[0].rcpt == ("prof@uni.example",)
     assert sink.auth_attempts == [True]  # AUTH only after TLS
 
 
@@ -61,7 +61,7 @@ async def test_a_relay_without_starttls_gets_nothing_not_even_auth(
 ) -> None:
     plain = MailSink(tmp_path / "plain", starttls=False, require_auth=False).start()
     try:
-        res = await SmtpSender(sink_config(plain)).send(_msg(), "prof@unical.it")
+        res = await SmtpSender(sink_config(plain)).send(_msg(), "prof@uni.example")
         assert not res.ok and res.error_class is ErrorClass.TLS and res.retryable
         assert plain.messages == [] and plain.auth_attempts == []
     finally:
@@ -73,7 +73,7 @@ async def test_an_untrusted_certificate_is_a_tls_failure(
 ) -> None:
     other = MailSink(tmp_path / "other")  # a different CA, never started
     res = await SmtpSender(sink_config(sink, ca_file=other.ca_file)).send(
-        _msg(), "prof@unical.it"
+        _msg(), "prof@uni.example"
     )
     assert res.error_class is ErrorClass.TLS
     assert sink.messages == [] and sink.auth_attempts == []
@@ -90,7 +90,7 @@ async def test_rcpt_replies_are_classified(
     sink: MailSink, fault: str, cls: ErrorClass, code: int, retryable: bool
 ) -> None:
     sink.fault = fault
-    res = await SmtpSender(sink_config(sink)).send(_msg(), "prof@unical.it")
+    res = await SmtpSender(sink_config(sink)).send(_msg(), "prof@uni.example")
     assert (res.ok, res.error_class, res.smtp_code, res.retryable) == (
         False,
         cls,
@@ -102,24 +102,24 @@ async def test_rcpt_replies_are_classified(
 
 async def test_a_relay_that_is_down_is_a_connect_failure(sink: MailSink) -> None:
     sink.down()
-    res = await SmtpSender(sink_config(sink)).send(_msg(), "prof@unical.it")
+    res = await SmtpSender(sink_config(sink)).send(_msg(), "prof@uni.example")
     assert res.error_class is ErrorClass.CONNECT and res.retryable
     sink.up()
-    assert (await SmtpSender(sink_config(sink)).send(_msg(), "prof@unical.it")).ok
+    assert (await SmtpSender(sink_config(sink)).send(_msg(), "prof@uni.example")).ok
 
 
 async def test_a_drop_after_data_is_not_a_success(sink: MailSink) -> None:
     """The relay holds the message but its 250 never arrives: not SENT (REQ-075)."""
     sink.fault = "drop_after_data"
     msg = _msg()
-    res = await SmtpSender(sink_config(sink)).send(msg, "prof@unical.it")
+    res = await SmtpSender(sink_config(sink)).send(msg, "prof@uni.example")
     assert not res.ok and res.error_class is ErrorClass.CONNECT
     assert len(sink.by_message_id(str(msg["Message-ID"]))) == 1
 
 
 async def test_refused_credentials_are_an_auth_failure(sink: MailSink) -> None:
     res = await SmtpSender(sink_config(sink, password="wrong")).send(
-        _msg(), "prof@unical.it"
+        _msg(), "prof@uni.example"
     )
     assert res.error_class is ErrorClass.AUTH and sink.messages == []
     # every mechanism the client tried (PLAIN, LOGIN) ran over TLS
@@ -129,7 +129,7 @@ async def test_refused_credentials_are_an_auth_failure(sink: MailSink) -> None:
 async def test_concurrent_sessions_never_pass_the_cap(sink: MailSink) -> None:
     sender = SmtpSender(sink_config(sink, max_connections=2))
     msgs = [_msg(i) for i in range(6)]
-    results = await asyncio.gather(*(sender.send(x, "prof@unical.it") for x in msgs))
+    results = await asyncio.gather(*(sender.send(x, "prof@uni.example") for x in msgs))
     assert all(r.ok for r in results)
     assert sender.peak_sessions == 2  # the cap was reached and never passed
     assert len(sink.messages) == 6
@@ -147,7 +147,7 @@ async def test_a_silent_relay_times_out() -> None:
         )
         loop = asyncio.get_running_loop()
         started = loop.time()
-        res = await SmtpSender(cfg).send(_msg(), "prof@unical.it")
+        res = await SmtpSender(cfg).send(_msg(), "prof@uni.example")
         assert res.error_class is ErrorClass.CONNECT
         assert loop.time() - started < 3
     finally:
@@ -179,7 +179,7 @@ async def test_a_quit_that_never_answers_after_the_250_is_still_sent(
     sender.quit_timeout_s = 0.2
     loop = asyncio.get_running_loop()
     started = loop.time()
-    res = await sender.send(_msg(), "prof@unical.it")
+    res = await sender.send(_msg(), "prof@uni.example")
     assert res.ok and res.smtp_code == 250
     assert len(sink.messages) == 1
     assert loop.time() - started < 1.0  # the QUIT bound, not the send timeout, ended it
@@ -192,7 +192,7 @@ async def test_a_refused_connection_is_connect_in_both_tls_modes(
     sink.down()
     for mode in ("starttls", "implicit"):
         res = await SmtpSender(sink_config(sink, tls_mode=mode, port=port)).send(
-            _msg(), "prof@unical.it"
+            _msg(), "prof@uni.example"
         )
         assert res.error_class is ErrorClass.CONNECT, mode
 
@@ -201,7 +201,7 @@ async def test_a_drop_during_the_plaintext_ehlo_is_connect_not_tls(
     sink: MailSink,
 ) -> None:
     sink.fault = "drop_on_ehlo"
-    res = await SmtpSender(sink_config(sink)).send(_msg(), "prof@unical.it")
+    res = await SmtpSender(sink_config(sink)).send(_msg(), "prof@uni.example")
     assert res.error_class is ErrorClass.CONNECT and sink.messages == []
 
 
@@ -212,7 +212,7 @@ async def test_implicit_tls_sends_and_an_untrusted_certificate_is_tls(
     other = MailSink(tmp_path / "other-ca")
     try:
         ok = await SmtpSender(sink_config(sink, tls_mode="implicit")).send(
-            _msg(), "prof@unical.it"
+            _msg(), "prof@uni.example"
         )
         assert ok.ok and len(sink.messages) == 1
         # CodeRabbit 4504362617: the sink records implicit TLS as TLS, AUTH included
@@ -220,7 +220,7 @@ async def test_implicit_tls_sends_and_an_untrusted_certificate_is_tls(
         assert sink.auth_attempts and all(sink.auth_attempts)
         bad = await SmtpSender(
             sink_config(sink, tls_mode="implicit", ca_file=other.ca_file)
-        ).send(_msg(1), "prof@unical.it")
+        ).send(_msg(1), "prof@uni.example")
         assert bad.error_class is ErrorClass.TLS and len(sink.messages) == 1
     finally:
         sink.stop()
@@ -252,7 +252,7 @@ async def test_a_cancelled_connect_closes_the_connection() -> None:
                 timeout_s=10.0,
             )
         )
-        task = asyncio.create_task(sender.send(_msg(), "prof@unical.it"))
+        task = asyncio.create_task(sender.send(_msg(), "prof@uni.example"))
         await asyncio.sleep(0.3)  # connected, EHLO sent, waiting for its reply
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -294,7 +294,7 @@ async def test_a_refused_starttls_is_tls_with_its_code() -> None:
     port = server.sockets[0].getsockname()[1]
     try:
         cfg = sink_config(SimpleNamespace(port=port, ca_file=None), timeout_s=3.0)  # type: ignore[arg-type]
-        res = await SmtpSender(cfg).send(_msg(), "prof@unical.it")
+        res = await SmtpSender(cfg).send(_msg(), "prof@uni.example")
         assert (res.error_class, res.smtp_code) == (ErrorClass.TLS, 454)
     finally:
         for w in writers:

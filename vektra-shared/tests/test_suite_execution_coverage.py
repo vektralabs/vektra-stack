@@ -61,7 +61,7 @@ _SELECTS_INTEGRATION = {
 EXPECTED_UNRUN: dict[str, str] = {
     "tests/nfr/test_performance.py": (
         "measures query latency against a live LLM, which GitHub Actions does not "
-        "have; run manually on Kalypso (see the note in integration.yml)"
+        "have; run manually on a host with one (see the note in integration.yml)"
     ),
     "tests/nfr/test_assess_transcript_timing.py": (
         "NFR-021 needs a stack run (assess profile, 50 sessions closed concurrently, the "

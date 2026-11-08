@@ -88,7 +88,7 @@ async def test_every_sealed_write_is_audited_old_new_without_content(pg) -> None
     site = await make_site(pg)
     await configure_activity(pg, site, 40)
     pub, _priv = config_pair()
-    a, b = "prof.rossi@unical.it", "m.bianchi@unical.it"
+    a, b = "prof.rossi@uni.example", "m.bianchi@uni.example"
     ra, rb = recipient_ref(site, a), recipient_ref(site, b)
 
     await _store(pg, pub, site, SOLUTION, None, 9)  # clearing an unset field: no change
@@ -117,7 +117,7 @@ async def test_every_sealed_write_is_audited_old_new_without_content(pg) -> None
     assert (last["old_count"], last["new_count"]) == (1, 2)
     assert last["old_1"] == ra and {last["new_1"], last["new_2"]} == {ra, rb}
     dumped = json.dumps([r.data for r in rows])
-    for secret in (SECRET, a, b, "unical"):
+    for secret in (SECRET, a, b, "uni.example"):
         assert secret not in dumped  # 0 secret content: refs and codes only
 
     # a key rotation re-seals blob and kid (the worker's only UPDATE columns): no audit row.

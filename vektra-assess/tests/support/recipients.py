@@ -22,7 +22,7 @@ from vektra_assess.crypto.teacher_config import (
 from vektra_assess.delivery.recipients import ConfigRecipients, recipient_ref
 from vektra_assess.keys import AssessKeyring
 
-TEACHERS = ("prof.rossi@unical.it", "m.bianchi@unical.it")
+TEACHERS = ("prof.rossi@uni.example", "m.bianchi@uni.example")
 
 
 def config_pair(kid: str = "w1") -> tuple[AssessKeyring, AssessKeyring]:

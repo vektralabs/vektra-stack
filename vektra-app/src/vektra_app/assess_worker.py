@@ -248,7 +248,22 @@ SESSION_KEYS = (
 )
 
 
-def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
+def _moodle_client(checked: Checked) -> Any:
+    """The worker's ONE WS client (review finding 3): ``VEKTRA_ASSESS_WS_RPS`` is a per-worker
+    cap only if one token bucket serves every WS caller, a site's breaker only protects it if
+    every caller sees it, and each client opens its own connection pool. Nothing connects here."""
+    from vektra_assess.moodle.client import MoodleWsClient
+    from vektra_assess.moodle.tokens import secret_token_provider
+
+    settings = checked.settings
+    return MoodleWsClient(
+        settings, token_provider=secret_token_provider(settings.secrets_dir)
+    )
+
+
+def _session_handlers(
+    checked: Checked, audit: Any, ws: Any | None = None
+) -> dict[Any, Any]:
     """The plan assess-session-lifecycle bodies: the ``preflight`` handler.
 
     Built only from a key set that passed the key matrix (``_checks``): without it (a composition
@@ -261,8 +276,6 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
     from vektra_assess.delivery.recipients import ConfigRecipients
     from vektra_assess.jobs import JobKind
-    from vektra_assess.moodle.client import MoodleWsClient
-    from vektra_assess.moodle.tokens import secret_token_provider
     from vektra_assess.worker.enrolment import make_recheck_handler
     from vektra_assess.worker.parser_client import ParserClient
     from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
@@ -283,9 +296,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
         llm=build_assess_llm(settings),
     )
     source = MoodleStartSource(
-        MoodleWsClient(
-            settings, token_provider=secret_token_provider(settings.secrets_dir)
-        ),
+        ws if ws is not None else _moodle_client(checked),
         ParserClient.from_settings(settings),
         engine.connect,
         teacher_private=checked.keys["assess_teacher_config_private"],
@@ -454,7 +465,7 @@ class SetupCheckParts:
     registry: Any | None = None  # the item registry the handler runs (None: not bound)
 
 
-def _setup_check_parts(checked: Checked) -> SetupCheckParts:
+def _setup_check_parts(checked: Checked, ws: Any | None = None) -> SetupCheckParts:
     """The REQ-079 ``setup_check`` handler and its daily tick (plan assess-moodle-ws F4, carried
     over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the WS
     token keyring); otherwise both stay unbound and ``assert_all_bound`` refuses to start.
@@ -468,9 +479,7 @@ def _setup_check_parts(checked: Checked) -> SetupCheckParts:
     if "assess_ws_tokens" not in checked.keys:
         return SetupCheckParts({}, {})
     from vektra_assess.jobs import JobKind
-    from vektra_assess.moodle.client import MoodleWsClient
     from vektra_assess.moodle.setup_check import builtin_registry
-    from vektra_assess.moodle.tokens import secret_token_provider
     from vektra_assess.worker.parser_client import ParserClient, register_parser_check
     from vektra_assess.worker.policy import load_policy
     from vektra_assess.worker.setup_check import (
@@ -487,9 +496,7 @@ def _setup_check_parts(checked: Checked) -> SetupCheckParts:
         engine.connect,
         smtp_configured=bool(settings.smtp_host and settings.smtp_from),
     )
-    client = MoodleWsClient(
-        settings, token_provider=secret_token_provider(settings.secrets_dir)
-    )
+    client = ws if ws is not None else _moodle_client(checked)
 
     async def setup_check() -> None:
         await queue_setup_checks(engine.connect)
@@ -648,10 +655,12 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
     delivery = _delivery_parts(checked)
-    setup = _setup_check_parts(checked)
+    # one WS client for every WS caller: one rate cap, one breaker registry, one pool
+    ws = _moodle_client(checked) if bindings is None else None
+    setup = _setup_check_parts(checked, ws)
     extra = bindings or Bindings(
         handlers={
-            **_session_handlers(checked, audit),
+            **_session_handlers(checked, audit, ws),
             **delivery.handlers,
             **setup.handlers,
         },

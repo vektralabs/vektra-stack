@@ -591,6 +591,40 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
     assert not next(t for t in scheduler._ticks if t.name == "setup_check").bound
 
 
+def test_one_moodle_client_serves_every_ws_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review finding 3: the session handlers and the setup check share ONE WS client, so one
+    token bucket (``VEKTRA_ASSESS_WS_RPS`` is a per-worker cap), one breaker registry and one
+    connection pool; a second client would double the cap and keep the breakers apart."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+    from vektra_assess.moodle import client as client_mod
+
+    made: list[object] = []
+
+    class Counting(client_mod.MoodleWsClient):
+        def __init__(self, *a: object, **k: object) -> None:
+            super().__init__(*a, **k)  # type: ignore[arg-type]
+            made.append(self)
+
+    monkeypatch.setattr(client_mod, "MoodleWsClient", Counting)
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
+    keys["assess_ws_tokens"] = Credentials("assess_ws_tokens", {})
+    full = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    assess_worker._compose(full)
+    assert len(made) == 1
+
+
 def _plan_statuses() -> dict[str, str]:
     """plan file stem -> status cell, from the plan table of .s2s/plans/INDEX-ASSESS.md."""
     import re

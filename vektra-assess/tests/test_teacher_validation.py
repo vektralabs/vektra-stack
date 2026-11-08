@@ -9,7 +9,7 @@ import pytest
 from vektra_assess.teacher import validation as v
 from vektra_assess.teacher.schemas import FieldError, field_errors
 
-UNICAL = frozenset({"unical.it"})
+UNI_DOMAINS = frozenset({"uni.example"})
 
 
 def codes(errors: list[FieldError]) -> list[tuple[str, str]]:
@@ -161,38 +161,42 @@ def test_end_date_must_follow_the_effective_opening() -> None:
 
 def test_recipients_are_validated_deduped_and_capped() -> None:
     got, errs = v.check_recipients(
-        ["Prof.Rossi@UNICAL.it", "prof.rossi@unical.it", "m.bianchi@unical.it"], UNICAL
+        ["Prof.Rossi@UNI.example", "prof.rossi@uni.example", "m.bianchi@uni.example"],
+        UNI_DOMAINS,
     )
-    assert errs == [] and got == ("Prof.Rossi@unical.it", "m.bianchi@unical.it")
+    assert errs == [] and got == ("Prof.Rossi@uni.example", "m.bianchi@uni.example")
     _, errs = v.check_recipients(
-        ["a@unical.it", "b@unical.it", "c@unical.it", "d@unical.it"], UNICAL
+        ["a@uni.example", "b@uni.example", "c@uni.example", "d@uni.example"],
+        UNI_DOMAINS,
     )
     assert field_errors(errs) == [
         {"field": "transcript_recipients", "code": "too_many", "range": "1-3"}
     ]
-    _, errs = v.check_recipients([], UNICAL)
+    _, errs = v.check_recipients([], UNI_DOMAINS)
     assert codes(errs) == [("transcript_recipients", "empty")]
 
 
 def test_a_recipient_outside_the_allowlist_names_the_allowed_domains() -> None:
     _, errs = v.check_recipients(
-        ["a@unical.it", "x@gmail.com"], frozenset({"unical.it", "b.it"})
+        ["a@uni.example", "x@gmail.com"], frozenset({"uni.example", "b.it"})
     )
     assert field_errors(errs) == [
         {
             "field": "transcript_recipients",
             "code": "domain_not_allowed",
             "index": 1,
-            "allowed_domains": ["b.it", "unical.it"],
+            "allowed_domains": ["b.it", "uni.example"],
         }
     ]
     assert "gmail" not in str(field_errors(errs))  # the address never comes back
     # an empty allowlist refuses every address
-    _, errs = v.check_recipients(["a@unical.it"], frozenset())
+    _, errs = v.check_recipients(["a@uni.example"], frozenset())
     assert (
         errs[0].code == "domain_not_allowed" and errs[0].extra["allowed_domains"] == []
     )
-    _, errs = v.check_recipients(["Name <a@unical.it>", "a b@unical.it"], UNICAL)
+    _, errs = v.check_recipients(
+        ["Name <a@uni.example>", "a b@uni.example"], UNI_DOMAINS
+    )
     assert codes(errs) == [("transcript_recipients", "invalid_address")] * 2
 
 

@@ -12,7 +12,7 @@ render worker's ``/state`` view:
   ``MAX_RECIPIENTS`` (a 4th recipient never exists).
 - ``recipient_ref``: ``sha256(site_id|address)`` hex. Delivery rows, logs and audit rows carry
   this ref only; the address is never stored outside the sealed config.
-- ``mask``: ``m***@unical.it`` (first character of the local part), the only form ``/state``
+- ``mask``: ``m***@uni.example`` (first character of the local part), the only form ``/state``
   shows.
 - ``domain_allowed``: exact match against ``VEKTRA_ASSESS_RECIPIENT_DOMAINS``; an empty list
   refuses every address.

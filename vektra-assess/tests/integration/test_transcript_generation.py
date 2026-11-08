@@ -470,13 +470,13 @@ async def test_four_configured_addresses_make_three_rows(pg, worker) -> None:  #
     and a duplicate (domain case aside) is one recipient."""
     ring = transcript_ring()
     addresses = [
-        "a@unical.it",
-        "A@UNICAL.IT ",  # a different local part (case kept), the domain lowercased
+        "a@uni.example",
+        "A@UNI.EXAMPLE ",  # a different local part (case kept), the domain lowercased
         "not an address",
-        "a@unical.it",  # duplicate
-        "Display <x@unical.it>",
-        "b@unical.it",
-        "c@unical.it",  # the 4th valid one: never a recipient
+        "a@uni.example",  # duplicate
+        "Display <x@uni.example>",
+        "b@uni.example",
+        "c@uni.example",  # the 4th valid one: never a recipient
     ]
     async with world(pg) as w:
         s = await _closed(w, worker)
@@ -494,7 +494,7 @@ async def test_four_configured_addresses_make_three_rows(pg, worker) -> None:  #
             {"t": s.session_id},
         )
         assert {r[0] for r in rows} == refs(
-            w.site, ["a@unical.it", "A@unical.it", "b@unical.it"]
+            w.site, ["a@uni.example", "A@uni.example", "b@uni.example"]
         )
 
 

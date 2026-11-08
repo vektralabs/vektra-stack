@@ -18,8 +18,8 @@ render worker's ``/state`` view:
   refuses every address.
 - ``ConfigRecipients``: opens the activity's sealed ``transcript_recipients`` field (revision 0036:
   one sealed row per field, binding ``[site_id, cmid, "transcript_recipients"]``) and returns its
-  recipients, or ``None`` when the field is unset, does not open, or is not a JSON list of
-  strings (unreadable is never guessed).
+  recipients: ``()`` when the field is unset or cleared, ``None`` only when it does not open or
+  is not a JSON list of strings (unreadable is never guessed).
 """
 
 from __future__ import annotations
@@ -120,11 +120,12 @@ class ConfigRecipients:
     async def read(
         self, conn: Conn, site_id: object, cmid: int
     ) -> tuple[str, ...] | None:
-        """The configured recipients; ``None`` when unreadable (unset, a seal that does not
-        open, not a JSON list of strings). ``()``: readable, nobody configured."""
+        """The configured recipients. ``None`` only when unreadable (a seal that does not open,
+        not a JSON list of strings); ``()`` when readable and nobody is configured (never set, or
+        cleared by the teacher)."""
         opened = await read_teacher_config(
             conn, self._private, site_id, int(cmid), (TRANSCRIPT_RECIPIENTS,)
         )
-        if opened.transcript_recipients is None:
+        if TRANSCRIPT_RECIPIENTS in opened.unreadable:
             return None
-        return configured_recipients(list(opened.transcript_recipients))
+        return configured_recipients(list(opened.transcript_recipients or ()))

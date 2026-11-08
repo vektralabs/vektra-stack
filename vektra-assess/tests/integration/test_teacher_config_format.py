@@ -91,14 +91,18 @@ async def test_a_config_without_a_solution_reads_none(pg) -> None:  # type: igno
         await engine.dispose()
 
 
-async def test_a_cleared_recipients_field_reads_as_unreadable(pg) -> None:  # type: ignore[no-untyped-def]
-    """Clearing keeps the row with no blob: the delivery reads None (unresolved), never ()."""
+async def test_unset_or_cleared_recipients_read_as_none_configured(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review 4: unset or cleared is a readable answer, ``()`` (generation records
+    ``no_recipients``); only a field that does not open is ``None`` (``config_unreadable``)."""
     engine = create_async_engine(pg.url("worker"))
     try:
         site = await make_site(pg)
         await configure_activity(pg, site, 13)
         pub, priv = config_pair()
-        reader = await configure_recipients(pg, site, 13, pair=(pub, priv))
+        reader = ConfigRecipients(priv)
+        async with engine.connect() as conn:
+            assert await reader.read(conn, site, 13) == ()  # never set
+        await configure_recipients(pg, site, 13, pair=(pub, priv))
         from vektra_assess.crypto.teacher_config import (
             TRANSCRIPT_RECIPIENTS,
             store_sealed_field,
@@ -109,6 +113,10 @@ async def test_a_cleared_recipients_field_reads_as_unreadable(pg) -> None:  # ty
                 conn, pub, site, 13, TRANSCRIPT_RECIPIENTS, None, actor_userid=2
             )
             await conn.commit()
+        async with engine.connect() as conn:
+            assert await reader.read(conn, site, 13) == ()  # cleared
+        # sealed to another key: unreadable
+        await configure_recipients(pg, site, 13, pair=(config_pair("x8")[0], priv))
         async with engine.connect() as conn:
             assert await reader.read(conn, site, 13) is None
     finally:

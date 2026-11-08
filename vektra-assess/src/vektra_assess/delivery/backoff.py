@@ -14,30 +14,21 @@ pass in, so a simulated 2 h outage or a 72 h expiry needs no sleeping.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+
+from vektra_assess.config import parse_schedule  # the rule lives in config
 
 DEFAULT_SCHEDULE = "1m,5m,15m,1h"
 DEFAULT_WINDOW_HOURS = 72
 
-_STEP = re.compile(r"^\s*(\d+)\s*([smh]?)\s*$")
-_UNIT = {"": 1, "s": 1, "m": 60, "h": 3600}
-
-
-def parse_schedule(text: str) -> tuple[timedelta, ...]:
-    steps: list[timedelta] = []
-    for part in str(text).split(","):
-        match = _STEP.match(part)
-        if match is None:
-            raise ValueError(f"not a duration: {part.strip()!r} (use e.g. 30s, 5m, 1h)")
-        seconds = int(match.group(1)) * _UNIT[match.group(2)]
-        if seconds <= 0:
-            raise ValueError("every step of the retry schedule must be positive")
-        steps.append(timedelta(seconds=seconds))
-    if not steps:
-        raise ValueError("the retry schedule is empty")
-    return tuple(steps)
+__all__ = [
+    "DEFAULT_SCHEDULE",
+    "DEFAULT_WINDOW_HOURS",
+    "delay",
+    "next_not_before",
+    "parse_schedule",
+]
 
 
 def delay(attempts: int, schedule: Sequence[timedelta]) -> timedelta:

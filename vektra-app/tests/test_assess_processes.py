@@ -674,3 +674,34 @@ def test_the_delivery_budget_must_cover_the_worst_send(
     )
     with pytest.raises(StartupValidationError, match="transcript_deliver budget 60 s"):
         assess_worker._compose(keyed)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"VEKTRA_ASSESS_SMTP_FROM": "vektra@unical.it"}],
+    ids=["defaults", "smtp-from-set"],
+)
+def test_the_parser_loads_its_settings_under_the_ceiling(
+    tmp_path: Path, extra: dict[str, str]
+) -> None:
+    """CodeRabbit round 2 (config.py): validating the settings must not import a module the
+    parser's ceiling refuses (the delivery schedule and address rules)."""
+    code = (
+        "from vektra_app import assess_parser as p; p.check_environment(); "
+        "from vektra_assess.parser_sidecar import server; "
+        "p.assert_import_ceiling(); print('ceiling ok')"
+    )
+    env = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
+        "VEKTRA_ASSESS_ENABLED": "true",
+        "VEKTRA_ASSESS_SECRETS_DIR": str(tmp_path / "absent"),
+        **extra,
+    }
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert out.stdout.strip() == "ceiling ok", out.stderr[-600:]

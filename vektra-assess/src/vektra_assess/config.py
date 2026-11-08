@@ -11,12 +11,65 @@ Owning plan: .s2s/plans/20261101-154950-assess-foundations.
 from __future__ import annotations
 
 import json
+import re
 import warnings
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# --- pure rules shared with vektra_assess.delivery (plan transcript-delivery 10b) -------------
+# They live HERE, not in vektra_assess.delivery: validating the settings must not import a
+# module outside the parser's import ceiling (the parser sidecar loads this class too).
+
+MAX_ADDRESS_BYTES = 254
+
+_LOCAL = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$"
+)
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_DOMAIN = re.compile(rf"^{_LABEL}(?:\.{_LABEL})+$")
+
+
+def normalize_address(raw: object) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:  # a lone surrogate: not text an SMTP server can carry
+        return None
+    if not value or size > MAX_ADDRESS_BYTES:
+        return None
+    if value.count("@") != 1:
+        return None
+    local, domain = value.split("@")
+    domain = domain.lower()
+    # fullmatch: ``$`` alone also matches before a trailing newline
+    if len(local) > 64 or not _LOCAL.fullmatch(local) or not _DOMAIN.fullmatch(domain):
+        return None
+    return f"{local}@{domain}"
+
+
+_STEP = re.compile(r"^\s*(\d+)\s*([smh]?)\s*$")
+_UNIT = {"": 1, "s": 1, "m": 60, "h": 3600}
+
+
+def parse_schedule(text: str) -> tuple[timedelta, ...]:
+    steps: list[timedelta] = []
+    for part in str(text).split(","):
+        match = _STEP.match(part)
+        if match is None:
+            raise ValueError(f"not a duration: {part.strip()!r} (use e.g. 30s, 5m, 1h)")
+        seconds = int(match.group(1)) * _UNIT[match.group(2)]
+        if seconds <= 0:
+            raise ValueError("every step of the retry schedule must be positive")
+        steps.append(timedelta(seconds=seconds))
+    if not steps:
+        raise ValueError("the retry schedule is empty")
+    return tuple(steps)
 
 
 class VektraAssessSettings(BaseSettings):
@@ -738,8 +791,6 @@ class VektraAssessSettings(BaseSettings):
     @field_validator("smtp_retry_schedule")
     @classmethod
     def _valid_schedule(cls, value: str) -> str:
-        from vektra_assess.delivery.backoff import parse_schedule
-
         parse_schedule(value)  # raises ValueError: refused at startup, never replaced
         return value
 
@@ -755,8 +806,6 @@ class VektraAssessSettings(BaseSettings):
         the From header and to MAIL FROM as is."""
         if value is None:
             return None
-        from vektra_assess.delivery.address import normalize_address
-
         address = normalize_address(value)
         if address is None:
             raise ValueError(

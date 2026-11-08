@@ -11,6 +11,9 @@
 - ``assess_terminations``: one row per REQ-081 terminate (reason encrypted the same way, the
   counts it closed and rolled back, whether it also disabled the activity). Audit rows carry only
   its id.
+- ``assess_extra_time``: 0 seconds is a valid grant (BR-013: 0-240 min / 0-200 %, a teacher
+  setting it back to none): ``ck_assess_extra_time_positive`` (> 0) becomes
+  ``ck_assess_extra_time_nonnegative`` (>= 0).
 - No REQ-092 notice path: the reset notice is out of v1 (product owner 2026-11-08), its flag is
   refused at startup, and nothing here can queue a ``reset_notice`` row.
 - ``assess_rollback_starting(uuid)``: SECURITY DEFINER, EXECUTE for the API only. Deletes ONE
@@ -313,6 +316,13 @@ def upgrade() -> None:
     op.execute(
         "CREATE INDEX ix_assess_terminations_activity ON assess_terminations (site_id, cmid)"
     )
+    op.execute(
+        "ALTER TABLE assess_extra_time DROP CONSTRAINT ck_assess_extra_time_positive"
+    )
+    op.execute(
+        "ALTER TABLE assess_extra_time ADD CONSTRAINT ck_assess_extra_time_nonnegative "
+        "CHECK (extra_seconds >= 0)"
+    )
     op.execute(ROLLBACK_FN)
     # ALTER FUNCTION ... OWNER TO needs CREATE on the schema (revoked again by the matrix below)
     op.execute(f"GRANT CREATE ON SCHEMA public TO {DEFINER}")
@@ -327,6 +337,15 @@ def downgrade() -> None:
     from pathlib import Path
 
     op.execute(f"DROP FUNCTION {SIG_ROLLBACK}")
+    # a zero grant is "none" under the old constraint
+    op.execute("DELETE FROM assess_extra_time WHERE extra_seconds = 0")
+    op.execute(
+        "ALTER TABLE assess_extra_time DROP CONSTRAINT ck_assess_extra_time_nonnegative"
+    )
+    op.execute(
+        "ALTER TABLE assess_extra_time ADD CONSTRAINT ck_assess_extra_time_positive "
+        "CHECK (extra_seconds > 0)"
+    )
     # the resets written by this revision cannot exist without its columns
     op.execute("DROP TABLE assess_terminations")
     op.execute("DELETE FROM assess_reset_grants")

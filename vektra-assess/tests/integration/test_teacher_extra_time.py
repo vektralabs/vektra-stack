@@ -408,3 +408,19 @@ async def test_extra_time_waits_for_an_in_flight_start_and_then_refuses(pg) -> N
             )
             == 0
         )
+
+
+async def test_zero_extra_time_clears_a_grant(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506916916: 0 minutes / 0 % is a valid request (BR-013 0-240 / 0-200 %)
+    and sets the grant back to none; it is not a database error."""
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, 907, cap_minutes=30)
+        await seed_teacher_gate(pg, w.site, 907)
+        stored = "SELECT extra_seconds FROM assess_extra_time WHERE site_id = :s AND cmid = 907"
+        for over in ({"minutes": 15}, {"minutes": 0}, {"percent": 50}, {"percent": 0}):
+            r = await w.client.put(
+                extra_url(907, 8401), json=body(**over), headers=teacher()
+            )
+            assert r.status_code == 200, (over, r.text)
+            assert r.json()["extra_seconds"] == await count(pg, stored, s=w.site)
+        assert await count(pg, stored, s=w.site) == 0

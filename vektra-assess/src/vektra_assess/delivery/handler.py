@@ -374,6 +374,8 @@ async def _unresolved(
         # due for the tick until the lease grace runs out (CodeRabbit 4504755706)
         gone = (await conn.execute(_WINDOW_OVER, {"i": w.id})).first()
         if gone is not None:
+            # the marker read under the row lock above names an attempt with no outcome:
+            # the relay may hold it, so the failure says so (CodeRabbit 4504990083)
             await _audit(
                 conn,
                 AssessAuditEvent.DELIVERY_FAILED,
@@ -382,6 +384,8 @@ async def _unresolved(
                 round=int(gone.round),
                 ref=gone.recipient_ref,
                 delivery_id=str(gone.id),
+                attempt=int(w.attempts),
+                last_attempt_outcome="unknown",
             )
             out.failed += 1
             _alert("delivery_failed", session_id=str(t.id), reason_code=WINDOW_EXPIRED)

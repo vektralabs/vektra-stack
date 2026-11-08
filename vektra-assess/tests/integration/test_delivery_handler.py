@@ -917,11 +917,24 @@ async def test_a_crash_marked_row_past_its_window_ends_while_unresolved(
             {"s": w.site, "c": s.cmid},
         )
         clock.advance(hours=72, seconds=60)  # window over, still inside the lease grace
+        sent_before = len(sink.messages)
+        attempts_before = len(await events(pg, s.session_id, "assess_delivery_attempt"))
         got = await h.deliver_transcript(deps, worker.connect, s.session_id)
         assert got is not None and got.failed == 2
+        # the expiry neither sends nor records a new attempt (CodeRabbit round 4 nitpick)
+        assert len(sink.messages) == sent_before
+        assert (
+            len(await events(pg, s.session_id, "assess_delivery_attempt"))
+            == attempts_before
+        )
         final = await rows(pg, s.session_id)
         assert {
             (r.status, r.last_error_class, r.attempt_started_at) for r in final
         } == {("FAILED", "window_expired", None)}
         failed = await events(pg, s.session_id, "assess_delivery_failed")
         assert [f.reason_code for f in failed] == ["window_expired"] * 2
+        # the relay may hold the crashed attempt: the audit says so before the marker is
+        # gone (CodeRabbit 4504990083)
+        assert [
+            (f.data["attempt"], f.data["last_attempt_outcome"]) for f in failed
+        ] == [(1, "unknown")] * 2

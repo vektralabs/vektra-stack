@@ -102,3 +102,20 @@ def test_a_body_for_a_slot_outside_the_table_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="not production slots"):
         _slots(Bindings({}, {"chaos_effect": body}))
+
+
+@pytest.mark.parametrize("timeout_s", [5, 30, 60])
+def test_the_smtp_probe_tick_fits_a_whole_probe(timeout_s: int) -> None:
+    """Plan 10b review #7: bounded slot wait + session timeout + QUIT must fit the tick."""
+    from vektra_assess.delivery.smtp import QUIT_TIMEOUT_S
+
+    settings = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_SMTP_TIMEOUT_S": timeout_s}
+    )
+    tick = next(
+        t
+        for t in build_slots(load_policy({}), settings).ticks
+        if t.name == "smtp_probe"
+    )
+    assert tick.timeout_s > 2 * timeout_s + QUIT_TIMEOUT_S
+    assert tick.timeout_s < tick.interval_s

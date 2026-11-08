@@ -435,7 +435,8 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         )
 
     async def smtp_probe() -> None:
-        await run_probe(sender, engine.connect)
+        # one whole probe; the tick's own timeout (slots.probe_tick_timeout_s) is longer
+        await run_probe(sender, engine.connect, timeout_s=sender.worst_case_s())
 
     return DeliveryParts(
         {JobKind.TRANSCRIPT_DELIVER: make_deliver_handler(deps)},

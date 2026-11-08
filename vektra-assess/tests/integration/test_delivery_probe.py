@@ -34,13 +34,23 @@ async def test_the_probe_writes_its_status_row_and_never_sends(
         res = await run_probe(SmtpSender(sink_config(sink)), engine.connect)
         assert res.ok
         details, age = await _row(pg)
-        assert details == {"ok": True, "error_class": None, "smtp_code": None}
+        assert details == {
+            "state": "ok",
+            "ok": True,
+            "error_class": None,
+            "smtp_code": None,
+        }
         assert float(age) < 60
         assert sink.messages == [] and sink.auth_attempts and all(sink.auth_attempts)
         res = await run_probe(SmtpSender(sink_config(plain)), engine.connect)
         assert not res.ok
         details, _ = await _row(pg)
-        assert details == {"ok": False, "error_class": "tls", "smtp_code": None}
+        assert details == {
+            "state": "failed",
+            "ok": False,
+            "error_class": "tls",
+            "smtp_code": None,
+        }
         assert plain.messages == [] and plain.auth_attempts == []
         # the worker's own heartbeat row is untouched by the probe
         assert (
@@ -56,3 +66,33 @@ async def test_the_probe_writes_its_status_row_and_never_sends(
         await engine.dispose()
     assert "smtp_probe_tls" in canary_log_capture.text()
     canary_log_capture.assert_clean([sink_config(sink).host + ":" + str(sink.port)])
+
+
+async def test_a_probe_that_times_out_or_finds_no_session_still_writes_its_row(
+    pg,
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #7: the row is written whatever happens, with the state that happened."""
+    import asyncio
+
+    from vektra_assess.delivery.smtp import SlotBusy
+
+    class Hangs:
+        async def probe(self):  # type: ignore[no-untyped-def]
+            await asyncio.sleep(30)
+
+    class Busy:
+        async def probe(self):  # type: ignore[no-untyped-def]
+            raise SlotBusy
+
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        async with asyncio.timeout(5):
+            res = await run_probe(Hangs(), engine.connect, timeout_s=0.2)
+        assert not res.ok
+        details, _ = await _row(pg)
+        assert details["state"] == "timeout" and details["ok"] is False
+        await run_probe(Busy(), engine.connect, timeout_s=1)
+        details, _ = await _row(pg)
+        assert details["state"] == "busy" and details["ok"] is False
+    finally:
+        await engine.dispose()

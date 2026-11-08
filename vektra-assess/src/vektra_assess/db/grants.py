@@ -53,6 +53,7 @@ TABLES: tuple[str, ...] = (
     "assess_start_breaker",
     "assess_snapshots",
     "assess_start_attempts",
+    "assess_teacher_gate",  # revision 0036 (plan 11): worker-written activity-level facts
     "assess_token_jti",
     "assess_transcript_download_tokens",
     "assess_transcripts",
@@ -175,6 +176,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "INSERT": _SEALED_API_INSERT,
             "UPDATE": _SEALED_API_UPDATE,
         },
+        # the teacher endpoints verify the actor against these fresh facts (plan 11)
+        "assess_teacher_gate": {"SELECT": _ALL},
         "assess_extra_time": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},
         "assess_reset_grants": {"SELECT": _ALL, "INSERT": _ALL, "UPDATE": _ALL},
         "assess_consumed_jtis": {
@@ -273,6 +276,13 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_activity_config_sealed": {
             "SELECT": _ALL,
             "UPDATE": ("sealed_blob", "kid"),
+        },
+        # the teacher_gate job writes the activity-level facts (editors, graders, enable facts)
+        "assess_teacher_gate": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": _ALL,
+            "DELETE": _ALL,
         },
         "assess_extra_time": {"SELECT": _ALL},
         "assess_reset_grants": {"SELECT": _ALL, "UPDATE": ("consumed_at",)},

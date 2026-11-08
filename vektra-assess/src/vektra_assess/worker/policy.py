@@ -75,6 +75,7 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.ENROLMENT_RECHECK: _WS,
     JobKind.GATE_REFRESH: _WS,
     JobKind.RENDER_CHECK: _WS,
+    JobKind.TEACHER_GATE: _WS,  # plan 11: a handful of Moodle reads per activity
     JobKind.CAPABILITY_PROBE: _WS,
     JobKind.TRANSCRIPT_GENERATE: KindPolicy("transcript", 30, 60),
     # up to 3 recipients through at most VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS sessions, each with

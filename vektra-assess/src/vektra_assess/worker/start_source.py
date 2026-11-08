@@ -232,6 +232,73 @@ class MoodleStartSource:
         res = await r.read_graders(self._client, site, ref.courseid)
         return res.value.graders if isinstance(res, Readable) else None
 
+    async def teacher_facts(
+        self, site_id: UUID, cmid: int, courseid: int, kind: str
+    ) -> dict[str, Any]:
+        """The activity-level facts of ``assess_teacher_gate`` (plan assess-teacher-ops): the
+        cmid resolved INSIDE the hinted course only, then its editors, graders and the REQ-077
+        enable facts. Anything unreadable is None (the API fails closed on it)."""
+        target = StartTarget(
+            session_id=UUID(int=0),
+            site_id=site_id,
+            cmid=cmid,
+            student_userid=0,
+            courseid_hint=courseid,
+            activity_type=kind,
+            session_no=1,
+            flags={},
+        )
+        site = await self._site(target)
+        if site is None:
+            return {"resolved": False, "reason": "site_release_unknown"}
+        res = await resolve_in_course(
+            self._client,
+            site,
+            cmid=cmid,
+            kind="quiz" if kind == "quiz" else "assign",
+            courseid=courseid,
+        )
+        if isinstance(res, Unreadable):
+            return {"resolved": False, "reason": res.detail_code or "unreadable"}
+        ref = res.value
+        c = self._client
+        editors = await r.read_editors(c, site, ref.courseid)
+        graders = await r.read_graders(c, site, ref.courseid)
+        out: dict[str, Any] = {
+            "resolved": True,
+            "courseid": ref.courseid,
+            "activity_type": kind,
+            "editors": sorted({u.userid for u in editors.value.graders})
+            if isinstance(editors, Readable)
+            else None,
+            "graders": sorted({u.userid for u in graders.value.graders})
+            if isinstance(graders, Readable)
+            else None,
+            "close_at": None,
+            "team_submission": None,
+            "grading_method": None,
+            "moodle_rubric": None,
+        }
+        if kind == "quiz":
+            close = await r.read_quiz_close_inputs(
+                c, site, ref.courseid, ref.instanceid
+            )
+            if isinstance(close, Readable):
+                out["close_at"] = int(close.value.timeclose or 0)
+            out["team_submission"] = False
+            return out
+        settings = await r.read_assign_settings(c, site, ref.courseid, ref.instanceid)
+        if isinstance(settings, Readable):
+            out["close_at"] = int(settings.value.cutoffdate or 0)
+            out["team_submission"] = bool(settings.value.teamsubmission)
+        grading = await r.read_grading_view(c, site, cmid)
+        if isinstance(grading, Readable):
+            out["grading_method"] = grading.value.method
+            out["moodle_rubric"] = (
+                grading.value.method == "rubric" and grading.value.rubric is not None
+            )
+        return out
+
     async def close_facts(
         self,
         *,

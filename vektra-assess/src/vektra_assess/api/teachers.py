@@ -1,0 +1,103 @@
+"""Is this teacher an EDITOR of this activity, NOW? (plan assess-teacher-ops, INT-001, REQ-077.)
+
+The plugin names the acting Moodle user (``actor_userid``); Vektra never trusts that claim on its
+own. It reads the activity-level facts the worker last wrote into ``assess_teacher_gate`` for
+(site, cmid) (``worker.teacher_gate``: the cmid resolved inside the hinted course, its editors,
+graders and REQ-077 enable facts) and accepts them only while at most ``max_age_s`` old.
+
+- absent, stale, or the editor list unreadable: refused (fail closed) and a ``teacher_gate`` job
+  is queued for the given course / type hint, so a retry a few seconds later can succeed;
+- fresh but the cmid was not found in the hinted course: refused; when the hint differs from
+  the one that failed, a refresh is queued (a wrong hint never blocks a right one for long);
+- fresh and the actor is not listed: refused, nothing queued (Moodle must change first).
+
+``require_fresh_grader`` and ``can_view_overrides`` (the list, reset, terminate, extra time and
+opening-fallback routes) arrive with those routes in 11b; the grader check of the transcript
+routes stays ``api.graders`` (per student, plan 10).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import text
+
+from vektra_assess.jobs import JobKind, enqueue_job, teacher_gate_dedupe_key
+
+KINDS = ("quiz", "assign")
+
+_GATE = text(
+    "SELECT inputs, extract(epoch FROM now() - refreshed_at) AS age_s "
+    "FROM assess_teacher_gate WHERE site_id = :s AND cmid = :c"
+)
+
+
+class TeacherCheck(StrEnum):
+    OK = "ok"
+    NOT_AN_EDITOR = "not_an_editor"
+    STALE = "stale"  # absent, older than the bound, or unreadable: refresh queued
+
+
+@dataclass(frozen=True)
+class TeacherGate:
+    """The outcome and, when fresh, the facts (ids and flags only)."""
+
+    check: TeacherCheck
+    facts: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return self.check is TeacherCheck.OK
+
+
+async def queue_teacher_gate(
+    conn: Any, site: UUID, cmid: int, courseid: int | None, kind: str | None
+) -> bool:
+    """Queue a refresh for this hint; without a usable hint nothing can be resolved."""
+    if not courseid or courseid < 1 or kind not in KINDS:
+        return False
+    return await enqueue_job(
+        conn,
+        JobKind.TEACHER_GATE,
+        {
+            "site_id": str(site),
+            "cmid": int(cmid),
+            "courseid": int(courseid),
+            "activity_type": str(kind),
+        },
+        dedupe_key=teacher_gate_dedupe_key(site, cmid, int(courseid), str(kind)),
+    )
+
+
+async def check_fresh_editor(
+    conn: Any,
+    *,
+    site: UUID,
+    cmid: int,
+    actor_userid: int,
+    max_age_s: int,
+    courseid_hint: int | None,
+    kind_hint: str | None,
+) -> TeacherGate:
+    row = (await conn.execute(_GATE, {"s": site, "c": int(cmid)})).first()
+    facts = dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
+    fresh = row is not None and row.age_s is not None and float(row.age_s) <= max_age_s
+    if not fresh:
+        await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
+        return TeacherGate(TeacherCheck.STALE)
+    if facts.get("resolved") is not True:
+        # resolved for another hint? ask again for this one (dedupe per hint)
+        if facts.get("hint") != [courseid_hint, kind_hint]:
+            await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
+            return TeacherGate(TeacherCheck.STALE)
+        return TeacherGate(TeacherCheck.NOT_AN_EDITOR)
+    editors = facts.get("editors")
+    if not isinstance(editors, list):
+        await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
+        return TeacherGate(TeacherCheck.STALE)
+    if int(actor_userid) not in {int(e) for e in editors if isinstance(e, int)}:
+        return TeacherGate(TeacherCheck.NOT_AN_EDITOR, facts)
+    return TeacherGate(TeacherCheck.OK, facts)

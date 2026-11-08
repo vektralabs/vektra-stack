@@ -11,6 +11,9 @@
   ``assess_teacher_config_changed`` for a teacher's write of a sealed field, old/new from the row
   itself: set / replaced / cleared, and for the recipients the old and new refs (the API cannot
   read the old ones). It fires on ``UPDATE OF updated_at``, which a key rotation never sets.
+- ``assess_teacher_gate(site_id, cmid, inputs, refreshed_at)``: the activity-level facts the
+  ``teacher_gate`` job (new job kind) writes: editors, graders and the REQ-077 enable facts. The
+  teacher endpoints accept them only while fresh (the API reads, the worker writes).
 - ``assess_activity_config``: ``version`` (optimistic concurrency of the config PUT),
   ``updated_by`` (Moodle user id of the last editor), ``CHECK (rag_enabled = false)`` (ARCH-072:
   RAG ON is unrepresentable in this release). The composite ``teacher_config_sealed`` /
@@ -32,8 +35,21 @@ depends_on = None
 DEFINER = "vektra_assess_definer"
 SIG_AUDIT = "public.assess_audit_sealed_change()"
 
+JOB_KINDS = (
+    "'setup_check', 'capability_probe', 'gate_refresh', 'render_check', "
+    "'session_deadline', 'transcript_generate', 'transcript_deliver', "
+    "'enrolment_recheck', 'purge', 'rotate_keys', 'erasure', 'preflight', 'reconcile_reply', "
+    "'teacher_notify', 'operator_notify', 'teacher_gate'"
+)
+OLD_JOB_KINDS = (
+    "'setup_check', 'capability_probe', 'gate_refresh', 'render_check', "
+    "'session_deadline', 'transcript_generate', 'transcript_deliver', "
+    "'enrolment_recheck', 'purge', 'rotate_keys', 'erasure', 'preflight', 'reconcile_reply', "
+    "'teacher_notify', 'operator_notify'"
+)
+
 GRANT_STATEMENTS = (
-    "REVOKE ALL ON assess_activity_config, assess_activity_config_sealed, assess_audit_events, assess_consumed_jtis, assess_deliveries, assess_enrolment_checks, assess_erasure_records, assess_extra_time, assess_gate_inputs, assess_heartbeat, assess_jobs, assess_model_activations, assess_outage_incidents, assess_render_checks, assess_render_state, assess_reset_grants, assess_session_handoff, assess_session_keys, assess_sessions, assess_setup_check_reports, assess_setup_checks, assess_site_capabilities, assess_site_keys, assess_sites, assess_start_breaker, assess_snapshots, assess_start_attempts, assess_token_jti, assess_transcript_download_tokens, assess_transcripts, assess_turn_flags, assess_turn_notes, assess_turns FROM vektra_assess_api, vektra_assess_worker, vektra_assess_definer",
+    "REVOKE ALL ON assess_activity_config, assess_activity_config_sealed, assess_audit_events, assess_consumed_jtis, assess_deliveries, assess_enrolment_checks, assess_erasure_records, assess_extra_time, assess_gate_inputs, assess_heartbeat, assess_jobs, assess_model_activations, assess_outage_incidents, assess_render_checks, assess_render_state, assess_reset_grants, assess_session_handoff, assess_session_keys, assess_sessions, assess_setup_check_reports, assess_setup_checks, assess_site_capabilities, assess_site_keys, assess_sites, assess_start_breaker, assess_snapshots, assess_start_attempts, assess_teacher_gate, assess_token_jti, assess_transcript_download_tokens, assess_transcripts, assess_turn_flags, assess_turn_notes, assess_turns FROM vektra_assess_api, vektra_assess_worker, vektra_assess_definer",
     "REVOKE ALL ON SEQUENCE assess_audit_events_id_seq, assess_enrolment_checks_id_seq, assess_erasure_records_id_seq, assess_jobs_id_seq, assess_model_activations_id_seq, assess_outage_incidents_id_seq, assess_render_checks_id_seq, assess_setup_checks_id_seq, assess_start_attempts_id_seq FROM vektra_assess_api, vektra_assess_worker, vektra_assess_definer",
     "REVOKE CREATE ON SCHEMA public FROM vektra_assess_api, vektra_assess_worker, vektra_assess_definer",
     "REVOKE ALL ON query_traces FROM vektra_assess_api, vektra_assess_worker, vektra_assess_definer",
@@ -75,6 +91,7 @@ GRANT_STATEMENTS = (
     "GRANT INSERT ON assess_start_attempts TO vektra_assess_api",
     "GRANT SELECT ON assess_start_attempts TO vektra_assess_api",
     "GRANT SELECT ON assess_start_breaker TO vektra_assess_api",
+    "GRANT SELECT ON assess_teacher_gate TO vektra_assess_api",
     "GRANT INSERT ON assess_token_jti TO vektra_assess_api",
     "GRANT SELECT ON assess_token_jti TO vektra_assess_api",
     "GRANT UPDATE (consumed_at) ON assess_token_jti TO vektra_assess_api",
@@ -166,6 +183,10 @@ GRANT_STATEMENTS = (
     "GRANT INSERT ON assess_start_breaker TO vektra_assess_worker",
     "GRANT SELECT ON assess_start_breaker TO vektra_assess_worker",
     "GRANT UPDATE ON assess_start_breaker TO vektra_assess_worker",
+    "GRANT DELETE ON assess_teacher_gate TO vektra_assess_worker",
+    "GRANT INSERT ON assess_teacher_gate TO vektra_assess_worker",
+    "GRANT SELECT ON assess_teacher_gate TO vektra_assess_worker",
+    "GRANT UPDATE ON assess_teacher_gate TO vektra_assess_worker",
     "GRANT DELETE ON assess_token_jti TO vektra_assess_worker",
     "GRANT SELECT ON assess_token_jti TO vektra_assess_worker",
     "GRANT DELETE ON assess_transcript_download_tokens TO vektra_assess_worker",
@@ -323,6 +344,22 @@ def upgrade() -> None:
                     AND item_count BETWEEN 1 AND 3 AND cardinality(refs) = item_count))
         )
     """)
+    # the worker-written activity-level facts a teacher request is verified against: editors,
+    # graders and the REQ-077 enable facts of (site, cmid), ids and flags only
+    op.execute("""
+        CREATE TABLE assess_teacher_gate (
+            site_id       UUID NOT NULL REFERENCES assess_sites(id) ON DELETE CASCADE,
+            cmid          BIGINT NOT NULL,
+            inputs        JSONB NOT NULL DEFAULT '{}'::jsonb,
+            refreshed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (site_id, cmid),
+            CONSTRAINT ck_assess_teacher_gate_small CHECK (pg_column_size(inputs) < 16384)
+        )
+    """)
+    op.execute("ALTER TABLE assess_jobs DROP CONSTRAINT ck_assess_jobs_kind")
+    op.execute(
+        f"ALTER TABLE assess_jobs ADD CONSTRAINT ck_assess_jobs_kind CHECK (kind IN ({JOB_KINDS}))"
+    )
     op.execute(AUDIT_FN)
     # ALTER FUNCTION ... OWNER TO needs CREATE on the schema (revoked again by the matrix below)
     op.execute(f"GRANT CREATE ON SCHEMA public TO {DEFINER}")
@@ -343,6 +380,13 @@ def downgrade() -> None:
 
     # the per-field sealed rows cannot be composed back without the worker's key: they are lost
     op.execute("DROP TABLE assess_activity_config_sealed")
+    op.execute("DELETE FROM assess_jobs WHERE kind = 'teacher_gate'")
+    op.execute("ALTER TABLE assess_jobs DROP CONSTRAINT ck_assess_jobs_kind")
+    op.execute(
+        f"ALTER TABLE assess_jobs ADD CONSTRAINT ck_assess_jobs_kind "
+        f"CHECK (kind IN ({OLD_JOB_KINDS}))"
+    )
+    op.execute("DROP TABLE assess_teacher_gate")
     op.execute(f"DROP FUNCTION {SIG_AUDIT}")
     op.execute(
         "ALTER TABLE assess_activity_config DROP CONSTRAINT ck_assess_activity_config_rag_off"

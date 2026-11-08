@@ -338,18 +338,22 @@ def transcript_integrity() -> ErrorResponse:
     )
 
 
-def teacher_unverified(*, stale: bool) -> ErrorResponse:
-    """403. ``stale``: the grader list was absent or too old and a refresh WAS queued (retry);
-    otherwise the fresh list does not name the teacher (no refresh, no point retrying)."""
+def teacher_unverified(*, stale: bool, role: str = "grader") -> ErrorResponse:
+    """403. ``stale``: the worker-written role list was absent, too old or unreadable and a
+    refresh WAS queued (retry); otherwise the fresh list does not name the teacher (no refresh,
+    no point retrying). ``role``: ``grader`` (download, resend) or ``editor`` (configuration,
+    REQ-077 "activity editors only")."""
+    what = "an editor" if role == "editor" else "a grader"
+    refused = what.replace(" ", "_")  # not_a_grader | not_an_editor
     return ErrorResponse(
         category=ErrorCategory.PERMANENT,
         code=ERR_ASSESS_021,
-        message="The teacher could not be verified as a grader of this activity.",
+        message=f"The teacher could not be verified as {what} of this activity.",
         remediation=(
             "A fresh check has been queued: retry in a few seconds."
             if stale
-            else "Moodle does not list this user as a grader of the activity's course; "
+            else f"Moodle does not list this user as {what} of the activity's course; "
             "a retry will not succeed until that changes in Moodle."
         ),
-        details={"reason": "grader_check_stale" if stale else "not_a_grader"},
+        details={"reason": f"{role}_check_stale" if stale else f"not_{refused}"},
     )

@@ -30,6 +30,7 @@ PRIVACY = "20261101-154950-assess-privacy-retention"
 MOODLE_WS = "20261101-154950-assess-moodle-ws"
 JOB_LOOP = "20261101-154950-assess-job-loop"
 HARDENING = "20261101-154950-assess-hardening-release"
+TEACHER = "20261101-154950-assess-teacher-ops"
 
 # job kind -> plan that binds its handler
 HANDLER_OWNERS: dict[JobKind, str] = {
@@ -48,6 +49,7 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.SETUP_CHECK: MOODLE_WS,
     JobKind.CAPABILITY_PROBE: MOODLE_WS,
     JobKind.ROTATE_KEYS: HARDENING,
+    JobKind.TEACHER_GATE: TEACHER,
 }
 
 # tick name -> plan that binds its body

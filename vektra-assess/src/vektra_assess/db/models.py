@@ -485,6 +485,21 @@ class RenderStateOrm(Base):
     computed_at: Mapped[datetime] = _ts(default=True)
 
 
+class TeacherGateOrm(Base):
+    """Revision 0036 (plan 11): worker-written activity-level facts for the teacher endpoints."""
+
+    __tablename__ = "assess_teacher_gate"
+
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE"), primary_key=True
+    )
+    cmid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    inputs: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    refreshed_at: Mapped[datetime] = _ts(default=True)
+
+
 class GateInputOrm(Base):
     __tablename__ = "assess_gate_inputs"
 

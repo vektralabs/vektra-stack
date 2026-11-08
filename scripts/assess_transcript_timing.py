@@ -44,6 +44,9 @@ GENERATION_P99_S = 60.0
 SENT_P95_S = 300.0
 WITHIN_S = 900.0
 WITHIN_RATIO = 0.99
+#: the benchmark workload: every session has this many recipients, all closed within this window
+RECIPIENTS_PER_SESSION = 2
+CONCURRENT_WINDOW_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -102,11 +105,25 @@ def evaluate(
         for s in samples
         if s.generated_at is not None
     ]
+    if any(len(s.deliveries) < RECIPIENTS_PER_SESSION for s in samples):
+        problems.append(
+            f"a session has fewer than {RECIPIENTS_PER_SESSION} recipients: "
+            "not the benchmark workload"
+        )
+    if samples:
+        closes = [s.closed_at for s in samples]
+        if (max(closes) - min(closes)).total_seconds() > CONCURRENT_WINDOW_S:
+            problems.append(
+                f"sessions were not closed concurrently (spread > {CONCURRENT_WINDOW_S:g} s)"
+            )
+    # every expected delivery is a sample: one not SENT counts as never (an infinite delay),
+    # so a few fast sends cannot hide the ones that never left
     sent = [
         (d.sent_at - s.closed_at).total_seconds()
+        if d.status == "SENT" and d.sent_at is not None
+        else math.inf
         for s in samples
         for d in s.deliveries
-        if d.status == "SENT" and d.sent_at is not None
     ]
     unconfirmed = [
         d.message_id
@@ -116,7 +133,7 @@ def evaluate(
     ]
     if unconfirmed:
         problems.append(f"{len(unconfirmed)} SENT rows have no message on the sink")
-    if not sent:
+    if not any(math.isfinite(x) for x in sent):
         problems.append("no SENT row: delivery timing cannot be judged")
     if len(gen) < len(samples):
         problems.append(f"{len(samples) - len(gen)} closed sessions have no transcript")
@@ -147,9 +164,10 @@ def evaluate(
         "status": "FAIL" if problems else "PASS",
         "problems": problems,
         "sessions": len(samples),
-        "sent_rows": len(sent),
+        "sent_rows": sum(1 for x in sent if math.isfinite(x)),
+        "expected_deliveries": len(sent),
         "p99_generation_s": p99_gen,
-        "p95_sent_s": p95_sent,
+        "p95_sent_s": p95_sent if p95_sent is None or math.isfinite(p95_sent) else None,
         "within_15min_ratio": ratio,
         "at": datetime.now(UTC).isoformat(),
     }

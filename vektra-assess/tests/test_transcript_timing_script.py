@@ -98,3 +98,36 @@ async def test_a_missing_environment_is_blocked(tmp_path: Path) -> None:
     doc, path = await t.amain(t.Config.from_env({}), out_dir=tmp_path)
     assert doc["status"] == "BLOCKED" and len(doc["blockers"]) == 3
     assert json.loads(path.read_text())["status"] == "BLOCKED"
+
+
+def test_unfinished_deliveries_count_against_p95() -> None:
+    """CodeRabbit 4504362573: a delivery not SENT is a miss, not a sample left out."""
+    samples = [_sample(i=i) for i in range(50)]
+    for s in samples[:6]:  # 6 of 100 deliveries never sent: more than 5%, p95 fails
+        object.__setattr__(
+            s,
+            "deliveries",
+            (s.deliveries[0], t.Delivery("RETRYING", None, None)),
+        )
+    doc = t.evaluate(samples, _ids(samples))
+    assert doc["status"] == "FAIL" and any("p95 sent" in p for p in doc["problems"])
+
+
+def test_the_workload_must_be_the_benchmark_one() -> None:
+    """CodeRabbit 4504362566: 2 recipients per session, closed concurrently."""
+    one = [_sample(n_rcpt=1, i=i) for i in range(50)]
+    assert any("2 recipients" in p for p in t.evaluate(one, _ids(one))["problems"])
+    spread = [
+        t.Sample(
+            T0 + timedelta(minutes=i),
+            T0 + timedelta(minutes=i, seconds=5),
+            tuple(
+                t.Delivery(
+                    "SENT", T0 + timedelta(minutes=i, seconds=30), f"<{i}-{k}@x>"
+                )
+                for k in range(2)
+            ),
+        )
+        for i in range(50)
+    ]
+    assert any("concurrent" in p for p in t.evaluate(spread, _ids(spread))["problems"])

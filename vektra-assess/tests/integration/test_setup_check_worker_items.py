@@ -147,6 +147,8 @@ BUSY = {"state": "busy", "ok": False, "error_class": None, "smtp_code": None}
 def _last(
     state: str, ok_: bool, error_class: str | None, age_s: float = 10
 ) -> dict[str, Any]:
+    """A ``last`` stamped NOW minus ``age_s``: built when the test runs, never at collection
+    (CI collects the whole suite long before this test runs)."""
     return {
         "state": state,
         "ok": ok_,
@@ -158,13 +160,13 @@ def _last(
 @pytest.mark.parametrize(
     ("last", "expected"),
     [
-        (_last("ok", True, None), Outcome(OK)),
-        (_last("failed", False, "tls"), Outcome(MISSING, "smtp_tls")),
+        (("ok", True, None, 10), Outcome(OK)),
+        (("failed", False, "tls", 10), Outcome(MISSING, "smtp_tls")),
         # no earlier result and nothing to probe with: not a relay failure, and not OK
         (None, Outcome(UNVERIFIABLE, "smtp_busy")),
         # CodeRabbit 4506450148: a success older than the freshness bound vouches for nothing
         (
-            _last("ok", True, None, age_s=setup_items.SMTP_PROBE_MAX_AGE_S + 60),
+            ("ok", True, None, setup_items.SMTP_PROBE_MAX_AGE_S + 60),
             Outcome(UNVERIFIABLE, "smtp_busy"),
         ),
         # a ``last`` without its time is no history
@@ -180,6 +182,8 @@ async def test_a_busy_relay_is_judged_by_its_last_real_result(
     """Review finding 2: ``busy`` means every relay session was in use by deliveries, not that
     the relay failed: the item judges the last non-busy result, never MISSING for busy itself,
     and only while that result is itself fresh."""
+    if isinstance(last, tuple):
+        last = _last(*last)
     await _smtp_row(pg, BUSY | ({"last": last} if last else {}), age_s=10)
     assert await smtp(pg) == expected
 

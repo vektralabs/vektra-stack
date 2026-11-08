@@ -46,7 +46,9 @@ async def _smtp_row(pg, details: dict[str, Any] | None, age_s: float = 0) -> Non
         )
 
 
-async def smtp(pg, *, configured: bool = True, prober: Any = None) -> Outcome:  # type: ignore[no-untyped-def]
+async def smtp(  # type: ignore[no-untyped-def]
+    pg, *, configured: bool = True, prober: Any = None, **item_kw: Any
+) -> Outcome:
     """``prober`` given: the item may run the real probe (``run_probe``) against it."""
     engine = create_async_engine(pg.url("worker"))
     try:
@@ -58,10 +60,30 @@ async def smtp(pg, *, configured: bool = True, prober: Any = None) -> Outcome:  
             engine.connect,
             configured=configured,
             probe=probe if prober is not None else None,
+            **item_kw,
         )
         return await check(CTX)
     finally:
         await engine.dispose()
+
+
+async def test_the_item_probe_is_capped_so_the_check_can_finish(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506662233: the item's own probe has a cap well inside the 120 s setup budget,
+    so a hanging relay cannot use up the time the capability probes and the report need; a
+    probe that hits the cap is UNVERIFIABLE, not a failed check."""
+    import asyncio
+
+    class Hangs:
+        async def probe(self) -> Any:
+            await asyncio.sleep(30)
+
+    await _smtp_row(pg, None)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    out = await smtp(pg, prober=Hangs(), probe_timeout_s=0.3)
+    assert out == Outcome(UNVERIFIABLE, "smtp_probe_timeout")
+    assert loop.time() - started < 5
+    assert setup_items.SMTP_ITEM_PROBE_MAX_S <= 30
 
 
 async def _smtp_details(pg) -> dict[str, Any] | None:  # type: ignore[no-untyped-def]

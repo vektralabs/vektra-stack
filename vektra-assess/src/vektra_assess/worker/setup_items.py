@@ -19,6 +19,7 @@ reports ``UNVERIFIABLE/check_error``.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -38,6 +39,10 @@ from vektra_assess.worker.runner import AcquireDb
 from vektra_assess.worker.slots import SMTP_PROBE_INTERVAL_S
 
 SMTP_PROBE_MAX_AGE_S = 3 * SMTP_PROBE_INTERVAL_S
+#: the cap on the item's own probe: a quarter of the 120 s setup-check budget. A healthy relay
+#: answers EHLO/STARTTLS/AUTH in seconds; the rest of the budget is kept for the Moodle items,
+#: the capability probes and the report (CodeRabbit 4506662233)
+SMTP_ITEM_PROBE_MAX_S = 30.0
 
 _SMTP_ROW = text(
     "SELECT details, extract(epoch FROM now() - beat_at) AS age, "
@@ -73,11 +78,22 @@ def smtp_probe_item(
     *,
     configured: bool,
     probe: Callable[[], Awaitable[Any]] | None = None,
+    probe_timeout_s: float = SMTP_ITEM_PROBE_MAX_S,
 ) -> ItemCheck:
     """``probe``: one whole bounded probe (``delivery.probe.run_probe``, which writes the row
     and never sends). Without a fresh row, the item runs it and judges what it wrote (review
     finding 1): at startup a setup check queued earlier can be claimed before the probe tick has
     written its first row, and a long-stopped worker finds only a stale one."""
+
+    async def capped() -> bool:
+        """Run the probe within ``probe_timeout_s``; False when the cap cut it short."""
+        assert probe is not None
+        try:
+            async with asyncio.timeout(probe_timeout_s):
+                await probe()
+        except TimeoutError:
+            return False
+        return True
 
     async def read() -> Any:
         """The relay probe row with its age and the database clock."""
@@ -89,12 +105,14 @@ def smtp_probe_item(
         if not configured:
             return missing("smtp_not_configured")
         row = await read()
-        # at most ONE probe per item run (CodeRabbit 4506450166): each is bounded by the SMTP
-        # worst case (about 65 s by default), and two would use up the 120 s setup budget
+        # at most ONE probe per item run (CodeRabbit 4506450166), and that one capped at
+        # ``probe_timeout_s`` (4506662233): the rest of the 120 s budget belongs to the Moodle
+        # items, the capability probes and the report. Hitting the cap is UNVERIFIABLE.
         probed = False
         if probe is not None and (row is None or float(row.age) > SMTP_PROBE_MAX_AGE_S):
-            await probe()
             probed = True
+            if not await capped():
+                return unverifiable("smtp_probe_timeout")
             row = await read()
         if row is None:
             return missing("smtp_never_probed")
@@ -103,7 +121,8 @@ def smtp_probe_item(
         verdict = _judge(row.details, float(row.now))
         if verdict is None and probe is not None and not probed:
             # busy with no earlier result to go by: probe once more (finding 2)
-            await probe()
+            if not await capped():
+                return unverifiable("smtp_probe_timeout")
             row = await read()
             if row is not None and float(row.age) <= SMTP_PROBE_MAX_AGE_S:
                 verdict = _judge(row.details, float(row.now))

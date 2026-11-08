@@ -335,3 +335,31 @@ async def test_a_session_of_another_activity_or_an_older_one_is_not_reset(
         r = await reset(w, cmid, "not-a-uuid")
         assert r.status_code == 400
         assert await grants(pg, w.site) == 0
+
+
+async def test_a_disabled_activity_refuses_the_reset_without_waiting_for_a_render(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-1: the render short-circuits a disabled activity (no Moodle half is ever
+    written), so the database gates must refuse first, not ``gate_inputs_stale`` forever."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [7501])
+        sid = seeded[7501][0]
+        await seed_teacher_gate(pg, w.site, cmid)
+        r = await w.client.post(
+            f"/api/v1/assess/activities/{cmid}/terminate",
+            json=body(reason="chiusa", expected_active_count=1, also_disable=True),
+            headers=teacher(),
+        )
+        assert r.status_code == 200, r.text
+        renders = (
+            "SELECT count(*) FROM assess_jobs WHERE kind = 'render_check' "
+            "AND (args->>'student_userid')::bigint = 7501"
+        )
+        before = await count(pg, renders)
+        r = await reset(w, cmid, sid)
+        assert r.status_code == 409, r.text
+        assert err(r)["details"] == {"reason": "gate", "gate": "not_enabled"}
+        assert await count(pg, renders) == before
+        assert await grants(pg, w.site) == 0

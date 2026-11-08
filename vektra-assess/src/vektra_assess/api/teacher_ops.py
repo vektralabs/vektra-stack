@@ -231,6 +231,28 @@ async def reset_session(
         cfg = (await conn.execute(_CONFIG, {"s": site, "c": c})).first()
         if cfg is None:
             raise _Refused(fail(reset_refused("gate", gate="not_enabled")))
+        allowed_unset = settings.privacy_allow_unset and settings.env == "development"
+        privacy_ok = bool(await privacy.is_configured(conn, site)) or allowed_unset
+
+        def gate_code(moodle_reasons: list[str]) -> str | None:
+            return v.reset_gate(
+                now=int(cfg.db_now),
+                enabled=bool(cfg.enabled),
+                cap_set=cfg.cap_minutes is not None,
+                end_at=cfg.end_at,
+                privacy_configured=privacy_ok,
+                moodle_reasons=moodle_reasons,
+            )
+
+        def refuse_gate(code: str) -> _Refused:
+            extra = {"field": "available_until"} if code == "end_date_passed" else {}
+            return _Refused(fail(reset_refused("gate", gate=code, **extra)))
+
+        # the database half first, live: a disabled activity is never rendered with its Moodle
+        # half (the render short-circuits), so waiting for one would never end (review 11b-1)
+        code = gate_code([])
+        if code is not None:
+            raise refuse_gate(code)
         render = (await conn.execute(_RENDER, params)).first()
         inputs = render.inputs if render is not None else None
         fresh = (
@@ -246,19 +268,9 @@ async def reset_session(
 
             await queue_render_check(conn, site, student, c, body.courseid)
             raise _Refused(fail(reset_refused("gate_inputs_stale")))
-        allowed_unset = settings.privacy_allow_unset and settings.env == "development"
-        code = v.reset_gate(
-            now=int(cfg.db_now),
-            enabled=bool(cfg.enabled),
-            cap_set=cfg.cap_minutes is not None,
-            end_at=cfg.end_at,
-            privacy_configured=bool(await privacy.is_configured(conn, site))
-            or allowed_unset,
-            moodle_reasons=[str(x) for x in inputs["moodle_reasons"]],  # type: ignore[index]
-        )
+        code = gate_code([str(x) for x in inputs["moodle_reasons"]])  # type: ignore[index]
         if code is not None:
-            extra = {"field": "available_until"} if code == "end_date_passed" else {}
-            raise _Refused(fail(reset_refused("gate", gate=code, **extra)))
+            raise refuse_gate(code)
         include = v.include_previous_turns(
             row.close_reason, body.include_previous_turns
         )

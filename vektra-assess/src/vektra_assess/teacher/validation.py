@@ -246,10 +246,16 @@ def enable_refusals(
     *,
     privacy_configured: bool,
     setup_green: bool,
+    turning_on: bool = True,
 ) -> list[FieldError]:
     """Why the discussion may NOT be enabled (REQ-077), each a field error on ``enabled`` (or on
     the field to fix). Empty when it may. Unreadable Moodle facts refuse (fail closed). The empty
-    pasted rubric is ``check_pasted_rubric`` (refused whether enabled or not)."""
+    pasted rubric is ``check_pasted_rubric`` (refused whether enabled or not).
+
+    ``turning_on``: the request itself sets ``enabled=true``. A save of an activity that is
+    already enabled re-checks only what that save can break (cap, rubric source, recipients); the
+    Moodle facts, privacy and setup check are the gate of switching it on (and the Start gates
+    re-check the Moodle facts at every Start)."""
     if not p.enabled:
         return []
     errs: list[FieldError] = []
@@ -257,6 +263,11 @@ def enable_refusals(
     def refuse(code: str, fld: str = "enabled", range_: str | None = None) -> None:
         errs.append(FieldError(fld, code, range_))
 
+    if not turning_on:
+        facts = ActivityFacts(
+            facts.activity_type, 1, False, "none", facts.moodle_rubric
+        )
+        privacy_configured = setup_green = True
     if facts.close_at is None:
         refuse("moodle_facts_unreadable")
     elif facts.close_at == 0:  # BR-007

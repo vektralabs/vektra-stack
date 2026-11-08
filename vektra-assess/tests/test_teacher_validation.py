@@ -257,3 +257,14 @@ def test_enable_is_refused_for_each_configuration_gap() -> None:
     assert refusals(v.Proposed(True, 30, "none", False, 0)) == [
         ("transcript_recipients", "empty")
     ]
+
+
+def test_a_save_of_an_enabled_activity_rechecks_only_what_it_can_break() -> None:
+    """Already enabled, not switching on: Moodle facts, privacy and setup are not re-gated here
+    (the Start gates re-check the facts), the configuration gaps still are."""
+    stale_facts = v.ActivityFacts("assign", 0, True, "guide", True)
+    kw = {"privacy_configured": False, "setup_green": False, "turning_on": False}
+    assert codes(v.enable_refusals(GOOD, stale_facts, **kw)) == []
+    assert codes(
+        v.enable_refusals(v.Proposed(True, 30, "moodle", False, 0), stale_facts, **kw)
+    ) == [("transcript_recipients", "empty")]

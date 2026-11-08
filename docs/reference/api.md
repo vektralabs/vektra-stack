@@ -149,7 +149,7 @@ the worker resolves the cmid inside that course only. Missing or stale facts: `4
 
 | Method | Path | Credential | Success | Errors |
 |--------|------|------------|---------|--------|
-| GET | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; headers `X-Assess-Actor` (Moodle user id), `X-Assess-Course`, `X-Assess-Activity-Type` (`quiz`/`assign`) | `200` the view below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021` (`not_an_editor`, `editor_check_stale`; audited `assess_teacher_unverified`) |
+| GET | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; headers `X-Assess-Actor` (Moodle user id), `X-Assess-Course`, `X-Assess-Activity-Type` (`quiz`/`assign`) | `200` the view below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`; `teacher_gate_hint`: the activity's facts are absent or stale and the course / type headers are missing or invalid, so no check could be queued), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021` (`not_an_editor`, `editor_check_stale`; audited `assess_teacher_unverified`) |
 | PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; body below (at most 256 KiB) | `200` the view below (new `version`) | `400 ERR-ASSESS-014` (malformed body, unknown field, wrong type), `400 ERR-ASSESS-022` (field errors, all at once, nothing saved), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021`, `409 ERR-ASSESS-023` (`expected_version` is not `details.current_version`: reload, nothing saved), `503 ERR-ASSESS-001` (`teacher_config_key`) |
 
 PUT body: `actor_userid`, `courseid`, `activity_type`, `expected_version` (0 for an activity never

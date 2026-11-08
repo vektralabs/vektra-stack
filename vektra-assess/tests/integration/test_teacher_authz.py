@@ -126,8 +126,14 @@ async def test_an_unresolved_hint_refuses_and_another_hint_asks_again(pg) -> Non
     assert (await check(pg, site, 54)).check is TeacherCheck.STALE
     (job,) = await jobs(pg, site)
     assert job.args["courseid"] == COURSE
-    # no hint at all: nothing can be resolved, nothing is queued
-    assert (await check(pg, site, 55, hint=(None, None))).check is TeacherCheck.STALE
+    # no hint at all: nothing can be resolved, nothing is queued, and the caller is NOT told a
+    # check was queued (review 5)
+    assert (
+        await check(pg, site, 55, hint=(None, None))
+    ).check is TeacherCheck.HINT_MISSING
+    assert (
+        await check(pg, site, 55, hint=(COURSE, "forum"))
+    ).check is TeacherCheck.HINT_MISSING
     assert len(await jobs(pg, site)) == 1
 
 

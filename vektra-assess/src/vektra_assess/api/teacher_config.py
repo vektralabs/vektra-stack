@@ -156,6 +156,9 @@ async def _verify(
 
 
 def _refusal(gate: TeacherGate) -> Any:
+    if gate.check is TeacherCheck.HINT_MISSING:
+        # nothing was queued: name the missing hint, never "retry in a few seconds"
+        return fail(bad_request("teacher_gate_hint"))
     return fail(
         teacher_unverified(stale=gate.check is TeacherCheck.STALE, role="editor")
     )

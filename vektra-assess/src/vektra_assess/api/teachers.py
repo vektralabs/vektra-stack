@@ -6,7 +6,9 @@ own. It reads the activity-level facts the worker last wrote into ``assess_teach
 graders and REQ-077 enable facts) and accepts them only while at most ``max_age_s`` old.
 
 - absent, stale, or the editor list unreadable: refused (fail closed) and a ``teacher_gate`` job
-  is queued for the given course / type hint, so a retry a few seconds later can succeed;
+  is queued for the given course / type hint, so a retry a few seconds later can succeed; with
+  no usable hint nothing can be queued: ``HINT_MISSING`` (the route answers 400, it never
+  promises a check that was not queued);
 - fresh but the cmid was not found in the hinted course (``activity_not_in_course``, the one
   definitive unresolved answer): refused, nothing queued; when the hint differs from the one that
   failed, or the row records a transient failure (site, reader, Moodle), a refresh is queued and
@@ -45,6 +47,9 @@ class TeacherCheck(StrEnum):
     OK = "ok"
     NOT_AN_EDITOR = "not_an_editor"
     STALE = "stale"  # absent, older than the bound, or unreadable: refresh queued
+    # a refresh is needed but the request gives no usable course / type hint: nothing could be
+    # queued, so the caller must not be told to retry (400, not "a check has been queued")
+    HINT_MISSING = "hint_missing"
 
 
 @dataclass(frozen=True)
@@ -59,12 +64,17 @@ class TeacherGate:
         return self.check is TeacherCheck.OK
 
 
+def usable_hint(courseid: int | None, kind: str | None) -> bool:
+    return bool(courseid) and int(courseid or 0) >= 1 and kind in KINDS
+
+
 async def queue_teacher_gate(
     conn: Any, site: UUID, cmid: int, courseid: int | None, kind: str | None
 ) -> bool:
-    """Queue a refresh for this hint; without a usable hint nothing can be resolved."""
-    if not courseid or courseid < 1 or kind not in KINDS:
-        return False
+    """Queue a refresh for this hint (False: a refresh for it is already pending). The caller
+    checks ``usable_hint`` first: without one nothing can be resolved."""
+    if courseid is None or kind is None or not usable_hint(courseid, kind):
+        raise ValueError("a teacher_gate refresh needs a course and type hint")
     return await enqueue_job(
         conn,
         JobKind.TEACHER_GATE,
@@ -91,9 +101,15 @@ async def check_fresh_editor(
     row = (await conn.execute(_GATE, {"s": site, "c": int(cmid)})).first()
     facts = dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
     fresh = row is not None and row.age_s is not None and float(row.age_s) <= max_age_s
-    if not fresh:
+
+    async def refresh() -> TeacherGate:
+        if not usable_hint(courseid_hint, kind_hint):
+            return TeacherGate(TeacherCheck.HINT_MISSING)
         await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
         return TeacherGate(TeacherCheck.STALE)
+
+    if not fresh:
+        return await refresh()
     if facts.get("resolved") is not True:
         # a definitive answer for THIS hint: not an editor of anything here. Another hint, or a
         # transient failure: ask again (dedupe per hint)
@@ -102,12 +118,10 @@ async def check_fresh_editor(
             and facts.get("reason") == NOT_IN_COURSE
         ):
             return TeacherGate(TeacherCheck.NOT_AN_EDITOR)
-        await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
-        return TeacherGate(TeacherCheck.STALE)
+        return await refresh()
     editors = facts.get("editors")
     if not isinstance(editors, list):
-        await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
-        return TeacherGate(TeacherCheck.STALE)
+        return await refresh()
     if int(actor_userid) not in {int(e) for e in editors if isinstance(e, int)}:
         return TeacherGate(TeacherCheck.NOT_AN_EDITOR, facts)
     return TeacherGate(TeacherCheck.OK, facts)

@@ -492,3 +492,33 @@ async def test_two_concurrent_first_saves_yield_one_row_and_a_409(pg, pair) -> N
         assert (await counts(pg, w.site))[0] == 1
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_a_get_without_usable_hints_is_400_not_a_promised_refresh(
+    pg, pair
+) -> None:  # type: ignore[no-untyped-def]
+    """Review 5: absent facts and no course / type hint: nothing can be queued, so the answer is
+    a 400 naming the missing hint, never "a fresh check has been queued"."""
+    ctx, w = await ready(pg, pair)
+    try:
+        for headers in (
+            {**auth("teacher"), "X-Assess-Actor": str(EDITOR)},
+            {**get_headers(), "X-Assess-Activity-Type": "forum"},
+        ):
+            r = await w.client.get(url(64), headers=headers)
+            assert r.status_code == 400, r.text
+            assert err(r)["code"] == "ERR-ASSESS-014"
+            assert err(r)["details"] == {"reason": "teacher_gate_hint"}
+        jobs = await pg.run(
+            "super",
+            "SELECT count(*) FROM assess_jobs WHERE kind = 'teacher_gate' AND args->>'site_id' = :s",
+            {"s": str(w.site)},
+        )
+        assert jobs[0][0] == 0
+        # fresh facts need no hint at all
+        r = await w.client.get(
+            url(60), headers={**auth("teacher"), "X-Assess-Actor": str(EDITOR)}
+        )
+        assert r.status_code == 200, r.text
+    finally:
+        await ctx.__aexit__(None, None, None)

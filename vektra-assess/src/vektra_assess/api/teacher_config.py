@@ -11,7 +11,7 @@ transaction: the config row (version + 1), each given secret field sealed to the
 key (``crypto.teacher_config.store_sealed_field``), and one audit row per changed field, old/new.
 Secret fields are audited by the database (set / replaced / cleared, recipient refs), never their
 content; nothing secret is logged. A session that has already started keeps what it copied at
-Start (duration, cap, snapshot), so a change never reaches it.
+Start (duration, cap, snapshot); only the transcript recipients are re-read at send time.
 
 GET: the non-secret values, ``impostata`` / ``non impostata`` for each secret field (plus the
 recipients' count), the computed opening condition, the end-date warning, the review-options

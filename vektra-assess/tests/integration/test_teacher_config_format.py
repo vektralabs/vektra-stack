@@ -177,3 +177,50 @@ async def test_without_the_private_key_a_stored_needed_field_fails_closed(pg) ->
         assert unset is not None and unset[4] is False and unset[2] is None
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("show", "source", "fetched"),
+    [
+        (False, "moodle", None),
+        (False, "none", None),
+        (True, "none", ["solution"]),
+        (False, "pasted", ["pasted_rubric"]),
+        (True, "pasted", ["solution", "pasted_rubric"]),
+    ],
+)
+async def test_capture_fetches_only_the_fields_it_may_see(  # type: ignore[no-untyped-def]
+    pg, monkeypatch, show, source, fetched
+) -> None:
+    """CodeRabbit nitpick (PR 170): a hidden field is not fetched and opened then discarded; it
+    is never asked for (the SQL field list is exactly the visible fields, or no read at all)."""
+    from vektra_assess.worker import start_source
+
+    calls: list[list[str]] = []
+    real = start_source.read_teacher_config
+
+    async def spy(conn, key, site_id, cmid, fields):  # type: ignore[no-untyped-def]
+        calls.append(list(fields))
+        return await real(conn, key, site_id, cmid, fields)
+
+    monkeypatch.setattr(start_source, "read_teacher_config", spy)
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        site = await make_site(pg)
+        await configure_activity(pg, site, 17)
+        pub, priv = config_pair()
+        await configure_recipients(
+            pg,
+            site,
+            17,
+            pair=(pub, priv),
+            extra={"solution": SOLUTION, "pasted_rubric": RUBRIC},
+        )
+        src = MoodleStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
+        got = await src._context(_target(site, 17, show=show, source=source))
+        assert got is not None
+        assert calls == ([] if fetched is None else [fetched])
+        assert got[2] == (SOLUTION if show else None)
+        assert got[3] == (RUBRIC if source == "pasted" else None)
+    finally:
+        await engine.dispose()

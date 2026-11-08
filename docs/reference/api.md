@@ -188,7 +188,10 @@ View (GET and PUT): `cmid`, `activity_type`, `version`, `configured`, `enabled`,
 `non impostata`), `transcript_recipients_count`, `opening` (`{"at", "source"}`, source
 `activity_close`, `attested` or `unknown`), `warnings`
 (`available_until_not_after_opening`, `review_options_hide_content`), `active_sessions`
-(ACTIVE + OUTAGE), `updated_at`. A change never reaches a session that has already started.
+(ACTIVE + OUTAGE), `updated_at`. A change does not reach a session that has already started
+(it copied its duration, cap and snapshot at Start), with one exception: the transcript
+recipients are re-read at send time, so a changed `transcript_recipients` applies to transcripts
+not yet delivered, including those of sessions started earlier (REQ-082 as amended).
 
 **`GET /state`, extended fields** (plan 9, agreed with the plugin). Every field is optional and
 ABSENT when the state does not call for it; Vektra sends data, URLs and versions only, the

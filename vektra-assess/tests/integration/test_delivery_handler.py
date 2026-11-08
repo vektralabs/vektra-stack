@@ -519,6 +519,19 @@ async def test_recipients_configured_after_the_close_are_fanned_out(
             ("RETRYING", "recipients_unresolved")
         }
         assert len(sink.messages) == 2
+        # CodeRabbit nitpick (PR 170): a cleared field reads () and the rows wait; a field
+        # sealed to ANOTHER key reads None (unreadable): the rows wait the same way
+        await configure_recipients(
+            pg, w.site, s.cmid, pair=(config_pair("x7")[0], priv)
+        )
+        clock.advance(hours=2)
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.unresolved
+        round2 = [r for r in await rows(pg, s.session_id) if r.round == 2]
+        assert {(r.status, r.last_error_class) for r in round2} == {
+            ("RETRYING", "recipients_unresolved")
+        }
+        assert len(sink.messages) == 2
         await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)
 
 

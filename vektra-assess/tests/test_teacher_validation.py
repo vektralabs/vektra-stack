@@ -293,7 +293,11 @@ def test_the_api_and_the_capture_read_the_same_rubric_source(
         else ("moodle" if kind == "assign" else "none")
     )
     assert v.rubric_source_of(flags, kind) == want
-    assert start_source.teacher_view(flags, kind, None).rubric_source == want
+    view = start_source.teacher_view(flags, kind, None, "griglia incollata")
+    assert view.rubric_source == want
+    # CodeRabbit nitpick (PR 170): the pasted rubric reaches the capture view only with the
+    # source "pasted" (the capture copies TeacherConfigView.pasted_rubric into the snapshot)
+    assert view.pasted_rubric == ("griglia incollata" if want == "pasted" else None)
 
 
 def test_the_end_date_is_compared_at_the_second_it_is_stored() -> None:

@@ -592,6 +592,71 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
     assert not next(t for t in scheduler._ticks if t.name == "setup_check").bound
 
 
+def _plan_statuses() -> dict[str, str]:
+    """plan file stem -> status cell, from the plan table of .s2s/plans/INDEX-ASSESS.md."""
+    import re
+
+    index = Path(__file__).resolve().parents[2] / ".s2s" / "plans" / "INDEX-ASSESS.md"
+    out: dict[str, str] = {}
+    for line in index.read_text().splitlines():
+        m = re.match(
+            r"\|[^|]*\|\s*\[[^\]]*\]\(([^)]*?)\.md\)\s*\|.*\|\s*([^|]*?)\s*\|$", line
+        )
+        if m:
+            out[Path(m.group(1)).name] = m.group(2)
+    return out
+
+
+def test_the_unbound_production_slots_are_exactly_the_documented_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard (2026-11-08): the setup_check binding was "carried over" between two completed plans
+    and bound by neither, so the production worker could not start. The real composition, with
+    every worker key and a relay, may leave unbound only the slots of plans still pending in
+    INDEX-ASSESS and the open decisions recorded in ``slots.OPEN_DECISIONS``."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+    from vektra_assess.worker import slots
+
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
+        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
+    keys |= {
+        "assess_smtp": Credentials("assess_smtp", {}),
+        "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
+    }
+    full = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    runtime, scheduler, *_ = assess_worker._compose(full)
+    unbound = {f"job:{k.value}" for k, s in runtime._handlers.items() if not s.bound}
+    unbound |= {f"tick:{t.name}" for t in scheduler._ticks if not t.bound}
+    assert unbound == slots.expected_unbound(), (
+        f"unbound but not allowlisted: {sorted(unbound - slots.expected_unbound())}; "
+        f"allowlisted but bound: {sorted(slots.expected_unbound() - unbound)}"
+    )
+
+    statuses = _plan_statuses()
+    for plan in slots.PENDING_OWNER_PLANS:
+        assert plan in statuses, plan
+        assert not statuses[plan].startswith("completed"), (
+            f"{plan} is completed: its slots must be bound, not allowlisted"
+        )
+    owners = {f"job:{k.value}": o for k, o in slots.HANDLER_OWNERS.items()}
+    owners |= {f"tick:{n}": o for n, o in slots.TICK_OWNERS.items()}
+    for slot in slots.OPEN_DECISIONS:
+        # an open decision is only for a slot whose owner is done; otherwise it is just pending
+        assert statuses[owners[slot]].startswith("completed"), slot
+
+
 # --- transcript delivery (plan assess-transcript-delivery 10b) ----------------------------
 
 

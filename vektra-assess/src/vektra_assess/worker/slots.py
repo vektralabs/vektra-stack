@@ -67,6 +67,43 @@ TICK_OWNERS: dict[str, str] = {
     "setup_check": MOODLE_WS,
 }
 
+# --- the documented allowlist of unbound slots ---------------------------------------------------
+# A production worker refuses to start while ANY slot is unbound, so every slot the fully keyed
+# composition leaves unbound must be accounted for here, and nothing else may be unbound. The guard
+# test (vektra-app/tests/test_assess_processes.py) composes the real worker and compares: a
+# carried-over binding that silently vanished (setup_check, until 2026-11-08) fails it, and so does
+# a slot bound without removing it from here.
+
+#: plans not yet completed in .s2s/plans/INDEX-ASSESS.md: their slots are unbound by schedule (the
+#: guard test checks each is still not ``completed`` there)
+PENDING_OWNER_PLANS: frozenset[str] = frozenset({PRIVACY, HARDENING})
+
+#: slots whose owner plan IS completed but whose behaviour is not specified anywhere: a decision is
+#: needed (recorded as an open item in the owner plan's Notes), not an invented body
+OPEN_DECISIONS: dict[str, str] = {
+    "job:session_deadline": (
+        "no enqueuer and no body in any plan; deadlines are enforced by the sweeper tick and the "
+        "API's lazy close (session-lifecycle Notes, 2026-11-08)"
+    ),
+    "job:teacher_notify": (
+        "queued by service_failure closes and the rollback cap; channel, content and recipients "
+        "are not specified (transcript-delivery Notes, 2026-11-08)"
+    ),
+    "job:operator_notify": (
+        "queued by the rollback cap and Moodle-unreachable rollbacks; no operator address or "
+        "channel exists (transcript-delivery Notes, 2026-11-08)"
+    ),
+}
+
+
+def expected_unbound() -> set[str]:
+    """The slots a fully keyed production composition is allowed to leave unbound today."""
+    owned = {
+        f"job:{k.value}" for k, o in HANDLER_OWNERS.items() if o in PENDING_OWNER_PLANS
+    }
+    owned |= {f"tick:{n}" for n, o in TICK_OWNERS.items() if o in PENDING_OWNER_PLANS}
+    return owned | set(OPEN_DECISIONS)
+
 
 class SlotsNotBound(RuntimeError):
     """One or more production slots have no body; the worker refuses to start."""

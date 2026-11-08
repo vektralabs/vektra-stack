@@ -655,3 +655,5 @@ Every acceptance check reads rows, bytes or real responses, never a status field
   - The import contract "`_assembly` is private to `vektra_assess.context`" now allows indirect
     imports: `assemble_context` (the public wrapper) is how the pre-flight and the turn route build
     bundles; a direct import of `_assembly` still breaks the contract (canary test unchanged).
+
+> Open item (2026-11-08, branch `fix/assess-unbound-worker-slots`): the job kind `session_deadline` (owned by this plan in `worker/slots.py`) is still unbound. Nothing enqueues it, and no task, note or carry-over of this plan specifies a body. Deadlines are enforced by the sweeper tick (M3.5) and the API's lazy close (M3.4). Decision needed: drop the kind as `capability_probe` was dropped (revision 0036), or specify what it does. It is allowlisted in `slots.OPEN_DECISIONS`, and the guard test `vektra-app/tests/test_assess_processes.py::test_the_unbound_production_slots_are_exactly_the_documented_allowlist` keeps it visible. While it is unbound, a production worker refuses to start.

@@ -27,6 +27,13 @@ Convention (Keep a Changelog 1.1.0):
 
 - **assess**: the sealed teacher configuration is one row per field (`solution`, `pasted_rubric`, `transcript_recipients`) instead of one JSON object in `assess_activity_config.teacher_config_sealed`; the snapshot capture, the transcript delivery and the key rotation read the per-field rows (revision `0036` drops `teacher_config_sealed`, `_kid`, `_set` and the never-read `recipients_extra`, and refuses to upgrade a database that holds a composite sealed config).
 
+### Fixed
+
+- **assess**: the production worker left job and tick `setup_check` unbound. The binding had been carried over from plan moodle-ws to plan job-loop and was done by neither, so the worker refused to start (`SlotsNotBound`) without the development override, and no site ever got a capability matrix. The handler (pool `setup`, 120 s, re-validates the report row, keeps the last 30 reports per site) and the daily tick (also on startup, one deduplicated job per enabled site) are now bound. The parser's `parser_sidecar_running` setup-check item is registered too.
+- **assess**: no code ever wrote `assess_sites.release`, which the render check and the pre-flight read, so every site rendered `unavailable/unreadable` and `/state` never left "checking". A setup-check run whose probes are persisted now sets it, in the same transaction as the capability matrix. A site that has never passed a check stays unreadable (fail closed).
+- **assess**: the `capability_probe` job kind is removed (revision `0036`). It had no enqueuer and no body, because the setup check's probes write the matrix, so the slot could never be bound.
+- **assess**: a guard test composes the real worker and requires the unbound slots to be exactly the documented allowlist (`worker/slots.py`). Those are the slots of the still-pending privacy and hardening plans plus three open decisions: `session_deadline`, `teacher_notify` and `operator_notify`. Until those three are decided and bound, a production worker still refuses to start.
+
 ## [0.8.0] - 2026-11-07
 
 ### Added

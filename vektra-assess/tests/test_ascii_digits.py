@@ -1,0 +1,125 @@
+"""Numbers read from headers and token claims are ASCII digits only (11a review follow-up).
+
+``str.isdigit`` also accepts superscripts ("²", which ``int`` rejects: a 500 instead of a 400) and
+other scripts' decimal digits ("١٢", which ``int`` silently reads as 12). One test per site.
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+
+import httpx
+import pytest
+from fastapi import FastAPI, Request
+
+from vektra_assess.api.common import read_capped_body
+from vektra_assess.api.deps import parse_version
+from vektra_assess.api.download_tokens import DownloadTokens
+from vektra_assess.api.events import _last_event_id
+from vektra_assess.config import VektraAssessSettings
+from vektra_assess.keys import AssessKeyring
+from vektra_assess.tokens import AssessTokens, TokenError, keyring_from
+from vektra_shared.http_errors import register_error_handlers
+
+NOT_ASCII = ["²", "١٢", "\uff11\uff12", "12²"]
+
+
+def _ring() -> AssessKeyring:
+    return AssessKeyring("assess_token_signing", "k1", {"k1": os.urandom(32)})
+
+
+def _app() -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.post("/body")
+    async def body(request: Request) -> dict[str, int]:
+        return {"n": len(await read_capped_body(request, max_bytes=8))}
+
+    @app.get("/last")
+    async def last(request: Request) -> dict[str, int]:
+        return {"id": _last_event_id(request)}
+
+    return app
+
+
+@pytest.mark.parametrize("declared", NOT_ASCII)
+async def test_a_non_ascii_content_length_is_not_a_500(declared: str) -> None:
+    """``api/common.py``: the declared length is compared only when it is ASCII digits; the
+    streamed cap still applies (here the body fits, so it is read)."""
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/body",
+            "headers": [(b"content-length", declared.encode("utf-8"))],
+        }
+    )
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"abc", "more_body": False}
+
+    req._receive = receive  # type: ignore[attr-defined]
+    assert await read_capped_body(req, max_bytes=8) == b"abc"
+
+
+async def test_an_ascii_content_length_over_the_cap_is_still_refused() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app()), base_url="http://t"
+    ) as c:
+        r = await c.post("/body", content=b"x" * 9)
+    assert r.status_code == 400
+    assert r.json()["error"]["details"]["reason"] == "body_too_large"
+
+
+@pytest.mark.parametrize("raw", NOT_ASCII)
+def test_a_non_ascii_last_event_id_replays_from_zero(raw: str) -> None:
+    """``api/events.py``: an unparsable Last-Event-ID is 0 (full replay), never a 500."""
+    req = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/last",
+            "headers": [(b"last-event-id", raw.encode("utf-8"))],
+        }
+    )
+    assert _last_event_id(req) == 0
+
+
+def test_an_ascii_last_event_id_is_read() -> None:
+    req = Request(
+        {"type": "http", "method": "GET", "headers": [(b"last-event-id", b"42")]}
+    )
+    assert _last_event_id(req) == 42
+
+
+@pytest.mark.parametrize("raw", ["1.²", "1.١٢.0", "\uff11.2"])
+def test_a_non_ascii_plugin_version_is_unparsable(raw: str) -> None:
+    """``api/deps.py``: refused (fails closed), never reinterpreted, never a 500."""
+    assert parse_version(raw) is None
+
+
+def test_an_ascii_plugin_version_parses() -> None:
+    assert parse_version("1.12.3") == (1, 12, 3, 0)
+
+
+@pytest.mark.parametrize("sub", NOT_ASCII)
+def test_a_download_token_with_a_non_ascii_sub_is_refused(sub: str) -> None:
+    """``api/download_tokens.py``: a signed token whose ``sub`` is "١٢" is not user 12."""
+    t = DownloadTokens(keyring_from(_ring()), issuer="vektra", ttl_s=60)
+    m = t.mint(sub=sub, tid=uuid.uuid4(), site=uuid.uuid4(), role="owner")  # type: ignore[arg-type]
+    with pytest.raises(TokenError):
+        t.verify(m.token)
+    ok = t.mint(sub=12, tid=uuid.uuid4(), site=uuid.uuid4(), role="owner")
+    assert t.verify(ok.token).sub == 12
+
+
+@pytest.mark.parametrize("sub", NOT_ASCII)
+def test_a_discussion_token_with_a_non_ascii_sub_is_refused(sub: str) -> None:
+    """``tokens.py`` (same pattern): ``claim_sub``, never a 500, never user 12."""
+    t = AssessTokens.from_settings(_ring(), VektraAssessSettings())
+    m = t._mint({"sub": sub, "site": str(uuid.uuid4()), "cmid": 7, "stage": "pre"}, 60)
+    with pytest.raises(TokenError) as exc:
+        t.verify(m.token, stage="pre")
+    assert exc.value.code == "claim_sub"

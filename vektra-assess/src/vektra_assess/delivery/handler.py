@@ -200,6 +200,11 @@ _STALE_WAITING = text(
     "FOR UPDATE SKIP LOCKED"
 )
 _DEFER = text("UPDATE assess_deliveries SET not_before = :nb WHERE id = :i")
+_WINDOW_OVER = text(
+    "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = 'window_expired', "
+    "attempt_started_at = NULL WHERE id = :i AND status IN ('PENDING', 'RETRYING') "
+    "RETURNING id, round, recipient_ref"
+)
 #: the same expiry as _EXPIRE, for ONE row, in the claim's own transaction
 _EXPIRE_ONE = text(
     "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = 'window_expired', "
@@ -362,8 +367,24 @@ async def _unresolved(
         nb = next_not_before(
             max(int(w.attempts), 1), w.created_at, now, deps.schedule, deps.window
         )
-        if nb is not None:  # past the window: _expire ends it
+        if nb is not None:
             await conn.execute(_DEFER, {"i": w.id, "nb": nb})
+            continue
+        # the window is over (as _settle decides for a failed attempt): ended now, not left
+        # due for the tick until the lease grace runs out (CodeRabbit 4504755706)
+        gone = (await conn.execute(_WINDOW_OVER, {"i": w.id})).first()
+        if gone is not None:
+            await _audit(
+                conn,
+                AssessAuditEvent.DELIVERY_FAILED,
+                t,
+                reason=WINDOW_EXPIRED,
+                round=int(gone.round),
+                ref=gone.recipient_ref,
+                delivery_id=str(gone.id),
+            )
+            out.failed += 1
+            _alert("delivery_failed", session_id=str(t.id), reason_code=WINDOW_EXPIRED)
     claimed = (await conn.execute(_CLAIM_IDLE, {"t": t.id, "now": now})).all()
     for c in claimed:
         nb = next_not_before(

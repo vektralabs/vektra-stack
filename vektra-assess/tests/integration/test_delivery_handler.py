@@ -887,3 +887,41 @@ async def test_a_row_that_expires_while_waiting_for_a_session_is_not_sent(
             (r.status, r.last_error_class) for r in await rows(pg, s.session_id)
         } == {("FAILED", "window_expired")}
         assert sink.messages == []
+
+
+async def test_a_crash_marked_row_past_its_window_ends_while_unresolved(
+    pg, worker, sink, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504755706: recipients unreadable, a crash-marked row whose backoff says
+    the window is over is FAILED (window_expired), not left due for the tick."""
+    clock = Clock()
+    real_settle = h._settle
+
+    async def crash_after_relay(*args: Any, **kw: Any) -> None:
+        if args[4].ok:
+            raise RuntimeError("worker killed before the outcome commit")
+        await real_settle(*args, **kw)
+
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        monkeypatch.setattr(h, "_settle", crash_after_relay)
+        with pytest.raises(RuntimeError):
+            await h.deliver_transcript(deps, worker.connect, s.session_id)
+        monkeypatch.setattr(h, "_settle", real_settle)
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET teacher_config_sealed = NULL, "
+            "teacher_config_kid = NULL WHERE site_id = :s AND cmid = :c",
+            {"s": w.site, "c": s.cmid},
+        )
+        clock.advance(hours=72, seconds=60)  # window over, still inside the lease grace
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.failed == 2
+        final = await rows(pg, s.session_id)
+        assert {
+            (r.status, r.last_error_class, r.attempt_started_at) for r in final
+        } == {("FAILED", "window_expired", None)}
+        failed = await events(pg, s.session_id, "assess_delivery_failed")
+        assert [f.reason_code for f in failed] == ["window_expired"] * 2

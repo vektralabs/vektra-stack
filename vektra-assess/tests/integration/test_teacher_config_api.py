@@ -550,3 +550,28 @@ async def test_texts_at_the_limit_fit_the_body_even_fully_escaped(pg, pair) -> N
         ]
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_non_ascii_digits_are_a_400_not_a_500(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    """Review 7: ``"²".isdigit()`` is True but ``int("²")`` raises: ids are ASCII digits only."""
+    ctx, w = await ready(pg, pair)
+    try:
+        r = await w.client.get(url("%C2%B2"), headers=get_headers())  # type: ignore[arg-type]
+        assert r.status_code == 400 and err(r)["details"] == {"reason": "cmid"}
+        r = await w.client.get(
+            "/api/v1/assess/activities/٣/config", headers=get_headers()
+        )
+        assert r.status_code == 400 and err(r)["details"] == {"reason": "cmid"}
+        headers = {
+            **get_headers(),
+            "X-Assess-Actor": b"\xb2",
+        }  # latin-1 superscript two
+        r = await w.client.get(url(60), headers=headers)  # type: ignore[arg-type]
+        assert r.status_code == 400 and err(r)["details"] == {
+            "reason": "x_assess_actor"
+        }
+        headers = {**get_headers(), "X-Assess-Course": b"\xb2"}
+        r = await w.client.get(url(60), headers=headers)  # type: ignore[arg-type]
+        assert r.status_code == 200  # a malformed hint is no hint; the facts are fresh
+    finally:
+        await ctx.__aexit__(None, None, None)

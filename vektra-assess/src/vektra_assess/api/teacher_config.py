@@ -121,10 +121,20 @@ _REVIEW = text(
 )
 
 
+def _ascii_id(raw: str) -> int | None:
+    """A positive BIGINT written in ASCII digits only (``str.isdigit`` also accepts "²" or
+    Arabic-Indic digits, which ``int`` then rejects or reinterprets)."""
+    if not 0 < len(raw) <= 19 or not all("0" <= ch <= "9" for ch in raw):
+        return None
+    value = int(raw)
+    return value if 0 < value < 2**63 else None
+
+
 def _cmid(raw: str) -> int:
-    if not raw.isdigit() or not 0 < int(raw) < 2**63:
+    value = _ascii_id(raw)
+    if value is None:
         raise fail(bad_request("cmid"))
-    return int(raw)
+    return value
 
 
 async def _site_of(conn: Any, key: ApiKeyInfo) -> UUID:
@@ -493,8 +503,7 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
 
 
 def _header_int(request: Request, name: str) -> int | None:
-    raw = request.headers.get(name, "")
-    return int(raw) if raw.isdigit() and 0 < int(raw) < 2**63 else None
+    return _ascii_id(request.headers.get(name, ""))
 
 
 @router.get("/activities/{cmid}/config")

@@ -29,6 +29,7 @@ from vektra_assess.worker.teacher_gate import make_teacher_gate_handler
 pytestmark = pytest.mark.parametrize("branch", BRANCHES)
 
 SITE = uuid.uuid4()
+VIEWER_OFFSET = 10_000
 
 
 class _Result:
@@ -80,6 +81,11 @@ def _source(branch: str) -> tuple[Replay, MoodleStartSource, dict[str, Any], lis
             body = copy.deepcopy(replay.responses[key])
             for row in body:
                 row["capability"] = capability
+                if capability == "mod/quiz:manageoverrides":
+                    # other user ids than the graders': a read that returned the graders
+                    # instead would not pass for the override viewers
+                    for user in row["users"]:
+                        user["id"] += VIEWER_OFFSET
             replay.responses[key.replace("mod/assign:grade", capability)] = body
     sink: list[Any] = []
 
@@ -139,9 +145,9 @@ async def test_quiz_facts(branch: str) -> None:
     assert got["close_at"] == q["expected"]["timeclose"]
     assert got["team_submission"] is False and got["grading_method"] is None
     assert got["graders"] == _graders(branch, m)
-    assert got["override_viewers"] == _graders(
-        branch, m
-    )  # synthetic: renamed recording
+    # synthetic: the graders recording, renamed, with shifted ids
+    assert got["override_viewers"] == [g + VIEWER_OFFSET for g in _graders(branch, m)]
+    assert not set(got["override_viewers"]) & set(got["graders"])
     assert got["override_holder"] is None  # no override later than the quiz's own close
 
 

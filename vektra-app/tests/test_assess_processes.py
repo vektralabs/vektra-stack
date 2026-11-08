@@ -90,6 +90,24 @@ async def test_worker_run_checks_hits_ceiling_before_db(
         await assess_worker.run_checks()
 
 
+@pytest.mark.parametrize(
+    "flag", ["VEKTRA_ASSESS_RAG_ENABLED", "VEKTRA_ASSESS_RESET_NOTICE_ENABLED"]
+)
+async def test_worker_refuses_the_flags_not_in_this_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    """CodeRabbit nitpick (PR #179): the worker, not only the API, refuses to start with the
+    RAG flag or the REQ-092 reset-notice flag on."""
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.setenv(flag, "true")
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="not available in this release"):
+        await assess_worker.run_checks()
+
+
 async def test_worker_refuses_api_only_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

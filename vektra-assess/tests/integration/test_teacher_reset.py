@@ -490,3 +490,39 @@ async def test_a_render_made_before_the_fallback_moved_is_not_current(
         )
         r = await reset(w, cmid, sid)
         assert r.status_code == 201, r.text
+
+
+async def test_the_queued_render_unblocks_the_reset(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (PR #179): no seeded render: the reset queues one, the REAL render
+    handler runs it (recorded Moodle), and the retried reset is granted."""
+    import logging
+
+    from integration.test_session_state import moodle_source
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.worker.render import RenderDeps, make_render_handler
+    from vektra_assess.worker.runner import JobContext
+
+    async with world(pg) as w:
+        with_transcript_key(w)
+        s = await seed_session(w, worker, "CLOSED")
+        await seed_teacher_gate(pg, w.site, s.cmid)
+        r = await reset(w, s.cmid, s.session_id)
+        assert err(r)["details"]["reason"] == "gate_inputs_stale"
+        (args,) = (
+            await pg.run(
+                "super",
+                "SELECT args FROM assess_jobs WHERE kind = 'render_check' "
+                "AND (args->>'student_userid')::bigint = :u AND state = 'ready'",
+                {"u": s.sub},
+            )
+        )[0]
+        handler = make_render_handler(
+            RenderDeps(settings=w.settings, source=moodle_source(worker))
+        )
+        await handler(
+            JobContext(
+                1, JobKind.RENDER_CHECK, args, 1, worker.connect, logging.getLogger("t")
+            )
+        )
+        r = await reset(w, s.cmid, s.session_id)
+        assert r.status_code == 201, r.text

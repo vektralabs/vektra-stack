@@ -23,6 +23,9 @@ from vektra_assess.tokens import AssessTokens, TokenError, keyring_from
 from vektra_shared.http_errors import register_error_handlers
 
 NOT_ASCII = ["²", "١٢", "\uff11\uff12", "12²"]
+#: as a header carries them: the UTF-8 bytes (Starlette decodes headers as Latin-1) and the
+#: raw Latin-1 superscript b"\xb2", which "isdigit" accepted and "int" rejected (a 500)
+NOT_ASCII_HEADERS = [value.encode("utf-8") for value in NOT_ASCII] + [b"\xb2"]
 
 
 def _ring() -> AssessKeyring:
@@ -44,8 +47,8 @@ def _app() -> FastAPI:
     return app
 
 
-@pytest.mark.parametrize("declared", NOT_ASCII)
-async def test_a_non_ascii_content_length_is_not_a_500(declared: str) -> None:
+@pytest.mark.parametrize("declared", NOT_ASCII_HEADERS)
+async def test_a_non_ascii_content_length_is_not_a_500(declared: bytes) -> None:
     """``api/common.py``: the declared length is compared only when it is ASCII digits; the
     streamed cap still applies (here the body fits, so it is read)."""
     req = Request(
@@ -53,7 +56,7 @@ async def test_a_non_ascii_content_length_is_not_a_500(declared: str) -> None:
             "type": "http",
             "method": "POST",
             "path": "/body",
-            "headers": [(b"content-length", declared.encode("utf-8"))],
+            "headers": [(b"content-length", declared)],
         }
     )
 
@@ -73,15 +76,15 @@ async def test_an_ascii_content_length_over_the_cap_is_still_refused() -> None:
     assert r.json()["error"]["details"]["reason"] == "body_too_large"
 
 
-@pytest.mark.parametrize("raw", NOT_ASCII)
-def test_a_non_ascii_last_event_id_replays_from_zero(raw: str) -> None:
+@pytest.mark.parametrize("raw", NOT_ASCII_HEADERS)
+def test_a_non_ascii_last_event_id_replays_from_zero(raw: bytes) -> None:
     """``api/events.py``: an unparsable Last-Event-ID is 0 (full replay), never a 500."""
     req = Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/last",
-            "headers": [(b"last-event-id", raw.encode("utf-8"))],
+            "headers": [(b"last-event-id", raw)],
         }
     )
     assert _last_event_id(req) == 0

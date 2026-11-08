@@ -50,11 +50,12 @@ BODY_TEMPLATE = (
 )
 
 
-def header_value(value: object, *, limit: int = MAX_HEADER_CHARS) -> str:
+def header_value(value: object, *, limit: int | None = MAX_HEADER_CHARS) -> str:
     """A value safe to put in a header: no control character survives (CR/LF injection),
-    whitespace collapsed, capped at ``limit`` characters."""
-    text = _CONTROL.sub(" ", str(value))
-    return _SPACES.sub(" ", text).strip()[:limit]
+    whitespace collapsed, capped at ``limit`` characters (``None``: never cut, for the
+    structured values that must equal the envelope or the stored row)."""
+    text = _SPACES.sub(" ", _CONTROL.sub(" ", str(value))).strip()
+    return text if limit is None else text[:limit]
 
 
 def message_id(
@@ -89,10 +90,14 @@ class TranscriptMail:
 def subject(mail: TranscriptMail) -> str:
     """REQ-075: course, activity and student in the subject (the student by Moodle id until the
     DPO rules on full names, OQ-020)."""
-    return header_value(
-        f"Trascrizione discussione - {mail.course} - attivita {mail.cmid} - "
-        f"studente {mail.student_userid} - sessione #{mail.session_no}"
+    head = "Trascrizione discussione - "
+    tail = (
+        f" - attivita {int(mail.cmid)} - studente {int(mail.student_userid)} - "
+        f"sessione #{int(mail.session_no)}"
     )
+    # the course takes what is left: a long name never pushes the ids out
+    room = max(MAX_HEADER_CHARS - len(head) - len(tail), 1)
+    return header_value(head + header_value(mail.course, limit=room) + tail)
 
 
 def body(mail: TranscriptMail) -> str:
@@ -106,10 +111,12 @@ def body(mail: TranscriptMail) -> str:
 
 def build(mail: TranscriptMail) -> EmailMessage:
     msg = EmailMessage(policy=SMTP)
-    msg["From"] = header_value(mail.sender)
-    msg["To"] = header_value(mail.recipient)
+    # addresses and the Message-ID are validated values: sanitised, never cut, so the
+    # headers equal the SMTP envelope and the stored Message-ID
+    msg["From"] = header_value(mail.sender, limit=None)
+    msg["To"] = header_value(mail.recipient, limit=None)
     msg["Subject"] = subject(mail)
-    msg["Message-ID"] = header_value(mail.message_id)
+    msg["Message-ID"] = header_value(mail.message_id, limit=None)
     msg["Date"] = format_datetime(mail.date)
     msg["Auto-Submitted"] = "auto-generated"
     msg.set_content(body(mail), subtype="plain", charset="utf-8")

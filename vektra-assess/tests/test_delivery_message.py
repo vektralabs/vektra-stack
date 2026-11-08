@@ -99,3 +99,29 @@ def test_the_body_is_plain_italian_and_content_free() -> None:
     assert "EAASSESS" in subject and "501" in subject and "101" in subject
     assert parsed["Message-ID"] == m.message_id(TID, 1, REF, "vektra.example.org")
     assert parsed["To"] == "prof@unical.it"
+
+
+def test_a_long_course_never_pushes_the_ids_out_of_the_subject() -> None:
+    """CodeRabbit 4504367061."""
+    parsed = email.message_from_bytes(
+        _wire(_mail(course="C" * 400)), policy=policy.SMTP
+    )
+    subject = str(parsed["Subject"])
+    assert len(subject) <= m.MAX_HEADER_CHARS
+    for part in ("attivita 501", "studente 101", "sessione #2"):
+        assert part in subject
+
+
+def test_addresses_and_the_message_id_are_never_truncated() -> None:
+    """CodeRabbit 4504367067: the To header must equal the envelope recipient, the
+    Message-ID header the stored one."""
+    domain = ".".join(["d" * 60, "e" * 60, "f" * 60, "it"])
+    long_to = "x" * 64 + "@" + domain
+    assert len(long_to) > m.MAX_HEADER_CHARS
+    mid = f"<{'a' * 32}@{domain}>"
+    parsed = email.message_from_bytes(
+        _wire(_mail(recipient=long_to, sender=long_to, message_id=mid)),
+        policy=policy.SMTP,
+    )
+    assert str(parsed["To"]) == long_to and str(parsed["From"]) == long_to
+    assert str(parsed["Message-ID"]) == mid

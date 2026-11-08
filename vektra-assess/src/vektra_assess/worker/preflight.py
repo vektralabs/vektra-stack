@@ -45,6 +45,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from vektra_assess import privacy
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.context.assemble import assemble_context
@@ -182,13 +183,14 @@ class PartBRunner(Protocol):
 PrivacyCheck = Callable[[AsyncConnection, UUID], Awaitable[bool]]
 
 
-async def privacy_not_configured(_conn: AsyncConnection, _site: UUID) -> bool:
-    """BR-006 (h) until plan assess-privacy-retention binds the REQ-089 store: not configured.
+async def privacy_not_configured(conn: AsyncConnection, site: UUID) -> bool:
+    """BR-006 (h) until plan assess-privacy-retention binds the REQ-089 store: not configured
+    (``vektra_assess.privacy.is_configured``, the one definition the teacher's enable uses too).
 
     Fail closed: every Start is rolled back with ``privacy_not_configured``. Development only,
     ``VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET`` lets the gate pass (the worker refuses it elsewhere).
     """
-    return False
+    return await privacy.is_configured(conn, site)
 
 
 @dataclass(frozen=True)

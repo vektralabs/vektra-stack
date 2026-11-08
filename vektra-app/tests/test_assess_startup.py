@@ -152,6 +152,20 @@ async def test_the_api_refuses_the_smtp_account(
         await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_the_api_refuses_the_rag_flag(
+    secrets_dir: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    """Plan assess-teacher-ops / ARCH-072: VEKTRA_ASSESS_RAG_ENABLED=true is refused at
+    startup ("not available in this release"), assess enabled or not."""
+    if enabled:
+        _api_keys(secrets_dir)
+        monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_RAG_ENABLED", "true")
+    with pytest.raises(StartupValidationError, match="not available in this release"):
+        await assess_wiring.step_12_assess_check(_state_app(), MAIN_DSN)  # type: ignore[arg-type]
+
+
 async def test_disabled_clean_api_passes(secrets_dir: Path) -> None:
     app = _state_app()
     await assess_wiring.step_12_assess_check(app, MAIN_DSN)  # type: ignore[arg-type]

@@ -4,7 +4,8 @@ Codes are defined in ``vektra_shared.errors`` (the single registry, REQ-011); th
 only re-exports them and builds the assess envelopes. Owning plans:
 .s2s/plans/20261101-154950-assess-foundations (001-004),
 .s2s/plans/20261101-154950-assess-session-lifecycle (005-016) and
-.s2s/plans/20261101-154950-assess-transcript-delivery (017-021).
+.s2s/plans/20261101-154950-assess-transcript-delivery (017-021) and
+.s2s/plans/20261101-154950-assess-teacher-ops (022-023).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
 carries a student's text, a Moodle value or a row of another student.
@@ -34,6 +35,8 @@ from vektra_shared.errors import (
     ERR_ASSESS_019,
     ERR_ASSESS_020,
     ERR_ASSESS_021,
+    ERR_ASSESS_022,
+    ERR_ASSESS_023,
     ErrorCategory,
     ErrorResponse,
 )
@@ -60,10 +63,14 @@ __all__ = [
     "ERR_ASSESS_019",
     "ERR_ASSESS_020",
     "ERR_ASSESS_021",
+    "ERR_ASSESS_022",
+    "ERR_ASSESS_023",
     "activation_refused",
     "assess_unavailable",
     "bad_request",
     "capacity_reached",
+    "config_conflict",
+    "config_invalid",
     "deadline_passed",
     "download_token_invalid",
     "key_not_bound",
@@ -356,4 +363,31 @@ def teacher_unverified(*, stale: bool, role: str = "grader") -> ErrorResponse:
             "a retry will not succeed until that changes in Moodle."
         ),
         details={"reason": f"{role}_check_stale" if stale else f"not_{refused}"},
+    )
+
+
+# --- teacher configuration (plan assess-teacher-ops) ----------------------------------------
+
+
+def config_invalid(fields: list[dict[str, object]]) -> ErrorResponse:
+    """400 with every field-level error (BR-013, REQ-077). Each item is ``{field, code}`` plus
+    the rule's bounds (``range``, ``allowed_domains``...): codes and limits only, never the
+    submitted value."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_022,
+        message="The discussion configuration was not saved: some fields are invalid.",
+        remediation="Correct the fields listed in details.fields and save again.",
+        details={"fields": fields},
+    )
+
+
+def config_conflict(current_version: int) -> ErrorResponse:
+    """409: another save landed since this form was loaded (optimistic concurrency)."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_023,
+        message="The discussion configuration was changed meanwhile.",
+        remediation="Reload the settings page and save again.",
+        details={"current_version": int(current_version)},
     )

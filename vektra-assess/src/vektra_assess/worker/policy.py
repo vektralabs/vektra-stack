@@ -75,7 +75,8 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.ENROLMENT_RECHECK: _WS,
     JobKind.GATE_REFRESH: _WS,
     JobKind.RENDER_CHECK: _WS,
-    JobKind.TEACHER_GATE: _WS,  # plan 11: a handful of Moodle reads per activity
+    # plan 11: re-derived from VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S by ``load_policy``
+    JobKind.TEACHER_GATE: KindPolicy("ws", 65, 130),
     JobKind.CAPABILITY_PROBE: _WS,
     JobKind.TRANSCRIPT_GENERATE: KindPolicy("transcript", 30, 60),
     # up to 3 recipients through at most VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS sessions, each with
@@ -129,6 +130,36 @@ def _number(
     return float(value)
 
 
+#: a teacher_gate refresh is two sequential Moodle stages (resolve the cmid, then the editors
+#: and the facts concurrently), each bounded by the WS call deadline, plus its DB statements
+TEACHER_GATE_STAGES = 2
+TEACHER_GATE_DB_MARGIN_S = 5.0
+
+
+def teacher_gate_defaults(ws_total_s: float) -> KindPolicy:
+    budget = TEACHER_GATE_STAGES * ws_total_s + TEACHER_GATE_DB_MARGIN_S
+    return KindPolicy("ws", budget, 2 * budget)
+
+
+def _ws_total(env: Mapping[str, str]) -> float:
+    """``VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S`` validated by the settings class (range included)."""
+    from pydantic import ValidationError
+
+    raw = env.get("VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S")
+    if raw is None:
+        return float(VektraAssessSettings.model_fields["ws_total_timeout_s"].default)
+    try:
+        return float(
+            VektraAssessSettings.model_validate(
+                {"VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S": raw}
+            ).ws_total_timeout_s
+        )
+    except ValidationError:
+        raise WorkerPolicyError(
+            f"VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S={raw!r} is not a valid deadline"
+        ) from None
+
+
 def _start_t(env: Mapping[str, str]) -> float:
     """``VEKTRA_ASSESS_START_T_S`` validated by the settings class itself (its range included)."""
     from pydantic import ValidationError
@@ -171,9 +202,12 @@ def load_policy(env: Mapping[str, str]) -> WorkerPolicy:
             pools[pool] = int(_number(name, raw, int, MAX_COUNT))
 
     start_t = _start_t(env)
+    ws_total = _ws_total(env)
     for kind, base in KIND_DEFAULTS.items():
         if kind is JobKind.PREFLIGHT:
             base = preflight_defaults(start_t)
+        elif kind is JobKind.TEACHER_GATE:
+            base = teacher_gate_defaults(ws_total)
         names = {f: f"{_JOB_PREFIX}{kind.value.upper()}_{f}" for f in _KIND_FIELDS}
         known.update(names.values())
         budget, lease, attempts = base.budget_s, base.lease_s, base.max_attempts

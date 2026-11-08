@@ -153,3 +153,20 @@ def test_preflight_budget_and_lease_follow_start_t() -> None:
 def test_incoherent_preflight_settings_refuse_to_start(env: dict[str, str]) -> None:
     with pytest.raises(WorkerPolicyError):
         load_policy(env)
+
+
+def test_the_teacher_gate_budget_covers_its_two_moodle_stages() -> None:
+    """CodeRabbit 4505511249: a refresh resolves the cmid (one call) and then reads the editors
+    and the facts concurrently (one more call's deadline): the budget must cover two full WS
+    deadlines plus a DB margin, from the configured deadline."""
+    from vektra_assess.jobs import JobKind
+
+    default = load_policy({}).kinds[JobKind.TEACHER_GATE]
+    total = float(VektraAssessSettings.model_fields["ws_total_timeout_s"].default)
+    assert default.budget_s >= 2 * total + 5 and default.lease_s >= 2 * default.budget_s
+    slow = load_policy({"VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S": "90"}).kinds[
+        JobKind.TEACHER_GATE
+    ]
+    assert slow.budget_s >= 2 * 90 + 5 and slow.lease_s >= 2 * slow.budget_s
+    explicit = load_policy({"VEKTRA_ASSESS_JOB_TEACHER_GATE_BUDGET_S": "100"})
+    assert explicit.kinds[JobKind.TEACHER_GATE].budget_s == 100

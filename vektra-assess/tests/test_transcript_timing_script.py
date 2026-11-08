@@ -169,3 +169,60 @@ async def test_a_stalled_query_is_blocked(tmp_path: Path, monkeypatch) -> None: 
     async with asyncio.timeout(5):
         doc, _ = await t.amain(cfg, out_dir=tmp_path)
     assert doc["status"] == "BLOCKED" and "timed out" in doc["blockers"][0]
+
+
+async def test_a_connection_whose_close_hangs_does_not_hang_the_check(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504591102: the reachability probe's close is bounded too."""
+    import asyncio
+    import sys
+    import types
+
+    class Conn:
+        async def close(self) -> None:
+            await asyncio.sleep(30)
+
+    async def connect(*_a, **_kw):  # type: ignore[no-untyped-def]
+        return Conn()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    monkeypatch.setattr(t, "CLOSE_TIMEOUT_S", 0.2, raising=False)
+    cfg = t.Config.from_env(
+        {
+            "VEKTRA_NFR_ASSESS_DSN": "postgresql://x@h/db",
+            "VEKTRA_NFR_ASSESS_SINCE": "2026-11-08",
+        }
+    )
+    async with asyncio.timeout(3):
+        reasons = await t.blockers(cfg)
+    assert reasons and all(
+        "unreachable" not in r for r in reasons
+    )  # only the sink is missing
+
+
+async def test_a_database_failure_while_reading_is_blocked(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504591105: the database can fail after the reachability check."""
+    ids = tmp_path / "ids.txt"
+    ids.write_text("<x@y>\n")
+
+    async def no_blockers(_cfg):  # type: ignore[no-untyped-def]
+        return []
+
+    async def fails(_dsn, _since, **_kw):  # type: ignore[no-untyped-def]
+        raise ConnectionRefusedError("gone")
+
+    monkeypatch.setattr(t, "blockers", no_blockers)
+    monkeypatch.setattr(t, "fetch", fails)
+    cfg = t.Config.from_env(
+        {
+            "VEKTRA_NFR_ASSESS_DSN": "postgresql://x@127.0.0.1:1/db",
+            "VEKTRA_NFR_ASSESS_SINCE": "2026-11-08T10:00:00Z",
+            "VEKTRA_NFR_ASSESS_SINK_IDS": str(ids),
+        }
+    )
+    doc, path = await t.amain(cfg, out_dir=tmp_path)
+    assert doc["status"] == "BLOCKED" and "ConnectionRefusedError" in doc["blockers"][0]
+    assert path.is_file()

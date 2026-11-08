@@ -46,6 +46,7 @@ WITHIN_S = 900.0
 WITHIN_RATIO = 0.99
 #: the read of the run is bounded: a stalled database is BLOCKED, never a hang
 QUERY_TIMEOUT_S = 60.0
+CLOSE_TIMEOUT_S = 10.0
 #: the benchmark workload: every session has this many recipients, all closed within this window
 RECIPIENTS_PER_SESSION = 2
 CONCURRENT_WINDOW_S = 60.0
@@ -200,9 +201,14 @@ async def blockers(cfg: Config) -> list[str]:
             import asyncpg
 
             conn = await asyncio.wait_for(asyncpg.connect(_pg_dsn(cfg.dsn)), 5)
-            await conn.close()
         except Exception as exc:
             reasons.append(f"stack database unreachable ({type(exc).__name__})")
+        else:
+            # reachable is all this proves; a close that hangs must not hang the check
+            try:
+                await asyncio.wait_for(conn.close(), CLOSE_TIMEOUT_S)
+            except Exception:
+                pass
     return reasons
 
 
@@ -239,7 +245,7 @@ async def fetch(dsn: str, since: datetime) -> list[Sample]:
     try:
         rows = await conn.fetch(_QUERY, since, timeout=QUERY_TIMEOUT_S)
     finally:
-        await asyncio.wait_for(conn.close(), 10)
+        await asyncio.wait_for(conn.close(), CLOSE_TIMEOUT_S)
     out = []
     for r in rows:
         ds = r["deliveries"]
@@ -285,6 +291,9 @@ async def amain(cfg: Config, out_dir: Path = RESULTS) -> tuple[dict[str, Any], P
             samples = await fetch(cfg.dsn, cfg.since)
     except TimeoutError:
         doc = blocked_result([f"reading the run timed out after {QUERY_TIMEOUT_S:g} s"])
+        return doc, write_result(doc, out_dir)
+    except Exception as exc:  # the database failed after the reachability check
+        doc = blocked_result([f"reading the run failed ({type(exc).__name__})"])
         return doc, write_result(doc, out_dir)
     doc = evaluate(samples, ids)
     return doc, write_result(doc, out_dir)

@@ -450,3 +450,22 @@ def test_opening_fallback_bounds_attestation_and_later_only() -> None:
         started=False,
     )
     assert codes(naive) == [("opening_at", "timezone_required")]
+
+
+@pytest.mark.parametrize(
+    ("close", "attested", "expected"),
+    [
+        (None, None, (None, "unknown")),
+        (0, None, (None, "unknown")),  # no close configured, no teacher date
+        (100, None, (100, "activity_close")),
+        (100, 100, (100, "attested")),  # a tie: the teacher's date decides
+        (100, 200, (200, "attested")),
+        (100, 50, (100, "activity_close")),
+        (None, 70, (70, "attested")),
+    ],
+)
+def test_one_opening_rule_for_the_config_view_and_the_gate_panel(
+    close: int | None, attested: int | None, expected: tuple[int | None, str]
+) -> None:
+    """Review 11b-8: the config view and the session list's gate panel share it."""
+    assert v.opening_view(close, attested) == expected

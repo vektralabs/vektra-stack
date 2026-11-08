@@ -130,6 +130,21 @@ def effective_opening(close_at: int | None, attested_at: int | None) -> int | No
     return max(known) if known else None
 
 
+def opening_view(
+    close_at: int | None, attested_at: int | None
+) -> tuple[int | None, str]:
+    """The effective opening and what decides it, as the teacher pages show it (the config
+    view and the session list's gate panel share this one rule): ``attested`` when the REQ-091
+    date decides (or ties the close), ``activity_close`` when the activity's own close does,
+    ``unknown`` when neither is known."""
+    opening = effective_opening(close_at, attested_at)
+    if opening is None:
+        return None, "unknown"
+    if attested_at is not None and attested_at >= (close_at or 0):
+        return opening, "attested"
+    return opening, "activity_close"
+
+
 def check_end_date(end_at: datetime, opening_at: int | None) -> list[FieldError]:
     if end_at.tzinfo is None:
         return [FieldError("available_until", "timezone_required")]

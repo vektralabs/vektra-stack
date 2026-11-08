@@ -395,3 +395,30 @@ async def test_stale_facts_refuse_every_operation_queue_a_refresh_and_change_not
                 )
                 == 0
             )
+
+
+async def test_the_config_view_and_the_gate_panel_show_the_same_opening(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review 11b-8: one rule, two pages; an attested date, then one before the close."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        for attested_sql, source in (
+            ("to_timestamp(1900000100)", "attested"),
+            ("to_timestamp(1899999000)", "activity_close"),
+        ):
+            await configure_activity(pg, w.site, 906, attested=False)
+            await pg.run(
+                "super",
+                f"UPDATE assess_activity_config SET attested_opening_at = {attested_sql} "
+                "WHERE site_id = :s AND cmid = 906",
+                {"s": w.site},
+            )
+            await seed_teacher_gate(
+                pg, w.site, 906, close_at=1_900_000_000, editors=[GRADER]
+            )
+            config = await w.client.get(
+                "/api/v1/assess/activities/906/config", headers=list_headers()
+            )
+            panel = await w.client.get(list_url(906), headers=list_headers())
+            assert config.status_code == panel.status_code == 200
+            assert config.json()["opening"] == panel.json()["gate"]["opening"]
+            assert panel.json()["gate"]["opening"]["source"] == source

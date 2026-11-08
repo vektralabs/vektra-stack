@@ -107,13 +107,7 @@ async def _gate_panel(
     close_at = close if isinstance(close, int) and not isinstance(close, bool) else None
     attested = (await conn.execute(_CONFIG, {"s": site, "c": cmid})).scalar()
     fallback = v.fallback_needed(kind, await readable_close_flags(conn, site))
-    opening = v.effective_opening(close_at, attested)
-    if opening is None:
-        source = "unknown"
-    elif attested is not None and attested >= (close_at or 0):
-        source = "attested"
-    else:
-        source = "activity_close"
+    opening, source = v.opening_view(close_at, attested)
     holder = facts.get("override_holder")
     panel: dict[str, Any] = {
         "opening": {"at": iso_time(opening), "source": source},

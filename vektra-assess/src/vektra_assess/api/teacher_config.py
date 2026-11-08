@@ -395,13 +395,7 @@ async def _view(conn: Any, site: UUID, cmid: int, gate: TeacherGate) -> dict[str
     flags = dict(row.flags or {}) if row is not None else {}
     attested = row.attested_at if row is not None else None
     end_at = row.end_at if row is not None else None
-    opening = v.effective_opening(facts.close_at, attested)
-    if opening is None:
-        source = "unknown"
-    elif attested is not None and attested >= (facts.close_at or 0):
-        source = "attested"  # REQ-091: the teacher's date decides (or ties the close)
-    else:
-        source = "activity_close"
+    opening, source = v.opening_view(facts.close_at, attested)
     rec_set, rec_n = sealed.get(TRANSCRIPT_RECIPIENTS, (False, None))
     review = (await conn.execute(_REVIEW, {"s": site})).scalar()
     active = int((await conn.execute(_ACTIVE, {"s": site, "c": cmid})).scalar() or 0)

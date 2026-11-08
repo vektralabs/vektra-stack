@@ -200,6 +200,14 @@ _STALE_WAITING = text(
     "FOR UPDATE SKIP LOCKED"
 )
 _DEFER = text("UPDATE assess_deliveries SET not_before = :nb WHERE id = :i")
+#: the same expiry as _EXPIRE, for ONE row, in the claim's own transaction
+_EXPIRE_ONE = text(
+    "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = 'window_expired', "
+    "attempt_started_at = NULL WHERE id = :i AND status IN ('PENDING', 'RETRYING') "
+    "AND created_at < :cutoff "
+    "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
+    "RETURNING id, round, recipient_ref"
+)
 _SENT = text(
     "UPDATE assess_deliveries SET status = 'SENT', sent_at = :now, smtp_code = :code, "
     "message_id = :mid, last_error_class = NULL, attempt_started_at = NULL "
@@ -508,6 +516,31 @@ async def _claim(
         t.id, int(due.round), due.recipient_ref or "", deps.message_id_domain
     )
     async with acquire() as conn, conn.begin():
+        # the window may have ended while the job waited for a relay session: checked again
+        # in the claim's own transaction (CodeRabbit 4504591114)
+        gone = (
+            await conn.execute(
+                _EXPIRE_ONE,
+                {
+                    "i": row_id,
+                    "cutoff": now - deps.window - deps.stale_after,
+                    "stale": now - deps.stale_after,
+                },
+            )
+        ).first()
+        if gone is not None:
+            await _audit(
+                conn,
+                AssessAuditEvent.DELIVERY_FAILED,
+                t,
+                reason=WINDOW_EXPIRED,
+                round=int(gone.round),
+                ref=gone.recipient_ref,
+                delivery_id=str(gone.id),
+            )
+            out.failed += 1
+            _alert("delivery_failed", session_id=str(t.id), reason_code=WINDOW_EXPIRED)
+            return None
         c = (
             await conn.execute(
                 _CLAIM_ONE,

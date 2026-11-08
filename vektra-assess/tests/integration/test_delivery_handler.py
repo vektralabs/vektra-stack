@@ -849,3 +849,41 @@ async def test_an_address_removed_while_waiting_for_a_session_is_not_mailed(
         await h.deliver_transcript(deps, worker.connect, s.session_id)
         by = {r.recipient_ref: r.status for r in await rows(pg, s.session_id)}
         assert by[recipient_ref(w.site, b)] == "REPLACED" and sink.to(b) == []
+
+
+async def test_a_row_that_expires_while_waiting_for_a_session_is_not_sent(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504591114: the expiry is checked again, atomically, at the claim: a row
+    whose window ends while the job waits for a relay session is FAILED, not sent."""
+    import asyncio
+
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        sender = SmtpSender(sink_config(sink, max_connections=1))
+        sender.slot_wait_s = 10
+        deps = _deps(ring, config, sink, clock, sender=sender)
+        held, release = asyncio.Event(), asyncio.Event()
+
+        async def hog() -> None:
+            async with sender.slot():
+                held.set()
+                await release.wait()
+
+        hogging = asyncio.create_task(hog())
+        await held.wait()
+        job = asyncio.create_task(
+            h.deliver_transcript(deps, worker.connect, s.session_id)
+        )
+        await asyncio.sleep(0.5)  # past the fan-out and its expiry check
+        clock.advance(hours=80)
+        release.set()
+        await hogging
+        got = await job
+        assert got is not None and got.sent == 0 and got.failed == 2
+        assert {
+            (r.status, r.last_error_class) for r in await rows(pg, s.session_id)
+        } == {("FAILED", "window_expired")}
+        assert sink.messages == []

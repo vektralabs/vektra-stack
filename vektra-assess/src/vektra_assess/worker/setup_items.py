@@ -87,15 +87,19 @@ def smtp_probe_item(
         if not configured:
             return missing("smtp_not_configured")
         row = await read()
+        # at most ONE probe per item run (CodeRabbit 4506450166): each is bounded by the SMTP
+        # worst case (about 65 s by default), and two would use up the 120 s setup budget
+        probed = False
         if probe is not None and (row is None or float(row.age) > SMTP_PROBE_MAX_AGE_S):
             await probe()
+            probed = True
             row = await read()
         if row is None:
             return missing("smtp_never_probed")
         if float(row.age) > SMTP_PROBE_MAX_AGE_S:
             return missing("smtp_probe_stale")
         verdict = _judge(row.details, float(row.now))
-        if verdict is None and probe is not None:
+        if verdict is None and probe is not None and not probed:
             # busy with no earlier result to go by: probe once more (finding 2)
             await probe()
             row = await read()

@@ -193,6 +193,24 @@ async def test_a_busy_row_without_history_is_probed_again(pg, tmp_path) -> None:
         sink.stop()
 
 
+async def test_the_item_probes_the_relay_at_most_once(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506450166: a stale row probed into a busy one must not be probed again, or
+    two bounded probes (about 65 s each) could use up the 120 s setup-check budget before the
+    capability probes and the report are written."""
+    from vektra_assess.delivery.smtp import SlotBusy
+
+    calls = []
+
+    class Busy:
+        async def probe(self) -> Any:
+            calls.append(1)
+            raise SlotBusy
+
+    await _smtp_row(pg, OK_ROW, age_s=setup_items.SMTP_PROBE_MAX_AGE_S + 60)
+    assert await smtp(pg, prober=Busy()) == Outcome(UNVERIFIABLE, "smtp_busy")
+    assert len(calls) == 1
+
+
 async def test_a_busy_probe_keeps_the_last_real_result_with_its_time(pg) -> None:  # type: ignore[no-untyped-def]
     """``run_probe`` writes ``last`` on a busy outcome with the time of that real result,
     carried unchanged across several busy ones (CodeRabbit 4506450148)."""

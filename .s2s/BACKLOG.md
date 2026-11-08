@@ -1613,7 +1613,7 @@ In today's deploy there is one widget per page and init fires once, so the impac
 **Status**: planned | **Priority**: low | **Created**: 2026-04-21
 **Origin**: CodeRabbit review on PR #66 (v0.5.0), `vektra-core/tests/test_pipeline.py:423-497`
 
-**Context**: the streaming path (`execute_stream` in both `SimpleQueryPipeline` and `AdvancedQueryPipeline`) was the regression vector fixed by commit `45437c8` (missing `document_name` in `sources_data` dict of `AdvancedQueryPipeline.execute_stream`). Current unit coverage exercises `execute()` via `test_execute_populates_document_name` and is cross-checked end-to-end by the Kalypso smoke test. Adding a dedicated unit assertion on the streamed `sources` payload would catch the same regression at fastest feedback.
+**Context**: the streaming path (`execute_stream` in both `SimpleQueryPipeline` and `AdvancedQueryPipeline`) was the regression vector fixed by commit `45437c8` (missing `document_name` in `sources_data` dict of `AdvancedQueryPipeline.execute_stream`). Current unit coverage exercises `execute()` via `test_execute_populates_document_name` and is cross-checked end-to-end by the live smoke test. Adding a dedicated unit assertion on the streamed `sources` payload would catch the same regression at fastest feedback.
 
 **Proposed approach**: mirror `test_execute_populates_document_name` using the existing `_collect_stream()` helper: monkeypatch `pipeline_mod._fetch_document_names` to the same hit/miss fakes and assert each streamed `QueryChunk(type="sources", ...).data[*]["document_name"]` matches expectations. Add the same test for `AdvancedQueryPipeline`.
 
@@ -2940,7 +2940,7 @@ The backend stores conversation turns in the database (used for multi-turn query
 - [x] System prompt explains context structure to the model
 - [x] System prompt instructs model to not reference retrieval mechanics to users
 - [x] System prompt instructs model to handle truncated sources gracefully
-- [x] Tested on Kalypso with real queries: no RAG internals leakage observed
+- [x] Tested on a live stack with real queries: no RAG internals leakage observed
 
 ---
 

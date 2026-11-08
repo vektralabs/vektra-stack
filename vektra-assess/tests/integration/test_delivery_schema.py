@@ -18,7 +18,7 @@ pytestmark = pytest.mark.integration
 
 
 def ref(n: int) -> str:
-    return hashlib.sha256(f"site|r{n}@unical.it".encode()).hexdigest()
+    return hashlib.sha256(f"site|r{n}@uni.example".encode()).hexdigest()
 
 
 async def _address(pg, tid, n, status="PENDING", round_=1):  # type: ignore[no-untyped-def]
@@ -57,7 +57,7 @@ async def test_an_address_row_has_a_ref_and_no_user_id(pg) -> None:  # type: ign
         await pg.run(
             "worker",
             "INSERT INTO assess_deliveries (transcript_id, recipient_kind, recipient_ref) "
-            "VALUES (:t, 'address', 'prof@unical.it')",
+            "VALUES (:t, 'address', 'prof@uni.example')",
             {"t": tid},
         )
 

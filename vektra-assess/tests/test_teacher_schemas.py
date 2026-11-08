@@ -40,14 +40,14 @@ def test_absent_null_and_value_are_three_states() -> None:
 @pytest.mark.parametrize(
     "bad",
     [
-        {"recipients_extra": ["a@unical.it"]},  # unknown field
+        {"recipients_extra": ["a@uni.example"]},  # unknown field
         {"cap_minutes": "30"},  # strict int
         {"enabled": "true"},  # strict bool
         {"rubric_source": "html"},
         {"activity_type": "forum"},
         {"actor_userid": 0},
         {"expected_version": -1},
-        {"transcript_recipients": ["a@unical.it"] * 21},
+        {"transcript_recipients": ["a@uni.example"] * 21},
     ],
 )
 def test_malformed_bodies_are_refused(bad: dict[str, object]) -> None:

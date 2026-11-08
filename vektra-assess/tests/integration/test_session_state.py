@@ -450,8 +450,8 @@ async def test_eligible_names_the_recipients_masked_from_the_teacher_config(
         assert inputs["graders"] == sorted(graders)
         view = (await state(w, await w.presession(sub=STU1, cmid=cm))).json()
         assert view["pre_session"]["recipients"] == [
-            {"role": "recipient", "name": "p***@unical.it"},
-            {"role": "recipient", "name": "m***@unical.it"},
+            {"role": "recipient", "name": "p***@uni.example"},
+            {"role": "recipient", "name": "m***@uni.example"},
         ]
         dumped = json.dumps(view) + json.dumps(inputs)
         for address in TEACHERS:

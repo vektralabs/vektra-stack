@@ -123,11 +123,11 @@ def test_an_unknown_site_timezone_blocks_only_an_enabled_assess() -> None:
 @pytest.mark.parametrize(
     "bad",
     [
-        "Vektra <vektra@unical.it>",
-        "<vektra@unical.it>",
-        "vektra @unical.it",
-        "vektra@unical.it\r\nBcc: x@evil.example",
-        "vektra@unical.it, other@unical.it",
+        "Vektra <vektra@uni.example>",
+        "<vektra@uni.example>",
+        "vektra @uni.example",
+        "vektra@uni.example\r\nBcc: x@evil.example",
+        "vektra@uni.example, other@uni.example",
         "vektra",
     ],
 )
@@ -140,9 +140,9 @@ def test_the_smtp_from_is_a_bare_address(bad: str) -> None:
     with pytest.raises(ValidationError, match="VEKTRA_ASSESS_SMTP_FROM"):
         VektraAssessSettings.model_validate({"VEKTRA_ASSESS_SMTP_FROM": bad})
     ok = VektraAssessSettings.model_validate(
-        {"VEKTRA_ASSESS_SMTP_FROM": " Vektra@Unical.IT "}
+        {"VEKTRA_ASSESS_SMTP_FROM": " Vektra@Uni.EXAMPLE "}
     )
-    assert ok.smtp_from == "Vektra@unical.it"
+    assert ok.smtp_from == "Vektra@uni.example"
 
 
 # --- plan assess-teacher-ops: startup refusals ------------------------------------------------

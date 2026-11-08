@@ -244,11 +244,28 @@ async def test_a_close_that_times_out_never_masks_the_query_result(monkeypatch) 
     import sys
     import types
 
+    close_called = False
+
     class Conn:
         async def fetch(self, *_a, **_kw):  # type: ignore[no-untyped-def]
-            return []
+            # a row with a delivery: the result read before the hang must survive it
+            return [
+                {
+                    "closed_at": T0,
+                    "generated_at": T0,
+                    "deliveries": [
+                        {
+                            "status": "SENT",
+                            "sent_at": T0.isoformat(),
+                            "message_id": "<m@x>",
+                        }
+                    ],
+                }
+            ]
 
         async def close(self) -> None:
+            nonlocal close_called
+            close_called = True
             await asyncio.sleep(30)
 
     async def connect(*_a, **_kw):  # type: ignore[no-untyped-def]
@@ -258,4 +275,5 @@ async def test_a_close_that_times_out_never_masks_the_query_result(monkeypatch) 
     monkeypatch.setattr(t, "CLOSE_TIMEOUT_S", 0.2)
     async with asyncio.timeout(3):
         got = await t.fetch("postgresql://x@h/db", T0)
-    assert got == []
+    assert close_called  # the hanging close was exercised, not skipped
+    assert got == [t.Sample(T0, T0, (t.Delivery("SENT", T0, "<m@x>"),))]

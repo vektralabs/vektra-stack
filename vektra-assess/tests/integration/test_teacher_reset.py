@@ -218,7 +218,7 @@ async def test_reset_refusals_then_a_new_session_with_earlier_bytes_unchanged(
             json.dumps([j[0] for j in jobs]),
             *texts,
         ):
-            assert CANARY not in place and "2718" not in place
+            assert CANARY not in place  # (a digit substring would match random hashes)
         assert all(CANARY.encode() not in bytes(t[0]) for t in turns)
         # the grader list shows it (and only there)
         r = await w.client.get(

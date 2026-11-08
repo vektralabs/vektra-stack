@@ -619,15 +619,18 @@ async def test_an_unrepresentable_end_date_is_a_400(pg, pair) -> None:  # type: 
     """CodeRabbit 4505511246, through the route: never a 500 when the value is stored."""
     ctx, w = await ready(pg, pair)
     try:
+        before = await counts(pg, w.site)
         r = await w.client.put(
             url(60),
-            json=body(available_until="9999-12-31T23:30:00-01:00"),
+            json=body(cap_minutes=30, available_until="9999-12-31T23:30:00-01:00"),
             headers=auth("teacher"),
         )
         assert r.status_code == 400, r.text
         assert err(r)["details"]["fields"] == [
             {"field": "available_until", "code": "out_of_range"}
         ]
+        # review 2 nitpick: the valid field of the rejected request was not saved either
+        assert await counts(pg, w.site) == before
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -647,5 +650,30 @@ async def test_a_naive_end_date_is_a_field_error_even_at_the_range_edge(
             assert err(r)["details"]["fields"] == [
                 {"field": "available_until", "code": "timezone_required"}
             ]
+    finally:
+        await ctx.__aexit__(None, None, None)
+
+
+async def test_a_secret_without_the_sealing_key_is_refused_and_saves_nothing(
+    pg, pair
+) -> None:  # type: ignore[no-untyped-def]
+    """Review 2 nitpick: an API without the worker's public key must refuse a secret field
+    (503 teacher_config_key) before saving any part of the request."""
+    ctx, w = await ready(pg, pair)
+    try:
+        del w.app.state.assess_keys[route.PUBLIC_KEY]
+        before = await counts(pg, w.site)
+        r = await w.client.put(
+            url(60), json=body(cap_minutes=30, solution="x"), headers=auth("teacher")
+        )
+        assert r.status_code == 503, r.text
+        assert err(r)["code"] == "ERR-ASSESS-001"
+        assert "teacher_config_key" in err(r)["remediation"]
+        assert await counts(pg, w.site) == before
+        # a save with no secret field needs no key
+        r = await w.client.put(
+            url(60), json=body(cap_minutes=30), headers=auth("teacher")
+        )
+        assert r.status_code == 200, r.text
     finally:
         await ctx.__aexit__(None, None, None)

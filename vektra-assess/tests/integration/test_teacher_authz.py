@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -148,22 +149,30 @@ async def test_a_transient_unresolved_row_is_stale_and_asks_again(pg, reason) ->
     assert len(await jobs(pg, site)) == 1
 
 
-async def test_the_facts_are_dated_when_they_were_read_not_when_stored(pg) -> None:  # type: ignore[no-untyped-def]
-    """CodeRabbit 4505511259: freshness must count from before the Moodle reads; a slow read
-    stored at the end would look fresher than the list it carries."""
+@pytest.mark.parametrize("existing", [False, True])
+async def test_the_facts_are_dated_when_they_were_read_not_when_stored(
+    pg, existing
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4505511259 / 4505705706: freshness counts from before the Moodle reads; a slow
+    read stored at the end would look fresher than the list it carries. Both the insert and the
+    ON CONFLICT update (review 2 nitpick) store the clock read before the reads began."""
     import asyncio
 
     from vektra_assess.worker.teacher_gate import refresh_teacher_gate
 
+    began: list[Any] = []
+
     class Slow:
         async def teacher_facts(self, *_a, **_k):  # type: ignore[no-untyped-def]
+            began.append((await pg.run("super", "SELECT clock_timestamp()"))[0][0])
             await asyncio.sleep(2.0)
             return {"resolved": True, "editors": [EDITOR]}
 
     site = await make_site(pg)
+    if existing:
+        await seed_gate(pg, site, 57, age="1 day")
     engine = create_async_engine(pg.url("worker"))
     try:
-        t0 = (await pg.run("super", "SELECT clock_timestamp()"))[0][0]
         await refresh_teacher_gate(Slow(), engine.connect, site, 57, COURSE, "assign")
     finally:
         await engine.dispose()
@@ -174,4 +183,6 @@ async def test_the_facts_are_dated_when_they_were_read_not_when_stored(pg) -> No
             {"s": site},
         )
     )[0]
-    assert (stamp - t0).total_seconds() < 1.0, (stamp, t0)
+    # dated no later than the moment the Moodle read began, and (update) not the old stamp
+    assert stamp <= began[0], (stamp, began[0])
+    assert (began[0] - stamp).total_seconds() < 1.0

@@ -102,8 +102,11 @@ async def test_tampering_is_a_mismatch_with_one_audit_row(pg: Pg, what: str) -> 
         if what in ("ciphertext", "both"):
             await c.execute(
                 text(
-                    "UPDATE assess_snapshots SET ciphertext = overlay(ciphertext placing "
-                    "'\\xff'::bytea from length(ciphertext) - 20 for 1) WHERE session_id=:s"
+                    # XOR, not overwrite: a byte that already was 0xff (1 run in 256)
+                    # would leave the ciphertext intact and the test would flake
+                    "UPDATE assess_snapshots SET ciphertext = set_byte(ciphertext, "
+                    "length(ciphertext) - 21, get_byte(ciphertext, length(ciphertext) - 21) # 255) "
+                    "WHERE session_id=:s"
                 ),
                 {"s": sid},
             )

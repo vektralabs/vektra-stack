@@ -452,3 +452,43 @@ async def test_a_cap_change_never_moves_a_started_sessions_deadline(
             {"s": w.site, "c": s.cmid},
         )
         assert tuple(cfg[0]) == (90, 1)
+
+
+async def test_two_concurrent_first_saves_yield_one_row_and_a_409(pg, pair) -> None:  # type: ignore[no-untyped-def]
+    """Review 2: a first save has no row to lock. While another first save holds its INSERT
+    uncommitted, this one waits, then is told the version moved (409), never a 500."""
+    import asyncio
+
+    from sqlalchemy import text as sql
+
+    ctx, w = await ready(pg, pair, cmid=63)
+    try:
+        other = create_async_engine(pg.url("api"))
+        try:
+            async with other.connect() as conn:
+                await conn.execute(
+                    sql(
+                        "INSERT INTO assess_activity_config (site_id, cmid, activity_type, "
+                        "version, updated_by) VALUES (:s, 63, 'assign', 1, :u)"
+                    ),
+                    {"s": w.site, "u": OTHER},
+                )
+                task = asyncio.create_task(
+                    w.client.put(
+                        url(63), json=body(cap_minutes=30), headers=auth("teacher")
+                    )
+                )
+                await asyncio.sleep(
+                    1.0
+                )  # the PUT is now blocked on the uncommitted row
+                assert not task.done()
+                await conn.commit()
+            r = await task
+        finally:
+            await other.dispose()
+        assert r.status_code == 409, r.text
+        assert err(r)["code"] == "ERR-ASSESS-023"
+        assert err(r)["details"] == {"current_version": 1}
+        assert (await counts(pg, w.site))[0] == 1
+    finally:
+        await ctx.__aexit__(None, None, None)

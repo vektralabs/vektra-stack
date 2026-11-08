@@ -84,7 +84,13 @@ _SEALED = text(
 _INSERT = text(
     "INSERT INTO assess_activity_config (site_id, cmid, activity_type, enabled, flags, "
     "rag_enabled, end_at, cap_minutes, version, updated_by, updated_at) VALUES (:s, :c, :t, :e, "
-    "CAST(:f AS jsonb), false, :end, :cap, 1, :u, now())"
+    "CAST(:f AS jsonb), false, :end, :cap, 1, :u, now()) "
+    # a first save has no row to lock: a concurrent first save that committed meanwhile makes
+    # this a version conflict (409), never a unique violation (500)
+    "ON CONFLICT (site_id, cmid) DO NOTHING"
+)
+_VERSION = text(
+    "SELECT version FROM assess_activity_config WHERE site_id = :s AND cmid = :c"
 )
 _UPDATE = text(
     "UPDATE assess_activity_config SET enabled = :e, flags = CAST(:f AS jsonb), end_at = :end, "
@@ -360,7 +366,9 @@ async def _save(
         "u": body.actor_userid,
     }
     if row is None:
-        await conn.execute(_INSERT, {**params, "t": kind})
+        if not (await conn.execute(_INSERT, {**params, "t": kind})).rowcount:
+            now = (await conn.execute(_VERSION, {"s": site, "c": cmid})).scalar()
+            raise fail(config_conflict(int(now or 0)))
     else:
         done = (await conn.execute(_UPDATE, {**params, "v": current_version})).rowcount
         if (

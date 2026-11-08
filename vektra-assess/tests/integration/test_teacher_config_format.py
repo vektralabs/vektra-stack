@@ -113,3 +113,38 @@ async def test_a_cleared_recipients_field_reads_as_unreadable(pg) -> None:  # ty
             assert await reader.read(conn, site, 13) is None
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("field", "flags"),
+    [
+        ("solution", {"show_solution": True, "rubric_source": "none"}),
+        ("pasted_rubric", {"show_solution": False, "rubric_source": "pasted"}),
+    ],
+)
+async def test_a_needed_field_that_does_not_open_fails_the_capture_closed(  # type: ignore[no-untyped-def]
+    pg, field, flags
+) -> None:
+    """Review 1: a seal the worker cannot open (another key) for a field the activity needs
+    rolls the Start back; it never starts without the solution or the pasted rubric."""
+    from vektra_assess.context.capture.capture import Failed, FailReason
+
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        site = await make_site(pg)
+        await configure_activity(pg, site, 14)
+        other_pub, _ = config_pair("x9")
+        _, priv = config_pair()
+        await configure_recipients(
+            pg, site, 14, pair=(other_pub, priv), extra={field: "testo"}
+        )
+        src = MoodleStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
+        target = _target(
+            site, 14, show=flags["show_solution"], source=flags["rubric_source"]
+        )
+        got = await src.capture(target)
+        assert got == Failed(
+            FailReason.POLICY_INPUT_UNREADABLE, "teacher_config_unreadable"
+        )
+    finally:
+        await engine.dispose()

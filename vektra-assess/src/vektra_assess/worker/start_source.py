@@ -485,7 +485,9 @@ class MoodleStartSource:
 
     async def _context(
         self, target: StartTarget
-    ) -> tuple[SiteRef, Capabilities, str | None, str | None] | None:
+    ) -> tuple[SiteRef, Capabilities, str | None, str | None, bool] | None:
+        """(site, capabilities, solution, pasted rubric, whether a NEEDED sealed field failed to
+        open); None when the site is unknown."""
         async with self._acquire() as conn:
             site = (await conn.execute(_SITE, {"s": target.site_id})).first()
             if site is None or not site.release:
@@ -503,23 +505,31 @@ class MoodleStartSource:
             if rubric_source_of(target.flags, kind) == "pasted":
                 wanted.append(PASTED_RUBRIC)
             solution = pasted = None
+            unreadable = False
             if wanted and self._teacher_private is not None:
                 opened = await read_teacher_config(
                     conn, self._teacher_private, target.site_id, target.cmid, wanted
                 )
                 solution, pasted = opened.solution, opened.pasted_rubric
+                # a field the activity needs that does not open fails closed (never a session
+                # silently started without its solution or pasted rubric)
+                unreadable = bool(opened.unreadable & set(wanted))
         ref = SiteRef(str(target.site_id), str(site.base_url), str(site.release))
         capabilities = Capabilities(
             review_html_filterable=caps.get("review_html_filterable", "unreadable"),
             rubric_display_settings=caps.get("rubric_display_settings", "unreadable"),
         )
-        return ref, capabilities, solution, pasted
+        return ref, capabilities, solution, pasted, unreadable
 
     async def capture(self, target: StartTarget) -> CaptureResult:
         ctx = await self._context(target)
         if ctx is None:
             return Failed(FailReason.POLICY_INPUT_UNREADABLE, "site_release_unknown")
-        site, caps, solution, pasted = ctx
+        site, caps, solution, pasted, unreadable = ctx
+        if unreadable:
+            return Failed(
+                FailReason.POLICY_INPUT_UNREADABLE, "teacher_config_unreadable"
+            )
         kind = "quiz" if target.activity_type == "quiz" else "assign"
         ref, _not_found = await self._resolve(site, target)
         self._resolved.pop(target.session_id)

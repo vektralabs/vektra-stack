@@ -169,7 +169,16 @@ def _run_worker_once(
 @pytest.mark.parametrize(
     ("label", "env", "needle"),
     [
-        ("a production slot is unbound", {}, "job:transcript_generate"),
+        (
+            "a production slot is unbound",
+            # a relay is configured (plan 10b refuses to start without one before the slots
+            # are checked), the unbound override is not set
+            {
+                "VEKTRA_ASSESS_SMTP_HOST": "relay.example.org",
+                "VEKTRA_ASSESS_SMTP_FROM": "vektra@example.org",
+            },
+            "job:transcript_generate",
+        ),
         (
             "lease shorter than twice the budget",
             {

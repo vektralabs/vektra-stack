@@ -83,8 +83,18 @@ async def seed_render(
     *,
     moodle_reasons: list[str] | None = None,
     age: str = "1 second",
+    attested_at: Any = "current",
 ) -> None:
-    """A render evaluation as the worker stores it (``moodle_reasons``: the Moodle half)."""
+    """A render evaluation as the worker stores it (``moodle_reasons``: the Moodle half,
+    ``attested_at``: the REQ-091 date it was evaluated with; "current" = the stored one)."""
+    if attested_at == "current":
+        rows = await pg.run(
+            "super",
+            "SELECT extract(epoch FROM attested_opening_at)::bigint "
+            "FROM assess_activity_config WHERE site_id = :s AND cmid = :c",
+            {"s": site, "c": cmid},
+        )
+        attested_at = rows[0][0] if rows else None
     inputs: dict[str, Any] = {
         "code": "already_discussed",
         "state": "closed",
@@ -93,6 +103,7 @@ async def seed_render(
     }
     if moodle_reasons is not None:
         inputs["moodle_reasons"] = moodle_reasons
+        inputs["attested_at"] = attested_at
     await pg.run(
         "worker",
         "INSERT INTO assess_gate_inputs (site_id, student_userid, cmid, inputs, refreshed_at) "

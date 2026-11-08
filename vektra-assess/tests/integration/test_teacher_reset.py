@@ -450,3 +450,43 @@ async def test_a_slow_render_is_dated_when_its_reads_began(pg, worker) -> None: 
             )
         )[0]
         assert 0 <= float(lag) < 1.0  # dated before the 1.5 s of reads, not after
+
+
+async def test_a_render_made_before_the_fallback_moved_is_not_current(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506916913: the Moodle half of a reset must have been evaluated with the
+    CURRENT REQ-091 date: after the teacher moves it, an earlier render is stale (refresh
+    queued), and one made with the new date counts."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, seeded = await live_sessions(w, worker, [7701])
+        sid = seeded[7701][0]
+        await seed_teacher_gate(pg, w.site, cmid)
+        await close(worker, sid)
+        (attested,) = (
+            await pg.run(
+                "super",
+                "SELECT extract(epoch FROM attested_opening_at)::bigint "
+                "FROM assess_activity_config WHERE site_id = :s AND cmid = :c",
+                {"s": w.site, "c": cmid},
+            )
+        )[0]
+        await seed_render(
+            pg, w.site, 7701, cmid, moodle_reasons=[], attested_at=attested
+        )
+        # the teacher moves the date (later): the render above no longer describes the gate
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET attested_opening_at = "
+            "attested_opening_at + interval '1 hour' WHERE site_id = :s AND cmid = :c",
+            {"s": w.site, "c": cmid},
+        )
+        r = await reset(w, cmid, sid)
+        assert r.status_code == 409, r.text
+        assert err(r)["details"]["reason"] == "gate_inputs_stale"
+        await seed_render(
+            pg, w.site, 7701, cmid, moodle_reasons=[], attested_at=attested + 3600
+        )
+        r = await reset(w, cmid, sid)
+        assert r.status_code == 201, r.text

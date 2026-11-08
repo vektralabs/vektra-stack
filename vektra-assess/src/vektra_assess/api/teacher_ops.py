@@ -266,6 +266,8 @@ async def reset_session(
             and float(render.age_s) <= settings.teacher_gate_max_age_s
             and isinstance(inputs, dict)
             and isinstance(inputs.get("moodle_reasons"), list)
+            # evaluated with the REQ-091 date in force now (a moved date changes gate (d))
+            and inputs.get("attested_at") == cfg.attested_at
         )
         if not fresh:
             # the Moodle half is evaluated by the worker: ask for it and let the teacher retry

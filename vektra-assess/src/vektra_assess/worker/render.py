@@ -6,8 +6,9 @@ hint) evaluate the SAME ``evaluate_start_gates`` the pre-flight uses, on fresh r
 - ``assess_render_state``: the advisory REQ-068 state and the content-free reason code;
 - ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 11b)
   ``moodle_reasons``: every failing gate code that needs Moodle facts (``gates.DB_SIDE``
-  excluded), present only when the Moodle half was actually evaluated, which a teacher reset
-  (REQ-087) re-checks against; plus (plan 10)
+  excluded), present only when the Moodle half was actually evaluated, with ``attested_at`` (the
+  REQ-091 date it was evaluated with), which a teacher reset (REQ-087) re-checks against while
+  that date is unchanged; plus (plan 10)
   ``graders`` (the course's grader user ids, for the API's fresh grader check) when Moodle could
   be read, and ``recipients`` (``{role: "recipient", name: "m***@domain"}``: the transcript
   recipients of the sealed teacher config, local part masked, REQ-082 as amended) when the config
@@ -121,6 +122,7 @@ async def evaluate_render(
     userid: int,
     cmid: int,
     courseid_hint: int | None = None,
+    seen: dict[str, Any] | None = None,
 ) -> tuple[GateDecision, StartTarget | None]:
     """The advisory decision and the target it was evaluated for (None: no configuration row).
 
@@ -135,6 +137,10 @@ async def evaluate_render(
         )
     if act is None:
         return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), None
+    if seen is not None:
+        # the REQ-091 date this evaluation used: a reset takes the Moodle half only while the
+        # date is still the same (CodeRabbit 4506916913)
+        seen["attested_at"] = act.attested_at
     target = StartTarget(
         session_id=uuid.uuid4(),  # no session: a scratch key for the source's resolution cache
         site_id=site_id,
@@ -207,6 +213,7 @@ async def store_render(
     graders: GradersRead | None = None,
     recipients: list[dict[str, str]] | None = None,
     observed_at: Any = None,
+    attested_at: Any = None,
 ) -> None:
     inputs: dict[str, Any] = {
         "code": decision.code.value,
@@ -220,6 +227,7 @@ async def store_render(
         inputs["moodle_reasons"] = [
             c.value for c in decision.reasons if c not in DB_SIDE
         ]
+        inputs["attested_at"] = attested_at
     if graders is not None:
         # user ids for the grader check (plan 10 authz)
         inputs["graders"] = list(graders.graders)
@@ -253,8 +261,9 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
         async with ctx.acquire() as conn:
             observed_at = (await conn.execute(_CLOCK)).scalar()
             await conn.rollback()
+        seen: dict[str, Any] = {}
         decision, target = await evaluate_render(
-            deps, ctx.acquire, site_id, userid, cmid, course
+            deps, ctx.acquire, site_id, userid, cmid, course, seen
         )
         try:
             graders = await read_graders(deps, target) if target else None
@@ -273,6 +282,7 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
             graders,
             recipients,
             observed_at=observed_at,
+            attested_at=seen.get("attested_at"),
         )
 
     return handle

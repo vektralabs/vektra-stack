@@ -55,6 +55,9 @@ ELSEWHERE = {
     E.DELIVERY_POSSIBLE_DUPLICATE: "test_delivery_handler.py",
     E.DELIVERY_RECIPIENT_REPLACED: "test_delivery_handler.py",
     E.DELIVERY_RECIPIENT_ADDED: "test_delivery_handler.py",
+    # plan assess-teacher-ops 11a
+    E.TEACHER_UNVERIFIED: "test_teacher_config_api.py",
+    E.TEACHER_CONFIG_CHANGED: "test_teacher_config_api.py",
 }
 NOT_DRIVABLE = {E.ATTEMPT_MISMATCH_REJECTED}
 

@@ -136,7 +136,7 @@ async def test_save_seals_each_field_audits_old_new_and_never_returns_a_secret(
             got["transcript_recipients_count"] == 2
         )  # case-insensitive duplicate collapsed
         assert got["pasted_rubric_state"] == "non impostata"
-        for secret in ("42", "unical", "Rossi"):
+        for secret in ("Soluzione", "unical", "Rossi"):
             assert secret not in r.text
 
         # ARCH-071: the API role cannot read the sealed solution back
@@ -180,7 +180,7 @@ async def test_save_seals_each_field_audits_old_new_and_never_returns_a_secret(
             recipient_ref(w.site, B),
         }
         dumped = json.dumps([r.data for r in rows])
-        for secret in ("42", "unical", "Rossi", "bianchi", "Soluzione"):
+        for secret in ("unical", "Rossi", "bianchi", "Soluzione", "Passo 2"):
             assert secret not in dumped  # 0 secret content in the audit
 
         # write-only semantics: absent = unchanged, null = clear

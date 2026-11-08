@@ -109,7 +109,14 @@ async def test_stale_or_unreadable_facts_refuse_and_queue(pg) -> None:  # type: 
 async def test_an_unresolved_hint_refuses_and_another_hint_asks_again(pg) -> None:  # type: ignore[no-untyped-def]
     site = await make_site(pg)
     await seed_gate(
-        pg, site, 54, resolved=False, editors=None, hint=[999, "assign"], courseid=None
+        pg,
+        site,
+        54,
+        resolved=False,
+        reason="activity_not_in_course",
+        editors=None,
+        hint=[999, "assign"],
+        courseid=None,
     )
     # the same wrong hint again: refused, nothing to refresh
     got = await check(pg, site, 54, hint=(999, "assign"))
@@ -121,4 +128,16 @@ async def test_an_unresolved_hint_refuses_and_another_hint_asks_again(pg) -> Non
     assert job.args["courseid"] == COURSE
     # no hint at all: nothing can be resolved, nothing is queued
     assert (await check(pg, site, 55, hint=(None, None))).check is TeacherCheck.STALE
+    assert len(await jobs(pg, site)) == 1
+
+
+@pytest.mark.parametrize("reason", ["site_release_unknown", "error", "http_5xx", None])
+async def test_a_transient_unresolved_row_is_stale_and_asks_again(pg, reason) -> None:  # type: ignore[no-untyped-def]
+    """Review 3: only "the cmid is not in that course" is definitive; a site, reader or Moodle
+    failure recorded as unresolved is retried, never reported as "not an editor"."""
+    site = await make_site(pg)
+    await seed_gate(
+        pg, site, 56, resolved=False, reason=reason, editors=None, courseid=None
+    )
+    assert (await check(pg, site, 56)).check is TeacherCheck.STALE
     assert len(await jobs(pg, site)) == 1

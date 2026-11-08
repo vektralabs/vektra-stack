@@ -7,8 +7,10 @@ graders and REQ-077 enable facts) and accepts them only while at most ``max_age_
 
 - absent, stale, or the editor list unreadable: refused (fail closed) and a ``teacher_gate`` job
   is queued for the given course / type hint, so a retry a few seconds later can succeed;
-- fresh but the cmid was not found in the hinted course: refused; when the hint differs from
-  the one that failed, a refresh is queued (a wrong hint never blocks a right one for long);
+- fresh but the cmid was not found in the hinted course (``activity_not_in_course``, the one
+  definitive unresolved answer): refused, nothing queued; when the hint differs from the one that
+  failed, or the row records a transient failure (site, reader, Moodle), a refresh is queued and
+  the request is told to retry (a wrong hint never blocks a right one for long);
 - fresh and the actor is not listed: refused, nothing queued (Moodle must change first).
 
 ``require_fresh_grader`` and ``can_view_overrides`` (the list, reset, terminate, extra time and
@@ -28,6 +30,10 @@ from sqlalchemy import text
 from vektra_assess.jobs import JobKind, enqueue_job, teacher_gate_dedupe_key
 
 KINDS = ("quiz", "assign")
+#: the only unresolved outcome that is an answer: the worker read the hinted course and the cmid
+#: is not among its activities of that type (``moodle.readers.resolve.resolve_in_course``). Every
+#: other unresolved reason (site unknown, reader error, Moodle unreachable) is transient: retried.
+NOT_IN_COURSE = "activity_not_in_course"
 
 _GATE = text(
     "SELECT inputs, extract(epoch FROM now() - refreshed_at) AS age_s "
@@ -89,11 +95,15 @@ async def check_fresh_editor(
         await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
         return TeacherGate(TeacherCheck.STALE)
     if facts.get("resolved") is not True:
-        # resolved for another hint? ask again for this one (dedupe per hint)
-        if facts.get("hint") != [courseid_hint, kind_hint]:
-            await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
-            return TeacherGate(TeacherCheck.STALE)
-        return TeacherGate(TeacherCheck.NOT_AN_EDITOR)
+        # a definitive answer for THIS hint: not an editor of anything here. Another hint, or a
+        # transient failure: ask again (dedupe per hint)
+        if (
+            facts.get("hint") == [courseid_hint, kind_hint]
+            and facts.get("reason") == NOT_IN_COURSE
+        ):
+            return TeacherGate(TeacherCheck.NOT_AN_EDITOR)
+        await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)
+        return TeacherGate(TeacherCheck.STALE)
     editors = facts.get("editors")
     if not isinstance(editors, list):
         await queue_teacher_gate(conn, site, cmid, courseid_hint, kind_hint)

@@ -135,6 +135,8 @@ async def test_a_wrong_type_hint_never_resolves(branch: str) -> None:
         SITE, int(m["quizzes"]["types"]["cmid"]), int(m["courseid"]), "assign"
     )
     assert got["resolved"] is False
+    # the one DEFINITIVE unresolved reason the API reports as "not an editor" (review 3)
+    assert got["reason"] == "activity_not_in_course"
     assert "editors" not in got and "graders" not in got
 
 

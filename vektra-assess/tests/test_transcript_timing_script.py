@@ -131,3 +131,41 @@ def test_the_workload_must_be_the_benchmark_one() -> None:
         for i in range(50)
     ]
     assert any("concurrent" in p for p in t.evaluate(spread, _ids(spread))["problems"])
+
+
+async def test_a_malformed_since_is_blocked_not_a_crash(tmp_path: Path) -> None:
+    """CodeRabbit 4504367027."""
+    cfg = t.Config.from_env({"VEKTRA_NFR_ASSESS_SINCE": "yesterday"})
+    doc, _ = await t.amain(cfg, out_dir=tmp_path)
+    assert doc["status"] == "BLOCKED"
+    assert any(
+        "VEKTRA_NFR_ASSESS_SINCE" in b and "yesterday" in b for b in doc["blockers"]
+    )
+
+
+async def test_a_stalled_query_is_blocked(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504362578: the read is bounded; a timeout is BLOCKED, never a hang."""
+    import asyncio
+
+    ids = tmp_path / "ids.txt"
+    ids.write_text("<x@y>\n")
+
+    async def no_blockers(_cfg):  # type: ignore[no-untyped-def]
+        return []
+
+    async def stalls(_dsn, _since, **_kw):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(t, "blockers", no_blockers)
+    monkeypatch.setattr(t, "fetch", stalls)
+    monkeypatch.setattr(t, "QUERY_TIMEOUT_S", 0.2, raising=False)
+    cfg = t.Config.from_env(
+        {
+            "VEKTRA_NFR_ASSESS_DSN": "postgresql://x@127.0.0.1:1/db",
+            "VEKTRA_NFR_ASSESS_SINCE": "2026-11-08T10:00:00Z",
+            "VEKTRA_NFR_ASSESS_SINK_IDS": str(ids),
+        }
+    )
+    async with asyncio.timeout(5):
+        doc, _ = await t.amain(cfg, out_dir=tmp_path)
+    assert doc["status"] == "BLOCKED" and "timed out" in doc["blockers"][0]

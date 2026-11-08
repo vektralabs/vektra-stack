@@ -44,6 +44,8 @@ GENERATION_P99_S = 60.0
 SENT_P95_S = 300.0
 WITHIN_S = 900.0
 WITHIN_RATIO = 0.99
+#: the read of the run is bounded: a stalled database is BLOCKED, never a hang
+QUERY_TIMEOUT_S = 60.0
 #: the benchmark workload: every session has this many recipients, all closed within this window
 RECIPIENTS_PER_SESSION = 2
 CONCURRENT_WINDOW_S = 60.0
@@ -54,18 +56,28 @@ class Config:
     dsn: str | None
     since: datetime | None
     sink_ids: Path | None
+    #: a setting that could not be read (reported as a blocker, never raised)
+    invalid: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Config:
         e = os.environ if env is None else env
         since = e.get("VEKTRA_NFR_ASSESS_SINCE")
         sink = e.get("VEKTRA_NFR_ASSESS_SINK_IDS")
+        parsed: datetime | None = None
+        invalid: list[str] = []
+        if since:
+            try:
+                parsed = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            except ValueError:
+                invalid.append(
+                    f"VEKTRA_NFR_ASSESS_SINCE={since!r} is not an ISO 8601 timestamp"
+                )
         return cls(
             dsn=e.get("VEKTRA_NFR_ASSESS_DSN") or None,
-            since=datetime.fromisoformat(since.replace("Z", "+00:00"))
-            if since
-            else None,
+            since=parsed,
             sink_ids=Path(sink) if sink else None,
+            invalid=tuple(invalid),
         )
 
 
@@ -174,10 +186,10 @@ def evaluate(
 
 
 async def blockers(cfg: Config) -> list[str]:
-    reasons = []
+    reasons = list(cfg.invalid)
     if not cfg.dsn:
         reasons.append("VEKTRA_NFR_ASSESS_DSN unset (the stack's Postgres)")
-    if cfg.since is None:
+    if cfg.since is None and not cfg.invalid:
         reasons.append("VEKTRA_NFR_ASSESS_SINCE unset (start of the run)")
     if cfg.sink_ids is None or not cfg.sink_ids.is_file():
         reasons.append(
@@ -223,11 +235,11 @@ def _ts(value: Any) -> datetime | None:
 async def fetch(dsn: str, since: datetime) -> list[Sample]:
     import asyncpg
 
-    conn = await asyncpg.connect(_pg_dsn(dsn))
+    conn = await asyncpg.connect(_pg_dsn(dsn), timeout=10)
     try:
-        rows = await conn.fetch(_QUERY, since)
+        rows = await conn.fetch(_QUERY, since, timeout=QUERY_TIMEOUT_S)
     finally:
-        await conn.close()
+        await asyncio.wait_for(conn.close(), 10)
     out = []
     for r in rows:
         ds = r["deliveries"]
@@ -268,7 +280,13 @@ async def amain(cfg: Config, out_dir: Path = RESULTS) -> tuple[dict[str, Any], P
         return doc, write_result(doc, out_dir)
     assert cfg.dsn and cfg.since and cfg.sink_ids
     ids = {ln.strip() for ln in cfg.sink_ids.read_text().splitlines() if ln.strip()}
-    doc = evaluate(await fetch(cfg.dsn, cfg.since), ids)
+    try:
+        async with asyncio.timeout(QUERY_TIMEOUT_S * 1.5):  # connect + query + close
+            samples = await fetch(cfg.dsn, cfg.since)
+    except TimeoutError:
+        doc = blocked_result([f"reading the run timed out after {QUERY_TIMEOUT_S:g} s"])
+        return doc, write_result(doc, out_dir)
+    doc = evaluate(samples, ids)
     return doc, write_result(doc, out_dir)
 
 

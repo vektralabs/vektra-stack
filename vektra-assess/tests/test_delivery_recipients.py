@@ -80,3 +80,17 @@ def test_the_domain_allowlist_is_exact_and_empty_refuses_all() -> None:
     assert not r.domain_allowed("a@unical.it.evil.example", domains)
     assert not r.domain_allowed("a@unical.it", r.parse_domains(""))
     assert not r.domain_allowed("a@unical.it", r.parse_domains(None))
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "p\n@unical.it",  # CodeRabbit 4504367030: `$` matches before a trailing newline
+        "p\r\n@unical.it",
+        "p@unical.it\n",  # stripped, but the domain must fully match too
+        "p\ud800@unical.it",  # CodeRabbit 4504362586: a lone surrogate cannot be encoded
+    ],
+)
+def test_newlines_and_unencodable_text_are_refused(raw: str) -> None:
+    got = r.normalize_address(raw)
+    assert got is None or (got == "p@unical.it" and raw == "p@unical.it\n")

@@ -23,12 +23,17 @@ def normalize_address(raw: object) -> str | None:
     if not isinstance(raw, str):
         return None
     value = raw.strip()
-    if not value or len(value.encode("utf-8")) > MAX_ADDRESS_BYTES:
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:  # a lone surrogate: not text an SMTP server can carry
+        return None
+    if not value or size > MAX_ADDRESS_BYTES:
         return None
     if value.count("@") != 1:
         return None
     local, domain = value.split("@")
     domain = domain.lower()
-    if len(local) > 64 or not _LOCAL.match(local) or not _DOMAIN.match(domain):
+    # fullmatch: ``$`` alone also matches before a trailing newline
+    if len(local) > 64 or not _LOCAL.fullmatch(local) or not _DOMAIN.fullmatch(domain):
         return None
     return f"{local}@{domain}"

@@ -66,6 +66,7 @@ LIVE = ("PENDING", "RETRYING")
 DOMAIN_NOT_ALLOWED = "domain_not_allowed"
 RECIPIENTS_UNRESOLVED = "recipients_unresolved"
 INTEGRITY = "transcript_integrity"
+WINDOW_EXPIRED = "window_expired"
 TRANSCRIPT_KEY = "transcript_key"
 
 
@@ -169,6 +170,14 @@ _CLAIM_ONE = text(
     "UPDATE assess_deliveries d SET attempt_started_at = :now, attempts = d.attempts + 1 "
     "FROM due WHERE d.id = due.id "
     "RETURNING d.id, d.round, d.recipient_ref, d.attempts, d.created_at, due.prev"
+)
+#: rows whose retry window (from creation) ended more than the lease ago: never attempted again
+_EXPIRE = text(
+    "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = 'window_expired', "
+    "attempt_started_at = NULL WHERE transcript_id = :t AND kind = 'transcript' "
+    "AND status IN ('PENDING', 'RETRYING') AND created_at < :cutoff "
+    "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
+    "RETURNING id, round, recipient_ref"
 )
 _CLAIM = text(
     "WITH due AS (SELECT id, attempt_started_at AS prev FROM assess_deliveries "
@@ -285,6 +294,36 @@ async def _fan_out(
                 out.added += 1
 
 
+async def _expire(
+    conn: Any, deps: DeliveryDeps, t: Any, now: datetime, out: Delivered
+) -> None:
+    """FAILED for live rows past their window: the last scheduled attempt sits exactly at the
+    window's end, so the lease is the grace for a job that runs it a little late; after that
+    a row is never attempted (a worker down for days must not mail days late)."""
+    gone = (
+        await conn.execute(
+            _EXPIRE,
+            {
+                "t": t.id,
+                "cutoff": now - deps.window - deps.stale_after,
+                "stale": now - deps.stale_after,
+            },
+        )
+    ).all()
+    for r in gone:
+        await _audit(
+            conn,
+            AssessAuditEvent.DELIVERY_FAILED,
+            t,
+            reason=WINDOW_EXPIRED,
+            round=int(r.round),
+            ref=r.recipient_ref,
+            delivery_id=str(r.id),
+        )
+        out.failed += 1
+        _alert("delivery_failed", session_id=str(t.id), reason_code=WINDOW_EXPIRED)
+
+
 async def _unresolved(
     conn: Any, deps: DeliveryDeps, t: Any, now: datetime, out: Delivered
 ) -> None:
@@ -360,6 +399,7 @@ async def deliver_transcript(
     async with acquire() as conn, conn.begin():
         configured = await deps.recipients.read(conn, t.site_id, int(t.cmid))
         await conn.execute(_LOCK, {"t": str(t.id)})
+        await _expire(conn, deps, t, now, out)
         if not configured:
             await _unresolved(conn, deps, t, now, out)
         else:

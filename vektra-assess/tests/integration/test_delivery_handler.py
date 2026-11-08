@@ -665,3 +665,47 @@ async def test_no_free_relay_session_leaves_the_rows_unclaimed(
             await task
         got = await h.deliver_transcript(deps, worker.connect, s.session_id)
         assert got is not None and got.sent == 2
+
+
+async def test_a_row_past_its_window_is_failed_not_sent(
+    pg, worker, sink, canary_log_capture
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4504367045: the worker was down past the 72 h window; when it comes back
+    the rows are FAILED (window_expired, audited, alerted), never sent late."""
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        sink.down()
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        sink.up()
+        clock.advance(hours=80)  # well past created_at + 72 h + the lease grace
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 0 and got.failed == 2
+        final = await rows(pg, s.session_id)
+        assert {(r.status, r.last_error_class) for r in final} == {
+            ("FAILED", "window_expired")
+        }
+        assert sink.messages == []
+        failed = await events(pg, s.session_id, "assess_delivery_failed")
+        assert [f.reason_code for f in failed] == ["window_expired"] * 2
+    fails = [a for a in alerts(canary_log_capture) if a["alert"] == "delivery_failed"]
+    assert {a["reason_code"] for a in fails} == {"window_expired"}
+
+
+async def test_the_final_attempt_at_the_window_end_still_runs(pg, worker, sink) -> None:  # type: ignore[no-untyped-def]
+    """The last attempt is scheduled exactly at the end of the window: a job that runs it a
+    little late (tick, queue) still sends."""
+    clock = Clock()
+    async with world(pg) as w:
+        s, ring, config, _ = await _ready(w, worker)
+        await clock.sync(pg)
+        deps = _deps(ring, config, sink, clock)
+        sink.down()
+        await h.deliver_transcript(deps, worker.connect, s.session_id)
+        sink.up()
+        clock.advance(hours=72, seconds=60)  # inside the lease grace after the deadline
+        got = await h.deliver_transcript(deps, worker.connect, s.session_id)
+        assert got is not None and got.sent == 2
+        await assert_sent_rows_are_on_the_sink(pg, s.session_id, sink)

@@ -9,9 +9,8 @@ Per student (Moodle user id only: the plugin resolves names), in user-id order, 
 students per page (``next_cursor`` = the last user id of the page, or null): sessions #1..#N with
 state, close reason, the transcript id and its delivery status per recipient (``recipient_kind``
 and ``status``, ``smtp_code`` and the error class; never an address nor its ref), the resets
-with their reasons (decrypted here, for this grader view only), continuity choice and the
-REQ-092 notice status (``studente non avvisato via email`` when no notice was queued), and the
-extra time. Activity level: the terminations with their reasons, and the gate panel: the
+with their reasons (decrypted here, for this grader view only), continuity choice and
+``studente non avvisato via email`` (REQ-092 is out of v1), and the extra time. Activity level: the terminations with their reasons, and the gate panel: the
 effective opening (the activity close, or the REQ-091 date when it decides), the C7 fallback
 reason when Vektra cannot read overrides / extensions, the override holder's user id only for an
 actor allowed to see it (never its reason, which is never stored), and ``N sessioni attive``.
@@ -53,7 +52,7 @@ _guard = require_exact_scope("assess:teacher")
 PAGE_SIZE = 50
 #: REQ-076 / REQ-091 C7 wording, shown as is by the plugin
 FALLBACK_REASON = "Vektra non può verificare proroghe/override per questa attività"
-#: REQ-092: no notice was queued for this reset (the flow is off until the DPO approves it)
+#: REQ-092 is out of v1 (product owner 2026-11-08): no reset is ever notified by email
 NOT_NOTIFIED = "studente non avvisato via email"
 
 _STUDENTS = text(
@@ -77,8 +76,7 @@ _DELIVERIES = text(
 )
 _RESETS = text(
     "SELECT g.id, g.student_userid, g.session_no, g.reason_ct, g.include_previous_turns, "
-    "g.granted_by, g.granted_at, d.status AS notice_status FROM assess_reset_grants g "
-    "LEFT JOIN assess_deliveries d ON d.reset_id = g.id "
+    "g.granted_by, g.granted_at FROM assess_reset_grants g "
     "WHERE g.site_id = :s AND g.cmid = :c AND g.student_userid = ANY(:us) "
     "ORDER BY g.student_userid, g.session_no"
 )
@@ -210,7 +208,7 @@ async def _page(
                 "include_previous_turns": bool(g.include_previous_turns),
                 "granted_by": ascii_id(str(g.granted_by)),
                 "granted_at": _iso(g.granted_at),
-                "student_notice": g.notice_status or NOT_NOTIFIED,
+                "student_notice": NOT_NOTIFIED,
             }
         )
     for x in (await conn.execute(_EXTRA, p)).all():

@@ -160,7 +160,7 @@ bot, finishes, and the transcript is delivered to the graders and downloadable b
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
-| 11 | [assess-teacher-ops](20261101-154950-assess-teacher-ops.md) | Teacher config (write-only), list, reset, terminate, extra time | 21 | 8, 10 | in_progress (11a Foundation + Config merged, PR #170; 11b teacher operations on `feat/assess-teacher-ops-11b`: list, reset, terminate, extra time, opening fallback, IDOR matrix; two items BLOCKED on decisions: REQ-087 continuity in the context, REQ-092 sender's address, see the plan's Notes) |
+| 11 | [assess-teacher-ops](20261101-154950-assess-teacher-ops.md) | Teacher config (write-only), list, reset, terminate, extra time | 21 | 8, 10 | completed (11a merged, PR #170; 11b on `feat/assess-teacher-ops-11b`: list, reset, terminate, extra time, opening fallback, IDOR matrix. Annotated: REQ-087 continuity deferred by the product owner 2026-11-08 (no previous-turns block in the context; plan 13 or a dedicated plan); REQ-092 out of v1, its flag refused at startup; live Moodle reads of editors / override managers BLOCKED (dev envs). Migration 0038 waits for 0037 to rebase) |
 | 12 | [assess-privacy-retention](20261101-154950-assess-privacy-retention.md) | Retention, crypto-shred purge, erasure, export, monitoring | 27 | 10 | pending |
 | P3 | [discuss-teacher-privacy](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-teacher-privacy.md) | Settings section, teacher pages, download proxy, Privacy API | 22 | P1, 10, 11, 12 | pending |
 | 13 | [assess-hardening-release](20261101-154950-assess-hardening-release.md) | Chaos suite, NFR campaign, runbooks, pilot go/no-go | 24 | all | pending |

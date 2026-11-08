@@ -125,11 +125,7 @@ _DELIVERY_API_READ = (
     "id", "transcript_id", "kind", "round", "recipient_kind", "recipient_userid", "status",
     "attempts", "not_before", "attempt_started_at", "last_error_class", "smtp_code",
     "sent_at", "created_at",
-    "reset_id",  # revision 0038 (plan 11b): the reset a ``reset_notice`` row announces
 )  # fmt: skip
-#: revision 0038 (plan 11b, REQ-092): the reset transaction queues the student's notice; the
-#: worker resolves the address at send time, so the API names the student, never an address
-_DELIVERY_API_INSERT = ("kind", "recipient_kind", "recipient_userid", "reset_id")
 _ALL: None = None
 
 MATRIX: Mapping[str, Mapping[str, Privs]] = {
@@ -202,10 +198,7 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         # read for the delivery status; resend rounds go through assess_enqueue_resend (0034).
         # Revision 0035: never ``recipient_ref`` (a hash of an address the API must not be able
         # to confirm by guessing, REQ-082 as amended)
-        "assess_deliveries": {
-            "SELECT": _DELIVERY_API_READ,
-            "INSERT": _DELIVERY_API_INSERT,
-        },
+        "assess_deliveries": {"SELECT": _DELIVERY_API_READ},
         # revision 0034 (plan 10): the post-check marks and contest entries of a bot turn,
         # written in the turn's own transaction, never updated
         "assess_turn_notes": {"INSERT": _ALL},

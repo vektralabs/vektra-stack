@@ -456,10 +456,6 @@ class DeliveryOrm(Base):
     message_id: Mapped[str | None] = mapped_column(TEXT)
     sent_at: Mapped[datetime | None] = _ts(nullable=True)
     created_at: Mapped[datetime] = _ts(default=True)
-    # revision 0038 (plan 11b, REQ-092): the reset a ``reset_notice`` row announces
-    reset_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("assess_reset_grants.id", ondelete="CASCADE")
-    )
 
 
 class TurnNoteOrm(Base):

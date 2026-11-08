@@ -10,8 +10,8 @@ activity or site is a 404, whoever asks.
 - ``POST /activities/{cmid}/sessions/{sid}/reset`` (REQ-087): the student's LATEST session must
   be CLOSED and not reset yet; the START gates are re-run (the database half live, the Moodle half
   from the student's fresh render evaluation); one ``assess_reset_grants`` row per (student,
-  activity, session number), the reason encrypted under the transcript KEK; the REQ-092 notice row
-  only when ``VEKTRA_ASSESS_RESET_NOTICE_ENABLED`` (default off).
+  activity, session number), the reason encrypted under the transcript KEK. No student notice:
+  REQ-092 is out of v1 (its flag is refused at startup).
 - ``POST /activities/{cmid}/terminate`` (REQ-081): ONE transaction; the live sessions are locked,
   their count must equal ``expected_active_count`` (409 with the current number, nothing changed);
   each ACTIVE / OUTAGE session goes through the single close path ``assess_close_session(...,
@@ -105,10 +105,6 @@ _INSERT_GRANT = text(
     "INSERT INTO assess_reset_grants (id, site_id, cmid, student_userid, granted_by, session_no, "
     "reason_ct, reason_kid, include_previous_turns) VALUES (:id, :s, :c, :u, :by, :n, :ct, :kid, "
     ":prev) ON CONFLICT ON CONSTRAINT uq_assess_reset_grants_session DO NOTHING RETURNING id"
-)
-_INSERT_NOTICE = text(
-    "INSERT INTO assess_deliveries (kind, recipient_kind, recipient_userid, reset_id) "
-    "VALUES ('reset_notice', 'student', :u, :r)"
 )
 _LIVE = text(
     "SELECT id, state, epoch FROM assess_sessions WHERE site_id = :s AND cmid = :c "
@@ -284,11 +280,6 @@ async def reset_session(
         ).first()
         if done is None:  # a concurrent reset of the same session won
             raise _Refused(fail(reset_refused("already_reset")))
-        notice = bool(settings.reset_notice_enabled)
-        if notice:
-            # REQ-092: the outbox row only; the worker resolves the student's address and
-            # language at send time, and a failure never reverts the reset
-            await conn.execute(_INSERT_NOTICE, {"u": student, "r": grant_id})
         # the results page should show state (10) without waiting for the next refresh tick
         from vektra_assess.api.state import queue_render_check
 
@@ -307,7 +298,6 @@ async def reset_session(
                 "reset_id": str(grant_id),
                 "session_no": int(row.session_no),
                 "include_previous_turns": include,
-                "notice": notice,
             },
         )
         log.info(
@@ -315,14 +305,12 @@ async def reset_session(
             site_id=str(site),
             cmid=c,
             reset_id=str(grant_id),
-            notice=notice,
         )
         return 201, {
             "reset_id": str(grant_id),
             "student_userid": student,
             "session_no_next": int(row.session_no) + 1,
             "include_previous_turns": include,
-            "student_notice": "queued" if notice else "not_sent",
         }
 
     return await _run(request, key, c, body, "reset", action)

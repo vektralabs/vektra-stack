@@ -1,9 +1,9 @@
-"""REQ-087 reset and the REQ-092 notice row through the real route (plan assess-teacher-ops 11b).
+"""REQ-087 reset through the real route (plan assess-teacher-ops 11b); REQ-092 is out of v1.
 
 Real Postgres, the restricted API role, sessions through the real Start and pre-flight, the
 student's render evaluation seeded as the worker writes it. Outcomes are counted on rows and
 bytes: the reset row and its encrypted reason, the earlier transcript's stored bytes (hash), the
-new session #N, the notice rows, and the reason canary in every place it must not reach.
+new session #N, no notice row, and the reason canary in every place it must not reach.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import json
 from typing import Any
 
 import pytest
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.recipients import configure_recipients
 from support.sessions import seed_session
@@ -29,7 +28,7 @@ from support.teacher_ops import (
     teacher,
     with_transcript_key,
 )
-from support.world import default_settings, err, world
+from support.world import err, world
 
 from integration.test_session_preflight import _reset
 from vektra_assess.crypto.teacher_reason import decrypt_reason
@@ -144,13 +143,12 @@ async def test_reset_refusals_then_a_new_session_with_earlier_bytes_unchanged(
         assert (
             granted["include_previous_turns"] is False
         )  # closed as "finished": default OFF
-        assert granted["student_notice"] == "not_sent"  # REQ-092 flag off by default
         assert CANARY not in r.text
         # a second reset of the same session: one grant only
         r = await reset(w, s.cmid, s.session_id)
         assert r.status_code == 409 and err(r)["details"]["reason"] == "already_reset"
         assert await grants(pg, w.site) == 1
-        # REQ-092 off: 0 notice rows
+        # REQ-092 is out of v1: no notice row, ever
         assert (
             await count(
                 pg, "SELECT count(*) FROM assess_deliveries WHERE kind = 'reset_notice'"
@@ -337,42 +335,3 @@ async def test_a_session_of_another_activity_or_an_older_one_is_not_reset(
         r = await reset(w, cmid, "not-a-uuid")
         assert r.status_code == 400
         assert await grants(pg, w.site) == 0
-
-
-async def test_the_notice_flag_on_queues_exactly_one_student_notice(pg, worker) -> None:  # type: ignore[no-untyped-def]
-    """REQ-092 with the flag ON: one ``reset_notice`` row per reset, addressed to the student
-    by user id and naming the reset; the row carries no reason (it has no such column) and no
-    address. The sender is not part of this plan (see the plan's Notes): the row is the queue."""
-    settings = default_settings(
-        VEKTRA_ASSESS_RESET_NOTICE_ENABLED=True,
-        VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION="dpo-2026-1",
-    )
-    async with world(pg, settings) as w:
-        with_transcript_key(w)
-        cmid, seeded = await live_sessions(w, worker, [7401])
-        sid = seeded[7401][0]
-        await seed_teacher_gate(pg, w.site, cmid)
-        await close(worker, sid)
-        await seed_render(pg, w.site, 7401, cmid, moodle_reasons=[])
-        r = await reset(w, cmid, sid)
-        assert r.status_code == 201 and r.json()["student_notice"] == "queued"
-        rows = await pg.run(
-            "super",
-            "SELECT d.recipient_kind, d.recipient_userid, d.recipient_ref, d.status, "
-            "d.reset_id = g.id FROM assess_deliveries d JOIN assess_reset_grants g "
-            "ON g.id = d.reset_id WHERE d.kind = 'reset_notice'",
-        )
-        assert [tuple(x) for x in rows] == [("student", 7401, None, "PENDING", True)]
-        r = await w.client.get(
-            f"/api/v1/assess/activities/{cmid}/sessions", headers=list_headers()
-        )
-        (student,) = r.json()["students"]
-        assert student["resets"][0]["student_notice"] == "PENDING"
-        # a reset_notice row without a reset (or a transcript row with one) is refused
-        with pytest.raises(DBAPIError) as exc:
-            await pg.run(
-                "api",
-                "INSERT INTO assess_deliveries (kind, recipient_kind, recipient_userid) "
-                "VALUES ('reset_notice', 'student', 7401)",
-            )
-        assert exc.value.orig.sqlstate == "23514"  # ck_assess_deliveries_reset

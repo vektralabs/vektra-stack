@@ -11,10 +11,8 @@
 - ``assess_terminations``: one row per REQ-081 terminate (reason encrypted the same way, the
   counts it closed and rolled back, whether it also disabled the activity). Audit rows carry only
   its id.
-- ``assess_deliveries.reset_id``: a ``reset_notice`` row (REQ-092) names the reset it announces,
-  at most one per reset; a ``reset_notice`` row is addressed to a student and has a reset, every
-  other row has none. The API may INSERT the notice row (kind, recipient kind, student id, reset
-  id), never an address.
+- No REQ-092 notice path: the reset notice is out of v1 (product owner 2026-11-08), its flag is
+  refused at startup, and nothing here can queue a ``reset_notice`` row.
 - ``assess_rollback_starting(uuid)``: SECURITY DEFINER, EXECUTE for the API only. Deletes ONE
   session that is still STARTING (pre-flight not committed: nothing consumed, the student is
   ELIGIBLE again), verifies by count that nothing of it is left, records the ``rolled_back``
@@ -51,8 +49,7 @@ GRANT_STATEMENTS = (
     "GRANT INSERT ON assess_consumed_jtis TO vektra_assess_api",
     "GRANT SELECT ON assess_consumed_jtis TO vektra_assess_api",
     "GRANT UPDATE (consumed_at) ON assess_consumed_jtis TO vektra_assess_api",
-    "GRANT INSERT (kind, recipient_kind, recipient_userid, reset_id) ON assess_deliveries TO vektra_assess_api",
-    "GRANT SELECT (id, transcript_id, kind, round, recipient_kind, recipient_userid, status, attempts, not_before, attempt_started_at, last_error_class, smtp_code, sent_at, created_at, reset_id) ON assess_deliveries TO vektra_assess_api",
+    "GRANT SELECT (id, transcript_id, kind, round, recipient_kind, recipient_userid, status, attempts, not_before, attempt_started_at, last_error_class, smtp_code, sent_at, created_at) ON assess_deliveries TO vektra_assess_api",
     "GRANT SELECT ON assess_enrolment_checks TO vektra_assess_api",
     "GRANT INSERT ON assess_erasure_records TO vektra_assess_api",
     "GRANT INSERT ON assess_extra_time TO vektra_assess_api",
@@ -314,19 +311,6 @@ def upgrade() -> None:
     op.execute(
         "CREATE INDEX ix_assess_terminations_activity ON assess_terminations (site_id, cmid)"
     )
-    op.execute(
-        "ALTER TABLE assess_deliveries ADD COLUMN reset_id UUID NULL "
-        "REFERENCES assess_reset_grants(id) ON DELETE CASCADE"
-    )
-    op.execute(
-        "ALTER TABLE assess_deliveries ADD CONSTRAINT uq_assess_deliveries_reset "
-        "UNIQUE (reset_id)"
-    )
-    op.execute(
-        "ALTER TABLE assess_deliveries ADD CONSTRAINT ck_assess_deliveries_reset CHECK ("
-        "(kind = 'reset_notice') = (reset_id IS NOT NULL) "
-        "AND (kind <> 'reset_notice' OR recipient_kind = 'student'))"
-    )
     op.execute(ROLLBACK_FN)
     # ALTER FUNCTION ... OWNER TO needs CREATE on the schema (revoked again by the matrix below)
     op.execute(f"GRANT CREATE ON SCHEMA public TO {DEFINER}")
@@ -341,15 +325,7 @@ def downgrade() -> None:
     from pathlib import Path
 
     op.execute(f"DROP FUNCTION {SIG_ROLLBACK}")
-    # the notices and resets written by this revision cannot exist without its columns
-    op.execute("DELETE FROM assess_deliveries WHERE kind = 'reset_notice'")
-    op.execute(
-        "ALTER TABLE assess_deliveries DROP CONSTRAINT ck_assess_deliveries_reset"
-    )
-    op.execute(
-        "ALTER TABLE assess_deliveries DROP CONSTRAINT uq_assess_deliveries_reset"
-    )
-    op.execute("ALTER TABLE assess_deliveries DROP COLUMN reset_id")
+    # the resets written by this revision cannot exist without its columns
     op.execute("DROP TABLE assess_terminations")
     op.execute("DELETE FROM assess_reset_grants")
     op.execute(

@@ -206,7 +206,7 @@ built: use a Moodle test-student account and a reset).
 | Method | Path | Body / headers | Success | Errors |
 |--------|------|----------------|---------|--------|
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | headers `X-Assess-Actor`, `X-Assess-Course`, `X-Assess-Activity-Type`, optional `X-Assess-Cursor` (the `next_cursor` of the previous page) | `200` the list below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`, `cursor`, `teacher_gate_hint`), `403 ERR-ASSESS-007` / `021`, `503 ERR-ASSESS-001` (`transcript_key`) |
-| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `reason` (1-1000 code points, mandatory), `include_previous_turns` (optional bool; absent = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns", "student_notice": "queued" \| "not_sent"}` | `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
+| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `reason` (1-1000 code points, mandatory), `include_previous_turns` (optional bool; absent = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
 | POST | `/api/v1/assess/activities/{cmid}/terminate` | `reason` (1-1000), `expected_active_count` (the "N sessioni attive" the teacher confirmed), `also_disable` (bool, default false) | `200 {"termination_id", "closed", "rolled_back", "disabled"}` | `400 ERR-ASSESS-022` (`reason`), `409 ERR-ASSESS-025` (`details.current`: the count now; nothing changed) |
 | PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | exactly one of `minutes` (0-240) / `percent` (0-200), `confirm_over_100` (required above +100 %); no reason field exists | `200 {"student_userid", "extra_seconds", "duration_s"}` | `400 ERR-ASSESS-022` (`extra_time`: `minutes_or_percent`, `out_of_range`, `total_too_long` (cap + extra above 240 min), `confirm_over_100`, `cap_not_configured`, `session_locked` with `state`) |
 | PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | `opening_at` (ISO 8601 with a time zone), `attestation: true`, `attestation_text_version` (`[A-Za-z0-9._-]{1,32}`, the attestation text the plugin showed) | `200 {"opening_at", "previous", "version"}` | `400 ERR-ASSESS-022` (`attestation`: `required`; `opening_at`: `fallback_not_needed`, `before_close` (with `close_at`), `only_later` (with `current_at`), `no_close_date`, `moodle_facts_unreadable`, `timezone_required`, `out_of_range`, `activity_not_configured`) |
@@ -218,9 +218,9 @@ evaluation (at most `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` old, otherwise `gate_
 reset after the end date is refused until the date is moved. The reason is stored encrypted
 under the transcript key: it is shown only in this list, never in a transcript, the audit table
 (which carries `reset_id`), a metric or a log. `include_previous_turns` records the continuity
-choice; whether earlier turns reach the model is decided at Start (REQ-087 (c)-(e)). With
-`VEKTRA_ASSESS_RESET_NOTICE_ENABLED` (default off, REQ-092 / OQ-020) the reset also queues one
-`reset_notice` delivery row for the student (user id only, no reason, no address).
+choice; in this release the context does not use it (deferred by the product owner,
+2026-11-08: no previous-turns block in the context yet). No student is notified of a reset:
+REQ-092 is out of v1 and `VEKTRA_ASSESS_RESET_NOTICE_ENABLED=true` is refused at startup.
 
 Terminate (REQ-081): one transaction. The activity's live sessions are locked and counted
 (ACTIVE + OUTAGE); a different count than `expected_active_count` changes nothing. Each ACTIVE /
@@ -246,8 +246,8 @@ List: `students` (in user-id order, 50 per page; `next_cursor` or `null`), each
 `{userid, sessions[{session_id, session_no, state, close_reason, committed_at, closed_at,
 transcript_id, deliveries[{round, recipient_kind, status, attempts, smtp_code, error_class,
 sent_at}]}], resets[{reset_id, after_session_no, reason, include_previous_turns, granted_by,
-granted_at, student_notice}], reset_count, extra_seconds}`; `student_notice` is the notice's
-delivery status or `studente non avvisato via email`. `terminations[{termination_id, reason,
+granted_at, student_notice}], reset_count, extra_seconds}`; `student_notice` is always
+`studente non avvisato via email` (REQ-092 is out of v1). `terminations[{termination_id, reason,
 closed, rolled_back, also_disable, by, at}]` (first page only). `gate`: `opening {at, source}`,
 `fallback_reason` (`Vektra non può verificare proroghe/override per questa attività` when the
 REQ-091 fallback applies, else `null`), `fallback_date_missing`, `active_sessions`, and

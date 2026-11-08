@@ -279,6 +279,37 @@ async def test_a_report_orphaned_running_by_a_crash_is_failed(pg) -> None:  # ty
     assert finished == 1
 
 
+async def test_the_item_rows_are_trimmed_with_the_reports(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 4: ``assess_setup_checks`` keeps the item rows of the last 30 runs (one
+    run's rows share ``run_at``, written in one transaction); another site is untouched."""
+    site, other = await make_site(pg), await make_site(pg)
+    for who in (site, other):
+        await pg.run(
+            "super",
+            "INSERT INTO assess_setup_checks (site_id, item, result, run_at) "
+            "SELECT :s, i, 'ok', now() - make_interval(days => g) "
+            "FROM generate_series(1, 35) g, unnest(ARRAY['token_works', 'ws_tls_ok']) i",
+            {"s": who},
+        )
+    await handle(pg, {"site_id": str(site)})
+    runs = await count(
+        pg,
+        "SELECT count(DISTINCT run_at) FROM assess_setup_checks WHERE site_id=:s",
+        s=site,
+    )
+    assert runs == handler_mod.KEEP_REPORTS
+    rows = await count(
+        pg, "SELECT count(*) FROM assess_setup_checks WHERE site_id=:s", s=site
+    )
+    assert rows == (handler_mod.KEEP_REPORTS - 1) * 2 + len(full_registry().names())
+    assert (
+        await count(
+            pg, "SELECT count(*) FROM assess_setup_checks WHERE site_id=:s", s=other
+        )
+        == 70
+    )
+
+
 async def test_the_keep_30_counts_finished_reports_only(pg) -> None:  # type: ignore[no-untyped-def]
     """Review finding 6: queued reports newer than the finished ones must not take places in
     the 30 kept, or fewer than 30 finished reports survive."""

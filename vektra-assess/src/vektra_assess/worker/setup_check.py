@@ -64,6 +64,13 @@ _TRIM = text(
     "SELECT id FROM assess_setup_check_reports WHERE site_id = :s "
     "AND status IN ('done', 'failed') ORDER BY created_at DESC, id DESC LIMIT :n)"
 )
+#: the per-item rows follow the same keep-30 rule: one run writes all its rows in one
+#: transaction, so they share ``run_at``; the rows of the 30 newest runs stay
+_TRIM_ITEMS = text(
+    "DELETE FROM assess_setup_checks WHERE site_id = :s AND run_at < ("
+    "SELECT min(run_at) FROM (SELECT DISTINCT run_at FROM assess_setup_checks "
+    "WHERE site_id = :s ORDER BY run_at DESC LIMIT :n) newest)"
+)
 #: a ``running`` report older than the job's lease belongs to a run that is dead: a worker killed
 #: mid-run (no ``except`` ran) leaves it so, and the retry of a job without ``report_id`` writes a
 #: new one. ``created_at`` is not the start of the run (an API report may wait queued first), so
@@ -179,5 +186,6 @@ def make_setup_check_handler(
         async with ctx.acquire() as conn:
             async with conn.begin():
                 await conn.execute(_TRIM, {"s": site_id, "n": KEEP_REPORTS})
+                await conn.execute(_TRIM_ITEMS, {"s": site_id, "n": KEEP_REPORTS})
 
     return handle

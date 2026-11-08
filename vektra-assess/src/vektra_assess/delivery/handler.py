@@ -192,6 +192,14 @@ _CLAIM_IDLE = text(
     "AND attempt_started_at IS NULL FOR UPDATE SKIP LOCKED) "
     "RETURNING id, round, recipient_ref, attempts, created_at"
 )
+#: crash-marked rows while the recipients are unreadable: deferred by the backoff, marker kept
+_STALE_WAITING = text(
+    "SELECT id, attempts, created_at FROM assess_deliveries WHERE transcript_id = :t "
+    "AND kind = 'transcript' AND status IN ('PENDING', 'RETRYING') AND not_before <= :now "
+    "AND attempt_started_at IS NOT NULL AND attempt_started_at < :stale "
+    "FOR UPDATE SKIP LOCKED"
+)
+_DEFER = text("UPDATE assess_deliveries SET not_before = :nb WHERE id = :i")
 _SENT = text(
     "UPDATE assess_deliveries SET status = 'SENT', sent_at = :now, smtp_code = :code, "
     "message_id = :mid, last_error_class = NULL, attempt_started_at = NULL "
@@ -335,6 +343,19 @@ async def _unresolved(
 ) -> None:
     """No readable recipient: due rows wait (RETRYING, backoff) or end FAILED past the window."""
     out.unresolved = True
+    # a crash-marked row keeps its marker (the resend must audit the possible duplicate) but
+    # waits like the others instead of being offered again on every tick (4504591109)
+    waiting = (
+        await conn.execute(
+            _STALE_WAITING, {"t": t.id, "now": now, "stale": now - deps.stale_after}
+        )
+    ).all()
+    for w in waiting:
+        nb = next_not_before(
+            max(int(w.attempts), 1), w.created_at, now, deps.schedule, deps.window
+        )
+        if nb is not None:  # past the window: _expire ends it
+            await conn.execute(_DEFER, {"i": w.id, "nb": nb})
     claimed = (await conn.execute(_CLAIM_IDLE, {"t": t.id, "now": now})).all()
     for c in claimed:
         nb = next_not_before(

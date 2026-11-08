@@ -742,9 +742,22 @@ async def test_an_unreadable_config_keeps_the_crash_marker(
         clock.now += STALE + timedelta(seconds=1)
         got = await h.deliver_transcript(deps, worker.connect, s.session_id)
         assert got is not None and got.unresolved
-        assert all(
-            r.attempt_started_at is not None for r in await rows(pg, s.session_id)
+        waiting = await rows(pg, s.session_id)
+        assert all(r.attempt_started_at is not None for r in waiting)
+        # CodeRabbit 4504591109: deferred by the backoff, not offered again every tick
+        assert all(r.not_before > clock.now for r in waiting)
+        await h.delivery_retry_tick(
+            worker.connect, stale_after=STALE, window=deps.window, now=clock.now
         )
+        queued = await pg.run(
+            "super",
+            "SELECT count(*) FROM assess_jobs WHERE dedupe_key = :k",
+            {"k": f"transcript_deliver:{s.session_id}:retry"},
+        )
+        assert (
+            queued[0][0] == 0
+        )  # the tick module-wide sees other tests' rows: count ours
+        clock.now = max(r.not_before for r in waiting)
         await configure_recipients(pg, w.site, s.cmid, pair=pair)
         got = await h.deliver_transcript(deps, worker.connect, s.session_id)
         assert got is not None and got.sent == 2 and got.duplicates == 2

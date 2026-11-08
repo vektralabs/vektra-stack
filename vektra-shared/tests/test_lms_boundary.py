@@ -71,6 +71,8 @@ LMS_NAMES: tuple[str, ...] = (
     "claroline",
     "atutor",
     "openolat",
+    "open olat",  # so `OpenOLATClient` is seen once CamelCase is split
+    # Matched written together only: split, "its learning" is ordinary prose.
     "itslearning",
     "schoology",
     "edmodo",
@@ -86,6 +88,8 @@ LMS_NAMES: tuple[str, ...] = (
 SOURCE_SUFFIXES = {
     ".py",
     ".js",
+    ".cjs",
+    ".jsx",
     ".mjs",
     ".ts",
     ".tsx",
@@ -300,6 +304,7 @@ def test_legitimate_platform_vocabulary_is_not_matched() -> None:
         "canvas { display: block }",
         "the blackboard example; learning management system; an LTI launch",
         "familias = 'ilia'; d2lx = 1",  # boundaries: inside a word, or a longer token
+        "its learning rate decays",  # itslearning only written together
     ]
     assert mentions_in("vektra-core/src/x.py", "\n".join(lines)) == []
 
@@ -308,7 +313,7 @@ def test_every_spelling_of_a_product_is_matched() -> None:
     text = (
         "MoodleClient\nmoodle_ws\nVektraMoodle\nmoodlews\nMOODLE_URL\nCanvas LMS\n"
         "D2L\nsakaimodule\nCANVAS_LMS\ncanvas-lms\ncanvaslms\nopen_edx\nLON_CAPA\n"
-        "LMSMoodle\nD2LClient\ngetmoodleclient\n"
+        "LMSMoodle\nD2LClient\ngetmoodleclient\nOpenOLATClient\nD2LAdapter\n"
     )
     assert [m.name for m in mentions_in("vektra-core/src/x.py", text)] == [
         "moodle",
@@ -327,6 +332,8 @@ def test_every_spelling_of_a_product_is_matched() -> None:
         "moodle",
         "d2l",
         "moodle",
+        "open olat",
+        "d2l",
     ]
 
 

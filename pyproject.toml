@@ -370,6 +370,10 @@ omit = [
     "*/vektra_assess/db/models.py",
     "*/vektra_assess/crypto/shred.py",
     "*/vektra_assess/crypto/rotation.py",
+    # the teacher config route: one transaction of SQL against the restricted API role, the
+    # sealed-field trigger and the version lock; its behaviour is asserted on real rows by
+    # vektra-assess/tests/integration/test_teacher_config_api.py (plan assess-teacher-ops)
+    "*/vektra_assess/api/teacher_config.py",
 ]
 
 [tool.coverage.report]

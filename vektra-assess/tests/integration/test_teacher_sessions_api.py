@@ -336,6 +336,14 @@ async def test_reasons_follow_the_transcript_kek_rotation(pg, worker) -> None:  
         # a ciphertext moved to another row does not open
         with pytest.raises(InvalidTag):
             decrypt_reason(new_only, rows[0][0], rows[1][1], bytes(rows[0][2]))
+        # and the table is bound on its own: same row id, same ciphertext, other table
+        other_table = (
+            "assess_terminations"
+            if rows[0][0] == "assess_reset_grants"
+            else "assess_reset_grants"
+        )
+        with pytest.raises(InvalidTag):
+            decrypt_reason(new_only, other_table, rows[0][1], bytes(rows[0][2]))
 
 
 async def test_stale_facts_refuse_every_operation_queue_a_refresh_and_change_nothing(

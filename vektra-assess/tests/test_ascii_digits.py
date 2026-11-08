@@ -76,6 +76,29 @@ async def test_an_ascii_content_length_over_the_cap_is_still_refused() -> None:
     assert r.json()["error"]["details"]["reason"] == "body_too_large"
 
 
+async def test_an_oversized_ascii_content_length_is_refused_before_reading() -> None:
+    """CodeRabbit nitpick (PR #179 round 3): the declared length alone refuses; the body is
+    never read (a receive that fails if called)."""
+    from fastapi import HTTPException
+
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/body",
+            "headers": [(b"content-length", b"9")],
+        }
+    )
+
+    async def receive() -> dict[str, object]:
+        raise AssertionError("the body must not be read")
+
+    req._receive = receive  # type: ignore[attr-defined]
+    with pytest.raises(HTTPException) as exc:
+        await read_capped_body(req, max_bytes=8)
+    assert exc.value.detail["error"]["details"]["reason"] == "body_too_large"
+
+
 @pytest.mark.parametrize("declared", NOT_ASCII_HEADERS)
 async def test_a_non_ascii_content_length_does_not_bypass_the_streamed_cap(
     declared: bytes,

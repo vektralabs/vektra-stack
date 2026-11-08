@@ -456,3 +456,49 @@ async def test_a_cap_raised_after_a_grant_never_gives_more_than_240_minutes(
             {"s": w.site},
         )
         assert [tuple(x) for x in rows] == [(240 * 60, 240 * 60)]
+
+
+async def test_extra_time_waits_for_the_real_start_handler(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (PR #179 round 3): the REAL Start route, paused inside its own
+    transaction after its STARTING row is written (so it holds the activity row FOR SHARE):
+    the extra-time PUT waits for it, then refuses the committed STARTING session."""
+    import asyncio
+    from unittest.mock import patch
+
+    from vektra_assess.api import start as start_route
+
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, 909, cap_minutes=30)
+        await seed_teacher_gate(pg, w.site, 909)
+        token = await w.presession(sub=8601, cmid=909)
+        reached, release = asyncio.Event(), asyncio.Event()
+        original = start_route.enqueue_job
+
+        async def paused(*args, **kwargs):  # type: ignore[no-untyped-def]
+            reached.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        with patch.object(start_route, "enqueue_job", paused):
+            started = asyncio.create_task(
+                w.client.post(
+                    "/api/v1/assess/sessions",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            )
+            await asyncio.wait_for(reached.wait(), 10)
+            put = asyncio.create_task(
+                w.client.put(
+                    extra_url(909, 8601), json=body(minutes=10), headers=teacher()
+                )
+            )
+            await asyncio.sleep(0.5)
+            assert not put.done()  # blocked on the Start's FOR SHARE
+            release.set()
+            r = await asyncio.wait_for(started, 10)
+            assert r.status_code == 202, r.text
+        r = await asyncio.wait_for(put, 10)
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": "extra_time", "code": "session_locked", "state": "STARTING"}
+        ]

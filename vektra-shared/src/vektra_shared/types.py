@@ -93,6 +93,33 @@ class ChunkMetadata(TypedDict, total=False):
     course_id: str
     module_id: str
     academic_year: str
+    # Source visibility (FEAT-026). True means: use this chunk's content to
+    # answer, but never attribute the answer to it. See HIDDEN_SOURCE_KEY.
+    hidden_from_students: bool
+
+
+# Metadata key that suppresses a chunk's *attribution* without touching its
+# retrievability (FEAT-026). Set at ingest time, carried in the vector store
+# payload, honoured when a pipeline assembles the source list.
+#
+# The name is the wire contract agreed with the pipeline that populates it,
+# so it is deliberately domain-flavoured rather than generic: one name end to
+# end, no mapping layer that can drift.
+HIDDEN_SOURCE_KEY = "hidden_from_students"
+
+
+def is_hidden_source(metadata: dict[str, Any] | None) -> bool:
+    """Whether a chunk's source must be withheld from the caller (FEAT-026).
+
+    Only a real boolean ``True`` hides a source. A chunk whose metadata carries
+    the string ``"true"`` is NOT hidden: the ingest API rejects that value at
+    the door (ERR-INGEST-005), so a truthy string here means the payload was
+    written by something that bypassed it, and guessing its intent is how a
+    non-boolean ``"false"`` would end up hiding every source in a namespace.
+    """
+    if not metadata:
+        return False
+    return metadata.get(HIDDEN_SOURCE_KEY) is True
 
 
 @dataclass

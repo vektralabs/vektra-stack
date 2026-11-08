@@ -18,6 +18,7 @@ const THEMES = {
     assistantBubble: "#f3f4f6",
     assistantText: "#1a1a1a",
     inputBg: "#ffffff",
+    danger: "#c0392b",
     shadow: "0 4px 24px rgba(0, 0, 0, 0.12)",
   },
   dark: {
@@ -33,6 +34,7 @@ const THEMES = {
     assistantBubble: "#2a2a3e",
     assistantText: "#e4e4e7",
     inputBg: "#2a2a3e",
+    danger: "#f87171",
     shadow: "0 4px 24px rgba(0, 0, 0, 0.4)",
   },
 };
@@ -90,9 +92,16 @@ export function buildStyles(theme) {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
   color: ${t.text};
+  transition: width 0.2s ease, height 0.2s ease;
 }
 .vektra-chat-panel.open {
   display: flex;
+}
+/* Enlarged panel (desktop): close to full viewport, keeping the same
+   anchoring and the room left for the floating button. */
+.vektra-chat-panel.panel-large {
+  width: min(960px, calc(100vw - 48px));
+  height: calc(100vh - 120px);
 }
 
 .vektra-chat-header {
@@ -114,6 +123,8 @@ export function buildStyles(theme) {
   gap: 4px;
 }
 .vektra-chat-new,
+.vektra-chat-delete,
+.vektra-chat-enlarge,
 .vektra-chat-close {
   background: none;
   border: none;
@@ -123,12 +134,33 @@ export function buildStyles(theme) {
   padding: 4px;
   line-height: 1;
 }
-.vektra-chat-new {
+.vektra-chat-new,
+.vektra-chat-delete {
   font-size: 16px;
 }
 .vektra-chat-new:hover,
+.vektra-chat-delete:hover,
+.vektra-chat-enlarge:hover,
 .vektra-chat-close:hover {
   color: ${t.text};
+}
+.vektra-chat-enlarge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vektra-chat-enlarge[aria-pressed="true"] {
+  color: var(--vektra-primary, ${t.primary});
+}
+.vektra-chat-enlarge:focus-visible {
+  outline: 2px solid var(--vektra-primary, ${t.primary});
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+/* Armed state of the two-step delete: the icon says what the next click does. */
+.vektra-chat-delete.armed {
+  color: ${t.danger};
+  transform: scale(1.15);
 }
 
 .vektra-chat-messages {
@@ -158,6 +190,54 @@ export function buildStyles(theme) {
   background: ${t.assistantBubble};
   color: ${t.assistantText};
   border-bottom-left-radius: 4px;
+}
+
+/* Per-answer actions (copy, back to start). Hidden while a streamed answer
+   has no text yet, so an empty bubble does not offer to copy nothing. */
+.vektra-chat-msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  margin-left: -4px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.vektra-chat-msg-body:empty ~ .vektra-chat-msg-actions {
+  display: none;
+}
+.vektra-chat-msg.assistant:hover .vektra-chat-msg-actions,
+.vektra-chat-msg-actions:focus-within {
+  opacity: 1;
+}
+.vektra-chat-msg-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  color: ${t.textSecondary};
+  line-height: 0;
+}
+/* Back-to-start is hidden when the answer fits in the list (see chat-ui). */
+.vektra-chat-msg-action[hidden] {
+  display: none;
+}
+.vektra-chat-msg-action:hover {
+  color: ${t.text};
+  background: ${t.border};
+}
+.vektra-chat-msg-action:focus-visible {
+  outline: 2px solid var(--vektra-primary, ${t.primary});
+  outline-offset: 1px;
+}
+.vektra-chat-msg-status {
+  margin-left: 4px;
+  font-size: 12px;
+  color: ${t.textSecondary};
 }
 
 .vektra-chat-msg.assistant p {
@@ -350,8 +430,23 @@ export function buildStyles(theme) {
   text-decoration: underline;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .vektra-chat-btn,
+  .vektra-chat-panel,
+  .vektra-chat-msg-actions,
+  .vektra-chat-send {
+    transition: none;
+  }
+  .vektra-chat-btn:hover {
+    transform: none;
+  }
+}
+
 @media (max-width: 480px) {
-  .vektra-chat-panel {
+  /* Full-width on small screens whether or not the panel is enlarged; the
+     toggle has nothing to do here, so it is hidden. */
+  .vektra-chat-panel,
+  .vektra-chat-panel.panel-large {
     width: calc(100vw - 16px);
     height: calc(100vh - 80px);
     bottom: 8px;
@@ -361,6 +456,9 @@ export function buildStyles(theme) {
   .vektra-chat-btn {
     bottom: 16px;
     right: 16px;
+  }
+  .vektra-chat-enlarge {
+    display: none;
   }
 }
 `;

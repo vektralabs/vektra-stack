@@ -36,6 +36,10 @@ export class ApiClient {
    * Manually set the current conversation ID (e.g. restored from sessionStorage).
    * Use null to clear it.
    */
+  getConversationId() {
+    return this._conversationId;
+  }
+
   setConversationId(id) {
     this._conversationId = id || null;
   }
@@ -75,6 +79,83 @@ export class ApiClient {
       throw new Error(`HTTP ${resp.status}`);
     }
     return resp.json();
+  }
+
+  /**
+   * List the student's own conversations for this course (FEAT-027).
+   *
+   * Server-side ownership is what makes history survive a closed tab or a
+   * different device: the id no longer has to come from sessionStorage.
+   * Returns [] when the endpoint is unavailable or the deployment has no
+   * persistent conversation store, so a widget on such a deployment behaves
+   * exactly as it did before rather than erroring.
+   *
+   * @param {number} [limit]
+   * @returns {Promise<Array<{conversation_id: string, title: string|null, turn_count: number, updated_at: string}>>}
+   */
+  async listConversations(limit = 5, _retried = false) {
+    let resp;
+    try {
+      resp = await fetch(
+        `${this._apiUrl}/api/v1/learn/conversations?limit=${encodeURIComponent(limit)}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${this._token}` },
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+    } catch {
+      return [];
+    }
+    if (resp.status === 401 && !_retried) {
+      const newToken = await this._refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.listConversations(limit, true);
+      }
+    }
+    if (!resp.ok) return [];
+    try {
+      const payload = await resp.json();
+      return Array.isArray(payload?.conversations) ? payload.conversations : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Delete one of the student's own conversations (FEAT-027, REQ-057).
+   * Returns true when the server confirms the deletion.
+   *
+   * @param {string} conversationId
+   * @returns {Promise<boolean>}
+   */
+  async deleteConversation(conversationId, _retried = false) {
+    let resp;
+    try {
+      resp = await fetch(
+        `${this._apiUrl}/api/v1/learn/conversations/${encodeURIComponent(conversationId)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${this._token}` },
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+    } catch {
+      return false;
+    }
+    if (resp.status === 401 && !_retried) {
+      const newToken = await this._refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.deleteConversation(conversationId, true);
+      }
+    }
+    // 204 is the delete; 404 means it is already gone, which is the same
+    // outcome for the student and must not surface as an error. The server
+    // answers 404 for "not yours" too, and that is deliberate there: it must
+    // not confirm which conversation ids exist.
+    return resp.status === 204 || resp.status === 404;
   }
 
   /**

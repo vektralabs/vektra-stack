@@ -26,12 +26,21 @@ build/
 htmlcov/
 coverage/
 
-# Local development
-.env
-.env.local
-.env.*.local
-CLAUDE.local.md
-.claude/
+# Local development. The `**/` prefix is load-bearing: a .dockerignore entry with
+# no slash matches the context ROOT only, so a bare `.env` leaves `migrations/.env`
+# and `vektra-*/src/.env` in the build context, and the Dockerfile copies those
+# directories whole. Measured against a real docker build (INFRA-008): with `.env`,
+# both `sub/.env` and `sub/deep/.env` were copied into the image; with `**/.env`
+# none was, and unrelated nested files still arrived. The image is published to a
+# public registry on every tag, so a file that reaches it is world-readable.
+# `.env.example` is excluded too: nothing copies it into the image, and a COPY that
+# needed it would fail loudly rather than ship a secret quietly.
+# vektra-shared/tests/test_image_content_boundary.py fails if these rules regress.
+**/.env
+**/.env.*
+**/CLAUDE.local.md
+**/.claude/
+**/.local/
 
 # S2S planning artifacts
 .s2s/

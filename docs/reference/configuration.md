@@ -130,8 +130,23 @@ The model name must match the vLLM `--model` path exactly (e.g., `/models/qwen35
 | `VEKTRA_ENV` | str | `development` | Environment mode. In `production`, non-TLS connections are rejected. |
 | `VEKTRA_SAFEGUARD_MODE` | str | `passthrough` | Safeguard implementation: `passthrough`, `presidio`, `guardrails-ai` |
 | `VEKTRA_MULTI_TENANT` | bool | `false` | Activate PostgreSQL RLS binding for namespace isolation |
-| `VEKTRA_CONVERSATION_KEY` | str | - | Symmetric encryption key for conversation content |
+| `VEKTRA_CONVERSATION_KEY` | str | - | Symmetric encryption key for conversation content. **Unset means conversations are not stored**: the app falls back to an in-memory store, so history dies with the process and the student-facing history endpoints return `ERR-LEARN-001`. See [Conversation history](#conversation-history). |
 | `VEKTRA_PII_CHUNK_THRESHOLD` | int | `3` | PII entity count threshold per chunk for post_retrieval filtering. Presidio mode only. |
+
+### Conversation history
+
+`VEKTRA_CONVERSATION_KEY` is what selects the persistent conversation store. With it set, questions and answers are written to Postgres encrypted with pgcrypto (`pgp_sym_encrypt`, [ADR-0011](../../.s2s/decisions/ADR-0011-conversation-encryption.md)) and a student's history survives a closed tab, a reboot and a different device. With it unset, the app registers an in-memory store: nothing is persisted, and `GET /api/v1/learn/conversations` and the turns endpoint answer `ERR-LEARN-001` rather than pretending the student has no history.
+
+```bash
+# 32 bytes of entropy is plenty; anything shorter is the weak link in the chain
+VEKTRA_CONVERSATION_KEY=$(openssl rand -base64 32)
+```
+
+Three things to know before turning it on:
+
+- **The key cannot be rotated in place.** Existing turns are decryptable only with the key that encrypted them; changing it makes previous history unreadable (the rows stay, the decrypt fails). Re-encryption would need a migration that reads every turn with the old key — there is no such tooling today.
+- **Enabling it starts storing personal data.** Turns are pseudonymous (`owner_subject` holds the LMS user id the token was issued for) and encrypted at rest, but they are still personal data. Set `VEKTRA_RETENTION_DAYS` in the same change, and make sure the deployment's privacy notice covers it.
+- **Losing the key loses the history**, by design. Back it up wherever the deployment keeps its secrets, not in the database it protects.
 
 ## Webhooks
 

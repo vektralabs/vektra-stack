@@ -48,6 +48,8 @@ The `error` object is at the JSON document root for **every** error response —
 | ERR-AUTH-001 | PERMANENT | 401 | Token is missing, malformed, unrecognized, or revoked | Include a valid API key as Bearer token. Create a new key via POST /api/v1/api-keys if revoked. |
 | ERR-AUTH-002 | PERMANENT | 401 | Token has expired | Refresh or create a new API key. (Reserved, not yet enforced.) |
 | ERR-AUTH-003 | PERMANENT | 403 | Insufficient scope for requested operation | Use an API key with the required scope, or request one from your administrator. |
+| ERR-AUTH-004 | TRANSIENT | 429 | Rate limit exceeded | Wait and retry after the rate limit window resets. The response carries `X-RateLimit-*` headers; the per-key limit is set on the API key (`rate_limit_rpm`). |
+| ERR-AUTH-005 | TRANSIENT | 503 | Auth service unavailable | Retry shortly. (Reserved by REQ-041, not yet raised by any code path.) |
 
 ### Ingest errors
 
@@ -57,6 +59,7 @@ The `error` object is at the JSON document root for **every** error response —
 | ERR-INGEST-002 | PERMANENT | 413 | File exceeds maximum size | Reduce file size below the configured limit, or split into smaller documents. |
 | ERR-INGEST-003 | PERMANENT | 422 | Scanned PDF detected (no extractable text layer) | Use a PDF with selectable text, or run OCR before ingesting. |
 | ERR-INGEST-004 | TRANSIENT | 503 | Vector store write failed during indexing | Retry the ingestion. If the problem persists, check database connectivity and disk space. |
+| ERR-INGEST-005 | PERMANENT | 422 | Invalid `metadata` form field | Send a flat JSON object (scalar values only, keys `[a-z][a-z0-9_]{0,63}`, 4 KB max). `hidden_from_students` must be a JSON boolean, not the string `"true"`. |
 
 ### Query errors
 
@@ -94,6 +97,8 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-LEARN-004 | vektra-learn | 409 | Duplicate enrollment (student already enrolled in course) |
 | ERR-LEARN-005 | vektra-learn | 404 | Conversation not found (GET conversations/turns) |
 | ERR-LEARN-006 | vektra-learn | 403 | Conversation belongs to a different course/namespace |
+| ERR-LEARN-007 | vektra-learn | 403 | Conversation belongs to another student, or predates per-student ownership |
+| ERR-LEARN-008 | vektra-learn | 503 | Conversation ownership could not be verified (conversation store unreachable); retry |
 | ERR-CONV-001 | vektra-core / vektra-admin | 404 | Conversation not found (core `GET`/`DELETE conversations/{id}`, admin turns) |
 | ERR-CONV-002 | vektra-core / vektra-admin | 503 | Persistent conversation store not available (starting up, or none configured) |
 | ERR-CONV-003 | vektra-admin | 501 | Configured conversation store cannot return decrypted turns (in-memory store) |
@@ -103,6 +108,15 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-INDEX-002 | vektra-index | 400 | Invalid index version (below 1) |
 | ERR-INDEX-003 | vektra-index | 400 | Reindex target must differ from the active version |
 | ERR-INDEX-004 | vektra-index | 404 | Reindex job not found |
+| ERR-ANALYTICS-001 | vektra-analytics | 503 | Analytics service or database session not available (starting up, or none configured) |
+| ERR-ANALYTICS-002 | vektra-analytics | 404 | Trace not found for the given `response_id` |
+
+### Deliberately not listed
+
+`ERR-QUOTA-001` (namespace quota exceeded) is defined in `vektra_shared/errors.py` and
+raised in `vektra_admin/quotas.py`, but `check_namespace_quota` has no production
+caller: the ingest wiring is still open as FEAT-025. Documenting it today would
+describe a response no client can receive. Add the row when the enforcement lands.
 
 ## Adding new error codes
 

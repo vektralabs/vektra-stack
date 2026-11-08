@@ -54,7 +54,7 @@ from vektra_shared.errors import (
 # Namespace config whitelist (WI-3)
 # ---------------------------------------------------------------------------
 # Tight whitelist: unknown keys are rejected (not silently ignored) so that
-# typos from upstream clients (e.g. Moodle plugin) surface immediately. Each
+# typos from upstream clients (e.g. an LMS plugin) surface immediately. Each
 # key is a public contract — extend cautiously.
 #
 # Validation model: every allowed key MUST be declared in exactly one of the
@@ -587,8 +587,8 @@ class NamespaceConfigDetailResponse(BaseModel):
     *config* mirrors what is physically stored in ``namespaces.config``.
     *resolved* is what queries actually see at runtime, after the resolvers
     in :mod:`vektra_shared.namespace` apply the env-var fallback chain
-    (namespace JSONB > env var > hardcoded default). Consumers like the
-    Moodle block edit form use *resolved* to render the "Use default" /
+    (namespace JSONB > env var > hardcoded default). Consumers like an
+    LMS block's edit form use *resolved* to render the "Use default" /
     "Override" toggle without having to re-implement the chain client-side.
     """
 
@@ -708,7 +708,7 @@ async def patch_namespace_config(
       - ``null`` value removes the key from config (falls back to env default
         when resolved downstream, see :mod:`vektra_shared.namespace`).
       - Unknown keys are rejected with 400 (not silently ignored) to surface
-        typos from upstream clients (e.g. Moodle plugin) during development.
+        typos from upstream clients (e.g. an LMS plugin) during development.
     """
     from vektra_admin.models import NamespaceOrm  # late import
 

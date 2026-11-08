@@ -88,3 +88,22 @@ async def test_add_turn_accepts_response_id():
     history = await store.get_history(cid)
     assert len(history) == 1
     assert history[0]["question"] == "Q1"
+
+
+async def test_owner_is_recorded_once_and_cannot_be_claimed():
+    """ensure_conversation writes the owner on first sight only (FEAT-027)."""
+    store = InMemoryConversationStore()
+    cid = uuid4()
+    assert await store.get_owner(cid) == (False, None)
+
+    await store.ensure_conversation(cid, "CS101", uuid4(), owner_subject="student-a")
+    await store.ensure_conversation(cid, "CS101", uuid4(), owner_subject="student-b")
+
+    assert await store.get_owner(cid) == (True, "student-a")
+
+
+async def test_turns_without_owner_read_as_known_and_ownerless():
+    store = InMemoryConversationStore()
+    cid = uuid4()
+    await store.add_turn(cid, "Q1", "A1")
+    assert await store.get_owner(cid) == (True, None)

@@ -1,3 +1,4 @@
 <context>
-{% for chunk in chunks %}<source id="{{ loop.index }}"{% if chunk.get("title") %} title="{{ chunk.get("title") | e }}"{% endif %}>{{ chunk.text | e }}</source>
+{% set counter = namespace(n=0) %}
+{% for chunk in chunks %}{% set citable = chunk.get("citable", True) %}{% if citable %}{% set counter.n = counter.n + 1 %}{% endif %}<source {% if citable %}id="{{ counter.n }}"{% else %}citable="false"{% endif %}{% if chunk.get("title") %} title="{{ chunk.get("title") | e }}"{% endif %}>{{ chunk.text | e }}</source>
 {% endfor %}</context>

@@ -193,7 +193,7 @@ Vektra is a modular open-source platform for Retrieval-Augmented Generation (RAG
 | Goal | Approach | Reference |
 |------|----------|-----------|
 | Deployment simplicity | Single container, Docker Compose, inline defaults | ARCH-001, ARCH-002 |
-| Extensibility | 9 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039, ARCH-053 |
+| Extensibility | 10 Protocol interfaces for all integration points, ProviderRegistry for unified selection | ARCH-029, ARCH-035 to ARCH-039, ARCH-053 |
 | Security | Single trust boundary, encrypted conversations, soft delete for compliance | ARCH-020, ARCH-031, ARCH-040 |
 | Observability | Structured logging, Prometheus metrics, correlation IDs, RAG-specific QueryTrace | ARCH-008, ARCH-013, ARCH-014, ARCH-041 |
 | Future extraction | Module boundaries enforced via import-linter | ARCH-003 |
@@ -224,7 +224,7 @@ See [section 3.1](#31-business-context) for system context diagram.
 │                                                                                     │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐ │
 │  │                           vektra_shared (library)                              │ │
-│  │  • Config schemas    • Error types    • 9 Protocol interfaces                  │ │
+│  │  • Config schemas    • Error types    • 10 Protocol interfaces                 │ │
 │  │  • Auth middleware   • ProviderRegistry  • Types (QueryTrace, Namespace, ...)  │ │
 │  └───────────────────────────────────────────────────────────────────────────────┘ │
 │         ▲                    ▲                    ▲                    ▲            │
@@ -563,13 +563,13 @@ See [section 8.4](#84-deployment) for Docker Compose specification and resource 
 
 #### vektra_shared
 
-**Responsibility**: Cross-cutting infrastructure (not a deployable component). Defines all 9 Protocol interfaces, extended types, ProviderRegistry, and auth middleware.
+**Responsibility**: Cross-cutting infrastructure (not a deployable component). Defines all 10 Protocol interfaces, extended types, ProviderRegistry, and auth middleware.
 
-**Provides**: 9 Protocol definitions (LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter), ProviderRegistry, types (DocumentChunk, QueryResponse, QueryTrace, SourceDocument, SourceRef, Namespace, SearchFilters, ChunkMetadata, BoundingBox, ElementType, SearchMode, QueryEmbedding, SparseVector, ChunkEmbedding, SearchResult, ChunkRef, QueryRequest, QueryChunk, SafeguardContext, SafeguardResult, ExtractionRequest), config schemas, error definitions, auth middleware
+**Provides**: 10 Protocol definitions (LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter, KeyStoreProvider), ProviderRegistry, types (DocumentChunk, QueryResponse, QueryTrace, SourceDocument, SourceRef, Namespace, SearchFilters, ChunkMetadata, BoundingBox, ElementType, SearchMode, QueryEmbedding, SparseVector, ChunkEmbedding, SearchResult, ChunkRef, QueryRequest, QueryChunk, SafeguardContext, SafeguardResult, ExtractionRequest), config schemas, error definitions, auth middleware
 
 ### 8.3 Protocol interfaces
 
-Phase 1 defines 9 Protocol interfaces. Each has a simple Phase 1 implementation (or is not registered when optional) and is designed for Phase 2 swap without contract changes.
+Phase 1 defines 10 Protocol interfaces. Each has a simple Phase 1 implementation (or is not registered when optional) and is designed for Phase 2 swap without contract changes.
 
 **Design principle**: Protocol signatures designed for Phase 2 features; Phase 1 implementations are simple. Fields and parameters that Phase 1 ignores still exist in the types so that Phase 2 swaps implementations without schema migrations or API changes.
 
@@ -707,6 +707,22 @@ class EventEmitter(Protocol):
 Phase 1: NoOpEventEmitter. Emission points: document.indexed, document.failed, query.completed, safeguard.triggered, apikey.created, apikey.revoked. Phase 2 (implemented): WebhookEventEmitter — HMAC-SHA256 signed HTTP POST with configurable URL, secret, and timeout (`VEKTRA_WEBHOOK_URL`, `VEKTRA_WEBHOOK_SECRET`, `VEKTRA_WEBHOOK_TIMEOUT`). LogEventEmitter was originally scoped for Phase 2 but never built; structlog already emits the same events at module boundaries, so the webhook path was prioritized instead.
 
 ### 8.3.1 Extended types
+
+#### KeyStoreProvider
+
+```python
+class KeyStoreProvider(Protocol):
+    async def lookup_by_token(token: str) -> ApiKeyInfo | None
+```
+
+Validates a Bearer token and returns the key's scopes, namespace binding and rate
+limit, or `None` when the token is unknown or revoked. Registered under the
+`key_store` slot; the concrete implementation lives in vektra-admin/vektra-core and
+hashes the token with argon2id before looking it up (ADR-0010).
+
+It is defined in `vektra_shared/auth.py` rather than the protocols module because the
+auth middleware consumes it directly, which is why earlier revisions of this document
+counted nine Protocols instead of ten.
 
 #### Protocol support types
 
@@ -2067,7 +2083,7 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 | **Presidio** | Microsoft open-source library for PII (Personally Identifiable Information) detection and anonymization. Accepted for Phase 2 SafeguardHook implementation for input/output content filtering. |
 | **Prompt template** | Jinja2 template file for prompt construction (ARCH-054). Three composable templates: system.j2 (LLM behavior), context.j2 (chunk formatting), conversation.j2 (history formatting). Loaded from configurable directory with built-in fallback. |
 | **Prompt version** | SHA-256 hash (8-char prefix) of concatenated template sources (ARCH-048, ARCH-054). Recorded in QueryTrace for quality correlation. Per-template hashes in StepTrace metadata. |
-| **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 9 Protocols defined: LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter. |
+| **Protocol interface** | Python typing.Protocol defining contract for pluggable components. 10 Protocols defined: LLMProvider, EmbeddingProvider, SparseEmbeddingProvider, VectorStoreProvider, DocumentExtractor, ChunkingStrategy, QueryPipeline, SafeguardHook, EventEmitter, KeyStoreProvider. |
 | **ProviderRegistry** | Unified registry for Protocol implementations. Dict-based in Phase 1, extensible to entry_points plugin discovery. |
 | **Query rewriting** | Pre-retrieval step that rewrites a conversational query into a self-contained form by resolving pronouns, demonstratives, and anaphoric references using conversation history (ARCH-061). |
 | **QueryPipeline** | Protocol abstracting the RAG query flow. Phase 1: SimpleQueryPipeline. Phase 2: AdvancedQueryPipeline with query rewriting (ARCH-061), reranking, and verification. |
@@ -2219,3 +2235,4 @@ Quality scenarios (QS-xx) define measurable targets. Validation scenarios ([vali
 *Version 1.9.1 - Conversational query rewriting: ARCH-061 (pre-retrieval query rewriting in AdvancedQueryPipeline), ADR-0023, rewrite.j2 template added to ARCH-054, ARCH-036 Phase 2 updated. Multilingual embedding note added to ADR-0013.*
 *Version 1.10 - OQ-018/OQ-019 resolution: ARCH-062 (admin UI server-side rendering, ADR-0024), ARCH-063 (learn chatbot widget, ADR-0025), ARCH-064 (Phase 2 hardware target 8GB/4CPU). Glossary: HTMX added. Deferred table: 3 entries added.*
 *Version 2.0 - Phase 2 delivery annotations: all Phase 2 features marked as implemented (v0.2.0). Component table expanded with vektra-analytics and vektra-learn. Protocol implementations updated: QdrantVectorStoreProvider, UnstructuredExtractor, DualStrategyChunking, AdvancedQueryPipeline, FastEmbedBM25Provider, WebhookEventEmitter. LogEventEmitter was originally scoped for Phase 2 but never built; the webhook path subsumed the use case.*
+*Version 2.1 - Protocol count corrected from 9 to 10: KeyStoreProvider (`vektra_shared/auth.py`, registry slot `key_store`) has existed since the vektra_shared foundation commit and was never listed. Section 8.3 gains its subsection; the quality table, the component diagram, section 8.3's opening and the glossary are updated. EmbeddingProvider's Phase 2 implementation (TEIEmbeddingProvider, FEAT-024) named in CONTEXT.md.*

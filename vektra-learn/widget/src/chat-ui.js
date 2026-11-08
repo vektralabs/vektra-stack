@@ -21,7 +21,16 @@ const I18N = {
     sessionExpired: "Your session has expired. Please reload the page.",
     close: "Close",
     newChat: "New chat",
+    deleteHistory: "Delete this conversation",
+    confirmDelete: "Delete? Click again",
+    historyDeleted: "This conversation has been deleted.",
     poweredBy: "Powered by",
+    copy: "Copy message",
+    copied: "Copied \u2713",
+    copyFailed: "Copy failed",
+    scrollTop: "Back to the start of this answer",
+    enlarge: "Enlarge panel",
+    shrink: "Restore panel size",
   },
   it: {
     title: "Assistente del corso",
@@ -37,7 +46,16 @@ const I18N = {
     sessionExpired: "La sessione è scaduta. Ricarica la pagina.",
     close: "Chiudi",
     newChat: "Nuova chat",
+    deleteHistory: "Elimina questa conversazione",
+    confirmDelete: "Eliminare? Clicca ancora",
+    historyDeleted: "Questa conversazione è stata eliminata.",
     poweredBy: "Offerto da",
+    copy: "Copia messaggio",
+    copied: "Copiato \u2713",
+    copyFailed: "Copia non riuscita",
+    scrollTop: "Torna all'inizio della risposta",
+    enlarge: "Ingrandisci pannello",
+    shrink: "Ripristina dimensione pannello",
   },
 };
 
@@ -77,6 +95,98 @@ function _isSafeLinkUrl(value) {
   );
 }
 
+// Static icon markup (no interpolated input). Stroked with currentColor so
+// the icons follow the theme colour of the button that holds them.
+const _SVG_OPEN =
+  '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">';
+const ICONS = {
+  copy: `${_SVG_OPEN}<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  scrollTop: `${_SVG_OPEN}<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/></svg>`,
+  enlarge: `${_SVG_OPEN}<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>`,
+  shrink: `${_SVG_OPEN}<path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg>`,
+};
+
+// The enlarged-panel preference outlives the page: it is a per-browser
+// convenience, so localStorage is enough, and any storage failure (private
+// mode, blocked site data) just falls back to the default size.
+const _LARGE_KEY = "vektra-chat-panel-large";
+
+function _readLargePref() {
+  try {
+    return window.localStorage.getItem(_LARGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function _writeLargePref(large) {
+  try {
+    window.localStorage.setItem(_LARGE_KEY, large ? "1" : "0");
+  } catch {
+    // storage unavailable: the choice lasts for this page only
+  }
+}
+
+function _prefersReducedMotion() {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+// Last-resort copy for contexts where the async Clipboard API is missing or
+// refused (plain http, older browsers, permissions policy). Selecting the
+// temporary textarea moves focus and replaces any selection on the host
+// page, so both are put back afterwards: a keyboard user stays on the copy
+// button.
+function _legacyCopy(text) {
+  const previousFocus = document.activeElement;
+  const selection = document.getSelection();
+  const previousRanges = [];
+  if (selection) {
+    for (let i = 0; i < selection.rangeCount; i++) {
+      previousRanges.push(selection.getRangeAt(i));
+    }
+  }
+
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "-1000px";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  area.remove();
+
+  if (selection) {
+    selection.removeAllRanges();
+    for (const range of previousRanges) selection.addRange(range);
+  }
+  if (previousFocus && typeof previousFocus.focus === "function") {
+    previousFocus.focus({ preventScroll: true });
+  }
+  return ok;
+}
+
+async function _copyText(text) {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through to the legacy path
+    }
+  }
+  return _legacyCopy(text);
+}
+
 export class ChatUI {
   /**
    * @param {object} opts
@@ -91,6 +201,9 @@ export class ChatUI {
    * @param {string|null} [opts.poweredByUrl] - custom footer link target
    * @param {function} opts.onSend - callback(question: string)
    * @param {function} [opts.onNewChat] - callback invoked when "New chat" is clicked
+   * @param {function} [opts.onDeleteHistory] - async callback invoked when the
+   *   student confirms deletion of their stored history; resolves to true on
+   *   success. Omit it and the button is not rendered at all.
    */
   constructor({
     theme = "light",
@@ -104,11 +217,14 @@ export class ChatUI {
     poweredByUrl = null,
     onSend,
     onNewChat = null,
+    onDeleteHistory = null,
   }) {
     this._theme = theme;
     this._lang = I18N[language] || I18N.en;
     this._onSend = onSend;
     this._onNewChat = onNewChat;
+    this._onDeleteHistory = onDeleteHistory;
+    this._deleteArmed = false;
     this._isOpen = false;
     this._sending = false;
     this._restoring = false; // true while a conversation history is being fetched
@@ -180,6 +296,12 @@ export class ChatUI {
         <span class="vektra-chat-header-title"></span>
         <div class="vektra-chat-header-actions">
           <button class="vektra-chat-new" aria-label="${this._lang.newChat}" title="${this._lang.newChat}">&#10227;</button>
+          ${
+            this._onDeleteHistory
+              ? `<button class="vektra-chat-delete" aria-label="${this._lang.deleteHistory}" aria-pressed="false" title="${this._lang.deleteHistory}">&#128465;</button>`
+              : ""
+          }
+          <button class="vektra-chat-enlarge" type="button" aria-label="${this._lang.enlarge}" aria-pressed="false" title="${this._lang.enlarge}"></button>
           <button class="vektra-chat-close" aria-label="${this._lang.close}">&times;</button>
         </div>
       </div>
@@ -228,6 +350,41 @@ export class ChatUI {
     this._sendBtn = this._panel.querySelector(".vektra-chat-send");
     this._closeBtn = this._panel.querySelector(".vektra-chat-close");
     this._newChatBtn = this._panel.querySelector(".vektra-chat-new");
+    this._deleteBtn = this._panel.querySelector(".vektra-chat-delete");
+    this._enlargeBtn = this._panel.querySelector(".vektra-chat-enlarge");
+    this._setLarge(_readLargePref(), { persist: false });
+    this._watchListSize();
+  }
+
+  /**
+   * Re-measure every answer's back-to-start button whenever the visible
+   * height of the message list changes: window resize, enlarge toggle, and
+   * the panel opening (the list measures 0 while it is closed).
+   */
+  _watchListSize() {
+    const update = () => this._updateScrollTopButtons();
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(update).observe(this._messagesEl);
+    } else {
+      window.addEventListener("resize", update);
+    }
+  }
+
+  _updateScrollTopButtons() {
+    for (const msg of this._messagesEl.querySelectorAll(".vektra-chat-msg.assistant")) {
+      this._updateScrollTopButton(msg);
+    }
+  }
+
+  /**
+   * Back-to-start only does something when the answer does not fit in the
+   * list's visible area; otherwise it is a dead control, so it is hidden
+   * (and leaves the tab order). Copy is always shown.
+   */
+  _updateScrollTopButton(msg) {
+    const btn = msg.querySelector(":scope > .vektra-chat-msg-actions > .vektra-chat-scroll-top");
+    if (!btn) return;
+    btn.hidden = msg.scrollHeight <= this._messagesEl.clientHeight;
   }
 
   _bindEvents() {
@@ -242,6 +399,70 @@ export class ChatUI {
     });
     if (this._newChatBtn) {
       this._newChatBtn.addEventListener("click", () => this._handleNewChat());
+    }
+    if (this._deleteBtn) {
+      this._deleteBtn.addEventListener("click", () => this._handleDeleteHistory());
+    }
+    this._enlargeBtn.addEventListener("click", () => this._setLarge(!this._large));
+  }
+
+  /**
+   * Switch the panel between its default and enlarged size. The accessible
+   * name stays the same and the state travels on aria-pressed, as for the
+   * delete control; the tooltip and icon say what the next click does. On
+   * narrow viewports the stylesheet keeps the panel full-width either way.
+   */
+  _setLarge(large, { persist = true } = {}) {
+    this._large = large;
+    this._panel.classList.toggle("panel-large", large);
+    this._enlargeBtn.setAttribute("aria-pressed", large ? "true" : "false");
+    this._enlargeBtn.title = large ? this._lang.shrink : this._lang.enlarge;
+    this._enlargeBtn.innerHTML = large ? ICONS.shrink : ICONS.enlarge;
+    if (persist) _writeLargePref(large);
+  }
+
+  /**
+   * Two-step delete: the first click arms the button and relabels it, the
+   * second one within 5s performs the deletion. A native confirm() would
+   * block the host page's event loop, and an irreversible action behind a
+   * single click of a small icon is how a student loses their history by
+   * missing the close button.
+   */
+  async _handleDeleteHistory() {
+    if (this._sending || this._restoring || !this._onDeleteHistory) return;
+
+    if (!this._deleteArmed) {
+      this._deleteArmed = true;
+      this._deleteBtn.classList.add("armed");
+      // The accessible name stays put: a screen reader that re-announces the
+      // control should still say what it is. The armed state is state, so it
+      // travels on aria-pressed, with the pending action in the tooltip.
+      this._deleteBtn.setAttribute("aria-pressed", "true");
+      this._deleteBtn.title = this._lang.confirmDelete;
+      this._disarmTimer = setTimeout(() => this._disarmDelete(), 5000);
+      return;
+    }
+
+    this._disarmDelete();
+    const ok = await this._onDeleteHistory();
+    if (ok) {
+      this.reset();
+      this.addMessage("assistant", this._lang.historyDeleted);
+    } else {
+      this.showError(this._lang.error);
+    }
+  }
+
+  _disarmDelete() {
+    if (this._disarmTimer) {
+      clearTimeout(this._disarmTimer);
+      this._disarmTimer = null;
+    }
+    this._deleteArmed = false;
+    if (this._deleteBtn) {
+      this._deleteBtn.classList.remove("armed");
+      this._deleteBtn.setAttribute("aria-pressed", "false");
+      this._deleteBtn.title = this._lang.deleteHistory;
     }
   }
 
@@ -363,13 +584,16 @@ export class ChatUI {
    * @returns {HTMLElement} the message element
    */
   addMessage(role, text) {
+    if (role === "assistant") {
+      const { el, body } = this._createAssistantMessage(() => text);
+      body.innerHTML = renderMarkdown(text);
+      this._updateScrollTopButton(el);
+      this._scrollToBottom();
+      return el;
+    }
     const msg = document.createElement("div");
     msg.className = `vektra-chat-msg ${role}`;
-    if (role === "assistant") {
-      msg.innerHTML = renderMarkdown(text);
-    } else {
-      msg.textContent = text;
-    }
+    msg.textContent = text;
     this._messagesEl.appendChild(msg);
     this._scrollToBottom();
     return msg;
@@ -377,25 +601,84 @@ export class ChatUI {
 
   /**
    * Create an empty assistant message for streaming tokens.
-   * @returns {{ el: HTMLElement, rawText: string }}
+   * @returns {{ el: HTMLElement, body: HTMLElement, rawText: string }}
    */
   createStreamMessage() {
+    const stream = { el: null, body: null, rawText: "" };
+    // The copy action reads rawText at click time, so it always gets the
+    // markdown source as streamed so far, never the rendered HTML.
+    const { el, body } = this._createAssistantMessage(() => stream.rawText);
+    stream.el = el;
+    stream.body = body;
+    this._scrollToBottom();
+    return stream;
+  }
+
+  /**
+   * Build an assistant bubble: a body that holds the rendered markdown, and
+   * an action row (copy, back to start). Streaming re-renders only the body,
+   * so the actions and the sources survive every token.
+   * @param {function(): string} getRawText - returns the message's markdown source
+   * @returns {{ el: HTMLElement, body: HTMLElement }}
+   */
+  _createAssistantMessage(getRawText) {
     const msg = document.createElement("div");
     msg.className = "vektra-chat-msg assistant";
-    msg.textContent = "";
+
+    const body = document.createElement("div");
+    body.className = "vektra-chat-msg-body";
+    msg.appendChild(body);
+
+    const actions = document.createElement("div");
+    actions.className = "vektra-chat-msg-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "vektra-chat-msg-action vektra-chat-copy";
+    copyBtn.setAttribute("aria-label", this._lang.copy);
+    copyBtn.title = this._lang.copy;
+    copyBtn.innerHTML = ICONS.copy;
+    actions.appendChild(copyBtn);
+
+    const topBtn = document.createElement("button");
+    topBtn.type = "button";
+    topBtn.className = "vektra-chat-msg-action vektra-chat-scroll-top";
+    topBtn.setAttribute("aria-label", this._lang.scrollTop);
+    topBtn.title = this._lang.scrollTop;
+    topBtn.innerHTML = ICONS.scrollTop;
+    topBtn.hidden = true; // shown once the answer is measured taller than the list
+    actions.appendChild(topBtn);
+
+    const status = document.createElement("span");
+    status.className = "vektra-chat-msg-status";
+    status.setAttribute("role", "status");
+    actions.appendChild(status);
+
+    let statusTimer = null;
+    copyBtn.addEventListener("click", async () => {
+      const ok = await _copyText(getRawText());
+      status.textContent = ok ? this._lang.copied : this._lang.copyFailed;
+      clearTimeout(statusTimer);
+      statusTimer = setTimeout(() => {
+        status.textContent = "";
+      }, 1500);
+    });
+    topBtn.addEventListener("click", () => this._scrollToMessageTop(msg));
+
+    msg.appendChild(actions);
     this._messagesEl.appendChild(msg);
-    this._scrollToBottom();
-    return { el: msg, rawText: "" };
+    return { el: msg, body };
   }
 
   /**
    * Append a token to a streaming message and re-render markdown.
-   * @param {{ el: HTMLElement, rawText: string }} stream
+   * @param {{ el: HTMLElement, body: HTMLElement, rawText: string }} stream
    * @param {string} token
    */
   appendToken(stream, token) {
     stream.rawText += token;
-    stream.el.innerHTML = renderMarkdown(stream.rawText);
+    stream.body.innerHTML = renderMarkdown(stream.rawText);
+    this._updateScrollTopButton(stream.el);
     this._scrollToBottom();
   }
 
@@ -409,8 +692,11 @@ export class ChatUI {
     if (!sources || sources.length === 0) return;
 
     // FEAT-021: link [n] citation markers in the answer to their source.
-    // Marker order matches the sources order (both follow the prompt's
-    // budget-selected chunk order), so [n] -> sources[n-1].
+    // Marker order matches the sources order because the prompt numbers only
+    // the sources the response carries: a withheld chunk (FEAT-026) is handed
+    // to the model without an id, so it consumes no number. Hence [n] ->
+    // sources[n-1]. A marker outside the list is left unlinked rather than
+    // guessed at.
     for (const cite of msgEl.querySelectorAll("sup.vektra-cite")) {
       const idx = parseInt(cite.getAttribute("data-cite"), 10) - 1;
       const src = sources[idx];
@@ -474,7 +760,10 @@ export class ChatUI {
       toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
     });
 
-    msgEl.appendChild(container);
+    // Sources go between the answer and its action row.
+    const actions = msgEl.querySelector(":scope > .vektra-chat-msg-actions");
+    msgEl.insertBefore(container, actions);
+    this._updateScrollTopButton(msgEl);
     this._scrollToBottom();
   }
 
@@ -528,10 +817,24 @@ export class ChatUI {
    */
   doneSending() {
     this._setSending(false);
+    this._updateScrollTopButtons();
     this._inputEl.focus();
   }
 
   _scrollToBottom() {
     this._messagesEl.scrollTop = this._messagesEl.scrollHeight;
+  }
+
+  /**
+   * Scroll the message list (not the host page) so the top of one message
+   * lines up with the top of the list.
+   */
+  _scrollToMessageTop(msg) {
+    const list = this._messagesEl;
+    const offset =
+      msg.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    // Keep the list's own top padding (16px) above the bubble.
+    const top = Math.max(0, list.scrollTop + offset - 16);
+    list.scrollTo({ top, behavior: _prefersReducedMotion() ? "auto" : "smooth" });
   }
 }

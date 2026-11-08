@@ -22,6 +22,158 @@
 
 ## Planned
 
+### BUG-029: the documented `namespace` form field of `POST /api/v1/ingest` was ignored
+
+**Status**: completed (2026-11-07) | **Priority**: high | **Created**: 2026-11-07
+**Origin**: the v0.8.0 widget acceptance run. Its ingest step sent `-F namespace=vk080`, got 200 for both documents, and every student question then answered "I couldn't find relevant information": the documents were in `default`.
+
+**Context**: the endpoint read the form field under the parameter's own name, `namespace_form`, because the `Form()` had no alias. The served OpenAPI schema listed `file, namespace_form, metadata`. Two dates, because the defect is the gap between them:
+- the **behaviour** is old: `namespace_form` has been the field name since 000a27d (2026-03-13), and it is in v0.7.1. The endpoint docstring said only "query param or form field", vague but naming no field;
+- the **false statement** is new: the form-field table in `docs/reference/api.md`, added in this cycle by 934cb66 (FEAT-026, 2026-09-08, not an ancestor of `main`), documented the field as `namespace`. v0.7.1 never shipped it.
+
+So without a fix, v0.8.0 would have published a reference doc written in this cycle that sends an integrator's documents to the wrong namespace, silently: 200, a `document_id`, a chunk count, and the course's students cannot retrieve any of it while whoever queries `default` can.
+
+**Fix, and the alternative not taken**: either the code accepts the documented name, or the table row is deleted and the query parameter stays the only way. The code was aligned to the doc: `namespace` is the name the query parameter already uses, `namespace_form` was an internal artefact, and no client sends it (searched in vektra-stack, vektra-moodle and vektra-internal on `develop` and `main`: only the endpoint itself and one test). The fix is an alias on the existing parameter, not a second parameter, so one field cannot be read two ways. `POST /api/v1/ingest/batch` was checked and needs nothing: its docs promise the namespace only as a query parameter, which is what it reads.
+
+**Acceptance criteria**:
+- [x] `-F namespace=X` lands in X; with both, the form field wins over the query, as documented; the query alone still works
+- [x] The test fails without the alias (mutation: the two form-field cases and the reserved-namespace-by-form case go red, the query-only controls stay green)
+- [x] The served OpenAPI schema lists `namespace` among the form fields
+- [ ] The v0.8.0 widget acceptance run ingests into the course namespace through the documented field
+
+**Traceability**: FEAT-026 (the doc table), 000a27d (the field name), the v0.8.0 release PR.
+
+---
+
+### INFRA-009: the VM cannot build the image it deploys
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-09-10
+**Origin**: the 2026-09-10 deployment. `/var` filled to 100% *during* `docker compose build` and the build had to be rescued mid-flight.
+
+**Context**: Docker's root lives on `/var`, which is 25 GB on that host and was already at 87% before the build started. The image is ~5.5 GB, and a build needs room for the layers plus the build cache at the same time. The operator recovered by pruning the build cache (~7.5 GB) and deleting the previous `vektra-stack:latest`, which brought it back to 79% — enough to finish, not enough to be safe next time. The same build will be attempted again on the next deployment, from roughly the same starting point.
+
+Building on the host is the current deployment method by choice (there is no published image carrying the numpy fix until a release is tagged, BUG-027), so this is not an occasional inconvenience: it is on the path of every update until releases resume.
+
+**Options, in rough order of effort**:
+- prune as a documented pre-flight step (`docker builder prune`, remove superseded tags). Cheapest, and it only buys headroom until the next growth.
+- move Docker's data root to a larger volume (`/etc/docker/daemon.json`, `data-root`). Needs a daemon restart and a copy of the existing data.
+- grow the `/var` volume. Depends on what the hypervisor allows.
+- build elsewhere and ship the image (`docker save` / `load`, or a registry). Removes the build from the host entirely, and is what a published release would do anyway.
+
+**Acceptance criteria**:
+- [ ] Decision recorded on where the image is built for this deployment
+- [ ] If it stays on the host: headroom check and prune documented as part of the deploy runbook, with the numbers this incident produced
+- [ ] A build that runs out of space fails before it has half-written layers, or the runbook says how to recover
+
+---
+
+### FEAT-027: conversations belong to a student, not to a course
+
+**Status**: completed (2026-09-09) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: deployment review (2026-09-08). Students lose their chat history whenever they close the tab or move to another device, and the fix exposed an authorization gap that had been sitting in the same endpoint.
+
+**Context**: `PersistentConversationStore` has existed since Phase 2 (Postgres + pgcrypto, ADR-0011) and is selected at startup by `VEKTRA_CONVERSATION_KEY`. Production never set it, so the app registered the in-memory store and every conversation died with the process. The widget compensated with a `sessionStorage` entry per course — which is tab-scoped by design, so history never survived a new device, a reopened window, or a browser restart.
+
+The reason it could not simply be turned on: a stored conversation had no owner. The `conversations` row carried `namespace_id` and `key_id`, and learn-originated conversations all use the same sentinel `key_id` because the widget authenticates with a JWT and holds no API key. So a conversation was identified as "belonging to a course", and the only authorization `GET /conversations/{id}/turns` could perform was a namespace match.
+
+**Security consequence** (found while designing the feature, fixed here): every student of a course holds a token for that namespace, so any of them could read any other student's turns given a conversation id. Exploitation needed a guessed v4 UUID, and no deployment had persistence enabled, so nothing stored was ever exposed — but the check did not exist; it was unreachable, which is not the same thing. Turning persistence on without fixing it would have armed it, the pattern this repo has already paid for three times (BUG-023's delete, DEBT-030's tests, DEBT-032's index versions).
+
+**Resolution**: migration `0008` adds `conversations.owner_subject` (nullable `VARCHAR(255)`) plus a partial index on `(namespace_id, owner_subject, updated_at DESC) WHERE deleted_at IS NULL`, which backs the one query that reads it. The learn query endpoint records the JWT `sub` when it creates the row — `ensure_conversation` writes it on insert only (`ON CONFLICT DO NOTHING`), so sending someone else's conversation id cannot claim it. The turns endpoint checks namespace **and** owner, refusing anything else with `ERR-LEARN-007` before decrypting a turn, and refusing ownerless rows rather than treating them as public. Two endpoints follow from ownership: `GET /api/v1/learn/conversations` (the caller's own, metadata only) and `DELETE /api/v1/learn/conversations/{id}` (soft delete, REQ-057), the second answering `404` for "not yours" as well as "not found", so it cannot enumerate ids.
+
+Decisions worth recording:
+
+1. **The owner is the JWT `sub`, stored in clear.** It is the Moodle username the token was issued for — a pseudonymous LMS identifier, the same value already stored in `dashboard_tokens.student_id` and `enrollments.student_id`. Hashing it would have pseudonymised one column while two neighbouring tables keep the plaintext, buying nothing and making operator debugging harder.
+2. **Ownerless rows are refused, not grandfathered.** This is free today (production has no persisted conversations) and it is the safe default when it stops being free.
+3. **The widget keeps `sessionStorage`, demoted.** It is now a fast path for the current tab; the server list is the fallback that makes history portable. A "new chat" or a deletion writes a tab-local marker, because otherwise the next load would helpfully restore the very conversation the student chose to leave.
+
+**Operational note**: enabling `VEKTRA_CONVERSATION_KEY` starts persisting personal data (pseudonymous and encrypted at rest, still personal). Set `VEKTRA_RETENTION_DAYS` in the same change. The key cannot be rotated in place — existing turns become undecryptable — and losing it loses the history; both are documented in `docs/reference/configuration.md`.
+
+**Acceptance criteria**:
+- [x] conversations carry an owner, recorded from the JWT subject at creation
+- [x] a student cannot read another student's turns, and the refusal precedes decryption
+- [x] a token with no subject cannot read history at all
+- [x] "my conversations" endpoint, scoped to owner and namespace
+- [x] student-initiated deletion, owner-scoped, audited, indistinguishable from "not found"
+- [x] widget resumes from the server when the tab has no stored id, and respects an explicit fresh start
+- [x] deployment documentation for the encryption key, its one-way nature and the GDPR consequence
+- [x] verified end-to-end on a stack with `VEKTRA_CONVERSATION_KEY` set (2026-09-09, local, isolated compose project, LLM stubbed): migration `0008` applied from an empty database; a second turn was given the first as history; the owner listed their conversation and a second student's token listed nothing; that second token was refused on the turns endpoint with `ERR-LEARN-007` and got a 404 (not a 403) when deleting; the owner read their two turns, deleted them, and the conversation vanished from both the API and the list while the row survived with `deleted_at` set and a fresh query opened a new conversation; `conversations.owner_subject` held the JWT subject, `conversation_turns.question` was `bytea` whose raw bytes do not contain the question and which decrypts with the configured key; the delete wrote its audit row
+- [ ] the same through the widget in a browser, on two real devices — the run above exercises the HTTP API directly, so the server-side resume is proven and the client-side "continua o riparti" behaviour is not
+
+### FEAT-026: retrieved but never cited - per-document source visibility
+
+**Status**: completed (2026-09-08) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: university deployment review (2026-09-08). Course pages carry publisher material that Moodle marks not visible to students; it must feed the assistant's answers without being handed back as a citable source.
+
+**Context**: ingestion had no channel for per-document attributes at all. `run_ingest` has taken an `extra_metadata` argument since the learn vertical needed `course_id`, and `ChunkMetadata` documents `course_id`, `module_id` and `academic_year` as supported keys, but no HTTP request could set any of them: the endpoint accepted a file and a namespace, nothing else. So the first requirement was a metadata channel, and the visibility flag is its first reserved key.
+
+The retrieval requirement is unusual and worth stating precisely: the content must stay **fully** retrievable — embedded, searched, reranked, parent-expanded, placed in the prompt — while the *attribution* disappears. This is not a relevance filter and must never become one: filtering at retrieval would degrade answers, which is the opposite of what the operator asked for.
+
+**Contract** (frozen before implementation so the n8n pipeline could be built against it):
+
+```
+POST /api/v1/ingest          multipart/form-data
+  file, namespace, metadata=<JSON object string>
+```
+
+- flat object, scalar values, keys `[a-z][a-z0-9_]{0,63}`, 4 KB; violations are `ERR-INGEST-005` (422)
+- reserved key `hidden_from_students` (JSON boolean, default false)
+- same field on `/api/v1/ingest/batch`, applying to every file in the request; an invalid value rejects the whole batch rather than ingesting some files without the visibility their caller asked for
+- producer-side rule agreed with the pipeline: the flag mirrors the course module's `visible === 0`, **not** `uservisible`, which reflects the *caller's* access and is true for an admin token even on hidden modules — reading it would invert the behaviour
+
+**Resolution**: metadata parsed and validated at the API boundary, threaded through the sync path, the arq task (new trailing optional argument, so a job enqueued by the previous version and still queued across a deploy runs with the signature it was serialized against) and the in-process fallback. The withholding itself is a two-line predicate (`vektra_shared.types.is_hidden_source`) applied at the four points where a pipeline turns selected chunks into a source list: `SimpleQueryPipeline` and `AdvancedQueryPipeline`, sync and SSE.
+
+Three decisions worth recording:
+
+1. **The filter is server-side and unconditional**, not a rendering hint. FEAT-014 established the opposite pattern for citation visibility (`show_sources` tells the widget what to draw while the API returns everything, so analytics keep full information). That is wrong here: the JSON body is readable in a browser's devtools, so chunk ids, snippets and filenames of publisher material would be one keypress away. Admin-scope callers are filtered too; inspection goes through the QueryTrace and `GET /documents/{id}/chunks`, which are already admin surfaces.
+2. **Citations (FEAT-021) had to be taught about it.** The first shape of this kept `loop.index` as the source id and relied on a prompt rule not to cite withheld chunks. Two defects: a prompt rule is advisory, so a marker could still disclose that a withheld source exists; and worse, a withheld chunk *consumed a number*, so with one in the middle every later id was off by one and the model's `[2]` addressed a source the client never received — the widget maps `[n]` to `sources[n-1]`. Withheld chunks now render with `citable="false"`, no `title` (a title is a filename the model could quote in prose) and **no id at all**: the context numbers only the sources the response carries, which makes a wrong marker impossible by construction rather than by instruction. Raised by CodeRabbit on #139 (comment 3969533968), which saw the disclosure half; the numbering half turned up while fixing it.
+3. **The flag must be a real boolean.** `"true"` is rejected rather than coerced, because `"false"` is truthy in Python: a coercing parser would hide every source in a namespace the first time the pipeline quoted the value, and would work by accident until then.
+
+**Known limitation, deliberate**: dedup is by content hash over live rows, so re-ingesting an unchanged file returns `exists`/`alias` and does not update metadata. Flipping visibility on an already ingested document requires `DELETE /api/v1/documents/{id}` then re-ingest; a content change needs no delete (the versioning path rewrites the chunks). A `PATCH` for document metadata is not filed yet and would remove this step.
+
+**Out of scope, needs a product decision**: modules that are visible but access-restricted (`availability`: group, date, completion). They keep their sources visible today. Widening the rule is a decision about what "restricted" means to a student, not a technical gap.
+
+**Acceptance criteria**:
+- [x] ingest API accepts and persists per-document metadata, on every ingestion path
+- [x] a chunk marked `hidden_from_students` is used in the answer and absent from the returned sources
+- [x] the same holds on the SSE path and in both pipelines
+- [x] citation markers cannot reference a withheld source
+- [x] contract documented in `docs/reference/api.md` with the delete-and-reingest caveat
+- [x] end-to-end check against a live stack (2026-09-09, local, isolated compose project, LLM stubbed): a document ingested with `hidden_from_students: true` reached the model (the stub records the prompt it was handed and saw the document's sentinel), the answer was built from it, and its `doc_id`, snippet and filename were absent from `sources` on both the JSON and the SSE path, with `sources_withheld=1` in the trace and the flag present on exactly that document's Qdrant points. A neighbouring visible document was still cited normally, and all four malformed-metadata probes returned `ERR-INGEST-005`. Log: `vektra-internal` session artifacts
+- [ ] the same, through the widget in a browser and with a document actually exported from Moodle by the ingestion pipeline — the run above drives the HTTP API with a synthetic document, so it proves the backend contract and not the integration around it
+
+### BUG-027: the published image cannot start on a pre-x86-64-v2 CPU
+
+**Status**: completed (2026-09-08) | **Priority**: high | **Created**: 2026-09-08
+**Origin**: production deployment on the university VM (2026-09-02). The GHCR image would not boot; the host has been running a hand-patched derivative ever since.
+
+**Context**: the deployment VM's CPU predates x86-64-v2 (`lscpu` shows `sse4_2` but no `popcnt`, no `avx`, so it is not a v2 host). Every numpy >= 2.0 x86_64 wheel on PyPI is built with an X86_V2 baseline and executes a v2 instruction while loading, so `import numpy` aborts the interpreter — before the ARCH-057 startup sequence, before any structured error, with `Illegal instruction (core dumped)` or numpy's own `RuntimeError: NumPy was built with baseline optimizations: (X86_V2)`. Since numpy backs embeddings and the whole retrieval path, nothing in Vektra runs.
+
+The workaround in production is an image derived from the published one (`FROM ghcr.io/vektralabs/vektra:0.7.1`, `ensurepip` then `pip install "numpy<2"`, deployed as `0.7.1-np1`). It works — numpy 1.26.4 with scipy 1.17, scikit-learn 1.8, onnxruntime 1.24, torch 2.10+cpu, fastembed 0.8, sentence-transformers 5.2, transformers 5.3 all import and serve — but it lives outside the repository and has to be rebuilt by hand after every release. That is the defect: not that the host is old, but that the repository does not know it exists.
+
+**Resolution**: `[tool.uv] constraint-dependencies = ["numpy<2"]` in the root pyproject, lock regenerated. A constraint rather than a dependency, because no workspace package imports numpy: it arrives transitively through sentence-transformers, scipy, scikit-learn, fastembed, onnxruntime, torch, qdrant-client and pgvector.
+
+Resolution impact, measured on the container's environment (linux, x86_64, CPython 3.12) by evaluating the lock's markers rather than reading uv's universal-resolution summary:
+
+- standard image (`--extra sparse --extra qdrant`): numpy 2.4.2 -> 1.26.4 is the only change. torch 2.10.0+cpu, transformers 5.3.0, scipy 1.17.0, scikit-learn 1.8.0, onnxruntime 1.24.2, sentence-transformers 5.2.3, fastembed 0.8.0, qdrant-client 1.17.0 unmoved.
+- OCR image (`--extra ocr`): unstructured 0.21.5 -> 0.18.32, unstructured-inference 1.5.2 -> 1.1.1, opencv-python 4.13 -> 4.11. Production runs the standard variant; if that host ever needs OCR, the choice has to be made again.
+- every package with an open advisory under DEBT-039 keeps its exact version (pillow 12.2.0, pypdf 6.14.2, aiohttp 3.14.1, pyasn1 0.6.3, cryptography 49.0.0, h2 4.3.0, setuptools 82.0.0, torch 2.10.0): the constraint reopens nothing.
+
+**Verification** (three levels, because none of the cheap ones can see the real failure):
+1. unit guard `vektra-index/tests/test_numpy_cpu_baseline.py` — the wheel's compiled-in `__cpu_baseline__` must stay within `{SSE, SSE2, SSE3}`. A property of the wheel, so a runner supporting AVX-512 still gives a real verdict; negative control run by forcing `platform.machine()` to x86_64 on arm64.
+2. integration step under `qemu-x86_64 -cpu qemu64,+sse3`, which masks CPUID exactly like the target host. Measured in a scratch amd64 container: numpy 1.26.4 imports (baseline `['SSE', 'SSE2', 'SSE3']`), numpy 2.4.2 dies with `uncaught target signal 4 (Illegal instruction)`. A control asserts the emulation really masks POPCNT/SSE41/SSE42 first, since otherwise the check would pass on any CPU.
+3. manual run of the image on the VM itself before the release is tagged (`/health` 200 plus one real query).
+
+**Traceability**: INFRA-007 (the GHCR publish flow this unblocks), DEBT-039 (advisory sweep, unaffected)
+
+**Acceptance criteria**:
+- [x] numpy pinned in the lock, with the resolution delta measured rather than assumed
+- [x] regression guard on the wheel baseline
+- [x] the image is exercised on an emulated pre-v2 CPU in CI, with a control that proves the emulation masks
+- [x] CPU requirement, host check and OCR caveat documented for operators
+- [ ] verified on the production VM and the hand-patched `0.7.1-np1` image retired
+
+---
+
 ### BUG-023: Qdrant mode - every code path that reads chunk text from Postgres silently returns nothing
 
 **Status**: completed (2026-07-14) | **Priority**: high | **Created**: 2026-07-13 | **PR**: #102
@@ -253,6 +405,122 @@ One subtlety the learn test had to account for: FastAPI resolves dependencies **
 - [x] Bounds documented in `docs/reference/api.md`
 
 **Traceability**: DEBT-013 (found by), REQ-010 (the note predicted the envelope on the 422 path; the live behaviour is the FastAPI validation shape, and the fix matches `/search`)
+
+---
+
+### DEBT-039: known advisories ship inside the published images
+
+**Status**: in progress (Phase 1 in review, Phase 2 not started) | **Priority**: medium | **Created**: 2026-09-02
+**Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02) and then auditing what that exposes.
+
+**Context**: the published images install wheels with open advisories, in packages the service actually loads: pillow and pypdf sit directly under the ingest path, which parses documents an operator uploads. Making the package public did **not** create the exposure (the source, `uv.lock` and the Dockerfile were already public, so anyone could rebuild the identical image); it lowered the cost of finding out to one `docker pull` and one scanner run, on an artifact that carries the project's name.
+
+**How to count, and why no count is written here.** The number moves on its own, as new advisories are published against versions already shipped, so a count written in this entry is stale the day after. Two predicates, and they answer different questions:
+
+- **Dependabot alerts** (`gh api repos/vektralabs/vektra-stack/dependabot/alerts --paginate`, `state=open`) measure the **default branch, `main`**, which is what the last release shipped. They say nothing about `develop`: a fix merged into `develop` leaves every alert open until the release reaches `main`.
+- **What an image installs**: `uv export --frozen --no-dev --no-hashes --no-emit-workspace --all-packages --extra sparse --extra qdrant` (add `--extra ocr` for the `-ocr` variant), keeping only the requirements whose markers hold for CPython 3.12 on linux x86_64, then `pip-audit --no-deps -r` on the result. This is the predicate for a branch, because it reads that branch's lock.
+
+Both were checked on a package they must find (pillow and pypdf, counted identically by the two) before trusting what they did not find.
+
+**The Phase 1 command first written here is wrong, and must not be re-run.** It was `uv lock -P pillow -P pypdf -P aiohttp -P pyasn1 -P cryptography -P h2 -P setuptools`, measured against a lock that has since changed. Run on today's `develop`, it **downgrades pillow to 10.4.0** (and pi-heif to 0.22.0) for every Python, 3.12 included. The cause is the `numpy<2` constraint that BUG-027 added, combined with a workspace whose `requires-python` has no upper bound: on the 3.13+ forks numpy<2 has no wheel, the resolver backs fastembed down to 0.4.2, which caps pillow below 11, and with `-P pillow` that cap ends up applied to the 3.12 fork as well (measured outcome; the lock before the command already split pillow into 10.4.0 for 3.13+ and 12.2.0 for 3.12). The fix is `[tool.uv] environments = ["python_version < '3.13'"]`: every image and CI job runs 3.12, and the bound removes the forks that cannot be satisfied. "All seven are transitive" and "the blast radius is eight lines" were also measurements of that older lock and no longer hold.
+
+**Phase 1, taken**: pillow 13.0.0, pypdf 6.21.4, aiohttp 3.14.5, pyasn1 0.6.5, cryptography 50.0.2, h2 4.4.1, setuptools 84.2.1, plus pyjwt, certifi, anyio, urllib3 and filelock, which carried advisories of their own by the time the bump was made, and fsspec 2026.6.0, mako 1.4.2, multidict 6.9.1, nltk 3.10.4 and soupsieve 2.9, each taken at its first fixed version with `-P pkg==version`. That pin matters: unpinned, the resolver takes multidict 7.x and soupsieve 4.0, a major version inside a security bump. fastembed moves 0.8.0 -> 0.9.1 with pillow (0.8.0 caps pillow below 13); it computes the BM25 sparse vectors, so it was checked rather than assumed: both versions produce identical indices and values on the same corpus (only the array dtype differs, and `_to_sparse_vector` calls `.tolist()`, which erases it), and 0.9.1 loads a model cache written by 0.8.0 without the network. Before merging, both images were built, real PDFs extracted by both extractors gave identical chunks on the old and the new `-ocr` image, and the images were run under `qemu-x86_64 -cpu qemu64,+sse3` to keep BUG-027 closed. The numbers, per image and per predicate, are in the Phase 1 PR.
+
+**`unstructured` cannot be taken under the current constraints, and it is not reachable today.** Both of its advisories need 0.24.0 or later (the full-read SSRF GHSA-4mvj-m6j5-pmf7 is fixed in 0.24.0, the XSS GHSA-v5mq-3xhg-98m9 in 0.24.1). No version from 0.19.0 up resolves together with `numpy<2`, with or without the Python bound: `unstructured[pdf]>=0.24` requires `unstructured-inference>=1.6.12`, which requires `opencv-python>=4.13.0.90`, which requires `numpy>=2`. And `numpy<2` is not negotiable while the production CPU predates x86-64-v2 (BUG-027). This is a fact to know, not a defect waiting for a fix: it stays until either the production host changes or an opencv release builds against numpy 1.x again. Meanwhile the SSRF is not reachable through Vektra, and that was measured in the artifacts, with a check that could have said otherwise:
+
+- the advisory's entry points are the `url=` argument of `partition()`, `partition_html()` and `partition_md()`. Vektra imports none of the three: a search of every `vektra-*/src` for those names finds only `partition_pdf`, and the same search finds `partition_pdf` (the positive control), so it is not a search that cannot match;
+- `UnstructuredExtractor._extract_impl` calls `partition_pdf(file=io.BytesIO(request.content), strategy="auto")`: bytes already in memory. In the installed 0.18.32 wheel, `partition/pdf.py` performs no fetch; `url` appears there only as link metadata;
+- only the `-ocr` image installs `unstructured` at all (`INSTALL_UNSTRUCTURED=true`); the standard image has no such package.
+
+**What would arm it**: any future endpoint or ingest path that passes a caller-supplied URL into one of those three functions, or that switches extraction to `partition()` on a URL. Whoever adds URL ingestion must reopen this entry first.
+
+**Phase 2, not started, on purpose**: `transformers`, `torch`, `sentence-transformers` and `accelerate` carry the embedding model and the cross-encoder reranker, so "it builds and the tests pass" is **not** evidence that retrieval is unchanged: a bump here can move scores without failing anything. Run the eval corpus before and after and compare hit rate and MRR against the recorded Combo D baselines. One transformers advisory (GHSA-x9r9) has no patched version at all.
+
+**`litellm` is outside both phases**: its advisories are fixed in later 1.9x releases, but it is the LLM abstraction every query goes through, so it moves in a block of its own with end-to-end query checks, not inside a dependency security sweep.
+
+**Acceptance criteria**:
+- [ ] Phase 1 merged into `develop`, and the image-install predicate above, run on the rebuilt images, shows none of the Phase 1 packages
+- [ ] After the next release reaches `main`, the Dependabot count for the Phase 1 packages is 0, checked against the API. Not before: until then those alerts stay open by construction, and reading them as a regression is the mistake this line exists to prevent
+- [ ] Phase 2 taken or explicitly deferred **with the eval numbers in hand**, not on the strength of a green suite
+- [ ] The remaining count is stated, including every alert deliberately not taken and why (`unstructured` above, the Phase 2 packages, `litellm`)
+
+**Traceability**: INFRA-007 (the images exist), INFRA-008 (what else the image carries), BUG-027 (the `numpy<2` constraint that shapes this entry), the RAG tuning baselines for the Phase 2 comparison.
+
+---
+
+### INFRA-008: nothing sensitive may reach the published image, checked rather than assumed
+
+**Status**: resolved (2026-09-02) | **Priority**: medium | **Created**: 2026-09-02 | **PR**: #133
+**Origin**: making `ghcr.io/vektralabs/vektra` public (2026-09-02). Verifying that the image carried nothing private turned up a second, live defect in the mechanism that was supposed to guarantee it.
+
+**Context**: `publish.yml` pushes two images on every `v*` tag, with no human between the push and the registry, and the package is now **public** and cannot be made private again. What kept secrets out was two conventions, neither of them checked: the Dockerfile copies named paths and never the context root, and `.dockerignore` excludes `.env`, `CLAUDE.local.md` and `.claude/`. Either could be removed by one edit with nothing going red.
+
+**The defect found while writing the check**: a `.dockerignore` entry without a slash matches **the context root only**. The file had `.env`, so `migrations/.env` and `vektra-*/src/.env` were never excluded, and the Dockerfile copies those directories whole. Measured against a real `docker build`, first with the old rules and then with the new ones, on a context mirroring the repo layout:
+
+| Planted file | Old `.dockerignore` | New `.dockerignore` |
+|---|---|---|
+| `migrations/.env` | **in the image** | excluded |
+| `vektra-shared/src/.env` | **in the image** | excluded |
+| `vektra-shared/src/vektra_shared/.env.local` | **in the image** | excluded |
+| `vektra-shared/src/CLAUDE.local.md` | **in the image** | excluded |
+| `vektra-learn/widget/src/.env` | **in the image** | excluded |
+| `migrations/env.py`, `config.py`, `api-client.js` (controls) | present | present |
+
+The controls matter: without them "no `.env` in the image" is also what an empty build context looks like.
+
+**Never exercised, and that is a measurement, not a hope**: no sensitive file has ever sat inside a copied directory (`find` over the working tree returns `.env`, `.env.example`, `CLAUDE.local.md` and `.claude/` at the **root** only), and CI builds from a git checkout, where an untracked file is not in the context at all. The four tracked paths matching the sensitive patterns are `.claude/CLAUDE.md`, `.claude/settings.json` and two scripts, all under the root `.claude/` that nothing copies. Direct inspection of the published `0.7.0` image agrees: no `.env` under `/app`, and zero hits passing the full node privacy denylist over its extracted code and the widget bundle, with an injected canary proving the scan could still say yes.
+
+**Resolution**: `.dockerignore` rules for secret-bearing files are `**`-prefixed (`**/.env`, `**/.env.*`, `**/CLAUDE.local.md`, `**/.claude/`, `**/.local/`, the last one new), and `vektra-shared/tests/test_image_content_boundary.py` fails if either convention regresses. It parses the Dockerfile (continuations, comments, the JSON array form, `--from=` stages skipped since those read a build stage and not the context), keeps the sources that are real directories, and asserts that for each of them every forbidden name is excluded by `.dockerignore`, one level down and deeper. It reasons about paths and never about what happens to be on disk: CI checks out a clean tree with no `.env` in it, so a guard that scanned the working tree would pass for the wrong reason on the very machine that publishes the image.
+
+It runs in the `test-structure` job, which carries **no path filter** on purpose. Every other unit job is gated on `dorny/paths-filter`, and `test-shared` is gated on `vektra-shared/**`, so a PR that edits only `Dockerfile` or only `.dockerignore` matches no filter and skips them all. Those two files are precisely what this guard exists to watch. Same reasoning as DEBT-031, same job.
+
+**Found in review** (CodeRabbit on #133, both reproduced before being applied): the sweep check compared the **literal** source string, so `COPY ././ /app` slipped through although a real build copies the whole context with it (verified: a planted file at the context root landed in the image while the guard reported no sweep); and `copied_directories` skipped **wildcard** sources, so rewriting the Dockerfile as `COPY vektra-*/src ...` would have dropped all eight package directories from the check with the guard still green. Sources are now normalised with `posixpath.normpath` after leading slashes are stripped, the way a builder cleans them, and wildcard sources are expanded against the real tree instead of skipped. Both have their own mutants, and the sweep check carries the opposite control too: `vektra-shared/src`, `migrations/` and `alembic.ini` must **not** read as sweeps, so a check that flagged everything could not pass either.
+
+**Acceptance criteria**:
+- [x] A `COPY . .` (and `COPY ./`, and the `ADD ["./", ...]` form) fails the build
+- [x] Path-equivalent sweeps (`././`, `./.`, `.//`, `a/..`, `./*`, `/`, `*`) fail too, compared after normalisation rather than as literals
+- [x] A wildcard directory source is expanded, never silently skipped
+- [x] Dropping or un-`**`-ing the `.env` rule fails the build
+- [x] The guard proves it can say no: the mutants above are asserted, and the matcher is asserted **not** to exclude files the image needs, so a matcher that excluded everything cannot pass
+- [x] It runs where a Dockerfile-only PR reaches it
+- [x] The `.dockerignore` gap it found is closed, verified with a real `docker build` in both directions and with positive controls
+
+**Traceability**: INFRA-007 (image publishing), DEBT-031 (the `test-structure` job and why it carries no path filter), ADR-0012.
+
+---
+
+### DEBT-038: the NFR-004 startup gate fails at random on GitHub runners
+
+**Status**: planned | **Priority**: medium | **Created**: 2026-09-02
+**Origin**: the v0.7.1 release promotion PR #131, which went red on a tree that had just gone green.
+
+**Context**: `tests/nfr/test_nfr_hard.py::test_nfr_004_startup_time` asserts `startup_ms < 60_000` against the wall-clock time the CI job measures for the container to become healthy. That budget is a GitHub-runner measurement of a HARD NFR, and the runner's variance is now the same order as the headroom.
+
+Measured on 2026-09-02, all on identical code:
+
+| Run | Branch | SHA | `STARTUP_MS` | Result |
+|---|---|---|---|---|
+| 33624494935 | `chore/v0.7.1-release` | `349068c` | 45968 | pass |
+| 33626475891 | `develop` | `eb3ba70` | 44715 | pass |
+| 33626510441 | `develop` (PR #131) | `eb3ba70` | **62992** | **fail** |
+| 33626510441 (rerun) | `develop` (PR #131) | `eb3ba70` | 45715 | pass |
+
+The third and fourth rows are the **same job on the same commit**, and the second and third are the same commit measured 23 seconds apart. So the failure carries no information about the code: it is the runner, and `Integration tests + NFR gates` is a required check on both `develop` and `main`, so a random red blocks a merge until someone reruns it by hand.
+
+**Why medium**: a required check that fails for reasons unrelated to the diff trains everyone to rerun without reading, which is exactly how a real regression gets waved through. The direction of the error is the dangerous one: it looks like diligence.
+
+**Not to be fixed by raising the number until it stops hurting.** `requirements.md` NFR-004 reads: *Target <60 seconds to healthy, Minimum <60 seconds, Measurement: time from `docker compose up` to `/health` 200, Classification: HARD (blocks release)*. The test is therefore a faithful implementation of the requirement as written, and the requirement is what puts a shared 2-core runner in charge of a claim about an operator's machine. Options, in the order they should be considered:
+
+1. Keep the requirement, change where it is enforced: measure the budget on a machine the claim is about, and keep CI as a coarse regression guard with a wider bound (fail over 90s, warn over 60s). Smallest change, keeps a hard promise hard, stops runner variance from arbitrating it.
+2. Split the metric, which means **amending NFR-004's `Measurement` field**, not just the test: assert the application's own startup sequence (the ARCH-057 11 steps, which the app already times and logs) separately from image pull plus container create plus healthcheck poll. Bigger, and it changes what is promised, so it needs the requirement edited in the same pass or the doc and the code diverge.
+3. Record the distribution before choosing either: the four measures above are one afternoon, not a baseline.
+
+**Acceptance criteria**:
+- [ ] A decision recorded on what NFR-004 measures and where, not just a new threshold
+- [ ] The required check no longer goes red on an unchanged tree across at least 10 consecutive runs
+- [ ] `requirements.md` NFR-004 and `tests/nfr/test_nfr_hard.py` still agree after the change, whichever option is taken
+
+**Traceability**: NFR-004, `tests/nfr/test_nfr_hard.py`, `.github/workflows/integration.yml`.
 
 ---
 

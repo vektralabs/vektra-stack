@@ -48,6 +48,7 @@ from vektra_shared.types import (
     SearchResult,
     SourceRef,
     StepTrace,
+    is_hidden_source,
 )
 
 log = structlog.get_logger(__name__)
@@ -569,7 +570,15 @@ class SimpleQueryPipeline:
 
         if selected_chunks:
             context_text = self._renderer.render_context(
-                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+                [
+                    {
+                        "text": r.text_snippet,
+                        "score": r.score,
+                        # Used, never attributed (FEAT-026).
+                        "citable": not is_hidden_source(r.metadata),
+                    }
+                    for r in selected_chunks
+                ]
             )
             user_content = f"{context_text}\n\nQuestion: {query.question}"
         else:
@@ -606,9 +615,15 @@ class SimpleQueryPipeline:
                 metadata={
                     "requested": len(selected_chunks),
                     "resolved": len(name_map),
+                    "sources_withheld": sum(
+                        1 for r in selected_chunks if is_hidden_source(r.metadata)
+                    ),
                 },
             )
         )
+        visible_chunks = [
+            r for r in selected_chunks if not is_hidden_source(r.metadata)
+        ]
         sources = [
             SourceRef(
                 doc_id=r.document_id,
@@ -619,7 +634,7 @@ class SimpleQueryPipeline:
                 document_version=r.document_version,
                 document_name=name_map.get(str(r.document_id)),
             )
-            for r in selected_chunks
+            for r in visible_chunks
         ]
 
         # Step 5: LLM call with graceful degradation
@@ -891,7 +906,15 @@ class SimpleQueryPipeline:
 
         if selected_chunks:
             context_text = self._renderer.render_context(
-                [{"text": r.text_snippet, "score": r.score} for r in selected_chunks]
+                [
+                    {
+                        "text": r.text_snippet,
+                        "score": r.score,
+                        # Used, never attributed (FEAT-026).
+                        "citable": not is_hidden_source(r.metadata),
+                    }
+                    for r in selected_chunks
+                ]
             )
             user_content = f"{context_text}\n\nQuestion: {query.question}"
         else:
@@ -1015,9 +1038,15 @@ class SimpleQueryPipeline:
                 metadata={
                     "requested": len(selected_chunks),
                     "resolved": len(name_map),
+                    "sources_withheld": sum(
+                        1 for r in selected_chunks if is_hidden_source(r.metadata)
+                    ),
                 },
             )
         )
+        visible_chunks = [
+            r for r in selected_chunks if not is_hidden_source(r.metadata)
+        ]
         sources_data = [
             {
                 "doc_id": str(r.document_id),
@@ -1028,7 +1057,7 @@ class SimpleQueryPipeline:
                 "document_version": r.document_version,
                 "document_name": name_map.get(str(r.document_id)),
             }
-            for r in selected_chunks
+            for r in visible_chunks
         ]
         yield QueryChunk(type="sources", data=sources_data)
 

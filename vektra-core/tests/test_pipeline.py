@@ -720,3 +720,80 @@ def test_count_tokens_fallback_warns_once(capsys):
     _count_tokens_impl(mock_llm, "test/token-once-model", "second")
     second = capsys.readouterr()
     assert "token_count_fallback" not in second.out
+
+
+# ---------------------------------------------------------------------------
+# Source visibility (FEAT-026)
+# ---------------------------------------------------------------------------
+
+
+async def test_hidden_chunk_is_used_but_withheld_from_sources():
+    """Same rule as the advanced pipeline: /api/v1/query must not leak either."""
+    visible = _make_search_result(0.9, "public lecture notes")
+    hidden = SearchResult(
+        chunk_id=str(uuid4()),
+        score=0.8,
+        text_snippet="publisher-only chapter text",
+        document_id=uuid4(),
+        document_version=1,
+        metadata={"hidden_from_students": True},
+    )
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[visible, hidden])
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+    llm.complete = AsyncMock(
+        return_value=CompletionResponse(
+            content="The answer.",
+            model="ollama/llama3",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+    )
+
+    pipeline = _make_pipeline(llm=llm, vector_store=vector_store)
+    response, trace = await pipeline.execute(QueryRequest(question="test"))
+
+    prompt = llm.complete.call_args.args[0][-1].content
+    assert "publisher-only chapter text" in prompt
+    returned = {s.chunk_id for s in response.sources}
+    assert visible.chunk_id in returned
+    assert hidden.chunk_id not in returned
+
+    names_step = next(s for s in trace.steps if s.name == "document_names")
+    assert names_step.metadata["sources_withheld"] == 1
+
+
+async def test_stream_hidden_chunk_withheld_from_sources():
+    visible = _make_search_result(0.9, "public lecture notes")
+    hidden = SearchResult(
+        chunk_id=str(uuid4()),
+        score=0.8,
+        text_snippet="publisher-only chapter text",
+        document_id=uuid4(),
+        document_version=1,
+        metadata={"hidden_from_students": True},
+    )
+    vector_store = AsyncMock()
+    vector_store.search = AsyncMock(return_value=[visible, hidden])
+
+    llm = MagicMock()
+    llm.count_tokens = MagicMock(return_value=10)
+
+    async def _mock_stream(*args, **kwargs):
+        yield CompletionChunk(content="Hello", done=True)
+
+    llm.stream = AsyncMock(return_value=_mock_stream())
+
+    pipeline = _make_pipeline(llm=llm, vector_store=vector_store)
+    chunks = []
+    stream = await pipeline.execute_stream(QueryRequest(question="test"))
+    async for chunk in stream:
+        chunks.append(chunk)
+
+    sources_chunk = next(c for c in chunks if c.type == "sources")
+    returned = {s["chunk_id"] for s in sources_chunk.data}
+    assert visible.chunk_id in returned
+    assert hidden.chunk_id not in returned

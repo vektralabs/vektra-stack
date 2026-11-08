@@ -663,8 +663,10 @@ async def run_setup_check(
         )
         async with engine.begin() as conn:
             # a site disabled while the network part ran gets nothing written (CodeRabbit
-            # 4506450163): FOR SHARE holds off a concurrent disable until this commits, and a
-            # disable that committed first is seen here
+            # 4506450163): FOR UPDATE holds off a concurrent disable until this commits, and a
+            # disable that committed first is seen here. FOR UPDATE, not FOR SHARE: it is the
+            # lock observe_release asks for, taken first so two persists of one site serialise
+            # instead of deadlocking (CodeRabbit 4506662217)
             if (await conn.execute(_SITE_ENABLED, {"s": site_id})).scalar() is not True:
                 await conn.execute(_FAIL_RUNNING, {"r": report_id})
                 abandoned = True
@@ -707,7 +709,7 @@ async def run_setup_check(
 
 
 _SITE_ENABLED = text(
-    "SELECT disabled_at IS NULL FROM assess_sites WHERE id = :s FOR SHARE"
+    "SELECT disabled_at IS NULL FROM assess_sites WHERE id = :s FOR UPDATE"
 )
 _FAIL_RUNNING = text(
     "UPDATE assess_setup_check_reports SET status = 'failed', "

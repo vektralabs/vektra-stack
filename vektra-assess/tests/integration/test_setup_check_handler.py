@@ -326,6 +326,26 @@ async def test_a_site_disabled_during_the_check_gets_nothing_written(  # type: i
     assert tuple(release[0]) == (None, None)
 
 
+async def test_two_persisting_checks_of_a_site_serialise_on_the_site_row(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506662217: the persistence transaction takes the site row lock it will need
+    (``observe_release`` asks FOR UPDATE) up front. Two transactions that both held FOR SHARE
+    and then asked FOR UPDATE would deadlock and fail one report; with FOR UPDATE first, the
+    second simply waits for the first."""
+    from sqlalchemy import text as sql
+    from sqlalchemy.exc import DBAPIError
+
+    from vektra_assess.moodle import setup_check as sc
+
+    site = await make_site(pg)
+    async with pg.conn("worker") as a, pg.conn("worker") as b:
+        await a.execute(sc._SITE_ENABLED, {"s": site})  # first persist holds the row
+        await b.execute(sql("SET lock_timeout = '300ms'"))
+        with pytest.raises(DBAPIError, match="lock timeout"):
+            await b.execute(sc._SITE_ENABLED, {"s": site})  # the second one waits
+        await b.rollback()
+        await a.rollback()
+
+
 async def _report(pg, site, status: str, age_s: float) -> uuid.UUID:  # type: ignore[no-untyped-def]
     return (
         await pg.run(

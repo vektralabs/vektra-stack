@@ -660,14 +660,8 @@ async def run_setup_check(
             if outcome.release is not None:
                 await observe_release(conn, site_id, outcome.release)
                 if outcome.flags:
+                    # also moves ``assess_sites.release`` when the matrix was probed
                     await persist_matrix(conn, site_id, outcome.release, outcome.flags)
-                    # ``release`` = the release whose capability matrix is valid (coordinator
-                    # decision 2026-11-08): the readers of the render check and the pre-flight
-                    # choose their model set from it, so it moves only with a persisted matrix
-                    await conn.execute(
-                        text("UPDATE assess_sites SET release = :r WHERE id = :s"),
-                        {"r": outcome.release, "s": site_id},
-                    )
             for item in outcome.items:
                 await conn.execute(
                     text(

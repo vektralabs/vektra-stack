@@ -142,3 +142,40 @@ async def test_a_run_without_probes_leaves_the_release_unset(pg) -> None:  # typ
             )[0][0] is None
     finally:
         await engine.dispose()
+
+
+async def test_a_run_without_a_probe_manifest_leaves_the_release_unset(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review finding 9: every flag ``not_probed`` is not a validated matrix, so ``release``
+    must not move (the readers would pick a model set nothing vouched for)."""
+    await _reset(pg)
+    engine = create_async_engine(pg.url("worker"))
+    try:
+        async with world(pg) as w:
+            await pg.run(
+                "super",
+                "UPDATE assess_sites SET release = NULL, last_seen_release = NULL, "
+                "probe_manifest = NULL WHERE id = :s",
+                {"s": w.site},
+            )
+            check = make_setup_check_handler(
+                engine, make_client(Replay(BRANCH)), SETTINGS, registry=full_registry()
+            )
+            await check(_ctx(engine, JobKind.SETUP_CHECK, {"site_id": str(w.site)}))
+            release, last_seen = (
+                await pg.run(
+                    "super",
+                    "SELECT release, last_seen_release FROM assess_sites WHERE id = :s",
+                    {"s": w.site},
+                )
+            )[0]
+            assert last_seen == M["release"]  # site_info answered
+            assert release is None
+            reasons = await pg.run(
+                "super",
+                "SELECT DISTINCT reason_code FROM assess_site_capabilities "
+                "WHERE site_id = :s",
+                {"s": w.site},
+            )
+            assert [r[0] for r in reasons] == ["not_probed"]
+    finally:
+        await engine.dispose()

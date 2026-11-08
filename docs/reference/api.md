@@ -153,7 +153,10 @@ the worker resolves the cmid inside that course only. Missing or stale facts: `4
 | PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` key; body below (at most about 593 KiB: two 20,000-code-point texts fully `\u`-escaped plus the recipients) | `200` the view below (new `version`) | `400 ERR-ASSESS-014` (malformed body, unknown field, wrong type), `400 ERR-ASSESS-022` (field errors, all at once, nothing saved), `403 ERR-ASSESS-007`, `403 ERR-ASSESS-021`, `409 ERR-ASSESS-023` (`expected_version` is not `details.current_version`: reload, nothing saved), `503 ERR-ASSESS-001` (`teacher_config_key`) |
 
 PUT body: `actor_userid`, `courseid`, `activity_type`, `expected_version` (0 for an activity never
-saved) are required. Every other field is optional; ABSENT means unchanged.
+saved) are required. Every other field is optional; ABSENT means unchanged. `null` clears only
+what can be empty: the write-only fields below, `cap_minutes` and `available_until`; `null` on
+`enabled`, `show_solution`, `rag_enabled` or `rubric_source` is the field error `null_not_allowed`
+(never a silent `false`).
 `enabled` (bool), `cap_minutes` (5-120), `rubric_source` (`none`/`pasted`, plus `moodle` for an
 assignment), `show_solution` (bool, default off), `rag_enabled` (only `false` is accepted: `true`
 is the field error `rag_unavailable` with `reason: operator_flag_off`), `available_until`
@@ -173,7 +176,7 @@ always, until plan assess-privacy-retention lands) and a setup check that is not
 `details.fields` items: `{"field", "code"}` plus the rule's bounds: `range` (`"5-120"`,
 `"0-20000"`, `"1-20000"`, `"1-3"`), `allowed_domains`, `index` (the recipient's position, never
 the address), `reason`, `opening_at`. Codes: `out_of_range`, `too_long`, `empty`, `required`,
-`invalid_address`, `domain_not_allowed`, `too_many`, `rag_unavailable`, `not_for_activity_type`,
+`invalid_address`, `domain_not_allowed`, `too_many`, `null_not_allowed`, `rag_unavailable`, `not_for_activity_type`,
 `timezone_required`, `opening_unknown`, `not_after_opening`, `moodle_rubric_missing`, and on
 `enabled`: `quiz_without_close_date`, `assignment_without_cutoff`, `team_submission`,
 `marking_guide`, `moodle_facts_unreadable`, `privacy_unset`, `setup_check_red`.

@@ -575,3 +575,41 @@ async def test_non_ascii_digits_are_a_400_not_a_500(pg, pair) -> None:  # type: 
         assert r.status_code == 200  # a malformed hint is no hint; the facts are fresh
     finally:
         await ctx.__aexit__(None, None, None)
+
+
+async def test_null_on_a_setting_that_cannot_be_cleared_is_a_field_error(
+    pg, pair
+) -> None:  # type: ignore[no-untyped-def]
+    """Review 8: ``null`` clears only the write-only fields, the cap and the end date. On
+    ``enabled``, ``show_solution``, ``rag_enabled`` and ``rubric_source`` it is a field error,
+    never a silent ``false`` (a silent disable)."""
+    ctx, w = await ready(pg, pair)
+    try:
+        r = await w.client.put(
+            url(60),
+            json=body(show_solution=True, cap_minutes=30),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 200
+        before = await counts(pg, w.site)
+        r = await w.client.put(
+            url(60),
+            json=body(
+                expected_version=1,
+                enabled=None,
+                show_solution=None,
+                rag_enabled=None,
+                rubric_source=None,
+            ),
+            headers=auth("teacher"),
+        )
+        assert r.status_code == 400, r.text
+        assert err(r)["details"]["fields"] == [
+            {"field": f, "code": "null_not_allowed"}
+            for f in ("enabled", "rubric_source", "show_solution", "rag_enabled")
+        ]
+        assert await counts(pg, w.site) == before
+        g = await w.client.get(url(60), headers=get_headers())
+        assert g.json()["show_solution"] is True
+    finally:
+        await ctx.__aexit__(None, None, None)

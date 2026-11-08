@@ -79,6 +79,8 @@ MAX_CONFIG_BODY_BYTES = (
     + 4096
 )
 PUBLIC_KEY = "assess_teacher_config_public"
+#: optional PUT fields that always have a value: ``null`` on them is a field error
+NOT_NULLABLE = ("enabled", "rubric_source", "show_solution", "rag_enabled")
 
 _CONFIG = text(
     "SELECT activity_type, enabled, flags, rag_enabled, cap_minutes, version, "
@@ -290,21 +292,25 @@ async def _save(
     new: dict[str, Any] = dict(old)
     errors: list[FieldError] = []
 
-    if body.given("enabled"):
-        new["enabled"] = bool(body.enabled)
+    # ``null`` clears only what can be empty (the write-only fields, the cap, the end date); on a
+    # setting that always has a value it is a field error, never a silent false (review 8)
+    errors += v.check_not_null(
+        name
+        for name in NOT_NULLABLE
+        if body.given(name) and getattr(body, name) is None
+    )
+    if body.enabled is not None:
+        new["enabled"] = body.enabled
     if body.given("cap_minutes"):
         new["cap_minutes"] = body.cap_minutes
         if body.cap_minutes is not None:
             errors += v.check_cap(body.cap_minutes)
-    if body.given("rubric_source"):
-        if body.rubric_source is None:
-            new["rubric_source"] = _default_source(kind)
-        else:
-            new["rubric_source"] = body.rubric_source
-            errors += v.check_rubric_source(body.rubric_source, kind)
-    if body.given("show_solution"):
-        new["show_solution"] = bool(body.show_solution)
-    if body.given("rag_enabled") and body.rag_enabled is not None:
+    if body.rubric_source is not None:
+        new["rubric_source"] = body.rubric_source
+        errors += v.check_rubric_source(body.rubric_source, kind)
+    if body.show_solution is not None:
+        new["show_solution"] = body.show_solution
+    if body.rag_enabled is not None:
         errors += v.check_rag(body.rag_enabled)
     if body.given("available_until"):
         end = body.available_until

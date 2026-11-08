@@ -268,3 +268,10 @@ def test_a_save_of_an_enabled_activity_rechecks_only_what_it_can_break() -> None
     assert codes(
         v.enable_refusals(v.Proposed(True, 30, "moodle", False, 0), stale_facts, **kw)
     ) == [("transcript_recipients", "empty")]
+
+
+def test_null_on_an_always_valued_setting_is_named() -> None:
+    assert field_errors(v.check_not_null(["enabled", "show_solution"])) == [
+        {"field": "enabled", "code": "null_not_allowed"},
+        {"field": "show_solution", "code": "null_not_allowed"},
+    ]

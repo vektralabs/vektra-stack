@@ -12,7 +12,7 @@ Text (solution, pasted rubric): normalised to NFC, control characters removed ex
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -71,6 +71,12 @@ def check_cap(value: int) -> list[FieldError]:
     if not CAP_MIN <= value <= CAP_MAX:
         return [FieldError("cap_minutes", "out_of_range", CAP_RANGE)]
     return []
+
+
+def check_not_null(names: Iterable[str]) -> list[FieldError]:
+    """``null`` on a setting that always has a value (``enabled``, ``show_solution``...): an
+    error, not a clear and not "unchanged" (absent is how a form leaves it unchanged)."""
+    return [FieldError(name, "null_not_allowed") for name in names]
 
 
 def check_rag(value: bool) -> list[FieldError]:

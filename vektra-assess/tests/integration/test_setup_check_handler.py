@@ -35,7 +35,7 @@ BRANCH = "5.2"
 
 def _ctx(engine: Any, args: dict[str, str | int]) -> JobContext:
     return JobContext(
-        job_id=1,
+        job_id=0,  # never a real id (BIGSERIAL starts at 1)
         kind=JobKind.SETUP_CHECK,
         args=args,
         attempt=1,
@@ -259,6 +259,31 @@ async def _report(pg, site, status: str, age_s: float) -> uuid.UUID:  # type: ig
             {"s": site, "st": status, "a": age_s},
         )
     )[0][0]
+
+
+async def test_an_old_running_report_with_a_live_lease_is_left_alone(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4506450159: age alone does not prove a run is dead. While another
+    ``setup_check`` job of the site holds a live lease (a report that waited queued longer
+    than the lease, now running), the old ``running`` report is not failed."""
+    site = await make_site(pg)
+    running = await _report(pg, site, "running", handler_mod.ORPHAN_AFTER_S + 60)
+    await pg.run(
+        "super",
+        "INSERT INTO assess_jobs (kind, args, state, lease_until, leased_by, attempts) "
+        "VALUES ('setup_check', jsonb_build_object('site_id', CAST(:s AS text), "
+        "'report_id', CAST(:r AS text)), 'leased', now() + interval '3 minutes', "
+        "'other-worker', 1)",
+        {"s": str(site), "r": str(running)},
+    )
+    try:
+        await handle(pg, {"site_id": str(site)})
+        assert dict(await reports(pg, site))[running] == "running"
+    finally:
+        await pg.run(
+            "super",
+            "DELETE FROM assess_jobs WHERE kind = 'setup_check' AND args->>'site_id' = :s",
+            {"s": str(site)},
+        )
 
 
 async def test_a_report_orphaned_running_by_a_crash_is_failed(pg) -> None:  # type: ignore[no-untyped-def]

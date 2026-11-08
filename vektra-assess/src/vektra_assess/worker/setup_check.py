@@ -74,13 +74,18 @@ _TRIM_ITEMS = text(
 #: a ``running`` report older than the job's lease belongs to a run that is dead: a worker killed
 #: mid-run (no ``except`` ran) leaves it so, and the retry of a job without ``report_id`` writes a
 #: new one. ``created_at`` is not the start of the run (an API report may wait queued first), so
-#: this relies on one setup check per site at a time: the ``setup`` pool runs one job (default
-#: concurrency 1) and the API admits one request per site per 5 minutes.
+#: age alone is not enough: nothing is failed while another ``setup_check`` job of the site holds
+#: a live lease (its report may be that old one, now running).
 _FAIL_ORPHANS = text(
     "UPDATE assess_setup_check_reports SET status = 'failed', finished_at = now() "
     "WHERE site_id = :s AND status = 'running' "
     "AND created_at < now() - make_interval(secs => :after) "
-    "AND id IS DISTINCT FROM :own"
+    "AND id IS DISTINCT FROM :own "
+    # lease ownership, not age alone (CodeRabbit 4506450159): while another setup_check job
+    # of this site holds a live lease, its report may be the old running one; leave them all
+    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.kind = 'setup_check' "
+    "AND j.state = 'leased' AND j.lease_until > now() AND j.id <> :job "
+    "AND j.args->>'site_id' = CAST(:s AS text))"
 )
 #: the default lease of the ``setup_check`` kind; the composition passes the loaded policy's
 ORPHAN_AFTER_S = KIND_DEFAULTS[JobKind.SETUP_CHECK].lease_s
@@ -163,7 +168,12 @@ def make_setup_check_handler(
             async with conn.begin():
                 await conn.execute(
                     _FAIL_ORPHANS,
-                    {"s": site_id, "after": orphan_after_s, "own": report_id},
+                    {
+                        "s": site_id,
+                        "after": orphan_after_s,
+                        "own": report_id,
+                        "job": ctx.job_id,
+                    },
                 )
         try:
             await run_setup_check(

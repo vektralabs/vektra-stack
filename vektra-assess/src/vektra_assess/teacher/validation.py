@@ -132,7 +132,8 @@ def check_end_date(end_at: datetime, opening_at: int | None) -> list[FieldError]
         return [FieldError("available_until", "timezone_required")]
     if opening_at is None:
         return [FieldError("available_until", "opening_unknown")]
-    if end_at.timestamp() <= opening_at:
+    # compared at the whole second it is stored at (``end_at`` is saved truncated)
+    if int(end_at.timestamp()) <= opening_at:
         return [
             FieldError(
                 "available_until", "not_after_opening", extra={"opening_at": opening_at}

@@ -294,3 +294,12 @@ def test_the_api_and_the_capture_read_the_same_rubric_source(
     )
     assert v.rubric_source_of(flags, kind) == want
     assert start_source.teacher_view(flags, kind, None).rubric_source == want
+
+
+def test_the_end_date_is_compared_at_the_second_it_is_stored() -> None:
+    """CodeRabbit 4505511242: the end date is stored in whole seconds; 0.5 s after the opening
+    truncates TO the opening and must be refused."""
+    assert codes(v.check_end_date(datetime.fromtimestamp(2_000.5, UTC), 2_000)) == [
+        ("available_until", "not_after_opening")
+    ]
+    assert v.check_end_date(datetime.fromtimestamp(2_001.0, UTC), 2_000) == []

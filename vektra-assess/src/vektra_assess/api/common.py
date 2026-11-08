@@ -44,12 +44,16 @@ async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
 def iso_time(value: Any) -> str | None:
     """The one epoch / datetime -> ISO 8601 rule of the assess views: epoch seconds as an
     ``int`` (0 included: 1970-01-01T00:00:00+00:00, a value, not "absent"), or an aware
-    ``datetime``, as ISO 8601; ``None`` and anything else (a bool, a float, a string) is None.
+    ``datetime``, as ISO 8601; ``None``, an epoch outside datetime's range and anything else (a
+    bool, a float, a string) is None.
     """
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, int) and not isinstance(value, bool):
-        return datetime.fromtimestamp(value, UTC).isoformat()
+        try:
+            return datetime.fromtimestamp(value, UTC).isoformat()
+        except (OverflowError, ValueError, OSError):
+            return None  # beyond datetime's range (a Moodle value): absent, never a 500
     return None
 
 

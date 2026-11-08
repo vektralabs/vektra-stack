@@ -205,3 +205,11 @@ def test_one_epoch_to_iso_rule_for_every_view() -> None:
         assert iso_time(absent) is None
     for module in (state, teacher_config, teacher_ops, teacher_sessions):
         assert not hasattr(module, "_iso") and not hasattr(module, "_epoch_iso"), module
+
+
+def test_an_unrepresentable_epoch_is_absent_not_a_500() -> None:
+    """CodeRabbit 4506916906: a Moodle close beyond datetime's range renders as absent."""
+    from vektra_assess.api.common import iso_time
+
+    for huge in (2**62, -(2**62), 10**18):
+        assert iso_time(huge) is None

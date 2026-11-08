@@ -417,12 +417,18 @@ async def test_zero_extra_time_clears_a_grant(pg) -> None:  # type: ignore[no-un
         await configure_activity(pg, w.site, 907, cap_minutes=30)
         await seed_teacher_gate(pg, w.site, 907)
         stored = "SELECT extra_seconds FROM assess_extra_time WHERE site_id = :s AND cmid = 907"
-        for over in ({"minutes": 15}, {"minutes": 0}, {"percent": 50}, {"percent": 0}):
+        for over, expected in (
+            ({"minutes": 15}, 900),
+            ({"minutes": 0}, 0),
+            ({"percent": 50}, 900),
+            ({"percent": 0}, 0),
+        ):
             r = await w.client.put(
                 extra_url(907, 8401), json=body(**over), headers=teacher()
             )
             assert r.status_code == 200, (over, r.text)
             assert r.json()["extra_seconds"] == await count(pg, stored, s=w.site)
+            assert r.json()["extra_seconds"] == expected
         assert await count(pg, stored, s=w.site) == 0
 
 

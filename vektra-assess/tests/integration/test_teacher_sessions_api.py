@@ -479,3 +479,16 @@ async def test_the_panel_shows_the_opening_start_waits_for(pg) -> None:  # type:
         expected = {"at": "2030-03-17T19:47:40+00:00", "source": "activity_close"}
         assert panel["opening"] == config["opening"] == expected
         assert "override_holder" not in panel
+
+
+async def test_an_out_of_range_close_still_renders_the_list(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (PR #179 round 2): a Moodle close beyond datetime's range that
+    decides the opening renders as a null date; the route answers 200 with its students."""
+    async with world(pg) as w:
+        with_transcript_key(w)
+        cmid, _seeded = await live_sessions(w, worker, [9601])
+        await seed_teacher_gate(pg, w.site, cmid, close_at=2**62)
+        r = await w.client.get(list_url(cmid), headers=list_headers())
+        assert r.status_code == 200, r.text
+        assert r.json()["gate"]["opening"]["at"] is None
+        assert [s["userid"] for s in r.json()["students"]] == [9601]

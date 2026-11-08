@@ -488,3 +488,8 @@ def test_a_percentage_is_whole_minutes_rounded_up() -> None:
     assert codes(v.check_extra_time(120, percent=101, confirm_over_100=True)) == [
         ("extra_time", "total_too_long")
     ]
+    # 119 min + 102 % = 121.38 min, rounded UP to 122: total 241 > 240 (rounding down
+    # would have accepted 240)
+    assert codes(v.check_extra_time(119, percent=102, confirm_over_100=True)) == [
+        ("extra_time", "total_too_long")
+    ]

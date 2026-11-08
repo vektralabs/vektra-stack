@@ -76,6 +76,35 @@ async def test_an_ascii_content_length_over_the_cap_is_still_refused() -> None:
     assert r.json()["error"]["details"]["reason"] == "body_too_large"
 
 
+@pytest.mark.parametrize("declared", NOT_ASCII_HEADERS)
+async def test_a_non_ascii_content_length_does_not_bypass_the_streamed_cap(
+    declared: bytes,
+) -> None:
+    """CodeRabbit nitpick (PR #179 round 2): an unparsable declared length is ignored, and
+    the cap applied while the body streams still refuses an oversized body."""
+    from fastapi import HTTPException
+
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/body",
+            "headers": [(b"content-length", declared)],
+        }
+    )
+    chunks = [b"x" * 5, b"x" * 5]
+
+    async def receive() -> dict[str, object]:
+        chunk = chunks.pop(0)
+        return {"type": "http.request", "body": chunk, "more_body": bool(chunks)}
+
+    req._receive = receive  # type: ignore[attr-defined]
+    with pytest.raises(HTTPException) as exc:
+        await read_capped_body(req, max_bytes=8)
+    assert exc.value.status_code == 400
+    assert exc.value.detail["error"]["details"]["reason"] == "body_too_large"
+
+
 @pytest.mark.parametrize("raw", NOT_ASCII_HEADERS)
 def test_a_non_ascii_last_event_id_replays_from_zero(raw: bytes) -> None:
     """``api/events.py``: an unparsable Last-Event-ID is 0 (full replay), never a 500."""

@@ -79,16 +79,8 @@ PENDING_OWNER_PLANS: frozenset[str] = frozenset({PRIVACY, HARDENING})
 
 #: slots whose owner plan IS completed but whose behaviour is not specified anywhere: a decision is
 #: needed (recorded as an open item in the owner plan's Notes), not an invented body
-OPEN_DECISIONS: dict[str, str] = {
-    "job:teacher_notify": (
-        "queued by service_failure closes and the rollback cap; channel, content and recipients "
-        "are not specified (transcript-delivery Notes, 2026-11-08)"
-    ),
-    "job:operator_notify": (
-        "queued by the rollback cap and Moodle-unreachable rollbacks; no operator address or "
-        "channel exists (transcript-delivery Notes, 2026-11-08)"
-    ),
-}
+#: none since 2026-11-09 (teacher_notify / operator_notify bound by the relay)
+OPEN_DECISIONS: dict[str, str] = {}
 
 
 def expected_unbound() -> set[str]:

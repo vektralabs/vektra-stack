@@ -157,5 +157,12 @@ activity form (REQ-082 as amended on 2026-11-07):
   (the transcript stays downloadable from the activity page).
 - Changing the addresses after a session closed takes effect at the next send attempt: a removed
   address is `REPLACED` (no mail), an added one gets its own delivery, never more than 3.
+- The same addresses receive the teacher notifications: a session closed for a service failure
+  (within the minute) and a student whose Starts failed for a technical problem several times in
+  a row. They carry ids and the event only (activity, numeric Moodle user id, session number).
+  The operator's copy of the rollback streak, and the "Moodle could not be read" alert, go to
+  `VEKTRA_ASSESS_OPERATOR_EMAIL`, which the worker requires to start. A notification that
+  reached nobody (no address configured, all refused, the retry window over) is audited
+  `assess_notify_failed` and raises the `notify_failed` alert in the worker log.
 - Who may DOWNLOAD a transcript or ask a resend is unchanged: the course's graders, re-checked by
   Moodle user id (`core_enrol_get_enrolled_users_with_capability`, no email field read).

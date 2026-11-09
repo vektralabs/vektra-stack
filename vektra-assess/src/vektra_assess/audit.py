@@ -74,6 +74,12 @@ class AssessAuditEvent(enum.StrEnum):
     DELIVERY_POSSIBLE_DUPLICATE = "assess_delivery_possible_duplicate"
     DELIVERY_RECIPIENT_REPLACED = "assess_delivery_recipient_replaced"
     DELIVERY_RECIPIENT_ADDED = "assess_delivery_recipient_added"
+    # teacher_notify / operator_notify (revision 0039): the same per-recipient record for the
+    # notification emails, keyed by the notification's job id. Refs and codes, never addresses.
+    NOTIFY_ATTEMPT = "assess_notify_attempt"
+    NOTIFY_SENT = "assess_notify_sent"
+    NOTIFY_FAILED = "assess_notify_failed"
+    NOTIFY_POSSIBLE_DUPLICATE = "assess_notify_possible_duplicate"
     # plan assess-teacher-ops: a teacher refused by the fresh role check (REQ-076, INT-001), and
     # a configuration change old/new (REQ-077, REQ-085). Sealed fields are audited by the
     # database trigger of revision 0036 under the same event name, with ``set|replaced|cleared``

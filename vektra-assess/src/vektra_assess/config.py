@@ -824,13 +824,21 @@ class VektraAssessSettings(BaseSettings):
         description="Comma list of the domains a transcript may be mailed to (exact match, REQ-082 as amended). Empty refuses every address: the delivery row is FAILED (domain_not_allowed) with an alert. The plugin validates the teacher's form against the same list.",
     )
 
+    operator_email: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_OPERATOR_EMAIL",
+        description="Address of the platform operator: the worker mails it the content-free operator alerts (REQ-071: repeated failed Starts, an LMS that cannot be read). Required with the relay: a production worker refuses to start without it. Not subject to VEKTRA_ASSESS_RECIPIENT_DOMAINS (it is deployment configuration, not a teacher's input).",
+    )
+
     @field_validator("smtp_retry_schedule")
     @classmethod
     def _valid_schedule(cls, value: str) -> str:
         parse_schedule(value)  # raises ValueError: refused at startup, never replaced
         return value
 
-    @field_validator("smtp_host", "smtp_from", "message_id_domain", mode="before")
+    @field_validator(
+        "smtp_host", "smtp_from", "message_id_domain", "operator_email", mode="before"
+    )
     @classmethod
     def _blank_is_unset(cls, value: Any) -> Any:
         return None if isinstance(value, str) and not value.strip() else value
@@ -849,6 +857,32 @@ class VektraAssessSettings(BaseSettings):
                 "(name@domain, no display name, no <>, no spaces)"
             )
         return address
+
+    @model_validator(mode="after")
+    def _bare_operator(self) -> Self:
+        """The same bare addr-spec rule as the From address, never repaired. Malformed:
+        refused at startup while assess is enabled; while it is disabled only a warning, the
+        value kept as given and never used (a dormant feature's setting never stops the API
+        from starting, as for the UI origin)."""
+        if self.operator_email is None:
+            return self
+        address = normalize_address(self.operator_email)
+        if address is not None:
+            # the settings are frozen: the normalised value replaces the raw one at load only
+            object.__setattr__(self, "operator_email", address)
+            return self
+        if self.enabled:
+            raise ValueError(
+                "VEKTRA_ASSESS_OPERATOR_EMAIL must be a bare e-mail address "
+                "(name@domain, no display name, no <>, no spaces)"
+            )
+        warnings.warn(
+            "VEKTRA_ASSESS_OPERATOR_EMAIL is not a bare e-mail address; ignored while "
+            "VEKTRA_ASSESS_ENABLED=false, refused once it is enabled",
+            UserWarning,
+            stacklevel=2,
+        )
+        return self
 
     @field_validator("smtp_ca_file", mode="before")
     @classmethod

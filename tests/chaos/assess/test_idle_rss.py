@@ -59,6 +59,7 @@ async def test_idle_rss_of_a_fully_bound_worker_is_under_the_ceiling(
         # the delivery slots are stubs here, so nothing ever connects to it
         VEKTRA_ASSESS_SMTP_HOST="relay.example.org",
         VEKTRA_ASSESS_SMTP_FROM="vektra@example.org",
+        VEKTRA_ASSESS_OPERATOR_EMAIL="ops@example.org",
     )
     try:
         await wait_until(lambda: worker_ready(pg), 120, "fully bound worker ready", w)

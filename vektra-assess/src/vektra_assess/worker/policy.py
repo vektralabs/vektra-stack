@@ -82,8 +82,10 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     # a 30 s hard timeout (plan transcript-delivery 10b); the lease is also the crash window
     # after which an attempt with no outcome is taken again (OQ-029)
     JobKind.TRANSCRIPT_DELIVER: KindPolicy("delivery", 120, 240),
-    JobKind.TEACHER_NOTIFY: KindPolicy("delivery", 30, 60),
-    JobKind.OPERATOR_NOTIFY: KindPolicy("delivery", 30, 60),
+    # the notification emails go through the same relay with the same per-send worst case (up
+    # to 3 teacher recipients); their lease is also their crash window (OQ-029)
+    JobKind.TEACHER_NOTIFY: KindPolicy("delivery", 120, 240),
+    JobKind.OPERATOR_NOTIFY: KindPolicy("delivery", 120, 240),
     # the setup check makes about twenty live Moodle calls: own pool, 120 s hard timeout
     JobKind.SETUP_CHECK: KindPolicy("setup", 120, 240),
     JobKind.PURGE: _MAINT,

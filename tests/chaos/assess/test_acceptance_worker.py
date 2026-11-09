@@ -176,6 +176,7 @@ def _run_worker_once(
             {
                 "VEKTRA_ASSESS_SMTP_HOST": "relay.example.org",
                 "VEKTRA_ASSESS_SMTP_FROM": "vektra@example.org",
+                "VEKTRA_ASSESS_OPERATOR_EMAIL": "ops@example.org",
             },
             "job:transcript_generate",
         ),

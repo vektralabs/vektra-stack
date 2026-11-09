@@ -200,3 +200,72 @@ async def test_the_fan_out_scan_moves_past_transcripts_already_queued(pg) -> Non
         {"k": [f"transcript_deliver:{t}:fanout" for t in pending]},
     )
     assert queued[0][0] == len(pending)
+
+
+# --- revision 0039: the notification rows ----------------------------------------------------
+
+
+async def _notify_row(pg, kind="teacher_notify", job=7, n=1):  # type: ignore[no-untyped-def]
+    await pg.run(
+        "worker",
+        "INSERT INTO assess_deliveries (kind, job_id, recipient_kind, recipient_ref) "
+        "VALUES (:k, :j, 'address', :ref)",
+        {"k": kind, "j": job, "ref": ref(n)},
+    )
+
+
+async def test_a_notification_row_is_keyed_by_its_job_and_ref(pg) -> None:  # type: ignore[no-untyped-def]
+    await pg.run("super", "DELETE FROM assess_deliveries WHERE job_id IS NOT NULL")
+    await _notify_row(pg, job=701, n=1)
+    await _notify_row(pg, "operator_notify", job=702, n=1)
+    with pytest.raises(IntegrityError, match="uq_assess_deliveries_job_ref"):
+        await _notify_row(pg, job=701, n=1)
+    # a notification without its job, and a transcript row with one
+    with pytest.raises(IntegrityError, match="ck_assess_deliveries_job"):
+        await pg.run(
+            "worker",
+            "INSERT INTO assess_deliveries (kind, recipient_kind, recipient_ref) "
+            "VALUES ('teacher_notify', 'address', :ref)",
+            {"ref": ref(3)},
+        )
+    tid = await _transcript(pg)
+    with pytest.raises(IntegrityError, match="ck_assess_deliveries_job"):
+        await pg.run(
+            "worker",
+            "INSERT INTO assess_deliveries (transcript_id, job_id, recipient_kind, "
+            "recipient_ref) VALUES (:t, 9, 'address', :ref)",
+            {"t": tid, "ref": ref(4)},
+        )
+    # never addressed by user id, never another kind
+    with pytest.raises(IntegrityError, match="ck_assess_deliveries_job"):
+        await pg.run(
+            "worker",
+            "INSERT INTO assess_deliveries (kind, job_id, recipient_kind, recipient_userid) "
+            "VALUES ('teacher_notify', 703, 'grader', 7)",
+        )
+    with pytest.raises(IntegrityError, match=r"ck_assess_deliveries_(kind|job)"):
+        await _notify_row(pg, "student_notify", job=704, n=5)
+    await pg.run("super", "DELETE FROM assess_deliveries WHERE job_id IS NOT NULL")
+
+
+async def test_round_trip_to_0038_and_back(pg) -> None:  # type: ignore[no-untyped-def]
+    """The downgrade removes the notification rows (0038 has no such kinds) and keeps every
+    transcript row (CodeRabbit nitpick on PR #190)."""
+    await pg.run("super", "DELETE FROM assess_deliveries WHERE job_id IS NOT NULL")
+    await _notify_row(pg, job=801, n=1)
+    await _notify_row(pg, "operator_notify", job=802, n=2)
+    tid = await _transcript(pg)
+    await _address(pg, tid, 9)
+    count = (
+        "SELECT kind, count(*) FROM assess_deliveries "
+        "WHERE kind IN ('teacher_notify', 'operator_notify') OR transcript_id = :t "
+        "GROUP BY kind ORDER BY kind"
+    )
+    before = [tuple(r) for r in await pg.run("super", count, {"t": tid})]
+    assert before == [("operator_notify", 1), ("teacher_notify", 1), ("transcript", 1)]
+    down = _alembic(pg.super_url, "downgrade", "0038")
+    assert down.returncode == 0, down.stderr
+    after = [tuple(r) for r in await pg.run("super", count, {"t": tid})]
+    assert after == [("transcript", 1)]
+    up = _alembic(pg.super_url, "upgrade", "head")
+    assert up.returncode == 0, up.stderr

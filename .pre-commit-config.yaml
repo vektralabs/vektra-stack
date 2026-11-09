@@ -13,6 +13,12 @@ repos:
     hooks:
       - id: uv-lock
 
+  # Generic secret scanning (keys, tokens): runs for every contributor
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
   # Generic file hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -57,3 +63,12 @@ repos:
         entry: uv run lint-imports
         language: system
         pass_filenames: false
+
+      # Privacy guard: blocks added lines matching the local, gitignored
+      # .local/privacy-denylist.txt (private infrastructure details). A no-op
+      # when the denylist is absent (external contributors, CI).
+      - id: privacy-denylist
+        name: privacy denylist
+        entry: scripts/check_privacy.sh
+        language: script
+        exclude: ^\.local/

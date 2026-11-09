@@ -677,9 +677,9 @@ def test_the_smtp_item_gets_the_probe_tick_body(
     checked = _checked(
         monkeypatch,
         VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
-        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
-        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
-        VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it",
+        VEKTRA_ASSESS_SMTP_HOST="relay.uni.example",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@uni.example",
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="uni.example",
     )
     ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
     keys: dict[str, object] = {

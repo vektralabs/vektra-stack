@@ -93,6 +93,19 @@ _STATE: dict[Code, ButtonState] = {
     Code.UNREADABLE: ButtonState.UNAVAILABLE,
 }
 
+#: the gates decided from Vektra's own database (the configuration, the sessions, privacy); every
+#: other failing code needs Moodle facts, which only the worker reads (render or pre-flight). A
+#: teacher reset (REQ-087) re-checks these live and takes the others from a fresh render.
+DB_SIDE: frozenset[Code] = frozenset(
+    {
+        Code.NOT_ENABLED,
+        Code.END_DATE_PASSED,
+        Code.SESSION_OPEN,
+        Code.ALREADY_DISCUSSED,
+        Code.PRIVACY_NOT_CONFIGURED,
+    }
+)
+
 #: assignment grading methods discussable in v1 (BR-014); "guide" is refused (EX-023)
 DISCUSSABLE_METHODS = frozenset({"none", "simple", "rubric", ""})
 

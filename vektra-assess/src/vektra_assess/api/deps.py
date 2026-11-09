@@ -70,7 +70,9 @@ def parse_version(raw: str) -> tuple[int, ...] | None:
     """``1.2.3`` -> ``(1, 2, 3)``; a suffix after ``-`` or ``+`` is ignored; junk -> None."""
     core = raw.strip().split("-", 1)[0].split("+", 1)[0]
     parts = core.split(".")
-    if not 1 <= len(parts) <= 4 or not all(p.isdigit() and len(p) <= 10 for p in parts):
+    if not 1 <= len(parts) <= 4 or not all(
+        p.isascii() and p.isdigit() and len(p) <= 10 for p in parts
+    ):
         return None
     nums = [int(p) for p in parts]
     return tuple(nums + [0] * (4 - len(nums)))

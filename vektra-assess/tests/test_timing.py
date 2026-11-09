@@ -102,3 +102,15 @@ def test_minutes_left_is_never_negative() -> None:
     from vektra_assess.timing import minutes_left
 
     assert minutes_left(-5) == 0
+
+
+def test_the_session_duration_never_exceeds_240_minutes() -> None:
+    """CodeRabbit 4506916939 (BR-013 "total <= 240 prevails"): a grant accepted at a small cap
+    stays stored when the cap is raised later; the duration frozen at Start is capped."""
+    from vektra_assess.timing import MAX_SESSION_S, session_duration_s
+
+    assert MAX_SESSION_S == 240 * 60
+    assert session_duration_s(30, 210 * 60) == 240 * 60
+    assert session_duration_s(120, 210 * 60) == 240 * 60  # not 330 minutes
+    assert session_duration_s(30, 15 * 60) == 45 * 60
+    assert session_duration_s(30, 0) == 30 * 60

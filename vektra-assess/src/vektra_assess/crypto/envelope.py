@@ -18,6 +18,7 @@ purpose            row binding
 ``transcript``     transcript_id
 ``transcript-dek`` transcript_id
 ``teacher-config`` site_id, cmid, field
+``teacher-reason`` table, row id
 =================  ==================================
 
 Nothing here logs, and no object defined here has a repr containing key bytes.
@@ -64,6 +65,7 @@ class Purpose:
     TRANSCRIPT: Final = "transcript"
     TRANSCRIPT_DEK: Final = "transcript-dek"
     TEACHER_CONFIG: Final = "teacher-config"
+    TEACHER_REASON: Final = "teacher-reason"
     ALL: Final = frozenset(
         {
             "snapshot",
@@ -73,6 +75,7 @@ class Purpose:
             "transcript",
             "transcript-dek",
             "teacher-config",
+            "teacher-reason",
         }
     )
 

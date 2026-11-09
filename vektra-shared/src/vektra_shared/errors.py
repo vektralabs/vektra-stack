@@ -199,6 +199,8 @@ ERR_ASSESS_020 = (
 ERR_ASSESS_021 = "ERR-ASSESS-021"  # Teacher not verified as a grader/editor of the activity (fresh check)
 ERR_ASSESS_022 = "ERR-ASSESS-022"  # Teacher configuration refused: field-level errors (BR-013, REQ-077)
 ERR_ASSESS_023 = "ERR-ASSESS-023"  # Teacher configuration changed meanwhile: expected_version is stale
+ERR_ASSESS_024 = "ERR-ASSESS-024"  # Teacher reset refused: session not CLOSED or a START gate refuses (REQ-087)
+ERR_ASSESS_025 = "ERR-ASSESS-025"  # Teacher terminate refused: expected_active_count is not the current count (REQ-081)
 
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
@@ -261,6 +263,8 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_ASSESS_021: 403,
     ERR_ASSESS_022: 400,  # explicit envelope with details.fields, never the 422 path (DEBT-035)
     ERR_ASSESS_023: 409,
+    ERR_ASSESS_024: 409,
+    ERR_ASSESS_025: 409,
 }
 
 

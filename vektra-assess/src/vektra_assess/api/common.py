@@ -8,6 +8,7 @@ or over-length body is a 400 ``ERR-ASSESS-014`` envelope and never FastAPI's def
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -40,6 +41,22 @@ async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
     return site
 
 
+def iso_time(value: Any) -> str | None:
+    """The one epoch / datetime -> ISO 8601 rule of the assess views: epoch seconds as an
+    ``int`` (0 included: 1970-01-01T00:00:00+00:00, a value, not "absent"), or an aware
+    ``datetime``, as ISO 8601; ``None``, an epoch outside datetime's range and anything else (a
+    bool, a float, a string) is None.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, int) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value, UTC).isoformat()
+        except (OverflowError, ValueError, OSError):
+            return None  # beyond datetime's range (a Moodle value): absent, never a 500
+    return None
+
+
 def fail(err: ErrorResponse, headers: dict[str, str] | None = None) -> HTTPException:
     hdrs = dict(headers or {})
     if err.retry_after is not None:
@@ -63,8 +80,12 @@ async def read_capped_body(
     soon as it passes ``max_bytes``, never buffered whole first (a declared Content-Length over
     the cap is refused at once, a chunked body as soon as it crosses it)."""
     declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > max_bytes:
-        raise fail(bad_request("body_too_large"))
+    if declared.isascii() and declared.isdigit():
+        # leading zeros stripped, and a length too long to be a size at all is over the cap by
+        # itself: ``int()`` refuses more than 4300 digits (CodeRabbit 4512009230)
+        digits = declared.lstrip("0") or "0"
+        if len(digits) > len(str(max_bytes)) or int(digits) > max_bytes:
+            raise fail(bad_request("body_too_large"))
     buf = bytearray()
     async for chunk in request.stream():
         if len(buf) + len(chunk) > max_bytes:

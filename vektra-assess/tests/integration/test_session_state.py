@@ -325,7 +325,9 @@ async def test_a_closed_session_without_reset_is_closed_whatever_the_render_says
         # a reset grant reopens the decision to the render state
         await pg.run(
             "super",
-            "INSERT INTO assess_reset_grants (site_id, cmid, student_userid) VALUES (:s, :c, :u)",
+            # the complete row the reset route writes (revision 0038; the reason is opaque here)
+            "INSERT INTO assess_reset_grants (site_id, cmid, student_userid, granted_by, "
+            "session_no, reason_ct, reason_kid) VALUES (:s, :c, :u, '41', 1, '\\x00', 't1')",
             {"s": w.site, "c": s.cmid, "u": s.sub},
         )
         r = await state(w, await w.presession(sub=s.sub, cmid=s.cmid))

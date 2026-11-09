@@ -4,7 +4,11 @@
 hint) evaluate the SAME ``evaluate_start_gates`` the pre-flight uses, on fresh reads, and upsert:
 
 - ``assess_render_state``: the advisory REQ-068 state and the content-free reason code;
-- ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 10)
+- ``assess_gate_inputs``: ``{"code", "state", "opens_at", "session_no_next"}``, plus (plan 11b)
+  ``moodle_reasons``: every failing gate code that needs Moodle facts (``gates.DB_SIDE``
+  excluded), present only when the Moodle half was actually evaluated, with ``attested_at`` (the
+  REQ-091 date it was evaluated with), which a teacher reset (REQ-087) re-checks against while
+  that date is unchanged; plus (plan 10)
   ``graders`` (the course's grader user ids, for the API's fresh grader check) when Moodle could
   be read, and ``recipients`` (``{role: "recipient", name: "m***@domain"}``: the transcript
   recipients of the sealed teacher config, local part masked, REQ-082 as amended) when the config
@@ -32,7 +36,13 @@ from sqlalchemy import text
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.delivery.recipients import ConfigRecipients, GraderLike, state_view
-from vektra_assess.gates import ButtonState, Code, GateDecision, evaluate_start_gates
+from vektra_assess.gates import (
+    DB_SIDE,
+    ButtonState,
+    Code,
+    GateDecision,
+    evaluate_start_gates,
+)
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
 from vektra_assess.worker.preflight import (
     DbGateFacts,
@@ -68,10 +78,15 @@ _UPSERT_STATE = text(
     "DO UPDATE SET status = EXCLUDED.status, reason_code = EXCLUDED.reason_code, "
     "computed_at = now()"
 )
+#: ``refreshed_at`` is the database clock read BEFORE the Moodle reads (``_CLOCK``), as the
+#: teacher_gate job does: a slow read never makes its facts look fresher than they are (a reset
+#: and the grader checks compare it with the same clock; CodeRabbit 4506916946)
+_CLOCK = text("SELECT clock_timestamp()")
 _UPSERT_INPUTS = text(
     "INSERT INTO assess_gate_inputs (site_id, student_userid, cmid, inputs, refreshed_at) "
-    "VALUES (:s, :u, :c, CAST(:i AS jsonb), now()) ON CONFLICT (site_id, student_userid, cmid) "
-    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = now()"
+    "VALUES (:s, :u, :c, CAST(:i AS jsonb), coalesce(:t, now())) "
+    "ON CONFLICT (site_id, student_userid, cmid) "
+    "DO UPDATE SET inputs = EXCLUDED.inputs, refreshed_at = EXCLUDED.refreshed_at"
 )
 _DONE = text(
     "UPDATE assess_render_checks SET done_at = now() WHERE site_id = :s "
@@ -107,6 +122,7 @@ async def evaluate_render(
     userid: int,
     cmid: int,
     courseid_hint: int | None = None,
+    seen: dict[str, Any] | None = None,
 ) -> tuple[GateDecision, StartTarget | None]:
     """The advisory decision and the target it was evaluated for (None: no configuration row).
 
@@ -121,6 +137,10 @@ async def evaluate_render(
         )
     if act is None:
         return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), None
+    if seen is not None:
+        # the REQ-091 date this evaluation used: a reset takes the Moodle half only while the
+        # date is still the same (CodeRabbit 4506916913)
+        seen["attested_at"] = act.attested_at
     target = StartTarget(
         session_id=uuid.uuid4(),  # no session: a scratch key for the source's resolution cache
         site_id=site_id,
@@ -192,6 +212,8 @@ async def store_render(
     decision: GateDecision,
     graders: GradersRead | None = None,
     recipients: list[dict[str, str]] | None = None,
+    observed_at: Any = None,
+    attested_at: Any = None,
 ) -> None:
     inputs: dict[str, Any] = {
         "code": decision.code.value,
@@ -199,6 +221,13 @@ async def store_render(
         "opens_at": decision.opens_at,
         "session_no_next": decision.session_no_next,
     }
+    # the full evaluation ran (not the disabled / open-session short cut): an OK decision, or a
+    # failing one with its reasons. The Moodle-side ones are what a reset re-checks (REQ-087).
+    if decision.code is Code.OK or decision.reasons:
+        inputs["moodle_reasons"] = [
+            c.value for c in decision.reasons if c not in DB_SIDE
+        ]
+        inputs["attested_at"] = attested_at
     if graders is not None:
         # user ids for the grader check (plan 10 authz)
         inputs["graders"] = list(graders.graders)
@@ -213,7 +242,8 @@ async def store_render(
                 {**params, "st": decision.state.value, "r": decision.code.value},
             )
             await conn.execute(
-                _UPSERT_INPUTS, {**params, "i": json.dumps(inputs, sort_keys=True)}
+                _UPSERT_INPUTS,
+                {**params, "i": json.dumps(inputs, sort_keys=True), "t": observed_at},
             )
             await conn.execute(_DONE, params)
 
@@ -228,8 +258,12 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
             return  # a malformed job is a stale no-op
         hint = ctx.args.get("courseid")
         course = int(hint) if hint else None
+        async with ctx.acquire() as conn:
+            observed_at = (await conn.execute(_CLOCK)).scalar()
+            await conn.rollback()
+        seen: dict[str, Any] = {}
         decision, target = await evaluate_render(
-            deps, ctx.acquire, site_id, userid, cmid, course
+            deps, ctx.acquire, site_id, userid, cmid, course, seen
         )
         try:
             graders = await read_graders(deps, target) if target else None
@@ -240,7 +274,15 @@ def make_render_handler(deps: RenderDeps) -> Callable[[JobContext], Awaitable[No
                 forget(target.session_id)
         recipients = await read_recipients(deps, ctx.acquire, site_id, cmid)
         await store_render(
-            ctx.acquire, site_id, userid, cmid, decision, graders, recipients
+            ctx.acquire,
+            site_id,
+            userid,
+            cmid,
+            decision,
+            graders,
+            recipients,
+            observed_at=observed_at,
+            attested_at=seen.get("attested_at"),
         )
 
     return handle

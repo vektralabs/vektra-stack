@@ -31,6 +31,8 @@ services:
       # the DPO's erasure decision (OQ-033): erase | retain_exam_evidence. Empty: the API refuses
       # to start outside development (no implicit choice)
       VEKTRA_ASSESS_ERASURE_MODE: ${VEKTRA_ASSESS_ERASURE_MODE:-}
+      VEKTRA_ASSESS_ERASURE_WAIT_S: ${VEKTRA_ASSESS_ERASURE_WAIT_S:-4}
+      VEKTRA_ASSESS_PRIVACY_RPM: ${VEKTRA_ASSESS_PRIVACY_RPM:-30}
     secrets:
       - { source: assess_token_signing, <<: *secret }
       - { source: assess_handoff_private, <<: *secret }

@@ -10,7 +10,7 @@
     the configured legal basis, audited, nothing deleted. ``erase``: an erasure request and an
     ``erasure`` job; the answer waits up to ``VEKTRA_ASSESS_ERASURE_WAIT_S`` for the worker and
     returns its counts, or 503 ``ERR-ASSESS-027`` (``pending``: the same request again is
-    idempotent; ``failed``: the count check found rows left, nothing was committed). Never a
+    idempotent; ``failed``: the count check found rows left: the deletion was rolled back, though live sessions closed beforehand stay closed). Never a
     2xx without an erasure or a ``retained`` outcome. The API itself deletes nothing.
 ``GET /api/v1/assess/privacy/subjects/{userid}/transcripts`` (exact ``assess:privacy-export``)
     REQ-093 (b): the subject's transcripts of this site, whatever the enrolment or course access

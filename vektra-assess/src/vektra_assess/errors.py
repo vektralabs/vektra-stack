@@ -466,7 +466,7 @@ def transcript_expired() -> ErrorResponse:
 
 def erasure_not_completed(reason: str, retry_after_s: int = 5) -> ErrorResponse:
     """503 (OQ-033): ``pending`` (the worker has not finished: the same request again is
-    idempotent) or ``failed`` (the count check found rows left: nothing was committed)."""
+    idempotent) or ``failed`` (the count check found rows left: the deletion was rolled back, though live sessions closed beforehand stay closed)."""
     return ErrorResponse(
         category=ErrorCategory.TRANSIENT,
         code=ERR_ASSESS_027,

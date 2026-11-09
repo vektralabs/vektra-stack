@@ -55,11 +55,13 @@ from vektra_assess.errors import (
     rate_limited,
     resend_recipient_forbidden,
     teacher_unverified,
+    transcript_expired,
     transcript_integrity,
     transcript_not_found,
 )
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import AssessKeyring
+from vektra_assess.privacy.subject import subject_ref
 from vektra_assess.tokens import SIGNING_SECRET, TokenError, keyring_from
 from vektra_assess.transcript import store
 from vektra_assess.transcript.naming import content_disposition
@@ -214,7 +216,7 @@ async def mint_download_token(
         site = await site_of_key(conn, key, purpose)
         row = (await conn.execute(_TRANSCRIPT, {"t": t})).first()
         if row is None or row.site_id != site or row.ciphertext is None:
-            raise fail(transcript_not_found())
+            raise fail(await _gone_or_missing(conn, t, site, role, requester))
         if role == "owner" and int(row.student_userid) != requester:
             await write_event(
                 conn,
@@ -264,6 +266,25 @@ async def mint_download_token(
         content={"token": minted.token, "expires_in": minted.ttl_s},
         headers={"Cache-Control": "no-store"},
     )
+
+
+_TOMBSTONE = text(
+    # the state's ``tid`` is the session id (a transcript's id is its session's)
+    "SELECT subject_ref FROM assess_purge_records WHERE (transcript_id = :t OR session_id = :t) "
+    "AND site_id = :s AND reason = 'retention' LIMIT 1"
+)
+
+
+async def _gone_or_missing(
+    conn: Any, t: UUID, site: Any, role: str, requester: int
+) -> ErrorResponse:
+    """410 for a transcript the retention purge removed (REQ-088: the student learns it
+    expired), 404 otherwise. The owner gets the 410 only for their own transcript (the
+    tombstone's subject), so a transcript id tells another student nothing."""
+    ref = (await conn.execute(_TOMBSTONE, {"t": t, "s": site})).scalar()
+    if ref is not None and (role != "owner" or ref == subject_ref(site, requester)):
+        return transcript_expired()
+    return transcript_not_found()
 
 
 def _forbidden_owner() -> ErrorResponse:

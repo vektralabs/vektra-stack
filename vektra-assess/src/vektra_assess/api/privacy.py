@@ -1,0 +1,470 @@
+"""Privacy settings, subject export and erasure (plan assess-privacy-retention, INT-001).
+
+``PUT|GET /api/v1/assess/sites/{site}/privacy`` (exact ``admin``)
+    The REQ-089 settings of a site (values supplied by the DPO, OQ-020). The PUT replaces the
+    whole row; any invalid field is a 400 ``ERR-ASSESS-028`` naming the fields, never echoing the
+    values. Audited old/new as counts and flags (``assess_privacy_config_changed``).
+``DELETE /api/v1/assess/privacy/subjects/{userid}`` (exact ``assess:privacy-erase``, site-bound)
+``DELETE /api/v1/assess/privacy/activities/{cmid}/subjects`` (same key, optional ``{"userids"}``)
+    OQ-033. ``VEKTRA_ASSESS_ERASURE_MODE=retain_exam_evidence``: 200 ``outcome=retained`` with
+    the configured legal basis, audited, nothing deleted. ``erase``: an erasure request and an
+    ``erasure`` job; the answer waits up to ``VEKTRA_ASSESS_ERASURE_WAIT_S`` for the worker and
+    returns its counts, or 503 ``ERR-ASSESS-027`` (``pending``: the same request again is
+    idempotent; ``failed``: the count check found rows left, nothing was committed). Never a
+    2xx without an erasure or a ``retained`` outcome. The API itself deletes nothing.
+``GET /api/v1/assess/privacy/subjects/{userid}/transcripts`` (exact ``assess:privacy-export``)
+    REQ-093 (b): the subject's transcripts of this site, whatever the enrolment or course access
+    now, as the exact bytes the in-course download serves (base64, with their SHA-256), at most
+    ``EXPORT_PAGE`` per page, the cursor in ``X-Assess-Cursor``. Audited with counts only.
+``GET /api/v1/assess/privacy/activities/{cmid}/subjects`` (exact ``assess:privacy-export``)
+    The user ids with any assess row for that activity of this site (the plugin's
+    ``get_users_in_context``).
+
+Keys are site-bound (``assess_site_keys`` purpose ``privacy-export`` / ``privacy-erase``); the
+admin superscope never reaches the subject routes, and an assess key never reaches the
+settings. No route reads the query string; every refusal is an explicit envelope.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+from typing import Any
+from uuid import UUID
+
+import structlog
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+
+from vektra_assess.api.common import (
+    engine_of,
+    fail,
+    iso_time,
+    json_object,
+    read_capped_body,
+    site_of_key,
+)
+from vektra_assess.api.deps import settings_of
+from vektra_assess.api.state import limiter_of
+from vektra_assess.api.teachers import ascii_id, header_int, path_id
+from vektra_assess.api.transcripts import transcript_key_of
+from vektra_assess.audit import AssessAuditEvent, write_event
+from vektra_assess.errors import (
+    assess_unavailable,
+    bad_request,
+    erasure_not_completed,
+    privacy_config_invalid,
+    rate_limited,
+    transcript_integrity,
+)
+from vektra_assess.jobs import JobKind, enqueue_job
+from vektra_assess.privacy import config as privacy_config
+from vektra_assess.privacy.subject import subject_ref
+from vektra_assess.transcript import store
+from vektra_shared.auth import ApiKeyInfo, require_exact_scope
+
+log = structlog.get_logger(__name__)
+router = APIRouter()
+
+_admin = require_exact_scope("admin")
+_erase = require_exact_scope("assess:privacy-erase")
+_export = require_exact_scope("assess:privacy-export")
+
+EXPORT_PAGE = 10
+#: an activity erasure names at most this many users in one request
+MAX_USERIDS = 1000
+_POLL_S = 0.2
+
+
+def _limit(request: Request, key: ApiKeyInfo) -> None:
+    allowed, _ = limiter_of(request, "privacy").check(
+        ("privacy", key.key_id), settings_of(request).privacy_rpm
+    )
+    if not allowed:
+        raise fail(rate_limited(60, "privacy_rate"))
+
+
+def _site_id(raw: str) -> UUID:
+    try:
+        return UUID(raw)
+    except ValueError:
+        raise fail(bad_request("site_id")) from None
+
+
+# --- settings (operator) ----------------------------------------------------------------------
+
+_SITE = text("SELECT id FROM assess_sites WHERE id = :s")
+_UPSERT = text(
+    "INSERT INTO assess_privacy_config (site_id, retention_days, legal_basis_label, "
+    "legal_basis_text, notice_url, notice_text, notice_version, updated_by, updated_at) "
+    "VALUES (:s, :retention_days, :legal_basis_label, :legal_basis_text, :notice_url, "
+    ":notice_text, :notice_version, :by, now()) ON CONFLICT (site_id) DO UPDATE SET "
+    "retention_days = EXCLUDED.retention_days, legal_basis_label = EXCLUDED.legal_basis_label, "
+    "legal_basis_text = EXCLUDED.legal_basis_text, notice_url = EXCLUDED.notice_url, "
+    "notice_text = EXCLUDED.notice_text, notice_version = EXCLUDED.notice_version, "
+    "updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at"
+)
+_CURRENT = text(
+    "SELECT retention_days, legal_basis_label, legal_basis_text, notice_url, notice_text, "
+    "notice_version, updated_by, updated_at FROM assess_privacy_config WHERE site_id = :s "
+    "FOR UPDATE"
+)
+
+
+def _view(row: Any) -> dict[str, Any]:
+    if row is None:
+        return {"configured": False}
+    out = {name: getattr(row, name) for name in privacy_config.FIELDS}
+    out["updated_by"] = row.updated_by
+    out["updated_at"] = iso_time(row.updated_at)
+    out["configured"] = privacy_config.passes(row)
+    out["mailbox_notice"] = privacy_config.MAILBOX_SENTENCE
+    return out
+
+
+@router.put("/sites/{site_id}/privacy")
+async def put_privacy(
+    site_id: str, request: Request, key: ApiKeyInfo = Depends(_admin)
+) -> JSONResponse:
+    site = _site_id(site_id)
+    doc = json_object(await read_capped_body(request))
+    errors = privacy_config.field_errors(doc)
+    if errors:
+        raise fail(privacy_config_invalid(errors))
+    async with engine_of(request).begin() as conn:
+        if (await conn.execute(_SITE, {"s": site})).scalar() is None:
+            raise fail(bad_request("unknown_site"))
+        old = (await conn.execute(_CURRENT, {"s": site})).first()
+        await conn.execute(
+            _UPSERT,
+            {
+                "s": site,
+                "by": f"api_key:{key.key_id}",
+                **{f: doc[f] for f in privacy_config.FIELDS},
+            },
+        )
+        changed = {
+            f"changed_{f}": old is None or getattr(old, f) != doc[f]
+            for f in privacy_config.FIELDS
+        }
+        await write_event(
+            conn,
+            AssessAuditEvent.PRIVACY_CONFIG_CHANGED,
+            actor="api",
+            site_id=site,
+            reason_code="created" if old is None else "updated",
+            data={
+                "old_retention_days": int(old.retention_days)
+                if old is not None
+                else None,
+                "new_retention_days": int(doc["retention_days"]),
+                "old_notice_version": str(old.notice_version)
+                if old is not None
+                else None,
+                "new_notice_version": str(doc["notice_version"]),
+                "key_id": key.key_id,
+                **changed,
+            },
+        )
+        row = (await conn.execute(_CURRENT, {"s": site})).first()
+    return JSONResponse(content=_view(row))
+
+
+@router.get("/sites/{site_id}/privacy")
+async def get_privacy(
+    site_id: str, request: Request, key: ApiKeyInfo = Depends(_admin)
+) -> JSONResponse:
+    site = _site_id(site_id)
+    async with engine_of(request).connect() as conn:
+        if (await conn.execute(_SITE, {"s": site})).scalar() is None:
+            raise fail(bad_request("unknown_site"))
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT retention_days, legal_basis_label, legal_basis_text, notice_url, "
+                    "notice_text, notice_version, updated_by, updated_at FROM "
+                    "assess_privacy_config WHERE site_id = :s"
+                ),
+                {"s": site},
+            )
+        ).first()
+    return JSONResponse(content=_view(row))
+
+
+# --- erasure (the plugin's privacy provider) ------------------------------------------------
+
+_QUEUE = text(
+    "INSERT INTO assess_erasure_records (site_id, subject_userid_hash, scope, cmid, "
+    "subject_userids) VALUES (:s, :h, :scope, :cmid, :users) RETURNING id"
+)
+_DONE = text(
+    "SELECT completed_at, outcome, rows_deleted FROM assess_erasure_records WHERE id = :i"
+)
+
+
+async def _retained(
+    request: Request, site: UUID, key: ApiKeyInfo, scope: str, cmid: int | None
+) -> JSONResponse:
+    async with engine_of(request).begin() as conn:
+        basis = await privacy_config.read(conn, site)
+        await write_event(
+            conn,
+            AssessAuditEvent.ERASURE_RETAINED,
+            actor="api",
+            site_id=site,
+            reason_code=scope,
+            data={"cmid": cmid, "key_id": key.key_id},
+        )
+    return JSONResponse(
+        content={
+            "outcome": "retained",
+            "legal_basis": basis.legal_basis_label if basis is not None else None,
+            "counts": {"sessions": 0, "transcripts": 0, "deliveries_abandoned": 0},
+        }
+    )
+
+
+async def _erase_and_wait(
+    request: Request,
+    site: UUID,
+    *,
+    scope: str,
+    cmid: int | None,
+    userids: list[int] | None,
+    subject_hash: str | None,
+) -> JSONResponse:
+    engine = engine_of(request)
+    async with engine.begin() as conn:
+        erasure_id = (
+            await conn.execute(
+                _QUEUE,
+                {
+                    "s": site,
+                    "h": subject_hash,
+                    "scope": scope,
+                    "cmid": cmid,
+                    "users": userids,
+                },
+            )
+        ).scalar_one()
+        await enqueue_job(
+            conn,
+            JobKind.ERASURE,
+            {"erasure_id": int(erasure_id)},
+            dedupe_key=f"erasure:{erasure_id}",
+        )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + settings_of(request).erasure_wait_s
+    while True:
+        async with engine.connect() as conn:
+            row = (await conn.execute(_DONE, {"i": erasure_id})).first()
+        if row is not None and row.completed_at is not None:
+            break
+        if loop.time() >= deadline:
+            raise fail(erasure_not_completed("pending"))
+        await asyncio.sleep(_POLL_S)
+    if row.outcome != "erased":
+        raise fail(erasure_not_completed("failed", retry_after_s=60))
+    counts = dict(row.rows_deleted or {})
+    return JSONResponse(
+        content={
+            "outcome": "erased",
+            "counts": {
+                "sessions": int(counts.get("sessions", 0)),
+                "transcripts": int(counts.get("transcripts", 0)),
+                "deliveries_abandoned": int(counts.get("deliveries_abandoned", 0)),
+            },
+        }
+    )
+
+
+@router.delete("/privacy/subjects/{userid}")
+async def erase_subject(
+    userid: str, request: Request, key: ApiKeyInfo = Depends(_erase)
+) -> JSONResponse:
+    user = path_id(userid, "userid")
+    _limit(request, key)
+    async with engine_of(request).connect() as conn:
+        site = await site_of_key(conn, key, "privacy-erase")
+    if settings_of(request).erasure_mode == "retain_exam_evidence":
+        return await _retained(request, site, key, "subject", None)
+    return await _erase_and_wait(
+        request,
+        site,
+        scope="subject",
+        cmid=None,
+        userids=[user],
+        subject_hash=subject_ref(site, user),
+    )
+
+
+def _userids(doc: dict[str, Any]) -> list[int] | None:
+    if set(doc) - {"userids"}:
+        raise fail(bad_request("unknown_field"))
+    raw = doc.get("userids")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw or len(raw) > MAX_USERIDS:
+        raise fail(bad_request("userids"))
+    out: list[int] = []
+    for item in raw:
+        value = (
+            ascii_id(str(item))
+            if isinstance(item, int) and not isinstance(item, bool)
+            else None
+        )
+        if value is None:
+            raise fail(bad_request("userids"))
+        out.append(value)
+    return sorted(set(out))
+
+
+@router.delete("/privacy/activities/{cmid}/subjects")
+async def erase_activity(
+    cmid: str, request: Request, key: ApiKeyInfo = Depends(_erase)
+) -> JSONResponse:
+    activity = path_id(cmid, "cmid")
+    raw = await read_capped_body(request)
+    users = _userids(json_object(raw)) if raw.strip() else None
+    _limit(request, key)
+    async with engine_of(request).connect() as conn:
+        site = await site_of_key(conn, key, "privacy-erase")
+    if settings_of(request).erasure_mode == "retain_exam_evidence":
+        return await _retained(request, site, key, "activity", activity)
+    return await _erase_and_wait(
+        request, site, scope="activity", cmid=activity, userids=users, subject_hash=None
+    )
+
+
+# --- export and listing ----------------------------------------------------------------------
+
+#: no enrolment or course check (REQ-093 (b)): the subject's own transcripts of this site
+_EXPORT = text(
+    "SELECT t.id, s.cmid, s.courseid_hint, s.session_no, s.closed_at, t.filename, "
+    "t.content_hash, t.ciphertext, t.dek_wrapped FROM assess_transcripts t "
+    "JOIN assess_sessions s ON s.id = t.session_id WHERE s.site_id = :s "
+    "AND s.student_userid = :u AND t.ciphertext IS NOT NULL AND t.shredded_at IS NULL "
+    "AND t.id > :after ORDER BY t.id LIMIT :n"
+)
+_NO_CURSOR = UUID(int=0)
+
+
+@router.get("/privacy/subjects/{userid}/transcripts")
+async def export_subject(
+    userid: str, request: Request, key: ApiKeyInfo = Depends(_export)
+) -> JSONResponse:
+    user = path_id(userid, "userid")
+    raw_cursor = request.headers.get("X-Assess-Cursor")
+    after = _NO_CURSOR
+    if raw_cursor:
+        try:
+            after = UUID(raw_cursor)
+        except ValueError:
+            raise fail(bad_request("cursor")) from None
+    _limit(request, key)
+    items: list[dict[str, Any]] = []
+    async with engine_of(request).begin() as conn:
+        site = await site_of_key(conn, key, "privacy-export")
+        rows = (
+            await conn.execute(
+                _EXPORT, {"s": site, "u": user, "after": after, "n": EXPORT_PAGE + 1}
+            )
+        ).all()
+        more = len(rows) > EXPORT_PAGE
+        for r in rows[:EXPORT_PAGE]:
+            try:
+                body = store.open_verified(
+                    transcript_key_of(request),
+                    r.id,
+                    bytes(r.ciphertext),
+                    bytes(r.dek_wrapped),
+                    str(r.content_hash),
+                )
+            except store.TranscriptKeyUnavailable:
+                raise fail(assess_unavailable("transcript_key")) from None
+            except store.TranscriptIntegrityError:
+                log.error(
+                    "assess.transcript.alert",
+                    alert="integrity_mismatch_at_export",
+                    transcript_id=str(r.id),
+                )
+                raise fail(transcript_integrity()) from None
+            items.append(
+                {
+                    "transcript_id": str(r.id),
+                    "cmid": int(r.cmid),
+                    "course_id": int(r.courseid_hint)
+                    if r.courseid_hint is not None
+                    else None,
+                    "session_no": int(r.session_no),
+                    "closed_at": iso_time(r.closed_at),
+                    "filename": r.filename,
+                    "sha256": str(r.content_hash),
+                    "content_base64": base64.b64encode(body).decode("ascii"),
+                }
+            )
+        await write_event(
+            conn,
+            AssessAuditEvent.PRIVACY_EXPORT,
+            actor="api",
+            site_id=site,
+            data={"transcripts": len(items), "page_more": more, "key_id": key.key_id},
+        )
+    return JSONResponse(
+        content={
+            "items": items,
+            "next_cursor": items[-1]["transcript_id"] if more and items else None,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+_SUBJECTS = text(
+    "SELECT u FROM ("
+    " SELECT student_userid AS u FROM assess_sessions WHERE site_id = :s AND cmid = :c"
+    " UNION SELECT student_userid FROM assess_extra_time WHERE site_id = :s AND cmid = :c"
+    " UNION SELECT student_userid FROM assess_reset_grants WHERE site_id = :s AND cmid = :c"
+    " UNION SELECT student_userid FROM assess_start_attempts WHERE site_id = :s AND cmid = :c"
+    ") AS t WHERE u > :after ORDER BY u LIMIT :n"
+)
+SUBJECTS_PAGE = 500
+
+
+@router.get("/privacy/activities/{cmid}/subjects")
+async def activity_subjects(
+    cmid: str, request: Request, key: ApiKeyInfo = Depends(_export)
+) -> JSONResponse:
+    activity = path_id(cmid, "cmid")
+    after = header_int(request, "X-Assess-Cursor") or 0
+    if request.headers.get("X-Assess-Cursor") and not after:
+        raise fail(bad_request("cursor"))
+    _limit(request, key)
+    async with engine_of(request).begin() as conn:
+        site = await site_of_key(conn, key, "privacy-export")
+        users = [
+            int(u)
+            for u in (
+                await conn.execute(
+                    _SUBJECTS,
+                    {"s": site, "c": activity, "after": after, "n": SUBJECTS_PAGE + 1},
+                )
+            ).scalars()
+        ]
+        more = len(users) > SUBJECTS_PAGE
+        users = users[:SUBJECTS_PAGE]
+        await write_event(
+            conn,
+            AssessAuditEvent.PRIVACY_SUBJECTS_LISTED,
+            actor="api",
+            site_id=site,
+            data={"cmid": activity, "subjects": len(users), "key_id": key.key_id},
+        )
+    return JSONResponse(
+        content={
+            "cmid": activity,
+            "userids": users,
+            "next_cursor": str(users[-1]) if more and users else None,
+        },
+        headers={"Cache-Control": "no-store"},
+    )

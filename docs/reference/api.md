@@ -258,6 +258,47 @@ REQ-091 fallback applies, else `null`), `fallback_date_missing`, `active_session
 `override_holder` (a quiz participant's user id) only when the actor may manage overrides; never
 an override's reason, a name or an address.
 
+**Privacy, retention and erasure** (plan assess-privacy-retention 12a; REQ-088, REQ-089, REQ-093,
+OQ-033, INT-001). The settings take the `admin` key (exact, the operator); the subject routes take
+a site-bound key of their own scope (`assess:privacy-erase` / `assess:privacy-export`, bound with
+purpose `privacy-erase` / `privacy-export`): the admin superscope never reaches them, and a key of
+another site sees only its own site's rows. No route reads the query string.
+
+| Method | Path | Body / headers | Success | Errors |
+|--------|------|----------------|---------|--------|
+| PUT | `/api/v1/assess/sites/{site_id}/privacy` | `retention_days` (1-3650), `legal_basis_label` (1-200), `legal_basis_text` (1-4000), `notice_url` (https, 9-2000), `notice_text` (1-8000), `notice_version` (1-40); the whole row, strict | `200` the stored settings with `configured: true` and the fixed `mailbox_notice` | `400 ERR-ASSESS-028` (`details.fields`: `{field, code}`, codes `required`, `out_of_range`, `not_an_integer`, `not_a_string`, `empty`, `too_long`, `not_https`, `control_character`, `unknown_field`; never the value), `400 ERR-ASSESS-014` (`site_id`, `unknown_site`) |
+| GET | `/api/v1/assess/sites/{site_id}/privacy` | - | `200` the settings, or `{"configured": false}` | `400 ERR-ASSESS-014` |
+| DELETE | `/api/v1/assess/privacy/subjects/{userid}` | - | `200 {"outcome": "erased", "counts": {sessions, transcripts, deliveries_abandoned}}`, or with `VEKTRA_ASSESS_ERASURE_MODE=retain_exam_evidence` `200 {"outcome": "retained", "legal_basis", "counts": {0...}}` | `400 ERR-ASSESS-014` (`userid`), `403 ERR-ASSESS-007`, `429`, `503 ERR-ASSESS-027` (`details.reason` `pending`: the worker has not finished within `VEKTRA_ASSESS_ERASURE_WAIT_S`, the same request again is idempotent; `failed`: the count check found rows left, nothing was committed) |
+| DELETE | `/api/v1/assess/privacy/activities/{cmid}/subjects` | optional `{"userids": [..]}` (1-1000 ids); absent: every subject of the activity | as above | as above (`userids`, `unknown_field`) |
+| GET | `/api/v1/assess/privacy/subjects/{userid}/transcripts` | optional `X-Assess-Cursor` (the `next_cursor` of the previous page) | `200 {"items": [{transcript_id, cmid, course_id, session_no, closed_at, filename, sha256, content_base64}], "next_cursor"}`, at most 10 per page, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`userid`, `cursor`), `403 ERR-ASSESS-007`, `429`, `500 ERR-ASSESS-020`, `503 ERR-ASSESS-001` (`transcript_key`) |
+| GET | `/api/v1/assess/privacy/activities/{cmid}/subjects` | optional `X-Assess-Cursor` (a user id) | `200 {"cmid", "userids": [..], "next_cursor"}` (500 per page): every user id with a session, extra time, reset or Start attempt in that activity of this site | `400 ERR-ASSESS-014`, `403 ERR-ASSESS-007`, `429` |
+
+Export (REQ-093 (b)): the subject's own transcripts of this site, whatever their enrolment or
+course access today, as the exact bytes the in-course download serves (`sha256` is the stored
+hash, so the two copies compare equal). After the retention purge: no items. Audited
+`assess_privacy_export` (counts only).
+
+Erasure (OQ-033): the API deletes nothing. It records the request and queues an `erasure` job;
+the worker first closes every live session of the scope through the single close path
+(`access_revoked`, its own transaction), then, in one transaction, abandons the copies still
+waiting for the relay (audited, no notice), crypto-shreds the session keys and transcript keys,
+deletes the content and the subject's own rows (sessions, Start attempts, minted tokens, the
+worker's per-student caches, extra time, resets), writes a tombstone per session, counts every
+table again for the scope (any row left: everything rolls back, the request is recorded
+`failed`) and completes the request with its counts, clearing the user ids it carried. Audited
+`assess_erasure` (counts) or `assess_erasure_retained`. Teacher-entered recipient addresses are not
+tied to a student id, so the configuration is not touched. Erasing a subject removes their
+sessions: on an activity still open they may Start again.
+
+Retention (REQ-089): the worker's daily `purge` tick removes the content of every CLOSED session
+older than its site's `retention_days` (a site without settings is never purged): copies still
+waiting for the relay become ABANDONED (audited `assess_delivery_abandoned_on_purge`) and the
+activity's recipients get a content-free notice; then keys first, rows second, the same count
+check (a batch that fails it rolls back alone, alert `purge_verification_failed`), a tombstone per
+session and `assess_purge` (counts only). The session row stays (ids, numbers, timestamps: what
+the START gate counts) and `GET /state` reports the transcript `purged`. Notification rows in a
+final state are deleted after 30 days; download tokens a day after their expiry.
+
 **`GET /state`, extended fields** (plan 9, agreed with the plugin). Every field is optional and
 ABSENT when the state does not call for it; Vektra sends data, URLs and versions only, the
 plugin owns every text.
@@ -266,10 +307,10 @@ plugin owns every text.
 |-------|-----------|---------|
 | `active` | `active`, `starting` | `{session_no, minutes_left?, deadline_at?}`: `deadline_at` once committed; `minutes_left` whole minutes rounded UP (1 until the very end, 0 only once the time is over; the UI's timer rounds the same way), frozen at the outage start while in OUTAGE, the frozen duration while starting |
 | `selected_attempt` | when the render worker recorded the selected attempt | `{attempt_no}`: the plugin compares it with the attempt its page shows (REQ-068 state 9) |
-| `pre_session` | `eligible`, `reset_granted` | `{duration_min, course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url?, notice_version}, previous_sessions, recipients?[{role, name}], files?[{name, predicted: readable\|partial\|unreadable}]}` |
+| `pre_session` | `eligible`, `reset_granted` | `{duration_min, course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url, notice_version, retention_days, legal_basis_label, summary, mailbox_notice}, previous_sessions, recipients?[{role, name}], files?[{name, predicted: readable\|partial\|unreadable}]}`. `privacy` is the site's REQ-089 settings (plan 12) and `summary` the system-rendered text, which always ends with the fixed `mailbox_notice` sentence; a site with no settings (development override only) gets the deployment's `notice_version` / `notice_url` and the `mailbox_notice` |
 | `closed_at` | `closed` (state 6) | the last close of the student's session, ISO 8601 |
 | `ended_at` | `ended` (state 11) | the activity's end date, ISO 8601 |
-| `transcripts` | any state, once the student has a CLOSED session (plan 10) | `[{tid, n, available, purged}]`, one per CLOSED session in session order: `tid` the transcript id (equal to the session id, so the discussion UI, which knows only its session, can ask for it), `n` the session number, `available` generated and downloadable, `purged` always `false` in this release: the purge (plan assess-privacy-retention) deletes the row and will set it from its tombstone; until then a purged transcript reads as `available: false` |
+| `transcripts` | any state, once the student has a CLOSED session (plan 10) | `[{tid, n, available, purged}]`, one per CLOSED session in session order: `tid` the transcript id (equal to the session id, so the discussion UI, which knows only its session, can ask for it), `n` the session number, `available` generated and downloadable, `purged` `true` once the retention purge removed it (from the session's tombstone, plan 12: then `available` is `false` and the download-token mint answers `410 ERR-ASSESS-026`) |
 
 `recipients`, `files` and `selected_attempt` come from the render worker's record and are
 omitted while it has not recorded them. `recipients` (REQ-082 as amended) are the transcript recipients

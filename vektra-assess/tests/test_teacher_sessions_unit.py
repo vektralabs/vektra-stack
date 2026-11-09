@@ -134,7 +134,7 @@ def reset_row(
     ct, _ = encrypt_reason(kek, "assess_reset_grants", rid, reason)
     return SimpleNamespace(
         id=rid, student_userid=user, session_no=no, reason_ct=memoryview(ct),
-        include_previous_turns=False, granted_by="5", granted_at=T0,
+        reason_kid=kek.active, include_previous_turns=False, granted_by="5", granted_at=T0,
     )  # fmt: skip
 
 

@@ -36,6 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from vektra_assess import privacy
 from vektra_assess.api.common import engine_of, fail
 from vektra_assess.api.deps import settings_of, tokens_of
 from vektra_assess.api.gate import verify_assess_token_pre
@@ -320,6 +321,12 @@ async def start_session(
                 raise _Refused(start_refused("session_already_open"))
             if int(hist.closed) > int(hist.grants):
                 raise _Refused(start_refused("already_discussed"))
+            # REQ-089: the notice the student saw is the site's current one; the deployment
+            # value stands in only for a site with no settings (development override)
+            notice_version = (
+                await privacy.current_notice_version(conn, claims.site)
+                or settings.privacy_notice_version
+            )
             row = (
                 await conn.execute(
                     _INSERT_SESSION,
@@ -328,7 +335,7 @@ async def start_session(
                         "c": claims.cmid,
                         "u": claims.sub,
                         "t": settings.start_t_s,
-                        "nv": settings.privacy_notice_version,
+                        "nv": notice_version,
                         "course": consumed.courseid_hint,
                     },
                 )
@@ -352,7 +359,7 @@ async def start_session(
                 data={
                     "cmid": claims.cmid,
                     "session_no": int(row.session_no),
-                    "notice_version": settings.privacy_notice_version,
+                    "notice_version": notice_version,
                 },
             )
     except _Refused as exc:

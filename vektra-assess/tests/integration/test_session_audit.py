@@ -68,6 +68,14 @@ ELSEWHERE = {
     E.TEACHER_TERMINATE: "test_teacher_terminate.py",
     E.TEACHER_EXTRA_TIME: "test_teacher_extra_time.py",
     E.TEACHER_OPENING_ATTESTED: "test_teacher_extra_time.py",
+    # plan assess-privacy-retention 12a
+    E.PRIVACY_CONFIG_CHANGED: "test_privacy_retention.py",
+    E.PURGE: "test_privacy_retention.py",
+    E.DELIVERY_ABANDONED_ON_PURGE: "test_privacy_retention.py",
+    E.ERASURE: "test_privacy_retention.py",
+    E.ERASURE_RETAINED: "test_privacy_retention.py",
+    E.PRIVACY_EXPORT: "test_privacy_retention.py",
+    E.PRIVACY_SUBJECTS_LISTED: "test_privacy_retention.py",
 }
 NOT_DRIVABLE = {E.ATTEMPT_MISMATCH_REJECTED}
 

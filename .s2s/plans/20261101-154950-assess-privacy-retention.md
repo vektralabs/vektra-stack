@@ -1,10 +1,10 @@
 # Implementation Plan: Assess privacy configuration, retention purge, erasure, export and metadata-only monitoring
 
 **ID**: 20261101-154950-assess-privacy-retention
-**Status**: active
-**Branch**: N/A
+**Status**: in_progress (12a on `feat/assess-privacy-retention`; 12b later)
+**Branch**: feat/assess-privacy-retention
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-01T20:58:19Z
+**Updated**: 2026-11-09T18:30:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -129,22 +129,22 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 ## Tasks
 
 ### Privacy config
-- [ ] Migration (next revision): `assess_privacy_config`, `assess_purge_records`; SECURITY DEFINER `assess_metrics_snapshot()`; grants; extend plan 2's grant assertion
-- [ ] `vektra_assess/privacy/config.py`: `is_configured`, `current_notice_version`, validation; replace plan 11's fail-closed stub
-- [ ] `PUT/GET /api/v1/assess/sites/{site}/privacy` (admin key; audited old/new); pre-session summary builder with the fixed mailbox sentence; expose summary in the state payload (plan 8 field)
-- [ ] Setup-check item `privacy_config` (plan 4 runner)
+- [x] Migration (next revision): `assess_privacy_config`, `assess_purge_records`; SECURITY DEFINER `assess_metrics_snapshot()`; grants; extend plan 2's grant assertion
+- [x] `vektra_assess/privacy/config.py`: `is_configured`, `current_notice_version`, validation; replace plan 11's fail-closed stub
+- [x] `PUT/GET /api/v1/assess/sites/{site}/privacy` (admin key; audited old/new); pre-session summary builder with the fixed mailbox sentence; expose summary in the state payload (plan 8 field)
+- [x] Setup-check item `privacy_config` (plan 4 runner)
 
 ### Purge and erasure
-- [ ] `vektra_assess/privacy/purge.py`: batch selection, ABANDONED + `purge_notice` rows, crypto-shred-then-delete transaction, tombstones, count verification with rollback on non-zero
-- [ ] Register the daily purge tick with plan 3's tick framework (advisory lock, separate pool, hard timeout); include done-job and expired-token cleanup
-- [ ] Add the 410 branch to `GET /transcripts/{tid}` and to the state payload's transcript links ("Trascrizione non più disponibile (periodo di conservazione scaduto)")
-- [ ] `vektra_assess/privacy/erasure.py` + `DELETE /privacy/subjects/{userid}`: live-session close, scoped purge, recipient/extra-time cleanup, mode switch, idempotence, audit
-- [ ] `GET /privacy/activities/{cmid}/subjects` (assess:privacy-export, site-bound, cmid re-resolved against the site binding): userids with any assess row for that activity; backs the plugin's `get_users_in_context` (added 2026-11-01, coordinator decision 3)
-- [ ] `DELETE /privacy/activities/{cmid}/subjects` (assess:privacy-erase, optional `userids` body): per-activity erasure reusing `erasure.py` scoped to (site, cmid[, userids]); backs `delete_data_for_all_users_in_context` / `delete_data_for_users`; same idempotence, mode switch and row-count verification; cross-activity and cross-site rows untouched (added 2026-11-01)
-- [ ] Startup: `VEKTRA_ASSESS_ERASURE_MODE` must be set explicitly outside development (fail closed: no implicit choice of the DPO's decision); warn when `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` is unset
+- [x] `vektra_assess/privacy/purge.py`: batch selection, ABANDONED + `purge_notice` rows, crypto-shred-then-delete transaction, tombstones, count verification with rollback on non-zero
+- [x] Register the daily purge tick with plan 3's tick framework (advisory lock, separate pool, hard timeout); include done-job and expired-token cleanup
+- [x] Add the 410 branch to `GET /transcripts/{tid}` and to the state payload's transcript links ("Trascrizione non più disponibile (periodo di conservazione scaduto)")
+- [x] `vektra_assess/privacy/erasure.py` + `DELETE /privacy/subjects/{userid}`: live-session close, scoped purge, recipient/extra-time cleanup, mode switch, idempotence, audit
+- [x] `GET /privacy/activities/{cmid}/subjects` (assess:privacy-export, site-bound, cmid re-resolved against the site binding): userids with any assess row for that activity; backs the plugin's `get_users_in_context` (added 2026-11-01, coordinator decision 3)
+- [x] `DELETE /privacy/activities/{cmid}/subjects` (assess:privacy-erase, optional `userids` body): per-activity erasure reusing `erasure.py` scoped to (site, cmid[, userids]); backs `delete_data_for_all_users_in_context` / `delete_data_for_users`; same idempotence, mode switch and row-count verification; cross-activity and cross-site rows untouched (added 2026-11-01)
+- [x] Startup: `VEKTRA_ASSESS_ERASURE_MODE` must be set explicitly outside development (fail closed: no implicit choice of the DPO's decision); warn when `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` is unset
 
 ### Export
-- [ ] `GET /privacy/subjects/{userid}/transcripts`: subject-key resolution, pagination, no enrolment check, rate limit, audit
+- [x] `GET /privacy/subjects/{userid}/transcripts`: subject-key resolution, pagination, no enrolment check, rate limit, audit
 
 ### Operator config and monitoring
 - [ ] Settings bounds validation for all operator-facing `VEKTRA_ASSESS_*` values (one startup step, `StartupValidationError` with remediation)
@@ -159,13 +159,13 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [ ] `docs/guides/operators/assess-keys.md` (key inventory, which process holds what, loss consequences, offline backup separate from DB dumps; full rotation and restore drill in plan 13)
 
 ### Tests, docs
-- [ ] Integration (testcontainers): sessions aged past retention → after purge, content row count 0 per table, only tombstones + audit remain; RETRYING delivery → ABANDONED, audited, purge_notice on the mail sink; injected failure mid-batch → rollback, 0 tombstones, alert; non-zero verification → alert and failure surfaced
-- [ ] Crypto-shred check: after deleting `kek_wrapped`, decryption of a pre-purge ciphertext copy taken in the test fails with the live KEK (proves the key, not just the row, is gone)
-- [ ] Erasure: subject with 3 sessions (one ACTIVE) → counts match, 0 rows remain, ACTIVE closed as access_revoked with 0 deliveries sent; repeat → counts 0; retain mode → 0 deletions + audit; other subjects' row counts unchanged
-- [ ] Export: unenrolled subject → transcripts #1..#N, each sha256 equal to the in-course download; cross-user → 0 foreign records; another key/site → 403; after purge → 0 items
+- [x] Integration (testcontainers): sessions aged past retention → after purge, content row count 0 per table, only tombstones + audit remain; RETRYING delivery → ABANDONED, audited, purge_notice on the mail sink; injected failure mid-batch → rollback, 0 tombstones, alert; non-zero verification → alert and failure surfaced
+- [x] Crypto-shred check: after deleting `kek_wrapped`, decryption of a pre-purge ciphertext copy taken in the test fails with the live KEK (proves the key, not just the row, is gone)
+- [x] Erasure: subject with 3 sessions (one ACTIVE) → counts match, 0 rows remain, ACTIVE closed as access_revoked with 0 deliveries sent; repeat → counts 0; retain mode → 0 deletions + audit; other subjects' row counts unchanged
+- [x] Export: unenrolled subject → transcripts #1..#N, each sha256 equal to the in-course download; cross-user → 0 foreign records; another key/site → 403; after purge → 0 items
 - [ ] REQ-080: admin key on download-token mint / transcript / export → 403; canary run (full flow with canaries in turns, files, solution) then grep of captured API, worker, parser logs, mail-sink server log and `/metrics` output → 0 hits; purge leaves 0 content rows
-- [ ] REQ-089: any privacy field unset → enable refused (plan 11 path) and setup check reports `privacy_config`; Start audit event carries `notice_version`; pre-session summary contains the mailbox sentence
-- [ ] Docs: `docs/reference/api.md` privacy, ops and health sections; `docs/reference/configuration.md` + `.env.example`; `CHANGELOG.md` [Unreleased]
+- [x] REQ-089: any privacy field unset → enable refused (plan 11 path) and setup check reports `privacy_config`; Start audit event carries `notice_version`; pre-session summary contains the mailbox sentence
+- [ ] Docs: `docs/reference/api.md` privacy, ops and health sections; `docs/reference/configuration.md` + `.env.example`; `CHANGELOG.md` [Unreleased] (12a: the privacy routes, purge, erasure, export and their settings are documented; ops and health go with 12b)
 
 ## State & Data Lifecycle
 
@@ -181,13 +181,13 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 
 ## Acceptance Criteria
 
-- [ ] Any privacy setting unset → enable refused and the setup check reports `privacy_config` MISSING; Start refused (REQ-089)
-- [ ] The Start audit event records the notice version; the pre-session summary contains the mailbox-retention statement (REQ-089)
-- [ ] Content older than RETENTION_DAYS → content row count 0 after purge, only tombstones and audit metadata remain; RETRYING deliveries ABANDONED, audited, graders notified (REQ-089, REQ-080)
-- [ ] After purge the student link returns 410 with the expiry message and the content is gone (row count 0) (REQ-088)
-- [ ] Erasure removes all the subject's content (row count 0 per table), leaves other subjects untouched, is idempotent, and never returns success without having erased or recorded a `retained` outcome (OQ-033)
-- [ ] Per-activity listing returns exactly the subjects with rows for that cmid; per-activity erasure leaves row counts of other activities and other sites unchanged (count-verified)
-- [ ] Export for an unenrolled subject returns #1..#N hash-equal to the in-course copy; cross-user returns 0 foreign records; after purge 0 transcripts (REQ-093)
+- [x] Any privacy setting unset → enable refused and the setup check reports `privacy_config` MISSING; Start refused (REQ-089)
+- [x] The Start audit event records the notice version; the pre-session summary contains the mailbox-retention statement (REQ-089)
+- [x] Content older than RETENTION_DAYS → content row count 0 after purge, only tombstones and audit metadata remain; RETRYING deliveries ABANDONED, audited, graders notified (REQ-089, REQ-080)
+- [x] After purge the student link returns 410 with the expiry message and the content is gone (row count 0) (REQ-088)
+- [x] Erasure removes all the subject's content (row count 0 per table), leaves other subjects untouched, is idempotent, and never returns success without having erased or recorded a `retained` outcome (OQ-033)
+- [x] Per-activity listing returns exactly the subjects with rows for that cmid; per-activity erasure leaves row counts of other activities and other sites unchanged (count-verified)
+- [x] Export for an unenrolled subject returns #1..#N hash-equal to the in-course copy; cross-user returns 0 foreign records; after purge 0 transcripts (REQ-093)
 - [ ] An operator (admin) credential reading content gets 403; a canary grep of logs, mail logs and metrics returns 0; resend/test-send accept no recipient (REQ-080)
 - [ ] `/health/assess` reports readiness from worker-written rows and returns 503 with the worker stopped while `/health` stays 200 (COMP-002)
 
@@ -229,13 +229,76 @@ no log files fails rather than passing.
 - Purge notice to graders is a new outbound flow; confirm with the DPO that it is covered by the
   notice (it carries no content).
 
-> Request from plan 10 (review of 10a, 2026-11-07): `GET /state` returns `transcripts[].purged`
+> [x] (done in 12a) Request from plan 10 (review of 10a, 2026-11-07): `GET /state` returns `transcripts[].purged`
 > as the constant `false` because `shred_transcript` deletes the transcript row and leaves no
 > trace. When this plan adds `assess_purge_records`, set `purged` from it in
 > `vektra_assess.api.state.transcripts_of` (LEFT JOIN on `transcript_id` or `session_id`) and
 > update the pinning test `test_session_state.py::test_transcripts_list_generated_and_shredded_ones`.
 
-> Request from plan 10 (CodeRabbit 4503029411 on PR #159): `transcript_generate` must not
+> [x] (done in 12a) Request from plan 10 (CodeRabbit 4503029411 on PR #159): `transcript_generate` must not
 > recreate a transcript that was purged. When the purge tombstone lands, check it in
 > `vektra_assess.worker.transcript_gen.generate_transcript` before regenerating (a retry of a job
 > whose settlement failed could otherwise run after `shred_transcript`).
+
+> **Split and design decisions (2026-11-09, coordinator; part 12a on `feat/assess-privacy-retention`).**
+>
+> - **Split.** 12a = Privacy config, Purge and erasure, Export, their tests and the docs of those
+>   endpoints. 12b = Operator config and monitoring (bounds step, SMTP test send, metrics with
+>   `assess_metrics_snapshot()`, `/health/assess`, log allowlist, alert rules), Keys (verify CLI,
+>   key guide), the canary grep and the health / metrics tests. `assess_metrics_snapshot()` moved
+>   to 12b with its only consumer. Also for 12b: the `delivery_retry` tick safety net for the
+>   notify rows (a job that dies with the database down for its whole retry budget), and
+>   `/health/assess` reading the `smtp` probe row; and the orphan `queued` / `running` setup-check
+>   reports (a report whose job died stays queued: not purge-related, a reliability item).
+> - **Revision 0040.** `assess_privacy_config` (CHECKs repeat the bounds; `is_configured`
+>   re-checks on read), `assess_purge_records` (one per session, `UNIQUE (session_id)`, an
+>   earlier tombstone is kept), and `assess_erasure_records` (revision 0012, never written) becomes
+>   the erasure request the API queues and the worker completes (scope, cmid, `subject_userids`
+>   cleared on completion by CHECK, outcome). Grants: the API reads/writes the settings, reads the
+>   tombstones and its erasure records, and still deletes nothing; the worker reads the settings,
+>   writes tombstones and gains DELETE on extra time and resets.
+> - **The session row survives the retention purge** (ids, numbers, timestamps, state; no
+>   content): the START gate counts CLOSED sessions against reset grants, so deleting them would
+>   reopen an activity to a student, and deleting grants would close it. The reset grant stays too;
+>   only the teacher's reason is overwritten (`reason_kid = 'purged'`, empty bytes), and the
+>   teacher's list shows `reason_state: "purged"`. The test-wide REQ-067 invariant (a consumed
+>   session has its opening turn) excludes tombstoned sessions by design.
+> - **Erasure deletes the session rows** (the subject asked for its data to go): on an activity
+>   still open the student could Start again. Erasure is an administrator's privacy action, not a
+>   student's self-service; recorded here for the DPO. Live sessions are closed in their OWN
+>   transaction first (`access_revoked`, the single close path): the REQ-067 constraint trigger
+>   checks a CLOSED session's opening turn at COMMIT from the row the close wrote, so a close and
+>   the deletion of that turn cannot share a transaction. Audit rows stay (append-only, content-
+>   free). Teacher-entered recipient addresses are not tied to a student id (REQ-082 as amended),
+>   so nothing is removed from the sealed configuration.
+> - **The API never deletes.** Erasure is an `erasure` job; the API waits up to
+>   `VEKTRA_ASSESS_ERASURE_WAIT_S` (4 s: the plugin's HTTP timeout is 5 s) and answers the counts,
+>   or `503 ERR-ASSESS-027 pending` (the same request again is idempotent: a new request, counts 0
+>   if already erased) / `failed`. Never a 2xx without an erasure or a `retained` outcome.
+> - **Purge notice = the #190 notify path** (no third sender): a `teacher_notify` job with
+>   `reason: delivery_abandoned_on_purge` and the ids it needs in its arguments (activity, student
+>   id, session number), queued in the purge transaction itself (content-free, so it does not
+>   need the purged rows; and a batch that rolls back queues no notice of a purge that did not
+>   happen). This replaces "sent BEFORE step 3 is committed": the outbox gives the same guarantee
+>   (the notice is durable once the purge is) without making the purge wait on the relay.
+>   Erasure abandons copies too but sends no notice.
+> - **Notification rows' retention** (request (c)): `teacher_notify` / `operator_notify` rows (the
+>   purge notice included) in a final state are deleted by the purge tick after 30 days (ids and
+>   codes only, kept for the operator meanwhile). Download tokens are deleted a day after expiry.
+> - **In-flight copies**: a session with a delivery attempt started in the last 15 minutes waits
+>   for the next daily run, so a send is never cut from under the relay.
+> - **A site without settings is never purged** (no retention to apply); such a site cannot be
+>   enabled outside development anyway.
+> - **410** is answered at the download-token mint (the link the plugin follows); a token minted
+>   before the purge is deleted with it (401 as any unknown token). The owner gets the 410 only for
+>   their own transcript (the tombstone's subject reference), another student a 404.
+> - **Subject reference**: `sha256("<site>|<userid>")`, a lookup key, not a secret (LMS user ids
+>   are small integers).
+> - **Error codes**: `ERR-ASSESS-026` (410 expired), `027` (503 erasure not completed), `028` (400
+>   privacy settings refused).
+> - **Notice version**: the Start records the site's `notice_version`; the deployment-wide
+>   `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION` / `_URL` only stand in for a site with no settings
+>   (development override).
+> - **`VEKTRA_ASSESS_ERASURE_MODE`** is checked at the API's startup step (the API decides the
+>   retained outcome), not in the settings model, so a dormant feature's setting never blocks a
+>   disabled deployment.

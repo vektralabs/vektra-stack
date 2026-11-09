@@ -78,6 +78,7 @@ _guard = require_exact_scope("assess:teacher")
 OPEN_STATES = ("STARTING", "ACTIVE", "OUTAGE")
 LIVE_STATES = ("ACTIVE", "OUTAGE")  # "N sessioni attive"
 
+_PURGED = text("SELECT 1 FROM assess_purge_records WHERE session_id = :sid")
 _SESSION = text(
     "SELECT id, student_userid, session_no, state, close_reason FROM assess_sessions "
     "WHERE id = :sid AND site_id = :s AND cmid = :c"
@@ -234,6 +235,10 @@ async def reset_session(
         latest = sessions[-1]
         if latest.id != row.id:
             raise _Refused(fail(reset_refused("not_latest")))
+        # a session the retention purge emptied (plan 12): its content is gone, and a reset
+        # reason written now would outlive it unscrubbed (CodeRabbit 4516399820)
+        if (await conn.execute(_PURGED, {"sid": row.id})).scalar() is not None:
+            raise _Refused(fail(reset_refused("purged")))
         grants = int((await conn.execute(_GRANTS, params)).scalar_one())
         if grants >= len(sessions):
             raise _Refused(fail(reset_refused("already_reset")))

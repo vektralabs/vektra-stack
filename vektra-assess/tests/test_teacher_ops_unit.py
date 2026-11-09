@@ -329,6 +329,12 @@ def test_an_unverified_teacher_is_refused_before_the_action(
         ),
         (reset_script(grants=1), 409, "already_reset"),
         (reset_script(inserted=False), 409, "already_reset"),
+        # plan 12: the retention purge emptied the session (CodeRabbit 4516399820)
+        (
+            {**reset_script(), "FROM assess_purge_records": Result(scalar=1)},
+            409,
+            "purged",
+        ),
     ],
 )
 def test_the_session_preconditions_refuse_and_write_nothing(

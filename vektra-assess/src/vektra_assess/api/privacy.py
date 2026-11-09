@@ -267,6 +267,14 @@ async def _pending_or_queue(
             )
         ).scalar()
         if pending is not None:
+            # its job may have died (attempts spent waiting for work in flight): queue it again;
+            # the dedupe key keeps one ready or leased job per request (CodeRabbit 4517939437)
+            await enqueue_job(
+                conn,
+                JobKind.ERASURE,
+                {"erasure_id": int(pending)},
+                dedupe_key=f"erasure:{pending}",
+            )
             return int(pending)
         erasure_id = (
             await conn.execute(

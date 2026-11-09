@@ -337,3 +337,26 @@ no log files fails rather than passing.
 > cannot keep them without keeping "this user took the exam". Options: refuse an erasure while
 > the activity is open (409), keep an anonymous per-activity counter, or accept it (the erasure
 > is an administrator's action; `retain_exam_evidence` exists for exam evidence).
+
+> **CodeRabbit round 1 on PR #191 (2026-11-09).** Fixed, each functional fix with a test that
+> failed on the earlier code: an explicit `{"userids": null}` erased the whole activity
+> (4516399722); a reset of a purged session wrote a reason the purge never scrubs: refused,
+> `ERR-ASSESS-024` `purged` (4516399820); the `purged` marker could be a real key id: reserved
+> in `load_keyring` (4516399792); a generation racing the purge inserted a transcript after the
+> tombstone: `FOR KEY SHARE` on the session first (4516399835); an erasure now waits (job retried)
+> while a leased job of the scope or a transcript send started in the last 15 minutes exists, and
+> deletes finished jobs that still name the subject (4516399770, 4516399779, 4516399805); two
+> identical erasure requests queued twice: advisory lock per scope (4516411675); the erasure
+> wait now bounds the pool wait too (4516399711); a notice URL must name a host and never raise
+> (4516411695); the purge validates a site's settings like `is_configured` (nitpick); a backlog
+> above one run's cap queues a bounded follow-up `purge` job (outside-diff); compose forwards
+> the API's privacy settings (outside-diff); the failed-erasure docs (4516399670).
+>
+> **Plugin requests P3 (vektra-moodle-discuss, owned by the plugin session), not done here:**
+> - render `pre_session.privacy.summary` (it ends with the fixed `mailbox_notice`) before the
+>   student confirms (CodeRabbit 4516399743). Once a plugin release does, the server raises the
+>   minimum plugin version (`VEKTRA_ASSESS_MIN_PLUGIN_VERSION` / the site minimum) so an older
+>   plugin can no longer Start;
+> - echo the `notice_version` the student saw in the Start request, so the API can refuse a
+>   Start whose notice changed meanwhile (CodeRabbit 4516399732). Until then the Start records
+>   the site's version at commit; the window is the pre-session token's TTL (at most 120 s).

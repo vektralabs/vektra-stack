@@ -186,6 +186,8 @@ async def test_a_service_failure_close_mails_every_configured_teacher_once(
             assert not list(msg.iter_attachments())  # a notice, never the transcript
         for r in stored:
             assert sink.by_message_id(r.message_id)
+        attempts = await events(pg, "assess_notify_attempt", int(job.id))
+        assert [a.data["outcome"] for a in attempts] == ["sent", "sent"]
         sent = await events(pg, "assess_notify_sent", int(job.id))
         assert len(sent) == 2
         assert {e.session_id for e in sent} == {s.session_id}

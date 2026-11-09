@@ -53,6 +53,11 @@ ELSEWHERE = {
     E.DELIVERY_SENT: "test_delivery_handler.py",
     E.DELIVERY_FAILED: "test_delivery_handler.py",
     E.DELIVERY_POSSIBLE_DUPLICATE: "test_delivery_handler.py",
+    # the notification emails (revision 0039)
+    E.NOTIFY_ATTEMPT: "test_notify_handler.py",
+    E.NOTIFY_SENT: "test_notify_handler.py",
+    E.NOTIFY_FAILED: "test_notify_handler.py",
+    E.NOTIFY_POSSIBLE_DUPLICATE: "test_notify_handler.py",
     E.DELIVERY_RECIPIENT_REPLACED: "test_delivery_handler.py",
     E.DELIVERY_RECIPIENT_ADDED: "test_delivery_handler.py",
     # plan assess-teacher-ops 11a

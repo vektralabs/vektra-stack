@@ -248,7 +248,22 @@ SESSION_KEYS = (
 )
 
 
-def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
+def _ws_client(checked: Checked) -> Any:
+    """The worker's ONE WS client (review finding 3): ``VEKTRA_ASSESS_WS_RPS`` is a per-worker
+    cap only if one token bucket serves every WS caller, a site's breaker only protects it if
+    every caller sees it, and each client opens its own connection pool. Nothing connects here."""
+    from vektra_assess.moodle.client import MoodleWsClient
+    from vektra_assess.moodle.tokens import secret_token_provider
+
+    settings = checked.settings
+    return MoodleWsClient(
+        settings, token_provider=secret_token_provider(settings.secrets_dir)
+    )
+
+
+def _session_handlers(
+    checked: Checked, audit: Any, ws: Any | None = None
+) -> dict[Any, Any]:
     """The plan assess-session-lifecycle bodies: the ``preflight`` handler.
 
     Built only from a key set that passed the key matrix (``_checks``): without it (a composition
@@ -261,8 +276,6 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
     from vektra_assess.delivery.recipients import ConfigRecipients
     from vektra_assess.jobs import JobKind
-    from vektra_assess.moodle.client import MoodleWsClient
-    from vektra_assess.moodle.tokens import secret_token_provider
     from vektra_assess.worker.enrolment import make_recheck_handler
     from vektra_assess.worker.parser_client import ParserClient
     from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
@@ -283,9 +296,7 @@ def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
         llm=build_assess_llm(settings),
     )
     source = MoodleStartSource(
-        MoodleWsClient(
-            settings, token_provider=secret_token_provider(settings.secrets_dir)
-        ),
+        ws if ws is not None else _ws_client(checked),
         ParserClient.from_settings(settings),
         engine.connect,
         teacher_private=checked.keys["assess_teacher_config_private"],
@@ -447,6 +458,71 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SetupCheckParts:
+    handlers: Mapping[Any, Any]
+    ticks: Mapping[str, Any]
+    registry: Any | None = None  # the item registry the handler runs (None: not bound)
+
+
+def _setup_check_parts(
+    checked: Checked, ws: Any | None = None, smtp_probe: Any | None = None
+) -> SetupCheckParts:
+    """The REQ-079 ``setup_check`` handler and its daily tick (the web-service plan, task F4, carried
+    over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the WS
+    token keyring); otherwise both stay unbound and ``assert_all_bound`` refuses to start.
+
+    The item registry is built per composition (never the module-level default, which a second
+    composition would register into twice): the built-ins plus the parser's
+    ``parser_sidecar_running`` contributor (plan assess-parser, "aggregated via the plan 3
+    setup-check slot"), and the worker's own ``smtp_probe`` and ``db_log_statement_none`` items
+    (``worker/setup_items.py``, coordinator decisions 2026-11-08).
+    """
+    if "assess_ws_tokens" not in checked.keys:
+        return SetupCheckParts({}, {})
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.worker.parser_client import ParserClient, register_parser_check
+    from vektra_assess.worker.policy import load_policy
+    from vektra_assess.worker.setup_check import (
+        make_setup_check_handler,
+        queue_setup_checks,
+    )
+    from vektra_assess.worker.setup_items import fresh_registry, register_worker_items
+
+    settings, engine = checked.settings, checked.engine
+    registry = fresh_registry()
+    register_parser_check(ParserClient.from_settings(settings), registry)
+    register_worker_items(
+        registry,
+        engine.connect,
+        smtp_configured=bool(settings.smtp_host and settings.smtp_from),
+        # the item probes itself when the tick's row is missing or stale (finding 1)
+        smtp_probe=smtp_probe,
+    )
+    client = ws if ws is not None else _ws_client(checked)
+
+    async def setup_check() -> None:
+        """The daily tick body: queue one setup check per enabled site."""
+        await queue_setup_checks(engine.connect)
+
+    return SetupCheckParts(
+        {
+            JobKind.SETUP_CHECK: make_setup_check_handler(
+                engine,
+                client,
+                settings,
+                registry=registry,
+                # a running report older than the job's lease is a dead run's (finding 6)
+                orphan_after_s=load_policy(os.environ)
+                .kinds[JobKind.SETUP_CHECK]
+                .lease_s,
+            )
+        },
+        {"setup_check": setup_check},
+        registry,
+    )
+
+
 def _session_ticks(checked: Checked) -> dict[str, Any]:
     """The plan assess-session-lifecycle tick bodies (they need no key)."""
     from vektra_assess.worker.enrolment import queue_rechecks
@@ -583,9 +659,16 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
     delivery = _delivery_parts(checked)
+    # one WS client for every WS caller: one rate cap, one breaker registry, one pool
+    ws = _ws_client(checked) if bindings is None else None
+    setup = _setup_check_parts(checked, ws, delivery.ticks.get("smtp_probe"))
     extra = bindings or Bindings(
-        handlers={**_session_handlers(checked, audit), **delivery.handlers},
-        ticks={**_session_ticks(checked), **delivery.ticks},
+        handlers={
+            **_session_handlers(checked, audit, ws),
+            **delivery.handlers,
+            **setup.handlers,
+        },
+        ticks={**_session_ticks(checked), **delivery.ticks, **setup.ticks},
     )
     slots = build_slots(
         policy,
@@ -718,7 +801,7 @@ def check_imports() -> None:
         importlib.import_module(f"vektra_assess.delivery.{name}")
     for name in (
         "audit", "cleanup", "heartbeat", "listener", "policy", "preflight", "reconcile",
-        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",
+        "enrolment", "outage_probe", "reaper", "render", "reply_reconcile", "runtime", "setup_check", "setup_items", "shutdown", "slots", "start_guard", "start_source", "transcript_gen",
         "sweeper", "ticks",
         "watchdog",
     ):  # fmt: skip

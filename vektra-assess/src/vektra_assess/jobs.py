@@ -46,11 +46,11 @@ class JobKind(enum.StrEnum):
     """The kinds the table accepts (``ck_assess_jobs_kind``). A kind that is not in the
     table's CHECK needs a migration first; a test compares the two lists."""
 
+    # also writes the capability matrix (its probes); ``capability_probe`` was dropped in 0037
     SETUP_CHECK = "setup_check"
-    CAPABILITY_PROBE = "capability_probe"
     GATE_REFRESH = "gate_refresh"
     RENDER_CHECK = "render_check"
-    SESSION_DEADLINE = "session_deadline"
+    # ``session_deadline`` was dropped in 0037: the sweeper tick and the lazy close enforce it
     TRANSCRIPT_GENERATE = "transcript_generate"
     TRANSCRIPT_DELIVER = "transcript_deliver"
     ENROLMENT_RECHECK = "enrolment_recheck"

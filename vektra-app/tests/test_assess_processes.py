@@ -556,6 +556,193 @@ async def test_startup_that_never_finishes_is_refused_with_a_structured_error(
         )
 
 
+def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The web-service plan, task F4 (carried over to assess-job-loop): kind ``setup_check`` in
+    its own pool with the 120 s hard timeout, plus the daily tick that also runs on startup; the
+    parser's ``parser_sidecar_running`` item is part of the registry the handler runs."""
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.keys import Credentials
+    from vektra_assess.worker import setup_items
+
+    # the setup-check module of vektra-assess, reached through the worker's own items module
+    check_mod = sys.modules[setup_items.builtin_registry.__module__]
+    pluggable_items = check_mod.PLUGGABLE_ITEMS
+
+    checked = _checked(monkeypatch, VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true")
+    keyed = assess_worker.Checked(
+        checked.engine,
+        checked.settings,
+        checked.worker_url,
+        {"assess_ws_tokens": Credentials("assess_ws_tokens", {})},
+    )
+    runtime, scheduler, *_ = assess_worker._compose(keyed)
+    spec = runtime._handlers[JobKind.SETUP_CHECK]
+    assert spec.bound and spec.pool == "setup" and spec.budget_s == 120
+    assert spec.lease_s >= 2 * spec.budget_s
+    assert "setup" in runtime._pools
+    tick = next(t for t in scheduler._ticks if t.name == "setup_check")
+    assert tick.bound and tick.run_on_startup and tick.interval_s == 86_400
+    parts = assess_worker._setup_check_parts(keyed)
+    # every pluggable item has its contributor (none is MISSING as not_registered)
+    assert set(pluggable_items) <= set(parts.registry.names())
+    # two compositions do not register into one shared registry (it would raise)
+    assess_worker._setup_check_parts(keyed)
+    # without the key matrix nothing of the setup check is bound
+    runtime, scheduler, *_ = assess_worker._compose(checked)
+    assert not runtime._handlers[JobKind.SETUP_CHECK].bound
+    assert not next(t for t in scheduler._ticks if t.name == "setup_check").bound
+
+
+def test_one_ws_client_serves_every_ws_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review finding 3: the session handlers and the setup check share ONE WS client, so one
+    token bucket (``VEKTRA_ASSESS_WS_RPS`` is a per-worker cap), one breaker registry and one
+    connection pool; a second client would double the cap and keep the breakers apart."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+
+    made: list[object] = []
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
+    )
+    # the WS client class and its module, as the composition builds it (the vektra-assess
+    # names are not repeated here)
+    ws_client_cls = type(assess_worker._ws_client(checked))
+    client_mod = sys.modules[ws_client_cls.__module__]
+
+    class Counting(ws_client_cls):  # type: ignore[misc, valid-type]
+        def __init__(self, *a: object, **k: object) -> None:
+            super().__init__(*a, **k)
+            made.append(self)
+
+    monkeypatch.setattr(client_mod, ws_client_cls.__name__, Counting)
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
+    keys["assess_ws_tokens"] = Credentials("assess_ws_tokens", {})
+    full = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    assess_worker._compose(full)
+    assert len(made) == 1
+
+
+def test_the_smtp_item_gets_the_probe_tick_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review finding 1: the setup-check item ``smtp_probe`` can run the same bounded probe the
+    tick runs, so a missing or stale row is probed instead of failing for a day."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+    from vektra_assess.worker import setup_items
+
+    got: dict[str, object] = {}
+    real = setup_items.register_worker_items
+
+    def spy(*a: object, **k: object) -> None:
+        got.update(k)
+        real(*a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(setup_items, "register_worker_items", spy)
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {
+        "assess_transcript_kek": ring,
+        "assess_teacher_config_private": ring,
+        "assess_smtp": Credentials("assess_smtp", {}),
+        "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
+    }
+    full = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    _runtime, scheduler, *_ = assess_worker._compose(full)
+    tick = next(t for t in scheduler._ticks if t.name == "smtp_probe")
+    assert got["smtp_configured"] is True
+    assert got["smtp_probe"] is tick.body is not None
+
+
+def _plan_statuses() -> dict[str, str]:
+    """plan file stem -> status cell, from the plan table of .s2s/plans/INDEX-ASSESS.md."""
+    import re
+
+    index = Path(__file__).resolve().parents[2] / ".s2s" / "plans" / "INDEX-ASSESS.md"
+    out: dict[str, str] = {}
+    for line in index.read_text().splitlines():
+        m = re.match(
+            r"\|[^|]*\|\s*\[[^\]]*\]\(([^)]*?)\.md\)\s*\|.*\|\s*([^|]*?)\s*\|$", line
+        )
+        if m:
+            out[Path(m.group(1)).name] = m.group(2)
+    return out
+
+
+def test_the_unbound_production_slots_are_exactly_the_documented_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard (2026-11-08): the setup_check binding was "carried over" between two completed plans
+    and bound by neither, so the production worker could not start. The real composition, with
+    every worker key and a relay, may leave unbound only the slots of plans still pending in
+    INDEX-ASSESS and the open decisions recorded in ``slots.OPEN_DECISIONS``."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+    from vektra_assess.worker import slots
+
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
+        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it",
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
+    keys |= {
+        "assess_smtp": Credentials("assess_smtp", {}),
+        "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
+    }
+    full = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    runtime, scheduler, *_ = assess_worker._compose(full)
+    unbound = {f"job:{k.value}" for k, s in runtime._handlers.items() if not s.bound}
+    unbound |= {f"tick:{t.name}" for t in scheduler._ticks if not t.bound}
+    assert unbound == slots.expected_unbound(), (
+        f"unbound but not allowlisted: {sorted(unbound - slots.expected_unbound())}; "
+        f"allowlisted but bound: {sorted(slots.expected_unbound() - unbound)}"
+    )
+
+    statuses = _plan_statuses()
+    for plan in slots.PENDING_OWNER_PLANS:
+        assert plan in statuses, plan
+        assert not statuses[plan].startswith("completed"), (
+            f"{plan} is completed: its slots must be bound, not allowlisted"
+        )
+    owners = {f"job:{k.value}": o for k, o in slots.HANDLER_OWNERS.items()}
+    owners |= {f"tick:{n}": o for n, o in slots.TICK_OWNERS.items()}
+    for slot in slots.OPEN_DECISIONS:
+        # an open decision is only for a slot whose owner is done; otherwise it is just pending
+        assert statuses[owners[slot]].startswith("completed"), slot
+
+
 # --- transcript delivery (plan assess-transcript-delivery 10b) ----------------------------
 
 

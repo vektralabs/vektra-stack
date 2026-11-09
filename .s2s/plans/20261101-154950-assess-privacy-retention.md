@@ -302,3 +302,35 @@ no log files fails rather than passing.
 > - **`VEKTRA_ASSESS_ERASURE_MODE`** is checked at the API's startup step (the API decides the
 >   retained outcome), not in the settings model, so a dormant feature's setting never blocks a
 >   disabled deployment.
+
+> **Code review of 12a (2026-11-09, high, 10 findings).** Fixed, each with a test that failed on
+> the earlier code:
+> 1. queued jobs (render check, gate refresh, notices, per-session jobs) survived an erasure and
+>    would write the subject's rows back: the erasure deletes the READY ones and counts them in
+>    its verification. A job already leased runs to its end (residual: a render check in flight
+>    at that instant can write one cache row back; the next erasure removes it);
+> 3. a 503 `pending` retry inserted another request carrying the same ids, and a request whose
+>    job died stayed incomplete with its ids forever: a retry now waits on the pending request
+>    of the same scope, and the purge tick records a request older than a day `failed`
+>    (`abandoned`), clearing its ids;
+> 4. the activity listing missed subjects whose only rows are minted tokens or the render
+>    worker's caches: one table list (`privacy.subject.SUBJECT_TABLES`) now drives the listing and
+>    the erasure (the API gains SELECT on `assess_render_checks`);
+> 5. an erased subject's tombstones kept `sha256(site|userid)` (trivially reversible): the
+>    erasure writes `subject_ref = 'erased'`, blanks the subject's earlier retention tombstones
+>    (worker UPDATE on `subject_ref` only) and clears the request's subject hash on completion;
+> 6. a grader got 410 for a purged transcript of an activity they do not grade (an existence
+>    oracle): only the owner gets 410, everyone else 404;
+> 7. a too-short value was reported `too_long`: now `too_short` with `min`;
+> 8. the purge UPDATEd delivery rows to ABANDONED just before deleting them: the abandonment is
+>    recorded in the audit and the notice only;
+> 9. / 10. the session -> transcript map was queried three times and the privacy-row read and the
+>    subject listing had copies: one map from `shred_sessions`, one `READ`, one listing query.
+>
+> **Open for the product owner / DPO (finding 2, not changed):** erasing a subject deletes their
+> session rows, so on an activity still open the START gate counts 0 closed sessions and the
+> student could Start again. The retention purge keeps the rows for this reason; an erasure
+> cannot keep them without keeping "this user took the exam". Options: refuse an erasure while
+> the activity is open (409), keep an anonymous per-activity counter, or accept it (the erasure
+> is an administrator's action; `retain_exam_evidence` exists for exam evidence). Recorded,
+> BLOCKED on the decision.

@@ -278,11 +278,14 @@ _TOMBSTONE = text(
 async def _gone_or_missing(
     conn: Any, t: UUID, site: Any, role: str, requester: int
 ) -> ErrorResponse:
-    """410 for a transcript the retention purge removed (REQ-088: the student learns it
-    expired), 404 otherwise. The owner gets the 410 only for their own transcript (the
-    tombstone's subject), so a transcript id tells another student nothing."""
+    """410 for the OWNER of a transcript the retention purge removed (REQ-088: the student
+    learns it expired; the tombstone's subject must be the requester), 404 for everyone else: a
+    grader cannot be verified against a purged session (its facts are gone), and a transcript id
+    must tell nobody else whether it existed."""
+    if role != "owner":
+        return transcript_not_found()
     ref = (await conn.execute(_TOMBSTONE, {"t": t, "s": site})).scalar()
-    if ref is not None and (role != "owner" or ref == subject_ref(site, requester)):
+    if ref is not None and ref == subject_ref(site, requester):
         return transcript_expired()
     return transcript_not_found()
 

@@ -51,6 +51,7 @@ def test_complete_settings_pass() -> None:
         ({"legal_basis_label": "   "}, "legal_basis_label", "empty"),
         ({"legal_basis_label": "x" * 201}, "legal_basis_label", "too_long"),
         ({"notice_url": "http://uni.example/p"}, "notice_url", "not_https"),
+        ({"notice_url": "https://"}, "notice_url", "too_short"),
         ({"notice_text": 5}, "notice_text", "not_a_string"),
         ({"notice_version": "v\x00"}, "notice_version", "control_character"),
     ],
@@ -222,3 +223,39 @@ def test_every_privacy_route_requires_exactly_its_scope() -> None:
     assert set(found) == set(PRIVACY_ROUTES)
     for key, scope in PRIVACY_ROUTES.items():
         assert found[key] == [scope], key
+
+
+def test_activity_erasure_body_is_strict() -> None:
+    from fastapi import HTTPException
+
+    from vektra_assess.api import privacy as api
+
+    assert api._userids({}) is None
+    assert api._userids({"userids": [5, 3, 5]}) == [3, 5]
+    for bad in (
+        {"userids": []},
+        {"userids": "5"},
+        {"userids": [True]},
+        {"userids": [0]},
+        {"userids": ["5"]},
+        {"userids": list(range(1, api.MAX_USERIDS + 2))},
+        {"userid": [5]},
+    ):
+        with pytest.raises(HTTPException) as exc:
+            api._userids(bad)
+        assert exc.value.status_code == 400, bad
+
+
+def test_the_settings_view_names_its_state_never_more() -> None:
+    from vektra_assess.api import privacy as api
+
+    assert api._view(None) == {"configured": False}
+    row = SimpleNamespace(**GOOD, updated_by="api_key:x", updated_at=None)
+    view = api._view(row)
+    assert view["configured"] is True
+    assert view["mailbox_notice"] == pc.MAILBOX_SENTENCE
+    assert {k for k in view} == {*pc.FIELDS, "updated_by", "updated_at", "configured",
+                                 "mailbox_notice"}  # fmt: skip
+    out = api._view(SimpleNamespace(**{**GOOD, "retention_days": 0}, updated_by="x",
+                                    updated_at=None))  # fmt: skip
+    assert out["configured"] is False

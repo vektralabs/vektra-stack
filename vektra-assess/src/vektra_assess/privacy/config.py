@@ -82,7 +82,9 @@ def field_errors(doc: dict[str, Any]) -> list[dict[str, object]]:
             errors.append({"field": name, "code": "not_a_string"})
         elif not value.strip():
             errors.append({"field": name, "code": "empty"})
-        elif not low <= len(value) <= high:
+        elif len(value) < low:
+            errors.append({"field": name, "code": "too_short", "min": low})
+        elif len(value) > high:
             errors.append({"field": name, "code": "too_long", "max": high})
         elif name == "notice_url" and not value.startswith("https://"):
             errors.append({"field": name, "code": "not_https"})
@@ -103,7 +105,7 @@ def passes(row: Any) -> bool:
     return not field_errors(doc)
 
 
-_READ = text(
+READ = text(
     "SELECT site_id, retention_days, legal_basis_label, legal_basis_text, notice_url, "
     "notice_text, notice_version, updated_by, updated_at FROM assess_privacy_config "
     "WHERE site_id = :s"
@@ -114,7 +116,7 @@ async def read(conn: Any, site_id: UUID) -> PrivacySettings | None:
     """The site's settings when they are complete and within bounds; ``None`` otherwise."""
     if conn is None:
         return None
-    row = (await conn.execute(_READ, {"s": site_id})).first()
+    row = (await conn.execute(READ, {"s": site_id})).first()
     if not passes(row):
         return None
     return PrivacySettings(

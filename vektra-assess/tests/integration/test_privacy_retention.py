@@ -584,6 +584,22 @@ async def test_an_unfinished_erasure_is_a_503_never_a_success(pg, worker) -> Non
             await one(pg, "SELECT count(*) FROM assess_jobs WHERE kind = 'erasure'")
             == 1
         )
+        # its job died (attempts spent waiting for work in flight): a retry queues it again
+        # (CodeRabbit 4517939437)
+        await pg.run(
+            "super", "UPDATE assess_jobs SET state = 'dead' WHERE kind = 'erasure'"
+        )
+        r = await w.client.delete(
+            f"/api/v1/assess/privacy/subjects/{s.sub}", headers=auth("erase")
+        )
+        assert r.status_code == 503, r.text
+        assert (
+            await one(
+                pg,
+                "SELECT count(*) FROM assess_jobs WHERE kind = 'erasure' AND state = 'ready'",
+            )
+            == 1
+        )
         # a request whose job died is recorded failed by the purge tick a day later, its ids
         # dropped
         await pg.run("super", "UPDATE assess_erasure_records SET requested_at = now() - "
@@ -1021,6 +1037,33 @@ async def test_a_backlog_queues_another_bounded_run(pg, worker, monkeypatch) -> 
         report = await run_purge(worker.connect, max_batches=1)
         assert report.sessions == 1 and report.backlog is True
         assert await one(pg, "SELECT count(*) FROM assess_jobs WHERE kind = 'purge' "
-                         "AND dedupe_key = 'purge:backlog'") == 1  # fmt: skip
-        report = await run_purge(worker.connect, max_batches=1)
-        assert report.sessions == 1
+                         "AND dedupe_key = 'purge:backlog:tick'") == 1  # fmt: skip
+        # the follow-up job, leased while it runs, queues its own follow-up (CodeRabbit
+        # 4517939449): a key of its own, never the one it holds
+        import logging
+
+        from vektra_assess.jobs import JobKind
+        from vektra_assess.worker.runner import JobContext
+
+        jid = (
+            await pg.run(
+                "super",
+                "UPDATE assess_jobs SET state = 'leased' WHERE kind = 'purge' "
+                "AND dedupe_key = 'purge:backlog:tick' RETURNING id",
+            )
+        )[0][0]
+        monkeypatch.setattr(purge_mod, "JOB_BATCHES", 1)
+        await purge_mod.make_purge_handler(worker.connect)(
+            JobContext(
+                int(jid), JobKind.PURGE, {}, 1, worker.connect, logging.getLogger("t")
+            )
+        )
+        assert (
+            await one(
+                pg,
+                "SELECT count(*) FROM assess_jobs WHERE kind = 'purge' AND state = 'ready' "
+                "AND dedupe_key = :k",
+                k=f"purge:backlog:{jid}",
+            )
+            == 1
+        )

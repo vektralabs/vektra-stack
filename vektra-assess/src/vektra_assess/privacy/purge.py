@@ -397,7 +397,9 @@ async def purge_batch(
     return len(due), shredded
 
 
-async def run_purge(connect: Connect, *, max_batches: int = MAX_BATCHES) -> PurgeReport:
+async def run_purge(
+    connect: Connect, *, max_batches: int = MAX_BATCHES, generation: str = "tick"
+) -> PurgeReport:
     """The daily purge: every configured site, batch by batch, each batch its own transaction.
 
     A batch that fails its count rolls back alone (alert ``purge_verification_failed``) and the
@@ -447,7 +449,9 @@ async def run_purge(connect: Connect, *, max_batches: int = MAX_BATCHES) -> Purg
                 conn,
                 JobKind.PURGE,
                 {},
-                dedupe_key=BACKLOG_KEY,
+                # one key per generation: a follow-up queued by the ``purge`` job that is running
+                # (leased, holding its own key) must not collide with it (CodeRabbit 4517939449)
+                dedupe_key=f"{BACKLOG_KEY}:{generation}",
                 not_before=datetime.now(UTC) + BACKLOG_DELAY,
             )
     log.info(
@@ -468,7 +472,7 @@ def make_purge_handler(connect: Connect) -> Callable[[Any], Any]:
     fewer batches than the daily tick, to fit the maintenance budget, and queues the next run
     itself while a backlog remains."""
 
-    async def handle(_ctx: Any) -> None:
-        await run_purge(connect, max_batches=JOB_BATCHES)
+    async def handle(ctx: Any) -> None:
+        await run_purge(connect, max_batches=JOB_BATCHES, generation=str(ctx.job_id))
 
     return handle

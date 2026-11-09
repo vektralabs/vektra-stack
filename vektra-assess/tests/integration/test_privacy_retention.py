@@ -256,6 +256,13 @@ async def test_the_purge_removes_every_content_row_and_keeps_the_control(
             headers=auth("mint"),
         )
         assert other.status_code == 404, other.text
+        # neither does a grader: the purged session's facts are gone, nothing can be verified
+        grader = await w.client.post(
+            f"/api/v1/assess/transcripts/{target.session_id}/download-token",
+            json={"actor_userid": 12},
+            headers=auth("teacher"),
+        )
+        assert grader.status_code == 404, grader.text
         del ring
 
 
@@ -406,6 +413,21 @@ async def test_erasure_removes_the_subject_and_only_the_subject(pg, worker) -> N
             "VALUES (:s, :c, :u, 600)",
             {"s": w.site, "c": closed.cmid, "u": closed.sub},
         )
+        # queued work that would write the subject's rows back after the erasure
+        from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
+
+        async with worker.begin() as conn:
+            for user in (closed.sub, control.sub):
+                await enqueue_job(
+                    conn,
+                    JobKind.RENDER_CHECK,
+                    {
+                        "site_id": str(w.site),
+                        "student_userid": user,
+                        "cmid": closed.cmid,
+                    },
+                    dedupe_key=render_dedupe_key(w.site, user, closed.cmid),
+                )
         before = await subject_counts(pg, w.site, closed.sub)
         assert before["assess_sessions"] == 2 and before["assess_extra_time"] == 1
         sessions_before = {
@@ -470,10 +492,29 @@ async def test_erasure_removes_the_subject_and_only_the_subject(pg, worker) -> N
             )
             == 1
         )
-        # the request record keeps counts, not the user id
-        rec = (await pg.run("super", "SELECT outcome, subject_userids, completed_at IS NOT NULL "
-                            "FROM assess_erasure_records WHERE site_id = :s", {"s": w.site}))  # fmt: skip
-        assert rec == [("erased", None, True)]
+        # no queued job is left to write the subject back; the control's job stays
+        jobs = await pg.run(
+            "super",
+            "SELECT args->>'student_userid' FROM assess_jobs WHERE kind = 'render_check' "
+            "AND args->>'site_id' = :s AND state = 'ready'",
+            {"s": str(w.site)},
+        )
+        assert [j[0] for j in jobs] == [str(control.sub)]
+        # the tombstones lead back to nobody
+        refs = await pg.run(
+            "super",
+            "SELECT DISTINCT subject_ref FROM assess_purge_records WHERE site_id = :s",
+            {"s": w.site},
+        )
+        assert refs == [("erased",)]
+        # the request record keeps counts, neither the user id nor its hash
+        rec = await pg.run(
+            "super",
+            "SELECT outcome, subject_userids, subject_userid_hash, completed_at IS NOT NULL "
+            "FROM assess_erasure_records WHERE site_id = :s",
+            {"s": w.site},
+        )
+        assert rec == [("erased", None, None, True)]
 
         # idempotent: a repeat erases nothing and still answers erased
         again = await erase(w, worker, f"/api/v1/assess/privacy/subjects/{closed.sub}")
@@ -516,6 +557,29 @@ async def test_an_unfinished_erasure_is_a_503_never_a_success(pg, worker) -> Non
         assert err(r)["code"] == "ERR-ASSESS-027"
         assert err(r)["details"] == {"reason": "pending"}
         assert r.headers["retry-after"]
+        # the plugin's retry waits on the same request: no second row carrying the same id
+        r = await w.client.delete(
+            f"/api/v1/assess/privacy/subjects/{s.sub}", headers=auth("erase")
+        )
+        assert r.status_code == 503, r.text
+        assert await one(pg, "SELECT count(*) FROM assess_erasure_records WHERE site_id = :s",
+                         s=w.site) == 1  # fmt: skip
+        assert (
+            await one(pg, "SELECT count(*) FROM assess_jobs WHERE kind = 'erasure'")
+            == 1
+        )
+        # a request whose job died is recorded failed by the purge tick a day later, its ids
+        # dropped
+        await pg.run("super", "UPDATE assess_erasure_records SET requested_at = now() - "
+                     "interval '2 days' WHERE site_id = :s", {"s": w.site})  # fmt: skip
+        await run_purge(worker.connect)
+        rec = await pg.run(
+            "super",
+            "SELECT outcome, error_code, subject_userids, subject_userid_hash "
+            "FROM assess_erasure_records WHERE site_id = :s",
+            {"s": w.site},
+        )
+        assert rec == [("failed", "abandoned", None, None)]
 
 
 async def test_activity_listing_and_erasure_stay_inside_the_activity(
@@ -528,18 +592,25 @@ async def test_activity_listing_and_erasure_stay_inside_the_activity(
         b = await as_other_student(pg, b, 990002)
         a, _ = await ready(w, worker, assignment="rubric_vis")
         elsewhere, _ = await ready(w, worker, assignment="scale")
+        # a student who only opened the page (the render worker's rows, no session)
+        await pg.run(
+            "super",
+            "INSERT INTO assess_render_state (site_id, student_userid, cmid, status) "
+            "VALUES (:s, 990009, :c, 'eligible')",
+            {"s": w.site, "c": a.cmid},
+        )
         listed = await w.client.get(
             f"/api/v1/assess/privacy/activities/{a.cmid}/subjects",
             headers=auth("export"),
         )
         assert listed.status_code == 200, listed.text
-        assert listed.json()["userids"] == sorted({a.sub, b.sub})
+        assert listed.json()["userids"] == sorted({a.sub, b.sub, 990009})
         assert (
             await one(
                 pg,
                 "SELECT count(*) FROM assess_audit_events WHERE "
                 "event = 'assess_privacy_subjects_listed' AND site_id = :s "
-                "AND (data->>'subjects')::int = 2",
+                "AND (data->>'subjects')::int = 3",
                 s=w.site,
             )
             == 1
@@ -720,3 +791,33 @@ async def test_settings_are_written_by_the_operator_and_gate_everything(
             )
             == 1
         )
+
+
+async def test_an_erasure_blanks_the_subject_of_earlier_retention_tombstones(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg, default_settings(VEKTRA_ASSESS_ERASURE_WAIT_S=10)) as w:
+        await _privacy_key(w, "assess:privacy-erase", "erase")
+        s, _ = await ready(w, worker)
+        await configure_privacy(pg, w.site, retention_days=1)
+        await age(pg, s.session_id, 2)
+        await run_purge(worker.connect)
+        ref = (
+            await pg.run(
+                "super",
+                "SELECT subject_ref FROM assess_purge_records WHERE session_id = :s",
+                {"s": s.session_id},
+            )
+        )[0][0]
+        assert ref != "erased"  # a retention tombstone names its subject (for the 410)
+        r = await erase(w, worker, f"/api/v1/assess/privacy/subjects/{s.sub}")
+        assert r.status_code == 200, r.text
+        assert r.json()["counts"]["sessions"] == 1  # the emptied session row itself
+        rows = await pg.run(
+            "super",
+            "SELECT reason, subject_ref FROM assess_purge_records WHERE session_id = :s",
+            {"s": s.session_id},
+        )
+        assert rows == [("retention", "erased")]
+        assert await one(pg, "SELECT count(*) FROM assess_sessions WHERE id = :s",
+                         s=s.session_id) == 0  # fmt: skip

@@ -12,13 +12,14 @@
   transcript and ``transcripts[].purged`` in the state, and are the erasure records of ARCH-077.
 - ``assess_erasure_records`` (revision 0012, never written before) becomes the erasure request
   the API queues and the worker completes: ``scope`` (one subject, or one activity with an
-  optional user list), ``cmid``, ``subject_userids`` (the ids the worker needs, CLEARED when the
-  record completes), ``outcome`` (``erased`` | ``failed``), ``error_code``. The subject hash
+  optional user list), ``cmid``, ``subject_userids`` (the ids the worker needs) and the subject
+  hash, both CLEARED when the record completes, ``outcome`` (``erased`` | ``failed``), ``error_code``. The subject hash
   becomes optional (an activity-wide request has none).
 - Grants: the API reads and writes the privacy settings and reads the tombstones and the erasure
-  records it queued; the worker reads the settings, writes the tombstones, and may now delete
-  the extra-time and reset rows of the sessions it purges or erases. The API still deletes
-  nothing.
+  records it queued, and the render checks (the subject listing names every subject with a row);
+  the worker reads the settings, writes the tombstones (and blanks the subject reference of an
+  erased subject's earlier ones), and may now delete the extra-time and reset rows of the
+  sessions it purges or erases. The API still deletes nothing.
 
 Revision ID: 0040
 Revises: 0039
@@ -62,6 +63,10 @@ _INSERT_AFTER = (
         ),
     ),
     (
+        "GRANT INSERT ON assess_render_checks TO vektra_assess_api",
+        ("GRANT SELECT ON assess_render_checks TO vektra_assess_api",),
+    ),
+    (
         "GRANT UPDATE ON assess_erasure_records TO vektra_assess_worker",
         ("GRANT DELETE ON assess_extra_time TO vektra_assess_worker",),
     ),
@@ -71,6 +76,7 @@ _INSERT_AFTER = (
             "GRANT SELECT ON assess_privacy_config TO vektra_assess_worker",
             "GRANT INSERT ON assess_purge_records TO vektra_assess_worker",
             "GRANT SELECT ON assess_purge_records TO vektra_assess_worker",
+            "GRANT UPDATE (subject_ref) ON assess_purge_records TO vektra_assess_worker",
         ),
     ),
     (
@@ -184,12 +190,13 @@ def upgrade() -> None:
     # worker needs are gone once the record is complete
     op.execute(
         "ALTER TABLE assess_erasure_records ADD CONSTRAINT ck_assess_erasure_records_shape "
-        "CHECK ((scope = 'subject' AND subject_userid_hash IS NOT NULL) "
-        "OR (scope = 'activity' AND cmid IS NOT NULL))"
+        "CHECK ((scope = 'subject' AND (subject_userid_hash IS NOT NULL "
+        "OR completed_at IS NOT NULL)) OR (scope = 'activity' AND cmid IS NOT NULL))"
     )
     op.execute(
         "ALTER TABLE assess_erasure_records ADD CONSTRAINT ck_assess_erasure_records_cleared "
-        "CHECK (completed_at IS NULL OR subject_userids IS NULL)"
+        "CHECK (completed_at IS NULL OR (subject_userids IS NULL "
+        "AND subject_userid_hash IS NULL))"
     )
     for stmt in GRANT_STATEMENTS:
         op.execute(stmt)

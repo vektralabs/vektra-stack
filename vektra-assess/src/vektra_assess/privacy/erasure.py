@@ -49,20 +49,9 @@ from vektra_assess.privacy.purge import (
     shred_sessions,
     write_tombstones,
 )
+from vektra_assess.privacy.subject import ERASED_REF, SUBJECT_TABLES, subject_ref
 
 log = structlog.get_logger(__name__)
-
-#: per-subject rows keyed (site_id, [cmid], student_userid), deleted and counted
-SUBJECT_TABLES: tuple[str, ...] = (
-    "assess_start_attempts",
-    "assess_token_jti",
-    "assess_gate_inputs",
-    "assess_render_state",
-    "assess_render_checks",
-    "assess_extra_time",
-    "assess_reset_grants",
-    "assess_sessions",
-)
 
 
 class ErasureVerificationFailed(RuntimeError):
@@ -112,9 +101,11 @@ _RECORD = text(
     "SELECT id, site_id, scope, cmid, subject_userids, completed_at FROM "
     "assess_erasure_records WHERE id = :i FOR UPDATE"
 )
+#: completion clears what named the subject: the ids and their hash
 _COMPLETE = text(
     "UPDATE assess_erasure_records SET completed_at = now(), outcome = :o, error_code = :e, "
-    "rows_deleted = CAST(:counts AS jsonb), subject_userids = NULL WHERE id = :i"
+    "rows_deleted = CAST(:counts AS jsonb), subject_userids = NULL, subject_userid_hash = NULL "
+    "WHERE id = :i"
 )
 _CLOSE = text("SELECT assess_close_session(:sid, :epoch, 'access_revoked')")
 
@@ -157,17 +148,6 @@ async def erase_scope(
         # it (raising here rolls this transaction back and the job is retried)
         raise SessionWentLive("a live session appeared in the scope")
     sids = [s.id for s in sessions]
-    transcripts = {
-        r.session_id: r.id
-        for r in (
-            await conn.execute(
-                text(
-                    "SELECT id, session_id FROM assess_transcripts WHERE session_id = ANY(:s)"
-                ),
-                {"s": sids},
-            )
-        ).all()
-    }
     shredded = await shred_sessions(
         conn, sids, abandon_why="subject_erased", notify=False
     )
@@ -175,8 +155,19 @@ async def erase_scope(
     result.deliveries_abandoned = shredded.abandoned
     result.deleted = dict(shredded.deleted)
     left = await leftover(conn, sids, shredded.transcript_ids)
+    # the tombstones of an erased subject lead back to nobody: theirs and any earlier
+    # retention tombstone lose the subject reference (a hash of small integers is no secret)
     await write_tombstones(
-        conn, sessions, transcripts, reason="erasure", counts=shredded.deleted
+        conn,
+        sessions,
+        shredded.transcripts,
+        reason="erasure",
+        counts=shredded.deleted,
+        subject=ERASED_REF,
+    )
+    await _forget_tombstones(conn, site_id, cmid=cmid, userids=userids, sessions=sids)
+    result.deleted["assess_jobs"] = await _drop_pending_jobs(
+        conn, site_id, cmid=cmid, userids=userids, sessions=sids
     )
     for table in SUBJECT_TABLES:
         res = await conn.execute(
@@ -195,9 +186,105 @@ async def erase_scope(
         ).scalar_one()
         if n:
             left[table] = int(n)
+    jobs = await _pending_jobs(conn, site_id, cmid=cmid, userids=userids, sessions=sids)
+    if jobs:
+        left["assess_jobs"] = jobs
     if left:
         raise ErasureVerificationFailed(json.dumps(left, sort_keys=True))
     return result
+
+
+def _jobs_where(cmid: int | None, userids: list[int] | None) -> str:
+    """Ready jobs that would act on the scope after the erasure (and write its rows back): a
+    per-student job of the site (render check, gate refresh, notice), or a job of one of its
+    sessions. A job already leased runs to its end: its writes are the residual (Notes)."""
+    student = "args->>'site_id' = :site_text AND args ? 'student_userid'"
+    if cmid is not None:
+        student += " AND args->>'cmid' = :cmid_text"
+    if userids is not None:
+        student += " AND args->>'student_userid' = ANY(:users_text)"
+    return (
+        f"state = 'ready' AND (({student}) OR args->>'session_id' = ANY(:sids_text) "
+        "OR args->>'transcript_id' = ANY(:sids_text))"
+    )
+
+
+def _jobs_params(
+    site_id: UUID, cmid: int | None, userids: list[int] | None, sessions: list[UUID]
+) -> dict[str, Any]:
+    return {
+        "site_text": str(site_id),
+        "cmid_text": str(cmid) if cmid is not None else None,
+        "users_text": [str(u) for u in userids] if userids is not None else None,
+        "sids_text": [str(s) for s in sessions],
+    }
+
+
+async def _drop_pending_jobs(
+    conn: AsyncConnection,
+    site_id: UUID,
+    *,
+    cmid: int | None,
+    userids: list[int] | None,
+    sessions: list[UUID],
+) -> int:
+    res = await conn.execute(
+        text(f"DELETE FROM assess_jobs WHERE {_jobs_where(cmid, userids)}"),
+        _jobs_params(site_id, cmid, userids, sessions),
+    )
+    return max(res.rowcount, 0)
+
+
+async def _pending_jobs(
+    conn: AsyncConnection,
+    site_id: UUID,
+    *,
+    cmid: int | None,
+    userids: list[int] | None,
+    sessions: list[UUID],
+) -> int:
+    n = (
+        await conn.execute(
+            text(
+                f"SELECT count(*) FROM assess_jobs WHERE {_jobs_where(cmid, userids)}"
+            ),
+            _jobs_params(site_id, cmid, userids, sessions),
+        )
+    ).scalar_one()
+    return int(n)
+
+
+async def _forget_tombstones(
+    conn: AsyncConnection,
+    site_id: UUID,
+    *,
+    cmid: int | None,
+    userids: list[int] | None,
+    sessions: list[UUID],
+) -> None:
+    """Earlier tombstones of the scope (a retention purge) keep ids and counts, never whose."""
+    where = "site_id = :site AND (session_id = ANY(:sids)"
+    params: dict[str, Any] = {"site": site_id, "sids": sessions, "erased": ERASED_REF}
+    if userids is not None:
+        where += " OR subject_ref = ANY(:refs)"
+        params["refs"] = [subject_ref(site_id, u) for u in userids]
+        if cmid is not None:
+            where = (
+                where.replace("OR subject_ref", "OR (cmid = :cmid AND subject_ref")
+                + ")"
+            )
+            params["cmid"] = cmid
+    elif cmid is not None:
+        where += " OR cmid = :cmid"
+        params["cmid"] = cmid
+    where += ")"
+    await conn.execute(
+        text(
+            f"UPDATE assess_purge_records SET subject_ref = :erased WHERE {where} "
+            "AND subject_ref <> :erased"
+        ),
+        params,
+    )
 
 
 async def run_erasure(connect: Connect, erasure_id: int) -> str:

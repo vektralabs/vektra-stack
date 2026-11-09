@@ -141,7 +141,8 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_jobs": {"INSERT": _ALL},
         # NFR-023 (plan assess-llm-runner): the admin endpoint appends, startup reads; append-only
         "assess_model_activations": {"SELECT": _ALL, "INSERT": _ALL},
-        "assess_render_checks": {"INSERT": _ALL},
+        # SELECT since revision 0040: the privacy listing names every subject with a row
+        "assess_render_checks": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_render_state": {"SELECT": _ALL},
         "assess_gate_inputs": {"SELECT": _ALL},
         "assess_enrolment_checks": {"SELECT": _ALL},
@@ -317,7 +318,12 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         },
         # revision 0040 (plan 12): retention per site, the tombstones the purge writes
         "assess_privacy_config": {"SELECT": _ALL},
-        "assess_purge_records": {"SELECT": _ALL, "INSERT": _ALL},
+        # an erasure makes earlier tombstones of its subject anonymous (subject_ref only)
+        "assess_purge_records": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": ("subject_ref",),
+        },
         "assess_terminations": {"SELECT": _ALL, "UPDATE": ("reason_ct", "reason_kid")},
         # session data. Snapshots and turns are never UPDATEd (BR-015); the worker reads
         # them to build the opening turn and the transcript and deletes them on purge.

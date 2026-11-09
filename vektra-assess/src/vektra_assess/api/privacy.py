@@ -60,7 +60,7 @@ from vektra_assess.errors import (
 )
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.privacy import config as privacy_config
-from vektra_assess.privacy.subject import subject_ref
+from vektra_assess.privacy.subject import ACTIVITY_SUBJECTS, subject_ref
 from vektra_assess.transcript import store
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
@@ -179,16 +179,7 @@ async def get_privacy(
     async with engine_of(request).connect() as conn:
         if (await conn.execute(_SITE, {"s": site})).scalar() is None:
             raise fail(bad_request("unknown_site"))
-        row = (
-            await conn.execute(
-                text(
-                    "SELECT retention_days, legal_basis_label, legal_basis_text, notice_url, "
-                    "notice_text, notice_version, updated_by, updated_at FROM "
-                    "assess_privacy_config WHERE site_id = :s"
-                ),
-                {"s": site},
-            )
-        ).first()
+        row = (await conn.execute(privacy_config.READ, {"s": site})).first()
     return JSONResponse(content=_view(row))
 
 
@@ -197,6 +188,16 @@ async def get_privacy(
 _QUEUE = text(
     "INSERT INTO assess_erasure_records (site_id, subject_userid_hash, scope, cmid, "
     "subject_userids) VALUES (:s, :h, :scope, :cmid, :users) RETURNING id"
+)
+#: a request for the same scope still waiting for the worker: a retry waits on it rather than
+#: queuing another (which would pile up rows carrying the same ids); a day later the purge tick
+#: records an abandoned one failed
+_PENDING = text(
+    "SELECT id FROM assess_erasure_records WHERE site_id = :s AND scope = :scope "
+    "AND completed_at IS NULL AND requested_at > now() - interval '1 day' "
+    "AND cmid IS NOT DISTINCT FROM :cmid "
+    "AND subject_userids IS NOT DISTINCT FROM CAST(:users AS bigint[]) "
+    "ORDER BY id DESC LIMIT 1"
 )
 _DONE = text(
     "SELECT completed_at, outcome, rows_deleted FROM assess_erasure_records WHERE id = :i"
@@ -236,6 +237,35 @@ async def _erase_and_wait(
 ) -> JSONResponse:
     engine = engine_of(request)
     async with engine.begin() as conn:
+        pending = (
+            await conn.execute(
+                _PENDING, {"s": site, "scope": scope, "cmid": cmid, "users": userids}
+            )
+        ).scalar()
+    if pending is not None:
+        erasure_id = int(pending)
+    else:
+        erasure_id = await _queue(
+            engine,
+            site,
+            scope=scope,
+            cmid=cmid,
+            userids=userids,
+            subject_hash=subject_hash,
+        )
+    return await _wait(request, engine, erasure_id)
+
+
+async def _queue(
+    engine: Any,
+    site: UUID,
+    *,
+    scope: str,
+    cmid: int | None,
+    userids: list[int] | None,
+    subject_hash: str | None,
+) -> int:
+    async with engine.begin() as conn:
         erasure_id = (
             await conn.execute(
                 _QUEUE,
@@ -254,6 +284,10 @@ async def _erase_and_wait(
             {"erasure_id": int(erasure_id)},
             dedupe_key=f"erasure:{erasure_id}",
         )
+    return int(erasure_id)
+
+
+async def _wait(request: Request, engine: Any, erasure_id: int) -> JSONResponse:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + settings_of(request).erasure_wait_s
     while True:
@@ -420,14 +454,6 @@ async def export_subject(
     )
 
 
-_SUBJECTS = text(
-    "SELECT u FROM ("
-    " SELECT student_userid AS u FROM assess_sessions WHERE site_id = :s AND cmid = :c"
-    " UNION SELECT student_userid FROM assess_extra_time WHERE site_id = :s AND cmid = :c"
-    " UNION SELECT student_userid FROM assess_reset_grants WHERE site_id = :s AND cmid = :c"
-    " UNION SELECT student_userid FROM assess_start_attempts WHERE site_id = :s AND cmid = :c"
-    ") AS t WHERE u > :after ORDER BY u LIMIT :n"
-)
 SUBJECTS_PAGE = 500
 
 
@@ -446,7 +472,7 @@ async def activity_subjects(
             int(u)
             for u in (
                 await conn.execute(
-                    _SUBJECTS,
+                    ACTIVITY_SUBJECTS,
                     {"s": site, "c": activity, "after": after, "n": SUBJECTS_PAGE + 1},
                 )
             ).scalars()

@@ -6,8 +6,8 @@ every CLOSED session whose ``closed_at`` is older than its site's ``retention_da
 1. select a batch (``BATCH`` sessions, ``FOR UPDATE SKIP LOCKED``) per configured site; a
    session with a delivery attempt still in flight (started within ``IN_FLIGHT``) waits for the
    next run, so a send is never cut from under the relay;
-2. deliveries still PENDING / RETRYING become ABANDONED, each audited
-   ``assess_delivery_abandoned_on_purge``, and the activity's recipients get a content-free
+2. deliveries still PENDING / RETRYING are abandoned, each audited
+   ``assess_delivery_abandoned_on_purge`` (the rows themselves go in step 3), and the activity's recipients get a content-free
    ``teacher_notify`` (``reason: delivery_abandoned_on_purge``: activity, student id, session
    number) queued in the same transaction;
 3. crypto-shredding first: the wrapped session key and the wrapped transcript key are nulled,
@@ -91,6 +91,8 @@ class Shredded:
 
     deleted: dict[str, int] = field(default_factory=dict)
     transcript_ids: list[UUID] = field(default_factory=list)
+    #: session id -> its transcript id, for the tombstones
+    transcripts: dict[UUID, UUID] = field(default_factory=dict)
     abandoned: int = 0
 
     def add(self, table: str, count: int) -> None:
@@ -104,6 +106,7 @@ class PurgeReport:
     abandoned: int = 0
     notify_rows: int = 0
     tokens: int = 0
+    stale_erasures: int = 0
 
     def merge(self, s: Shredded, sessions: int) -> None:
         self.sessions += sessions
@@ -115,7 +118,7 @@ class PurgeReport:
 # --- the shared shredding step ----------------------------------------------------------------
 
 _TRANSCRIPTS_OF = text(
-    "SELECT id FROM assess_transcripts WHERE session_id = ANY(:s) ORDER BY id"
+    "SELECT id, session_id FROM assess_transcripts WHERE session_id = ANY(:s) ORDER BY id"
 )
 _NULL_KEK = text(
     "UPDATE assess_session_keys SET kek_wrapped = NULL, shredded_at = now() "
@@ -130,10 +133,6 @@ _LIVE_DELIVERIES = text(
     "FROM assess_deliveries d JOIN assess_transcripts t ON t.id = d.transcript_id "
     "JOIN assess_sessions s ON s.id = t.session_id "
     "WHERE d.transcript_id = ANY(:t) AND d.status IN ('PENDING', 'RETRYING') ORDER BY d.id"
-)
-_ABANDON = text(
-    "UPDATE assess_deliveries SET status = 'ABANDONED', last_error_class = :why "
-    "WHERE id = ANY(:i)"
 )
 _REASONS_OUT = text(
     "UPDATE assess_reset_grants g SET reason_ct = ''::bytea, reason_kid = :kid "
@@ -158,7 +157,8 @@ async def abandon_live_deliveries(
     rows = (await conn.execute(_LIVE_DELIVERIES, {"t": list(transcript_ids)})).all()
     if not rows:
         return 0
-    await conn.execute(_ABANDON, {"i": [r.id for r in rows], "why": why})
+    # no status UPDATE: these rows are deleted a few statements later in this transaction, so
+    # the abandonment is recorded where it survives, in the audit (and the notice)
     notified: set[UUID] = set()
     for r in rows:
         await write_event(
@@ -201,7 +201,9 @@ async def shred_sessions(
     sids = list(session_ids)
     if not sids:
         return out
-    tids = list((await conn.execute(_TRANSCRIPTS_OF, {"s": sids})).scalars().all())
+    rows = (await conn.execute(_TRANSCRIPTS_OF, {"s": sids})).all()
+    out.transcripts = {r.session_id: r.id for r in rows}
+    tids = [r.id for r in rows]
     out.transcript_ids = tids
     out.abandoned = await abandon_live_deliveries(
         conn, tids, why=abandon_why, notify=notify
@@ -284,15 +286,19 @@ async def write_tombstones(
     *,
     reason: str,
     counts: dict[str, int],
+    subject: str | None = None,
 ) -> None:
-    """One tombstone per session (ids and the batch's counts); an existing one is kept."""
+    """One tombstone per session (ids and the batch's counts); an existing one is kept.
+    ``subject`` replaces the subject reference (the erasure writes ``ERASED_REF``)."""
     payload = json.dumps(counts, sort_keys=True)
     for s in sessions:
         await conn.execute(
             _TOMBSTONE,
             {
                 "site": s.site_id,
-                "ref": subject_ref(s.site_id, int(s.student_userid)),
+                "ref": subject
+                if subject is not None
+                else subject_ref(s.site_id, int(s.student_userid)),
                 "sid": s.id,
                 "tid": transcripts.get(s.id),
                 "no": int(s.session_no),
@@ -320,13 +326,15 @@ _DUE = text(
     "  AND d.attempt_started_at > now() - make_interval(secs => :flight)) "
     "ORDER BY s.closed_at, s.id LIMIT :n FOR UPDATE OF s SKIP LOCKED"
 )
-_TRANSCRIPT_OF_SESSION = text(
-    "SELECT id, session_id FROM assess_transcripts WHERE session_id = ANY(:s)"
-)
 _NOTIFY_ROWS = text(
     "DELETE FROM assess_deliveries WHERE kind IN ('teacher_notify', 'operator_notify') "
     "AND status IN ('SENT', 'FAILED', 'ABANDONED', 'REPLACED') "
     "AND created_at < now() - make_interval(days => :days)"
+)
+_STALE_ERASURES = text(
+    "UPDATE assess_erasure_records SET completed_at = now(), outcome = 'failed', "
+    "error_code = 'abandoned', subject_userids = NULL, subject_userid_hash = NULL "
+    "WHERE completed_at IS NULL AND requested_at < now() - interval '1 day'"
 )
 _OLD_TOKENS = text(
     "DELETE FROM assess_transcript_download_tokens WHERE expires_at < now() - interval '1 day'"
@@ -352,10 +360,6 @@ async def purge_batch(
     if not due:
         return 0, Shredded()
     sids = [r.id for r in due]
-    transcripts = {
-        r.session_id: r.id
-        for r in (await conn.execute(_TRANSCRIPT_OF_SESSION, {"s": sids})).all()
-    }
     shredded = await shred_sessions(
         conn, sids, abandon_why="retention_expired", notify=True
     )
@@ -363,7 +367,7 @@ async def purge_batch(
     if left:
         raise PurgeVerificationFailed(json.dumps(left, sort_keys=True))
     await write_tombstones(
-        conn, due, transcripts, reason="retention", counts=shredded.deleted
+        conn, due, shredded.transcripts, reason="retention", counts=shredded.deleted
     )
     await write_event(
         conn,
@@ -417,6 +421,10 @@ async def run_purge(connect: Connect, *, max_batches: int = MAX_BATCHES) -> Purg
         report.notify_rows = max(res.rowcount, 0)
         res = await conn.execute(_OLD_TOKENS)
         report.tokens = max(res.rowcount, 0)
+        # an erasure request whose job died never completes: after a day it is recorded failed
+        # and the ids it carried are dropped (the plugin's retry makes a new request)
+        res = await conn.execute(_STALE_ERASURES)
+        report.stale_erasures = max(res.rowcount, 0)
     log.info(
         "assess.purge.done",
         sessions=report.sessions,

@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from email.policy import SMTP
@@ -317,6 +317,11 @@ _FAIL = text(
     "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = :cls, "
     "smtp_code = :code, attempt_started_at = NULL "
     "WHERE id = :i AND attempt_started_at = :started"
+)
+#: when the chain first addressed its rows: the retry window of a root job retried by the
+#: runner (which carries no ``since``) still counts from here
+_ORIGIN = text(
+    "SELECT min(created_at) AS origin FROM assess_deliveries WHERE job_id = :j AND kind = :k"
 )
 #: the next run's time, for an operator reading the rows (the chain, not a tick, runs them)
 _LIVE_ROWS = text(
@@ -702,6 +707,14 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
         else {notify_ref(kind, event.site_id, a): a for a in configured}
     )
     async with ctx.acquire() as conn, conn.begin():
+        if "since" not in ctx.args:
+            # a root job retried by the runner: the window counts from the rows it already
+            # addressed, not from the retry (CodeRabbit 4513956336)
+            origin = (
+                await conn.execute(_ORIGIN, {"j": run.root, "k": kind.value})
+            ).first()
+            if origin is not None and origin.origin is not None:
+                run = replace(run, since=min(run.since, origin.origin))
         live, any_rows = await _reconcile(conn, deps, run, by_ref, out)
         if by_ref is not None and not by_ref and not any_rows:
             # readable and empty: the teacher configured nobody to tell
@@ -714,6 +727,13 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
         out.unresolved = True
         _alert(RECIPIENTS_UNRESOLVED, kind)
         await _next_run(deps, ctx.acquire, run, out, busy_only=False)
+        return out
+    if now >= run.since + deps.window + deps.stale_after:
+        # a run that starts past the window and its grace (a worker down for hours) sends
+        # nothing: its live rows are FAILED window_expired, as the transcript handler does
+        # past its cutoff (CodeRabbit 4513956352)
+        await _expire(deps, ctx.acquire, run, out)
+        log.info("assess_notify_expired", kind=kind.value, job_id=run.root)
         return out
     # every row runs to its end even when one raises (review #1: no orphaned send a retried
     # job could race); a row that raised is taken again by the next run of the chain, so an

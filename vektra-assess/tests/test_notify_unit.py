@@ -326,9 +326,13 @@ class Outbox:
                     "attempts": 0,
                     "message_id": None,
                     "cls": None,
+                    "created_at": self.clock(),
                 }
             )
             return _Rows([], 1)
+        if stmt is n._ORIGIN:
+            made = [r["created_at"] for r in self.rows if r["job_id"] == p["j"]]
+            return _Rows([SimpleNamespace(origin=min(made) if made else None)])
         if stmt is n._WITHDRAW:
             r = self._row(p["i"])
             if r is None or r["status"] not in n.LIVE:
@@ -648,6 +652,44 @@ async def test_a_leased_row_whose_domain_was_removed_is_retried_not_dropped() ->
     assert got is not None and sender.sent == []
     assert got.busy == 1 and got.next_run == WHEN + n.BUSY_RETRY
     assert box.rows[0]["attempt_started_at"] == WHEN
+
+
+async def test_a_retried_root_job_keeps_the_first_runs_window() -> None:
+    """CodeRabbit 4513956336: the root job carries no ``since``; retried by the runner after
+    its rows exist, the window still counts from the rows' creation, not from the retry."""
+    clock = Clock()
+    box = Outbox(clock)
+    fail = SendResult(False, ErrorClass.CONNECT)
+    deps = _deps(("a@uni.example",), Sender(fail, fail), clock)
+    await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    box.jobs.clear()
+    clock.now = WHEN + timedelta(minutes=10)  # the runner retries the same root job
+    await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    (nxt,) = box.jobs
+    assert f'"since":{int(WHEN.timestamp())}' in nxt["args"]
+
+
+async def test_a_chained_run_past_its_window_never_sends() -> None:
+    """CodeRabbit 4513956352: a chained run that starts after the window and its grace (a
+    worker down for hours) fails the live rows as window_expired instead of sending them."""
+    clock = Clock()
+    box = Outbox(clock)
+    await n.notify(
+        _deps(("a@uni.example",), Sender(SendResult(False, ErrorClass.CONNECT)), clock),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box),
+    )
+    clock.now = WHEN + timedelta(hours=3)  # window 1 h: far past it
+    sender = Sender()
+    chained = {**CAP, "root_job_id": 9, "try": 2, "since": int(WHEN.timestamp())}
+    got = await n.notify(
+        _deps(("a@uni.example",), sender, clock),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box, 15, chained),
+    )
+    assert got is not None and sender.sent == [] and got.sent == 0
+    assert got.next_run is None and box.rows[0]["status"] == "FAILED"
+    assert ("assess_notify_failed", "window_expired") in box.audit
 
 
 class Boom(Sender):

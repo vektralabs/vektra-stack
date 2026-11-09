@@ -36,7 +36,7 @@ import json
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import RESERVED_KID
+from vektra_assess.privacy import config as privacy_config
 from vektra_assess.privacy.subject import subject_ref
 
 log = structlog.get_logger(__name__)
@@ -59,6 +60,10 @@ BATCH = 100
 MAX_BATCHES = 20
 #: a delivery attempt started this recently may still be on the wire
 IN_FLIGHT = timedelta(minutes=15)
+#: a backlog run: this many batches per site per ``purge`` job (the maintenance budget)
+JOB_BATCHES = 3
+BACKLOG_DELAY = timedelta(minutes=5)
+BACKLOG_KEY = "purge:backlog"
 #: notification rows carry ids and codes only; kept this long for the operator, then deleted
 NOTIFY_RETENTION = timedelta(days=30)
 ABANDONED_NOTICE = "delivery_abandoned_on_purge"
@@ -108,6 +113,8 @@ class PurgeReport:
     notify_rows: int = 0
     tokens: int = 0
     stale_erasures: int = 0
+    #: a site reached the batch cap: a follow-up ``purge`` job was queued
+    backlog: bool = False
 
     def merge(self, s: Shredded, sessions: int) -> None:
         self.sessions += sessions
@@ -312,9 +319,11 @@ async def write_tombstones(
 
 # --- the retention purge ----------------------------------------------------------------------
 
+#: every stored settings row; only those that pass the same validation as ``is_configured``
+#: authorize a purge (a row the application calls unconfigured never deletes anything)
 _SITES = text(
-    "SELECT site_id, retention_days FROM assess_privacy_config "
-    "WHERE retention_days BETWEEN 1 AND 3650 ORDER BY site_id"
+    "SELECT site_id, retention_days, legal_basis_label, legal_basis_text, notice_url, "
+    "notice_text, notice_version FROM assess_privacy_config ORDER BY site_id"
 )
 #: CLOSED past retention, not purged yet, no delivery attempt on the wire
 _DUE = text(
@@ -396,10 +405,12 @@ async def run_purge(connect: Connect, *, max_batches: int = MAX_BATCHES) -> Purg
     tick records a failure (a purge that left rows never reads as a success)."""
     report = PurgeReport()
     async with connect() as conn, conn.begin():
-        sites = (await conn.execute(_SITES)).all()
+        sites = [
+            r for r in (await conn.execute(_SITES)).all() if privacy_config.passes(r)
+        ]
     failed: list[str] = []
     for site in sites:
-        for _ in range(max_batches):
+        for batch_no in range(max_batches):
             try:
                 async with connect() as conn, conn.begin():
                     n, shredded = await purge_batch(
@@ -417,6 +428,8 @@ async def run_purge(connect: Connect, *, max_batches: int = MAX_BATCHES) -> Purg
             report.merge(shredded, n)
             if n < BATCH:
                 break
+            if batch_no == max_batches - 1:
+                report.backlog = True  # more is due than one run may take
     async with connect() as conn, conn.begin():
         res = await conn.execute(_NOTIFY_ROWS, {"days": NOTIFY_RETENTION.days})
         report.notify_rows = max(res.rowcount, 0)
@@ -426,6 +439,17 @@ async def run_purge(connect: Connect, *, max_batches: int = MAX_BATCHES) -> Purg
         # and the ids it carried are dropped (the plugin's retry makes a new request)
         res = await conn.execute(_STALE_ERASURES)
         report.stale_erasures = max(res.rowcount, 0)
+        if report.backlog:
+            # a site with more due than a run's cap: another bounded run soon, as a ``purge``
+            # job, instead of letting content outlive its retention until tomorrow
+            # (CodeRabbit outside-diff on run_purge)
+            await enqueue_job(
+                conn,
+                JobKind.PURGE,
+                {},
+                dedupe_key=BACKLOG_KEY,
+                not_before=datetime.now(UTC) + BACKLOG_DELAY,
+            )
     log.info(
         "assess.purge.done",
         sessions=report.sessions,
@@ -440,9 +464,11 @@ async def run_purge(connect: Connect, *, max_batches: int = MAX_BATCHES) -> Purg
 
 
 def make_purge_handler(connect: Connect) -> Callable[[Any], Any]:
-    """The ``purge`` job: the same run on demand (no arguments)."""
+    """The ``purge`` job: a bounded run on demand or for a backlog (no arguments). It runs
+    fewer batches than the daily tick, to fit the maintenance budget, and queues the next run
+    itself while a backlog remains."""
 
     async def handle(_ctx: Any) -> None:
-        await run_purge(connect)
+        await run_purge(connect, max_batches=JOB_BATCHES)
 
     return handle

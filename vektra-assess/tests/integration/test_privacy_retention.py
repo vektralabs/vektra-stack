@@ -362,18 +362,33 @@ async def _privacy_key(w, scope: str, name: str, site=None) -> None:  # type: ig
 
 
 async def _work_erasures(pg, worker, stop: asyncio.Event) -> None:  # type: ignore[no-untyped-def]
-    """What the worker does: complete every queued erasure request."""
+    """What the worker does: run the registered ``erasure`` handler on every queued job, with
+    the job's own arguments (the dispatch is tested, not only ``run_erasure``)."""
+    import logging
+
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.privacy.erasure import make_erasure_handler
+    from vektra_assess.worker.runner import JobContext
+
+    handle = make_erasure_handler(worker.connect)
     while not stop.is_set():
         rows = await pg.run(
             "super",
-            "SELECT (args->>'erasure_id')::bigint FROM assess_jobs WHERE kind = 'erasure' "
-            "AND state = 'ready'",
+            "SELECT id, args FROM assess_jobs WHERE kind = 'erasure' AND state = 'ready'",
         )
-        for (eid,) in rows:
+        for jid, args in rows:
             await pg.run("super", "UPDATE assess_jobs SET state = 'done', done_at = now() "
-                         "WHERE kind = 'erasure' AND (args->>'erasure_id')::bigint = :i",
-                         {"i": eid})  # fmt: skip
-            await run_erasure(worker.connect, int(eid))
+                         "WHERE id = :i", {"i": jid})  # fmt: skip
+            await handle(
+                JobContext(
+                    int(jid),
+                    JobKind.ERASURE,
+                    args,
+                    1,
+                    worker.connect,
+                    logging.getLogger("t"),
+                )
+            )
         await asyncio.sleep(0.05)
 
 
@@ -938,3 +953,74 @@ async def test_two_identical_erasure_requests_queue_one(pg, worker) -> None:  # 
         assert {r.status_code for r in got} == {503}
         assert await one(pg, "SELECT count(*) FROM assess_erasure_records WHERE site_id = :s",
                          s=w.site) == 1  # fmt: skip
+
+
+async def test_the_erasure_handler_ignores_a_malformed_job(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    import logging
+
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.privacy.erasure import make_erasure_handler
+    from vektra_assess.worker.runner import JobContext
+
+    handle = make_erasure_handler(worker.connect)
+    for args in ({}, {"erasure_id": "1"}, {"erasure_id": True}):
+        assert (
+            await handle(
+                JobContext(
+                    1, JobKind.ERASURE, args, 1, worker.connect, logging.getLogger("t")
+                )
+            )
+            is None
+        )
+
+
+async def test_the_purge_scrubs_the_reason_of_the_sessions_reset(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    async with world(pg) as w:
+        s, _ = await ready(w, worker)
+        await pg.run(
+            "super",
+            "INSERT INTO assess_reset_grants (site_id, cmid, student_userid, granted_by, "
+            "session_no, reason_ct, reason_kid) VALUES (:s, :c, :u, '5', 1, :ct, 't1')",
+            {"s": w.site, "c": s.cmid, "u": s.sub, "ct": b"x" * 40},
+        )
+        await configure_privacy(pg, w.site, retention_days=1)
+        await age(pg, s.session_id, 2)
+        await run_purge(worker.connect)
+        rows = await pg.run(
+            "super",
+            "SELECT length(reason_ct), reason_kid FROM assess_reset_grants "
+            "WHERE site_id = :s AND student_userid = :u",
+            {"s": w.site, "u": s.sub},
+        )
+        assert rows == [
+            (0, purge_mod.PURGED_KID)
+        ]  # the grant stays, the reason is gone
+
+
+async def test_a_settings_row_that_fails_validation_never_purges(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick on _SITES: the purge uses the same validation as is_configured."""
+    async with world(pg) as w:
+        s, _ = await ready(w, worker)
+        await configure_privacy(pg, w.site, retention_days=1, legal_basis_label="   ")
+        await age(pg, s.session_id, 2)
+        before = await content_counts(pg, s.session_id)
+        await run_purge(worker.connect)
+        assert await content_counts(pg, s.session_id) == before
+
+
+async def test_a_backlog_queues_another_bounded_run(pg, worker, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit outside-diff: more due than one run's cap queues a follow-up purge job."""
+    async with world(pg) as w:
+        a, _ = await ready(w, worker, assignment="rubric_vis")
+        b, _ = await ready(w, worker, assignment="scale")
+        await configure_privacy(pg, w.site, retention_days=1)
+        await age(pg, a.session_id, 2)
+        await age(pg, b.session_id, 2)
+        await pg.run("super", "DELETE FROM assess_jobs WHERE kind = 'purge'")
+        monkeypatch.setattr(purge_mod, "BATCH", 1)
+        report = await run_purge(worker.connect, max_batches=1)
+        assert report.sessions == 1 and report.backlog is True
+        assert await one(pg, "SELECT count(*) FROM assess_jobs WHERE kind = 'purge' "
+                         "AND dedupe_key = 'purge:backlog'") == 1  # fmt: skip
+        report = await run_purge(worker.connect, max_batches=1)
+        assert report.sessions == 1

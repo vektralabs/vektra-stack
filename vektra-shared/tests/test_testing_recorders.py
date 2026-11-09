@@ -151,6 +151,8 @@ def test_a_numeric_canary_counts_only_as_a_whole_number() -> None:
         "latency_ms": 17.3141123,
         "t": "0.731411",
         "u": "7.314112",
+        "w": 7.31411e-06,
+        "x": "7.31411E+3",
         "v": 7.31411,
     }
     assert find_canaries(near_misses, ["7.31411"]) == {"7.31411": 1}

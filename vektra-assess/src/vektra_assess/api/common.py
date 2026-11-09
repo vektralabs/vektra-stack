@@ -80,8 +80,12 @@ async def read_capped_body(
     soon as it passes ``max_bytes``, never buffered whole first (a declared Content-Length over
     the cap is refused at once, a chunked body as soon as it crosses it)."""
     declared = request.headers.get("content-length", "")
-    if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
-        raise fail(bad_request("body_too_large"))
+    if declared.isascii() and declared.isdigit():
+        # leading zeros stripped, and a length too long to be a size at all is over the cap by
+        # itself: ``int()`` refuses more than 4300 digits (CodeRabbit 4512009230)
+        digits = declared.lstrip("0") or "0"
+        if len(digits) > len(str(max_bytes)) or int(digits) > max_bytes:
+            raise fail(bad_request("body_too_large"))
     buf = bytearray()
     async for chunk in request.stream():
         if len(buf) + len(chunk) > max_bytes:

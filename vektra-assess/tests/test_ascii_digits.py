@@ -110,6 +110,35 @@ async def test_an_oversized_ascii_content_length_is_refused_before_reading() -> 
     assert exc.value.detail["error"]["details"]["reason"] == "body_too_large"
 
 
+@pytest.mark.parametrize(
+    "declared", [b"1" * 5000, b"0" * 5000 + b"9"], ids=["5000_digits", "zero_padded_9"]
+)
+async def test_a_very_long_ascii_content_length_is_refused_not_a_500(
+    declared: bytes,
+) -> None:
+    """CodeRabbit 4512009230 (PR #179): a declared length longer than Python's int-conversion
+    limit (4300 digits) is still ``body_too_large``, never a ValueError; leading zeros do not
+    make a small value look huge."""
+    from fastapi import HTTPException
+
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/body",
+            "headers": [(b"content-length", declared)],
+        }
+    )
+
+    async def receive() -> dict[str, object]:
+        raise AssertionError("the body must not be read")
+
+    req._receive = receive  # type: ignore[attr-defined]
+    with pytest.raises(HTTPException) as exc:
+        await read_capped_body(req, max_bytes=8)
+    assert exc.value.detail["error"]["details"]["reason"] == "body_too_large"
+
+
 @pytest.mark.parametrize("declared", NOT_ASCII_HEADERS)
 async def test_a_non_ascii_content_length_does_not_bypass_the_streamed_cap(
     declared: bytes,

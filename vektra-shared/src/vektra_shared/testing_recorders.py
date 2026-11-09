@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -354,13 +355,29 @@ def _texts(blob: Any) -> Iterable[str]:
 
 
 def find_canaries(blobs: Any, canaries: Iterable[str]) -> dict[str, int]:
-    """Occurrences of each canary across every string reachable from ``blobs`` (0s included)."""
+    """Occurrences of each canary across every string reachable from ``blobs`` (0s included).
+
+    A numeric canary (a mark such as ``7.31411``) counts only as a whole number: not preceded or
+    followed by another digit, nor preceded by a decimal point, nor followed by an exponent
+    (``7.31411e-06`` is another value). Otherwise any float that happens to contain those digits
+    (a latency of ``17.3141123`` in a trace) reads as a leak. The pattern is the escaped canary
+    between fixed lookarounds, so it cannot backtrack.
+    """
     wanted = list(dict.fromkeys(canaries))
     counts = dict.fromkeys(wanted, 0)
+    numeric = {
+        c: re.compile(rf"(?<![\d.]){re.escape(c)}(?!\d|[eE][+-]?\d)")
+        for c in wanted
+        if _NUMERIC.fullmatch(c)
+    }
     for text in _texts(blobs):
         for c in wanted:
-            counts[c] += text.count(c)
+            rx = numeric.get(c)
+            counts[c] += len(rx.findall(text)) if rx else text.count(c)
     return counts
+
+
+_NUMERIC = re.compile(r"\d+(?:\.\d+)?")
 
 
 def assert_no_canaries(

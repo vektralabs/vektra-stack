@@ -158,6 +158,7 @@ jobs:
               "vektra_assess.delivery.message", "vektra_assess.delivery.smtp",
               "vektra_assess.delivery.backoff", "vektra_assess.delivery.recipients",
               "vektra_assess.delivery.handler", "vektra_assess.delivery.probe",
+              "vektra_assess.delivery.notify",
               # Teacher operations (plan teacher-ops 11a): the fresh editor check and the
               # worker job that reads the activity facts it checks against.
               "vektra_assess.api.teachers", "vektra_assess.worker.teacher_gate",

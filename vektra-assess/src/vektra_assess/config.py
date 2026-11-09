@@ -824,13 +824,21 @@ class VektraAssessSettings(BaseSettings):
         description="Comma list of the domains a transcript may be mailed to (exact match, REQ-082 as amended). Empty refuses every address: the delivery row is FAILED (domain_not_allowed) with an alert. The plugin validates the teacher's form against the same list.",
     )
 
+    operator_email: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_OPERATOR_EMAIL",
+        description="Address of the platform operator: the worker mails it the content-free operator alerts (REQ-071: repeated failed Starts, an LMS that cannot be read). Required with the relay: a production worker refuses to start without it. Not subject to VEKTRA_ASSESS_RECIPIENT_DOMAINS (it is deployment configuration, not a teacher's input).",
+    )
+
     @field_validator("smtp_retry_schedule")
     @classmethod
     def _valid_schedule(cls, value: str) -> str:
         parse_schedule(value)  # raises ValueError: refused at startup, never replaced
         return value
 
-    @field_validator("smtp_host", "smtp_from", "message_id_domain", mode="before")
+    @field_validator(
+        "smtp_host", "smtp_from", "message_id_domain", "operator_email", mode="before"
+    )
     @classmethod
     def _blank_is_unset(cls, value: Any) -> Any:
         return None if isinstance(value, str) and not value.strip() else value
@@ -846,6 +854,21 @@ class VektraAssessSettings(BaseSettings):
         if address is None:
             raise ValueError(
                 "VEKTRA_ASSESS_SMTP_FROM must be a bare e-mail address "
+                "(name@domain, no display name, no <>, no spaces)"
+            )
+        return address
+
+    @field_validator("operator_email")
+    @classmethod
+    def _bare_operator(cls, value: str | None) -> str | None:
+        """The same bare addr-spec rule as the From address: refused at startup, never
+        repaired."""
+        if value is None:
+            return None
+        address = normalize_address(value)
+        if address is None:
+            raise ValueError(
+                "VEKTRA_ASSESS_OPERATOR_EMAIL must be a bare e-mail address "
                 "(name@domain, no display name, no <>, no spaces)"
             )
         return address

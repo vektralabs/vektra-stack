@@ -456,6 +456,9 @@ class DeliveryOrm(Base):
     message_id: Mapped[str | None] = mapped_column(TEXT)
     sent_at: Mapped[datetime | None] = _ts(nullable=True)
     created_at: Mapped[datetime] = _ts(default=True)
+    #: revision 0039: the notification job (first of its retry chain) of a ``teacher_notify`` /
+    #: ``operator_notify`` row; NULL for every other kind
+    job_id: Mapped[int | None] = mapped_column(BIGINT)
 
 
 class TurnNoteOrm(Base):

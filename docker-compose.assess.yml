@@ -110,6 +110,8 @@ services:
       VEKTRA_ASSESS_SMTP_RETRY_WINDOW_HOURS: ${VEKTRA_ASSESS_SMTP_RETRY_WINDOW_HOURS:-72}
       VEKTRA_ASSESS_MESSAGE_ID_DOMAIN: ${VEKTRA_ASSESS_MESSAGE_ID_DOMAIN:-}
       VEKTRA_ASSESS_RECIPIENT_DOMAINS: ${VEKTRA_ASSESS_RECIPIENT_DOMAINS:-}
+      # the operator alerts (REQ-071) are mailed here; empty: the worker refuses to start
+      VEKTRA_ASSESS_OPERATOR_EMAIL: ${VEKTRA_ASSESS_OPERATOR_EMAIL:-}
     secrets:
       - { source: assess_handoff_public, <<: *secret }
       - { source: assess_transcript_kek, <<: *secret }

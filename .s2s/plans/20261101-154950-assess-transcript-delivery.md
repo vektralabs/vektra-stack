@@ -503,8 +503,54 @@ run develop's provisioning). REQ-082 amended in `.s2s/requirements.md` (free-tex
 - Session cap frozen at commit: `assess_sessions.cap_s` (revision 0034) feeds the header.
 - MathML deeper than 32 levels renders as escaped TeX (the template renders the tree recursively).
 
-> Open item (2026-11-08, branch `fix/assess-unbound-worker-slots`): the job kinds `teacher_notify` and `operator_notify` (owned by this plan in `worker/slots.py`) are still unbound, although they are queued in production paths. `assess_close_session` v3 queues `teacher_notify` on every `service_failure`. `start_guard.after_rollback` queues both at the rollback cap. `alert_moodle_unreachable` queues `operator_notify` (args: ids, `reason`, `kind`). No task or note of this plan specifies the channel (email through the 10b relay? a log alert?), the content, or the recipients. For the teacher, it is not specified whether this means the sealed config's transcript recipients. For the operator, no address setting exists at all. REQ-071 ("3 consecutive rollbacks notify the teacher and the operator") and the service_failure AC ("teacher notified within 1 min") remain unmet. Decision needed, not invented here. Both are allowlisted in `slots.OPEN_DECISIONS` and kept visible by the guard test. While they are unbound, a production worker refuses to start, and a dev worker fails those jobs with `handler_not_bound`.
+> ~~Open item~~ **Closed 2026-11-09** (product decision of 2026-11-08, implemented on `feat/assess-notify-smtp`, see "Teacher and operator notifications" below). Original text: (2026-11-08, branch `fix/assess-unbound-worker-slots`): the job kinds `teacher_notify` and `operator_notify` (owned by this plan in `worker/slots.py`) are still unbound, although they are queued in production paths. `assess_close_session` v3 queues `teacher_notify` on every `service_failure`. `start_guard.after_rollback` queues both at the rollback cap. `alert_moodle_unreachable` queues `operator_notify` (args: ids, `reason`, `kind`). No task or note of this plan specifies the channel (email through the 10b relay? a log alert?), the content, or the recipients. For the teacher, it is not specified whether this means the sealed config's transcript recipients. For the operator, no address setting exists at all. REQ-071 ("3 consecutive rollbacks notify the teacher and the operator") and the service_failure AC ("teacher notified within 1 min") remain unmet. Decision needed, not invented here. Both are allowlisted in `slots.OPEN_DECISIONS` and kept visible by the guard test. While they are unbound, a production worker refuses to start, and a dev worker fails those jobs with `handler_not_bound`.
 
 > Coordinator decision (2026-11-08): the REQ-079 setup-check item `smtp_probe` that this plan was to register (moodle-ws Integration Notes) is registered: it judges the probe tick's `smtp` heartbeat row (fresh within 900 s = 3 x 300 s, `ok` true). See the moodle-ws Notes and `worker/setup_items.py`.
 
 > Review finding 2 (2026-11-08, branch `fix/assess-unbound-worker-slots`): `delivery/probe.run_probe` now writes `last` (`{state, ok, error_class}` of the previous non-busy probe) on a `busy` row, so the setup-check item `smtp_probe` and later `/health/assess` can judge the relay while all its sessions are busy. See the moodle-ws Notes.
+
+### Teacher and operator notifications (2026-11-09, branch `feat/assess-notify-smtp`)
+
+Product decision (user, 2026-11-08): by email over the 10b relay; the teacher gets the activity's
+configured transcript recipients, the operator a new `VEKTRA_ASSESS_OPERATOR_EMAIL`. Design
+decisions taken here, one line each with the reason:
+
+- [x] **Outbox**: the rows live in `assess_deliveries` (revision 0039: kinds `teacher_notify` /
+  `operator_notify`, `job_id` set iff a notification, partial unique `(job_id, recipient_ref)`),
+  not in a new table: the table was created with a `kind` and a NULL-able `transcript_id` for
+  non-transcript rows, the worker already holds every privilege on it, the API reads no new
+  column, so the grant matrix does not change. The transcript queries all filter
+  `kind = 'transcript'` (checked: delivery tick, fan-out, teacher session list, shred).
+- [x] **Exactly-once as 10b**: attempt start committed before connecting, outcome after, fenced
+  on the start; a run that finds an attempt with no outcome resends with the SAME Message-ID
+  (`sha256("notify-<kind>-<root job>"|1|ref)`) and audits `assess_notify_possible_duplicate`.
+- [x] **Retries**: one schedule per notification, the relay's (`SMTP_RETRY_SCHEDULE`, window
+  `SMTP_RETRY_WINDOW_HOURS` from the first run). A run that leaves work completes and queues the
+  chain's next run (`args` + `root_job_id`, `try`, `since`; `dedupe_key` per parent job) at the
+  scheduled time, rather than failing the job: the job loop's own backoff tops out after ~1 min
+  of 5 attempts, far shorter than a relay outage. Past the window: `FAILED window_expired`,
+  audited, alert. A busy relay (no session in time) retries after 30 s without counting.
+- [x] **Recipients**: teacher = the sealed `transcript_recipients`, re-read every run (a removed
+  address is `FAILED recipient_withdrawn`, an added one gets a row, never more than 3); refs are
+  the transcript rows' (`sha256(site|address)`); same allowlist (`domain_not_allowed`, no
+  connection). Readable but empty = `assess_notify_failed no_recipients` + alert (a teacher who
+  configured nobody gets no notice, and that is visible); unreadable = wait for the next run.
+  Operator = `VEKTRA_ASSESS_OPERATOR_EMAIL`, NOT under the allowlist (deployment configuration,
+  not a teacher's input), ref `sha256("operator"|address)`.
+- [x] **Operator address unset**: the `operator_notify` slot stays unbound and the worker refuses
+  to start, named in the startup check before the database (fail closed at startup, the 10b
+  relay rule), rather than a dead job at the first alert.
+- [x] **Content** (PII minimised): fixed Italian text. Teacher: activity cmid, the student's
+  numeric LMS id and the session number, the same identifiers the transcript email already
+  carries (OQ-020: by id until the DPO rules); no name, no answer, no reason text, no
+  attachment. Operator: site id, cmid, the fixed rollback reason code; no student id.
+- [x] **Budgets**: both kinds default to 120 s / 240 s (was 30 / 60, shorter than one relay
+  send's worst case); the composition refuses a budget below it, as for `transcript_deliver`.
+- [x] **Producers unchanged**: close v3/v4 (`service_failure`), `after_rollback` (streak),
+  `alert_moodle_unreachable` (15-min bucket). The teacher job ignores the LMS alert (no activity).
+- [ ] **Retention** of the notification rows: no purge yet (a few rows per incident, refs only).
+  Plan 12 (privacy-retention) to include them in its retention sweep with the audit horizon.
+- REQ-071 ("3 consecutive rollbacks notify the teacher and the operator") and the service_failure
+  AC ("teacher notified within 1 min": the job is queued in the close transaction with a NOTIFY
+  wake-up and sends on its first run) are met; verified end to end in
+  `integration/test_notify_handler.py` against the TLS mail sink.

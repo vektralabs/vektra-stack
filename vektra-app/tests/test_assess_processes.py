@@ -305,6 +305,7 @@ async def test_worker_checks_against_postgres(
             # plan 10b: a production worker needs its relay (checked before the database)
             "VEKTRA_ASSESS_SMTP_HOST": "relay.example.org",
             "VEKTRA_ASSESS_SMTP_FROM": "vektra@example.org",
+            "VEKTRA_ASSESS_OPERATOR_EMAIL": "ops@example.org",
         }
         res = subprocess.run(
             [sys.executable, "-c", code],
@@ -727,9 +728,10 @@ def test_the_unbound_production_slots_are_exactly_the_documented_allowlist(
         monkeypatch,
         VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
         VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
-        VEKTRA_ASSESS_SMTP_HOST="relay.unical.it",
-        VEKTRA_ASSESS_SMTP_FROM="vektra@unical.it",
-        VEKTRA_ASSESS_RECIPIENT_DOMAINS="unical.it",
+        VEKTRA_ASSESS_SMTP_HOST="relay.uni.example",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@uni.example",
+        VEKTRA_ASSESS_RECIPIENT_DOMAINS="uni.example",
+        VEKTRA_ASSESS_OPERATOR_EMAIL="ops@uni.example",
     )
     ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
     keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
@@ -771,12 +773,16 @@ def test_the_worker_refuses_to_run_without_a_relay(
 
     with pytest.raises(StartupValidationError, match="VEKTRA_ASSESS_SMTP_HOST"):
         assess_worker.assert_smtp_configured(VektraAssessSettings())
+    relay = {
+        "VEKTRA_ASSESS_SMTP_HOST": "relay.uni.example",
+        "VEKTRA_ASSESS_SMTP_FROM": "vektra@uni.example",
+    }
+    # the operator alerts (REQ-071) need their address: refused by name, before the database
+    with pytest.raises(StartupValidationError, match="VEKTRA_ASSESS_OPERATOR_EMAIL"):
+        assess_worker.assert_smtp_configured(VektraAssessSettings.model_validate(relay))
     assess_worker.assert_smtp_configured(
         VektraAssessSettings.model_validate(
-            {
-                "VEKTRA_ASSESS_SMTP_HOST": "relay.uni.example",
-                "VEKTRA_ASSESS_SMTP_FROM": "vektra@uni.example",
-            }
+            {**relay, "VEKTRA_ASSESS_OPERATOR_EMAIL": "ops@uni.example"}
         )
     )
     # development override: the delivery slots stay unbound instead
@@ -843,9 +849,21 @@ def test_a_configured_relay_binds_the_delivery_handler_and_ticks(
     assert runtime._handlers[JobKind.TRANSCRIPT_DELIVER].bound
     bound = {t.name for t in scheduler._ticks if t.bound}
     assert {"delivery_retry", "smtp_probe"} <= bound
+    # the teacher notification rides the same relay; the operator one needs its address
+    assert runtime._handlers[JobKind.TEACHER_NOTIFY].bound
+    assert not runtime._handlers[JobKind.OPERATOR_NOTIFY].bound
+    with_ops = _checked(monkeypatch, VEKTRA_ASSESS_OPERATOR_EMAIL="ops@uni.example")
+    runtime, *_ = assess_worker._compose(
+        assess_worker.Checked(
+            with_ops.engine, with_ops.settings, with_ops.worker_url, keys
+        )
+    )
+    assert runtime._handlers[JobKind.OPERATOR_NOTIFY].bound
+    assert runtime._handlers[JobKind.TEACHER_NOTIFY].bound
     # no relay configured: nothing of the delivery is bound
     runtime, scheduler, *_ = assess_worker._compose(checked)
     assert not runtime._handlers[JobKind.TRANSCRIPT_DELIVER].bound
+    assert not runtime._handlers[JobKind.TEACHER_NOTIFY].bound
     assert not {"delivery_retry", "smtp_probe"} & {
         t.name for t in scheduler._ticks if t.bound
     }
@@ -878,6 +896,37 @@ def test_the_delivery_budget_must_cover_the_worst_send(
         checked.engine, checked.settings, checked.worker_url, keys
     )
     with pytest.raises(StartupValidationError, match="transcript_deliver budget 60 s"):
+        assess_worker._compose(keyed)
+
+
+@pytest.mark.parametrize("kind", ["teacher_notify", "operator_notify"])
+def test_the_notify_budget_must_cover_the_worst_send(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """The notification emails share the relay's worst case: a budget shorter than one send
+    would cut every attempt off mid-session, so the worker refuses to compose."""
+    import os
+
+    from vektra_assess.keys import AssessKeyring, Credentials
+
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_SMTP_HOST="relay.uni.example",
+        VEKTRA_ASSESS_SMTP_FROM="vektra@uni.example",
+        VEKTRA_ASSESS_OPERATOR_EMAIL="ops@uni.example",
+        **{f"VEKTRA_ASSESS_JOB_{kind.upper()}_BUDGET_S": "30"},
+    )
+    ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
+    keys: dict[str, object] = {
+        "assess_transcript_kek": ring,
+        "assess_teacher_config_private": ring,
+        "assess_smtp": Credentials("assess_smtp", {}),
+    }
+    keyed = assess_worker.Checked(
+        checked.engine, checked.settings, checked.worker_url, keys
+    )
+    with pytest.raises(StartupValidationError, match=f"{kind} budget 30 s"):
         assess_worker._compose(keyed)
 
 

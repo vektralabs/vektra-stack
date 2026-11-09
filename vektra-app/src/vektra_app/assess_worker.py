@@ -85,21 +85,36 @@ def assert_import_ceiling(loaded: Iterable[str] | None = None) -> None:
 
 
 def assert_smtp_configured(settings: Any) -> None:
-    """Transcripts are delivered by the worker's SMTP (REQ-075): without a relay and a From
-    address the delivery slots stay unbound, so the worker refuses to start, naming the
-    settings, unless the development override lets it run with unbound slots."""
-    if settings.worker_allow_unbound or (settings.smtp_host and settings.smtp_from):
+    """Transcripts and notifications are delivered by the worker's SMTP (REQ-075, REQ-071):
+    without a relay, a From address and the operator's address the delivery slots stay unbound,
+    so the worker refuses to start, naming the settings, unless the development override lets
+    it run with unbound slots."""
+    if settings.worker_allow_unbound:
         return
-    raise StartupValidationError(
-        step=STEP,
-        detail="VEKTRA_ASSESS_SMTP_HOST and VEKTRA_ASSESS_SMTP_FROM must be set: transcripts "
-        "are delivered by the worker's SMTP (REQ-075)",
-        remediation=(
-            "Set the relay host and the From address (and the assess_smtp secret with the "
-            "account), or for development only VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true with "
-            "VEKTRA_ENV=development."
-        ),
-    )
+    if not (settings.smtp_host and settings.smtp_from):
+        raise StartupValidationError(
+            step=STEP,
+            detail="VEKTRA_ASSESS_SMTP_HOST and VEKTRA_ASSESS_SMTP_FROM must be set: "
+            "transcripts are delivered by the worker's SMTP (REQ-075)",
+            remediation=(
+                "Set the relay host and the From address (and the assess_smtp secret with the "
+                "account), or for development only VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true with "
+                "VEKTRA_ENV=development."
+            ),
+        )
+    if not settings.operator_email:
+        # the operator alerts (REQ-071) go to this address: without it the operator_notify
+        # slot stays unbound, so the worker is refused here, before the database, by name
+        raise StartupValidationError(
+            step=STEP,
+            detail="VEKTRA_ASSESS_OPERATOR_EMAIL must be set: the operator alerts (REQ-071) "
+            "are mailed to it through the same relay",
+            remediation=(
+                "Set VEKTRA_ASSESS_OPERATOR_EMAIL to the platform operator's address, or for "
+                "development only VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true with "
+                "VEKTRA_ENV=development."
+            ),
+        )
 
 
 def make_engine(url: str, pool_size: int, command_timeout_s: float = 30.0) -> Any:
@@ -379,7 +394,8 @@ def smtp_config(settings: Any, credentials: Any) -> Any:
 
 
 def _delivery_parts(checked: Checked) -> DeliveryParts:
-    """The ``transcript_deliver`` handler and the ``delivery_retry`` / ``smtp_probe`` ticks.
+    """The ``transcript_deliver``, ``teacher_notify`` and ``operator_notify`` handlers and the
+    ``delivery_retry`` / ``smtp_probe`` ticks.
 
     Bound only with the relay configured and the worker keys loaded; otherwise nothing is bound
     and ``assert_all_bound`` (or the startup check above) refuses to run without the development
@@ -399,6 +415,7 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         delivery_retry_tick,
         make_deliver_handler,
     )
+    from vektra_assess.delivery.notify import NotifyDeps, make_notify_handler
     from vektra_assess.delivery.probe import run_probe
     from vektra_assess.delivery.recipients import ConfigRecipients, parse_domains
     from vektra_assess.delivery.smtp import SmtpSender
@@ -406,7 +423,8 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
     from vektra_assess.worker.policy import load_policy
 
     sender = SmtpSender(smtp_config(settings, checked.keys["assess_smtp"]))
-    policy = load_policy(os.environ).kinds[JobKind.TRANSCRIPT_DELIVER]
+    policy_all = load_policy(os.environ)
+    policy = policy_all.kinds[JobKind.TRANSCRIPT_DELIVER]
     lease = policy.lease_s
     # every row of a job runs concurrently: one row's worst case (bounded slot wait + send
     # timeout + QUIT bound) plus the DB statements must fit the job's hard budget
@@ -452,8 +470,42 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         # one whole probe; the tick's own timeout (slots.probe_tick_timeout_s) is longer
         await run_probe(sender, engine.connect, timeout_s=sender.worst_case_s())
 
+    handlers: dict[Any, Any] = {JobKind.TRANSCRIPT_DELIVER: make_deliver_handler(deps)}
+    # the notification emails (REQ-071, REQ-086): the same relay, recipients and schedule
+    for kind in (JobKind.TEACHER_NOTIFY, JobKind.OPERATOR_NOTIFY):
+        kp = policy_all.kinds[kind]
+        if kp.budget_s < need:
+            raise StartupValidationError(
+                step=STEP,
+                detail=(
+                    f"{kind.value} budget {kp.budget_s:g} s is shorter than one delivery's "
+                    f"worst case {need:g} s"
+                ),
+                remediation=(
+                    f"Raise VEKTRA_ASSESS_JOB_{kind.value.upper()}_BUDGET_S (the lease "
+                    "follows at 2x) or lower VEKTRA_ASSESS_SMTP_TIMEOUT_S."
+                ),
+            )
+    notify_deps = NotifyDeps(
+        recipients=deps.recipients,
+        sender=sender,
+        sender_address=deps.sender_address,
+        message_id_domain=deps.message_id_domain,
+        domains=domains,
+        operator_address=settings.operator_email,
+        schedule=deps.schedule,
+        window=deps.window,
+    )
+    handlers[JobKind.TEACHER_NOTIFY] = make_notify_handler(
+        notify_deps, JobKind.TEACHER_NOTIFY
+    )
+    if settings.operator_email:
+        # without the address the slot stays unbound (refused at startup outside development)
+        handlers[JobKind.OPERATOR_NOTIFY] = make_notify_handler(
+            notify_deps, JobKind.OPERATOR_NOTIFY
+        )
     return DeliveryParts(
-        {JobKind.TRANSCRIPT_DELIVER: make_deliver_handler(deps)},
+        handlers,
         {"delivery_retry": delivery_retry, "smtp_probe": smtp_probe},
     )
 

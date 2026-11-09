@@ -304,8 +304,8 @@ persisted cut and marked "[risposta interrotta]". A provider outage moves the se
 (timer frozen, input locked, the pending turn kept); the worker's probe ends it and credits the
 interval when at least G seconds, the cumulative credit capped at C = min(15 min, half the
 duration); beyond C, or after 3 consecutive failed calls, the session closes `service_failure` and
-the close queues a `teacher_notify` job in the same transaction (delivery is plan
-transcript-delivery's). Limits and their sizing: `docs/reference/configuration.md`.
+the close queues a `teacher_notify` job in the same transaction: the worker mails the activity's
+configured transcript recipients (ids and the event only, no content) within the minute. Limits and their sizing: `docs/reference/configuration.md`.
 
 ### Assess UI: the discussion page and the postMessage contract (plugin <-> UI)
 

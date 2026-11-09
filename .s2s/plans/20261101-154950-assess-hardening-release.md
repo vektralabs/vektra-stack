@@ -212,3 +212,14 @@ every release, with a manual exploratory session on top.
   on KEK rotation (plan 12); `deploy/nginx/vektra.conf.example` XFO DENY (plan 9).
 - Per-key RPM rate limiting outside assess remains dormant (`app.state.rate_limiter` never set);
   confirm the release did not arm it as a side effect, or record that it did.
+- **Worker DB pool vs. row fan-out (deferred from CodeRabbit 4513956359 on PR #190, 2026-11-09).**
+  The delivery pool runs 2 jobs at once, and both the transcript handler (`delivery/handler.py`
+  `_all`) and the notification handler (`delivery/notify.py`) gather their rows: up to 3 each, so
+  up to 6 rows may want a DB connection at the same moment, against `VEKTRA_ASSESS_WORKER_POOL_SIZE`
+  = 5 (`max_overflow=0`) shared with heartbeats and the other pools. A row holds a connection
+  only for its claim and its settle, never across the SMTP send, so the pool waits rather than
+  fails; but a slow DB can push a row past its job budget, and heartbeats queue behind it. The
+  fix is one coordinator shared by every handler (a semaphore sized from the pool, minus a
+  reserve for heartbeats), not a notification-only limit; it belongs to the NFR-020 sizing work
+  here, with a load test (2 delivery jobs x 3 rows, DB latency injected) proving heartbeats stay
+  fresh.

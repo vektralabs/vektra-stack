@@ -579,3 +579,18 @@ async def test_the_operator_is_mailed_at_its_address_without_the_allowlist() -> 
         await n.notify(deps, JobKind.OPERATOR_NOTIFY, _ctx(box, 11, {"reason": "x"}))
         is None
     )
+
+
+async def test_replaced_recipients_free_their_slots() -> None:
+    """A teacher who replaced every address between two runs: the old rows fail as withdrawn
+    and do not count towards the cap of three, so the new addresses are all mailed."""
+    clock = Clock()
+    box = Outbox(clock)
+    old = ("a@uni.example", "b@uni.example", "c@uni.example")
+    down = Sender(*(SendResult(False, ErrorClass.CONNECT) for _ in old))
+    await n.notify(_deps(old, down, clock), JobKind.TEACHER_NOTIFY, _ctx(box))
+    new = ("d@uni.example", "e@uni.example", "f@uni.example")
+    sender = Sender()
+    got = await n.notify(_deps(new, sender, clock), JobKind.TEACHER_NOTIFY, _ctx(box))
+    assert got is not None and got.sent == 3
+    assert sorted(a for a, _ in sender.sent) == list(new)

@@ -508,20 +508,12 @@ async def _reconcile(
     by_ref: Mapping[str, str] | None,
     out: Notified,
 ) -> list[Any]:
-    """Rows for the recipients configured now (never past ``MAX_RECIPIENTS``); a live row whose
-    recipient is no longer configured is FAILED (``recipient_withdrawn``). The live rows left."""
+    """Rows for the recipients configured now; a live row whose recipient is no longer
+    configured is FAILED (``recipient_withdrawn``) first, so it frees its slot: never more than
+    ``MAX_RECIPIENTS`` rows live or SENT. The live rows left."""
     now = deps.clock()
     rows = (await conn.execute(_ROWS, {"j": run.root, "k": run.kind.value})).all()
     if by_ref is not None:
-        have = {r.recipient_ref for r in rows}
-        room = MAX_RECIPIENTS - len(rows)
-        for ref in by_ref:
-            if ref not in have and room > 0:
-                await conn.execute(
-                    _ADD, {"k": run.kind.value, "j": run.root, "ref": ref, "now": now}
-                )
-                room -= 1
-        rows = (await conn.execute(_ROWS, {"j": run.root, "k": run.kind.value})).all()
         for r in rows:
             if r.status in LIVE and r.recipient_ref not in by_ref:
                 gone = (
@@ -539,6 +531,15 @@ async def _reconcile(
                         delivery_id=str(r.id),
                     )
                     out.failed += 1
+        rows = (await conn.execute(_ROWS, {"j": run.root, "k": run.kind.value})).all()
+        have = {r.recipient_ref for r in rows}
+        room = MAX_RECIPIENTS - sum(1 for r in rows if r.status in (*LIVE, "SENT"))
+        for ref in by_ref:
+            if ref not in have and room > 0:
+                await conn.execute(
+                    _ADD, {"k": run.kind.value, "j": run.root, "ref": ref, "now": now}
+                )
+                room -= 1
         rows = (await conn.execute(_ROWS, {"j": run.root, "k": run.kind.value})).all()
     return [r for r in rows if r.status in LIVE]
 

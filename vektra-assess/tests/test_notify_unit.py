@@ -112,6 +112,16 @@ async def test_a_service_failure_job_is_re_read_from_its_session() -> None:
             {"site_id": str(SITE), "reason": 5, "kind": "moodle_unreachable"},
             None,
         ),
+        # CodeRabbit 4513956282: a trailing newline is not a code (it would reach the body)
+        (
+            JobKind.OPERATOR_NOTIFY,
+            {
+                "site_id": str(SITE),
+                "reason": "unreadable\n",
+                "kind": "moodle_unreachable",
+            },
+            None,
+        ),
         # a rollback cap without its ids, or with ids that are not ASCII digits
         (
             JobKind.TEACHER_NOTIFY,

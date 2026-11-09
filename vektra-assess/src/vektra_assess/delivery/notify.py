@@ -182,7 +182,7 @@ async def read_event(conn: Any, kind: JobKind, args: Mapping[str, Any]) -> Event
         if (
             kind is not OPERATOR
             or not isinstance(reason, str)
-            or not _CODE.match(reason)
+            or not _CODE.fullmatch(reason)
         ):
             return None
         return Event(LMS_UNREADABLE, site, reason=reason)

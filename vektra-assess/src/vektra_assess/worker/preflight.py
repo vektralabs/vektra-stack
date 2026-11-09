@@ -71,6 +71,7 @@ from vektra_assess.llm.types import (
     RagNotAvailableError,
     TurnResult,
 )
+from vektra_assess.timing import session_duration_s
 from vektra_assess.worker import locks
 from vektra_assess.worker.policy import (
     COMMIT_MARGIN_S,
@@ -483,7 +484,7 @@ async def _admit(
         session_no=int(row.session_no),
         flags=dict(act.flags or {}),
     )
-    duration = int(act.cap_minutes) * 60 + int(act.extra_s)
+    duration = session_duration_s(int(act.cap_minutes), int(act.extra_s))
     return target, duration, elapsed, db, int(act.cap_minutes) * 60
 
 

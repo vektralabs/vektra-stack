@@ -95,7 +95,10 @@ async def test_reload_two_tabs_and_after_the_close(pg) -> None:  # type: ignore[
             # a reset grant (plan 11) creates session #2
             await pg.run(
                 "super",
-                "INSERT INTO assess_reset_grants (site_id, cmid, student_userid) VALUES (:s, :c, :u)",
+                # the complete row the reset route writes (revision 0038; the reason is opaque here)
+                "INSERT INTO assess_reset_grants (site_id, cmid, student_userid, granted_by, "
+                "session_no, reason_ct, reason_kid) "
+                "VALUES (:s, :c, :u, '41', 1, '\\x00', 't1')",
                 {"s": w.site, "c": s.cmid, "u": s.sub},
             )
             start = await w.client.post(

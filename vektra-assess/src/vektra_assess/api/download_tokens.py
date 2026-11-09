@@ -89,7 +89,9 @@ class DownloadTokens:
             raise TokenError(type(exc).__name__) from None
         try:
             sub_raw, role, jti = claims["sub"], claims["role"], claims["jti"]
-            if not isinstance(sub_raw, str) or not sub_raw.isdigit():
+            if not isinstance(sub_raw, str) or not (
+                sub_raw.isascii() and sub_raw.isdigit()
+            ):
                 raise ValueError
             if role not in ("owner", "grader") or not isinstance(jti, str):
                 raise ValueError

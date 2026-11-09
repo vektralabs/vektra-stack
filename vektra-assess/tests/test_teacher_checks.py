@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from vektra_assess.api.teachers import TeacherCheck, check_fresh_editor
+from vektra_assess.api.teachers import TeacherCheck, check_fresh_teacher
 from vektra_assess.crypto import seal, teacher_config
 from vektra_assess.keys import AssessKeyring
 
@@ -41,7 +41,7 @@ def check(
     conn: Conn, actor: int = 5, hint: tuple[Any, Any] = (7, "quiz")
 ) -> TeacherCheck:
     got = asyncio.run(
-        check_fresh_editor(
+        check_fresh_teacher(
             conn,
             site=SITE,
             cmid=3,
@@ -49,6 +49,7 @@ def check(
             max_age_s=120,
             courseid_hint=hint[0],
             kind_hint=hint[1],
+            role="editor",
         )
     )
     return got.check
@@ -124,3 +125,16 @@ def test_the_sealed_writer_seals_per_field_and_never_sends_refs_for_a_clear() ->
                 conn, pub, SITE, 3, "notes", "x", actor_userid=9
             )
         )
+
+
+def test_one_fresh_check_entry_and_no_name_clash_with_the_transcript_grader_check() -> (
+    None
+):
+    """Review 11b-9: the teacher routes use ``check_fresh_teacher`` (through
+    ``verify_teacher``); no second ``check_fresh_grader`` shadows ``api.graders``'s per-student
+    check, and no dead wrapper remains."""
+    from vektra_assess.api import graders, teachers
+
+    assert not hasattr(teachers, "check_fresh_grader")
+    assert not hasattr(teachers, "check_fresh_editor")
+    assert callable(graders.check_fresh_grader)

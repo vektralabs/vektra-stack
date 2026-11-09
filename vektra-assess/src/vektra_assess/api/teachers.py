@@ -15,20 +15,30 @@ graders and REQ-077 enable facts) and accepts them only while at most ``max_age_
   the request is told to retry (a wrong hint never blocks a right one for long);
 - fresh and the actor is not listed: refused, nothing queued (Moodle must change first).
 
-``require_fresh_grader`` and ``can_view_overrides`` (the list, reset, terminate, extra time and
-opening-fallback routes) arrive with those routes in 11b; the grader check of the transcript
-routes stays ``api.graders`` (per student, plan 10).
+The same row answers both roles: ``editors`` (``moodle/course:manageactivities``: the
+configuration, REQ-077) and, since 11b, ``graders`` (``mod/assign:grade``: the session list,
+reset, terminate, extra time and opening fallback, REQ-076). ``can_view_overrides`` reads the
+``override_viewers`` list of the same row (fail closed: absent or unreadable is False). The
+grader check of the transcript routes stays ``api.graders`` (per student, plan 10).
+
+``verify_teacher`` is the one route-level entry: the check, the audited refusal
+(``assess_teacher_unverified``), and the refusal envelope to raise AFTER the transaction commits
+(so the audit row and the queued refresh survive the refusal).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
+from fastapi import HTTPException, Request
 from sqlalchemy import text
 
+from vektra_assess.api.common import fail
+from vektra_assess.audit import AssessAuditEvent, write_event
+from vektra_assess.errors import bad_request, teacher_unverified
 from vektra_assess.jobs import JobKind, enqueue_job, teacher_gate_dedupe_key
 
 KINDS = ("quiz", "assign")
@@ -43,9 +53,15 @@ _GATE = text(
 )
 
 
+Role = Literal["editor", "grader"]
+#: the facts key listing the users of each role
+_ROLE_KEY: dict[str, str] = {"editor": "editors", "grader": "graders"}
+
+
 class TeacherCheck(StrEnum):
     OK = "ok"
     NOT_AN_EDITOR = "not_an_editor"
+    NOT_A_GRADER = "not_a_grader"
     STALE = "stale"  # absent, older than the bound, or unreadable: refresh queued
     # a refresh is needed but the request gives no usable course / type hint: nothing could be
     # queued, so the caller must not be told to retry (400, not "a check has been queued")
@@ -88,7 +104,7 @@ async def queue_teacher_gate(
     )
 
 
-async def check_fresh_editor(
+async def check_fresh_teacher(
     conn: Any,
     *,
     site: UUID,
@@ -97,7 +113,11 @@ async def check_fresh_editor(
     max_age_s: int,
     courseid_hint: int | None,
     kind_hint: str | None,
+    role: Role,
 ) -> TeacherGate:
+    refused = (
+        TeacherCheck.NOT_AN_EDITOR if role == "editor" else TeacherCheck.NOT_A_GRADER
+    )
     row = (await conn.execute(_GATE, {"s": site, "c": int(cmid)})).first()
     facts = dict(row.inputs) if row is not None and isinstance(row.inputs, dict) else {}
     fresh = row is not None and row.age_s is not None and float(row.age_s) <= max_age_s
@@ -111,17 +131,101 @@ async def check_fresh_editor(
     if not fresh:
         return await refresh()
     if facts.get("resolved") is not True:
-        # a definitive answer for THIS hint: not an editor of anything here. Another hint, or a
+        # a definitive answer for THIS hint: not a teacher of anything here. Another hint, or a
         # transient failure: ask again (dedupe per hint)
         if (
             facts.get("hint") == [courseid_hint, kind_hint]
             and facts.get("reason") == NOT_IN_COURSE
         ):
-            return TeacherGate(TeacherCheck.NOT_AN_EDITOR)
+            return TeacherGate(refused)
         return await refresh()
-    editors = facts.get("editors")
-    if not isinstance(editors, list):
-        return await refresh()
-    if int(actor_userid) not in {int(e) for e in editors if isinstance(e, int)}:
-        return TeacherGate(TeacherCheck.NOT_AN_EDITOR, facts)
+    members = facts.get(_ROLE_KEY[role])
+    if not isinstance(members, list):
+        return (
+            await refresh()
+        )  # unreadable (or written before the role was read): ask again
+    if int(actor_userid) not in {
+        int(e) for e in members if isinstance(e, int) and not isinstance(e, bool)
+    }:
+        return TeacherGate(refused, facts)
     return TeacherGate(TeacherCheck.OK, facts)
+
+
+def can_view_overrides(gate: TeacherGate, actor_userid: int) -> bool:
+    """REQ-076 gate panel: whether the actor may see WHO holds the override that sets the
+    activity's opening (``override_viewers``: holders of the override-management capability,
+    worker-read). Absent, unreadable or not listed: False (fail closed: the holder is omitted,
+    never the reason, which is never stored at all)."""
+    viewers = gate.facts.get("override_viewers") if gate.ok else None
+    if not isinstance(viewers, list):
+        return False
+    return int(actor_userid) in {
+        int(v) for v in viewers if isinstance(v, int) and not isinstance(v, bool)
+    }
+
+
+# --- route helpers ---------------------------------------------------------------------------
+
+
+def ascii_id(raw: str) -> int | None:
+    """A positive BIGINT written in ASCII digits only (``str.isdigit`` also accepts "²" or
+    Arabic-Indic digits, which ``int`` then rejects or reinterprets)."""
+    if not 0 < len(raw) <= 19 or not all("0" <= ch <= "9" for ch in raw):
+        return None
+    value = int(raw)
+    return value if 0 < value < 2**63 else None
+
+
+def path_id(raw: str, name: str) -> int:
+    """A path id (``cmid``, ``userid``) or the 400 envelope naming it."""
+    value = ascii_id(raw)
+    if value is None:
+        raise fail(bad_request(name))
+    return value
+
+
+def header_int(request: Request, name: str) -> int | None:
+    return ascii_id(request.headers.get(name, ""))
+
+
+async def verify_teacher(
+    conn: Any,
+    *,
+    site: UUID,
+    cmid: int,
+    actor: int,
+    courseid: int | None,
+    kind: str | None,
+    max_age_s: int,
+    route: str,
+    role: Role,
+) -> tuple[TeacherGate, HTTPException | None]:
+    """The fresh role check of one teacher request. On a refusal the ``teacher_unverified``
+    audit row is written in the caller's transaction and the envelope is returned, to be raised
+    once that transaction has committed."""
+    gate = await check_fresh_teacher(
+        conn,
+        site=site,
+        cmid=cmid,
+        actor_userid=actor,
+        max_age_s=max_age_s,
+        courseid_hint=courseid,
+        kind_hint=kind if kind in KINDS else None,
+        role=role,
+    )
+    if gate.ok:
+        return gate, None
+    await write_event(
+        conn,
+        AssessAuditEvent.TEACHER_UNVERIFIED,
+        actor="api",
+        site_id=site,
+        reason_code=gate.check.value,
+        data={"cmid": cmid, "actor": actor, "route": route, "role": role},
+    )
+    if gate.check is TeacherCheck.HINT_MISSING:
+        # nothing was queued: name the missing hint, never "retry in a few seconds"
+        return gate, fail(bad_request("teacher_gate_hint"))
+    return gate, fail(
+        teacher_unverified(stale=gate.check is TeacherCheck.STALE, role=role)
+    )

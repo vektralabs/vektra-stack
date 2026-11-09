@@ -858,20 +858,31 @@ class VektraAssessSettings(BaseSettings):
             )
         return address
 
-    @field_validator("operator_email")
-    @classmethod
-    def _bare_operator(cls, value: str | None) -> str | None:
-        """The same bare addr-spec rule as the From address: refused at startup, never
-        repaired."""
-        if value is None:
-            return None
-        address = normalize_address(value)
-        if address is None:
+    @model_validator(mode="after")
+    def _bare_operator(self) -> Self:
+        """The same bare addr-spec rule as the From address, never repaired. Malformed:
+        refused at startup while assess is enabled; while it is disabled only a warning, the
+        value kept as given and never used (a dormant feature's setting never stops the API
+        from starting, as for the UI origin)."""
+        if self.operator_email is None:
+            return self
+        address = normalize_address(self.operator_email)
+        if address is not None:
+            # the settings are frozen: the normalised value replaces the raw one at load only
+            object.__setattr__(self, "operator_email", address)
+            return self
+        if self.enabled:
             raise ValueError(
                 "VEKTRA_ASSESS_OPERATOR_EMAIL must be a bare e-mail address "
                 "(name@domain, no display name, no <>, no spaces)"
             )
-        return address
+        warnings.warn(
+            "VEKTRA_ASSESS_OPERATOR_EMAIL is not a bare e-mail address; ignored while "
+            "VEKTRA_ASSESS_ENABLED=false, refused once it is enabled",
+            UserWarning,
+            stacklevel=2,
+        )
+        return self
 
     @field_validator("smtp_ca_file", mode="before")
     @classmethod

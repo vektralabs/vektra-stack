@@ -145,6 +145,32 @@ def test_the_smtp_from_is_a_bare_address(bad: str) -> None:
     assert ok.smtp_from == "Vektra@uni.example"
 
 
+def test_a_malformed_operator_email_blocks_only_an_enabled_assess() -> None:
+    """CodeRabbit 4513956271: a dormant feature's setting never stops the API from starting.
+    Enabled: a malformed address is refused at startup and a good one is normalised."""
+    from pydantic import ValidationError
+
+    from vektra_assess.config import VektraAssessSettings
+
+    bad = "Ops <ops@uni.example>"
+    with pytest.warns(UserWarning, match="VEKTRA_ASSESS_OPERATOR_EMAIL"):
+        off = VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_ENABLED": False, "VEKTRA_ASSESS_OPERATOR_EMAIL": bad}
+        )
+    assert off.operator_email == bad  # kept as given, never used while dormant
+    with pytest.raises(ValidationError, match="VEKTRA_ASSESS_OPERATOR_EMAIL"):
+        VektraAssessSettings.model_validate(
+            {"VEKTRA_ASSESS_ENABLED": True, "VEKTRA_ASSESS_OPERATOR_EMAIL": bad}
+        )
+    ok = VektraAssessSettings.model_validate(
+        {
+            "VEKTRA_ASSESS_ENABLED": True,
+            "VEKTRA_ASSESS_OPERATOR_EMAIL": " Ops@Uni.EXAMPLE ",
+        }
+    )
+    assert ok.operator_email == "Ops@uni.example"
+
+
 # --- plan assess-teacher-ops: startup refusals ------------------------------------------------
 
 

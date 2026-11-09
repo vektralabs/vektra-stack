@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.jobs import JobKind, enqueue_job
+from vektra_assess.keys import RESERVED_KID
 from vektra_assess.privacy.subject import subject_ref
 
 log = structlog.get_logger(__name__)
@@ -61,7 +62,7 @@ IN_FLIGHT = timedelta(minutes=15)
 #: notification rows carry ids and codes only; kept this long for the operator, then deleted
 NOTIFY_RETENTION = timedelta(days=30)
 ABANDONED_NOTICE = "delivery_abandoned_on_purge"
-PURGED_KID = "purged"
+PURGED_KID = RESERVED_KID  # refused as a real kid by load_keyring
 
 #: per-session content tables, keyed on ``session_id`` (counted before and after)
 SESSION_TABLES: tuple[str, ...] = (

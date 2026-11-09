@@ -292,3 +292,15 @@ def test_per_site_ws_token_files_are_refused_for_non_workers(
     (d / "assess_ws_token_3f2a").write_text("{}")
     detail = _refusal(role, d)
     assert "assess_ws_token_3f2a: forbidden for" in detail
+
+
+def test_the_purge_marker_is_never_a_key_id(full_set: Path, tmp_path: Path) -> None:
+    """Plan 12 (CodeRabbit 4516399792): ``purged`` marks a removed reason; a key under that
+    kid would make every reason it encrypts read as purged."""
+    d = _role_set(full_set, tmp_path, "worker")
+    p = d / "assess_kek"
+    os.chmod(p, 0o600)
+    key = base64.b64encode(b"x" * 32).decode()
+    p.write_text(json.dumps({"active": "purged", "keys": {"purged": key}}))
+    os.chmod(p, 0o400)
+    assert "kid 'purged' is reserved" in _refusal("worker", d)

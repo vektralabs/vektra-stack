@@ -52,6 +52,8 @@ def test_complete_settings_pass() -> None:
         ({"legal_basis_label": "x" * 201}, "legal_basis_label", "too_long"),
         ({"notice_url": "http://uni.example/p"}, "notice_url", "not_https"),
         ({"notice_url": "https://"}, "notice_url", "too_short"),
+        ({"notice_url": "https:///privacy"}, "notice_url", "invalid_url"),
+        ({"notice_url": "https://[invalid"}, "notice_url", "invalid_url"),
         ({"notice_text": 5}, "notice_text", "not_a_string"),
         ({"notice_version": "v\x00"}, "notice_version", "control_character"),
     ],

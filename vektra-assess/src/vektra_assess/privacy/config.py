@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import text
@@ -88,6 +89,8 @@ def field_errors(doc: dict[str, Any]) -> list[dict[str, object]]:
             errors.append({"field": name, "code": "too_long", "max": high})
         elif name == "notice_url" and not value.startswith("https://"):
             errors.append({"field": name, "code": "not_https"})
+        elif name == "notice_url" and not _has_host(value):
+            errors.append({"field": name, "code": "invalid_url"})
         elif any(ord(ch) < 32 and ch not in "\n\t" for ch in value):
             errors.append({"field": name, "code": "control_character"})
     unknown = sorted(set(doc) - set(FIELDS))
@@ -95,6 +98,15 @@ def field_errors(doc: dict[str, Any]) -> list[dict[str, object]]:
         {"field": str(name)[:60], "code": "unknown_field"} for name in unknown
     )
     return errors
+
+
+def _has_host(url: str) -> bool:
+    """A URL a browser can follow: it parses and names a host (``https:///x`` does not, and
+    ``https://[x`` does not parse: never an exception out of the validation)."""
+    try:
+        return bool(urlsplit(url).hostname)
+    except ValueError:
+        return False
 
 
 def passes(row: Any) -> bool:

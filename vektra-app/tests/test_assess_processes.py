@@ -559,12 +559,16 @@ async def test_startup_that_never_finishes_is_refused_with_a_structured_error(
 def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plan assess-moodle-ws F4 (carried over to assess-job-loop): kind ``setup_check`` in its
-    own pool with the 120 s hard timeout, plus the daily tick that also runs on startup; the
+    """The web-service plan, task F4 (carried over to assess-job-loop): kind ``setup_check`` in
+    its own pool with the 120 s hard timeout, plus the daily tick that also runs on startup; the
     parser's ``parser_sidecar_running`` item is part of the registry the handler runs."""
     from vektra_assess.jobs import JobKind
     from vektra_assess.keys import Credentials
-    from vektra_assess.moodle.setup_check import PLUGGABLE_ITEMS
+    from vektra_assess.worker import setup_items
+
+    # the setup-check module of vektra-assess, reached through the worker's own items module
+    check_mod = sys.modules[setup_items.builtin_registry.__module__]
+    pluggable_items = check_mod.PLUGGABLE_ITEMS
 
     checked = _checked(monkeypatch, VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true")
     keyed = assess_worker.Checked(
@@ -582,7 +586,7 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
     assert tick.bound and tick.run_on_startup and tick.interval_s == 86_400
     parts = assess_worker._setup_check_parts(keyed)
     # every pluggable item has its contributor (none is MISSING as not_registered)
-    assert set(PLUGGABLE_ITEMS) <= set(parts.registry.names())
+    assert set(pluggable_items) <= set(parts.registry.names())
     # two compositions do not register into one shared registry (it would raise)
     assess_worker._setup_check_parts(keyed)
     # without the key matrix nothing of the setup check is bound
@@ -591,7 +595,7 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
     assert not next(t for t in scheduler._ticks if t.name == "setup_check").bound
 
 
-def test_one_moodle_client_serves_every_ws_handler(
+def test_one_ws_client_serves_every_ws_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Review finding 3: the session handlers and the setup check share ONE WS client, so one
@@ -600,16 +604,24 @@ def test_one_moodle_client_serves_every_ws_handler(
     import os
 
     from vektra_assess.keys import AssessKeyring, Credentials
-    from vektra_assess.moodle import client as client_mod
 
     made: list[object] = []
+    checked = _checked(
+        monkeypatch,
+        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
+        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
+    )
+    # the WS client class and its module, as the composition builds it (the vektra-assess
+    # names are not repeated here)
+    ws_client_cls = type(assess_worker._ws_client(checked))
+    client_mod = sys.modules[ws_client_cls.__module__]
 
-    class Counting(client_mod.MoodleWsClient):
+    class Counting(ws_client_cls):  # type: ignore[misc, valid-type]
         def __init__(self, *a: object, **k: object) -> None:
-            super().__init__(*a, **k)  # type: ignore[arg-type]
+            super().__init__(*a, **k)
             made.append(self)
 
-    monkeypatch.setattr(client_mod, "MoodleWsClient", Counting)
+    monkeypatch.setattr(client_mod, ws_client_cls.__name__, Counting)
     checked = _checked(
         monkeypatch,
         VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",

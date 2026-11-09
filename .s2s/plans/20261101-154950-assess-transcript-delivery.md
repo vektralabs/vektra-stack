@@ -554,3 +554,28 @@ decisions taken here, one line each with the reason:
   AC ("teacher notified within 1 min": the job is queued in the close transaction with a NOTIFY
   wake-up and sends on its first run) are met; verified end to end in
   `integration/test_notify_handler.py` against the TLS mail sink.
+
+#### Code review of the notifications (2026-11-09, high), decisions
+
+10 findings; 7 fixed with a test that failed on the first version, 3 handled as below.
+
+- [x] #1 a retried run could claim a row still sending, and `gather` left orphaned sends: the
+  claim skips an attempt inside the lease (`stale_after` = the kinds' lease), and every row
+  runs to its end (`return_exceptions`).
+- [x] #2 a run that raised could kill the chain and leave rows live forever: a row's exception
+  is counted and the chain's next run is queued (only cancellation propagates). Residual: the
+  database down for the job's whole retry budget kills the job, which the runner audits
+  `assess_job_dead`. A kind-aware sweep in the `delivery_retry` tick (the reviewer's deeper fix)
+  needs the event arguments stored on the row: left for plan 12's retention pass, noted there.
+- [x] #3 a busy rerun advanced the backoff: it keeps its `try`.
+- [x] #4 (cap counted withdrawn rows): fixed before the review (dbe780b).
+- [x] #5 `_WITHDRAW` returned the cleared marker: the CTE returns it from before the update, so
+  a window expiry over a crash marker records `last_attempt_outcome=unknown`.
+- [x] #6 a crash-marked row whose recipient was removed is claimed first (auditing the possible
+  duplicate), then FAILED `recipient_withdrawn`.
+- [x] #7 the address is re-checked once the relay session is held (as the transcript handler).
+- [ ] #8 claim/settle duplicated from `delivery/handler.py`: kept as a copy for now (the two
+  differ in key, window source and audit names); a shared kind-agnostic helper is a refactor
+  for plan 13's hardening, recorded here so a fence fix is applied to both meanwhile.
+- [x] #9 redundant reads: `_reconcile` returns whether any row exists (one read fewer).
+- [x] #10 `OPEN_DECISIONS` comment on its own line.

@@ -278,7 +278,9 @@ async def test_a_crash_after_the_relay_accepted_resends_with_the_same_message_id
             {"j": int(job.id)},
         )
         sink.fault = None
-        clock.advance(minutes=2)
+        clock.advance(
+            minutes=5
+        )  # past the lease: the marker is a crash, not a live send
         second = await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(job, worker))
         assert second is not None and second.sent == 1 and second.duplicates == 1
         (row,) = await rows(pg, int(job.id))
@@ -410,3 +412,31 @@ async def test_a_purged_session_makes_the_job_a_no_op(pg, worker, sink) -> None:
             is None
         )
         assert sink.messages == []
+
+
+async def test_a_crash_marker_that_outlives_the_window_fails_as_unknown(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #5: the window ends on a row whose last attempt left no outcome: the failure
+    records that the relay may hold the mail (the marker read BEFORE it is cleared)."""
+    clock = Clock()
+    async with world(pg) as w:
+        _, config, job = await _service_failure(w, worker, TEACHERS[:1])
+        await clock.sync(pg)
+        deps = _deps(config, sink, clock)
+        sink.down()
+        await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(job, worker))
+        await pg.run(
+            "super",
+            "UPDATE assess_deliveries SET attempt_started_at = now() WHERE job_id = :j",
+            {"j": int(job.id)},
+        )
+        nxt = next(j for j in await jobs(pg, "teacher_notify") if j.id != job.id)
+        clock.advance(hours=73)
+        # the recipients cannot be read on the last run: no new attempt replaces the marker
+        unreadable = _deps(ConfigRecipients(config_pair("w9")[1]), sink, clock)
+        got = await n.notify(unreadable, JobKind.TEACHER_NOTIFY, ctx(nxt, worker))
+        assert got is not None and got.next_run is None
+        (failed,) = await events(pg, "assess_notify_failed", int(job.id))
+        assert failed.reason_code == "window_expired"
+        assert failed.data["last_attempt_outcome"] == "unknown"

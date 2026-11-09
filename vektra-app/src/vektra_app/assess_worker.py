@@ -495,6 +495,13 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         operator_address=settings.operator_email,
         schedule=deps.schedule,
         window=deps.window,
+        # the crash window: no run of either kind outlives its lease
+        stale_after=timedelta(
+            seconds=max(
+                policy_all.kinds[k].lease_s
+                for k in (JobKind.TEACHER_NOTIFY, JobKind.OPERATOR_NOTIFY)
+            )
+        ),
     )
     handlers[JobKind.TEACHER_NOTIFY] = make_notify_handler(
         notify_deps, JobKind.TEACHER_NOTIFY

@@ -339,6 +339,8 @@ class Outbox:
             if r is None or r["status"] not in n.LIVE:
                 return _Rows([])
             prev = r["attempt_started_at"]
+            if prev is not None and prev >= p["stale"]:
+                return _Rows([])  # still inside its lease
             r["attempt_started_at"] = p["now"]
             r["attempts"] += 1
             r["message_id"] = r["message_id"] or p["mid"]
@@ -503,7 +505,8 @@ async def test_a_crash_marker_is_resent_with_its_message_id_and_audited() -> Non
         ("a@uni.example",), Sender(SendResult(False, ErrorClass.CONNECT)), clock
     )
     await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
-    box.rows[0]["attempt_started_at"] = WHEN  # an attempt with no outcome
+    # an attempt with no outcome, older than the lease: a crash
+    box.rows[0]["attempt_started_at"] = WHEN - timedelta(minutes=5)
     sender = Sender()
     got = await n.notify(
         _deps(("a@uni.example",), sender, clock), JobKind.TEACHER_NOTIFY, _ctx(box)
@@ -594,3 +597,98 @@ async def test_replaced_recipients_free_their_slots() -> None:
     got = await n.notify(_deps(new, sender, clock), JobKind.TEACHER_NOTIFY, _ctx(box))
     assert got is not None and got.sent == 3
     assert sorted(a for a, _ in sender.sent) == list(new)
+
+
+# --- code review (2026-11-09), each failing on the first version -------------------------------
+
+
+async def test_an_attempt_still_inside_the_lease_is_never_taken_again() -> None:
+    """Review #1: a retried run must not claim a row whose send may still be running."""
+    clock = Clock()
+    box = Outbox(clock)
+    deps = _deps(
+        ("a@uni.example",), Sender(SendResult(False, ErrorClass.CONNECT)), clock
+    )
+    await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    box.rows[0]["attempt_started_at"] = WHEN  # in flight, well inside the lease
+    sender = Sender()
+    got = await n.notify(
+        _deps(("a@uni.example",), sender, clock), JobKind.TEACHER_NOTIFY, _ctx(box)
+    )
+    assert got is not None and sender.sent == [] and got.duplicates == 0
+    assert box.rows[0]["attempt_started_at"] == WHEN
+
+
+class Boom(Sender):
+    async def send(
+        self, msg: Any, recipient: str, *, slot_held: bool = False
+    ) -> SendResult:
+        if recipient.startswith("a@"):
+            raise RuntimeError("relay library bug")
+        return await super().send(msg, recipient, slot_held=slot_held)
+
+
+async def test_a_run_that_raises_still_finishes_its_rows_and_queues_the_next() -> None:
+    """Review #1/#2: one row's exception neither orphans the other sends nor kills the chain
+    (a dead job would leave the rows live forever, with no alert)."""
+    clock = Clock()
+    box = Outbox(clock)
+    sender = Boom()
+    deps = _deps(("a@uni.example", "b@uni.example"), sender, clock)
+    got = await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    assert got is not None and got.sent == 1 and got.next_run is not None
+    assert [a for a, _ in sender.sent] == ["b@uni.example"]
+    assert len(box.jobs) == 1
+
+
+async def test_a_busy_relay_does_not_advance_the_backoff() -> None:
+    """Review #3: a busy-only rerun keeps its try number."""
+    clock = Clock()
+    box = Outbox(clock)
+    await n.notify(
+        _deps(("a@uni.example",), Sender(SlotBusy), clock),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box),
+    )
+    (nxt,) = box.jobs
+    assert '"try":1' in nxt["args"]
+
+
+async def test_a_crash_marked_row_whose_recipient_left_audits_the_possible_duplicate() -> (
+    None
+):
+    """Review #6: the relay may hold the mail; the withdrawal must not erase that."""
+    clock = Clock()
+    box = Outbox(clock)
+    deps = _deps(
+        ("a@uni.example",), Sender(SendResult(False, ErrorClass.CONNECT)), clock
+    )
+    await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    box.rows[0]["attempt_started_at"] = WHEN - timedelta(
+        hours=1
+    )  # a crash, past the lease
+    got = await n.notify(
+        _deps(("z@uni.example",), Sender(), clock), JobKind.TEACHER_NOTIFY, _ctx(box)
+    )
+    assert got is not None and got.duplicates == 1
+    assert "assess_notify_possible_duplicate" in _events(box)
+    assert ("assess_notify_failed", "recipient_withdrawn") in box.audit
+
+
+class Changing(Recipients):
+    def __init__(self, *answers: tuple[str, ...]) -> None:
+        super().__init__(answers[0])
+        self.answers = list(answers)
+
+    async def read(self, *_: Any) -> tuple[str, ...] | None:
+        return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+
+
+async def test_an_address_removed_while_waiting_for_the_relay_is_not_mailed() -> None:
+    """Review #7: the address must still be configured once the relay session is held."""
+    clock = Clock()
+    box = Outbox(clock)
+    sender = Sender()
+    deps = _deps(None, sender, clock, recipients=Changing(("a@uni.example",), ()))
+    got = await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    assert got is not None and sender.sent == [] and got.next_run is not None

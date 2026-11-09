@@ -79,9 +79,8 @@ PENDING_OWNER_PLANS: frozenset[str] = frozenset({PRIVACY, HARDENING})
 
 #: slots whose owner plan IS completed but whose behaviour is not specified anywhere: a decision is
 #: needed (recorded as an open item in the owner plan's Notes), not an invented body
-OPEN_DECISIONS: dict[
-    str, str
-] = {}  # none since 2026-11-09 (teacher/operator notify bound)
+#: none since 2026-11-09 (teacher_notify / operator_notify bound by the relay)
+OPEN_DECISIONS: dict[str, str] = {}
 
 
 def expected_unbound() -> set[str]:

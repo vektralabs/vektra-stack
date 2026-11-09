@@ -95,6 +95,9 @@ class NotifyDeps:
     operator_address: str | None
     schedule: Sequence[timedelta]
     window: timedelta
+    #: an attempt started longer ago than this without an outcome is a crash (the job lease:
+    #: a run still inside its budget is never raced)
+    stale_after: timedelta = timedelta(seconds=240)
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
 
 
@@ -118,7 +121,9 @@ class Notified:
     retrying: int = 0
     failed: int = 0
     duplicates: int = 0
-    busy: int = 0
+    busy: int = 0  # no relay session in time, or an attempt still in flight: rerun soon
+    withdrawn: int = 0  # the address was removed while the row waited for the relay
+    errors: int = 0  # rows whose run raised: the next run takes them again
     unresolved: bool = False
     next_run: datetime | None = None
 
@@ -280,14 +285,20 @@ _ADD = text(
     "INSERT INTO assess_deliveries (kind, job_id, recipient_kind, recipient_ref, status, "
     "not_before) VALUES (:k, :j, 'address', :ref, 'PENDING', :now) ON CONFLICT DO NOTHING"
 )
+#: RETURNING reads the marker from before the update (review #5: after it, it is always NULL)
 _WITHDRAW = text(
-    "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = :cls, "
-    "attempt_started_at = NULL WHERE id = :i AND status IN ('PENDING', 'RETRYING') "
-    "RETURNING id, recipient_ref, attempt_started_at"
+    "WITH prev AS (SELECT id, attempt_started_at FROM assess_deliveries WHERE id = :i "
+    "AND status IN ('PENDING', 'RETRYING') FOR UPDATE) "
+    "UPDATE assess_deliveries d SET status = 'FAILED', last_error_class = :cls, "
+    "attempt_started_at = NULL FROM prev WHERE d.id = prev.id "
+    "RETURNING d.id, d.recipient_ref, prev.attempt_started_at"
 )
 _CLAIM = text(
     "WITH due AS (SELECT id, attempt_started_at AS prev FROM assess_deliveries "
-    "WHERE id = :i AND status IN ('PENDING', 'RETRYING') FOR UPDATE SKIP LOCKED) "
+    "WHERE id = :i AND status IN ('PENDING', 'RETRYING') "
+    # an attempt inside the lease may still be sending: never taken again (review #1)
+    "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) "
+    "FOR UPDATE SKIP LOCKED) "
     "UPDATE assess_deliveries d SET attempt_started_at = :now, attempts = d.attempts + 1, "
     "message_id = COALESCE(d.message_id, :mid) FROM due WHERE d.id = due.id "
     "RETURNING d.id, d.recipient_ref, d.attempts, due.prev, d.message_id"
@@ -307,6 +318,7 @@ _FAIL = text(
     "smtp_code = :code, attempt_started_at = NULL "
     "WHERE id = :i AND attempt_started_at = :started"
 )
+#: the next run's time, for an operator reading the rows (the chain, not a tick, runs them)
 _LIVE_ROWS = text(
     "UPDATE assess_deliveries SET not_before = :nb WHERE job_id = :j AND kind = :k "
     "AND status IN ('PENDING', 'RETRYING')"
@@ -362,7 +374,12 @@ async def _claim(deps: NotifyDeps, acquire: AcquireDb, run: _Run, row_id: UUID, 
         f"notify-{run.kind.value}-{run.root}", 1, ref, deps.message_id_domain
     )
     async with acquire() as conn, conn.begin():
-        c = (await conn.execute(_CLAIM, {"i": row_id, "now": now, "mid": mid})).first()
+        c = (
+            await conn.execute(
+                _CLAIM,
+                {"i": row_id, "now": now, "mid": mid, "stale": now - deps.stale_after},
+            )
+        ).first()
         if c is None:
             return None
         if c.prev is not None:
@@ -466,9 +483,17 @@ async def _row(
         return False
     try:
         async with deps.sender.slot():
+            # the slot wait may have been long: the address must still be configured NOW
+            # (review #7, as the transcript handler does)
+            if run.kind is TEACHER and not await _still_configured(
+                deps, acquire, run, address
+            ):
+                out.withdrawn += 1  # left unclaimed; the next run withdraws it
+                return True
             c = await _claim(deps, acquire, run, row_id, ref, out)
             if c is None:
-                return False
+                out.busy += 1  # an attempt still inside its lease: looked at again soon
+                return True
             msg = build(
                 run.kind,
                 run.event,
@@ -483,6 +508,33 @@ async def _row(
     except SlotBusy:
         out.busy += 1  # no relay session in time: the row stays live, untouched
         return True
+
+
+async def _gone(
+    deps: NotifyDeps,
+    acquire: AcquireDb,
+    run: _Run,
+    row_id: UUID,
+    ref: str,
+    out: Notified,
+) -> bool:
+    """A crash-marked row whose recipient is no longer configured: claimed (which audits the
+    possible duplicate: the relay may hold it) and FAILED ``recipient_withdrawn`` (review #6)."""
+    c = await _claim(deps, acquire, run, row_id, ref, out)
+    if c is None:
+        out.busy += 1
+        return True
+    await _settle(
+        deps, acquire, run, c, SendResult(False), RECIPIENT_WITHDRAWN, out, final=True
+    )
+    return False
+
+
+async def _still_configured(
+    deps: NotifyDeps, acquire: AcquireDb, run: _Run, address: str
+) -> bool:
+    current = await _recipients(deps, acquire, run)
+    return current is not None and address in current
 
 
 async def _recipients(
@@ -507,15 +559,18 @@ async def _reconcile(
     run: _Run,
     by_ref: Mapping[str, str] | None,
     out: Notified,
-) -> list[Any]:
+) -> tuple[list[Any], bool]:
     """Rows for the recipients configured now; a live row whose recipient is no longer
     configured is FAILED (``recipient_withdrawn``) first, so it frees its slot: never more than
-    ``MAX_RECIPIENTS`` rows live or SENT. The live rows left."""
+    ``MAX_RECIPIENTS`` rows live or SENT. A crash-marked row is left to the run, which claims it
+    (auditing the possible duplicate) before it fails. The live rows left, and whether the
+    notification has any row at all."""
     now = deps.clock()
     rows = (await conn.execute(_ROWS, {"j": run.root, "k": run.kind.value})).all()
     if by_ref is not None:
         for r in rows:
-            if r.status in LIVE and r.recipient_ref not in by_ref:
+            marked = r.attempt_started_at is not None
+            if r.status in LIVE and r.recipient_ref not in by_ref and not marked:
                 gone = (
                     await conn.execute(
                         _WITHDRAW, {"i": r.id, "cls": RECIPIENT_WITHDRAWN}
@@ -541,7 +596,7 @@ async def _reconcile(
                 )
                 room -= 1
         rows = (await conn.execute(_ROWS, {"j": run.root, "k": run.kind.value})).all()
-    return [r for r in rows if r.status in LIVE]
+    return [r for r in rows if r.status in LIVE], bool(rows)
 
 
 async def _expire(
@@ -602,7 +657,8 @@ async def _next_run(
             if k not in ("root_job_id", "try", "since")
         },
         "root_job_id": run.root,
-        "try": run.try_no + 1,
+        # a busy rerun made no attempt: it does not advance the backoff (review #3)
+        "try": run.try_no if busy_only else run.try_no + 1,
         "since": int(run.since.timestamp()),
     }
     async with acquire() as conn, conn.begin():
@@ -645,22 +701,23 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
         else {notify_ref(kind, event.site_id, a): a for a in configured}
     )
     async with ctx.acquire() as conn, conn.begin():
-        live = await _reconcile(conn, deps, run, by_ref, out)
-        if by_ref is not None and not by_ref and not live:
-            rows = (await conn.execute(_ROWS, {"j": run.root, "k": kind.value})).all()
-            if not rows:
-                # readable and empty: the teacher configured nobody to tell
-                await _audit(
-                    conn, AssessAuditEvent.NOTIFY_FAILED, run, reason=NO_RECIPIENTS
-                )
-                out.failed += 1
-                _alert("notify_failed", kind, reason_code=NO_RECIPIENTS)
+        live, any_rows = await _reconcile(conn, deps, run, by_ref, out)
+        if by_ref is not None and not by_ref and not any_rows:
+            # readable and empty: the teacher configured nobody to tell
+            await _audit(
+                conn, AssessAuditEvent.NOTIFY_FAILED, run, reason=NO_RECIPIENTS
+            )
+            out.failed += 1
+            _alert("notify_failed", kind, reason_code=NO_RECIPIENTS)
     if by_ref is None:
         out.unresolved = True
         _alert(RECIPIENTS_UNRESOLVED, kind)
         await _next_run(deps, ctx.acquire, run, out, busy_only=False)
         return out
-    retry = await asyncio.gather(
+    # every row runs to its end even when one raises (review #1: no orphaned send a retried
+    # job could race); a row that raised is taken again by the next run of the chain, so an
+    # exception never kills the chain and leaves its rows live forever (review #2)
+    results = await asyncio.gather(
         *(
             _row(
                 deps,
@@ -671,11 +728,29 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
                 by_ref[r.recipient_ref],
                 out,
             )
+            if r.recipient_ref in by_ref
+            else _gone(deps, ctx.acquire, run, r.id, r.recipient_ref, out)
             for r in live
-        )
+        ),
+        return_exceptions=True,
     )
+    retry: list[bool] = []
+    for res in results:
+        if isinstance(res, BaseException):
+            if not isinstance(res, Exception):
+                raise res  # cancellation (the job's hard timeout) is not a row's failure
+            out.errors += 1
+            log.warning(
+                "assess_notify_row_error",
+                kind=kind.value,
+                error_type=type(res).__name__,
+            )
+            retry.append(True)
+        else:
+            retry.append(bool(res))
     if any(retry):
-        await _next_run(deps, ctx.acquire, run, out, busy_only=out.retrying == 0)
+        busy_only = out.retrying == 0 and out.errors == 0
+        await _next_run(deps, ctx.acquire, run, out, busy_only=busy_only)
     log.info(
         "assess_notify_run",
         kind=kind.value,

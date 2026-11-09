@@ -77,7 +77,6 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.RENDER_CHECK: _WS,
     # plan 11: re-derived from VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S by ``load_policy``
     JobKind.TEACHER_GATE: KindPolicy("ws", 95, 190),
-    JobKind.CAPABILITY_PROBE: _WS,
     JobKind.TRANSCRIPT_GENERATE: KindPolicy("transcript", 30, 60),
     # up to 3 recipients through at most VEKTRA_ASSESS_SMTP_MAX_CONNECTIONS sessions, each with
     # a 30 s hard timeout (plan transcript-delivery 10b); the lease is also the crash window
@@ -90,7 +89,6 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     JobKind.PURGE: _MAINT,
     JobKind.ROTATE_KEYS: _MAINT,
     JobKind.ERASURE: _MAINT,
-    JobKind.SESSION_DEADLINE: _MAINT,
     # unwrap the DEK, append one marked turn: short, its own budget in the maintenance pool
     JobKind.RECONCILE_REPLY: KindPolicy("maintenance", 20, 40, 3),
 }

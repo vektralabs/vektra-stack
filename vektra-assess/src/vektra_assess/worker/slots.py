@@ -36,7 +36,6 @@ TEACHER = "20261101-154950-assess-teacher-ops"
 HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.PREFLIGHT: SESSION,
     JobKind.RECONCILE_REPLY: SESSION,
-    JobKind.SESSION_DEADLINE: SESSION,
     JobKind.ENROLMENT_RECHECK: SESSION,
     JobKind.GATE_REFRESH: SESSION,
     JobKind.RENDER_CHECK: SESSION,
@@ -47,7 +46,6 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.PURGE: PRIVACY,
     JobKind.ERASURE: PRIVACY,
     JobKind.SETUP_CHECK: MOODLE_WS,
-    JobKind.CAPABILITY_PROBE: MOODLE_WS,
     JobKind.ROTATE_KEYS: HARDENING,
     JobKind.TEACHER_GATE: TEACHER,
 }
@@ -67,6 +65,39 @@ TICK_OWNERS: dict[str, str] = {
     "purge": PRIVACY,
     "setup_check": MOODLE_WS,
 }
+
+# --- the documented allowlist of unbound slots ---------------------------------------------------
+# A production worker refuses to start while ANY slot is unbound, so every slot the fully keyed
+# composition leaves unbound must be accounted for here, and nothing else may be unbound. The guard
+# test (vektra-app/tests/test_assess_processes.py) composes the real worker and compares: a
+# carried-over binding that silently vanished (setup_check, until 2026-11-08) fails it, and so does
+# a slot bound without removing it from here.
+
+#: plans not yet completed in .s2s/plans/INDEX-ASSESS.md: their slots are unbound by schedule (the
+#: guard test checks each is still not ``completed`` there)
+PENDING_OWNER_PLANS: frozenset[str] = frozenset({PRIVACY, HARDENING})
+
+#: slots whose owner plan IS completed but whose behaviour is not specified anywhere: a decision is
+#: needed (recorded as an open item in the owner plan's Notes), not an invented body
+OPEN_DECISIONS: dict[str, str] = {
+    "job:teacher_notify": (
+        "queued by service_failure closes and the rollback cap; channel, content and recipients "
+        "are not specified (transcript-delivery Notes, 2026-11-08)"
+    ),
+    "job:operator_notify": (
+        "queued by the rollback cap and Moodle-unreachable rollbacks; no operator address or "
+        "channel exists (transcript-delivery Notes, 2026-11-08)"
+    ),
+}
+
+
+def expected_unbound() -> set[str]:
+    """The slots a fully keyed production composition is allowed to leave unbound today."""
+    owned = {
+        f"job:{k.value}" for k, o in HANDLER_OWNERS.items() if o in PENDING_OWNER_PLANS
+    }
+    owned |= {f"tick:{n}" for n, o in TICK_OWNERS.items() if o in PENDING_OWNER_PLANS}
+    return owned | set(OPEN_DECISIONS)
 
 
 class SlotsNotBound(RuntimeError):
@@ -94,6 +125,8 @@ class Slots:
 #: QUIT's own bound after a session (``delivery.smtp.QUIT_TIMEOUT_S``) and room for the row write
 PROBE_QUIT_S = 5.0
 PROBE_ROW_MARGIN_S = 10.0
+#: the smtp_probe tick's interval; the setup-check item ``smtp_probe`` judges freshness from it
+SMTP_PROBE_INTERVAL_S = 300.0
 
 
 def probe_tick_timeout_s(smtp_timeout_s: float) -> float:
@@ -134,7 +167,7 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
         # timeout covers a whole probe (bounded slot wait + session + QUIT) plus the row write
         t(
             "smtp_probe",
-            300,
+            SMTP_PROBE_INTERVAL_S,
             probe_tick_timeout_s(s.smtp_timeout_s),
             locks.SMTP_PROBE,
             jitter_s=30,

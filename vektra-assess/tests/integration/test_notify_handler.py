@@ -442,3 +442,26 @@ async def test_a_crash_marker_that_outlives_the_window_fails_as_unknown(
         (failed,) = await events(pg, "assess_notify_failed", int(job.id))
         assert failed.reason_code == "window_expired"
         assert failed.data["last_attempt_outcome"] == "unknown"
+
+
+async def test_a_retried_root_job_counts_its_window_on_the_worker_clock(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4514485538: the window's origin is the first run's WORKER clock. With the
+    database clock 74 h behind the worker, a DB-side ``created_at`` would put the origin past
+    a 72 h window, and the root job retried by the runner would fail its rows unsent."""
+    clock = Clock()
+    async with world(pg) as w:
+        _, config, job = await _service_failure(w, worker, TEACHERS[:1])
+        await clock.sync(pg)
+        clock.advance(hours=74)  # the worker's clock, 74 h ahead of the database's
+        deps = _deps(config, sink, clock)
+        sink.down()
+        first = await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(job, worker))
+        assert first is not None and first.retrying == 1
+        # the runner retries the same root job (no ``since``) a minute later; the relay is back
+        sink.up()
+        clock.advance(minutes=1)
+        again = await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(job, worker))
+        assert again is not None and again.sent == 1 and again.failed == 0
+        assert [r.status for r in await rows(pg, int(job.id))] == ["SENT"]

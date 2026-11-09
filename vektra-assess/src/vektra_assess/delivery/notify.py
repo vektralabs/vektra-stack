@@ -281,9 +281,13 @@ _ROWS = text(
     "SELECT id, recipient_ref, status, attempt_started_at FROM assess_deliveries "
     "WHERE job_id = :j AND kind = :k ORDER BY created_at, id"
 )
+#: ``created_at`` on the WORKER clock: it is the retry window's origin for a root job retried
+#: by the runner (``_ORIGIN``), and every other window instant is the worker's (CodeRabbit
+#: 4514485538: a DB-side default would mix two clocks)
 _ADD = text(
     "INSERT INTO assess_deliveries (kind, job_id, recipient_kind, recipient_ref, status, "
-    "not_before) VALUES (:k, :j, 'address', :ref, 'PENDING', :now) ON CONFLICT DO NOTHING"
+    "not_before, created_at) VALUES (:k, :j, 'address', :ref, 'PENDING', :now, :now) "
+    "ON CONFLICT DO NOTHING"
 )
 #: RETURNING reads the marker from before the update (review #5: after it, it is always NULL)
 _WITHDRAW = text(

@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.privacy.purge import (
+    IN_FLIGHT,
     Connect,
     leftover,
     shred_sessions,
@@ -59,7 +60,8 @@ class ErasureVerificationFailed(RuntimeError):
 
 
 class SessionWentLive(RuntimeError):
-    """A session of the scope was live at the deletion: retried by the job runner."""
+    """A session of the scope was live at the deletion, or work on it was in flight (a leased
+    job, a send): the transaction rolls back and the job runner retries the erasure."""
 
 
 async def close_live(
@@ -107,6 +109,13 @@ _COMPLETE = text(
     "rows_deleted = CAST(:counts AS jsonb), subject_userids = NULL, subject_userid_hash = NULL "
     "WHERE id = :i"
 )
+#: a transcript copy whose attempt started recently and has no outcome yet: maybe on the wire
+_SENDING = text(
+    "SELECT count(*) FROM assess_deliveries d JOIN assess_transcripts t "
+    "ON t.id = d.transcript_id WHERE t.session_id = ANY(:s) AND d.sent_at IS NULL "
+    "AND d.status IN ('PENDING', 'RETRYING') "
+    "AND d.attempt_started_at > now() - make_interval(secs => :flight)"
+)
 _CLOSE = text("SELECT assess_close_session(:sid, :epoch, 'access_revoked')")
 
 
@@ -148,6 +157,26 @@ async def erase_scope(
         # it (raising here rolls this transaction back and the job is retried)
         raise SessionWentLive("a live session appeared in the scope")
     sids = [s.id for s in sessions]
+    # work in flight on the scope would outlive the erasure: a leased job (a render check can
+    # write the student's caches back) or a transcript copy on the wire (its bytes are already
+    # decrypted). The erasure waits for them: raising rolls back and the job is retried
+    jp = _jobs_params(site_id, cmid, userids, sids)
+    busy = (
+        await conn.execute(
+            text(
+                "SELECT count(*) FROM assess_jobs WHERE "
+                f"{_jobs_where(cmid, userids, leased=True)}"
+            ),
+            jp,
+        )
+    ).scalar_one()
+    sending = (
+        await conn.execute(_SENDING, {"s": sids, "flight": IN_FLIGHT.total_seconds()})
+    ).scalar_one()
+    if busy or sending:
+        raise SessionWentLive(
+            f"work in flight on the scope: {busy} job(s), {sending} send(s)"
+        )
     shredded = await shred_sessions(
         conn, sids, abandon_why="subject_erased", notify=False
     )
@@ -194,17 +223,22 @@ async def erase_scope(
     return result
 
 
-def _jobs_where(cmid: int | None, userids: list[int] | None) -> str:
-    """Ready jobs that would act on the scope after the erasure (and write its rows back): a
-    per-student job of the site (render check, gate refresh, notice), or a job of one of its
-    sessions. A job already leased runs to its end: its writes are the residual (Notes)."""
+def _jobs_where(
+    cmid: int | None, userids: list[int] | None, *, leased: bool = False
+) -> str:
+    """Jobs of the scope: a per-student job of the site (render check, gate refresh, notice) or
+    a job of one of its sessions. Not leased (``leased=False``): every one that still names the
+    subject, ready or finished (done, failed, dead: their arguments and dedupe keys carry the
+    ids), deleted with the rows. Leased: a run in flight that could write rows back after the
+    erasure commits; the erasure waits for it (CodeRabbit 4516399770 / 4516399779)."""
     student = "args->>'site_id' = :site_text AND args ? 'student_userid'"
     if cmid is not None:
         student += " AND args->>'cmid' = :cmid_text"
     if userids is not None:
         student += " AND args->>'student_userid' = ANY(:users_text)"
     return (
-        f"state = 'ready' AND (({student}) OR args->>'session_id' = ANY(:sids_text) "
+        f"state {'=' if leased else '<>'} 'leased' AND (({student}) "
+        "OR args->>'session_id' = ANY(:sids_text) "
         "OR args->>'transcript_id' = ANY(:sids_text))"
     )
 

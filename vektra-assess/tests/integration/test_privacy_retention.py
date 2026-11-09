@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import uuid
 from typing import Any
@@ -859,6 +860,68 @@ async def test_a_generation_racing_the_purge_inserts_nothing(pg, worker) -> None
                 pg,
                 "SELECT count(*) FROM assess_transcripts WHERE session_id = :s",
                 s=s.session_id,
+            )
+            == 0
+        )
+
+
+async def test_an_erasure_waits_for_work_in_flight_and_leaves_no_job_naming_the_subject(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4516399770 / 4516399779 / 4516399805: a leased render check or a copy on the
+    wire would outlive the erasure, so it waits (the job is retried); finished jobs that still
+    carry the subject's ids go with the rows."""
+    from vektra_assess.privacy.erasure import SessionWentLive
+
+    async with world(pg) as w:
+        s, _ = await ready(w, worker)
+        args = json.dumps(
+            {"site_id": str(w.site), "student_userid": s.sub, "cmid": s.cmid}
+        )
+        for state in ("leased", "done", "dead"):
+            await pg.run(
+                "super",
+                "INSERT INTO assess_jobs (kind, args, state, dedupe_key) VALUES "
+                f"('render_check', CAST(:a AS jsonb), '{state}', :k)",
+                {"a": args, "k": f"render_check:{w.site}:{s.sub}:{s.cmid}:{state}"},
+            )
+        eid = (
+            await pg.run(
+                "super",
+                "INSERT INTO assess_erasure_records (site_id, subject_userid_hash, scope, "
+                "subject_userids) VALUES (:s, 'h', 'subject', :u) RETURNING id",
+                {"s": w.site, "u": [s.sub]},
+            )
+        )[0][0]
+        before = await content_counts(pg, s.session_id)
+        with pytest.raises(SessionWentLive):
+            await run_erasure(worker.connect, int(eid))
+        assert await content_counts(pg, s.session_id) == before
+        # the render check finishes; a copy is now on the wire: still waiting
+        await pg.run(
+            "super", "UPDATE assess_jobs SET state = 'done' WHERE state = 'leased'"
+        )
+        await pg.run(
+            "super",
+            "UPDATE assess_deliveries SET attempt_started_at = now() WHERE transcript_id = :t",
+            {"t": s.session_id},
+        )
+        with pytest.raises(SessionWentLive):
+            await run_erasure(worker.connect, int(eid))
+        await pg.run(
+            "super",
+            "UPDATE assess_deliveries SET attempt_started_at = now() - interval '1 hour' "
+            "WHERE transcript_id = :t",
+            {"t": s.session_id},
+        )
+        assert await run_erasure(worker.connect, int(eid)) == "erased"
+        assert await one(pg, "SELECT count(*) FROM assess_sessions WHERE id = :s",
+                         s=s.session_id) == 0  # fmt: skip
+        assert (
+            await one(
+                pg,
+                "SELECT count(*) FROM assess_jobs WHERE args->>'site_id' = :s",
+                s=str(w.site),
             )
             == 0
         )

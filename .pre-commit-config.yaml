@@ -69,6 +69,6 @@ repos:
       # when the denylist is absent (external contributors, CI).
       - id: privacy-denylist
         name: privacy denylist
-        entry: scripts/check_privacy.sh
+        entry: scripts/hooks/check_privacy.sh
         language: script
         exclude: ^\.local/

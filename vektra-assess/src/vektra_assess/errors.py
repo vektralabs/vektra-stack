@@ -5,7 +5,8 @@ only re-exports them and builds the assess envelopes. Owning plans:
 .s2s/plans/20261101-154950-assess-foundations (001-004),
 .s2s/plans/20261101-154950-assess-session-lifecycle (005-016) and
 .s2s/plans/20261101-154950-assess-transcript-delivery (017-021) and
-.s2s/plans/20261101-154950-assess-teacher-ops (022-025).
+.s2s/plans/20261101-154950-assess-teacher-ops (022-025) and
+.s2s/plans/20261101-154950-assess-privacy-retention (026-028).
 
 Every message and remediation here is fixed text plus content-free codes: no envelope ever
 carries a student's text, a Moodle value or a row of another student.
@@ -39,6 +40,9 @@ from vektra_shared.errors import (
     ERR_ASSESS_023,
     ERR_ASSESS_024,
     ERR_ASSESS_025,
+    ERR_ASSESS_026,
+    ERR_ASSESS_027,
+    ERR_ASSESS_028,
     ErrorCategory,
     ErrorResponse,
 )
@@ -69,6 +73,9 @@ __all__ = [
     "ERR_ASSESS_023",
     "ERR_ASSESS_024",
     "ERR_ASSESS_025",
+    "ERR_ASSESS_026",
+    "ERR_ASSESS_027",
+    "ERR_ASSESS_028",
     "activation_refused",
     "assess_unavailable",
     "bad_request",
@@ -77,9 +84,11 @@ __all__ = [
     "config_invalid",
     "deadline_passed",
     "download_token_invalid",
+    "erasure_not_completed",
     "key_not_bound",
     "loginas_refused",
     "plugin_too_old",
+    "privacy_config_invalid",
     "rate_limited",
     "reply_pending",
     "resend_recipient_forbidden",
@@ -91,6 +100,7 @@ __all__ = [
     "state_conflict",
     "teacher_unverified",
     "token_invalid",
+    "transcript_expired",
     "transcript_integrity",
     "transcript_not_found",
 ]
@@ -432,4 +442,48 @@ def terminate_count_mismatch(current: int) -> ErrorResponse:
         message="The number of active sessions changed since the confirmation.",
         remediation="Confirm again with the current number of active sessions.",
         details={"current": int(current)},
+    )
+
+
+# --- privacy and retention (plan assess-privacy-retention) -----------------------------------
+
+#: REQ-088: the student-facing text of a purged transcript, shown as is by the plugin
+TRANSCRIPT_EXPIRED_TEXT = (
+    "Trascrizione non più disponibile (periodo di conservazione scaduto)"
+)
+
+
+def transcript_expired() -> ErrorResponse:
+    """410 (REQ-088): the transcript existed and was purged at the end of its retention period;
+    a tombstone says so, nothing of its content remains."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_026,
+        message=TRANSCRIPT_EXPIRED_TEXT,
+        remediation="The retention period of this transcript has expired: it cannot be restored.",
+    )
+
+
+def erasure_not_completed(reason: str, retry_after_s: int = 5) -> ErrorResponse:
+    """503 (OQ-033): ``pending`` (the worker has not finished: the same request again is
+    idempotent) or ``failed`` (the count check found rows left: nothing was committed)."""
+    return ErrorResponse(
+        category=ErrorCategory.TRANSIENT,
+        code=ERR_ASSESS_027,
+        message="The erasure has not completed.",
+        remediation="Retry the same request; if it keeps failing, contact the operator.",
+        retry_after=retry_after_s,
+        details={"reason": reason},
+    )
+
+
+def privacy_config_invalid(fields: list[dict[str, object]]) -> ErrorResponse:
+    """400 (REQ-089): the privacy settings were refused, ``details.fields`` = ``{field, code}``
+    per invalid field, never the value."""
+    return ErrorResponse(
+        category=ErrorCategory.PERMANENT,
+        code=ERR_ASSESS_028,
+        message="The privacy settings were refused.",
+        remediation="Correct the listed fields and save again.",
+        details={"fields": fields},
     )

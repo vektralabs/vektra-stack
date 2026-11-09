@@ -92,6 +92,16 @@ class AssessAuditEvent(enum.StrEnum):
     TEACHER_TERMINATE = "assess_teacher_terminate"
     TEACHER_EXTRA_TIME = "assess_teacher_extra_time"
     TEACHER_OPENING_ATTESTED = "assess_teacher_opening_attested"
+    # plan assess-privacy-retention (REQ-085 purge, erasure and privacy events): ids, counts and
+    # codes only. A failed purge or erasure rolls its transaction back, so its alert is a log
+    # line, never an audit row that would claim a deletion.
+    PRIVACY_CONFIG_CHANGED = "assess_privacy_config_changed"
+    PURGE = "assess_purge"
+    DELIVERY_ABANDONED_ON_PURGE = "assess_delivery_abandoned_on_purge"
+    ERASURE = "assess_erasure"
+    ERASURE_RETAINED = "assess_erasure_retained"
+    PRIVACY_EXPORT = "assess_privacy_export"
+    PRIVACY_SUBJECTS_LISTED = "assess_privacy_subjects_listed"
 
 
 class Conn(Protocol):

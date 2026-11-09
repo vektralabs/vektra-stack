@@ -133,6 +133,7 @@ async def step_12_assess_check(
 
     from sqlalchemy.ext.asyncio import create_async_engine
 
+    from vektra_assess.config import erasure_mode_problem
     from vektra_assess.crypto.selftest import run_crypto_selftest
     from vektra_assess.db.roles import (
         assert_distinct_dsn,
@@ -140,6 +141,16 @@ async def step_12_assess_check(
         dsn_with_password,
     )
 
+    problem = erasure_mode_problem(settings)
+    if problem is not None:
+        raise StartupValidationError(
+            step=STEP,
+            detail=problem,
+            remediation=(
+                "Set VEKTRA_ASSESS_ERASURE_MODE to the DPO's decision (erase, the default "
+                "behaviour of OQ-033, or retain_exam_evidence), docs/reference/configuration.md."
+            ),
+        )
     loaded: dict[str, Any] = enforce_key_matrix(
         "api", secrets_dir=settings.secrets_dir, step=STEP
     )

@@ -39,6 +39,8 @@ TABLES: tuple[str, ...] = (
     "assess_jobs",
     "assess_model_activations",
     "assess_outage_incidents",
+    "assess_privacy_config",  # revision 0040 (plan 12): the REQ-089 settings of a site
+    "assess_purge_records",  # revision 0040 (plan 12): the purge tombstones, ids and counts only
     "assess_render_checks",
     "assess_render_state",
     "assess_reset_grants",
@@ -71,6 +73,7 @@ SEQUENCES: tuple[str, ...] = (
     "assess_jobs_id_seq",
     "assess_model_activations_id_seq",
     "assess_outage_incidents_id_seq",
+    "assess_purge_records_id_seq",
     "assess_render_checks_id_seq",
     "assess_setup_checks_id_seq",
     "assess_start_attempts_id_seq",
@@ -126,6 +129,11 @@ _DELIVERY_API_READ = (
     "attempts", "not_before", "attempt_started_at", "last_error_class", "smtp_code",
     "sent_at", "created_at",
 )  # fmt: skip
+#: columns of assess_privacy_config the API may UPDATE (never the site it belongs to)
+_PRIVACY_UPDATE = (
+    "retention_days", "legal_basis_label", "legal_basis_text", "notice_url", "notice_text",
+    "notice_version", "updated_by", "updated_at",
+)  # fmt: skip
 _ALL: None = None
 
 MATRIX: Mapping[str, Mapping[str, Privs]] = {
@@ -166,7 +174,17 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "UPDATE": ("consumed_at",),
         },
         "assess_audit_events": {"INSERT": _ALL},
-        "assess_erasure_records": {"INSERT": _ALL},
+        # revision 0040 (plan 12): the erasure endpoint queues a record and waits for the
+        # worker's completion on it (the API deletes nothing itself)
+        "assess_erasure_records": {"SELECT": _ALL, "INSERT": _ALL},
+        # revision 0040 (plan 12, REQ-089): the operator writes a site's privacy settings
+        "assess_privacy_config": {
+            "SELECT": _ALL,
+            "INSERT": _ALL,
+            "UPDATE": _PRIVACY_UPDATE,
+        },
+        # revision 0040: the tombstones answer 410 and ``transcripts[].purged``
+        "assess_purge_records": {"SELECT": _ALL},
         "assess_activity_config": {
             "SELECT": _CONFIG_READ,
             "INSERT": _CONFIG_WRITE,
@@ -288,12 +306,18 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
             "UPDATE": _ALL,
             "DELETE": _ALL,
         },
-        "assess_extra_time": {"SELECT": _ALL},
-        # revision 0038: the transcript-KEK rotation re-encrypts the teacher's reasons
+        # revision 0040 (plan 12): the erasure deletes the subject's grants
+        "assess_extra_time": {"SELECT": _ALL, "DELETE": _ALL},
+        # revision 0038: the transcript-KEK rotation re-encrypts the teacher's reasons;
+        # revision 0040: purge and erasure delete the grants of the sessions they remove
         "assess_reset_grants": {
             "SELECT": _ALL,
             "UPDATE": ("consumed_at", "reason_ct", "reason_kid"),
+            "DELETE": _ALL,
         },
+        # revision 0040 (plan 12): retention per site, the tombstones the purge writes
+        "assess_privacy_config": {"SELECT": _ALL},
+        "assess_purge_records": {"SELECT": _ALL, "INSERT": _ALL},
         "assess_terminations": {"SELECT": _ALL, "UPDATE": ("reason_ct", "reason_kid")},
         # session data. Snapshots and turns are never UPDATEd (BR-015); the worker reads
         # them to build the opening turn and the transcript and deletes them on purge.

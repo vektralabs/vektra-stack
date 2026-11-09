@@ -327,10 +327,13 @@ no log files fails rather than passing.
 > 9. / 10. the session -> transcript map was queried three times and the privacy-row read and the
 >    subject listing had copies: one map from `shred_sessions`, one `READ`, one listing query.
 >
-> **Open for the product owner / DPO (finding 2, not changed):** erasing a subject deletes their
+> **Product owner decision (2026-11-09, finding 2): accepted as is, documented.** Erasure is
+> started by an administrator or the DPO, not by the student, so using it to earn a fresh attempt
+> is unlikely; the API reference states the consequence. No 409, no residual counter.
+>
+> Original note (finding 2): erasing a subject deletes their
 > session rows, so on an activity still open the START gate counts 0 closed sessions and the
 > student could Start again. The retention purge keeps the rows for this reason; an erasure
 > cannot keep them without keeping "this user took the exam". Options: refuse an erasure while
 > the activity is open (409), keep an anonymous per-activity counter, or accept it (the erasure
-> is an administrator's action; `retain_exam_evidence` exists for exam evidence). Recorded,
-> BLOCKED on the decision.
+> is an administrator's action; `retain_exam_evidence` exists for exam evidence).

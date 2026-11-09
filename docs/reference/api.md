@@ -291,7 +291,9 @@ user ids and the subject hash it carried. A retry of a pending request waits on 
 a request whose job died is recorded `failed` (`abandoned`) by the purge tick a day later. Audited
 `assess_erasure` (counts) or `assess_erasure_retained`. Teacher-entered recipient addresses are not
 tied to a student id, so the configuration is not touched. Erasing a subject removes their
-sessions: on an activity still open they may Start again.
+sessions: on an activity still open they may Start again. This is accepted by design: an erasure
+is an administrator's or the DPO's action, not the student's; to keep the exam evidence instead,
+use `VEKTRA_ASSESS_ERASURE_MODE=retain_exam_evidence`.
 
 Retention (REQ-089): the worker's daily `purge` tick removes the content of every CLOSED session
 older than its site's `retention_days` (a site without settings is never purged): copies still

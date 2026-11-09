@@ -336,9 +336,11 @@ async def erase_subject(
 def _userids(doc: dict[str, Any]) -> list[int] | None:
     if set(doc) - {"userids"}:
         raise fail(bad_request("unknown_field"))
-    raw = doc.get("userids")
-    if raw is None:
-        return None
+    if "userids" not in doc:
+        return None  # the whole activity
+    raw = doc["userids"]
+    # an explicit null is a failed selection on the caller's side, never "everyone"
+    # (CodeRabbit 4516399722)
     if not isinstance(raw, list) or not raw or len(raw) > MAX_USERIDS:
         raise fail(bad_request("userids"))
     out: list[int] = []

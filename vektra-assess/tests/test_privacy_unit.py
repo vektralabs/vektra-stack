@@ -233,6 +233,7 @@ def test_activity_erasure_body_is_strict() -> None:
     assert api._userids({}) is None
     assert api._userids({"userids": [5, 3, 5]}) == [3, 5]
     for bad in (
+        {"userids": None},
         {"userids": []},
         {"userids": "5"},
         {"userids": [True]},

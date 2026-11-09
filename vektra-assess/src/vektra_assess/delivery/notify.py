@@ -469,7 +469,8 @@ async def _row(
     if run.kind is TEACHER and not domain_allowed(address, deps.domains):
         c = await _claim(deps, acquire, run, row_id, ref, out)
         if c is None:
-            return False
+            out.busy += 1  # an attempt still inside its lease: failed on the next run
+            return True
         await _settle(
             deps,
             acquire,

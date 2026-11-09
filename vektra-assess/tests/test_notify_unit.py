@@ -629,6 +629,27 @@ async def test_an_attempt_still_inside_the_lease_is_never_taken_again() -> None:
     assert box.rows[0]["attempt_started_at"] == WHEN
 
 
+async def test_a_leased_row_whose_domain_was_removed_is_retried_not_dropped() -> None:
+    """CodeRabbit 4513956318: the disallowed-domain branch met a row still inside its lease
+    and ended the chain, leaving it live with no failure audit. It is a busy retry."""
+    clock = Clock()
+    box = Outbox(clock)
+    deps = _deps(
+        ("a@uni.example",), Sender(SendResult(False, ErrorClass.CONNECT)), clock
+    )
+    await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    box.rows[0]["attempt_started_at"] = WHEN  # in flight, well inside the lease
+    sender = Sender()
+    got = await n.notify(
+        _deps(("a@uni.example",), sender, clock, domains=frozenset()),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box),
+    )
+    assert got is not None and sender.sent == []
+    assert got.busy == 1 and got.next_run == WHEN + n.BUSY_RETRY
+    assert box.rows[0]["attempt_started_at"] == WHEN
+
+
 class Boom(Sender):
     async def send(
         self, msg: Any, recipient: str, *, slot_held: bool = False

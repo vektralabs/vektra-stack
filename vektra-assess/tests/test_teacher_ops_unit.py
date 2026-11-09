@@ -188,7 +188,6 @@ def cfg(**kw: Any) -> Any:
         version=3,
         end_at=None,
         attested_at=None,
-        db_now=NOW,
     )
     return SimpleNamespace(**{**base, **kw})
 
@@ -206,6 +205,7 @@ def reset_script(
     grants: int = 0,
     gate_row: Any = "default",
     inserted: bool = True,
+    clock: int | None = None,
 ) -> dict[str, Any]:
     sessions = [sess()] if sessions is None else sessions
     return {
@@ -219,6 +219,7 @@ def reset_script(
             [] if gate_row is None else [render() if gate_row == "default" else gate_row]
         ),
         "INSERT INTO assess_reset_grants": Result([SimpleNamespace(id=1)] if inserted else []),
+        "clock_timestamp())::bigint AS db_now": Result(scalar=NOW if clock is None else clock),
     }  # fmt: skip
 
 
@@ -250,6 +251,33 @@ def test_a_reset_grants_one_session_with_the_reason_encrypted_to_its_row(
     assert kw["data"]["reset_id"] == view["reset_id"]
     assert "reason" not in json.dumps(kw["data"], default=str)
     assert len(w.renders) == 1  # results page refreshed without waiting for the tick
+
+
+def test_the_continuity_default_follows_the_locked_session_not_the_first_read(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodeRabbit 4512009201 (PR #179): the worker closed the session for a service failure
+    between the unlocked read and the lock; the default must follow the locked row."""
+    script = reset_script(sessions=[sess(reason="service_failure")])
+    script["WHERE id = :sid"] = Result([sess(state="ACTIVE", reason=None)])  # type: ignore[arg-type]
+    w = world(script)
+    status, view = run(reset(monkeypatch))
+    assert status == 201
+    assert view["include_previous_turns"] is True
+    (row,) = w.conn.ran("INSERT INTO assess_reset_grants")
+    assert row["prev"] is True
+
+
+def test_the_end_date_is_checked_on_the_clock_after_the_locks(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodeRabbit 4512009218 (PR #179): ``now()`` is the transaction start; a reset that waited
+    past the end date for the activity lock must still be refused."""
+    w = world(reset_script(config=cfg(end_at=NOW + 10), clock=NOW + 20))
+    status, detail = refused(reset(monkeypatch))
+    assert status == 409
+    assert detail["error"]["details"]["gate"] == "end_date_passed"
+    assert w.conn.ran("INSERT INTO assess_reset_grants") == []
 
 
 def test_an_explicit_continuity_choice_is_kept(

@@ -94,10 +94,12 @@ _GRANTS = text(
 )
 _CONFIG = text(
     "SELECT enabled, cap_minutes, version, extract(epoch FROM end_at)::bigint AS end_at, "
-    "extract(epoch FROM attested_opening_at)::bigint AS attested_at, "
-    "extract(epoch FROM now())::bigint AS db_now "
+    "extract(epoch FROM attested_opening_at)::bigint AS attested_at "
     "FROM assess_activity_config WHERE site_id = :s AND cmid = :c FOR UPDATE"
 )
+#: the wall clock read AFTER the locks: ``now()`` is the transaction start, and a reset may have
+#: waited for the activity lock past the end date (CodeRabbit 4512009218)
+_CLOCK = text("SELECT extract(epoch FROM clock_timestamp())::bigint AS db_now")
 _RENDER = text(
     "SELECT inputs, extract(epoch FROM now() - refreshed_at) AS age_s FROM assess_gate_inputs "
     "WHERE site_id = :s AND student_userid = :u AND cmid = :c"
@@ -239,10 +241,11 @@ async def reset_session(
             raise _Refused(fail(reset_refused("gate", gate="not_enabled")))
         allowed_unset = settings.privacy_allow_unset and settings.env == "development"
         privacy_ok = bool(await privacy.is_configured(conn, site)) or allowed_unset
+        db_now = int((await conn.execute(_CLOCK)).scalar_one())
 
         def gate_code(moodle_reasons: list[str]) -> str | None:
             return v.reset_gate(
-                now=int(cfg.db_now),
+                now=db_now,
                 enabled=bool(cfg.enabled),
                 cap_set=cfg.cap_minutes is not None,
                 end_at=cfg.end_at,
@@ -279,8 +282,10 @@ async def reset_session(
         code = gate_code([str(x) for x in inputs["moodle_reasons"]])  # type: ignore[index]
         if code is not None:
             raise refuse_gate(code)
+        # the LOCKED row's close reason: the worker may have closed the session between the
+        # unlocked read and the lock (CodeRabbit 4512009201)
         include = v.include_previous_turns(
-            row.close_reason, body.include_previous_turns
+            latest.close_reason, body.include_previous_turns
         )
         grant_id = uuid.uuid4()
         ct, kid = encrypt_reason(kek, "assess_reset_grants", grant_id, reason)

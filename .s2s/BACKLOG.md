@@ -22,6 +22,26 @@
 
 ## Planned
 
+### BUG-030: the LLM provider sends `max_tokens` to OpenAI models that only accept `max_completion_tokens`
+
+**Status**: draft | **Priority**: medium | **Created**: 2026-11-09
+**Origin**: the local assess end-to-end stack. The discussion model `openai/gpt-6-luna` (the test model chosen for OQ-026) answered a direct call made with `max_completion_tokens`, and rejected every call made with `max_tokens`: `BadRequestError: Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.`
+
+**Context**: `vektra-core/src/vektra_core/providers/litellm_provider.py` always passes `max_tokens` to `litellm.acompletion`, both the plain and the streaming path. `litellm.drop_params = True` does not help: it drops parameters litellm *knows* a provider does not support, and the pinned litellm has no model entry for `gpt-6-luna`, so it forwards `max_tokens` unchanged. For OpenAI models litellm does know (`openai/gpt-5-mini`, measured the same day with the same key) it rewrites the parameter itself, which is why the RAG and the stack work today. So every discussion turn, and the Start pre-flight, would fail on a model newer than the pinned litellm. The local stack runs `openai/gpt-5-mini` meanwhile.
+
+**Possible fixes** (pick one, measure before choosing):
+- upgrade litellm, if a newer release maps the model;
+- or have the provider send `max_completion_tokens` for OpenAI models that require it (a setting, or retry once on this exact error), without changing what other providers receive.
+
+**Acceptance criteria**:
+- [ ] A discussion turn and a RAG query succeed on `openai/gpt-6-luna` (or the then-current OpenAI test model) through the real provider, streaming and non-streaming
+- [ ] Non-OpenAI providers (vLLM, Anthropic, Ollama) still receive `max_tokens` exactly as today
+- [ ] A test fails on the current code: a fake OpenAI endpoint that rejects `max_tokens` makes the provider call fail
+
+**Traceability**: OQ-026 (test model), plan assess-llm-runner, ADR-0008 (litellm).
+
+---
+
 ### BUG-028: the learn query checks a conversation's owner but not its course
 
 **Status**: draft | **Priority**: medium | **Created**: 2026-11-07

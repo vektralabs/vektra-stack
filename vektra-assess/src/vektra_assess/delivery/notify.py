@@ -74,6 +74,10 @@ KINDS = (TEACHER, OPERATOR)
 
 SERVICE_FAILURE = "service_failure"
 ROLLBACK_CAP = "rollback_cap"
+#: plan assess-privacy-retention: the retention purge abandoned a transcript copy still waiting
+#: for the relay (activity, student id and session number travel in the job: the session's
+#: content is gone by the time the notice runs)
+PURGE_ABANDONED = "delivery_abandoned_on_purge"
 LMS_UNREADABLE = "moodle_unreachable"
 NO_RECIPIENTS = "no_recipients"
 RECIPIENT_WITHDRAWN = "recipient_withdrawn"
@@ -186,6 +190,14 @@ async def read_event(conn: Any, kind: JobKind, args: Mapping[str, Any]) -> Event
         ):
             return None
         return Event(LMS_UNREADABLE, site, reason=reason)
+    if reason == PURGE_ABANDONED:
+        cmid, userid = _int(args.get("cmid")), _int(args.get("student_userid"))
+        number = _int(args.get("session_no"))
+        if kind is not TEACHER or cmid is None or userid is None or number is None:
+            return None
+        return Event(
+            PURGE_ABANDONED, site, cmid=cmid, student_userid=userid, session_no=number
+        )
     if reason == ROLLBACK_CAP:
         cmid, userid = _int(args.get("cmid")), _int(args.get("student_userid"))
         if cmid is None or userid is None:
@@ -225,6 +237,18 @@ def _text(kind: JobKind, e: Event) -> tuple[str, str]:
             f"  studente (id Moodle): {e.student_userid}\n\n"
             "L'amministratore della piattaforma ha ricevuto lo stesso avviso.\n"
             + _FOOTER,
+        )
+    if kind is TEACHER and e.code == PURGE_ABANDONED:
+        return (
+            f"Copia della trascrizione non consegnata - attivita {e.cmid} - "
+            f"studente {e.student_userid} - sessione #{e.session_no}",
+            "Buongiorno,\n\n"
+            "la copia via email della trascrizione indicata sotto non era ancora stata "
+            "consegnata quando il periodo di conservazione e' scaduto: la trascrizione e' "
+            "stata cancellata e la copia non verra' piu' inviata.\n\n"
+            f"  attivita': {e.cmid}\n"
+            f"  studente (id Moodle): {e.student_userid}\n"
+            f"  sessione: #{e.session_no}\n" + _FOOTER,
         )
     if kind is OPERATOR and e.code == ROLLBACK_CAP:
         return (

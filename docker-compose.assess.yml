@@ -28,6 +28,9 @@ services:
     environment:
       VEKTRA_ASSESS_ENABLED: "true"
       VEKTRA_ASSESS_API_DATABASE_URL: postgresql+asyncpg://vektra_assess_api@postgres:5432/vektra
+      # the DPO's erasure decision (OQ-033): erase | retain_exam_evidence. Empty: the API refuses
+      # to start outside development (no implicit choice)
+      VEKTRA_ASSESS_ERASURE_MODE: ${VEKTRA_ASSESS_ERASURE_MODE:-}
     secrets:
       - { source: assess_token_signing, <<: *secret }
       - { source: assess_handoff_private, <<: *secret }
@@ -112,6 +115,8 @@ services:
       VEKTRA_ASSESS_RECIPIENT_DOMAINS: ${VEKTRA_ASSESS_RECIPIENT_DOMAINS:-}
       # the operator alerts (REQ-071) are mailed here; empty: the worker refuses to start
       VEKTRA_ASSESS_OPERATOR_EMAIL: ${VEKTRA_ASSESS_OPERATOR_EMAIL:-}
+      # how long database backups are kept (crypto-shredding scope, ARCH-079); empty: a warning
+      VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS: ${VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS:-}
     secrets:
       - { source: assess_handoff_public, <<: *secret }
       - { source: assess_transcript_kek, <<: *secret }

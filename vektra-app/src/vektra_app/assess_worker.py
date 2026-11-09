@@ -517,6 +517,36 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
     )
 
 
+def _privacy_parts(checked: Checked) -> tuple[dict[Any, Any], dict[str, Any]]:
+    """The retention purge (daily tick, and the ``purge`` job: the same run on demand) and the
+    ``erasure`` job (plan assess-privacy-retention). Both run on the worker's own engine: the
+    API never deletes. Without a database backup retention the operator is warned that
+    crypto-shredding does not reach backups that still hold wrapped keys (ARCH-079)."""
+    from vektra_assess.jobs import JobKind
+    from vektra_assess.privacy.erasure import make_erasure_handler
+    from vektra_assess.privacy.purge import make_purge_handler, run_purge
+
+    settings, engine = checked.settings, checked.engine
+    if settings.db_backup_retention_days is None:
+        log.warning(
+            "assess_db_backup_retention_unset",
+            reason_code="crypto_shred_scope_unknown",
+            remediation=(
+                "Set VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS: a purge removes the keys from the "
+                "database, not from backups taken before it"
+            ),
+        )
+
+    async def purge() -> None:
+        await run_purge(engine.connect)
+
+    handlers: dict[Any, Any] = {
+        JobKind.PURGE: make_purge_handler(engine.connect),
+        JobKind.ERASURE: make_erasure_handler(engine.connect),
+    }
+    return handlers, {"purge": purge}
+
+
 @dataclass(frozen=True, slots=True)
 class SetupCheckParts:
     handlers: Mapping[Any, Any]
@@ -721,13 +751,20 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     # one WS client for every WS caller: one rate cap, one breaker registry, one pool
     ws = _ws_client(checked) if bindings is None else None
     setup = _setup_check_parts(checked, ws, delivery.ticks.get("smtp_probe"))
+    privacy_handlers, privacy_ticks = _privacy_parts(checked)
     extra = bindings or Bindings(
         handlers={
             **_session_handlers(checked, audit, ws),
             **delivery.handlers,
             **setup.handlers,
+            **privacy_handlers,
         },
-        ticks={**_session_ticks(checked), **delivery.ticks, **setup.ticks},
+        ticks={
+            **_session_ticks(checked),
+            **delivery.ticks,
+            **setup.ticks,
+            **privacy_ticks,
+        },
     )
     slots = build_slots(
         policy,

@@ -107,7 +107,10 @@ _SESSION = text(
     "(SELECT count(*) FROM assess_start_attempts a WHERE a.site_id = s.site_id "
     "AND a.cmid = s.cmid AND a.student_userid = s.student_userid "
     "AND a.outcome = 'rolled_back' AND a.created_at <= s.created_at) AS failed_starts, "
-    "EXISTS (SELECT 1 FROM assess_transcripts t WHERE t.session_id = s.id) AS done "
+    # a purged session is done for good (plan 12): its tombstone outlives the transcript, so a
+    # retried job never regenerates what the retention purge removed (CodeRabbit 4503029411)
+    "(EXISTS (SELECT 1 FROM assess_transcripts t WHERE t.session_id = s.id) "
+    "OR EXISTS (SELECT 1 FROM assess_purge_records p WHERE p.session_id = s.id)) AS done "
     "FROM assess_sessions s LEFT JOIN assess_activity_config c ON c.site_id = s.site_id "
     "AND c.cmid = s.cmid WHERE s.id = :sid"
 )
@@ -133,8 +136,9 @@ _EARLIER = text(
 )
 _INSERT = text(
     "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, transcript_kid, "
-    "content_hash, turns_digest, filename, byte_size, course_shortname) VALUES (:id, :sid, :ct, "
-    ":dek, :kid, :h, :digest, :name, :size, :course) ON CONFLICT (session_id) DO NOTHING "
+    "content_hash, turns_digest, filename, byte_size, course_shortname) SELECT :id, :sid, :ct, "
+    ":dek, :kid, :h, :digest, :name, :size, :course WHERE NOT EXISTS (SELECT 1 FROM "
+    "assess_purge_records p WHERE p.session_id = :sid) ON CONFLICT (session_id) DO NOTHING "
     "RETURNING id"
 )
 _DELIVERY = text(

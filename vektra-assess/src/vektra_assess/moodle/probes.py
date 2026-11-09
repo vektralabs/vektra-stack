@@ -766,7 +766,19 @@ async def persist_matrix(
     conn: AsyncConnection, site_id: Any, release: str, results: tuple[FlagResult, ...]
 ) -> None:
     """Write every flag row. The CALLER owns the transaction (the whole check run is one):
-    all rows or none. ``release`` is the one ``observe_release`` recorded."""
+    all rows or none. ``release`` is the one ``observe_release`` recorded.
+
+    ``assess_sites.release`` is "the release whose capability matrix is valid" (coordinator
+    decision 2026-11-08): the render check and the pre-flight pick their reader model set from
+    it. It moves to ``release`` here, in the same transaction, only when at least one flag was
+    actually probed: a matrix of ``not_probed`` rows (no probe manifest) vouches for nothing.
+    """
+    probed = any(r.reason_code != UnreadableReason.NOT_PROBED.value for r in results)
+    if probed:
+        await conn.execute(
+            text("UPDATE assess_sites SET release = :r WHERE id = :s"),
+            {"r": release, "s": site_id},
+        )
     for r in results:
         await conn.execute(
             text(

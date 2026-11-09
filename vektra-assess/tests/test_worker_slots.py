@@ -22,9 +22,9 @@ from vektra_assess.worker.slots import (
 # The exact production slot set. Adding a kind or a tick to the worker means changing this list in
 # the same commit: an unreviewed (or test-only) slot in the production composition fails here.
 PRODUCTION_KINDS = {
-    "capability_probe", "enrolment_recheck", "erasure", "gate_refresh", "preflight", "purge",
+    "enrolment_recheck", "erasure", "gate_refresh", "preflight", "purge",
     "reconcile_reply", "render_check",
-    "rotate_keys", "session_deadline", "setup_check", "teacher_notify", "operator_notify", "transcript_deliver",
+    "rotate_keys", "setup_check", "teacher_notify", "operator_notify", "transcript_deliver",
     "transcript_generate", "teacher_gate",
 }  # fmt: skip
 PRODUCTION_TICKS = [

@@ -427,9 +427,7 @@ def test_opening_fallback_bounds_attestation_and_later_only() -> None:
     assert _fallback(CLOSE, attestation=False) == [("attestation", "required")]
     assert _fallback(CLOSE, needed=False) == [("opening_at", "fallback_not_needed")]
     assert _fallback(CLOSE, close_at=0) == [("opening_at", "no_close_date")]  # BR-007
-    assert _fallback(CLOSE, close_at=None) == [
-        ("opening_at", "moodle_facts_unreadable")
-    ]
+    assert _fallback(CLOSE, close_at=None) == [("opening_at", "close_unreadable")]
     # before any session started, an earlier move is allowed; after, only later
     assert _fallback(CLOSE + 10, current_at=CLOSE + 20) == []
     assert _fallback(CLOSE + 10, current_at=CLOSE + 20, started=True) == [

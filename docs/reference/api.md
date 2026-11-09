@@ -201,7 +201,7 @@ a GRADER of the activity (`mod/assign:grade` in its course, in the worker's fres
 hints) and is strict (an unknown field is `400 ERR-ASSESS-014`). `{cmid}`, `{sid}` and `{userid}`
 are resolved inside the key's site and the path's activity: a session of another activity or site
 is `404 ERR-ASSESS-008`. No route reads the query string; no preview route exists (REQ-090 is not
-built: use a Moodle test-student account and a reset).
+built: use an LMS test-student account and a reset).
 
 | Method | Path | Body / headers | Success | Errors |
 |--------|------|----------------|---------|--------|
@@ -209,11 +209,11 @@ built: use a Moodle test-student account and a reset).
 | POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `reason` (1-1000 code points, mandatory), `include_previous_turns` (optional bool; absent = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
 | POST | `/api/v1/assess/activities/{cmid}/terminate` | `reason` (1-1000), `expected_active_count` (the "N sessioni attive" the teacher confirmed), `also_disable` (bool, default false) | `200 {"termination_id", "closed", "rolled_back", "disabled"}` | `400 ERR-ASSESS-022` (`reason`), `409 ERR-ASSESS-025` (`details.current`: the count now; nothing changed) |
 | PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | exactly one of `minutes` (0-240) / `percent` (0-200), `confirm_over_100` (required above +100 %); no reason field exists | `200 {"student_userid", "extra_seconds", "duration_s"}` | `400 ERR-ASSESS-022` (`extra_time`: `minutes_or_percent`, `out_of_range`, `total_too_long` (cap + extra above 240 min), `confirm_over_100`, `cap_not_configured`, `session_locked` with `state`) |
-| PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | `opening_at` (ISO 8601 with a time zone), `attestation: true`, `attestation_text_version` (`[A-Za-z0-9._-]{1,32}`, the attestation text the plugin showed) | `200 {"opening_at", "previous", "version"}` | `400 ERR-ASSESS-022` (`attestation`: `required`; `opening_at`: `fallback_not_needed`, `before_close` (with `close_at`), `only_later` (with `current_at`), `no_close_date`, `moodle_facts_unreadable`, `timezone_required`, `out_of_range`, `activity_not_configured`) |
+| PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | `opening_at` (ISO 8601 with a time zone), `attestation: true`, `attestation_text_version` (`[A-Za-z0-9._-]{1,32}`, the attestation text the plugin showed) | `200 {"opening_at", "previous", "version"}` | `400 ERR-ASSESS-022` (`attestation`: `required`; `opening_at`: `fallback_not_needed`, `before_close` (with `close_at`), `only_later` (with `current_at`), `no_close_date`, `close_unreadable`, `timezone_required`, `out_of_range`, `activity_not_configured`) |
 
 Reset (REQ-087): the student's LATEST session must be CLOSED and not already reset (one reset per
 session, concurrent requests yield one). The START gates are re-run: enabled and configured, the
-end date and privacy live from Vektra's rows, the Moodle half from the student's render
+end date and privacy live from Vektra's rows, the LMS half from the student's render
 evaluation (at most `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` old, otherwise `gate_inputs_stale`). A
 reset after the end date is refused until the date is moved. The reason is stored encrypted
 under the transcript key: it is shown only in this list, never in a transcript, the audit table

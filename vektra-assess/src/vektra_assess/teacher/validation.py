@@ -391,7 +391,7 @@ def check_opening_fallback(
     except (OverflowError, ValueError, OSError):
         return [*errors, FieldError("opening_at", "out_of_range")]
     if close_at is None:
-        errors.append(FieldError("opening_at", "moodle_facts_unreadable"))
+        errors.append(FieldError("opening_at", "close_unreadable"))
     elif close_at <= 0:
         errors.append(FieldError("opening_at", "no_close_date"))
     elif at < close_at:

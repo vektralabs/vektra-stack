@@ -821,3 +821,44 @@ async def test_an_erasure_blanks_the_subject_of_earlier_retention_tombstones(
         assert rows == [("retention", "erased")]
         assert await one(pg, "SELECT count(*) FROM assess_sessions WHERE id = :s",
                          s=s.session_id) == 0  # fmt: skip
+
+
+async def test_a_generation_racing_the_purge_inserts_nothing(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4516399835: the purge holds the session row while a generation reaches its
+    INSERT; the INSERT must see the purge's tombstone once it commits."""
+    from vektra_assess.privacy.purge import purge_batch
+
+    async with world(pg) as w:
+        ring = AssessKeyring(store.KEYRING, "t1", {"t1": os.urandom(32)})
+        s = await seed_session(w, worker, "CLOSED")  # no transcript yet
+        recipients = await configure_recipients(w.pg, w.site, s.cmid)
+        await configure_privacy(pg, w.site, retention_days=1)
+        await age(pg, s.session_id, 2)
+        holder = await worker.connect()
+        tx = await holder.begin()
+        n, _ = await purge_batch(
+            holder, w.site, 1
+        )  # locks the session row, not committed
+        assert n == 1
+        gen = asyncio.create_task(
+            generate_transcript(
+                GenerationDeps(
+                    kek=s.kek, transcript_kek=ring, facts=Facts(), recipients=recipients
+                ),
+                worker.connect,
+                s.session_id,
+            )
+        )
+        await asyncio.sleep(1.0)
+        assert not gen.done()  # waiting on the purge's row lock
+        await tx.commit()
+        await holder.close()
+        await gen
+        assert (
+            await one(
+                pg,
+                "SELECT count(*) FROM assess_transcripts WHERE session_id = :s",
+                s=s.session_id,
+            )
+            == 0
+        )

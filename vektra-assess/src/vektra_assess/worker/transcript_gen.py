@@ -134,6 +134,7 @@ _EARLIER = text(
     "AND cmid = :cmid AND student_userid = :u AND session_no < :n AND state = 'CLOSED' "
     "ORDER BY session_no"
 )
+_LOCK_SESSION = text("SELECT 1 FROM assess_sessions WHERE id = :sid FOR KEY SHARE")
 _INSERT = text(
     "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, transcript_kid, "
     "content_hash, turns_digest, filename, byte_size, course_shortname) SELECT :id, :sid, :ct, "
@@ -308,6 +309,11 @@ async def generate_transcript(
     unresolved = "config_unreadable" if configured is None else "no_recipients"
     del configured  # only the refs leave this point
     async with acquire() as conn, conn.begin():
+        # FOR KEY SHARE waits for a purge holding the session row (FOR UPDATE); the INSERT is
+        # then a new statement with a new snapshot, so it sees that purge's tombstone and
+        # inserts nothing (CodeRabbit 4516399835: the check alone used a snapshot from before
+        # the purge committed)
+        await conn.execute(_LOCK_SESSION, {"sid": sid})
         got = (
             await conn.execute(
                 _INSERT,

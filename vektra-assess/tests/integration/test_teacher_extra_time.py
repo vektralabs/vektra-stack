@@ -492,8 +492,22 @@ async def test_extra_time_waits_for_the_real_start_handler(pg) -> None:  # type:
                     extra_url(909, 8601), json=body(minutes=10), headers=teacher()
                 )
             )
-            await asyncio.sleep(0.5)
-            assert not put.done()  # blocked on the Start's FOR SHARE
+            # PostgreSQL itself reports the PUT's backend waiting on a lock, on the activity row
+            # it locks FOR UPDATE: not a sleep and a "not done yet" guess
+            blocked = False
+            for _ in range(100):
+                rows = await pg.run(
+                    "super",
+                    "SELECT count(*) FROM pg_stat_activity WHERE usename = 'vektra_assess_api' "
+                    "AND wait_event_type = 'Lock' AND query LIKE '%assess_activity_config%' "
+                    "AND query LIKE '%FOR UPDATE%'",
+                )
+                if rows[0][0]:
+                    blocked = True
+                    break
+                await asyncio.sleep(0.1)
+            assert blocked, "the extra-time PUT never waited on the Start's lock"
+            assert not put.done()
             release.set()
             r = await asyncio.wait_for(started, 10)
             assert r.status_code == 202, r.text

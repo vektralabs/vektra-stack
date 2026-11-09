@@ -67,6 +67,17 @@ async def test_a_non_ascii_content_length_is_not_a_500(declared: bytes) -> None:
     assert await read_capped_body(req, max_bytes=8) == b"abc"
 
 
+async def test_a_body_exactly_at_the_cap_is_read() -> None:
+    """CodeRabbit nitpick (PR #179): Content-Length 8 with 8 bytes against an 8-byte cap is
+    read whole (the limit is inclusive)."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app()), base_url="http://t"
+    ) as c:
+        r = await c.post("/body", content=b"x" * 8, headers={"Content-Length": "8"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"n": 8}
+
+
 async def test_an_ascii_content_length_over_the_cap_is_still_refused() -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=_app()), base_url="http://t"

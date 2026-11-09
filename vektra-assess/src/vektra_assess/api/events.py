@@ -295,7 +295,7 @@ async def _poll(
 
 def _last_event_id(request: Request) -> int:
     raw = request.headers.get("last-event-id", "0").strip()
-    return int(raw) if raw.isdigit() and len(raw) < 12 else 0
+    return int(raw) if raw.isascii() and raw.isdigit() and len(raw) < 12 else 0
 
 
 def _settings(request: Request) -> tuple[float, float, float]:

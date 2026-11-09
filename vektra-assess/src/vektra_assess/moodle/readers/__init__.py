@@ -14,6 +14,7 @@ from vektra_assess.moodle.readers.enrol import (
     read_editors,
     read_enrolment,
     read_graders,
+    read_override_managers,
     read_user_courses,
 )
 from vektra_assess.moodle.readers.files import fetch_submission_file
@@ -56,6 +57,7 @@ __all__ = [
     "read_grading_view",
     "read_loginas_events",
     "read_module_visibility_for_user",
+    "read_override_managers",
     "read_own_auth",
     "read_quiz_close_inputs",
     "read_quiz_overrides",

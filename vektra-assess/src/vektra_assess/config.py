@@ -735,35 +735,25 @@ class VektraAssessSettings(BaseSettings):
         False,
         alias="VEKTRA_ASSESS_RESET_NOTICE_ENABLED",
         description=(
-            "REQ-092: email the student when a teacher grants a new session. Off until the DPO "
-            "approves the flow and the text (OQ-020); true is refused at startup unless "
-            "VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION records the approved text."
+            "REQ-092 student notice of a reset. OUT OF v1 (product owner 2026-11-08): setting it "
+            "to true is refused at startup; no notice is queued or sent, and the teacher list "
+            "shows 'studente non avvisato via email'."
         ),
     )
-    reset_notice_text_version: str | None = Field(
-        None,
-        alias="VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION",
-        description="Version label of the DPO-approved REQ-092 notice text (required with the notice on).",
-    )
-
-    @field_validator("reset_notice_text_version", mode="before")
-    @classmethod
-    def _blank_version_is_unset(cls, value: Any) -> Any:
-        return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")
     def _teacher_ops_refusals(self) -> Self:
-        """Startup refusals (plan assess-teacher-ops): no dormant path for RAG, no notice
-        without the record of its approved text."""
+        """Startup refusals (plan assess-teacher-ops): no dormant path for RAG nor for the
+        REQ-092 reset notice (both not available in this release)."""
         if self.rag_enabled:
             raise ValueError(
                 "VEKTRA_ASSESS_RAG_ENABLED=true is not available in this release: discussion "
                 "retrieval stays off (ARCH-072). Unset it."
             )
-        if self.reset_notice_enabled and not self.reset_notice_text_version:
+        if self.reset_notice_enabled:
             raise ValueError(
-                "VEKTRA_ASSESS_RESET_NOTICE_ENABLED=true needs "
-                "VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION (the DPO-approved text, OQ-020)"
+                "VEKTRA_ASSESS_RESET_NOTICE_ENABLED=true is not available in this release: the "
+                "REQ-092 reset notice is out of v1. Unset it."
             )
         return self
 

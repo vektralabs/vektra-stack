@@ -31,12 +31,23 @@ no fallback and no second copy in the database. The same is true, for transcript
 
 ## Re-wrap the KEK
 
-1. Add a new kid to `assess_kek`, make it `active`, redeploy the worker.
+1. Add a new kid to `assess_kek`, make it `active`, redeploy the worker. For
+   `assess_transcript_kek` the API reads AND writes under it too (the teachers' reset and
+   termination reasons), so roll it out in two phases:
+   1. add the new kid as an INACTIVE key and deploy it to EVERY API instance and the worker
+      (every process can now read what the new kid will write; nothing writes it yet);
+   2. make it `active` and deploy again everywhere, draining the old instances, before the
+      final sweep below. Activating in one step would let an updated instance write a reason
+      that a not yet updated one cannot read, and an old instance still running could write
+      under the old kid after the helpers returned 0.
 2. Run `rewrap_session_keys(conn, keyring, from_kid)` in a loop (commit between batches) until it
-   returns 0. Do the same with `rewrap_transcript_deks` for `assess_transcript_kek`, and with
+   returns 0. Do the same with `rewrap_transcript_deks` for `assess_transcript_kek` AND with
+   `rewrap_teacher_reasons(conn, keyring, from_kid)` for the same key (the teachers' reset and
+   termination reasons are encrypted directly under it: both must return 0), and with
    `reseal_teacher_configs(conn, old_private, new_public)` when the teacher-config key pair
    rotates (each returns the rows still on the old key, never the rows it just touched).
-3. Only now remove the old kid from the keyring.
+3. Only now, once no process holding the old kid as active is left and a last sweep returned 0,
+   remove the old kid from the keyring.
 
 ## Re-seal the hand-off
 

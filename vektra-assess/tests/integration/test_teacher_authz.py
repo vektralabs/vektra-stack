@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.world import make_site
 
-from vektra_assess.api.teachers import TeacherCheck, check_fresh_editor
+from vektra_assess.api.teachers import TeacherCheck, check_fresh_teacher
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +59,7 @@ async def check(pg, site, cmid, actor=EDITOR, hint=(COURSE, "assign")):  # type:
     engine = create_async_engine(pg.url("api"))
     try:
         async with engine.begin() as conn:
-            return await check_fresh_editor(
+            return await check_fresh_teacher(
                 conn,
                 site=site,
                 cmid=cmid,
@@ -67,6 +67,7 @@ async def check(pg, site, cmid, actor=EDITOR, hint=(COURSE, "assign")):  # type:
                 max_age_s=120,
                 courseid_hint=hint[0],
                 kind_hint=hint[1],
+                role="editor",
             )
     finally:
         await engine.dispose()

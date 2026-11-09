@@ -80,3 +80,45 @@ def test_the_query_check_bites() -> None:
         r for r in probe.routes if isinstance(r, APIRoute) and r.path.endswith("probe")
     )
     assert "token" in set(_all_params(route.dependant, "query"))
+
+
+# --- plan assess-teacher-ops 11b: the teacher routes ----------------------------------------
+
+TEACHER_PREFIX = "/api/v1/assess/activities/"
+TEACHER_ROUTES = {
+    ("/api/v1/assess/activities/{cmid}/config", "GET"),
+    ("/api/v1/assess/activities/{cmid}/config", "PUT"),
+    ("/api/v1/assess/activities/{cmid}/sessions", "GET"),
+    ("/api/v1/assess/activities/{cmid}/sessions/{sid}/reset", "POST"),
+    ("/api/v1/assess/activities/{cmid}/terminate", "POST"),
+    ("/api/v1/assess/activities/{cmid}/students/{userid}/extra-time", "PUT"),
+    ("/api/v1/assess/activities/{cmid}/opening-fallback", "PUT"),
+}
+
+
+def _dependency_names(dependant: Any) -> Iterator[str]:
+    for dep in dependant.dependencies:
+        if dep.call is not None:
+            yield getattr(dep.call, "__name__", repr(dep.call))
+        yield from _dependency_names(dep)
+
+
+def test_no_preview_route_exists() -> None:
+    """REQ-090 (could) is not built in v1: no route may offer it, not even dormant."""
+    for path, _methods, _dependant in routes():
+        assert "preview" not in path.lower(), path
+
+
+def test_every_teacher_route_requires_exactly_the_teacher_scope() -> None:
+    """Every route under ``/activities/`` (and only the declared set) depends on
+    ``require_exact_scope("assess:teacher")``: an admin key or a mint key never reaches one."""
+    found = set()
+    for path, methods, dependant in routes():
+        if not path.startswith(TEACHER_PREFIX):
+            continue
+        names = list(_dependency_names(dependant))
+        assert "require_exact_scope_assess:teacher" in names, path
+        assert not [n for n in names if n.startswith("require_scope_")], path
+        assert "verify_assess_token" not in " ".join(names), path
+        found |= {(path, m) for m in methods}
+    assert found == TEACHER_ROUTES

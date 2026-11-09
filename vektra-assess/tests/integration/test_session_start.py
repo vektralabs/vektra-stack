@@ -249,7 +249,9 @@ async def test_a_closed_session_blocks_a_new_start_until_a_reset_grant(pg) -> No
         assert err(r)["details"]["reason"] == "already_discussed"
         await pg.run(
             "super",
-            "INSERT INTO assess_reset_grants (site_id, cmid, student_userid) VALUES (:s, :c, 555)",
+            # the complete row the reset route writes (revision 0038; the reason is opaque here)
+            "INSERT INTO assess_reset_grants (site_id, cmid, student_userid, granted_by, "
+            "session_no, reason_ct, reason_kid) VALUES (:s, :c, 555, '41', 1, '\\x00', 't1')",
             {"s": w.site, "c": CMID},
         )
         r = await start(w, await w.presession(sub=555, cmid=CMID))

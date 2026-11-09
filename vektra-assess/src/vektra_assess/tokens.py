@@ -242,7 +242,9 @@ class AssessTokens:
                 site_claim = None
             raise TokenError("loginas", site=site_claim)
         sub_raw = claims.get("sub")
-        if not isinstance(sub_raw, str) or not sub_raw.isdigit():
+        if not isinstance(sub_raw, str) or not (
+            sub_raw.isascii() and sub_raw.isdigit()
+        ):
             raise TokenError("claim_sub")
         jti = claims.get("jti")
         if not isinstance(jti, str) or not 8 <= len(jti) <= 64:

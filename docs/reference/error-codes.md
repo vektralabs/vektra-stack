@@ -133,6 +133,8 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ASSESS-021 | vektra-assess | 403 | The teacher is not a grader (download, resend) or an editor (configuration) of the activity according to a fresh worker check (`details.reason`: `not_a_grader`, `not_an_editor`; absent or stale, `*_check_stale`: a refresh is queued, retry) |
 | ERR-ASSESS-022 | vektra-assess | 400 | Teacher configuration refused (BR-013, REQ-077): `details.fields` lists `{field, code, ...}` per invalid field (with `range` or `allowed_domains` where the rule has one). Explicit envelope, never the framework 422 |
 | ERR-ASSESS-023 | vektra-assess | 409 | Teacher configuration changed since it was read: `expected_version` is not the current `details.current_version`; reload and save again |
+| ERR-ASSESS-024 | vektra-assess | 409 | Teacher reset refused (REQ-087): `details.reason` `not_closed` (an open session: terminate it first), `not_latest` (a reset names the student's latest session), `already_reset` (a reset of that session exists), `gate_inputs_stale` (the student's LMS facts are older than the bound or changed since: a render check was queued, retry in a few seconds), or `gate` with `details.gate` the START gate that refuses (`end_date_passed` also names `details.field` `available_until`: move the date first). A session that does not exist in this activity is `404 ERR-ASSESS-008` |
+| ERR-ASSESS-025 | vektra-assess | 409 | Teacher terminate refused (REQ-081): `expected_active_count` is not the number of active sessions now (`details.current`); nothing was changed, confirm again with the current number |
 
 ### Deliberately not listed
 

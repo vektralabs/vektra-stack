@@ -235,10 +235,12 @@ class MoodleStartSource:
         self, site_id: UUID, cmid: int, courseid: int, kind: str
     ) -> dict[str, Any]:
         """The activity-level facts of ``assess_teacher_gate`` (plan assess-teacher-ops): the
-        cmid resolved INSIDE the hinted course only, then, concurrently, its editors and the
-        REQ-077 enable facts. Anything unreadable is None (the API fails closed on it). The
-        graders are not read here: nothing in 11a consumes them (11b adds them with its
-        routes)."""
+        cmid resolved INSIDE the hinted course only, then, concurrently, its editors (REQ-077),
+        its graders (REQ-076, plan 11b), the REQ-077 enable facts and, for a quiz, the override
+        facts of the REQ-076 gate panel: ``override_holder`` (the participant whose user override
+        sets the latest close, when the overrides are readable: Moodle 5.2) and
+        ``override_viewers`` (``mod/quiz:manageoverrides``). Anything unreadable is None (the API
+        fails closed on it). Ids and flags only."""
         site = await self._site(site_id)
         if site is None:
             return {"resolved": False, "reason": "site_release_unknown"}
@@ -257,22 +259,35 @@ class MoodleStartSource:
             "courseid": ref.courseid,
             "activity_type": kind,
             "editors": None,
+            "graders": None,
             "close_at": None,
             "team_submission": None,
             "grading_method": None,
             "moodle_rubric": None,
+            "override_holder": None,
+            "override_viewers": None,
+            "automatic_close_at": None,
         }
         if kind == "quiz":
-            editors, close = await asyncio.gather(
+            editors, graders, close, viewers = await asyncio.gather(
                 r.read_editors(c, site, ref.courseid),
+                r.read_graders(c, site, ref.courseid),
                 r.read_quiz_close_inputs(c, site, ref.courseid, ref.instanceid),
+                r.read_override_managers(c, site, ref.courseid),
             )
             if isinstance(close, Readable):
                 out["close_at"] = int(close.value.timeclose or 0)
+                out["override_holder"] = _override_holder(close.value)
+                out["automatic_close_at"] = _automatic_close(close.value)
             out["team_submission"] = False
+            if isinstance(viewers, Readable):
+                out["override_viewers"] = sorted(
+                    {u.userid for u in viewers.value.graders}
+                )
         else:
-            editors, settings, grading = await asyncio.gather(
+            editors, graders, settings, grading = await asyncio.gather(
                 r.read_editors(c, site, ref.courseid),
+                r.read_graders(c, site, ref.courseid),
                 r.read_assign_settings(c, site, ref.courseid, ref.instanceid),
                 r.read_grading_view(c, site, cmid),
             )
@@ -287,6 +302,8 @@ class MoodleStartSource:
                 )
         if isinstance(editors, Readable):
             out["editors"] = sorted({u.userid for u in editors.value.graders})
+        if isinstance(graders, Readable):
+            out["graders"] = sorted({u.userid for u in graders.value.graders})
         return out
 
     async def close_facts(
@@ -559,3 +576,32 @@ class MoodleStartSource:
             caps,
             moodle_release=release,
         )
+
+
+def _override_holder(q: Any) -> int | None:
+    """The participant whose USER override sets the quiz's latest close (REQ-076 gate panel),
+    or None: overrides unreadable (Moodle 4.3), none later than the quiz's own close, or the
+    latest one is a GROUP override (a group is not a person to name)."""
+    if not isinstance(q.overrides, Readable):
+        return None
+    later = [o for o in q.overrides.value if o.timeclose and o.timeclose > q.timeclose]
+    if not later:
+        return None
+    top = max(later, key=lambda o: o.timeclose)
+    return int(top.userid) if top.userid else None
+
+
+def _automatic_close(q: Any) -> int | None:
+    """BR-006(d) automatic close of a quiz for the teacher pages (CodeRabbit 4506916932): the
+    latest of the quiz close and every participant's override close, plus the grace period,
+    the same formula the Start gate uses (``gates._effective_gate``); None unless the close,
+    every override and the grace are readable (the gate then takes the REQ-091 fallback path,
+    whose inputs the API already has)."""
+    if not q.timeclose or not isinstance(q.overrides, Readable):
+        return None
+    if not isinstance(q.grace, Readable):
+        return None
+    g = q.grace.value
+    grace = g.graceperiod_s if g.overduehandling == "graceperiod" else 0
+    closes = [o.timeclose for o in q.overrides.value if o.timeclose]
+    return int(max([q.timeclose, *closes]) + grace)

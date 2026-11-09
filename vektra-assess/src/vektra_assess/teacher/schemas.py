@@ -1,4 +1,4 @@
-"""Request and response shapes of the teacher configuration (plan assess-teacher-ops, INT-001).
+"""Request and response shapes of the teacher endpoints (plan assess-teacher-ops, INT-001).
 
 ``ConfigPut`` is strict (``extra="forbid"``, strict scalar types): a malformed body is the 400
 ``ERR-ASSESS-014`` envelope of ``api.common.parse_body``, never FastAPI's 422. The BR-013 ranges are
@@ -78,6 +78,61 @@ class ConfigPut(BaseModel):
 
     def given(self, name: str) -> bool:
         return name in self.model_fields_set
+
+
+#: body bound of a teacher's reason; the rule (1..1000 code points after normalisation) is a
+#: field error naming its range (``teacher.validation.check_reason``)
+MAX_REASON_BODY_CHARS = 4000
+ReasonStr = Annotated[StrictStr, Field(max_length=MAX_REASON_BODY_CHARS)]
+
+
+class TeacherAction(BaseModel):
+    """The common part of every teacher operation (plan assess-teacher-ops 11b): the acting
+    Moodle user (verified as a fresh grader) and the hints for the worker's refresh."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_userid: StrictInt = Field(ge=1)
+    courseid: StrictInt = Field(ge=1)
+    activity_type: ActivityType
+
+
+class ResetPost(TeacherAction):
+    """``POST /activities/{cmid}/sessions/{sid}/reset`` (REQ-087)."""
+
+    reason: ReasonStr
+    #: REQ-087 (b): absent = the default (ON only after a ``service_failure`` close)
+    include_previous_turns: StrictBool | None = None
+
+
+class TerminatePost(TeacherAction):
+    """``POST /activities/{cmid}/terminate`` (REQ-081)."""
+
+    reason: ReasonStr
+    #: the "N sessioni attive" the teacher confirmed; another number now is a 409
+    expected_active_count: StrictInt = Field(ge=0)
+    also_disable: StrictBool = False
+
+
+class ExtraTimePut(TeacherAction):
+    """``PUT /activities/{cmid}/students/{userid}/extra-time`` (REQ-078). Exactly one of
+    ``minutes`` / ``percent`` (a field error otherwise); no reason field exists."""
+
+    minutes: StrictInt | None = None
+    percent: StrictInt | None = None
+    confirm_over_100: StrictBool = False
+
+
+class OpeningFallbackPut(TeacherAction):
+    """``PUT /activities/{cmid}/opening-fallback`` (REQ-091)."""
+
+    opening_at: datetime
+    #: the teacher ticked the attestation; required on every edit
+    attestation: StrictBool
+    #: the version of the attestation text the plugin showed (audited with the date)
+    attestation_text_version: Annotated[
+        StrictStr, Field(pattern=r"^[A-Za-z0-9._-]{1,32}$")
+    ]
 
 
 @dataclass(frozen=True)

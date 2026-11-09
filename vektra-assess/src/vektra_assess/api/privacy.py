@@ -236,27 +236,18 @@ async def _erase_and_wait(
     subject_hash: str | None,
 ) -> JSONResponse:
     engine = engine_of(request)
-    async with engine.begin() as conn:
-        pending = (
-            await conn.execute(
-                _PENDING, {"s": site, "scope": scope, "cmid": cmid, "users": userids}
-            )
-        ).scalar()
-    if pending is not None:
-        erasure_id = int(pending)
-    else:
-        erasure_id = await _queue(
-            engine,
-            site,
-            scope=scope,
-            cmid=cmid,
-            userids=userids,
-            subject_hash=subject_hash,
-        )
+    erasure_id = await _pending_or_queue(
+        engine, site, scope=scope, cmid=cmid, userids=userids, subject_hash=subject_hash
+    )
     return await _wait(request, engine, erasure_id)
 
 
-async def _queue(
+#: one request per scope at a time: two identical requests arriving together would both miss
+#: the pending lookup and queue twice (CodeRabbit 4516411675)
+_SCOPE_LOCK = text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))")
+
+
+async def _pending_or_queue(
     engine: Any,
     site: UUID,
     *,
@@ -265,7 +256,18 @@ async def _queue(
     userids: list[int] | None,
     subject_hash: str | None,
 ) -> int:
+    """The pending request of the same scope, or a new one with its job, under a lock taken for
+    the transaction so the lookup and the insert are one step."""
+    users = ",".join(str(u) for u in userids) if userids is not None else "*"
     async with engine.begin() as conn:
+        await conn.execute(_SCOPE_LOCK, {"k": f"erasure:{site}:{scope}:{cmid}:{users}"})
+        pending = (
+            await conn.execute(
+                _PENDING, {"s": site, "scope": scope, "cmid": cmid, "users": userids}
+            )
+        ).scalar()
+        if pending is not None:
+            return int(pending)
         erasure_id = (
             await conn.execute(
                 _QUEUE,
@@ -287,17 +289,27 @@ async def _queue(
     return int(erasure_id)
 
 
+async def _read_done(engine: Any, erasure_id: int) -> Any:
+    async with engine.connect() as conn:
+        return (await conn.execute(_DONE, {"i": erasure_id})).first()
+
+
 async def _wait(request: Request, engine: Any, erasure_id: int) -> JSONResponse:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + settings_of(request).erasure_wait_s
     while True:
-        async with engine.connect() as conn:
-            row = (await conn.execute(_DONE, {"i": erasure_id})).first()
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise fail(erasure_not_completed("pending"))
+        try:
+            # the deadline covers the pool wait and the query too: a busy pool answers
+            # pending on time, never after the pool's own timeout (CodeRabbit 4516399711)
+            row = await asyncio.wait_for(_read_done(engine, erasure_id), remaining)
+        except TimeoutError:
+            raise fail(erasure_not_completed("pending")) from None
         if row is not None and row.completed_at is not None:
             break
-        if loop.time() >= deadline:
-            raise fail(erasure_not_completed("pending"))
-        await asyncio.sleep(_POLL_S)
+        await asyncio.sleep(min(_POLL_S, max(deadline - loop.time(), 0)))
     if row.outcome != "erased":
         raise fail(erasure_not_completed("failed", retry_after_s=60))
     counts = dict(row.rows_deleted or {})

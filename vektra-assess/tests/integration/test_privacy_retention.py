@@ -925,3 +925,16 @@ async def test_an_erasure_waits_for_work_in_flight_and_leaves_no_job_naming_the_
             )
             == 0
         )
+
+
+async def test_two_identical_erasure_requests_queue_one(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4516411675: the pending lookup and the insert are one step per scope."""
+    async with world(pg, default_settings(VEKTRA_ASSESS_ERASURE_WAIT_S=0.5)) as w:
+        await _privacy_key(w, "assess:privacy-erase", "erase")
+        path = "/api/v1/assess/privacy/subjects/4242"
+        got = await asyncio.gather(
+            *(w.client.delete(path, headers=auth("erase")) for _ in range(5))
+        )
+        assert {r.status_code for r in got} == {503}
+        assert await one(pg, "SELECT count(*) FROM assess_erasure_records WHERE site_id = :s",
+                         s=w.site) == 1  # fmt: skip

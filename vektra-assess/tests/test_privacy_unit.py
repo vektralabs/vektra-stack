@@ -260,3 +260,31 @@ def test_the_settings_view_names_its_state_never_more() -> None:
     out = api._view(SimpleNamespace(**{**GOOD, "retention_days": 0}, updated_by="x",
                                     updated_at=None))  # fmt: skip
     assert out["configured"] is False
+
+
+def test_a_busy_pool_answers_pending_on_time() -> None:
+    """CodeRabbit 4516399711: the erasure deadline covers the pool wait, not only the sleeps."""
+    import time
+
+    from fastapi import HTTPException
+
+    from vektra_assess.api import privacy as api
+
+    class Hanging:
+        @asynccontextmanager
+        async def connect(self) -> Any:
+            await asyncio.sleep(30)  # an exhausted pool
+            yield None
+
+    settings = VektraAssessSettings.model_validate(
+        {"VEKTRA_ASSESS_ERASURE_WAIT_S": 0.5}
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(assess_settings=settings))
+    )
+    started = time.monotonic()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api._wait(request, Hanging(), 1))  # type: ignore[arg-type]
+    assert time.monotonic() - started < 2
+    assert exc.value.status_code == 503
+    assert exc.value.detail["error"]["details"] == {"reason": "pending"}

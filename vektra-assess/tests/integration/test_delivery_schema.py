@@ -248,8 +248,24 @@ async def test_a_notification_row_is_keyed_by_its_job_and_ref(pg) -> None:  # ty
     await pg.run("super", "DELETE FROM assess_deliveries WHERE job_id IS NOT NULL")
 
 
-def test_round_trip_to_0038_and_back(pg) -> None:  # type: ignore[no-untyped-def]
+async def test_round_trip_to_0038_and_back(pg) -> None:  # type: ignore[no-untyped-def]
+    """The downgrade removes the notification rows (0038 has no such kinds) and keeps every
+    transcript row (CodeRabbit nitpick on PR #190)."""
+    await pg.run("super", "DELETE FROM assess_deliveries WHERE job_id IS NOT NULL")
+    await _notify_row(pg, job=801, n=1)
+    await _notify_row(pg, "operator_notify", job=802, n=2)
+    tid = await _transcript(pg)
+    await _address(pg, tid, 9)
+    count = (
+        "SELECT kind, count(*) FROM assess_deliveries "
+        "WHERE kind IN ('teacher_notify', 'operator_notify') OR transcript_id = :t "
+        "GROUP BY kind ORDER BY kind"
+    )
+    before = [tuple(r) for r in await pg.run("super", count, {"t": tid})]
+    assert before == [("operator_notify", 1), ("teacher_notify", 1), ("transcript", 1)]
     down = _alembic(pg.super_url, "downgrade", "0038")
     assert down.returncode == 0, down.stderr
+    after = [tuple(r) for r in await pg.run("super", count, {"t": tid})]
+    assert after == [("transcript", 1)]
     up = _alembic(pg.super_url, "upgrade", "head")
     assert up.returncode == 0, up.stderr

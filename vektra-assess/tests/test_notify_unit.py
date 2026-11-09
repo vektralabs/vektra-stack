@@ -494,10 +494,15 @@ async def test_a_tls_failure_alerts_and_an_outside_domain_is_never_sent() -> Non
     box = Outbox(clock)
     sender = Sender(SendResult(False, ErrorClass.TLS))
     deps = _deps(("a@uni.example", "x@elsewhere.example"), sender, clock)
-    got = await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        got = await n.notify(deps, JobKind.TEACHER_NOTIFY, _ctx(box))
     assert got is not None and got.failed == 1 and got.retrying == 1
     assert [a for a, _ in sender.sent] == ["a@uni.example"]
     assert ("assess_notify_failed", "domain_not_allowed") in box.audit
+    alerts = [e["alert"] for e in logs if e["event"] == "assess.delivery.alert"]
+    assert "smtp_tls" in alerts  # CodeRabbit nitpick: the TLS failure is alerted
 
 
 async def test_a_busy_relay_retries_soon_without_an_attempt() -> None:

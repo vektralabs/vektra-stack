@@ -68,7 +68,7 @@ Convention (Keep a Changelog 1.1.0):
     - Each role's value is resolved from the server value and any `ALTER ROLE`/`ALTER DATABASE` defaults.
     - A value other than `none`/`0` is MISSING, naming the setting.
     - It is UNVERIFIABLE `server_log_settings_masked` when a default on the worker's own role hides a server value that another assess role inherits.
-- **assess**: a guard test composes the real worker and requires the unbound slots to be exactly the documented allowlist (`worker/slots.py`). Those are the slots of the still-pending privacy and hardening plans plus two open product decisions, `teacher_notify` and `operator_notify`. Until those two are decided and bound, a production worker still refuses to start.
+- **assess**: a guard test composes the real worker and requires the unbound slots to be exactly the documented allowlist (`worker/slots.py`). The remaining unbound slots belong to the still-pending privacy and hardening plans; `teacher_notify` and `operator_notify` are now bound (see Added).
 
 ### Security
 

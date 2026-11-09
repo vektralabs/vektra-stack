@@ -145,6 +145,21 @@ def test_canary_search_walks_every_shape() -> None:
         assert_no_canaries(blob, ["CNRY-1"], sink="payload")
 
 
+def test_a_numeric_canary_counts_only_as_a_whole_number() -> None:
+    """A latency that merely contains the mark's digits is not a leak; the mark itself is."""
+    near_misses = {
+        "latency_ms": 17.3141123,
+        "t": "0.731411",
+        "u": "7.314112",
+        "w": 7.31411e-06,
+        "x": "7.31411E+3",
+        "v": 7.31411,
+    }
+    assert find_canaries(near_misses, ["7.31411"]) == {"7.31411": 1}
+    leaks = ['{"mark":"7.31411"}', b"mark 7.31411/10", "voto: 7.31411."]
+    assert find_canaries(leaks, ["7.31411"]) == {"7.31411": 3}
+
+
 def test_canonical_bytes_are_stable() -> None:
     assert canonical_bytes({"b": 1, "a": {"y", "x"}}) == b'{"a":["x","y"],"b":1}'
 

@@ -348,6 +348,23 @@ class Outbox:
                     )
                 ]
             )
+        if getattr(n, "_EXPIRE_ROW", None) is not None and stmt is n._EXPIRE_ROW:
+            r = self._row(p["i"])
+            if r is None or r["status"] not in n.LIVE:
+                return _Rows([])
+            prev = r["attempt_started_at"]
+            if prev is not None and prev >= p["stale"]:
+                return _Rows([])  # an attempt inside its lease is never disturbed
+            r.update(status="FAILED", cls=p["cls"], attempt_started_at=None)
+            return _Rows(
+                [
+                    SimpleNamespace(
+                        id=r["id"],
+                        recipient_ref=r["recipient_ref"],
+                        attempt_started_at=prev,
+                    )
+                ]
+            )
         if stmt is n._CLAIM:
             r = self._row(p["i"])
             if r is None or r["status"] not in n.LIVE:
@@ -695,6 +712,67 @@ async def test_a_chained_run_past_its_window_never_sends() -> None:
     assert got is not None and sender.sent == [] and got.sent == 0
     assert got.next_run is None and box.rows[0]["status"] == "FAILED"
     assert ("assess_notify_failed", "window_expired") in box.audit
+
+
+class SlowSlot(Sender):
+    """A relay slot that frees up only after the clock has moved."""
+
+    def __init__(self, clock: Clock, wait: timedelta) -> None:
+        super().__init__()
+        self.clock, self.wait = clock, wait
+
+    @contextlib.asynccontextmanager
+    async def slot(self) -> Any:
+        self.clock.now += self.wait
+        yield
+
+
+async def test_a_slot_freed_after_the_cutoff_never_starts_a_send() -> None:
+    """CodeRabbit 4514485552: the run began inside the window, but its relay slot freed up
+    past the cutoff. The row is FAILED window_expired at claim time, nothing is sent."""
+    clock = Clock()
+    box = Outbox(clock)
+    await n.notify(
+        _deps(("a@uni.example",), Sender(SendResult(False, ErrorClass.CONNECT)), clock),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box),
+    )
+    # the chained run starts 1 s before the cutoff (window 1 h + 240 s grace)
+    clock.now = WHEN + timedelta(hours=1, seconds=239)
+    sender = SlowSlot(clock, timedelta(seconds=30))
+    chained = {**CAP, "root_job_id": 9, "try": 2, "since": int(WHEN.timestamp())}
+    got = await n.notify(
+        _deps(("a@uni.example",), sender, clock),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box, 15, chained),
+    )
+    assert got is not None and sender.sent == [] and got.sent == 0
+    assert box.rows[0]["status"] == "FAILED" and box.rows[0]["cls"] == "window_expired"
+    assert ("assess_notify_failed", "window_expired") in box.audit
+
+
+async def test_past_the_cutoff_an_attempt_inside_its_lease_is_left_alone() -> None:
+    """The same check never fails a row whose send may still be running elsewhere."""
+    clock = Clock()
+    box = Outbox(clock)
+    await n.notify(
+        _deps(("a@uni.example",), Sender(SendResult(False, ErrorClass.CONNECT)), clock),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box),
+    )
+    clock.now = WHEN + timedelta(hours=1, seconds=239)
+    started = clock.now  # another worker's attempt, just started
+    box.rows[0]["attempt_started_at"] = started
+    sender = SlowSlot(clock, timedelta(seconds=30))
+    chained = {**CAP, "root_job_id": 9, "try": 2, "since": int(WHEN.timestamp())}
+    got = await n.notify(
+        _deps(("a@uni.example",), sender, clock),
+        JobKind.TEACHER_NOTIFY,
+        _ctx(box, 15, chained),
+    )
+    assert got is not None and sender.sent == []
+    assert box.rows[0]["attempt_started_at"] == started
+    assert box.rows[0]["status"] != "FAILED"
 
 
 class Boom(Sender):

@@ -318,6 +318,16 @@ _FAIL = text(
     "smtp_code = :code, attempt_started_at = NULL "
     "WHERE id = :i AND attempt_started_at = :started"
 )
+#: past the cutoff: a live row is FAILED, except one whose attempt is still inside its lease
+#: (its send may be running elsewhere; its own settle, or the run after the lease, ends it)
+_EXPIRE_ROW = text(
+    "WITH prev AS (SELECT id, attempt_started_at FROM assess_deliveries WHERE id = :i "
+    "AND status IN ('PENDING', 'RETRYING') "
+    "AND (attempt_started_at IS NULL OR attempt_started_at < :stale) FOR UPDATE) "
+    "UPDATE assess_deliveries d SET status = 'FAILED', last_error_class = :cls, "
+    "attempt_started_at = NULL FROM prev WHERE d.id = prev.id "
+    "RETURNING d.id, d.recipient_ref, prev.attempt_started_at"
+)
 #: when the chain first addressed its rows: the retry window of a root job retried by the
 #: runner (which carries no ``since``) still counts from here
 _ORIGIN = text(
@@ -496,6 +506,13 @@ async def _row(
             ):
                 out.withdrawn += 1  # left unclaimed; the next run withdraws it
                 return True
+            if deps.clock() >= _cutoff(deps, run):
+                # the slot freed up past the cutoff: no send may start now
+                async with acquire() as conn, conn.begin():
+                    if await _expire_row(conn, deps, run, row_id, ref, out):
+                        return False
+                out.busy += 1  # an attempt inside its lease: the run after it ends it
+                return True
             c = await _claim(deps, acquire, run, row_id, ref, out)
             if c is None:
                 out.busy += 1  # an attempt still inside its lease: looked at again soon
@@ -605,34 +622,59 @@ async def _reconcile(
     return [r for r in rows if r.status in LIVE], bool(rows)
 
 
+def _cutoff(deps: NotifyDeps, run: _Run) -> datetime:
+    """Past this instant the chain sends nothing: the window plus one lease of grace."""
+    return run.since + deps.window + deps.stale_after
+
+
+async def _expire_row(
+    conn: Any, deps: NotifyDeps, run: _Run, row_id: UUID, ref: str, out: Notified
+) -> bool:
+    """FAIL one live row ``window_expired``, audited and alerted. False: its attempt is still
+    inside its lease and is left alone (CodeRabbit 4514485552)."""
+    gone = (
+        await conn.execute(
+            _EXPIRE_ROW,
+            {
+                "i": row_id,
+                "cls": WINDOW_EXPIRED,
+                "stale": deps.clock() - deps.stale_after,
+            },
+        )
+    ).first()
+    if gone is None:
+        return False
+    extra: dict[str, Any] = {}
+    if gone.attempt_started_at is not None:
+        extra["last_attempt_outcome"] = "unknown"  # the relay may hold it
+    await _audit(
+        conn,
+        AssessAuditEvent.NOTIFY_FAILED,
+        run,
+        reason=WINDOW_EXPIRED,
+        ref=ref,
+        delivery_id=str(row_id),
+        **extra,
+    )
+    out.failed += 1
+    _alert("notify_failed", run.kind, reason_code=WINDOW_EXPIRED)
+    return True
+
+
 async def _expire(
     deps: NotifyDeps, acquire: AcquireDb, run: _Run, out: Notified
 ) -> None:
-    """The window is over: every live row is FAILED (``window_expired``), audited."""
+    """The window is over: every live row is FAILED (``window_expired``), audited. A row whose
+    attempt is still inside its lease is left to that attempt; one last run after the lease
+    expires it if the attempt never settled."""
+    held = 0
     async with acquire() as conn, conn.begin():
         rows = (await conn.execute(_ROWS, {"j": run.root, "k": run.kind.value})).all()
         for r in rows:
             if r.status not in LIVE:
                 continue
-            gone = (
-                await conn.execute(_WITHDRAW, {"i": r.id, "cls": WINDOW_EXPIRED})
-            ).first()
-            if gone is None:
-                continue
-            extra: dict[str, Any] = {}
-            if gone.attempt_started_at is not None:
-                extra["last_attempt_outcome"] = "unknown"  # the relay may hold it
-            await _audit(
-                conn,
-                AssessAuditEvent.NOTIFY_FAILED,
-                run,
-                reason=WINDOW_EXPIRED,
-                ref=r.recipient_ref,
-                delivery_id=str(r.id),
-                **extra,
-            )
-            out.failed += 1
-            _alert("notify_failed", run.kind, reason_code=WINDOW_EXPIRED)
+            if not await _expire_row(conn, deps, run, r.id, r.recipient_ref, out):
+                held += 1
         if out.unresolved and not rows:
             # nothing was ever addressed: the notification itself failed
             await _audit(
@@ -640,6 +682,9 @@ async def _expire(
             )
             out.failed += 1
             _alert("notify_failed", run.kind, reason_code=RECIPIENTS_UNRESOLVED)
+    if held:
+        out.busy += held
+        await _queue(deps, acquire, run, out, deps.clock() + deps.stale_after, True)
 
 
 async def _next_run(
@@ -656,6 +701,18 @@ async def _next_run(
     if nb is None:
         await _expire(deps, acquire, run, out)
         return
+    await _queue(deps, acquire, run, out, nb, busy_only)
+
+
+async def _queue(
+    deps: NotifyDeps,
+    acquire: AcquireDb,
+    run: _Run,
+    out: Notified,
+    nb: datetime,
+    busy_only: bool,
+) -> None:
+    """Queue the chain's next run at ``nb``."""
     args = {
         **{
             k: v
@@ -728,7 +785,7 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
         _alert(RECIPIENTS_UNRESOLVED, kind)
         await _next_run(deps, ctx.acquire, run, out, busy_only=False)
         return out
-    if now >= run.since + deps.window + deps.stale_after:
+    if now >= _cutoff(deps, run):
         # a run that starts past the window and its grace (a worker down for hours) sends
         # nothing: its live rows are FAILED window_expired, as the transcript handler does
         # past its cutoff (CodeRabbit 4513956352)

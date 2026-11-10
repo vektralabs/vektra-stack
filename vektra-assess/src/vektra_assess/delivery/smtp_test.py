@@ -176,3 +176,38 @@ def make_smtp_test_handler(deps: SmtpTestDeps) -> Callable[[Any], Awaitable[None
         await run_test(deps, ctx)
 
     return handle
+
+
+# --- the reaper (review #2) -----------------------------------------------------------------
+
+#: a test whose single-attempt job died (killed mid-send, or before it ran) has no rerun to
+#: settle it: PENDING older than the job's lease with no job of its own still ready or leased.
+_REAP = text(
+    "UPDATE assess_deliveries d SET status = 'FAILED', last_error_class = :cls, "
+    "attempt_started_at = NULL WHERE d.kind = 'smtp_test' AND d.status = 'PENDING' "
+    "AND d.created_at < :stale AND NOT EXISTS (SELECT 1 FROM assess_jobs j "
+    "WHERE j.kind = 'smtp_test_send' AND j.state IN ('ready', 'leased') "
+    "AND j.args->>'test_id' = CAST(d.id AS text)) RETURNING d.id"
+)
+
+
+async def reap_interrupted_tests(
+    acquire: Callable[[], Any], *, stale_after: timedelta, now: datetime | None = None
+) -> int:
+    """The ``delivery_retry`` tick: a test send that can no longer finish reads FAILED
+    ``interrupted``, never PENDING for a week. Audited like any outcome."""
+    at = now or datetime.now(UTC)
+    async with acquire() as conn, conn.begin():
+        ids = [
+            r[0]
+            for r in (
+                await conn.execute(
+                    _REAP, {"cls": INTERRUPTED, "stale": at - stale_after}
+                )
+            ).all()
+        ]
+        for test_id in ids:
+            await _audit(conn, test_id, INTERRUPTED)
+    if ids:
+        log.warning("assess_smtp_test_reaped", count=len(ids))
+    return len(ids)

@@ -477,8 +477,17 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         await delivery_retry_tick(
             engine.connect, stale_after=deps.stale_after, window=deps.window
         )
-        # plan 12b: a notification chain whose job died gets its next run back
+        # plan 12b: a notification chain whose job died gets its next run back, and an SMTP test
+        # whose single-attempt job died ends FAILED interrupted (review #2)
         await rescue_dead_chains(engine.connect)
+        from vektra_assess.delivery.smtp_test import reap_interrupted_tests
+
+        await reap_interrupted_tests(
+            engine.connect,
+            stale_after=timedelta(
+                seconds=policy_all.kinds[JobKind.SMTP_TEST_SEND].lease_s
+            ),
+        )
 
     async def smtp_probe() -> None:
         # one whole probe; the tick's own timeout (slots.probe_tick_timeout_s) is longer

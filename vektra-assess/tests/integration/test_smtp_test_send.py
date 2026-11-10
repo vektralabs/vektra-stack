@@ -175,3 +175,44 @@ async def test_the_purge_drops_week_old_test_rows(pg, worker, sink) -> None:  # 
             {"i": test_id},
         )
         assert left[0][0] == 0
+
+
+async def test_a_test_whose_job_died_is_reaped_to_interrupted(pg, worker) -> None:  # type: ignore[no-untyped-def]
+    """Review #2: the job has one attempt, so a test killed mid-send (or before it ran) had no
+    rerun to settle it and read PENDING for a week. The tick reaps it."""
+    from datetime import timedelta
+
+    async with world(pg, default_settings(**RELAY)) as w:
+        r = await w.client.post("/api/v1/assess/ops/smtp-test", headers=auth("admin"))
+        test_id = r.json()["id"]
+        job = await _job(pg)
+        # the run claimed the row and the worker was killed: the job is dead, the row PENDING
+        await pg.run(
+            "super",
+            "INSERT INTO assess_deliveries (id, kind, recipient_kind, recipient_ref, status, "
+            "attempts, attempt_started_at) VALUES (:i, 'smtp_test', 'address', :ref, "
+            "'PENDING', 1, now())",
+            {"i": test_id, "ref": "0" * 64},
+        )
+        later = (await pg.run("super", "SELECT now() + interval '10 min'"))[0][0]
+        # while the job is still ready the row is left alone
+        assert (
+            await st.reap_interrupted_tests(
+                worker.connect, stale_after=timedelta(minutes=4), now=later
+            )
+            == 0
+        )
+        await pg.run("super", "UPDATE assess_jobs SET state = 'dead' WHERE id = :j",
+                     {"j": job.id})  # fmt: skip
+        assert (
+            await st.reap_interrupted_tests(
+                worker.connect, stale_after=timedelta(minutes=4), now=later
+            )
+            == 1
+        )
+        got = (
+            await w.client.get(
+                f"/api/v1/assess/ops/smtp-test/{test_id}", headers=auth("admin")
+            )
+        ).json()
+        assert (got["status"], got["error_class"]) == ("FAILED", "interrupted")

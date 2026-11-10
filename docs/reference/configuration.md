@@ -172,7 +172,11 @@ Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route
 Until every job handler of the feature is bound (later plans), a production worker refuses to start; for development and CI add
 `-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development` for the worker only.
 These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
-process environment, never from an env file.
+process environment, never from an env file. Every numeric setting has a lower and an upper
+bound; a value outside its range (or any invalid value) stops the API at startup step
+`assess_check`, and the worker before it touches the database, with a `StartupValidationError`
+that names each rejected variable and the rule it broke. The rejected value itself is never
+printed, because some settings carry connection strings.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -182,16 +186,16 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_SECRETS_DIR` | path | `/run/secrets` | Directory holding the assess secret files. |
 | `VEKTRA_ASSESS_API_POOL_SIZE` | int | `15` | Connection pool of the assess API engine. |
 | `VEKTRA_ASSESS_WORKER_POOL_SIZE` | int | `5` | Connection pool of the worker engine. |
-| `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. Minimum `30` (three beat intervals). |
+| `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` | int | `60` | A worker heartbeat older than this makes `/health/assess` non-healthy. Range `30`..`600` (at least three beat intervals). |
 | `VEKTRA_ASSESS_MOODLE_CA_FILE` | path | - | CA bundle for verifying the Moodle TLS certificate (on-prem CA); the system store when unset. |
 | `VEKTRA_ASSESS_WS_TIMEOUT_CONNECT_S` | float | `3` | Connect timeout of one Moodle web-service call. |
 | `VEKTRA_ASSESS_WS_TIMEOUT_READ_S` | float | `10` | Read timeout of one Moodle web-service call. |
 | `VEKTRA_ASSESS_WS_TOTAL_TIMEOUT_S` | float | `30` | Overall deadline of one Moodle call including the body; a server dripping bytes under the byte cap cannot hold it open (`Unreadable(timeout)`). |
-| `VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES` | int | `8388608` | Byte cap of a JSON response; the stream is aborted on overflow (`Unreadable(size_cap)`). |
-| `VEKTRA_ASSESS_WS_MAX_FILE_BYTES` | int | `10485760` | Byte cap of one downloaded submission file (REQ-101). |
+| `VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES` | int | `8388608` | Byte cap of a JSON response; the stream is aborted on overflow (`Unreadable(size_cap)`). Range `1024`..`67108864`. |
+| `VEKTRA_ASSESS_WS_MAX_FILE_BYTES` | int | `10485760` | Byte cap of one downloaded submission file (REQ-101). Range `1024`..`67108864`. |
 | `VEKTRA_ASSESS_WS_RPS` | float | `10` | Cap on Moodle calls per second, shared by every caller in the worker **process** (one replica, COMP-003: running several worker replicas multiplies it). |
-| `VEKTRA_ASSESS_BREAKER_THRESHOLD` | int | `5` | Consecutive transport/5xx failures that open the per-site circuit breaker (in memory, per worker process). |
-| `VEKTRA_ASSESS_BREAKER_COOLDOWN_S` | float | `30` | Seconds the breaker stays open before one half-open probe. |
+| `VEKTRA_ASSESS_BREAKER_THRESHOLD` | int | `5` | Consecutive transport/5xx failures that open the per-site circuit breaker (in memory, per worker process). Range `1`..`100`. |
+| `VEKTRA_ASSESS_BREAKER_COOLDOWN_S` | float | `30` | Seconds the breaker stays open before one half-open probe. Range `>0`..`3600`. |
 | `VEKTRA_ASSESS_MOODLE_ALLOW_HTTP` | bool | `false` | Plain http to Moodle. Honoured only with `VEKTRA_ENV=development`; the worker refuses to start with it set in any other environment. |
 | `VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS` | str | - | Comma-separated CIDRs a Moodle host may resolve into (an on-prem Moodle on a private network, e.g. `10.20.0.0/16`). Empty: private addresses are refused. Metadata, link-local and multicast addresses are always refused. |
 | `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | str | - | Username of the ingestion web-service account. The setup check refuses an assess token that belongs to it; when unset that item is `UNVERIFIABLE` (not OK). |
@@ -201,7 +205,7 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` | float | `5` | Seconds between worker heartbeats (row upsert and file touch). At most 10, so `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` (minimum 30) always spans at least three beats. |
 | `VEKTRA_ASSESS_JOB_POLL_INTERVAL_S` | float | `1` | Claim-loop poll when no `NOTIFY` arrives. The poll is the correctness backstop; `NOTIFY` is only a latency hint. |
 | `VEKTRA_ASSESS_JOB_BACKOFF_BASE_S` / `_CAP_S` | float | `5` / `300` | Retry backoff of a failed job attempt: exponential from the base, jittered to 50-100 % of the step, capped. |
-| `VEKTRA_ASSESS_JOB_DONE_RETENTION_H` | int | `24` | Hours a `done` job row is kept before the hourly cleanup deletes it. `dead` rows are kept for the purge plan. |
+| `VEKTRA_ASSESS_JOB_DONE_RETENTION_H` | int | `24` | Hours a `done` job row is kept before the hourly cleanup deletes it. `dead` rows are kept for the purge plan. Range `1`..`8760`. |
 | `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` | bool | `false` | Development and CI only: start the worker while some job kinds or ticks have no handler yet. Unbound slots stay unbound and a job of that kind fails with `handler_not_bound`, never completing silently. Honoured only with `VEKTRA_ENV=development`; set in any other environment the worker refuses to start. The shipped overlay does **not** set it; the dev-only `docker-compose.assess.dev.yml` does. Default: a worker with an unbound slot refuses to start and names each slot and the plan that owns it. |
 | `VEKTRA_ASSESS_WORKER_DB_COMMAND_TIMEOUT_S` | float | `30` | Upper bound on any single worker database statement (pool). A restart or a dropped network can leave a connection half-open: no error, only silence; without a bound the worker would wait on it. The control connection uses a fixed 5 s bound. |
 | `VEKTRA_ASSESS_WORKER_WEDGE_EXIT_S` | float | `60` | Liveness watchdog (10-600): if the heartbeat row has not been written for this long while the worker should be ready, it exits with code 70 and the supervisor (`restart: unless-stopped`) starts a fresh process, which reconciles on startup. Backstop for any wedge the timeouts do not catch. |
@@ -219,8 +223,8 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_LLM_EXTRA_BODY` | JSON object | - | Passed as `extra_body` on every discussion-model call, in the API and in the worker (Part B). For Qwen3 on vLLM: `{"chat_template_kwargs": {"enable_thinking": false}}`. Empty or unset: none. The RAG's `VEKTRA_LLM_EXTRA_BODY` is never used for assess. Invalid JSON or a non-object refuses startup. |
 | `VEKTRA_ASSESS_LLM_TEMPERATURE` | float | `0.2` | Sampling temperature of the discussion model (REQ-100 determinism). |
 | `VEKTRA_ASSESS_LLM_MAX_TOKENS` | int | `600` | Completion tokens per reply, reserved out of the context window before history is kept. |
-| `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). |
-| `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. |
+| `VEKTRA_ASSESS_LLM_CONTEXT_WINDOW` | int | `8192` | Context window of the model. History is trimmed oldest first; the context bundle is never trimmed (a bundle that does not fit is an error). Range `2048`..`1048576`. |
+| `VEKTRA_ASSESS_LLM_SEED` | int | - | Passed to providers that support a seed. Range `0`..`2147483647`. |
 | `VEKTRA_ASSESS_OUTAGE_TIMEOUT_S` | float | `45` | No first token within this time is a provider outage (REQ-086); a slow stream that keeps producing is not. |
 | `VEKTRA_ASSESS_OUTAGE_G_S` | int | `20` | REQ-086 G. An outage moves the session to OUTAGE (timer frozen, input locked); the worker probes the provider every 5-10 s with one `max_tokens=1` call while any session is in OUTAGE. At the first success the outage ends: an interval of at least G seconds is credited in full, a shorter one earns nothing, and the cumulative credit never exceeds C = min(15 min, half the session duration). Cumulative outage above C, or a third consecutive failed call, closes the session `service_failure`. |
 | `VEKTRA_ASSESS_PRIVACY_NOTICE_URL` | url | unset | URL of the privacy notice, returned to the plugin in `GET /state` `pre_session.privacy.notice_url` (with `VEKTRA_ASSESS_PRIVACY_NOTICE_VERSION`). |
@@ -234,7 +238,7 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_START_BREAKER_ROLLBACKS` | int | `10` | Per-site Start breaker: this many system rollbacks of one site within the window open it (worker-written `assess_start_breaker`, audited `assess_start_breaker_open`); the API then refuses Starts 503 `start_breaker_open` without consuming anything. |
 | `VEKTRA_ASSESS_START_BREAKER_WINDOW_S` | int | `300` | The breaker's counting window. |
 | `VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S` | int | `120` | Seconds the breaker stays fully open; then half-open (one Start at a time goes through). A commit closes it (`assess_start_breaker_close`); another system rollback re-opens it. |
-| `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. |
+| `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. Range `0`..`1000`. |
 | `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Safeguard of the discussion runner in the API. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
 | `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
 | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request. |
@@ -253,10 +257,10 @@ process environment, never from an env file.
 | `VEKTRA_ASSESS_STATE_RPM` | int | `30` | `GET /state` calls per minute per site, student and activity (a pre-session token changes on every page view, so it is not the key). Assess-local limiter whose empty windows the housekeeping sweep removes; the global per-key limiter stays dormant. |
 | `VEKTRA_ASSESS_SITE_TIMEZONE` | str | `Europe/Rome` | IANA zone of the transcript's timestamps and of the date in its file name (BR-016: the date of the close in the site time zone). An unknown zone is refused at startup. |
 | `VEKTRA_ASSESS_DOWNLOAD_TOKEN_TTL_S` | int | `60` | Lifetime of a transcript download token (`aud=transcript`, single use), 5-120 s (ARCH-067). The plugin mints it server-side right before the browser fetches the file. |
-| `VEKTRA_ASSESS_DOWNLOAD_RPM` | int | `10` | Transcript operations per minute per transcript and requester, download-token mints and downloads drawing on ONE budget (a complete download costs 2; minimum 2); above it 429 `download_rate`. |
-| `VEKTRA_ASSESS_RESEND_MIN_INTERVAL_S` | int | `600` | Minimum time between two delivery rounds of the same transcript (generation's round 1 included); each round mails up to 3 recipients. Sooner: 429 `resend_interval` with `Retry-After`. Checked by `assess_enqueue_resend` under the per-transcript lock. |
-| `VEKTRA_ASSESS_RESEND_RPM` | int | `6` | Resend calls per minute per API key (assess-local limiter); above it 429 `resend_rate`. |
-| `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` | int | `120` | Freshness bound of the grader list the render worker writes into `assess_gate_inputs`: a teacher's download-token mint, download or resend is checked against it. Older or absent: 403 `ERR-ASSESS-021` and a refresh is queued, so a retry seconds later succeeds (fail closed). The same bound applies to the activity facts (editors, graders, close date, team submission, grading method, override facts) the `teacher_gate` job writes into `assess_teacher_gate` for the configuration routes and the teacher operations (session list, reset, terminate, extra time, opening fallback), and to the student's render evaluation a reset re-checks (older: the reset answers `gate_inputs_stale` and queues a render check). |
+| `VEKTRA_ASSESS_DOWNLOAD_RPM` | int | `10` | Transcript operations per minute per transcript and requester, download-token mints and downloads drawing on ONE budget (a complete download costs 2; minimum 2); above it 429 `download_rate`. Range `2`..`600`. |
+| `VEKTRA_ASSESS_RESEND_MIN_INTERVAL_S` | int | `600` | Minimum time between two delivery rounds of the same transcript (generation's round 1 included); each round mails up to 3 recipients. Sooner: 429 `resend_interval` with `Retry-After`. Checked by `assess_enqueue_resend` under the per-transcript lock. Range `0`..`86400`. |
+| `VEKTRA_ASSESS_RESEND_RPM` | int | `6` | Resend calls per minute per API key (assess-local limiter); above it 429 `resend_rate`. Range `1`..`600`. |
+| `VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S` | int | `120` | Freshness bound of the grader list the render worker writes into `assess_gate_inputs`: a teacher's download-token mint, download or resend is checked against it. Older or absent: 403 `ERR-ASSESS-021` and a refresh is queued, so a retry seconds later succeeds (fail closed). The same bound applies to the activity facts (editors, graders, close date, team submission, grading method, override facts) the `teacher_gate` job writes into `assess_teacher_gate` for the configuration routes and the teacher operations (session list, reset, terminate, extra time, opening fallback), and to the student's render evaluation a reset re-checks (older: the reset answers `gate_inputs_stale` and queues a render check). Range `10`..`3600`. |
 | `VEKTRA_ASSESS_RAG_ENABLED` | bool | `false` | Discussion retrieval from course material (ARCH-072). **Not available in this release**: `true` is refused at startup by the API and the worker, and a teacher's RAG ON is the field error `rag_unavailable`. The database makes RAG ON unrepresentable (`CHECK (rag_enabled = false)`). |
 | `VEKTRA_ASSESS_RESET_NOTICE_ENABLED` | bool | `false` | REQ-092 student notice of a reset. **Out of v1** (product owner 2026-11-08): `true` is refused at startup by the API and the worker ("not available in this release"), like the RAG flag, so no notice path exists: a reset queues nothing and the teacher list shows `studente non avvisato via email` for every reset. |
 | `VEKTRA_ASSESS_SMTP_HOST` | str | - | Worker only. SMTP relay of the transcript emails (REQ-075). Unset: delivery is not bound and the worker refuses to start, unless `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true` (development). The account is NOT a setting: it is the worker-only secret `assess_smtp`, `{"username": "...", "password": "..."}` (or `{}` for a relay that takes no AUTH; one field without the other refuses startup). The API refuses to start when that secret is mounted or named in its environment. |

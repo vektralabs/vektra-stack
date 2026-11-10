@@ -158,7 +158,9 @@ async def run_checks() -> object:
 
 
 async def _checks() -> Checked:
-    from vektra_assess.config import VektraAssessSettings
+    from pydantic import ValidationError
+
+    from vektra_assess.config import VektraAssessSettings, explain_settings_error
     from vektra_assess.crypto.selftest import run_crypto_selftest
     from vektra_assess.db.roles import (
         assert_distinct_dsn,
@@ -167,7 +169,13 @@ async def _checks() -> Checked:
     )
     from vektra_assess.keys import enforce_key_matrix
 
-    settings = VektraAssessSettings()
+    try:
+        settings = VektraAssessSettings()
+    except ValidationError as exc:
+        detail, remediation = explain_settings_error(exc)
+        raise StartupValidationError(
+            step=STEP, detail=detail, remediation=remediation
+        ) from None
     if not settings.enabled:
         raise DisabledError(
             "VEKTRA_ASSESS_ENABLED is not true: the assess worker does not run on a "

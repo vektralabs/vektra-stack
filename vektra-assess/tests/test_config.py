@@ -192,3 +192,38 @@ def test_reset_notice_flag_on_is_refused_at_startup(
     monkeypatch.setenv("VEKTRA_ASSESS_RESET_NOTICE_TEXT_VERSION", "dpo-2026-12-01")
     with pytest.raises(ValidationError, match="not available in this release"):
         VektraAssessSettings()
+
+
+def test_every_numeric_operator_setting_has_both_bounds() -> None:
+    """REQ-080 / plan 12b: no operator-facing number is unbounded on either side."""
+    import typing
+
+    import annotated_types as at
+
+    loose = []
+    for name, f in VektraAssessSettings.model_fields.items():
+        args = typing.get_args(f.annotation) or (f.annotation,)
+        if not any(a in (int, float) for a in args):
+            continue
+        lo = any(isinstance(m, (at.Ge, at.Gt)) for m in f.metadata)
+        hi = any(isinstance(m, (at.Le, at.Lt)) for m in f.metadata)
+        if not (lo and hi):
+            loose.append(f.alias or name)
+    assert loose == []
+
+
+def test_a_value_out_of_bounds_names_the_variable_in_the_remediation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_assess.config import explain_settings_error
+
+    monkeypatch.setenv("VEKTRA_ASSESS_BREAKER_THRESHOLD", "100000")
+    monkeypatch.setenv("VEKTRA_ASSESS_API_POOL_SIZE", "0")
+    with pytest.raises(ValidationError) as exc:
+        VektraAssessSettings()
+    detail, remediation = explain_settings_error(exc.value)
+    assert "VEKTRA_ASSESS_BREAKER_THRESHOLD" in detail
+    assert "VEKTRA_ASSESS_API_POOL_SIZE" in detail
+    assert "100000" not in detail  # the bound is named, the value is not echoed
+    assert "VEKTRA_ASSESS_BREAKER_THRESHOLD" in remediation
+    assert "docs/reference/configuration.md" in remediation

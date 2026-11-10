@@ -102,10 +102,24 @@ async def test_worker_refuses_the_flags_not_in_this_release(
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
     monkeypatch.setenv(flag, "true")
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError, match="not available in this release"):
+    with pytest.raises(StartupValidationError, match="not available in this release"):
         await assess_worker.run_checks()
+
+
+async def test_worker_reports_an_out_of_bounds_setting_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan 12b: a rejected setting is a StartupValidationError naming the variable, and the
+    rejected value (a DSN can carry a password) is not echoed."""
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.setenv("VEKTRA_ASSESS_WORKER_POOL_SIZE", "4242")
+    with pytest.raises(StartupValidationError) as exc:
+        await assess_worker.run_checks()
+    assert "VEKTRA_ASSESS_WORKER_POOL_SIZE" in exc.value.detail
+    assert "4242" not in exc.value.detail
+    assert "VEKTRA_ASSESS_WORKER_POOL_SIZE" in exc.value.remediation
 
 
 async def test_worker_refuses_api_only_key(

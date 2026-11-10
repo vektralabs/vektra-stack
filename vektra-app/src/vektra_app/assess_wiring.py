@@ -39,11 +39,12 @@ def load_assess_settings() -> VektraAssessSettings:
     try:
         return VektraAssessSettings()
     except ValidationError as exc:
+        from vektra_assess.config import explain_settings_error
+
+        detail, remediation = explain_settings_error(exc)
         raise StartupValidationError(
-            step=STEP,
-            detail=str(exc),
-            remediation="Fix the VEKTRA_ASSESS_* variables (docs/reference/configuration.md).",
-        ) from exc
+            step=STEP, detail=detail, remediation=remediation
+        ) from None
 
 
 def include_assess_router(app: FastAPI) -> bool:

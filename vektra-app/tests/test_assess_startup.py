@@ -107,6 +107,22 @@ def test_broken_assess_config_mounts_nothing(
     assert _assess_paths(create_app()) == []
 
 
+def test_an_out_of_bounds_setting_is_named_without_its_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan 12b: the API's settings step names the variable and its bound, never the value
+    (pydantic's own message echoes the input, and a DSN carries a password)."""
+    monkeypatch.setenv(
+        "VEKTRA_ASSESS_API_DATABASE_URL", "postgresql+asyncpg://a:s3cr3t@db/x"
+    )
+    monkeypatch.setenv("VEKTRA_ASSESS_API_POOL_SIZE", "0")
+    with pytest.raises(StartupValidationError) as exc:
+        assess_wiring.load_assess_settings()
+    assert "VEKTRA_ASSESS_API_POOL_SIZE" in exc.value.detail
+    assert "s3cr3t" not in exc.value.to_plain_text()
+    assert "VEKTRA_ASSESS_API_POOL_SIZE" in exc.value.remediation
+
+
 # --- 6.5: step 12 refusals ------------------------------------------------------
 
 

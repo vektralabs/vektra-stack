@@ -147,7 +147,8 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [x] `GET /privacy/subjects/{userid}/transcripts`: subject-key resolution, pagination, no enrolment check, rate limit, audit
 
 ### Operator config and monitoring
-- [ ] Settings bounds validation for all operator-facing `VEKTRA_ASSESS_*` values (one startup step, `StartupValidationError` with remediation)
+- [x] Settings bounds validation for all operator-facing `VEKTRA_ASSESS_*` values (one startup step, `StartupValidationError` with remediation)
+  (12b: every numeric setting bounded on both sides, guarded by a test; `explain_settings_error` names each rejected variable without echoing its value, used by API step 12 and by the worker before it opens a connection)
 - [ ] SMTP test-send endpoints + worker handler (uses plan 10's sender; recipient fixed by setting)
 - [ ] Prometheus collector over `assess_metrics_snapshot()`; label-enum guard test
 - [ ] `/health/assess` readiness payload; test that killing the worker makes `/health/assess` 503 while shallow `/health` stays 200

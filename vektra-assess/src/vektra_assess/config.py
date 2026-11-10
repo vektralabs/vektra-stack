@@ -107,6 +107,7 @@ class VektraAssessSettings(BaseSettings):
     heartbeat_max_age_s: int = Field(
         60,
         ge=30,  # at least three beat intervals (10 s), or /health/assess would flap
+        le=600,
         alias="VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S",
         description="A worker heartbeat older than this makes /health/assess non-healthy.",
     )
@@ -173,6 +174,7 @@ class VektraAssessSettings(BaseSettings):
     job_done_retention_h: int = Field(
         24,
         ge=1,
+        le=8760,
         alias="VEKTRA_ASSESS_JOB_DONE_RETENTION_H",
         description="Hours a done job row is kept before the hourly cleanup tick deletes it; dead rows are kept for the purge plan.",
     )
@@ -258,12 +260,14 @@ class VektraAssessSettings(BaseSettings):
     ws_max_response_bytes: int = Field(
         8 * 1024 * 1024,
         ge=1024,
+        le=64 * 1024 * 1024,
         alias="VEKTRA_ASSESS_WS_MAX_RESPONSE_BYTES",
         description="Byte cap of a JSON web-service response; the stream is aborted on overflow.",
     )
     ws_max_file_bytes: int = Field(
         10 * 1024 * 1024,
         ge=1024,
+        le=64 * 1024 * 1024,
         alias="VEKTRA_ASSESS_WS_MAX_FILE_BYTES",
         description="Byte cap of one downloaded submission file (REQ-101).",
     )
@@ -274,9 +278,11 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ASSESS_WS_RPS",
         description="Global cap on Moodle calls per second, shared by every caller in the worker.",
     )
-    breaker_threshold: int = Field(5, ge=1, alias="VEKTRA_ASSESS_BREAKER_THRESHOLD")
+    breaker_threshold: int = Field(
+        5, ge=1, le=100, alias="VEKTRA_ASSESS_BREAKER_THRESHOLD"
+    )
     breaker_cooldown_s: float = Field(
-        30.0, gt=0, alias="VEKTRA_ASSESS_BREAKER_COOLDOWN_S"
+        30.0, gt=0, le=3600, alias="VEKTRA_ASSESS_BREAKER_COOLDOWN_S"
     )
     moodle_allow_http: bool = Field(
         False,
@@ -322,6 +328,7 @@ class VektraAssessSettings(BaseSettings):
     llm_context_window: int = Field(
         8192,
         ge=2048,
+        le=1_048_576,
         alias="VEKTRA_ASSESS_LLM_CONTEXT_WINDOW",
         description="Context window of the model in tokens. History is trimmed oldest first to fit; the context bundle is never trimmed (a bundle that does not fit is an error).",
     )
@@ -338,6 +345,8 @@ class VektraAssessSettings(BaseSettings):
 
     llm_seed: int | None = Field(
         None,
+        ge=0,
+        le=2**31 - 1,
         alias="VEKTRA_ASSESS_LLM_SEED",
         description="Passed to the provider where it supports a seed (REQ-100 determinism).",
     )
@@ -349,10 +358,10 @@ class VektraAssessSettings(BaseSettings):
         description="No first token within this many seconds is a provider outage (REQ-086); a slow stream that keeps producing is not.",
     )
     llm_price_per_1k_in: float | None = Field(
-        None, ge=0, alias="VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN"
+        None, ge=0, le=1000, alias="VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN"
     )
     llm_price_per_1k_out: float | None = Field(
-        None, ge=0, alias="VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT"
+        None, ge=0, le=1000, alias="VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT"
     )
     store_traces: bool = Field(
         True,
@@ -740,6 +749,7 @@ class VektraAssessSettings(BaseSettings):
     download_rpm: int = Field(
         10,
         ge=2,
+        le=600,
         alias="VEKTRA_ASSESS_DOWNLOAD_RPM",
         description=(
             "Transcript operations per minute per transcript and requester, mints and downloads "
@@ -749,6 +759,7 @@ class VektraAssessSettings(BaseSettings):
     resend_min_interval_s: int = Field(
         600,
         ge=0,
+        le=86_400,
         alias="VEKTRA_ASSESS_RESEND_MIN_INTERVAL_S",
         description=(
             "Minimum time between two delivery rounds of the same transcript (each round mails "
@@ -759,12 +770,14 @@ class VektraAssessSettings(BaseSettings):
     resend_rpm: int = Field(
         6,
         ge=1,
+        le=600,
         alias="VEKTRA_ASSESS_RESEND_RPM",
         description="Resend calls per minute per API key (assess-local limiter); 429 beyond it.",
     )
     teacher_gate_max_age_s: int = Field(
         120,
         ge=10,
+        le=3600,
         alias="VEKTRA_ASSESS_TEACHER_GATE_MAX_AGE_S",
         description=(
             "Freshness bound of the worker-written grader / editor lists a teacher request is "
@@ -964,3 +977,29 @@ def erasure_mode_problem(settings: VektraAssessSettings) -> str | None:
             "'erase' or 'retain_exam_evidence' (the DPO's decision, OQ-033)"
         )
     return None
+
+
+def explain_settings_error(exc: Exception) -> tuple[str, str]:
+    """``(detail, remediation)`` for a settings ``ValidationError``, naming each variable.
+
+    One line per rejected ``VEKTRA_ASSESS_*`` variable with pydantic's reason (the bound it
+    broke). The rejected VALUE is never echoed: the settings hold DSNs and the error goes
+    to the startup log. The remediation names the variables to fix.
+    """
+    errors = exc.errors() if hasattr(exc, "errors") else []  # type: ignore[union-attr]
+    by_name = {n: (f.alias or n) for n, f in VektraAssessSettings.model_fields.items()}
+    names: list[str] = []
+    lines: list[str] = []
+    for err in errors:
+        loc = err.get("loc") or ()
+        key = str(loc[0]) if loc else ""
+        var = by_name.get(key, key) or "settings"
+        if var not in names:
+            names.append(var)
+        lines.append(f"{var}: {err.get('msg', 'invalid')}")
+    detail = "; ".join(lines) or type(exc).__name__
+    remediation = (
+        f"Fix {', '.join(names) or 'the VEKTRA_ASSESS_* variables'} "
+        "(bounds in docs/reference/configuration.md)."
+    )
+    return detail, remediation

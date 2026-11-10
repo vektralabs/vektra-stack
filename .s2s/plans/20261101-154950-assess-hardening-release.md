@@ -129,7 +129,7 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 - [x] ADR-0006 status note (drift record) pointing to ADR-0029; update `.s2s/CONTEXT.md` components table with vektra-assess (only if not already done by plan 1)
 
 ### Release
-- [ ] Release checklist `docs/guides/contributors/release-assess.md` (or the existing release section): version bump in every workspace `pyproject.toml` (currently 0.7.1) to the next minor, `uv lock`, CHANGELOG `[Unreleased]` → `[X.Y.0] - date` + fresh `[Unreleased]`, BUG-027 qemu baseline green with the assess modules, image built by `publish.yml` on tag and smoke-tested (`/health`, `/health/assess`, setup check), minimum plugin_version enforced at mint matches the released plugin
+- [x] Release checklist `docs/guides/contributors/release-assess.md` (13b: the checklist only; no version bumped, no release cut: the owner's decision) (or the existing release section): version bump in every workspace `pyproject.toml` (currently 0.7.1) to the next minor, `uv lock`, CHANGELOG `[Unreleased]` → `[X.Y.0] - date` + fresh `[Unreleased]`, BUG-027 qemu baseline green with the assess modules, image built by `publish.yml` on tag and smoke-tested (`/health`, `/health/assess`, setup check), minimum plugin_version enforced at mint matches the released plugin
 - [x] Image content boundary: `test_image_content_boundary.py` asserts assess UI assets present and no test fixtures, mail-sink, canary datasets or `.s2s/` in the image
 - [ ] Pilot go/no-go document `docs/guides/operators/assess-pilot-go-no-go.md` with the criteria below, signed off per item with evidence links
 

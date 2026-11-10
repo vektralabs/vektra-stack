@@ -161,8 +161,10 @@ the content rows for the affected ids and fails loudly if the count is not 0.
   (12b: plus `VektraAssessMetricsDown` (every other rule is blind while the snapshot cannot be read); a unit test parses the file and fails if a rule names a series the collector does not emit)
 
 ### Keys
-- [ ] `python -m vektra_assess.keys verify` CLI: compares fingerprints of loaded keys (KEK, transcript key, teacher-config key, hand-off key, token signing key, subject-key secret) with the `key_version`/kid values referenced in the DB; non-zero exit on mismatch (detects a restore with the wrong key set)
-- [ ] `docs/guides/operators/assess-keys.md` (key inventory, which process holds what, loss consequences, offline backup separate from DB dumps; full rotation and restore drill in plan 13)
+- [x] `python -m vektra_assess.keys verify` CLI: compares fingerprints of loaded keys (KEK, transcript key, teacher-config key, hand-off key, token signing key, subject-key secret) with the `key_version`/kid values referenced in the DB; non-zero exit on mismatch (detects a restore with the wrong key set)
+  (12b: the DB stores kids, not fingerprints, so a kid match alone cannot catch a restore with other bytes under the same kid; the check therefore also OPENS one row per referenced kid (session DEK, transcript, reset and termination reasons) and reports `wrong_key`. Teacher-config and hand-off kids are checked for presence. Fingerprints are printed for comparing deployments. The token signing key has no DB reference, and there is no subject-key secret (the subject ref is an unkeyed hash): both stated in the output and the runbook. Exit 0 / 1 mismatch / 2 cannot run; `--role worker|api`)
+- [x] `docs/guides/operators/assess-keys.md` (key inventory, which process holds what, loss consequences, offline backup separate from DB dumps; full rotation and restore drill in plan 13)
+  (12b: written into the existing `docs/guides/assess-keys-runbook.md` (backup apart from dumps, restore drill and rotation were already there) rather than a second guide: key inventory with holder, DB reference and loss consequence, and the verify check)
 
 ### Tests, docs
 - [x] Integration (testcontainers): sessions aged past retention → after purge, content row count 0 per table, only tombstones + audit remain; RETRYING delivery → ABANDONED, audited, purge_notice on the mail sink; injected failure mid-batch → rollback, 0 tombstones, alert; non-zero verification → alert and failure surfaced

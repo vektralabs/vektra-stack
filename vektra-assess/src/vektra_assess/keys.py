@@ -395,10 +395,19 @@ def generate(out: Path, *, kid: str = "k1") -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["verify"]:
+        # plan 12b: do the loaded keys open this database's rows (a restore with the wrong keys)
+        from vektra_assess.keys_verify import main as verify_main
+
+        return verify_main(argv[1:])
     parser = argparse.ArgumentParser(prog="python -m vektra_assess.keys")
     sub = parser.add_subparsers(dest="cmd", required=True)
     gen = sub.add_parser("generate", help="write a complete set of assess keyrings")
     gen.add_argument("--out", type=Path, required=True)
+    sub.add_parser(
+        "verify", help="check the loaded keys against the database (exit 1 on mismatch)"
+    )
     args = parser.parse_args(argv)
     if args.cmd == "generate":
         for path in generate(args.out):

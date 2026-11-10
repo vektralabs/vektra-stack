@@ -66,7 +66,21 @@ def test_negative_controls_do_not_count_as_scenario_reports(tmp_path: Path) -> N
     rows = [
         _row("negative:a", ok=False),
         _row("negative:b", ok=False),
-        _row("empty", ok=False),
+        _row("selftest:empty", ok=False),
     ]
     j, d = _write(tmp_path, JUNIT_OK, rows)
     assert any("0 invariant reports" in p for p in evaluate(j, d, 2, 1))
+
+
+def test_scenarios_are_counted_by_distinct_real_name(tmp_path: Path) -> None:
+    """A scenario reported twice, or the checker's self-test rows, cannot pad the count."""
+    rows = [
+        _row("close:finished"),
+        _row("close:finished"),
+        _row("selftest:clean"),
+        _row("selftest:empty", ok=False),
+    ]
+    j, d = _write(tmp_path, JUNIT_OK, rows)
+    problems = evaluate(j, d, 2, 2)
+    assert any("1 invariant reports" in p for p in problems), problems
+    assert evaluate(j, d, 2, 1) == []

@@ -5,8 +5,9 @@ Usage: ``python tests/chaos/assess/gate.py <junit.xml> <report-dir> <min-cases> 
 A skipped chaos case is a hole, not a pass (no Docker would skip every one of them), and a run
 whose invariant report is missing or shorter than declared proves nothing. Exit 0 only when the
 JUnit file has at least ``min-cases`` cases with no skip, failure or error, and the report has at
-least ``min-scenarios`` scenario lines, negative controls not counted, every one ``ok``. The
-report is rewritten as a markdown summary next to the JSON lines (the CI artifact).
+least ``min-scenarios`` distinct scenario names (negative controls and self-tests not
+counted), every one ``ok``. The report is rewritten as a markdown summary next to the JSON lines
+(the CI artifact).
 """
 
 from __future__ import annotations
@@ -42,9 +43,10 @@ def evaluate(
         if lines_path.exists()
         else []
     )
-    # only real scenarios count towards the declared minimum: the checker's own negative
-    # controls report violations on purpose, and a run made of them alone proves nothing
-    scenarios = [r for r in rows if not _negative(r)]
+    # only real scenarios count towards the declared minimum, each name once: the negative
+    # controls and the checker's self-tests are not scenarios, and a scenario reported twice
+    # is still one scenario
+    scenarios = {str(r["scenario"]) for r in rows if not _negative(r)}
     if len(scenarios) < min_scenarios:
         problems.append(
             f"{len(scenarios)} invariant reports, at least {min_scenarios} declared"
@@ -56,9 +58,14 @@ def evaluate(
     return problems
 
 
+#: rows that are not chaos scenarios: negative controls (meant to report violations) and the
+#: checker's own self-tests
+NOT_SCENARIOS = ("negative:", "selftest:")
+
+
 def _negative(row: dict[str, object]) -> bool:
-    """The checker's own negative controls are meant to report violations."""
-    return str(row["scenario"]).startswith("negative:") or row["scenario"] == "empty"
+    """A negative control or a checker self-test, never a scenario."""
+    return str(row["scenario"]).startswith(NOT_SCENARIOS)
 
 
 def _summary(

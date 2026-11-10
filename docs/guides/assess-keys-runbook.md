@@ -51,6 +51,14 @@ key) so two deployments can be compared, then one line per check:
   were written with: the keys come from another deployment or another backup;
 - `skipped ... (not_readable)`: this role may not read those rows; the other container checks them.
 
+Not every key is checked the same way. The check OPENS a row for `assess_kek` (a session DEK),
+`assess_transcript_kek` (a transcript, and the reset and termination reasons): a wrong key under
+the right kid is caught (`wrong_key`). For `assess_teacher_config_private` (worker) and
+`assess_handoff_private` (API) it confirms only that every referenced kid is present (`kid_present`):
+same-named keys with other bytes pass. `assess_teacher_config_public` (API), `assess_handoff_public`
+(worker) and `assess_token_signing` are listed with their fingerprints only. So exit 0 proves the
+session and transcript keys; for the others compare the printed fingerprints with the backup's.
+
 Exit code 0 means every referenced key opened its rows, 1 means at least one mismatch, 2 means the
 check could not run (settings, secrets or database). Treat 1 as an incident before the stack serves
 anyone: nothing else fails until a teacher opens a transcript.
@@ -70,7 +78,7 @@ no fallback and no second copy in the database. The same is true, for transcript
 1. Restore the database dump into a scratch Postgres.
 2. Mount the backed-up `secrets/assess/` into a scratch worker (`vektra-assess-worker`).
 3. Run `python -m vektra_assess.keys verify` in the scratch worker (and in a scratch API): it must
-   exit 0. Then run the rewrap helpers with the old kid as the source: they unwrap every DEK, so a
+   exit 0, and the fingerprints of the keys it only lists must match the backup's (see above). Then run the rewrap helpers with the old kid as the source: they unwrap every DEK, so a
    missing or wrong key fails loudly here instead of during an incident.
 4. Compare: the number of sessions whose DEK unwrapped must equal `SELECT count(*) FROM
    assess_session_keys WHERE kek_wrapped IS NOT NULL`.

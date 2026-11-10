@@ -11,7 +11,7 @@
     worker has written its row (the API cannot read jobs, so an id that was never queued also
     reads ``queued``), then ``PENDING`` while it sends, ``SENT`` or ``FAILED`` with the error
     class (``tls``, ``connect``, ``temp_4xx``, ``perm_5xx``, ``auth``, ``relay_busy``,
-    ``interrupted``). No address, no message.
+    ``interrupted``, ``internal_error``). No address, no message.
 
 No route reads the query string. Both are audited in the worker (outcome) or here (request).
 """

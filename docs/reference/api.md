@@ -159,7 +159,7 @@ The worker sends ONE fixed, content-free message to `VEKTRA_ASSESS_OPERATOR_EMAI
 transcript relay; the request never names a recipient. `status` is `queued` until the worker has
 written its row (an id that was never queued also reads `queued`: the API cannot read jobs), then
 `PENDING`, `SENT` or `FAILED` with `error_class` `tls`, `connect`, `temp_4xx`, `perm_5xx`, `auth`,
-`relay_busy` or `interrupted` (a rerun after a crash never sends a second copy). One attempt only.
+`relay_busy`, `internal_error` or `interrupted` (a rerun after a crash never sends a second copy). One attempt only.
 Result rows are deleted after 7 days. Audited: `assess_smtp_test_requested`, `assess_smtp_test_result`.
 
 ### Assess setup check (assess)

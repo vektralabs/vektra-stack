@@ -95,3 +95,12 @@ async def test_an_already_attempted_row_is_never_sent_again() -> None:
     s = _Sender(SendResult(True, None, 250))
     assert await st.run_test(_deps(s), _ctx([], claim=False)) == st.INTERRUPTED
     assert s.sent == []
+
+
+async def test_an_unexpected_send_error_still_settles_the_row() -> None:
+    """Review: a claimed row whose send raised stayed PENDING (the job has one attempt), so the
+    operator's GET read "PENDING" for a week. It is FAILED ``internal_error`` now."""
+    s = _Sender(RuntimeError("boom"))
+    log: list[str] = []
+    assert await st.run_test(_deps(s), _ctx(log)) == st.INTERNAL
+    assert any(entry.endswith("status") for entry in log)

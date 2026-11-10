@@ -38,6 +38,7 @@ KIND = "smtp_test"
 RETENTION = timedelta(days=7)
 INTERRUPTED = "interrupted"
 BUSY = "relay_busy"
+INTERNAL = "internal_error"
 SUBJECT = "Vektra: prova di invio SMTP"
 BODY = (
     "Questo e' un messaggio di prova inviato dall'operatore della piattaforma Vektra per "
@@ -132,6 +133,14 @@ async def run_test(deps: SmtpTestDeps, ctx: Any) -> str:
     except SlotBusy:
         result = SendResult(False, None, None)
         outcome = BUSY
+    except Exception as exc:
+        log.warning(
+            "assess_smtp_test_error",
+            error_type=type(exc).__name__,
+            job_id=int(ctx.job_id),
+        )
+        result = SendResult(False, None, None)
+        outcome = INTERNAL
     else:
         outcome = (
             "sent"

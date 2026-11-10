@@ -232,8 +232,8 @@ jobs:
       - name: Seed the Hugging Face cache from the image
         if: steps.hf-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack \
-            -c 'cp -a /home/vektra/.cache/huggingface/. /hf-cache/'
+          docker run --rm --user 0 --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack \
+            -c 'cp -R /home/vektra/.cache/huggingface/. /hf-cache/ && chmod -R a+rwX /hf-cache'
           ls "$HF_CACHE_DIR/hub"
 
       - name: Start stack and measure startup (NFR-004)
@@ -503,8 +503,8 @@ jobs:
       - name: Seed the Hugging Face cache from the image
         if: steps.hf-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack \
-            -c 'cp -a /home/vektra/.cache/huggingface/. /hf-cache/'
+          docker run --rm --user 0 --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack \
+            -c 'cp -R /home/vektra/.cache/huggingface/. /hf-cache/ && chmod -R a+rwX /hf-cache'
           ls "$HF_CACHE_DIR/hub"
 
       - name: Start the assess stack

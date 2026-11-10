@@ -486,7 +486,12 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
 
     handlers: dict[Any, Any] = {JobKind.TRANSCRIPT_DELIVER: make_deliver_handler(deps)}
     # the notification emails (REQ-071, REQ-086): the same relay, recipients and schedule
-    for kind in (JobKind.TEACHER_NOTIFY, JobKind.OPERATOR_NOTIFY):
+    # ... and the operator's test send (plan 12b, review #5): one send through the same relay
+    for kind in (
+        JobKind.TEACHER_NOTIFY,
+        JobKind.OPERATOR_NOTIFY,
+        JobKind.SMTP_TEST_SEND,
+    ):
         kp = policy_all.kinds[kind]
         if kp.budget_s < need:
             raise StartupValidationError(

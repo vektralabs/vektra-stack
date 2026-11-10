@@ -914,7 +914,9 @@ def test_the_delivery_budget_must_cover_the_worst_send(
         assess_worker._compose(keyed)
 
 
-@pytest.mark.parametrize("kind", ["teacher_notify", "operator_notify"])
+@pytest.mark.parametrize(
+    "kind", ["teacher_notify", "operator_notify", "smtp_test_send"]
+)
 def test_the_notify_budget_must_cover_the_worst_send(
     monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:

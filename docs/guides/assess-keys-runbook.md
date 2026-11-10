@@ -1,4 +1,4 @@
-# Assess keys: backup, restore drill, KEK re-wrap, hand-off re-seal
+# Assess keys: backup, restore drill and rotation
 
 Operator runbook for the assessment discussion feature (`VEKTRA_ASSESS_ENABLED=true`). Key
 purposes and the rotation order are in [configuration](../reference/configuration.md#assess-key-purposes-and-rotation).
@@ -86,32 +86,203 @@ no fallback and no second copy in the database. The same is true, for transcript
 4. Compare: the number of sessions whose DEK unwrapped must equal `SELECT count(*) FROM
    assess_session_keys WHERE kek_wrapped IS NOT NULL`.
 
-## Re-wrap the KEK
+## Key rotation
 
-1. Add a new kid to `assess_kek`, make it `active`, redeploy the worker. For
-   `assess_transcript_kek` the API reads AND writes under it too (the teachers' reset and
-   termination reasons), so roll it out in two phases:
-   1. add the new kid as an INACTIVE key and deploy it to EVERY API instance and the worker
-      (every process can now read what the new kid will write; nothing writes it yet);
-   2. make it `active` and deploy again everywhere, draining the old instances, before the
-      final sweep below. Activating in one step would let an updated instance write a reason
-      that a not yet updated one cannot read, and an old instance still running could write
-      under the old kid after the helpers returned 0.
-2. Run `rewrap_session_keys(conn, keyring, from_kid)` in a loop (commit between batches) until it
-   returns 0. Do the same with `rewrap_transcript_deks` for `assess_transcript_kek` AND with
-   `rewrap_teacher_reasons(conn, keyring, from_kid)` for the same key (the teachers' reset and
-   termination reasons are encrypted directly under it: both must return 0), and with
-   `reseal_teacher_configs(conn, old_private, new_public)` when the teacher-config key pair
-   rotates (each returns the rows still on the old key, never the rows it just touched).
-3. Only now, once no process holding the old kid as active is left and a last sweep returned 0,
-   remove the old kid from the keyring.
+### How a rotation works
 
-## Re-seal the hand-off
+Every keyring holds several kids; each ciphertext records the kid it was written under, and new
+data is always written under the `active` kid. A rotation therefore has four steps, and only the
+middle one differs per key:
 
-The API's hand-off key pair protects the DEK of each LIVE session. To rotate it, add the new pair
-under a new kid, deploy the API with the new private key, then run
-`reseal_handoffs(conn, kek_keyring, new_api_pub, new_kid)` on the worker until it returns 0. A
-session that closes meanwhile loses its hand-off row (the close deletes it), so the helper skips it.
+1. **Add** a new kid, deploy it to every process that holds the keyring, and make it `active`
+   (for a keyring the API and the worker share, in two phases: see the transcript KEK).
+2. **Move** the rows still under the old kid to the new one.
+3. **Prove** that nothing references the old kid: the command exits 0 or the count query below
+   returns 0, and `python -m vektra_assess.keys verify` exits 0 in both containers.
+4. **Retire** the old kid from the live keyring, restart, verify again. Keep the retired key in
+   the offline backup until it may be destroyed (see the cadence below).
+
+Every process loads its keyrings when it starts, so each "deploy" below means: replace the secret
+file, then restart the process (`docker compose ... up -d --force-recreate <service>`). The one
+exception is `assess_ws_tokens`, which the worker re-reads on every LMS call.
+
+**New key material.** There is no command that adds one kid to an existing keyring. Generate a
+complete scratch set and take the value you need from it:
+
+```bash
+uv run python -m vektra_assess.keys generate --out /secure/scratch/assess-new
+```
+
+Every keyring in the scratch set holds one kid, `k1`. Copy its base64 value into the live file
+under a NEW kid name (for example `k2`; any string except `purged`), keeping the old kid. For an
+X25519 pair (`assess_handoff_*`, `assess_teacher_config_*`), take the private and the public value
+from the same scratch set: they are generated as a matching pair. Then destroy the scratch set.
+Editing a live keyring by hand is the step most likely to break a deployment: a JSON error or a
+wrong mode stops the process at start (see [secrets](operators/assess-secrets.md#startup-refusals)),
+so keep the previous file until `verify` has passed.
+
+`compose` below stands for
+`docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess`.
+
+### Session KEK (`assess_kek`, worker only)
+
+1. Add `k2` to `assess_kek` with `"active": "k2"`, keep `k1`. Restart the worker. New sessions
+   are wrapped under `k2`.
+2. Re-wrap the session DEKs still under `k1`:
+
+   ```bash
+   compose exec vektra-assess-worker python -m vektra_assess.keys rewrap --what session-keys --from-kid k1
+   ```
+
+   It runs as the worker role in committed batches (`--batch`, default 100) and prints only
+   counts and kids. Exit 0: no row is left under `k1`. Exit 1: rows remain, either locked
+   elsewhere (run it again) or rows that did not decrypt, listed by id (a data or key problem:
+   investigate before going on). Exit 2: it could not run (settings, secrets, a kid the keyring
+   does not hold, or `k1` still the active kid).
+3. `compose exec vektra-assess-worker python -m vektra_assess.keys verify --role worker` exits 0.
+4. Remove `k1` from the live `assess_kek`, restart the worker, run `verify` again.
+
+The hand-off rows of live sessions are sealed to the API's hand-off key, not wrapped under the
+KEK, so a KEK rotation does not touch them. A purged or erased session has no wrapped DEK
+(`kek_wrapped IS NULL`), so the re-wrap skips it and it stays unrecoverable.
+
+### Transcript KEK (`assess_transcript_kek`, API and worker)
+
+The API reads AND writes under this key (it opens transcripts for download and encrypts the
+teachers' reset and termination reasons), so the new kid must be readable everywhere before
+anything writes it:
+
+1. Add `k2` as an INACTIVE kid (`"active"` stays `k1`) and deploy it to EVERY API instance and the
+   worker.
+2. Set `"active": "k2"` and deploy again everywhere, draining the old instances. Activating in one
+   step would let an updated instance write a reason that a not yet updated one cannot read.
+3. Re-wrap, from the worker:
+
+   ```bash
+   compose exec vektra-assess-worker python -m vektra_assess.keys rewrap --what transcripts --from-kid k1
+   ```
+
+   One command re-wraps the per-transcript DEKs (`crypto.rotation.rewrap_transcript_deks`) AND
+   re-encrypts the teachers' reasons (`rewrap_teacher_reasons`, plan teacher-ops 11b), so the kid
+   cannot be retired with reasons left behind. Same exit codes as above. It refuses to run while
+   `k1` is still active (exit 2), which is why step 2 comes first.
+4. `verify` exits 0 in the worker (`--role worker`) and in every API container (`--role api`).
+5. Only now, once no process holding `k1` as active is left and the last run exited 0, remove `k1`
+   from the live keyring and deploy everywhere.
+
+A reason that no longer decrypts is shown as `reason: null`, `reason_state: "unreadable"` in the
+teacher list (alert `teacher_reason_unreadable`): that is the symptom of a retired kid that still
+had reasons under it.
+
+### API hand-off key pair (`assess_handoff_private` on the API, `assess_handoff_public` on the worker)
+
+The worker seals the DEK of each LIVE session to the API's hand-off public key (the active kid of
+its `assess_handoff_public`); the API opens it with the private key named by the row's
+`handoff_kid`. A hand-off row exists only while its session is ACTIVE or OUTAGE: the close
+deletes it. So at most the live sessions (bounded by the admission limit K and the session
+duration) carry an old kid, and they go away on their own.
+
+1. Take a new pair from a scratch set. Add it as kid `h2` to `assess_handoff_private` on EVERY API
+   instance (keep `h1`; the API opens by kid) and, where the API mounts it, to its
+   `assess_handoff_public`. Restart the API instances.
+2. Add `h2` to the worker's `assess_handoff_public` with `"active": "h2"`. Restart the worker. New
+   hand-offs are sealed to `h2`.
+3. Wait until no live session carries `h1`. As the database owner (neither assess role can be
+   used: the API role may not read `assess_session_handoff`):
+
+   ```sql
+   SELECT count(*) FROM assess_session_handoff WHERE handoff_kid <> 'h2';
+   ```
+
+   The longest a session can stay live is its frozen duration (at most 240 minutes) plus its
+   credited outage time (at most 15 minutes) plus the reply grace, so the count reaches 0 within
+   a few hours; read the count, do not rely on the clock.
+4. Remove `h1` from the API's keyring and restart the API. Removing it earlier makes every live
+   session under `h1` fail to load its material.
+
+`crypto.rotation.reseal_handoffs(conn, kek_keyring, new_api_pub, new_kid)` re-seals the live rows
+at once instead of waiting, but **no command wraps it**: it is a Python function, exercised only
+by `vektra-assess/tests/integration/test_shred_rotation.py`. Waiting is the supported path.
+
+### Teacher-config key pair (`assess_teacher_config_public` on the API, `_private` on the worker)
+
+The API seals each write-only field (solution, pasted rubric, recipients) to the active kid of
+`assess_teacher_config_public`; the worker opens it with the private key named in the blob.
+Sealed fields stay until a teacher changes them, so waiting does not move them.
+
+1. Take a new pair from a scratch set. Add the private key as `t2` to the worker's
+   `assess_teacher_config_private` (keep `t1`) and restart the worker.
+2. Add the public key as `t2` with `"active": "t2"` to the API's `assess_teacher_config_public`
+   (and to the worker's, where it is mounted). Restart the API instances. New saves are sealed to
+   `t2`.
+3. Count the fields still sealed under another kid, as the database owner:
+
+   ```sql
+   SELECT count(*) FROM assess_activity_config_sealed WHERE sealed_blob IS NOT NULL AND kid <> 't2';
+   ```
+
+4. **Keep `t1` in the worker's private keyring while that count is above 0.**
+   `crypto.rotation.reseal_teacher_configs(conn, old_worker_priv, new_worker_pub)` re-seals the
+   rows, but no command wraps it (it is exercised only by the integration tests
+   `test_shred_rotation.py` and `test_teacher_config_format.py`). Until one exists, a
+   teacher-config rotation stops at step 3: the API seals new data to `t2`, the old blobs stay
+   readable under `t1`, and `t1` cannot be retired. `verify --role worker` checks only that every
+   referenced kid is present (`kid_present`).
+
+### Token signing key (`assess_token_signing`, API only)
+
+Tokens are signed with the active kid and verified against every kid the keyring holds; no token
+is stored. With more than one API instance, roll it out in two phases like the transcript KEK
+(an instance that does not hold the new kid refuses tokens signed with it):
+
+1. Add `s2` as an inactive kid on every API instance and restart them.
+2. Set `"active": "s2"` everywhere and restart.
+3. Wait for the longest token lifetime: `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` (default 900 s; the
+   pre-session and download tokens live at most 120 s).
+4. Remove `s1` and restart. A token still signed with `s1` is then refused with `401`; the plugin
+   mints a new one (and `GET /sessions/{sid}` re-mints the session token on resume).
+
+`verify` lists this keyring by fingerprint only: nothing in the database references it.
+
+### Subject references (nothing to rotate)
+
+There is no subject-key secret. The subject reference of a tombstone or an erasure is an unkeyed
+`sha256(site|userid)`, and a recipient reference is `sha256(site|address)`. Nothing can be rotated
+or lost; equally, these references are not secret against anyone who can guess the inputs. (The
+plan named a "subject-key secret, not rotatable without a full rekey"; the code has none.)
+
+### Credentials and passwords
+
+- **LMS web-service token** (`assess_ws_tokens`): create the new token on the LMS, replace the
+  site's entry in the file (no restart: it is re-read on every call), run the setup check
+  (`token_works` must be `OK`), then delete the old token on the LMS. See the
+  [service account](assess-moodle-service-account.md#token-creation-and-rotation).
+- **SMTP account** (`assess_smtp`): replace the file, restart the worker, then
+  `POST /api/v1/assess/ops/smtp-test` and read its result.
+- **Role passwords** (`assess_db_api_password`, `assess_db_worker_password`): replace the file,
+  `compose run --rm vektra-assess-db-init`, restart the process that holds the password.
+
+### Cadence: rotation, retirement and backup retention
+
+Crypto-shredding (the retention purge and the erasure) removes a session's wrapped DEK from the
+live database, not from a database backup taken before the purge. A backup plus the KEK that was
+active when it was taken can therefore still open a purged session, until either the backup
+expires or that KEK is destroyed (ARCH-079 as amended by plan 12). The rules that follow from
+it (plan 13 design note; they are operational policy, not enforced by code):
+
+- Set `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` to the real retention of your database backups.
+  The worker only warns at startup when it is unset; nothing else reads it.
+- Rotate `assess_kek` and `assess_transcript_kek` at least once per retention interval (the
+  smallest `retention_days` of your sites' privacy settings).
+- A retired kid stays in the offline key backup (never in a live keyring) until the newest
+  database backup taken while any row was under it has expired, that is
+  `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` days after the re-wrap that retired it finished. Then
+  destroy every copy of it and record the date.
+- What this does and does not buy: a purged session stays recoverable from a backup for as long
+  as that backup is kept, whatever the rotation; destroying a retired kid before its backups
+  expire would make the whole of those backups unreadable, not only the purged rows. The cadence
+  bounds how many retired keys exist and gives each one a date after which it must be gone. The
+  restore drill below must use a backup that is still within its retention.
 
 ## Shredding
 

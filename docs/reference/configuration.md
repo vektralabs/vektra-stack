@@ -395,11 +395,12 @@ Every secret is a JSON keyring `{"active": "<kid>", "keys": {"<kid>": "<base64>"
 | `assess_transcript_kek` | API and worker | per-transcript DEKs |
 | `assess_teacher_config_public` / `_private` | API seals with the public key, only the worker holds the private key | the solution or pasted rubric: the API can write it, never read it |
 
-Rotation order (each step is idempotent and resumable; the helper returns what is left):
+Rotation (the full procedure per key, with the two-phase rollout of the keys the API and the
+worker share, is the [keys runbook](../guides/assess-keys-runbook.md#key-rotation)):
 
 1. add the new kid to the keyring and make it `active`; deploy;
-2. `rewrap_session_keys`, `rewrap_transcript_deks`, `reseal_handoffs` and `reseal_teacher_configs` (worker): each returns how many rows still carry the old key, so loop until it returns 0;
-3. remove the old kid from the keyring only after every helper returned 0.
+2. move the rows still under the old kid: `python -m vektra_assess.keys rewrap --what session-keys --from-kid <old>` (`assess_kek`) and `--what transcripts` (`assess_transcript_kek`: the transcript DEKs and the teachers' reasons), run in the worker container until it exits 0. The hand-off rows go away as the live sessions close. `reseal_teacher_configs` has no command yet, so the old teacher-config private kid cannot be retired;
+3. remove the old kid from the keyring only after `rewrap` exited 0 and `python -m vektra_assess.keys verify` exits 0 in both containers.
 
 The envelope AAD binds each ciphertext to its row (`snapshot` to the session, `turn` to session and turn number, and so on), so a ciphertext copied to another row fails authentication.
 

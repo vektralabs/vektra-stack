@@ -189,3 +189,24 @@ def test_row_counts_are_gauges_and_no_rule_reads_them_as_counters() -> None:
     assert (
         "VektraAssessPurgeNeverSucceeded" in names
     )  # review #4: an absent series pages too
+
+
+async def test_a_hung_read_times_out_and_the_next_refresh_runs() -> None:
+    """CodeRabbit 4525094941: a half-open connection blocked refresh forever."""
+    import asyncio
+
+    class _Hang:
+        def connect(self):  # type: ignore[no-untyped-def]
+            class _C:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    await asyncio.sleep(3600)
+
+                async def __aexit__(self, *_a):  # type: ignore[no-untyped-def]
+                    return False
+
+            return _C()
+
+    cache = m.SnapshotCache(timeout_s=0.05)
+    cache.snapshot, cache.read_at = dict(HOSTILE), 0.0
+    await asyncio.wait_for(cache.refresh(_Hang()), 1.0)
+    assert cache.snapshot is None

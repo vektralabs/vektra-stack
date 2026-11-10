@@ -33,6 +33,8 @@ from prometheus_client.registry import REGISTRY, Collector
 log = logging.getLogger("vektra_assess.metrics")
 
 REFRESH_S = 15.0
+#: one snapshot read, connection included, never waits longer than this
+READ_TIMEOUT_S = 10.0
 OTHER = "other"
 
 SESSION_STATES = ("STARTING", "ACTIVE", "OUTAGE", "CLOSED")
@@ -234,17 +236,28 @@ def families(snap: Mapping[str, Any] | None, *, age_s: float | None) -> list[Met
 class SnapshotCache:
     """The last snapshot, refreshed by :meth:`run` every ``REFRESH_S`` seconds."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        *,
+        timeout_s: float = READ_TIMEOUT_S,
+    ) -> None:
         self._clock = clock
+        self._timeout_s = timeout_s
         self.snapshot: dict[str, Any] | None = None
         self.read_at: float | None = None
 
     async def refresh(self, engine: Any) -> None:
         from sqlalchemy import text
 
-        try:
+        async def read() -> Any:
             async with engine.connect() as conn:
-                value = (await conn.execute(text(SNAPSHOT_SQL))).scalar_one()
+                return (await conn.execute(text(SNAPSHOT_SQL))).scalar_one()
+
+        try:
+            # bounded: a half-open connection must not stop every later refresh (CodeRabbit
+            # 4525094941); a timeout is an ordinary failure below
+            value = await asyncio.wait_for(read(), self._timeout_s)
         except Exception as exc:
             log.warning(
                 "assess_metrics_snapshot_failed",

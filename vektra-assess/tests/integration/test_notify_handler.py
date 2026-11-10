@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from fixtures.mailsink import MailSink, sink_config
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.recipients import TEACHERS, config_pair, configure_recipients
 from support.sessions import seed_session
@@ -526,3 +527,21 @@ async def test_a_chain_with_no_job_left_ends_failed_not_live_forever(
         }
         (row,) = await rows(pg, int(job.id))
         assert (row.status, row.last_error_class) == ("FAILED", "chain_lost")
+
+
+async def test_the_chain_lookup_uses_its_index(pg) -> None:  # type: ignore[no-untyped-def]
+    """Review #8: ``args->>'root_job_id'`` is indexed (revision 0043) and the lookup takes it."""
+    async with pg.conn("super") as c:
+        await c.execute(text("SET enable_seqscan = off"))
+        plan = "\n".join(
+            r[0]
+            for r in (
+                await c.execute(
+                    text(
+                        "EXPLAIN SELECT id FROM assess_jobs "
+                        "WHERE args->>'root_job_id' = '42'"
+                    )
+                )
+            ).all()
+        )
+    assert "ix_assess_jobs_root" in plan, plan

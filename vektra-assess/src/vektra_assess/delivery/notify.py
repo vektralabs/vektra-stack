@@ -890,8 +890,12 @@ _ORPHANS = text(
     "WHERE d.kind IN ('teacher_notify', 'operator_notify') "
     "AND d.status IN ('PENDING', 'RETRYING') AND d.job_id IS NOT NULL "
     "AND d.created_at < :settled "
-    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.state IN ('ready', 'leased') "
-    "AND (j.id = d.job_id OR j.args->>'root_job_id' = CAST(d.job_id AS text))) "
+    # two anti-joins, each on an index (the primary key, ``ix_assess_jobs_root``, review #8)
+    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.id = d.job_id "
+    "AND j.state IN ('ready', 'leased')) "
+    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j "
+    "WHERE j.args->>'root_job_id' = CAST(d.job_id AS text) "
+    "AND j.state IN ('ready', 'leased')) "
     "ORDER BY d.job_id LIMIT :n"
 )
 #: the chain's newest job still on record: its arguments carry the event and the backoff state

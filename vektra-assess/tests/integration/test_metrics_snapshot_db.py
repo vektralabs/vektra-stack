@@ -97,3 +97,56 @@ async def test_only_the_api_may_call_it_and_it_opens_no_table(pg) -> None:  # ty
     for table in ("assess_jobs", "assess_audit_events"):
         with pytest.raises(DBAPIError, match="permission denied"):
             await pg.run("api", f"SELECT count(*) FROM {table}")
+
+
+async def test_the_snapshot_and_the_exposition_agree(pg) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick (metrics.py): seeded RETRYING and TLS-failed deliveries and the purge
+    fields come out of ``families`` with the values the database holds."""
+    from prometheus_client import generate_latest
+    from prometheus_client.registry import CollectorRegistry
+
+    await pg.run("super", "DELETE FROM assess_deliveries")
+    for status, cls in (("RETRYING", "tls"), ("FAILED", "tls"), ("RETRYING", None)):
+        await pg.run(
+            "super",
+            "INSERT INTO assess_deliveries (kind, recipient_kind, recipient_ref, status, "
+            "last_error_class, job_id, created_at) VALUES ('operator_notify', 'address', "
+            ":ref, :st, :c, 1, now() - interval '2 hours')",
+            {"ref": uuid.uuid4().hex * 2, "st": status, "c": cls},
+        )
+    # a test send must stay out of every delivery figure
+    await pg.run(
+        "super",
+        "INSERT INTO assess_deliveries (kind, recipient_kind, recipient_ref, status, "
+        "last_error_class) VALUES ('smtp_test', 'address', :ref, 'FAILED', 'tls')",
+        {"ref": uuid.uuid4().hex * 2},
+    )
+    await pg.run(
+        "super",
+        "INSERT INTO assess_heartbeat (component, details) VALUES ('purge', "
+        "CAST(:d AS jsonb)) "
+        "ON CONFLICT (component) DO UPDATE SET details = EXCLUDED.details",
+        {
+            "d": json.dumps(
+                {"ok": False, "last_success": 1700000000, "rows_deleted": 42}
+            )
+        },
+    )
+    snap = (await pg.run("api", m.SNAPSHOT_SQL))[0][0]
+
+    class _Fixed:
+        def collect(self):  # type: ignore[no-untyped-def]
+            return m.families(snap, age_s=0.0)
+
+    reg = CollectorRegistry()
+    reg.register(_Fixed())  # type: ignore[arg-type]
+    text = generate_latest(reg).decode()
+    assert 'vektra_assess_deliveries{status="RETRYING"} 2.0' in text
+    assert 'vektra_assess_deliveries{status="FAILED"} 1.0' in text
+    assert "vektra_assess_tls_failures 2.0" in text
+    oldest = [ln for ln in text.splitlines()
+              if ln.startswith("vektra_assess_deliveries_retrying_oldest_seconds ")]  # fmt: skip
+    assert oldest and float(oldest[0].split()[1]) >= 7190
+    assert "vektra_assess_purge_last_success_timestamp 1.7e+09" in text
+    assert "vektra_assess_purge_rows_deleted_total 42.0" in text
+    assert "vektra_assess_purge_last_run_ok 0.0" in text

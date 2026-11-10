@@ -26,6 +26,8 @@ from vektra_assess.moodle.probes import (
     persist_matrix,
 )
 
+from .conftest import Pg
+
 pytestmark = pytest.mark.integration
 
 BRANCH = "5.2"
@@ -344,7 +346,7 @@ async def test_a_queued_report_is_revalidated_and_run(pg):
         await run(pg, uuid.uuid4())
 
 
-async def test_a_report_whose_job_died_is_failed_not_queued_forever(pg):
+async def test_a_report_whose_job_died_is_failed_not_queued_forever(pg: Pg) -> None:
     """Plan 12b: the hourly sweep closes a queued report no job will run; a report whose job
     is still ready (or a running one with a live job of its site) is left alone."""
     from vektra_assess.worker.setup_check import fail_abandoned_reports

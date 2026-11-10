@@ -330,3 +330,27 @@ async def test_verify_reports_a_present_kid_without_a_sample_as_present() -> Non
     reasons = {f.reason for f in rep.findings}
     assert "kid_present" in reasons
     assert any(r and r.startswith("not_referenced") for r in reasons)
+
+
+async def test_a_dsn_with_a_password_cannot_run_and_is_not_printed(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch
+) -> None:
+    """CodeRabbit 4524508958: the DSN error escaped the handler (exit 1 = 'mismatch')."""
+    import io
+
+    from vektra_assess import keys
+    from vektra_assess import keys_verify as kv
+
+    keys.generate(tmp_path / "s")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv(
+        "VEKTRA_ASSESS_WORKER_DATABASE_URL", "postgresql+asyncpg://w:s3cr3t@db/x"
+    )
+    monkeypatch.setattr(
+        keys,
+        "enforce_key_matrix",
+        lambda *a, **k: {"assess_db_worker_password": keys.Password("p", "x" * 30)},
+    )
+    out = io.StringIO()
+    assert await kv._run("worker", out) == 2
+    assert "s3cr3t" not in out.getvalue()

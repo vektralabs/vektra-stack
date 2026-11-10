@@ -203,9 +203,25 @@ def render(report: Report, out: TextIO) -> None:
     print("RESULT: " + ("MISMATCH" if report.mismatched else "ok"), file=out)
 
 
-async def _run(role: Literal["worker", "api"], out: TextIO) -> int:
+def make_query(engine: Any) -> Query:
+    """The ``query`` callable over ``engine``: rows, or ``None`` on a permission denial (the
+    role may not read that table), any other database error raised."""
     from sqlalchemy import text
     from sqlalchemy.exc import DBAPIError
+
+    async def query(sql: str, params: Mapping[str, Any]) -> Sequence[Any] | None:
+        try:
+            async with engine.connect() as conn:
+                return list((await conn.execute(text(sql), dict(params))).all())
+        except DBAPIError as exc:
+            if "permission denied" in str(exc.orig).lower():
+                return None
+            raise
+
+    return query
+
+
+async def _run(role: Literal["worker", "api"], out: TextIO) -> int:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from vektra_assess.config import VektraAssessSettings, explain_settings_error
@@ -239,18 +255,17 @@ async def _run(role: Literal["worker", "api"], out: TextIO) -> int:
             file=out,
         )
         return 2
-    engine = create_async_engine(
-        dsn_with_password(url, loaded[secret].value, step="keys_verify")  # type: ignore[union-attr]
-    )
-
-    async def query(sql: str, params: Mapping[str, Any]) -> Sequence[Any] | None:
-        try:
-            async with engine.connect() as conn:
-                return list((await conn.execute(text(sql), dict(params))).all())
-        except DBAPIError as exc:
-            if "permission denied" in str(exc.orig).lower():
-                return None
-            raise
+    try:
+        # a DSN that carries a password, or one the driver refuses, means the check cannot run
+        # (exit 2, never 1, which means a key mismatch); the exception text may hold the DSN,
+        # so only its type is printed (CodeRabbit 4524508958)
+        engine = create_async_engine(
+            dsn_with_password(url, loaded[secret].value, step="keys_verify")  # type: ignore[union-attr]
+        )
+    except Exception as exc:
+        print(f"cannot run: database URL {type(exc).__name__}", file=out)
+        return 2
+    query = make_query(engine)
 
     try:
         report = await verify(loaded, query)

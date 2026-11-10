@@ -278,3 +278,40 @@ every release, with a manual exploratory session on top.
   batch driver is `crypto.rotation.rewrap_to_done`, and its stall guard stops a run that a row
   locked elsewhere would otherwise keep spinning. `keys_verify.open_role` is shared by `verify`
   and `rewrap`. The cadence, ordering and retirement steps are runbook text, so they stay in 13b.
+- **Chaos consolidation status at the end of 13a.**
+  - Task 1 (harness, invariants): `invariants.py` is done, with a negative control for every
+    invariant, and the mail sink gained `hold_after_data`. Drift: the harness drives real worker
+    processes, child processes and a testcontainers Postgres, not `docker compose kill`. That kills
+    the same OS processes without needing the full stack, which cannot run in CI (see the BLOCKED
+    list). The fault-injecting LLM stub is not built: no 13a scenario needs it. It comes with the
+    API-turn scenarios. Task left open.
+  - Task 2 (matrix), covered so far:
+    - the six close reasons;
+    - kill -9 mid pre-flight commit;
+    - kill -9 of the API mid-reply;
+    - Postgres restart mid-turn;
+    - kill -9 of the worker mid-handler;
+    - Postgres restart under job load;
+    - **kill -9 of the delivering process between DATA and 250**
+      (`vektra-assess/tests/integration/test_chaos_mid_smtp_kill.py`, new).
+
+    Each one ends with the invariant checker. Not yet covered: the worker killed mid-generation,
+    Postgres restarted during delivery and during a Start burst, the parser killed mid-extraction,
+    and the cross product with the API lazy close. Task left open.
+  - Task 3 (key-lifecycle chaos: API restart resuming from the hand-off row, worker down
+    10 min, epoch bump mid-stream): not started in 13a. Task left open.
+  - **REQ-080 compose-stack canary grep: still BLOCKED.** The chaos harness does not bring up the
+    compose stack, and the stack still lacks an LMS site with a released attempt, an activated
+    model and a test relay (the NFR-021 gap). Command once they exist:
+    `tests/nfr/assess_canary_grep.sh` over the stack's logs, mail log and `/metrics` (plan 12
+    Notes).
+- **NFR campaign items, BLOCKED by environment (13a).** None is reported PASS:
+  - NFR-020 / OQ-032 K sweep, and NFR-018 latency: blocked on the target VM or HPC and the
+    reference model (OQ-026). Run `scripts/assess_burst.py` at K = 5/10/15/20, then
+    `VEKTRA_NFR_ASSESS_DSN=... VEKTRA_NFR_ASSESS_SINCE=... python scripts/assess_nfr_report.py`.
+  - NFR-019 24 h soak: blocked on the target VM. Same report script over the soak window.
+  - NFR-021: blocked on the target VM and the production-like relay. Run
+    `scripts/assess_transcript_timing.py` (plan 10).
+  - NFR-014 pen matrix: blocked on live LMS 4.3/5.2 with login-as (OQ-031).
+  - NFR-015 / NFR-017 canary suites on the target model: blocked on OQ-026.
+  - NFR-016 manual NVDA/VoiceOver pass: blocked on a person with a screen reader.

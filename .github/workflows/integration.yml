@@ -602,10 +602,14 @@ jobs:
       - name: Install dev dependencies
         run: uv sync --dev --frozen
 
-      # make test-chaos-assess runs the suite and the gate (tests/chaos/assess/gate.py): a skipped
-      # case, fewer cases or invariant reports than declared, or any violation fails the job.
+      # The suite, then the gate (tests/chaos/assess/gate.py, the same as `make test-chaos-assess`):
+      # a skipped case, fewer cases or invariant reports than declared, or any violation fails.
       - name: Run the chaos harness and the invariant gate
-        run: make test-chaos-assess
+        run: |
+          mkdir -p test-results/assess-chaos
+          CHAOS_REPORT_DIR=test-results/assess-chaos uv run pytest tests/chaos/assess -v --tb=short --junitxml=test-results/assess-chaos/junit.xml || status=$?
+          uv run python tests/chaos/assess/gate.py test-results/assess-chaos/junit.xml test-results/assess-chaos 41 12
+          exit "${status:-0}"
 
       - name: Upload test results
         if: always()

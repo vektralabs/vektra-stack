@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from gate import evaluate
+
+# hermetic, but it belongs to the chaos job, which runs tests/chaos/assess as a whole
+pytestmark = pytest.mark.integration
 
 JUNIT_OK = '<testsuite><testcase name="a"/><testcase name="b"/></testsuite>'
 

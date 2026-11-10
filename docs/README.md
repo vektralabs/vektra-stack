@@ -24,6 +24,7 @@
 
 - [Deployment](guides/operators/assess-deployment.md) - the `assess` Compose profile, roles and DSNs, limits, health checks, setup check
 - [Secrets and the key matrix](guides/operators/assess-secrets.md) - which process must and must not hold each secret, file formats, generation, startup refusals
+- [Framing](guides/operators/assess-framing.md) - the UI origin, the per-site LMS origin, the reverse proxy and how to verify them
 
 ## Workflows
 

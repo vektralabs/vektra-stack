@@ -976,3 +976,19 @@ def test_the_parser_loads_its_settings_under_the_ceiling(
         timeout=120,
     )
     assert out.stdout.strip() == "ceiling ok", out.stderr[-600:]
+
+
+async def test_the_worker_entrypoint_reports_a_bad_setting_without_its_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CodeRabbit 4525094921: the heartbeat-file cleanup built the settings before the guarded
+    checks, so a rejected value escaped as a raw traceback."""
+    hb = tmp_path / "hb"
+    hb.write_text("old")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE", str(hb))
+    monkeypatch.setenv("VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S", "60123")
+    assert await assess_worker._amain() == 1
+    err = capsys.readouterr().err
+    assert "VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S" in err and "60123" not in err
+    assert not hb.exists()  # the stale heartbeat is still removed

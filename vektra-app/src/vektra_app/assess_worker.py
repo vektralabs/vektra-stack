@@ -969,12 +969,24 @@ def check_imports() -> None:
 
 
 async def _amain(bindings: Any | None = None) -> int:
+    # A heartbeat left by a previous run must not vouch for this one. The settings may be
+    # invalid here: then the path comes from the variable or the default, and the guarded
+    # ``_checks`` below reports the error by name, never with the rejected value (CodeRabbit
+    # 4525094921)
+    from pydantic import ValidationError
+
     from vektra_assess.config import VektraAssessSettings
     from vektra_assess.worker.shutdown import install_signal_handlers
 
-    # A heartbeat left by a previous run must not vouch for this one.
+    try:
+        heartbeat_file = VektraAssessSettings().worker_heartbeat_file
+    except ValidationError:
+        field = VektraAssessSettings.model_fields["worker_heartbeat_file"]
+        from pathlib import Path
+
+        heartbeat_file = Path(os.environ.get(str(field.alias), str(field.default)))
     with contextlib.suppress(FileNotFoundError):
-        VektraAssessSettings().worker_heartbeat_file.unlink()
+        heartbeat_file.unlink()
     try:
         checked = await _checks()
     except DisabledError as exc:

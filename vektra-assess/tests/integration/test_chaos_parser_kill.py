@@ -7,8 +7,10 @@ item) runs as its own process group on a private unix socket; the worker side is
 The kill point: the first extraction request of the capture is on the sidecar's socket and no
 reply has been sent. The sidecar is frozen (SIGSTOP) before the request so the request cannot be
 answered first, then the whole group gets SIGKILL: supervisor, forkserver and item child, no
-handler, no reply, the socket closed by the kernel. The client sees ``closed_without_reply``:
-the parser is unavailable, never a "corrupt file" in the snapshot.
+handler, no reply, the socket closed by the kernel. The client sees a killed peer before any
+reply byte: ``closed_without_reply`` (EOF, macOS) or ``reset`` (ECONNRESET, Linux), the two
+``_Unavailable`` outcomes of ``ParserClient._read_response``. Both are the parser unavailable,
+never a "corrupt file" in the snapshot, and both roll back with the same reason.
 
 Rows: the pre-flight rolls back, the STARTING row is deleted, snapshot / key / turn / hand-off rows
 are 0, one ``rolled_back`` attempt and one ``assess_start_rollback`` audit row. The sidecar is
@@ -49,6 +51,11 @@ sys.path.insert(
 from invariants import assert_invariants
 
 pytestmark = pytest.mark.integration
+
+#: what the client reports for a peer killed before any reply byte: EOF on macOS, ECONNRESET
+#: on Linux (both ``_Unavailable`` -> ``ParserUnavailableError``). ``reset_mid_reply`` or
+#: ``truncated`` would mean a partial reply (a protocol violation, CORRUPT), so they are not here
+KILLED_PEER = frozenset({"closed_without_reply", "reset"})
 
 SIDECAR = textwrap.dedent(
     """
@@ -215,10 +222,11 @@ async def test_parser_killed_mid_extraction_rolls_the_start_back_then_restarts_c
             killed = KillPoint(ParserClient(sidecar.socket_path), sidecar, kill=True)
             sid = await _start(w, sub, cmid)
             await handler(killed)(job_context(worker, sid))
-            assert killed.calls[:1] and killed.errors == ["closed_without_reply"], (
+            assert killed.calls[:1] and len(killed.errors) == 1, (
                 killed.calls,
                 killed.errors,
             )
+            assert killed.errors[0] in KILLED_PEER, killed.errors
             assert sidecar.proc is not None and sidecar.proc.poll() is not None
             after_kill = await rows(pg, w.site, cmid, sub)
             assert after_kill == {**empty, "rolled_back": 1, "rb_audit": 1}, after_kill

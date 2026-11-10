@@ -337,3 +337,27 @@ async def test_setup_check_contributor(fake: Fake) -> None:
     reg = ItemRegistry()
     register_parser_check(client_for(fake), reg)
     assert reg.names() == ["parser_sidecar_running"]
+
+
+async def test_a_peer_reset_before_any_reply_is_unavailable_not_corrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sidecar killed before replying is seen as EOF on macOS and as ECONNRESET on Linux. Both
+    must be ``ParserUnavailableError`` (the pre-flight rolls back), never a CORRUPT file."""
+
+    class Resetting:
+        async def readexactly(self, n: int) -> bytes:
+            raise ConnectionResetError(104, "Connection reset by peer")
+
+    class Writer:
+        def write(self, _b: bytes) -> None: ...
+        async def drain(self) -> None: ...
+        def close(self) -> None: ...
+        async def wait_closed(self) -> None: ...
+
+    async def connect(_path: str) -> tuple[Resetting, Writer]:
+        return Resetting(), Writer()
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", connect)
+    with pytest.raises(ParserUnavailableError, match=r"^reset$"):
+        await ParserClient("/nonexistent.sock").sanitize_html(b"<p>x</p>")

@@ -34,11 +34,9 @@ jobs:
         run: uv sync --dev --frozen
 
       - name: Run the chaos harness and the invariant gate
-        run: |
-          mkdir -p test-results/assess-chaos
-          CHAOS_REPORT_DIR=test-results/assess-chaos uv run pytest tests/chaos/assess vektra-assess/tests/integration/test_chaos_*.py -v --tb=short --junitxml=test-results/assess-chaos/junit.xml || status=$?
-          uv run python tests/chaos/assess/gate.py test-results/assess-chaos/junit.xml test-results/assess-chaos 61 26
-          exit "${status:-0}"
+        # the one definition of the suite and its declared minimums is the Makefile target
+        # (the suite-execution guard follows `make <target>` into its recipe)
+        run: make test-chaos-assess
 
       - name: Upload the invariant report
         if: always()

@@ -6,8 +6,10 @@
 # model is checked against the Hub unless the client is offline. On a slow Hub
 # window that made the NFR-004 startup gate measure the network instead of our
 # startup. integration.yml restores this directory with actions/cache, bind-mounts
-# it here, and sets HF_HUB_OFFLINE=1 only when the cache was an exact hit, so a
-# cold run still downloads and then saves what it fetched.
+# it here, and sets HF_HUB_OFFLINE=1 only when the cache was an exact hit. On a
+# miss it first copies the image's own cache in (HF_HOME here would otherwise hide
+# the baked embedding model), so a cold run downloads only what the image lacks, and
+# it saves the cache only after .github/ci/check_hf_cache.py finds every model.
 services:
   vektra:
     environment:

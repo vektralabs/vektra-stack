@@ -226,6 +226,16 @@ jobs:
           print("parser ok: pdfminer parsed the embedded page", flush=True)
           '
 
+      # On a miss the mounted cache is empty, and HF_HOME=/hf-cache would hide the
+      # embedding model baked into the image: copy the image's cache in first, so
+      # the timed start never downloads a model the image already carries.
+      - name: Seed the Hugging Face cache from the image
+        if: steps.hf-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack \
+            -c 'cp -a /home/vektra/.cache/huggingface/. /hf-cache/'
+          ls "$HF_CACHE_DIR/hub"
+
       - name: Start stack and measure startup (NFR-004)
         id: startup
         env:
@@ -289,8 +299,18 @@ jobs:
       # Saved after tear-down and whatever the tests did, so a cold run that fails a
       # test still warms the next one. The two matrix legs share the key: the second
       # save finds it taken, which is not an error.
-      - name: Save the Hugging Face model cache
+      # Saved only when every model the next (offline) run needs is in the cache:
+      # an exact hit with a model missing would fail that run instead of this one.
+      - name: Check the Hugging Face cache is complete
+        id: hf-complete
         if: always() && steps.hf-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          HF_HOME: ${{ env.HF_CACHE_DIR }}
+        run: uv run --frozen python .github/ci/check_hf_cache.py
+
+      - name: Save the Hugging Face model cache
+        if: always() && steps.hf-complete.outcome == 'success'
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
@@ -403,8 +423,16 @@ jobs:
           path: test-results/
           retention-days: 14
 
-      - name: Save the Hugging Face model cache
+      # Saved only when every model the next (offline) run needs is in the cache:
+      # an exact hit with a model missing would fail that run instead of this one.
+      - name: Check the Hugging Face cache is complete
+        id: hf-complete
         if: always() && steps.hf-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: uv run --frozen python .github/ci/check_hf_cache.py all-MiniLM-L6-v2
+
+      - name: Save the Hugging Face model cache
+        if: always() && steps.hf-complete.outcome == 'success'
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
@@ -466,9 +494,21 @@ jobs:
           # runner-owned files (uid 1001) must be handed to the container user.
           sudo chown -R 1000:1000 secrets/assess
 
-      - name: Build and start the assess stack
+      - name: Build the image
+        run: docker compose build
+
+      # On a miss the mounted cache is empty, and HF_HOME=/hf-cache would hide the
+      # embedding model baked into the image: copy the image's cache in first, so
+      # the timed start never downloads a model the image already carries.
+      - name: Seed the Hugging Face cache from the image
+        if: steps.hf-cache.outputs.cache-hit != 'true'
         run: |
-          docker compose build
+          docker run --rm --entrypoint sh -v "$HF_CACHE_DIR:/hf-cache" vektra-stack \
+            -c 'cp -a /home/vektra/.cache/huggingface/. /hf-cache/'
+          ls "$HF_CACHE_DIR/hub"
+
+      - name: Start the assess stack
+        run: |
           docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml -f .github/ci/compose.hf-cache.yml --profile assess up -d
           timeout 120 bash -c 'until curl -so /dev/null http://localhost:8000/health; do sleep 2; done'
           timeout 90 bash -c 'until [ "$(docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml -f .github/ci/compose.hf-cache.yml --profile assess ps vektra-assess-worker --format "{{.Health}}")" = "healthy" ]; do sleep 3; done'
@@ -523,8 +563,18 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.yml -f docker-compose.assess.yml -f docker-compose.assess.dev.yml -f .github/ci/compose.hf-cache.yml --profile assess down -v
 
-      - name: Save the Hugging Face model cache
+      # Saved only when every model the next (offline) run needs is in the cache:
+      # an exact hit with a model missing would fail that run instead of this one.
+      - name: Check the Hugging Face cache is complete
+        id: hf-complete
         if: always() && steps.hf-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          HF_HOME: ${{ env.HF_CACHE_DIR }}
+        run: uv run --frozen python .github/ci/check_hf_cache.py
+
+      - name: Save the Hugging Face model cache
+        if: always() && steps.hf-complete.outcome == 'success'
         continue-on-error: true
         uses: actions/cache/save@v6
         with:

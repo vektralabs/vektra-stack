@@ -23,7 +23,10 @@ Invariants (each query returns the offending ids, so an empty list is the only p
 False-pass guard: ``expect_sessions`` declares how many sessions the scenario created; fewer rows
 than declared fails the check instead of passing on an empty table. The count is scoped to the
 scenario's own ``sites`` (required whenever something is declared), so rows that an earlier test
-left on a module-scoped database cannot stand in for sessions this scenario never made.
+left on a module-scoped database cannot stand in for sessions this scenario never made. With
+``sites`` the session-keyed checks are scoped the same way, so a test order change cannot make a
+scenario fail on another test's rows; ``no_orphan_content`` and ``no_stale_lease`` stay global
+(an orphan has no session, a job no site).
 """
 
 from __future__ import annotations
@@ -37,14 +40,18 @@ from typing import Any
 
 RETAINED = "s.id NOT IN (SELECT session_id FROM assess_purge_records WHERE session_id IS NOT NULL)"
 
+#: replaced by the site filter of a scoped check, or by nothing (``_scoped``)
+SCOPE = " __SCOPE__"
+
 QUERIES: dict[str, str] = {
     "one_live_session": (
-        "SELECT site_id::text || ':' || cmid || ':' || student_userid FROM assess_sessions "
-        "WHERE state <> 'CLOSED' GROUP BY site_id, cmid, student_userid HAVING count(*) > 1"
+        "SELECT s.site_id::text || ':' || s.cmid || ':' || s.student_userid "
+        f"FROM assess_sessions s WHERE s.state <> 'CLOSED'{SCOPE} "
+        "GROUP BY s.site_id, s.cmid, s.student_userid HAVING count(*) > 1"
     ),
     "consumed_iff_opening": (
         "SELECT s.id::text FROM assess_sessions s WHERE "
-        f"{RETAINED} AND ("
+        f"{RETAINED}{SCOPE} AND ("
         "(s.state IN ('ACTIVE','OUTAGE','CLOSED') AND NOT EXISTS (SELECT 1 FROM assess_turns t "
         " WHERE t.session_id = s.id AND t.role = 'bot' AND t.kind = 'opening')) OR "
         "(s.state = 'STARTING' AND EXISTS (SELECT 1 FROM assess_turns t "
@@ -52,8 +59,10 @@ QUERIES: dict[str, str] = {
     ),
     "handoff_only_live": (
         "SELECT h.session_id::text FROM assess_session_handoff h "
-        "JOIN assess_sessions s ON s.id = h.session_id WHERE s.state NOT IN ('ACTIVE','OUTAGE')"
+        "JOIN assess_sessions s ON s.id = h.session_id "
+        f"WHERE s.state NOT IN ('ACTIVE','OUTAGE'){SCOPE}"
     ),
+    # an orphan has no session, so no site: always global
     "no_orphan_content": (
         "SELECT 'snapshot:' || session_id FROM assess_snapshots WHERE session_id NOT IN "
         "(SELECT id FROM assess_sessions) UNION ALL "
@@ -66,30 +75,42 @@ QUERIES: dict[str, str] = {
     ),
     "transcript_per_closed": (
         "SELECT s.id::text FROM assess_sessions s WHERE s.state = 'CLOSED' AND "
-        f"{RETAINED} AND (SELECT count(*) FROM assess_transcripts t "
+        f"{RETAINED}{SCOPE} AND (SELECT count(*) FROM assess_transcripts t "
         " WHERE t.session_id = s.id) <> 1 "
         "UNION ALL SELECT 'not-closed:' || t.session_id FROM assess_transcripts t "
-        "JOIN assess_sessions s ON s.id = t.session_id WHERE s.state <> 'CLOSED'"
+        f"JOIN assess_sessions s ON s.id = t.session_id WHERE s.state <> 'CLOSED'{SCOPE}"
     ),
     "one_sent_per_recipient": (
-        "SELECT transcript_id::text || ':' || recipient_ref || ':' || round FROM assess_deliveries "
-        "WHERE kind = 'transcript' AND status = 'SENT' "
-        "GROUP BY transcript_id, recipient_ref, round HAVING count(*) > 1"
+        "SELECT d.transcript_id::text || ':' || d.recipient_ref || ':' || d.round "
+        "FROM assess_deliveries d JOIN assess_transcripts t ON t.id = d.transcript_id "
+        "JOIN assess_sessions s ON s.id = t.session_id "
+        f"WHERE d.kind = 'transcript' AND d.status = 'SENT'{SCOPE} "
+        "GROUP BY d.transcript_id, d.recipient_ref, d.round HAVING count(*) > 1"
     ),
+    # jobs have no site: always global
     "no_stale_lease": (
         "SELECT id::text FROM assess_jobs WHERE state = 'leased' "
         "AND lease_until < now() - make_interval(secs => :grace_s)"
     ),
     "no_stale_starting": (
-        "SELECT id::text FROM assess_sessions WHERE state = 'STARTING' "
-        "AND starting_expires_at < now() - make_interval(secs => :grace_s)"
+        "SELECT s.id::text FROM assess_sessions s WHERE s.state = 'STARTING' "
+        f"AND s.starting_expires_at < now() - make_interval(secs => :grace_s){SCOPE}"
     ),
     "key_present": (
         "SELECT s.id::text FROM assess_sessions s WHERE s.state IN ('ACTIVE','OUTAGE','CLOSED') "
-        f"AND {RETAINED} AND NOT EXISTS (SELECT 1 FROM assess_session_keys k "
+        f"AND {RETAINED}{SCOPE} AND NOT EXISTS (SELECT 1 FROM assess_session_keys k "
         " WHERE k.session_id = s.id AND k.kek_wrapped IS NOT NULL)"
     ),
 }
+
+
+def _scoped(sql: str, scoped: bool) -> str:
+    """``sql`` with its session rows limited to ``:sites`` (a scoped check) or unchanged."""
+    return sql.replace(
+        SCOPE,
+        " AND CAST(s.site_id AS text) = ANY(CAST(:sites AS text[]))" if scoped else "",
+    )
+
 
 ALWAYS = (
     "one_live_session",
@@ -109,7 +130,8 @@ _SENT = (
     " WHERE e.event = 'assess_delivery_possible_duplicate' AND e.session_id = t.session_id "
     " AND e.data->>'delivery_id' = d.id::text) "
     "FROM assess_deliveries d JOIN assess_transcripts t ON t.id = d.transcript_id "
-    "WHERE d.kind = 'transcript' AND d.status = 'SENT'"
+    "JOIN assess_sessions s ON s.id = t.session_id "
+    f"WHERE d.kind = 'transcript' AND d.status = 'SENT'{SCOPE}"
 )
 
 
@@ -174,12 +196,18 @@ async def check(
     )
     report = Report(scenario, int(sessions), expect_sessions)
     for name in names:
-        rows = await pg.run("super", QUERIES[name], {"grace_s": grace_s})
+        rows = await pg.run(
+            "super",
+            _scoped(QUERIES[name], bool(scope)),
+            {"grace_s": grace_s, "sites": scope},
+        )
         report.violations[name] = sorted(str(r[0]) for r in rows)
         report.checked.append(name)
     if sink_copies is not None:
         bad = []
-        for transcript, message_id, duplicate in await pg.run("super", _SENT):
+        for transcript, message_id, duplicate in await pg.run(
+            "super", _scoped(_SENT, bool(scope)), {"sites": scope}
+        ):
             n = sink_copies(message_id)
             if n < 1 or n > (2 if duplicate else 1):
                 bad.append(f"{transcript}:{message_id}:{n}")

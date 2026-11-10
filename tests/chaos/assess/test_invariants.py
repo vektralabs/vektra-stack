@@ -137,6 +137,28 @@ async def test_rows_left_by_an_earlier_test_cannot_satisfy_the_declared_count(
     assert (await check(pg, "selftest:scoped", expect_sessions=1, sites=[mine])).ok
 
 
+async def test_a_violation_on_an_earlier_site_does_not_fail_a_later_scenario(
+    pg,
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit nitpick on #195: the session-keyed checks are scoped to the scenario's sites
+    too, so a test order change cannot make one scenario fail on another's rows. The same
+    violation is still caught when its site is in scope."""
+    await wipe(pg)
+    earlier = uuid.uuid4()
+    await session(
+        pg, "CLOSED", opening=False, site=earlier
+    )  # consumed without an opening
+    mine = uuid.uuid4()
+    await session(pg, "ACTIVE", opening=True, site=mine, student=2)
+    assert (
+        await check(pg, "selftest:scoped-clean", expect_sessions=1, sites=[mine])
+    ).ok
+    caught = await check(
+        pg, "selftest:scoped-caught", expect_sessions=1, sites=[mine, earlier]
+    )
+    assert not caught.ok and caught.violations["consumed_iff_opening"]
+
+
 async def test_a_declared_count_without_its_sites_is_refused(pg) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ValueError, match="sites"):
         await check(pg, "selftest:unscoped", expect_sessions=1)

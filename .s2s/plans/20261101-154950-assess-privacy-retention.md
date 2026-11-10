@@ -382,3 +382,15 @@ no log files fails rather than passing.
 >   `job_cleanup` tick): a `queued` / `running` report older than the kind's lease with no
 >   `setup_check` job that could still run it becomes `failed` (it would otherwise read "queued"
 >   forever and never be trimmed).
+
+> **12b `/code-review` high (2026-11-10), 10 findings, all valid, all fixed** (each with a test
+> that fails on the earlier code): #1 the notification net ends a chain it cannot help
+> (`chain_ended`, `rescue_cap` after 3, `chain_lost`); #2 SMTP tests whose single-attempt job died
+> are reaped to `interrupted` by the `delivery_retry` tick; #3 row counts are gauges and every alert
+> rule reads a level; #4 every purge run is recorded (`ok` false on a raise, a failed count or a
+> backlog) and `VektraAssessPurgeNeverSucceeded` covers the absent series; #5 the worker's budget
+> check covers `smtp_test_send`; #6 `smtp_test` rows are out of the delivery figures (0041 edited:
+> not on develop yet); #7 one connection for `/health/assess`, the configured count in SQL, and the
+> shallow `/health` runs no excluded check; #8 `ix_assess_jobs_root` (revision 0043) and two
+> anti-joins; #9 `terminated_by_teacher` and `none` rollback buckets; #10 the metrics task is
+> awaited before the engine is disposed.

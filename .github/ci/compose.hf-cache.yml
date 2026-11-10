@@ -1,0 +1,20 @@
+# CI only: give the API container a Hugging Face cache that outlives the job.
+#
+# The image bakes the embedding model, but the default reranker
+# (VEKTRA_RERANK_MODEL, a cross-encoder of about 2 GB) is downloaded from the
+# Hugging Face Hub during provider registration on every start, and even a cached
+# model is checked against the Hub unless the client is offline. On a slow Hub
+# window that made the NFR-004 startup gate measure the network instead of our
+# startup. integration.yml restores this directory with actions/cache, bind-mounts
+# it here, and sets HF_HUB_OFFLINE=1 only when the cache was an exact hit. On a
+# miss it first copies the image's own cache in (HF_HOME here would otherwise hide
+# the baked embedding model), so a cold run downloads only what the image lacks, and
+# it saves the cache only after .github/ci/check_hf_cache.py finds every model.
+services:
+  vektra:
+    environment:
+      HF_HOME: /hf-cache
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - ${HF_CACHE_DIR:?set by integration.yml}:/hf-cache

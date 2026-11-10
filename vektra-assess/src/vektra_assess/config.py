@@ -979,6 +979,27 @@ def erasure_mode_problem(settings: VektraAssessSettings) -> str | None:
     return None
 
 
+#: pydantic error types whose message names a rule and never the rejected input
+_SAFE_ERROR_TYPES = frozenset(
+    {
+        "greater_than",
+        "greater_than_equal",
+        "less_than",
+        "less_than_equal",
+        "int_parsing",
+        "int_from_float",
+        "float_parsing",
+        "bool_parsing",
+        "missing",
+        "extra_forbidden",
+        "literal_error",
+        "string_too_short",
+        "string_too_long",
+        "finite_number",
+    }
+)
+
+
 def explain_settings_error(exc: Exception) -> tuple[str, str]:
     """``(detail, remediation)`` for a settings ``ValidationError``, naming each variable.
 
@@ -997,7 +1018,15 @@ def explain_settings_error(exc: Exception) -> tuple[str, str]:
         var = by_name.get(key, key) or "settings"
         if var not in names:
             names.append(var)
-        lines.append(f"{var}: {err.get('msg', 'invalid')}")
+        etype = str(err.get("type", ""))
+        if etype in _SAFE_ERROR_TYPES or (etype == "value_error" and not loc):
+            # a bound or a type: pydantic's message names the rule, never the input. A
+            # model-level validator's message is ours and names settings, not values
+            msg = str(err.get("msg", "invalid value"))
+        else:
+            # a field validator's message may quote the rejected text (CodeRabbit 4524508948)
+            msg = "invalid value"
+        lines.append(f"{var}: {msg}")
     detail = "; ".join(lines) or type(exc).__name__
     remediation = (
         f"Fix {', '.join(names) or 'the VEKTRA_ASSESS_* variables'} "

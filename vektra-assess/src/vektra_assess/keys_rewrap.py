@@ -52,12 +52,15 @@ async def run(what: str, from_kid: str, batch: int, out: TextIO) -> int:
         return opened
     loaded, engine = opened
     key_name, _ = WHAT[what]
-    ring = getattr(loaded.get(key_name), "value", None)
-    if ring is None or from_kid not in getattr(ring, "keys", {}):
+    from vektra_assess.keys import AssessKeyring
+
+    # the key matrix loads keyrings as ``AssessKeyring`` (only passwords carry ``.value``)
+    ring = loaded.get(key_name)
+    if not isinstance(ring, AssessKeyring) or from_kid not in ring.keys:
         print(f"cannot run: {key_name} does not hold kid {from_kid!r}", file=out)
         await engine.dispose()
         return 2
-    if getattr(ring, "active", None) == from_kid:
+    if ring.active == from_kid:
         print(
             f"cannot run: {from_kid!r} is still the active kid of {key_name}", file=out
         )

@@ -169,8 +169,10 @@ Three things to know before turning it on:
 Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
 `assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
 `make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
-Until every job handler of the feature is bound (later plans), a production worker refuses to start; for development and CI add
-`-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development` for the worker only.
+A production worker refuses to start while any job handler is unbound. One still is: the `rotate_keys` job kind
+(owned by plan assess-hardening-release, never enqueued; key rotation is the `python -m vektra_assess.keys rewrap` command),
+so today only development and CI run the worker, with `-f docker-compose.assess.dev.yml`, which sets
+`VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development` (see the [deployment guide](../guides/operators/assess-deployment.md#current-release-blocker)).
 These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
 process environment, never from an env file. Every numeric setting has a lower and an upper
 bound; a value outside its range (or any invalid value) stops the API at startup step
@@ -204,7 +206,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE` | path | `/tmp/vektra-assess-worker.heartbeat` | File the worker refreshes every `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` (container healthcheck). |
 | `VEKTRA_ASSESS_WORKER_HEARTBEAT_INTERVAL_S` | float | `5` | Seconds between worker heartbeats (row upsert and file touch). At most 10, so `VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S` (minimum 30) always spans at least three beats. |
 | `VEKTRA_ASSESS_JOB_POLL_INTERVAL_S` | float | `1` | Claim-loop poll when no `NOTIFY` arrives. The poll is the correctness backstop; `NOTIFY` is only a latency hint. |
-| `VEKTRA_ASSESS_JOB_BACKOFF_BASE_S` / `_CAP_S` | float | `5` / `300` | Retry backoff of a failed job attempt: exponential from the base, jittered to 50-100 % of the step, capped. |
+| `VEKTRA_ASSESS_JOB_BACKOFF_BASE_S` / `VEKTRA_ASSESS_JOB_BACKOFF_CAP_S` | float | `5` / `300` | Retry backoff of a failed job attempt: exponential from the base, jittered to 50-100 % of the step, capped. |
 | `VEKTRA_ASSESS_JOB_DONE_RETENTION_H` | int | `24` | Hours a `done` job row is kept before the hourly cleanup deletes it. `dead` rows are kept for the purge plan. Range `1`..`8760`. |
 | `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` | bool | `false` | Development and CI only: start the worker while some job kinds or ticks have no handler yet. Unbound slots stay unbound and a job of that kind fails with `handler_not_bound`, never completing silently. Honoured only with `VEKTRA_ENV=development`; set in any other environment the worker refuses to start. The shipped overlay does **not** set it; the dev-only `docker-compose.assess.dev.yml` does. Default: a worker with an unbound slot refuses to start and names each slot and the plan that owns it. |
 | `VEKTRA_ASSESS_WORKER_DB_COMMAND_TIMEOUT_S` | float | `30` | Upper bound on any single worker database statement (pool). A restart or a dropped network can leave a connection half-open: no error, only silence; without a bound the worker would wait on it. The control connection uses a fixed 5 s bound. |
@@ -238,7 +240,7 @@ printed, because some settings carry connection strings.
 | `VEKTRA_ASSESS_START_BREAKER_ROLLBACKS` | int | `10` | Per-site Start breaker: this many system rollbacks of one site within the window open it (worker-written `assess_start_breaker`, audited `assess_start_breaker_open`); the API then refuses Starts 503 `start_breaker_open` without consuming anything. |
 | `VEKTRA_ASSESS_START_BREAKER_WINDOW_S` | int | `300` | The breaker's counting window. |
 | `VEKTRA_ASSESS_START_BREAKER_COOLDOWN_S` | int | `120` | Seconds the breaker stays fully open; then half-open (one Start at a time goes through). A commit closes it (`assess_start_breaker_close`); another system rollback re-opens it. |
-| `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. Range `0`..`1000`. |
+| `VEKTRA_ASSESS_LLM_PRICE_PER_1K_IN` / `VEKTRA_ASSESS_LLM_PRICE_PER_1K_OUT` | float | - | Optional price table for the per-turn cost estimate; unset (on-prem) leaves the cost empty, not 0. Range `0`..`1000`. |
 | `VEKTRA_ASSESS_SAFEGUARD_MODE` | `presidio` \| `none` | `presidio` | Safeguard of the discussion runner in the API. With `presidio`, startup fails if Presidio cannot load (no silent passthrough); `none` must be set explicitly. The worker's Part B runner always uses an explicit passthrough (its import ceiling excludes Presidio; Part B has no student input). |
 | `VEKTRA_ASSESS_STORE_TRACES` | bool | `true` | Store the runner's content-free QueryTrace (pipeline and namespace `assess-discussion`). |
 | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `onprem` \| `cloud` | `cloud` | Where the model runs. With `cloud` (the safe default) the eval suite refuses any dataset that is not synthetic before a single request. |
@@ -379,8 +381,10 @@ logging (ARCH-078).
 | VEKTRA_* variables read directly from env (`VEKTRA_CORS_ORIGINS`) | 1 |
 | External API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | 2 |
 | Infrastructure (`POSTGRES_PASSWORD`, `CMD_TARGET`) | 2 |
-| VEKTRA_ASSESS_* variables in `VektraAssessSettings` (assess processes only) | 9 |
-| **Total documented** | **80** |
+| VEKTRA_ASSESS_* variables in `VektraAssessSettings` (assess processes only; also `VEKTRA_ENV` and `VEKTRA_LLM_API_KEY`, counted above) | 101 |
+| **Total documented** | **172** |
+
+Not counted: the `VEKTRA_ASSESS_POOL_<POOL>_CONCURRENCY` and `VEKTRA_ASSESS_JOB_<KIND>_*` families and their alias `VEKTRA_ASSESS_PREFLIGHT_CONCURRENCY` (read by the worker's job policy, `vektra_assess.worker.policy`), and `VEKTRA_ASSESS_JUDGE_MODEL`, `VEKTRA_ASSESS_JUDGE_API_BASE` and `VEKTRA_ASSESS_JUDGE_LOCALITY` (read by `make eval-assess` only). `vektra-assess/tests/test_reference_docs.py` fails when a `VektraAssessSettings` variable is missing from this page or from `.env.example`, or when this page names an assess variable the code does not read.
 
 The 66 Pydantic-validated VEKTRA_* variables are declared across `VektraSettings` (flat aggregation) and sub-configs (`RewriteConfig`, `RerankConfig`, `WebhookConfig`, `IngestConfig` extensions). Sub-configs are validated independently at startup, not aggregated into VektraSettings. `VEKTRA_CORS_ORIGINS` is read directly via `os.environ.get` at app startup (see `vektra-app/src/vektra_app/main.py`). Infrastructure variables (`POSTGRES_PASSWORD`, `CMD_TARGET`) are used by Docker Compose or the entrypoint script.
 

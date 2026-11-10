@@ -39,6 +39,12 @@ is always on and Compose has no optional secrets) and gated by the `assess` prof
 | `vektra-assess-worker` | `assess-worker` | the job loop, the ticks, LMS reads, the Start pre-flight, transcripts, SMTP | `vektra_assess_worker` through `VEKTRA_ASSESS_WORKER_DATABASE_URL` | default, no published port | `mem_limit: 512m`, `stop_grace_period: 30s` |
 | `vektra-assess-parser` | `assess-parser` | parses submitted files, each in a fresh child process | none | `network_mode: none` | `read_only`, user `1000:1000`, `mem_limit: 768m`, `pids_limit: 64`, `cpus: 1.5`, `cap_drop: [ALL]`, `no-new-privileges`, `/tmp` tmpfs 64m |
 
+**Run one API process.** The event stream broker, the DEK cache of live sessions and the
+per-token rate limiters live in the API process's memory (`vektra_assess.api.events`,
+`api.material`, `api.housekeeping`): with two API processes behind a balancer, a student's stream
+and turns could land on different processes. The runbooks mention "every API instance" for the
+rollout order of shared keys; that covers rolling restarts, not parallel instances.
+
 Start order: `postgres` healthy, then `vektra-assess-db-init` completed successfully, then the
 API and the worker; the worker also waits for the parser to have started. The parser and the
 worker share the `assess_parser_sock` volume (`VEKTRA_ASSESS_PARSER_SOCKET`,

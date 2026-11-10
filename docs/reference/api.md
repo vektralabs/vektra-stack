@@ -119,6 +119,84 @@ verdict above, the alert rules cover them:
 intervals) or `unknown`; `smtp_probe.status` is `ok`, `failed` or `unknown` (while a probe is running it
 is the previous probe's verdict).
 
+### Assess overview: credentials and route index
+
+The assessment discussion routes (`/api/v1/assess`) are mounted only when
+`VEKTRA_ASSESS_ENABLED=true`. Operators should start from the
+[deployment guide](../guides/operators/assess-deployment.md). Every route below is described in
+the sections that follow; every `ERR-ASSESS-*` code is in [error codes](error-codes.md).
+
+**Credentials.** Five kinds, never interchangeable:
+
+| Credential | How it is obtained | Notes |
+|---|---|---|
+| `admin` API key | `POST /api/v1/api-keys` | the operator; never satisfies a route that names an `assess:*` scope |
+| `assess:mint`, `assess:teacher`, `assess:privacy-export`, `assess:privacy-erase` API keys | `POST /api/v1/api-keys` with one of these scopes, then bound to one site with the matching purpose in `assess_site_keys` | held by the LMS plugin, used server-side; checked by exact scope AND by the binding (`403 ERR-ASSESS-007` otherwise). An `assess:*` scope cannot share a key with `admin`, `ingest` or `query` |
+| pre-session token | `POST /tokens` (the plugin, with its `assess:mint` key) | HS256, `aud=discussion`, `stage: "pre"`, at most 120 s, single use at Start or resume |
+| session token | returned by `POST /sessions` and by `GET /sessions/{sid}` on resume | HS256, `aud=discussion`, bound to the session and its epoch |
+| download token | `POST /transcripts/{tid}/download-token` | HS256, `aud=transcript`, single use, at most 120 s |
+
+Tokens travel in `Authorization: Bearer` only; a token in a query string or a cookie is refused.
+Every token requires `loginas: false` (`403 ERR-ASSESS-006` otherwise).
+
+**Route index.**
+
+| Method | Path | Credential | Section |
+|---|---|---|---|
+| POST | `/api/v1/assess/sites/{site_id}/setup-check` | `admin` or the site's `assess:teacher` | [setup check](#assess-setup-check-assess) |
+| GET | `/api/v1/assess/sites/{site_id}/setup-check/{report_id}` | `admin` or the site's `assess:teacher` | [setup check](#assess-setup-check-assess) |
+| POST | `/api/v1/assess/admin/model-activations` | `admin` | [model activation](#assess-model-activation-nfr-023) |
+| POST | `/api/v1/assess/tokens` | `assess:mint` | [student discussion](#assess-student-discussion-sessions-turns-and-events-iframe-client) |
+| GET | `/api/v1/assess/state` | pre-session token | student discussion |
+| POST | `/api/v1/assess/sessions` | pre-session token | student discussion |
+| GET | `/api/v1/assess/sessions/{sid}` | session token (or pre-session: resume) | student discussion |
+| GET | `/api/v1/assess/sessions/{sid}/events` | session token | student discussion, wire format below |
+| POST | `/api/v1/assess/sessions/{sid}/turns` | session token | student discussion |
+| POST | `/api/v1/assess/sessions/{sid}/retry` | session token | student discussion |
+| POST | `/api/v1/assess/sessions/{sid}/turns/{turn_no}/flag` | session token | student discussion |
+| POST | `/api/v1/assess/sessions/{sid}/finish` | session token | student discussion |
+| POST | `/api/v1/assess/transcripts/{tid}/download-token` | `assess:mint` (the owner) or `assess:teacher` (a grader) | transcripts |
+| GET | `/api/v1/assess/transcripts/{tid}` | download token | transcripts |
+| POST | `/api/v1/assess/transcripts/{tid}/resend` | `assess:teacher` (a grader) or `admin` | transcripts |
+| GET, PUT | `/api/v1/assess/activities/{cmid}/config` | `assess:teacher` (an editor) | teacher configuration |
+| GET | `/api/v1/assess/activities/{cmid}/sessions` | `assess:teacher` (a grader) | teacher operations |
+| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `assess:teacher` (a grader) | teacher operations |
+| POST | `/api/v1/assess/activities/{cmid}/terminate` | `assess:teacher` (a grader) | teacher operations |
+| PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | `assess:teacher` (a grader) | teacher operations |
+| PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | `assess:teacher` (a grader) | teacher operations |
+| GET, PUT | `/api/v1/assess/sites/{site_id}/privacy` | `admin` | privacy |
+| DELETE | `/api/v1/assess/privacy/subjects/{userid}` | `assess:privacy-erase` | privacy |
+| DELETE | `/api/v1/assess/privacy/activities/{cmid}/subjects` | `assess:privacy-erase` | privacy |
+| GET | `/api/v1/assess/privacy/subjects/{userid}/transcripts` | `assess:privacy-export` | privacy |
+| GET | `/api/v1/assess/privacy/activities/{cmid}/subjects` | `assess:privacy-export` | privacy |
+| POST | `/api/v1/assess/ops/smtp-test` | `admin` | [SMTP test send](#assess-operator-smtp-test-send) |
+| GET | `/api/v1/assess/ops/smtp-test/{test_id}` | `admin` | SMTP test send |
+| GET | `/api/v1/assess/ui` | none (public page, no data) | [UI](#assess-ui-the-discussion-page-and-the-postmessage-contract-plugin---ui) |
+| GET | `/api/v1/assess/ui/assets/{name}` | none | UI |
+| GET | `/health/assess` | any valid API key | [health](#get-healthcomponent) |
+
+`vektra-assess/tests/test_reference_docs.py` fails when a mounted assess route is missing from
+this table.
+
+**Event stream wire format** (`GET /sessions/{sid}/events`, `text/event-stream`, response headers
+`Cache-Control: no-store` and `X-Accel-Buffering: no`). Read it with `fetch()`, since the token
+is a header. Each event is
+
+```text
+id: <n>
+event: <type>
+data: <one line of JSON>
+
+```
+
+with `<n>` a per-session counter that only grows. A connection always starts with
+`event: state` carrying no `id` (it does not move the client's cursor). A comment line
+`: keep-alive` is sent every 15 s of silence. The server ends a stream after one hour; the client
+reconnects with `Last-Event-ID: <n>` and gets the events the in-memory ring still holds after
+`<n>`. Persisted turns are read from `GET /sessions/{sid}`, never from the stream. The event
+types and their payloads are listed under **Events** below. The broker is in the API process, so
+the stream is correct with one API process only (see the deployment guide).
+
 ### Assess metrics (`/metrics`)
 
 With assess enabled, the API's existing `/metrics` also exposes content-free series read from

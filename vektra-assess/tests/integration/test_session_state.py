@@ -17,6 +17,7 @@ from support.world import configure_activity, default_settings, err, world
 
 from integration.test_session_preflight import _reset, moodle_source
 from vektra_assess.jobs import JobKind
+from vektra_assess.privacy import MAILBOX_SENTENCE
 from vektra_assess.worker.render import (
     RenderDeps,
     gate_refresh_tick,
@@ -400,8 +401,9 @@ async def test_transcripts_list_generated_and_shredded_ones(pg, worker) -> None:
         assert view["transcripts"] == [
             {"tid": str(s.session_id), "n": 1, "available": True, "purged": False}
         ]
-        # the plan-2 shred deletes the row: the entry reads "not available", and purged stays
-        # false (review #9: no surviving trace of the shred until plan 12's tombstone)
+        # the plan-2 shred deletes the row and writes no tombstone: the entry reads "not
+        # available" and purged stays false. Only the retention purge (plan 12) writes the
+        # tombstone that sets purged (test_privacy_retention.py)
         from vektra_assess.crypto.shred import shred_transcript
 
         async with worker.begin() as conn:
@@ -478,9 +480,12 @@ async def test_eligible_carries_the_pre_session_data(pg, worker) -> None:  # typ
             "duration_min": 40,
             "course_material_used": False,
             "limits": {"max_message_chars": 2000, "messages_per_min": 4},
+            # a site with no REQ-089 settings (development override): the deployment values,
+            # and the fixed mailbox sentence all the same (plan 12)
             "privacy": {
                 "notice_url": "https://uni.example/privacy",
                 "notice_version": "1",
+                "mailbox_notice": MAILBOX_SENTENCE,
             },
             "previous_sessions": 0,
         }  # recipients and files only when the render worker recorded them

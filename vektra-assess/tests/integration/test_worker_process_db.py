@@ -102,7 +102,10 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
 
         await pg.run(
             "super",
-            "INSERT INTO assess_jobs (kind, args, max_attempts) VALUES ('purge', '{}'::jsonb, 1)",
+            # a slot still unbound in production (plan 13's key rotation; the purge is bound
+            # since plan 12)
+            "INSERT INTO assess_jobs (kind, args, max_attempts) "
+            "VALUES ('rotate_keys', '{}'::jsonb, 1)",
         )
         await pg.run("super", "SELECT pg_notify('assess_jobs', '')")
 
@@ -130,7 +133,7 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
             "assess_job_dead",
             "handler_not_bound",
             "worker",
-            "purge",
+            "rotate_keys",
         )
         assert (await pg.run("super", "SELECT count(*) FROM assess_audit_events"))[0][
             0

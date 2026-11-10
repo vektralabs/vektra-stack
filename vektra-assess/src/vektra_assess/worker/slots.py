@@ -75,7 +75,8 @@ TICK_OWNERS: dict[str, str] = {
 
 #: plans not yet completed in .s2s/plans/INDEX-ASSESS.md: their slots are unbound by schedule (the
 #: guard test checks each is still not ``completed`` there)
-PENDING_OWNER_PLANS: frozenset[str] = frozenset({PRIVACY, HARDENING})
+#: (plan 12a binds every privacy slot: purge tick and job, erasure job)
+PENDING_OWNER_PLANS: frozenset[str] = frozenset({HARDENING})
 
 #: slots whose owner plan IS completed but whose behaviour is not specified anywhere: a decision is
 #: needed (recorded as an open item in the owner plan's Notes), not an invented body

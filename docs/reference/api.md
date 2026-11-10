@@ -206,7 +206,7 @@ built: use an LMS test-student account and a reset).
 | Method | Path | Body / headers | Success | Errors |
 |--------|------|----------------|---------|--------|
 | GET | `/api/v1/assess/activities/{cmid}/sessions` | headers `X-Assess-Actor`, `X-Assess-Course`, `X-Assess-Activity-Type`, optional `X-Assess-Cursor` (the `next_cursor` of the previous page) | `200` the list below, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`cmid`, `x_assess_actor`, `cursor`, `teacher_gate_hint`), `403 ERR-ASSESS-007` / `021`, `503 ERR-ASSESS-001` (`transcript_key`) |
-| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `reason` (1-1000 code points, mandatory), `include_previous_turns` (optional bool; absent = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
+| POST | `/api/v1/assess/activities/{cmid}/sessions/{sid}/reset` | `reason` (1-1000 code points, mandatory), `include_previous_turns` (optional bool; absent = ON only after a `service_failure` close) | `201 {"reset_id", "student_userid", "session_no_next", "include_previous_turns"}` | `400 ERR-ASSESS-022` (`reason`: `required`, `too_long`), `404 ERR-ASSESS-008`, `409 ERR-ASSESS-024` (`details.reason`: `not_closed`, `not_latest`, `already_reset`, `purged`, `gate_inputs_stale` (a render check was queued: retry in a few seconds), or `gate` with `details.gate` the refusing START gate; `end_date_passed` adds `field: available_until`) |
 | POST | `/api/v1/assess/activities/{cmid}/terminate` | `reason` (1-1000), `expected_active_count` (the "N sessioni attive" the teacher confirmed), `also_disable` (bool, default false) | `200 {"termination_id", "closed", "rolled_back", "disabled"}` | `400 ERR-ASSESS-022` (`reason`), `409 ERR-ASSESS-025` (`details.current`: the count now; nothing changed) |
 | PUT | `/api/v1/assess/activities/{cmid}/students/{userid}/extra-time` | exactly one of `minutes` (0-240) / `percent` (0-200), `confirm_over_100` (required above +100 %); no reason field exists | `200 {"student_userid", "extra_seconds", "duration_s"}` | `400 ERR-ASSESS-022` (`extra_time`: `minutes_or_percent`, `out_of_range`, `total_too_long` (cap + extra above 240 min), `confirm_over_100`, `cap_not_configured`, `session_locked` with `state`) |
 | PUT | `/api/v1/assess/activities/{cmid}/opening-fallback` | `opening_at` (ISO 8601 with a time zone), `attestation: true`, `attestation_text_version` (`[A-Za-z0-9._-]{1,32}`, the attestation text the plugin showed) | `200 {"opening_at", "previous", "version"}` | `400 ERR-ASSESS-022` (`attestation`: `required`; `opening_at`: `fallback_not_needed`, `before_close` (with `close_at`), `only_later` (with `current_at`), `not_before_end` (with `available_until`: when an end date is set the fallback must be earlier than it), `no_close_date`, `close_unreadable`, `timezone_required`, `out_of_range`, `activity_not_configured`) |
@@ -258,6 +258,56 @@ REQ-091 fallback applies, else `null`), `fallback_date_missing`, `active_session
 `override_holder` (a quiz participant's user id) only when the actor may manage overrides; never
 an override's reason, a name or an address.
 
+**Privacy, retention and erasure** (plan assess-privacy-retention 12a; REQ-088, REQ-089, REQ-093,
+OQ-033, INT-001). The settings take the `admin` key (exact, the operator); the subject routes take
+a site-bound key of their own scope (`assess:privacy-erase` / `assess:privacy-export`, bound with
+purpose `privacy-erase` / `privacy-export`): the admin superscope never reaches them, and a key of
+another site sees only its own site's rows. No route reads the query string.
+
+| Method | Path | Body / headers | Success | Errors |
+|--------|------|----------------|---------|--------|
+| PUT | `/api/v1/assess/sites/{site_id}/privacy` | `retention_days` (1-3650), `legal_basis_label` (1-200), `legal_basis_text` (1-4000), `notice_url` (https, 9-2000), `notice_text` (1-8000), `notice_version` (1-40); the whole row, strict | `200` the stored settings with `configured: true` and the fixed `mailbox_notice` | `400 ERR-ASSESS-028` (`details.fields`: `{field, code}`, codes `required`, `out_of_range`, `not_an_integer`, `not_a_string`, `empty`, `too_short`, `too_long`, `not_https`, `invalid_url` (no host, or does not parse), `control_character`, `unknown_field`; never the value), `400 ERR-ASSESS-014` (`site_id`, `unknown_site`) |
+| GET | `/api/v1/assess/sites/{site_id}/privacy` | - | `200` the settings, or `{"configured": false}` | `400 ERR-ASSESS-014` |
+| DELETE | `/api/v1/assess/privacy/subjects/{userid}` | - | `200 {"outcome": "erased", "counts": {sessions, transcripts, deliveries_abandoned}}`, or with `VEKTRA_ASSESS_ERASURE_MODE=retain_exam_evidence` `200 {"outcome": "retained", "legal_basis", "counts": {0...}}` | `400 ERR-ASSESS-014` (`userid`), `403 ERR-ASSESS-007`, `429`, `503 ERR-ASSESS-027` (`details.reason` `pending`: the worker has not finished within `VEKTRA_ASSESS_ERASURE_WAIT_S`, the same request again is idempotent; `failed`: the count check found rows left: the deletion was rolled back, though live sessions closed beforehand stay closed) |
+| DELETE | `/api/v1/assess/privacy/activities/{cmid}/subjects` | optional `{"userids": [..]}` (1-1000 ids); absent: every subject of the activity | as above | as above (`userids`, `unknown_field`) |
+| GET | `/api/v1/assess/privacy/subjects/{userid}/transcripts` | optional `X-Assess-Cursor` (the `next_cursor` of the previous page) | `200 {"items": [{transcript_id, cmid, course_id, session_no, closed_at, filename, sha256, content_base64}], "next_cursor"}`, at most 10 per page, `Cache-Control: no-store` | `400 ERR-ASSESS-014` (`userid`, `cursor`), `403 ERR-ASSESS-007`, `429`, `500 ERR-ASSESS-020`, `503 ERR-ASSESS-001` (`transcript_key`) |
+| GET | `/api/v1/assess/privacy/activities/{cmid}/subjects` | optional `X-Assess-Cursor` (a user id) | `200 {"cmid", "userids": [..], "next_cursor"}` (500 per page): every user id with any row the erasure would delete in that activity of this site (sessions, Start attempts, minted tokens, the render worker's per-student rows, extra time, resets) | `400 ERR-ASSESS-014`, `403 ERR-ASSESS-007`, `429` |
+
+Export (REQ-093 (b)): the subject's own transcripts of this site, whatever their enrolment or
+course access today, as the exact bytes the in-course download serves (`sha256` is the stored
+hash, so the two copies compare equal). After the retention purge: no items. Audited
+`assess_privacy_export` (counts only).
+
+Erasure (OQ-033): the API deletes nothing. It records the request and queues an `erasure` job;
+the worker first closes every live session of the scope through the single close path
+(`access_revoked`, its own transaction), then, in one transaction, abandons the copies still
+waiting for the relay (audited, no notice), crypto-shreds the session keys and transcript keys,
+deletes the content and the subject's own rows (sessions, Start attempts, minted tokens, the
+worker's per-student caches, extra time, resets) and the queued jobs that would write them back,
+writes a tombstone per session that names nobody (and makes the subject's earlier retention
+tombstones name nobody), counts every table again for the scope (any row left: everything rolls
+back, the request is recorded `failed`) and completes the request with its counts, clearing the
+user ids and the subject hash it carried. While work on the scope is in flight (a leased job
+of the student, a transcript copy whose send started in the last 15 minutes) the erasure waits:
+its job is retried. A failed count rolls the deletion back; live sessions closed beforehand stay
+closed. A retry of a pending request waits on that request (one request per scope at a time);
+a request whose job died is recorded `failed` (`abandoned`) by the purge tick a day later. Audited
+`assess_erasure` (counts) or `assess_erasure_retained`. Teacher-entered recipient addresses are not
+tied to a student id, so the configuration is not touched. Erasing a subject removes their
+sessions: on an activity still open they may Start again. This is accepted by design: an erasure
+is an administrator's or the DPO's action, not the student's; to keep the exam evidence instead,
+use `VEKTRA_ASSESS_ERASURE_MODE=retain_exam_evidence`.
+
+Retention (REQ-089): the worker's daily `purge` tick removes the content of every CLOSED session
+older than its site's `retention_days` (a site without settings is never purged): copies still
+waiting for the relay become ABANDONED (audited `assess_delivery_abandoned_on_purge`) and the
+activity's recipients get a content-free notice; then keys first, rows second, the same count
+check (a batch that fails it rolls back alone, alert `purge_verification_failed`), a tombstone per
+session and `assess_purge` (counts only). The session row stays (ids, numbers, timestamps: what
+the START gate counts) and `GET /state` reports the transcript `purged`. Notification rows in a
+final state are deleted after 30 days; download tokens a day after their expiry. A site with more due than one
+run's cap gets a follow-up `purge` job a few minutes later.
+
 **`GET /state`, extended fields** (plan 9, agreed with the plugin). Every field is optional and
 ABSENT when the state does not call for it; Vektra sends data, URLs and versions only, the
 plugin owns every text.
@@ -266,10 +316,10 @@ plugin owns every text.
 |-------|-----------|---------|
 | `active` | `active`, `starting` | `{session_no, minutes_left?, deadline_at?}`: `deadline_at` once committed; `minutes_left` whole minutes rounded UP (1 until the very end, 0 only once the time is over; the UI's timer rounds the same way), frozen at the outage start while in OUTAGE, the frozen duration while starting |
 | `selected_attempt` | when the render worker recorded the selected attempt | `{attempt_no}`: the plugin compares it with the attempt its page shows (REQ-068 state 9) |
-| `pre_session` | `eligible`, `reset_granted` | `{duration_min, course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url?, notice_version}, previous_sessions, recipients?[{role, name}], files?[{name, predicted: readable\|partial\|unreadable}]}` |
+| `pre_session` | `eligible`, `reset_granted` | `{duration_min, course_material_used, limits{max_message_chars, messages_per_min}, privacy{notice_url, notice_version, retention_days, legal_basis_label, summary, mailbox_notice}, previous_sessions, recipients?[{role, name}], files?[{name, predicted: readable\|partial\|unreadable}]}`. `privacy` is the site's REQ-089 settings (plan 12) and `summary` the system-rendered text, which always ends with the fixed `mailbox_notice` sentence; a site with no settings (development override only) gets the deployment's `notice_version` / `notice_url` and the `mailbox_notice` |
 | `closed_at` | `closed` (state 6) | the last close of the student's session, ISO 8601 |
 | `ended_at` | `ended` (state 11) | the activity's end date, ISO 8601 |
-| `transcripts` | any state, once the student has a CLOSED session (plan 10) | `[{tid, n, available, purged}]`, one per CLOSED session in session order: `tid` the transcript id (equal to the session id, so the discussion UI, which knows only its session, can ask for it), `n` the session number, `available` generated and downloadable, `purged` always `false` in this release: the purge (plan assess-privacy-retention) deletes the row and will set it from its tombstone; until then a purged transcript reads as `available: false` |
+| `transcripts` | any state, once the student has a CLOSED session (plan 10) | `[{tid, n, available, purged}]`, one per CLOSED session in session order: `tid` the transcript id (equal to the session id, so the discussion UI, which knows only its session, can ask for it), `n` the session number, `available` generated and downloadable, `purged` `true` once the retention purge removed it (from the session's tombstone, plan 12: then `available` is `false` and the download-token mint answers the owner `410 ERR-ASSESS-026`; anyone else, a grader included, gets `404`) |
 
 `recipients`, `files` and `selected_attempt` come from the render worker's record and are
 omitted while it has not recorded them. `recipients` (REQ-082 as amended) are the transcript recipients

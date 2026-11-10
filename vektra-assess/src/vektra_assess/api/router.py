@@ -15,6 +15,7 @@ from vektra_assess.api import (
     housekeeping,
     mint,
     model_activations,
+    privacy,
     retry,
     sessions,
     setup_check,
@@ -52,3 +53,5 @@ router.include_router(teacher_config.router)
 # plan assess-teacher-ops 11b: the session list and the operations (graders only)
 router.include_router(teacher_sessions.router)
 router.include_router(teacher_ops.router)
+# plan assess-privacy-retention: privacy settings (operator), subject export and erasure
+router.include_router(privacy.router)

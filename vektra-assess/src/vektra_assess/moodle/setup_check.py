@@ -146,6 +146,7 @@ PLUGGABLE_ITEMS: tuple[str, ...] = (
     "parser_sidecar_running",
     "smtp_probe",
     "db_log_statement_none",
+    "privacy_config",  # plan assess-privacy-retention (REQ-089)
 )
 
 

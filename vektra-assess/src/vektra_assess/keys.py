@@ -102,6 +102,10 @@ MAX_MODE = 0o440  # owner and group read, nothing else
 _PARSER_FORBIDDEN_ENV_FRAGMENTS = ("DATABASE_URL", "DSN", "PASSWORD", "SECRET", "TOKEN")
 
 
+#: never a key id (plan 12: ``privacy.purge.PURGED_KID`` marks a purged reason)
+RESERVED_KID = "purged"
+
+
 class KeyringError(ValueError):
     """A keyring file is malformed or unsafe. The message never contains key bytes."""
 
@@ -204,6 +208,10 @@ def load_keyring(name: str, secrets_dir: Path) -> Loaded:
         )
     if active not in raw_keys:
         raise KeyringError(f"{name}: active kid {active!r} is not in keys")
+    if RESERVED_KID in raw_keys:
+        # the retention purge marks a removed teacher reason with this kid (plan 12): a real key
+        # under it would read as already purged and fail the purge's count on every run
+        raise KeyringError(f"{name}: kid {RESERVED_KID!r} is reserved")
     keys: dict[str, bytes] = {}
     for kid, b64 in raw_keys.items():
         if not isinstance(b64, str):

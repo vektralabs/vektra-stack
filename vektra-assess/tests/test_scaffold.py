@@ -15,6 +15,7 @@ PKG_DIR = Path(vektra_assess.__file__).resolve().parent
 
 EXPECTED_SUBPACKAGES = {
     "api",
+    "privacy",  # plan assess-privacy-retention: config, purge, erasure
     "worker",
     "moodle",
     "parser_sidecar",

@@ -478,9 +478,18 @@ def test_assess_limiters_are_local_keyed_by_session_or_student() -> None:
     assert (
         tuple(limiters)
         == LIMITER_NAMES
-        == ("state", "turns", "retry", "flag", "ui_page", "download", "resend")
+        == (
+            "state",
+            "turns",
+            "retry",
+            "flag",
+            "ui_page",
+            "download",
+            "resend",
+            "privacy",
+        )
     )
-    assert len({id(v) for v in limiters.values()}) == 7  # no shared instance
+    assert len({id(v) for v in limiters.values()}) == 8  # no shared instance
     sid = str(uuid.uuid4())
     assert limiters["turns"].check(sid, 1)[0] is True
     assert limiters["turns"].check(sid, 1)[0] is False

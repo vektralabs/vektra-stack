@@ -668,6 +668,56 @@ class VektraAssessSettings(BaseSettings):
             "privacy_not_configured). Honoured only with VEKTRA_ENV=development."
         ),
     )
+    # --- retention, erasure, export (plan assess-privacy-retention) -------------------------
+    erasure_mode: Literal["erase", "retain_exam_evidence"] | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_ERASURE_MODE",
+        description=(
+            "OQ-033 / OQ-020 (the DPO's decision): 'erase' deletes a subject's discussions on an "
+            "erasure request; 'retain_exam_evidence' keeps them under the configured legal basis "
+            "and answers outcome=retained (audited, nothing deleted). Mandatory while assess is "
+            "enabled outside development (the API refuses to start without it): no implicit "
+            "choice of the DPO's decision."
+        ),
+    )
+    privacy_rpm: int = Field(
+        30,
+        ge=1,
+        le=600,
+        alias="VEKTRA_ASSESS_PRIVACY_RPM",
+        description=(
+            "Privacy export, listing and erasure requests per minute per key (the plugin's "
+            "privacy provider); 429 beyond it."
+        ),
+    )
+    erasure_wait_s: float = Field(
+        4.0,
+        ge=0.5,
+        le=30.0,
+        alias="VEKTRA_ASSESS_ERASURE_WAIT_S",
+        description=(
+            "How long an erasure request waits for the worker before answering 503 "
+            "ERR-ASSESS-027 pending (the same request again is idempotent)."
+        ),
+    )
+    db_backup_retention_days: int | None = Field(
+        None,
+        ge=0,
+        le=3650,
+        alias="VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS",
+        description=(
+            "How long database backups are kept. Crypto-shredding covers a backup only once no "
+            "retained backup still holds the wrapped key (ARCH-079 as amended by plan 12): "
+            "unset, the worker warns at startup."
+        ),
+    )
+
+    @field_validator("erasure_mode", "db_backup_retention_days", mode="before")
+    @classmethod
+    def _blank_privacy_is_unset(cls, value: Any) -> Any:
+        """An empty value (compose's ``${VAR:-}``) is unset, never an invalid choice."""
+        return None if isinstance(value, str) and not value.strip() else value
+
     # --- transcripts (plan assess-transcript-delivery) ---------------------------------------
     site_timezone: str = Field(
         "Europe/Rome",
@@ -899,3 +949,18 @@ class VektraAssessSettings(BaseSettings):
             "in any other environment the API refuses to start with it set."
         ),
     )
+
+
+def erasure_mode_problem(settings: VektraAssessSettings) -> str | None:
+    """Why the API must not start with these erasure settings (plan 12, OQ-033): no default
+    for the DPO's decision outside development. ``None``: fine."""
+    if (
+        settings.enabled
+        and settings.erasure_mode is None
+        and settings.env != "development"
+    ):
+        return (
+            "VEKTRA_ASSESS_ERASURE_MODE must be set while assess is enabled outside development: "
+            "'erase' or 'retain_exam_evidence' (the DPO's decision, OQ-033)"
+        )
+    return None

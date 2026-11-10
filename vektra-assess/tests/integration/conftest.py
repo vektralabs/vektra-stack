@@ -132,10 +132,13 @@ def consumed_invariant(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 #: the rows that break consumed == exists(persisted opening bot turn); must be none
+#: (plan 12: a session the retention purge emptied keeps its row and a tombstone, by design, and
+#: is still consumed: it is excluded here, never counted as a session without its opening turn)
 CONSUMED_INVARIANT = (
     "SELECT s.id, s.state FROM assess_sessions s "
     "WHERE (s.state <> 'STARTING') <> EXISTS (SELECT 1 FROM assess_turns t "
-    "WHERE t.session_id = s.id AND t.role = 'bot' AND t.kind = 'opening')"
+    "WHERE t.session_id = s.id AND t.role = 'bot' AND t.kind = 'opening') "
+    "AND NOT EXISTS (SELECT 1 FROM assess_purge_records p WHERE p.session_id = s.id)"
 )
 
 

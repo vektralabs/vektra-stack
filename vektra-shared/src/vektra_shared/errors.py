@@ -201,6 +201,13 @@ ERR_ASSESS_022 = "ERR-ASSESS-022"  # Teacher configuration refused: field-level 
 ERR_ASSESS_023 = "ERR-ASSESS-023"  # Teacher configuration changed meanwhile: expected_version is stale
 ERR_ASSESS_024 = "ERR-ASSESS-024"  # Teacher reset refused: session not CLOSED or a START gate refuses (REQ-087)
 ERR_ASSESS_025 = "ERR-ASSESS-025"  # Teacher terminate refused: expected_active_count is not the current count (REQ-081)
+ERR_ASSESS_026 = (
+    "ERR-ASSESS-026"  # Transcript purged: its retention period expired (REQ-088)
+)
+ERR_ASSESS_027 = "ERR-ASSESS-027"  # Subject erasure not completed yet or failed its count check: retry (OQ-033)
+ERR_ASSESS_028 = (
+    "ERR-ASSESS-028"  # Privacy configuration refused: field-level errors (REQ-089)
+)
 
 # Admin errors (ERR-ADMIN-001..007 live in vektra-admin as string literals;
 # 008 is shared because it backs a factory reused within that module)
@@ -265,6 +272,9 @@ _CODE_STATUS_OVERRIDE: dict[str, int] = {
     ERR_ASSESS_023: 409,
     ERR_ASSESS_024: 409,
     ERR_ASSESS_025: 409,
+    ERR_ASSESS_026: 410,
+    ERR_ASSESS_027: 503,
+    ERR_ASSESS_028: 400,  # explicit envelope with details.fields, never the 422 path (DEBT-035)
 }
 
 

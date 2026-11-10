@@ -589,10 +589,58 @@ class ErasureRecordOrm(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     site_id: Mapped[UUID] = mapped_column(ForeignKey("assess_sites.id"))
-    subject_userid_hash: Mapped[str] = mapped_column(TEXT)
+    subject_userid_hash: Mapped[str | None] = mapped_column(
+        TEXT
+    )  # 0040: NULL per activity
     requested_at: Mapped[datetime] = _ts(default=True)
     completed_at: Mapped[datetime | None] = _ts(nullable=True)
     rows_deleted: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    # revision 0040 (plan 12): the request the API queues and the worker completes
+    scope: Mapped[str] = mapped_column(TEXT)  # subject | activity
+    cmid: Mapped[int | None] = mapped_column(BIGINT)
+    #: the ids the worker needs, cleared when the record completes
+    subject_userids: Mapped[list[int] | None] = mapped_column(ARRAY(BIGINT))
+    outcome: Mapped[str | None] = mapped_column(TEXT)  # erased | failed
+    error_code: Mapped[str | None] = mapped_column(TEXT)
+
+
+class PrivacyConfigOrm(Base):
+    """Revision 0040 (plan 12, REQ-089): a site's privacy settings, written by the operator."""
+
+    __tablename__ = "assess_privacy_config"
+
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE"), primary_key=True
+    )
+    retention_days: Mapped[int] = mapped_column(INTEGER)
+    legal_basis_label: Mapped[str] = mapped_column(TEXT)
+    legal_basis_text: Mapped[str] = mapped_column(TEXT)
+    notice_url: Mapped[str] = mapped_column(TEXT)
+    notice_text: Mapped[str] = mapped_column(TEXT)
+    notice_version: Mapped[str] = mapped_column(TEXT)
+    updated_by: Mapped[str] = mapped_column(TEXT)
+    updated_at: Mapped[datetime] = _ts(default=True)
+
+
+class PurgeRecordOrm(Base):
+    """Revision 0040 (plan 12): a purge tombstone, ids and counts only, one per session."""
+
+    __tablename__ = "assess_purge_records"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    site_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assess_sites.id", ondelete="CASCADE")
+    )
+    subject_ref: Mapped[str] = mapped_column(TEXT)
+    session_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), unique=True)
+    transcript_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    session_no: Mapped[int] = mapped_column(INTEGER)
+    cmid: Mapped[int] = mapped_column(BIGINT)
+    reason: Mapped[str] = mapped_column(TEXT)  # retention | erasure
+    purged_at: Mapped[datetime] = _ts(default=True)
+    counts: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb")
     )
 

@@ -33,6 +33,7 @@ from vektra_assess.api.deps import settings_of
 from vektra_assess.api.gate import verify_assess_token_pre
 from vektra_assess.errors import assess_unavailable, rate_limited
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
+from vektra_assess.privacy import config as privacy_config
 from vektra_assess.timing import minutes_left, session_duration_s
 from vektra_assess.tokens import PreClaims
 
@@ -43,7 +44,16 @@ router = APIRouter()
 #: by a hashable of the session or the student, never the API key: ``state`` by (site, student,
 #: activity), ``turns`` / ``retry`` / ``flag`` by session id, ``ui_page`` (the public discussion
 #: UI page, plan 9) by client address, ``download`` (plan 10) by transcript and requester, ``resend`` by API key
-LIMITER_NAMES = ("state", "turns", "retry", "flag", "ui_page", "download", "resend")
+LIMITER_NAMES = (
+    "state",
+    "turns",
+    "retry",
+    "flag",
+    "ui_page",
+    "download",
+    "resend",
+    "privacy",  # plan 12: the privacy export and erasure routes, per key
+)
 
 
 class Limiter(Protocol):
@@ -163,8 +173,10 @@ _PRE = text(
 )
 _PREDICTED = ("readable", "partial", "unreadable")
 _TRANSCRIPTS = text(
-    "SELECT s.id, s.session_no, t.id AS tid, t.ciphertext IS NOT NULL AS live "
-    "FROM assess_sessions s LEFT JOIN assess_transcripts t ON t.session_id = s.id "
+    "SELECT s.id, s.session_no, t.id AS tid, t.ciphertext IS NOT NULL AS live, "
+    "p.id IS NOT NULL AS purged FROM assess_sessions s "
+    "LEFT JOIN assess_transcripts t ON t.session_id = s.id "
+    "LEFT JOIN assess_purge_records p ON p.session_id = s.id "
     "WHERE s.site_id = :s AND s.cmid = :c AND s.student_userid = :u AND s.state = 'CLOSED' "
     "ORDER BY s.session_no"
 )
@@ -175,17 +187,18 @@ async def transcripts_of(conn: Any, params: dict[str, Any]) -> list[dict[str, An
     id, which is its session id), ``n`` (the session number) and ``available`` (generated and
     not shredded).
 
-    ``purged`` is ALWAYS false in this release (review #9): ``shred_transcript`` deletes the row,
-    so nothing that survives a shred says it happened, and a purged transcript reads exactly like
-    one not generated yet (``available: false``). Plan assess-privacy-retention owns the purge
-    and its tombstone; it sets ``purged`` from that tombstone (and the 410 branch)."""
+    ``purged`` comes from the session's tombstone (plan assess-privacy-retention): the retention
+    purge keeps the session row and writes one ``assess_purge_records`` row per session, so a
+    purged transcript reads ``available: false, purged: true`` (the plugin shows the expiry
+    message, and the download link answers 410) and one not generated yet reads
+    ``available: false, purged: false``."""
     rows = (await conn.execute(_TRANSCRIPTS, params)).all()
     return [
         {
             "tid": str(r.id),
             "n": int(r.session_no),
-            "available": r.tid is not None and bool(r.live),
-            "purged": False,
+            "available": r.tid is not None and bool(r.live) and not r.purged,
+            "purged": bool(r.purged),
         }
         for r in rows
     ]
@@ -238,11 +251,21 @@ async def enrich(
         if state == "ended" and pre is not None and pre.end_at is not None:
             view["ended_at"] = pre.end_at.isoformat()
         if state in ("eligible", "reset_granted") and pre is not None:
-            privacy: dict[str, Any] = {
-                "notice_version": settings.privacy_notice_version
-            }
-            if settings.privacy_notice_url:
-                privacy["notice_url"] = settings.privacy_notice_url
+            # REQ-089: the site's own settings and the system-rendered summary (with the fixed
+            # mailbox sentence); the deployment-wide values only stand in for a site with none
+            # (development with VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET: elsewhere such a site cannot
+            # be enabled, so it never reaches these states)
+            site_privacy = await privacy_config.read(conn, params["s"])
+            privacy: dict[str, Any]
+            if site_privacy is not None:
+                privacy = privacy_config.pre_session_privacy(site_privacy)
+            else:
+                privacy = {
+                    "notice_version": settings.privacy_notice_version,
+                    "mailbox_notice": privacy_config.MAILBOX_SENTENCE,
+                }
+                if settings.privacy_notice_url:
+                    privacy["notice_url"] = settings.privacy_notice_url
             pre_session: dict[str, Any] = {
                 "duration_min": session_duration_s(
                     int(pre.cap_minutes or 0), int(pre.extra_s)

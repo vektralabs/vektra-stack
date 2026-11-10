@@ -7,6 +7,8 @@
   ``ok`` is true and ``beat_at`` is at most ``SMTP_PROBE_MAX_AGE_S`` old (3 tick intervals: one
   missed or slow probe is tolerated, two are not). With no row or a stale one, the item runs
   the probe itself (bounded, never sends) and judges that fresh result.
+- ``privacy_config`` (plan assess-privacy-retention, REQ-089): OK only with the site's privacy
+  settings complete and within bounds, MISSING ``privacy_config_unset`` otherwise.
 - ``db_log_statement_none`` (ARCH-078, plan assess-foundations): ``SHOW log_statement`` is
   ``none`` and ``SHOW log_parameter_max_length`` is ``0`` on the worker's own connection, AND
   no ``ALTER ROLE/DATABASE ... SET`` override (``pg_db_role_setting``) gives any assess role, or
@@ -233,3 +235,22 @@ def register_worker_items(
         smtp_probe_item(acquire, configured=smtp_configured, probe=smtp_probe),
     )
     registry.register("db_log_statement_none", db_log_statement_item(acquire))
+    registry.register("privacy_config", privacy_config_item(acquire))
+
+
+def privacy_config_item(acquire: AcquireDb) -> ItemCheck:
+    """REQ-089 (plan assess-privacy-retention): OK only when the site's privacy settings are all
+    set and within bounds (``privacy.config.is_configured``); MISSING otherwise, so a site can
+    never pass its setup check with the retention, legal basis or notice unset."""
+
+    async def check(ctx: CheckContext) -> Outcome:
+        """Judge the site's stored privacy settings."""
+        from uuid import UUID
+
+        from vektra_assess.privacy.config import is_configured
+
+        async with acquire() as conn:
+            configured = await is_configured(conn, UUID(str(ctx.site.site_id)))
+        return ok() if configured else missing("privacy_config_unset")
+
+    return check

@@ -878,3 +878,78 @@ def make_notify_handler(
         await notify(deps, kind, ctx)
 
     return handle
+
+
+# --- the safety net: a chain whose job died (plan assess-privacy-retention 12b) ----------------
+
+#: live notification rows whose chain has no job left to run them: every job of the chain
+#: (the root, and the runs that carry its id as ``root_job_id``) is done, failed or dead. Old
+#: enough that the producer's own first run is not raced.
+_ORPHANS = text(
+    "SELECT DISTINCT d.job_id, d.kind FROM assess_deliveries d "
+    "WHERE d.kind IN ('teacher_notify', 'operator_notify') "
+    "AND d.status IN ('PENDING', 'RETRYING') AND d.job_id IS NOT NULL "
+    "AND d.created_at < :settled "
+    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.state IN ('ready', 'leased') "
+    "AND (j.id = d.job_id OR j.args->>'root_job_id' = CAST(d.job_id AS text))) "
+    "ORDER BY d.job_id LIMIT :n"
+)
+#: the chain's newest job still on record: its arguments carry the event and the backoff state
+_LAST_OF_CHAIN = text(
+    "SELECT id, args FROM assess_jobs WHERE kind = :k AND (id = :root "
+    "OR args->>'root_job_id' = CAST(:root AS text)) ORDER BY id DESC LIMIT 1"
+)
+#: a chain whose jobs were all cleaned up cannot be rebuilt: its rows end, alerted
+_CHAIN_LOST = text(
+    "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = 'chain_lost', "
+    "attempt_started_at = NULL WHERE job_id = :root AND kind = :k "
+    "AND status IN ('PENDING', 'RETRYING')"
+)
+#: a rescued chain waits this long after its rows were last written (the runner's own retries
+#: of a job that is merely slow are never raced)
+RESCUE_AFTER = timedelta(minutes=5)
+
+
+async def rescue_dead_chains(
+    acquire: AcquireDb, *, now: datetime | None = None, batch: int = 100
+) -> dict[str, int]:
+    """The ``delivery_retry`` tick's net for notification chains (review #2 residual).
+
+    A chain's next run is queued by the run before it; if a job dies (the database down for its
+    whole retry budget, the runner records ``assess_job_dead``) its rows stay live with nothing
+    left to run them. Each such chain gets ONE new run with the newest job's arguments (its event,
+    root, try and window start), so the window and the backoff stay the chain's own. A chain
+    whose jobs were all cleaned up has no arguments left: its rows become FAILED ``chain_lost``,
+    with an alert, rather than live forever."""
+    at = now or datetime.now(UTC)
+    rescued = lost = 0
+    async with acquire() as conn, conn.begin():
+        orphans = (
+            await conn.execute(_ORPHANS, {"settled": at - RESCUE_AFTER, "n": batch})
+        ).all()
+        for root, kind in orphans:
+            last = (
+                await conn.execute(_LAST_OF_CHAIN, {"k": kind, "root": int(root)})
+            ).first()
+            if last is None:
+                await conn.execute(_CHAIN_LOST, {"root": int(root), "k": kind})
+                lost += 1
+                log.error(
+                    "assess.notify.alert",
+                    alert="notify_chain_lost",
+                    kind=kind,
+                    job_id=int(root),
+                )
+                continue
+            args = last.args if isinstance(last.args, Mapping) else {}
+            rescued += await enqueue_job(
+                conn,
+                JobKind(kind),
+                {**args, "root_job_id": int(root)},
+                dedupe_key=f"{kind}:rescue:{int(root)}:{int(last.id)}",
+            )
+    if rescued or lost:
+        log.warning(
+            "assess_notify_rescued", count=rescued, flag=lost > 0, kind="notify"
+        )
+    return {"rescued": rescued, "lost": lost}

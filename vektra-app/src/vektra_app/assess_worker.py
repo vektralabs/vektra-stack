@@ -423,7 +423,11 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         delivery_retry_tick,
         make_deliver_handler,
     )
-    from vektra_assess.delivery.notify import NotifyDeps, make_notify_handler
+    from vektra_assess.delivery.notify import (
+        NotifyDeps,
+        make_notify_handler,
+        rescue_dead_chains,
+    )
     from vektra_assess.delivery.probe import run_probe
     from vektra_assess.delivery.recipients import ConfigRecipients, parse_domains
     from vektra_assess.delivery.smtp import SmtpSender
@@ -473,6 +477,8 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         await delivery_retry_tick(
             engine.connect, stale_after=deps.stale_after, window=deps.window
         )
+        # plan 12b: a notification chain whose job died gets its next run back
+        await rescue_dead_chains(engine.connect)
 
     async def smtp_probe() -> None:
         # one whole probe; the tick's own timeout (slots.probe_tick_timeout_s) is longer
@@ -772,6 +778,10 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     async def cleanup() -> None:
         await cleanup_done_jobs(acquire_raw, settings.job_done_retention_h)
         await cleanup_expired_jtis(acquire_raw)
+        # plan 12b: setup-check reports whose job died would read "queued" forever
+        from vektra_assess.worker.setup_check import fail_abandoned_reports
+
+        await fail_abandoned_reports(checked.engine.connect)
 
     async def lease_reaper() -> None:
         await reap_exhausted(acquire_raw, audit)

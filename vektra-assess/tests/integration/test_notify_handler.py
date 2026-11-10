@@ -465,3 +465,64 @@ async def test_a_retried_root_job_counts_its_window_on_the_worker_clock(
         again = await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(job, worker))
         assert again is not None and again.sent == 1 and again.failed == 0
         assert [r.status for r in await rows(pg, int(job.id))] == ["SENT"]
+
+
+# --- plan 12b: the delivery_retry safety net -----------------------------------------------
+
+
+async def test_a_chain_whose_job_died_is_run_again_by_the_safety_net(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    clock = Clock()
+    async with world(pg) as w:
+        _, config, job = await _service_failure(w, worker, TEACHERS[:1])
+        await clock.sync(pg)
+        deps = _deps(config, sink, clock)
+        sink.down()
+        got = await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(job, worker))
+        assert got is not None and got.retrying == 1
+        # the chain's queued run dies (the database was down for its whole retry budget)
+        await pg.run(
+            "super",
+            "UPDATE assess_jobs SET state = 'dead' WHERE kind = 'teacher_notify'",
+        )
+        later = (await pg.run("super", "SELECT now() + interval '10 min'"))[0][0]
+        # nothing rescues a live chain early, and a chain with a live job is never touched
+        assert (await n.rescue_dead_chains(worker.connect))["rescued"] == 0
+        got = await n.rescue_dead_chains(worker.connect, now=later)
+        assert got == {"rescued": 1, "lost": 0}
+        again = await n.rescue_dead_chains(worker.connect, now=later)
+        assert (
+            again["rescued"] == 0
+        )  # the rescued run is ready: the chain is alive again
+        (rescue,) = [j for j in await jobs(pg, "teacher_notify") if j.state == "ready"]
+        a = rescue.args if isinstance(rescue.args, dict) else json.loads(rescue.args)
+        assert (
+            a["root_job_id"] == int(job.id) and a["try"] == 2
+        )  # the chain's own backoff
+        sink.up()
+        clock.advance(minutes=2)
+        done = await n.notify(deps, JobKind.TEACHER_NOTIFY, ctx(rescue, worker))
+        assert done is not None and done.sent == 1
+        assert [r.status for r in await rows(pg, int(job.id))] == ["SENT"]
+
+
+async def test_a_chain_with_no_job_left_ends_failed_not_live_forever(
+    pg, worker, sink
+) -> None:  # type: ignore[no-untyped-def]
+    clock = Clock()
+    async with world(pg) as w:
+        _, config, job = await _service_failure(w, worker, TEACHERS[:1])
+        await clock.sync(pg)
+        sink.down()
+        await n.notify(
+            _deps(config, sink, clock), JobKind.TEACHER_NOTIFY, ctx(job, worker)
+        )
+        await pg.run("super", "DELETE FROM assess_jobs WHERE kind = 'teacher_notify'")
+        later = (await pg.run("super", "SELECT now() + interval '10 min'"))[0][0]
+        assert await n.rescue_dead_chains(worker.connect, now=later) == {
+            "rescued": 0,
+            "lost": 1,
+        }
+        (row,) = await rows(pg, int(job.id))
+        assert (row.status, row.last_error_class) == ("FAILED", "chain_lost")

@@ -60,10 +60,10 @@ def test_every_label_value_is_in_its_fixed_enum() -> None:
 def test_unknown_values_are_counted_under_other() -> None:
     text = _exposition(HOSTILE)
     assert 'vektra_assess_sessions{state="other"} 1.0' in text
-    assert 'vektra_assess_sessions_closed_total{reason="other"} 1.0' in text
+    assert 'vektra_assess_sessions_closed{reason="other"} 1.0' in text
     assert 'vektra_assess_deliveries{status="other"} 7.0' in text
-    assert 'vektra_assess_start_rollbacks_total{reason="capture_failed"} 2.0' in text
-    assert 'vektra_assess_start_rollbacks_total{reason="other"} 9.0' in text
+    assert 'vektra_assess_start_rollbacks{reason="capture_failed"} 2.0' in text
+    assert 'vektra_assess_start_rollbacks{reason="other"} 9.0' in text
 
 
 def test_every_enum_value_is_present_even_at_zero() -> None:
@@ -78,8 +78,8 @@ def test_scalar_series() -> None:
     text = _exposition(HOSTILE)
     assert "vektra_assess_metrics_up 1.0" in text
     assert "vektra_assess_deliveries_retrying_oldest_seconds 3600.5" in text
-    assert "vektra_assess_tls_failures_total 2.0" in text
-    assert "vektra_assess_capacity_refusals_total 3.0" in text
+    assert "vektra_assess_tls_failures 2.0" in text
+    assert "vektra_assess_capacity_refusals 3.0" in text
     assert "vektra_assess_purge_rows_deleted_total 120.0" in text
     assert "vektra_assess_smtp_probe_ok 1.0" in text
     assert "vektra_assess_worker_heartbeat_age_seconds 4.0" in text
@@ -158,9 +158,34 @@ def test_a_teacher_terminate_and_an_unknown_reason_have_their_own_buckets() -> N
     """Review #9: ``assess_rollback_starting`` records ``terminated_by_teacher``; a NULL reason
     arrives as ``none``. Neither is ``other``."""
     text = _exposition({"rollbacks": {"terminated_by_teacher": 2, "none": 1}})
-    assert (
-        'vektra_assess_start_rollbacks_total{reason="terminated_by_teacher"} 2.0'
-        in text
+    assert 'vektra_assess_start_rollbacks{reason="terminated_by_teacher"} 2.0' in text
+    assert 'vektra_assess_start_rollbacks{reason="none"} 1.0' in text
+    assert 'vektra_assess_start_rollbacks{reason="other"} 0.0' in text
+
+
+def test_row_counts_are_gauges_and_no_rule_reads_them_as_counters() -> None:
+    """Review #3: a level exposed as a counter reads a purge as a reset, so increase() fires."""
+    from pathlib import Path
+
+    import yaml
+
+    text = _exposition(HOSTILE)
+    for name in (
+        "sessions_closed",
+        "start_rollbacks",
+        "tls_failures",
+        "capacity_refusals",
+    ):
+        assert f"# TYPE vektra_assess_{name} gauge" in text, name
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "deploy/prometheus/assess-alerts.yml.example"
     )
-    assert 'vektra_assess_start_rollbacks_total{reason="none"} 1.0' in text
-    assert 'vektra_assess_start_rollbacks_total{reason="other"} 0.0' in text
+    for rule in yaml.safe_load(path.read_text())["groups"][0]["rules"]:
+        assert "increase(" not in rule["expr"] and "rate(" not in rule["expr"], rule[
+            "alert"
+        ]
+    names = {r["alert"] for r in yaml.safe_load(path.read_text())["groups"][0]["rules"]}
+    assert (
+        "VektraAssessPurgeNeverSucceeded" in names
+    )  # review #4: an absent series pages too

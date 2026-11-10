@@ -10,8 +10,9 @@ corrupted row) is counted under ``other``, never emitted as itself. So no site, 
 id can become a label, whatever the database holds. ``LABELS`` is the whole allowed vocabulary;
 the guard test fails if the exposition contains any other label value.
 
-``*_total`` series count the rows the database still holds (the retention purge removes old
-ones), so they can go down after a purge: alert on levels, not on ``rate()``.
+Counts of rows the database still holds are GAUGES (the retention purge lowers them, review
+#3): alert on their level. The only counters are monotonic: the purge's cumulative deleted rows
+and this process's dropped log keys.
 """
 
 from __future__ import annotations
@@ -137,9 +138,9 @@ def families(snap: Mapping[str, Any] | None, *, age_s: float | None) -> list[Met
         sessions.add_metric([state], n)
     out.append(sessions)
 
-    closed = CounterMetricFamily(
+    closed = GaugeMetricFamily(
         "vektra_assess_sessions_closed",
-        "Closed assess sessions still held, by close reason",
+        "Closed assess sessions still held, by close reason (a level: the purge lowers it)",
         labels=["reason"],
     )
     for reason, n in _grouped(snap.get("closed"), CLOSE_REASONS).items():
@@ -153,9 +154,9 @@ def families(snap: Mapping[str, Any] | None, *, age_s: float | None) -> list[Met
         deliveries.add_metric([status], n)
     out.append(deliveries)
 
-    rollbacks = CounterMetricFamily(
+    rollbacks = GaugeMetricFamily(
         "vektra_assess_start_rollbacks",
-        "Start rollbacks still held, by reason",
+        "Start rollbacks still held, by reason (a level)",
         labels=["reason"],
     )
     for reason, n in _grouped(
@@ -182,14 +183,14 @@ def families(snap: Mapping[str, Any] | None, *, age_s: float | None) -> list[Met
         "Age of the oldest RETRYING delivery",
         "retrying_oldest_s",
     )
-    counter(
+    gauge(
         "vektra_assess_capacity_refusals",
-        "Start rollbacks for capacity (pre-flight) still held",
+        "Start rollbacks for capacity (pre-flight) still held (a level)",
         "capacity_refusals",
     )
-    counter(
+    gauge(
         "vektra_assess_tls_failures",
-        "Delivery rows whose last attempt failed on TLS",
+        "Live or failed delivery rows whose last attempt failed on TLS (a level)",
         "tls_failures",
     )
     gauge(

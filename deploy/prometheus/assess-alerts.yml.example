@@ -5,8 +5,8 @@
 # series are content-free counts and ages; labels are fixed enums.
 #
 # The thresholds below are the plan's defaults (plan assess-privacy-retention 12b). Tune `for:`
-# to your paging policy. `*_total` series count rows the database still holds, so the retention
-# purge can lower them: the rules use levels or increase(), which treats a drop as a reset.
+# to your paging policy. Counts of rows the database still holds are gauges (the retention purge
+# lowers them): every rule reads a level, none uses rate() or increase() on them.
 
 groups:
   - name: vektra-assess
@@ -48,7 +48,7 @@ groups:
           summary: "An email has been retrying for more than 1 h"
 
       - alert: VektraAssessSmtpTlsFailures
-        expr: increase(vektra_assess_tls_failures_total[1h]) > 0
+        expr: vektra_assess_tls_failures > 0
         labels: {severity: critical}
         annotations:
           summary: "The SMTP relay failed TLS (no STARTTLS, handshake or certificate)"
@@ -68,6 +68,15 @@ groups:
         annotations:
           summary: "No successful retention purge for more than 26 h"
           description: "Content may outlive its retention period (REQ-089)."
+
+      # the timestamp is absent until a purge has succeeded once: a first purge that keeps failing
+      # (or never runs) must page too, not leave the rule above silent forever
+      - alert: VektraAssessPurgeNeverSucceeded
+        expr: absent(vektra_assess_purge_last_success_timestamp) and on() vektra_assess_metrics_up == 1
+        for: 26h
+        labels: {severity: critical}
+        annotations:
+          summary: "No retention purge has ever succeeded on this deployment"
 
       - alert: VektraAssessPurgeVerificationFailed
         expr: vektra_assess_purge_last_run_ok == 0

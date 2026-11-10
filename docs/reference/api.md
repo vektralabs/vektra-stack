@@ -129,12 +129,12 @@ database). Labels are fixed enums: a value outside its enum is counted as `other
 |---|---|---|
 | `vektra_assess_metrics_up` | - | 1 when the snapshot was read within its budget |
 | `vektra_assess_sessions` | `state` | sessions by state |
-| `vektra_assess_sessions_closed_total` | `reason` | closed sessions still held, by close reason |
+| `vektra_assess_sessions_closed` | `reason` | closed sessions still held, by close reason |
 | `vektra_assess_deliveries` | `status` | delivery rows by status (all kinds) |
 | `vektra_assess_deliveries_retrying_oldest_seconds` | - | age of the oldest RETRYING email |
-| `vektra_assess_tls_failures_total` | - | delivery rows whose last attempt failed on TLS |
-| `vektra_assess_capacity_refusals_total` | - | Start rollbacks for capacity in the pre-flight (the API's advisory refusals are audit rows only, and the audit table is readable by no role) |
-| `vektra_assess_start_rollbacks_total` | `reason` | Start rollbacks by reason |
+| `vektra_assess_tls_failures` | - | live or failed delivery rows whose last attempt failed on TLS |
+| `vektra_assess_capacity_refusals` | - | Start rollbacks for capacity in the pre-flight (the API's advisory refusals are audit rows only, and the audit table is readable by no role) |
+| `vektra_assess_start_rollbacks` | `reason` | Start rollbacks by reason |
 | `vektra_assess_jobs_oldest_ready_seconds` | - | age of the oldest due job |
 | `vektra_assess_worker_heartbeat_age_seconds` | - | worker heartbeat age (database clock) |
 | `vektra_assess_smtp_probe_ok` | - | 1 when the last SMTP probe passed |
@@ -143,8 +143,8 @@ database). Labels are fixed enums: a value outside its enum is counted as `other
 | `vektra_assess_purge_rows_deleted_total` | - | content rows deleted by the purge (cumulative) |
 | `vektra_assess_log_keys_dropped_total` | - | log keys the `vektra_assess.*` allowlist replaced in this API process |
 
-The `*_total` row counts follow the rows the database still holds, so the retention purge can lower
-them: alert on levels or `increase()`. Example rules: `deploy/prometheus/assess-alerts.yml.example`.
+Counts of rows the database still holds are gauges (the retention purge lowers them): alert on their
+level. The two `_total` series are monotonic counters. SMTP test rows are never counted. Example rules: `deploy/prometheus/assess-alerts.yml.example`.
 
 ### Assess operator: SMTP test send
 

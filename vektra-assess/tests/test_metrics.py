@@ -122,3 +122,33 @@ def test_install_registers_once_and_swaps_the_cache() -> None:
     again = m.install(second_cache)
     assert first is again and again.cache is second_cache
     assert list(again.collect())  # up=0 at least
+
+
+def test_every_alert_rule_reads_a_series_the_collector_emits() -> None:
+    """deploy/prometheus/assess-alerts.yml.example: the plan's alerts, on real series names."""
+    from pathlib import Path
+
+    import yaml
+
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "deploy/prometheus/assess-alerts.yml.example"
+    )
+    rules = yaml.safe_load(path.read_text())["groups"][0]["rules"]
+    text = _exposition(HOSTILE)
+    emitted = {line.split("{")[0].split(" ")[0] for line in text.splitlines()
+               if line and not line.startswith("#")}  # fmt: skip
+    for rule in rules:
+        for name in re.findall(r"vektra_assess_\w+", rule["expr"]):
+            assert name in emitted, (rule["alert"], name)
+    names = {r["alert"] for r in rules}
+    assert {
+        "VektraAssessWorkerHeartbeatStale",
+        "VektraAssessJobBacklog",
+        "VektraAssessDeliveryFailed",
+        "VektraAssessDeliveryRetryingTooLong",
+        "VektraAssessSmtpTlsFailures",
+        "VektraAssessPurgeLate",
+        "VektraAssessPurgeVerificationFailed",
+        "VektraAssessSmtpProbeDown",
+    } <= names

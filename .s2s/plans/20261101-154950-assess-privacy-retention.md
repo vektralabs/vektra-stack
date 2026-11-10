@@ -368,3 +368,16 @@ no log files fails rather than passing.
 > - echo the `notice_version` the student saw in the Start request, so the API can refuse a
 >   Start whose notice changed meanwhile (CodeRabbit 4516399732). Until then the Start records
 >   the site's version at commit; the window is the pre-session token's TTL (at most 120 s).
+
+> **12b, the items moved from 12a (2026-11-10).**
+> - `delivery_retry` safety net for the notification chains (`delivery.notify.rescue_dead_chains`,
+>   run by the tick after the transcript sweep): live `teacher_notify` / `operator_notify` rows
+>   older than 5 min whose chain has no ready or leased job get ONE new run with the newest chain
+>   job's arguments (event, root, try and window start: the chain keeps its own backoff and
+>   window). A chain whose jobs were all cleaned up has nothing to rebuild from: its rows become
+>   FAILED `chain_lost` with the alert `notify_chain_lost`. Transcript rows already had their net
+>   (`_DUE` re-queues every due transcript).
+> - Abandoned setup-check reports (`worker.setup_check.fail_abandoned_reports`, hourly in the
+>   `job_cleanup` tick): a `queued` / `running` report older than the kind's lease with no
+>   `setup_check` job that could still run it becomes `failed` (it would otherwise read "queued"
+>   forever and never be trimmed).

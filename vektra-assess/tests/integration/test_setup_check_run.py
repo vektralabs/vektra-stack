@@ -342,3 +342,43 @@ async def test_a_queued_report_is_revalidated_and_run(pg):
         await run(pg, other, report_id=rid)
     with pytest.raises(LookupError):
         await run(pg, uuid.uuid4())
+
+
+async def test_a_report_whose_job_died_is_failed_not_queued_forever(pg):
+    """Plan 12b: the hourly sweep closes a queued report no job will run; a report whose job
+    is still ready (or a running one with a live job of its site) is left alone."""
+    from vektra_assess.worker.setup_check import fail_abandoned_reports
+
+    site = await make_site(pg)
+
+    async def report(age_s: int, status: str = "queued") -> uuid.UUID:
+        rid = (
+            await pg.run(
+                "super",
+                "INSERT INTO assess_setup_check_reports (site_id, status, created_at) "
+                "VALUES (:s, :st, now() - make_interval(secs => :a)) RETURNING id",
+                {"s": site, "st": status, "a": age_s},
+            )
+        )[0][0]
+        return rid
+
+    dead, alive, young = await report(900), await report(900), await report(5)
+    for rid, state in ((dead, "dead"), (alive, "ready")):
+        await pg.run(
+            "super",
+            "INSERT INTO assess_jobs (kind, args, state) VALUES ('setup_check', "
+            "jsonb_build_object('site_id', CAST(:s AS text), 'report_id', CAST(:r AS text)), :st)",
+            {"s": str(site), "r": str(rid), "st": state},
+        )
+    async with worker_engine(pg) as engine:
+        assert await fail_abandoned_reports(engine.connect, after_s=600) == 1
+        assert await fail_abandoned_reports(engine.connect, after_s=600) == 0
+    status = {
+        r[0]: r[1]
+        for r in await pg.run(
+            "super",
+            "SELECT id, status FROM assess_setup_check_reports WHERE site_id = :s",
+            {"s": site},
+        )
+    }
+    assert status == {dead: "failed", alive: "queued", young: "queued"}

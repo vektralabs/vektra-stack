@@ -91,6 +91,34 @@ _FAIL_ORPHANS = text(
 ORPHAN_AFTER_S = KIND_DEFAULTS[JobKind.SETUP_CHECK].lease_s
 
 
+#: plan assess-privacy-retention 12b: a ``queued`` or ``running`` report whose job is gone (dead
+#: after its retries, or deleted) would read "queued" forever and never be trimmed (only
+#: finished reports count towards the 30 kept). Failed once no ``setup_check`` job that could
+#: still run it is ready or leased: its own job (by ``report_id``) or, for a running report,
+#: a live job of the same site.
+_FAIL_ABANDONED = text(
+    "UPDATE assess_setup_check_reports r SET status = 'failed', finished_at = now() "
+    "WHERE r.status IN ('queued', 'running') "
+    "AND r.created_at < now() - make_interval(secs => :after) "
+    "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.kind = 'setup_check' "
+    "AND j.state IN ('ready', 'leased') AND (j.args->>'report_id' = CAST(r.id AS text) "
+    "OR (r.status = 'running' AND j.state = 'leased' "
+    "AND j.args->>'site_id' = CAST(r.site_id AS text))))"
+)
+
+
+async def fail_abandoned_reports(
+    acquire: AcquireDb, *, after_s: float = ORPHAN_AFTER_S
+) -> int:
+    """Hourly (the ``job_cleanup`` tick): close the reports no job will ever finish."""
+    async with acquire() as conn, conn.begin():
+        res = await conn.execute(_FAIL_ABANDONED, {"after": after_s})
+    n = max(res.rowcount, 0)
+    if n:
+        log.warning("assess_setup_reports_abandoned", count=n)
+    return n
+
+
 def dedupe_key(site_id: object) -> str:
     """The key ``capabilities.observe_release`` uses too: one pending check per site."""
     return f"setup_check:{site_id}"

@@ -14,8 +14,8 @@ Invariants (each query returns the offending ids, so an empty list is the only p
 - ``transcript_per_closed`` (only with ``settled=True``): every CLOSED, retained session has
   exactly one transcript, and no transcript exists for a session that is not CLOSED;
 - ``one_sent_per_recipient``: per (transcript, recipient, round) at most one SENT row;
-- ``sink_copies`` (only with a mail sink): every SENT row has 1 copy on the sink, or 2 when the
-  row's transcript carries an audited ``assess_delivery_possible_duplicate``;
+- ``sink_copies`` (only with a mail sink): every SENT row has 1 copy on the sink, or 2 when an
+  audited ``assess_delivery_possible_duplicate`` names that very row (``data.delivery_id``);
 - ``no_stale_lease``: no job still leased past ``lease_until`` + grace;
 - ``no_stale_starting``: no STARTING row older than the reaper bound;
 - ``key_present``: every committed, retained session keeps a wrapped key (no accidental shred).
@@ -103,8 +103,11 @@ ALWAYS = (
 )
 
 _SENT = (
+    # the duplicate audit names its own row (``data.delivery_id``): one recipient's legitimate
+    # resend never excuses another recipient's second copy
     "SELECT d.transcript_id::text, d.message_id, EXISTS (SELECT 1 FROM assess_audit_events e "
-    " WHERE e.event = 'assess_delivery_possible_duplicate' AND e.session_id = t.session_id) "
+    " WHERE e.event = 'assess_delivery_possible_duplicate' AND e.session_id = t.session_id "
+    " AND e.data->>'delivery_id' = d.id::text) "
     "FROM assess_deliveries d JOIN assess_transcripts t ON t.id = d.transcript_id "
     "WHERE d.kind = 'transcript' AND d.status = 'SENT'"
 )

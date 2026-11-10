@@ -234,6 +234,43 @@ async def test_two_sent_rows_for_one_recipient_are_caught(pg) -> None:  # type: 
     assert r.violations["sink_copies"] == [f"{tid}:m1:2"]
 
 
+async def test_a_duplicate_audit_excuses_only_its_own_delivery_row(pg) -> None:  # type: ignore[no-untyped-def]
+    """Two recipients of one transcript: A was legitimately resent (its row has an audited
+    ``assess_delivery_possible_duplicate``), B was double-sent with no audit. The audit of A
+    must not excuse B."""
+    await wipe(pg)
+    sid = await session(pg, "CLOSED", opening=True)
+    tid, a, b = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    await plant(
+        pg,
+        "INSERT INTO assess_transcripts (id, session_id, ciphertext, dek_wrapped, transcript_kid, "
+        "content_hash, turns_digest, filename, byte_size) VALUES (:tid, :sid, '\\x01', '\\x01', "
+        "'k', 'h', 'd', 'f.pdf', 1)",
+        "INSERT INTO assess_deliveries (id, transcript_id, kind, round, recipient_kind, status, "
+        "recipient_ref, message_id, sent_at) VALUES "
+        "(:a, :tid, 'transcript', 1, 'address', 'SENT', :ra, 'mA', now()), "
+        "(:b, :tid, 'transcript', 1, 'address', 'SENT', :rb, 'mB', now())",
+        "INSERT INTO assess_audit_events (session_id, event, actor_kind, data) VALUES "
+        "(:sid, 'assess_delivery_possible_duplicate', 'worker', "
+        "jsonb_build_object('delivery_id', CAST(:a_s AS text)))",
+        tid=tid,
+        sid=sid,
+        a=a,
+        a_s=str(a),
+        b=b,
+        ra="a" * 64,
+        rb="b" * 64,
+    )
+    r = await check(
+        pg,
+        "negative:sink-per-row",
+        expect_sessions=0,
+        only=[],
+        sink_copies=lambda _m: 2,
+    )
+    assert r.violations["sink_copies"] == [f"{tid}:mB:2"]
+
+
 async def test_a_lease_left_past_its_expiry_is_caught(pg) -> None:  # type: ignore[no-untyped-def]
     await wipe(pg)
     await plant(

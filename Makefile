@@ -91,11 +91,11 @@ test-assess-e2e: ## Assess discussion UI in Chromium: Playwright + axe, two orig
 # restarted, links blackholed; every scenario ends with tests/chaos/assess/invariants.py. The gate
 # fails on a skipped case, on fewer cases or invariant reports than declared, or on any violation.
 CHAOS_DIR_OUT ?= test-results/assess-chaos
-CHAOS_MIN_CASES ?= 49
-CHAOS_MIN_SCENARIOS ?= 15
+CHAOS_MIN_CASES ?= 61
+CHAOS_MIN_SCENARIOS ?= 26
 test-chaos-assess: ## Assess chaos suite + invariant gate (needs Docker); report in test-results/assess-chaos
 	rm -rf $(CHAOS_DIR_OUT) && mkdir -p $(CHAOS_DIR_OUT)
-	CHAOS_REPORT_DIR=$(CHAOS_DIR_OUT) uv run pytest tests/chaos/assess -v --tb=short \
+	CHAOS_REPORT_DIR=$(CHAOS_DIR_OUT) uv run pytest tests/chaos/assess vektra-assess/tests/integration/test_chaos_*.py -v --tb=short \
 		--junitxml=$(CHAOS_DIR_OUT)/junit.xml; status=$$?; \
 	uv run python tests/chaos/assess/gate.py $(CHAOS_DIR_OUT)/junit.xml $(CHAOS_DIR_OUT) \
 		$(CHAOS_MIN_CASES) $(CHAOS_MIN_SCENARIOS) && exit $$status

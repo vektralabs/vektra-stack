@@ -5,8 +5,8 @@ Usage: ``python tests/chaos/assess/gate.py <junit.xml> <report-dir> <min-cases> 
 A skipped chaos case is a hole, not a pass (no Docker would skip every one of them), and a run
 whose invariant report is missing or shorter than declared proves nothing. Exit 0 only when the
 JUnit file has at least ``min-cases`` cases with no skip, failure or error, and the report has at
-least ``min-scenarios`` scenario lines, every one ``ok``. The report is rewritten as a markdown
-summary next to the JSON lines (the CI artifact).
+least ``min-scenarios`` scenario lines, negative controls not counted, every one ``ok``. The
+report is rewritten as a markdown summary next to the JSON lines (the CI artifact).
 """
 
 from __future__ import annotations
@@ -42,9 +42,12 @@ def evaluate(
         if lines_path.exists()
         else []
     )
-    if len(rows) < min_scenarios:
+    # only real scenarios count towards the declared minimum: the checker's own negative
+    # controls report violations on purpose, and a run made of them alone proves nothing
+    scenarios = [r for r in rows if not _negative(r)]
+    if len(scenarios) < min_scenarios:
         problems.append(
-            f"{len(rows)} invariant reports, at least {min_scenarios} declared"
+            f"{len(scenarios)} invariant reports, at least {min_scenarios} declared"
         )
     bad = [r["scenario"] for r in rows if not r["ok"] and not _negative(r)]
     if bad:

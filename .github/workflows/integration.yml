@@ -607,8 +607,8 @@ jobs:
       - name: Run the chaos harness and the invariant gate
         run: |
           mkdir -p test-results/assess-chaos
-          CHAOS_REPORT_DIR=test-results/assess-chaos uv run pytest tests/chaos/assess -v --tb=short --junitxml=test-results/assess-chaos/junit.xml || status=$?
-          uv run python tests/chaos/assess/gate.py test-results/assess-chaos/junit.xml test-results/assess-chaos 49 15
+          CHAOS_REPORT_DIR=test-results/assess-chaos uv run pytest tests/chaos/assess vektra-assess/tests/integration/test_chaos_*.py -v --tb=short --junitxml=test-results/assess-chaos/junit.xml || status=$?
+          uv run python tests/chaos/assess/gate.py test-results/assess-chaos/junit.xml test-results/assess-chaos 61 26
           exit "${status:-0}"
 
       - name: Upload test results

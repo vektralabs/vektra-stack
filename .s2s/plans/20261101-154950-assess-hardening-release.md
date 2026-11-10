@@ -102,9 +102,9 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 ## Tasks
 
 ### Chaos suite consolidation
-- [ ] Create `tests/chaos/assess/` with the compose driver, fault-injecting LLM stub (latency, 5xx, stall) and mail-sink toggles reused from plan 10; `invariants.py` checker
-- [ ] Implement the scenario matrix (close reasons × kill points × Postgres restart); each test asserts invariants and the exact expected row deltas
-- [ ] Key-lifecycle chaos: API restart with live sessions (resume from handoff row without worker), worker down for 10 min (turns continue, closes deferred, then reconciled), epoch bump mid-stream
+- [x] Create `tests/chaos/assess/` with the compose driver, fault-injecting LLM stub (latency, 5xx, stall) and mail-sink toggles reused from plan 10; `invariants.py` checker
+- [x] Implement the scenario matrix (close reasons × kill points × Postgres restart); each test asserts invariants and the exact expected row deltas
+- [x] Key-lifecycle chaos: API restart with live sessions (resume from handoff row without worker), worker down for 10 min (turns continue, closes deferred, then reconciled), epoch bump mid-stream
 - [x] `make test-chaos-assess` and a nightly `chaos-assess` job in `integration.yml` (also required on release tags); results artifact = invariant report
 
 ### NFR verification campaign
@@ -333,3 +333,43 @@ every release, with a manual exploratory session on top.
 
   The LLM stub is not yet wired into a scenario: it is meant for the three-failed-calls
   service_failure path and the stalled reply.
+
+- **13a, third pass (coordinator request of 2026-11-10): chaos tasks 1-3 complete.** Every
+  scenario below asserts exact row deltas by counting rows, ends with `assert_invariants`, has a
+  negative control and fails if its fault was not actually hit. Files in
+  `vektra-assess/tests/integration/` (they need the in-process API and the seeded sessions):
+  - `test_chaos_api_restart.py` (end of the second pass): the API's DEK cache dropped, the session
+    reads its history from the hand-off row, no worker; control: without the row the read fails.
+  - `test_chaos_worker_outage.py`: worker down 10 min on an injected clock (the rows the lifecycle
+    compares to `now()` are rewound; nothing sleeps). **Drift, measured:** turns continue only for
+    the enrolment freshness window (`VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`, 150 s); past it a turn is
+    refused 503 `enrolment_freshness`, state unchanged, audited. That is the designed fail-closed of
+    gate step 6 (NFR-014, M3.7), not a bug, so the plan line "turns continue" for 10 min does not
+    hold and the test asserts the refusal. Closes are deferred: the API's lazy close still closes a
+    timed-out session (job left `ready`), an abandoned one stays ACTIVE. When the worker returns
+    (re-check, sweeper, production claim + transcript handler + fenced complete) the abandoned one
+    closes `timed_out`, both transcripts are generated once, no job is left, turns are accepted
+    again, settled invariants pass. Control: without the returning worker the settled check fails.
+  - `test_chaos_postgres_restart.py` (new `pg_fixed_port` fixture): a real `docker restart` while
+    the mail sink holds DATA without its 250 (at least one settle lost; the retry gives one SENT per
+    recipient, one `possible_duplicate` per lost claimed row, at most 2 copies per Message-ID;
+    control: an empty relay fails `sink_copies`), and during a burst of 30 Starts (each student has
+    all four rows of a Start or none; the failed ones start again and get exactly one session;
+    control: a STARTING row without its job is reported).
+  - `test_chaos_parser_kill.py`: the real sidecar process group frozen with the capture's first
+    extraction request on its socket, then SIGKILL. The client reports `closed_without_reply`, the
+    pre-flight rolls back (`internal_error`: the parser outage has no reason code of its own), no
+    content row survives; the restarted sidecar and the same path unkilled commit once (control).
+  - `test_chaos_llm_faults.py`: `llm_stub.py` wired through the production runner composition
+    (`vektra_app.assess_llm`). 3 x 503 closes `service_failure` (2 outage intervals, transcript and
+    teacher-notify jobs, no bot reply); control: the stub back to `ok` before the third call answers
+    the turn. A stalled provider enters OUTAGE at the outage timeout (`first_token_timeout`), then
+    the same pending turn is answered once. Measured: a `service_failure` close leaves
+    `pending_reply_since` set on the CLOSED row; only ACTIVE rows read it, so it is harmless.
+  - Not a full cartesian product: the six close reasons are each run once through the one close
+    function, and each kill point is run with the close path it can actually interrupt.
+- **Chaos gate after the third pass.** `make test-chaos-assess`, the PR job in `integration.yml`
+  and `chaos-assess.yml` now also run `vektra-assess/tests/integration/test_chaos_*.py`, so every
+  chaos scenario reaches the gate and its report. The gate no longer counts the checker's own
+  negative controls towards the declared scenario minimum (before, a run made only of negative
+  controls could meet it). Declared: **61 cases, 26 invariant reports**.

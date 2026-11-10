@@ -60,3 +60,13 @@ def test_a_violation_in_a_real_scenario_fails(tmp_path: Path) -> None:
     j, d = _write(tmp_path, JUNIT_OK, [_row("close:finished", ok=False)])
     assert any("close:finished" in p for p in evaluate(j, d, 2, 1))
     assert "Verdict: FAIL" in (d / "invariants.md").read_text()
+
+
+def test_negative_controls_do_not_count_as_scenario_reports(tmp_path: Path) -> None:
+    rows = [
+        _row("negative:a", ok=False),
+        _row("negative:b", ok=False),
+        _row("empty", ok=False),
+    ]
+    j, d = _write(tmp_path, JUNIT_OK, rows)
+    assert any("0 invariant reports" in p for p in evaluate(j, d, 2, 1))

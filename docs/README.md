@@ -20,6 +20,10 @@
 - [Widget integration](guides/widget-integration.md) - embed the LMS-agnostic chatbot widget in any course page (data-* attributes, JWT flow, conversation persistence, token refresh)
 - [Contributors](guides/contributors/index.md) - dev setup, testing, extending providers
 
+### Assessment discussion (operators)
+
+- [Deployment](guides/operators/assess-deployment.md) - the `assess` Compose profile, roles and DSNs, limits, health checks, setup check
+
 ## Workflows
 
 - [n8n periodic ingestion](workflows/README.md) - reference workflow for automated document sync

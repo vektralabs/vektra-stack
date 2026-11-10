@@ -2,9 +2,9 @@
 
 **ID**: 20261101-154950-assess-hardening-release
 **Status**: in_progress
-**Branch**: feat/assess-hardening-release (13a)
+**Branch**: feat/assess-hardening-release (13a), docs/assess-hardening-release-13b (13b)
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-10T16:00:00Z
+**Updated**: 2026-11-10T20:00:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -119,7 +119,7 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 - [ ] REQ-080 canary grep on the target deployment logs, mail logs and `/metrics` (plan 12 script)
 
 ### Runbooks and operator docs
-- [ ] `docs/guides/operators/assess-deployment.md`: compose `assess` profile, roles and DSNs, connection budget, `log_statement=none`, worker/parser limits, healthchecks, TLS UI origin, setup check walkthrough
+- [x] `docs/guides/operators/assess-deployment.md`: compose `assess` profile, roles and DSNs, connection budget, `log_statement=none`, worker/parser limits, healthchecks, TLS UI origin, setup check walkthrough
 - [ ] `docs/guides/operators/assess-secrets.md`: per-service secret files and the ARCH-071 key matrix (who must and must not hold what), generation commands, startup refusal messages
 - [ ] Key rotation runbooks: KEK (re-wrap job, retire/destroy cadence tied to backup retention), API X25519 hand-off key (re-seal ≤ K live hand-off rows), transcript key (re-wrap per-transcript DEKs with `crypto.rotation.rewrap_transcript_deks` AND the teachers' reset / termination reasons with `rewrap_teacher_reasons`, plan teacher-ops 11b, before the old kid is retired), teacher-config key (re-seal blobs), token signing key (kid overlap), subject-key secret (not rotatable without full rekey — documented)
 - [ ] Offline key backup + restore drill: back up keys separately from DB dumps; drill = restore DB dump + keys into a clean host, run `python -m vektra_assess.keys verify`, download a retained transcript and compare its sha256 to the pre-backup value, confirm purged sessions stay unrecoverable; record drill date and result

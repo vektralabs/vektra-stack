@@ -545,3 +545,43 @@ async def test_the_chain_lookup_uses_its_index(pg) -> None:  # type: ignore[no-u
             ).all()
         )
     assert "ix_assess_jobs_root" in plan, plan
+
+
+@pytest.mark.parametrize("ending", ["done", "cap"])
+async def test_a_chain_that_cannot_progress_ends_instead_of_being_rescued_forever(
+    pg, worker, sink, ending
+) -> None:  # type: ignore[no-untyped-def]
+    """Review #1: a chain whose newest job finished without settling its rows (its event is
+    gone) or that was already rescued ``MAX_RESCUES`` times ends FAILED; no new job."""
+    clock = Clock()
+    async with world(pg) as w:
+        _, config, job = await _service_failure(w, worker, TEACHERS[:1])
+        await clock.sync(pg)
+        sink.down()
+        await n.notify(
+            _deps(config, sink, clock), JobKind.TEACHER_NOTIFY, ctx(job, worker)
+        )
+        if ending == "done":
+            await pg.run(
+                "super",
+                "UPDATE assess_jobs SET state = 'done' WHERE kind = 'teacher_notify'",
+            )
+        else:
+            await pg.run(
+                "super",
+                "UPDATE assess_jobs SET state = 'dead', args = args || "
+                "jsonb_build_object('rescues', CAST(:m AS int)) WHERE kind = 'teacher_notify'",
+                {"m": n.MAX_RESCUES},
+            )
+        later = (await pg.run("super", "SELECT now() + interval '10 min'"))[0][0]
+        before = len(await jobs(pg, "teacher_notify"))
+        assert await n.rescue_dead_chains(worker.connect, now=later) == {
+            "rescued": 0,
+            "lost": 1,
+        }
+        assert len(await jobs(pg, "teacher_notify")) == before
+        (row,) = await rows(pg, int(job.id))
+        expected = n.CHAIN_ENDED if ending == "done" else n.RESCUE_CAP
+        assert (row.status, row.last_error_class) == ("FAILED", expected)
+        # and the net leaves it alone from now on
+        assert (await n.rescue_dead_chains(worker.connect, now=later))["lost"] == 0

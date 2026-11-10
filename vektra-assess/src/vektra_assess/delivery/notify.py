@@ -900,18 +900,26 @@ _ORPHANS = text(
 )
 #: the chain's newest job still on record: its arguments carry the event and the backoff state
 _LAST_OF_CHAIN = text(
-    "SELECT id, args FROM assess_jobs WHERE kind = :k AND (id = :root "
+    "SELECT id, args, state FROM assess_jobs WHERE kind = :k AND (id = :root "
     "OR args->>'root_job_id' = CAST(:root AS text)) ORDER BY id DESC LIMIT 1"
 )
 #: a chain whose jobs were all cleaned up cannot be rebuilt: its rows end, alerted
 _CHAIN_LOST = text(
-    "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = 'chain_lost', "
+    "UPDATE assess_deliveries SET status = 'FAILED', last_error_class = :cls, "
     "attempt_started_at = NULL WHERE job_id = :root AND kind = :k "
     "AND status IN ('PENDING', 'RETRYING')"
 )
 #: a rescued chain waits this long after its rows were last written (the runner's own retries
 #: of a job that is merely slow are never raced)
 RESCUE_AFTER = timedelta(minutes=5)
+#: a chain is rescued at most this many times (review #1): a poison chain that keeps dying ends
+MAX_RESCUES = 3
+#: why a chain's live rows were ended by the net
+CHAIN_LOST = "chain_lost"  # no job of the chain left to rebuild from
+CHAIN_ENDED = (
+    "chain_ended"  # the newest job finished without settling them (its event is gone)
+)
+RESCUE_CAP = "rescue_cap"  # rescued MAX_RESCUES times and still dead
 
 
 async def rescue_dead_chains(
@@ -922,9 +930,11 @@ async def rescue_dead_chains(
     A chain's next run is queued by the run before it; if a job dies (the database down for its
     whole retry budget, the runner records ``assess_job_dead``) its rows stay live with nothing
     left to run them. Each such chain gets ONE new run with the newest job's arguments (its event,
-    root, try and window start), so the window and the backoff stay the chain's own. A chain
-    whose jobs were all cleaned up has no arguments left: its rows become FAILED ``chain_lost``,
-    with an alert, rather than live forever."""
+    root, try and window start), so the window and the backoff stay the chain's own. The rows
+    end FAILED, with an alert, rather than live forever, when the chain's jobs were all cleaned up
+    (``chain_lost``), when its newest job finished without settling them (``chain_ended``: its
+    event is gone, a rerun would do the same), or after ``MAX_RESCUES`` rescues (``rescue_cap``:
+    a poison chain)."""
     at = now or datetime.now(UTC)
     rescued = lost = 0
     async with acquire() as conn, conn.begin():
@@ -935,21 +945,40 @@ async def rescue_dead_chains(
             last = (
                 await conn.execute(_LAST_OF_CHAIN, {"k": kind, "root": int(root)})
             ).first()
-            if last is None:
-                await conn.execute(_CHAIN_LOST, {"root": int(root), "k": kind})
+            args = (
+                dict(last.args)
+                if last is not None and isinstance(last.args, Mapping)
+                else {}
+            )
+            rescues = _int(args.get("rescues")) or 0
+            why = (
+                CHAIN_LOST
+                if last is None
+                # a finished job left the rows live: it found nothing to send (the session was
+                # purged, the event is gone); running it again would do the same, forever
+                else CHAIN_ENDED
+                if last.state == "done"
+                else RESCUE_CAP
+                if rescues >= MAX_RESCUES
+                else None
+            )
+            if why is not None:
+                await conn.execute(
+                    _CHAIN_LOST, {"root": int(root), "k": kind, "cls": why}
+                )
                 lost += 1
                 log.error(
                     "assess.notify.alert",
                     alert="notify_chain_lost",
                     kind=kind,
                     job_id=int(root),
+                    reason_code=why,
                 )
                 continue
-            args = last.args if isinstance(last.args, Mapping) else {}
             rescued += await enqueue_job(
                 conn,
                 JobKind(kind),
-                {**args, "root_job_id": int(root)},
+                {**args, "root_job_id": int(root), "rescues": rescues + 1},
                 dedupe_key=f"{kind}:rescue:{int(root)}:{int(last.id)}",
             )
     if rescued or lost:

@@ -150,7 +150,8 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [x] Settings bounds validation for all operator-facing `VEKTRA_ASSESS_*` values (one startup step, `StartupValidationError` with remediation)
   (12b: every numeric setting bounded on both sides, guarded by a test; `explain_settings_error` names each rejected variable without echoing its value, used by API step 12 and by the worker before it opens a connection)
 - [ ] SMTP test-send endpoints + worker handler (uses plan 10's sender; recipient fixed by setting)
-- [ ] Prometheus collector over `assess_metrics_snapshot()`; label-enum guard test
+- [x] Prometheus collector over `assess_metrics_snapshot()`; label-enum guard test
+  (12b: revision 0041; the API refreshes the snapshot every 15 s in a background task, a scrape never waits on the database; values outside an enum are counted as `other`; `*_total` series count retained rows, so a purge can lower them; the purge records its runs in the `purge` heartbeat row: `ok`, `last_success`, cumulative `rows_deleted`)
 - [ ] `/health/assess` readiness payload; test that killing the worker makes `/health/assess` 503 while shallow `/health` stays 200
 - [ ] Assess log allowlist processor in `vektra_app/main.py configure_structlog()` scoped to `vektra_assess.*`
 - [ ] `deploy/prometheus/assess-alerts.yml.example`: heartbeat > 60 s, oldest ready job > 30 s, FAILED deliveries > 0, RETRYING oldest > 1 h, TLS failures, purge last success > 26 h, purge verification failure, smtp probe down

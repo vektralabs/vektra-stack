@@ -401,10 +401,14 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_session_keys": {"SELECT": ("session_id",)},
         "assess_snapshots": {"SELECT": _ALL},
         "assess_turns": {"SELECT": _ALL, "INSERT": _ALL},
-        "assess_jobs": {"INSERT": _ALL},
-        "assess_audit_events": {"INSERT": _ALL},
+        # SELECT since revision 0041 (plan 12b): assess_metrics_snapshot() counts ready jobs,
+        # refusals and rollbacks; it returns counts only
+        "assess_jobs": {"SELECT": _ALL, "INSERT": _ALL},
+        "assess_audit_events": {"SELECT": _ALL, "INSERT": _ALL},
         # revision 0038: the teacher's rollback of a STARTING session records its attempt
-        "assess_start_attempts": {"INSERT": _ALL},
+        "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL},
+        # revision 0041: the snapshot reads the worker, smtp and purge rows
+        "assess_heartbeat": {"SELECT": _ALL},
         # revision 0034 (plan 10): assess_enqueue_resend reads the transcript and the last
         # round, and inserts round n+1; it never updates or deletes a delivery
         "assess_transcripts": {"SELECT": _ALL},
@@ -472,6 +476,8 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     # revision 0036 (plan 11): the trigger that audits a sealed teacher-config change old/new
     # from the row itself (the API cannot read the old recipient refs). Nobody EXECUTEs it.
     "assess_audit_sealed_change()": (),
+    # revision 0041 (plan 12b): the content-free counts behind the API's /metrics collector
+    "assess_metrics_snapshot()": (API,),
 }
 
 

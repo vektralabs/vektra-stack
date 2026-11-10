@@ -764,3 +764,42 @@ async def test_a_site_on_http_is_named_with_its_own_remedy(
     assert err.detail == "assess site site-1 refused: moodle_origin_not_https"
     assert "https" in err.remediation and "disable" in err.remediation
     assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.remediation
+
+
+async def test_the_metrics_refresher_feeds_the_process_collector() -> None:
+    """Plan 12b: step 12 attaches a snapshot cache to the /metrics collector and refreshes it
+    in the background; shutdown cancels the task."""
+    import asyncio
+
+    from prometheus_client import generate_latest
+
+    class _Conn:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_a):  # type: ignore[no-untyped-def]
+            return False
+
+        async def execute(self, *_a, **_k):  # type: ignore[no-untyped-def]
+            class _R:
+                def scalar_one(self):  # type: ignore[no-untyped-def]
+                    return {"sessions": {"ACTIVE": 3}}
+
+            return _R()
+
+    class _Engine:
+        def connect(self):  # type: ignore[no-untyped-def]
+            return _Conn()
+
+    app = _state_app()
+    assess_wiring.start_metrics_refresher(app, _Engine())  # type: ignore[arg-type]
+    try:
+        for _ in range(50):
+            if app.state.assess_metrics_cache.snapshot is not None:
+                break
+            await asyncio.sleep(0.01)
+        text = generate_latest().decode()
+        assert 'vektra_assess_sessions{state="ACTIVE"} 3.0' in text
+        assert "vektra_assess_metrics_up 1.0" in text
+    finally:
+        app.state.assess_metrics_task.cancel()

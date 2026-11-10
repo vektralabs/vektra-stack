@@ -24,6 +24,8 @@ dependencies = [
     # Vektra-shipped discussion strings (llm/strings/*.yaml), safe_load only.
     "pyyaml>=6.0",
     "latex2mathml>=3.77",
+    # Content-free metrics on the API's /metrics (plan assess-privacy-retention 12b).
+    "prometheus-client>=0.20",
 ]
 
 [build-system]

@@ -454,6 +454,11 @@ async def run_purge(
                 dedupe_key=f"{BACKLOG_KEY}:{generation}",
                 not_before=datetime.now(UTC) + BACKLOG_DELAY,
             )
+    async with connect() as conn, conn.begin():
+        await conn.execute(
+            _RECORD_RUN,
+            {"ok": not failed, "rows": sum(report.deleted.values())},
+        )
     log.info(
         "assess.purge.done",
         sessions=report.sessions,
@@ -465,6 +470,22 @@ async def run_purge(
     if failed:
         raise PurgeVerificationFailed(f"{len(failed)} site(s) left rows")
     return report
+
+
+#: the run, for ``/metrics`` and ``/health/assess`` (plan 12b): whether it left no row behind,
+#: the time of the last run that did, and the cumulative content rows deleted. Counts only.
+_RECORD_RUN = text(
+    "INSERT INTO assess_heartbeat (component, beat_at, details) VALUES ('purge', now(), "
+    "jsonb_build_object('ok', CAST(:ok AS boolean), "
+    "'last_success', CASE WHEN CAST(:ok AS boolean) THEN extract(epoch FROM now()) END, "
+    "'rows_deleted', CAST(:rows AS bigint))) "
+    "ON CONFLICT (component) DO UPDATE SET beat_at = now(), details = jsonb_build_object("
+    "'ok', CAST(:ok AS boolean), "
+    "'last_success', CASE WHEN CAST(:ok AS boolean) THEN to_jsonb(extract(epoch FROM now())) "
+    "ELSE assess_heartbeat.details->'last_success' END, "
+    "'rows_deleted', COALESCE((assess_heartbeat.details->>'rows_deleted')::bigint, 0) "
+    "+ CAST(:rows AS bigint))"
+)
 
 
 def make_purge_handler(connect: Connect) -> Callable[[Any], Any]:

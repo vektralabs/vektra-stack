@@ -183,7 +183,24 @@ async def step_12_assess_check(
     # assess-local limiters (plan assess-session-lifecycle): the dormant global per-key limiter
     # (app.state.rate_limiter) stays unset
     app.state.assess_limiters = build_assess_limiters()
+    start_metrics_refresher(app, engine)
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
+
+
+def start_metrics_refresher(app: FastAPI, engine: Any) -> None:
+    """Plan assess-privacy-retention 12b: the content-free assess series on ``/metrics``,
+    read from ``assess_metrics_snapshot()`` by a background refresh (a scrape never waits on
+    the database). Cancelled at shutdown before the engine is disposed."""
+    import asyncio
+
+    from vektra_assess.metrics import SnapshotCache, install
+
+    cache = SnapshotCache()
+    install(cache)
+    app.state.assess_metrics_cache = cache
+    app.state.assess_metrics_task = asyncio.get_running_loop().create_task(
+        cache.run(engine), name="assess-metrics-refresh"
+    )
 
 
 async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:

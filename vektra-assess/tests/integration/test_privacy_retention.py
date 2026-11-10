@@ -153,6 +153,13 @@ async def age(pg, sid: uuid.UUID, days: int) -> None:  # type: ignore[no-untyped
 # --- the retention purge ----------------------------------------------------------------------
 
 
+async def _purge_beat(pg) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    rows = await pg.run(
+        "super", "SELECT details FROM assess_heartbeat WHERE component = 'purge'"
+    )
+    return dict(rows[0][0]) if rows else {}
+
+
 async def test_the_purge_removes_every_content_row_and_keeps_the_control(
     pg, worker
 ) -> None:  # type: ignore[no-untyped-def]
@@ -175,11 +182,18 @@ async def test_the_purge_removes_every_content_row_and_keeps_the_control(
         control_before = await content_counts(pg, control.session_id)
         assert control_before["assess_turns"] > 0
 
+        rows_before = await _purge_beat(pg)
         report = await run_purge(worker.connect)
 
         assert report.sessions == 1 and report.abandoned >= 1
         after = await content_counts(pg, target.session_id)
         assert after == dict.fromkeys(after, 0), after
+        # plan 12b: the run is recorded for /metrics and /health/assess (counts only)
+        beat = await _purge_beat(pg)
+        assert beat["ok"] is True and beat["last_success"] is not None
+        assert beat["rows_deleted"] - rows_before.get("rows_deleted", 0) >= sum(
+            before.values()
+        ) - sum(after.values())
         assert await content_counts(pg, control.session_id) == control_before
         # the session row stays (ids and numbers, no content), with one tombstone
         assert await one(pg, "SELECT count(*) FROM assess_sessions WHERE id = :s",
@@ -314,10 +328,19 @@ async def test_a_failed_count_rolls_the_batch_back(pg, worker, monkeypatch) -> N
         async def left(*_a: Any, **_k: Any) -> dict[str, int]:
             return {"assess_turns": 1}
 
+        await pg.run(
+            "super",
+            "INSERT INTO assess_heartbeat (component, details) VALUES ('purge', "
+            '\'{"ok": true, "last_success": 1000, "rows_deleted": 5}\') '
+            "ON CONFLICT (component) DO UPDATE SET details = EXCLUDED.details",
+        )
         monkeypatch.setattr(purge_mod, "leftover", left)
         with pytest.raises(PurgeVerificationFailed):
             await run_purge(worker.connect)
         assert await content_counts(pg, s.session_id) == before
+        # a failed run is recorded as such and keeps the last SUCCESS time (plan 12b)
+        beat = await _purge_beat(pg)
+        assert beat["ok"] is False and beat["last_success"] == 1000
         assert await one(pg, "SELECT count(*) FROM assess_purge_records WHERE session_id = :s",
                          s=s.session_id) == 0  # fmt: skip
         assert await one(pg, "SELECT count(*) FROM assess_audit_events WHERE "

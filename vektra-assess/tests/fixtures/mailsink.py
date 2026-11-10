@@ -191,10 +191,21 @@ class _Handler:
             server.transport.close()
         if self.sink.fault == "hold_after_data":
             # the message is stored and the 250 is withheld until ``release`` (the chaos suite
-            # kills the client process in this window: relay has it, client never heard 250)
+            # kills the client process in this window: relay has it, client never heard 250).
+            # Holds that overlap share one release; when the last one ends both events are
+            # reset, so the next hold holds again
+            with self.sink._lock:
+                self.sink._holding += 1
             self.sink.held.set()
-            while not self.sink.release.is_set():
-                await asyncio.sleep(0.05)
+            try:
+                while not self.sink.release.is_set():
+                    await asyncio.sleep(0.05)
+            finally:
+                with self.sink._lock:
+                    self.sink._holding -= 1
+                    if self.sink._holding == 0:
+                        self.sink.held.clear()
+                        self.sink.release.clear()
         return "250 2.0.0 queued"
 
 
@@ -214,6 +225,7 @@ class MailSink:
     #: ``hold_after_data``: set when a message is stored and its 250 withheld; ``release`` ends it
     held: threading.Event = field(default_factory=threading.Event)
     release: threading.Event = field(default_factory=threading.Event)
+    _holding: int = 0
     _controller: Controller | None = None
 
     def __post_init__(self) -> None:

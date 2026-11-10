@@ -300,3 +300,23 @@ async def test_a_refused_starttls_is_tls_with_its_code() -> None:
         for w in writers:
             w.close()
         server.close()
+
+
+async def test_each_hold_after_data_starts_from_reset_events(sink: MailSink) -> None:
+    """A second hold must hold again: ``held`` and ``release`` are reset once a hold ends."""
+    sink.fault = "hold_after_data"
+    for round_ in (1, 2):
+        send = asyncio.create_task(
+            SmtpSender(sink_config(sink)).send(_msg(), "prof@uni.example")
+        )
+        assert await asyncio.to_thread(sink.held.wait, 10), round_
+        await asyncio.sleep(0.3)
+        assert not send.done(), f"hold {round_} did not withhold the 250"
+        sink.release.set()
+        assert (await asyncio.wait_for(send, 10)).ok
+        for _ in range(100):  # the hold resets its events as it ends
+            if not sink.held.is_set() and not sink.release.is_set():
+                break
+            await asyncio.sleep(0.02)
+        assert not sink.held.is_set() and not sink.release.is_set(), round_
+    assert len(sink.messages) == 2

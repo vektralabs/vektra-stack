@@ -189,6 +189,12 @@ class _Handler:
         if self.sink.fault == "drop_after_data":
             # the message is held, the 250 never reaches the client
             server.transport.close()
+        if self.sink.fault == "hold_after_data":
+            # the message is stored and the 250 is withheld until ``release`` (the chaos suite
+            # kills the client process in this window: relay has it, client never heard 250)
+            self.sink.held.set()
+            while not self.sink.release.is_set():
+                await asyncio.sleep(0.05)
         return "250 2.0.0 queued"
 
 
@@ -205,6 +211,9 @@ class MailSink:
         default_factory=list
     )  # tls flag of each AUTH seen
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    #: ``hold_after_data``: set when a message is stored and its 250 withheld; ``release`` ends it
+    held: threading.Event = field(default_factory=threading.Event)
+    release: threading.Event = field(default_factory=threading.Event)
     _controller: Controller | None = None
 
     def __post_init__(self) -> None:
@@ -257,6 +266,7 @@ class MailSink:
         return self
 
     def stop(self) -> None:
+        self.release.set()  # never leave a held DATA blocking the controller's shutdown
         if self._controller is not None:
             self._controller.stop()
             self._controller = None

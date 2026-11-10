@@ -108,7 +108,7 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 - [x] `make test-chaos-assess` and a nightly `chaos-assess` job in `integration.yml` (also required on release tags); results artifact = invariant report
 
 ### NFR verification campaign
-- [ ] `scripts/assess_nfr_report.py`: reads audit events + rows, computes p50/p95/p99 per NFR, commit rate, service_failure rate, capacity refusals, concurrency distribution
+- [x] `scripts/assess_nfr_report.py`: reads audit events + rows, computes p50/p95/p99 per NFR, commit rate, service_failure rate, capacity refusals, concurrency distribution
 - [ ] NFR-020 / OQ-032: burst runs (20/30/40 Starts, 10-file submissions) at K = 5/10/15/20 on each candidate hardware configuration; write `docs/guides/operators/assess-sizing.md` with the evidence table and the recommended K and topology (decision input)
 - [ ] NFR-018: latency at the chosen K on the reference model (OQ-026) — Inizia→commit, first visible output, full ~150-word reply
 - [ ] NFR-019: 1-min probe over a 24 h soak with synthetic sessions; commit rate and service_failure rate excluding student-caused and capacity refusals
@@ -244,3 +244,11 @@ every release, with a manual exploratory session on top.
   nightly (02:17 UTC), on every `v*` tag and on demand, keeping the report 90 days. Drift: the plan
   named a nightly job inside `integration.yml`; a schedule there would re-run every integration job
   nightly, so the nightly run is its own workflow. First local run (2026-11-10): 41 passed, gate PASS.
+- **NFR report (13a).** `scripts/assess_nfr_report.py` reads only rows: commit latency from
+  `assess_sessions.created_at` (the STARTING row the Start writes) to `committed_at`, full reply
+  from a student turn to the next bot turn, Start outcomes from `assess_start_attempts`, closes
+  from `close_reason`, and a sweep of live intervals for the concurrency distribution. First
+  visible output is in no row, so it is always BLOCKED, never estimated from a server proxy.
+  "Admitted" (NFR-019) excludes `capacity` (reported for NFR-020), `part_b_rejected` (student) and
+  `terminated_by_teacher`: an assumption to confirm with QA. A sample below its minimum is BLOCKED
+  and one BLOCKED item keeps the report from PASS. Exit 0/1/2 = PASS/FAIL/BLOCKED.

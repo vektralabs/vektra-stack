@@ -1,10 +1,10 @@
 # Implementation Plan: Assess hardening, NFR verification campaign and release
 
 **ID**: 20261101-154950-assess-hardening-release
-**Status**: active
-**Branch**: N/A
+**Status**: in_progress
+**Branch**: feat/assess-hardening-release (13a)
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-01T20:58:19Z
+**Updated**: 2026-11-10T16:00:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -130,7 +130,7 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 
 ### Release
 - [ ] Release checklist `docs/guides/contributors/release-assess.md` (or the existing release section): version bump in every workspace `pyproject.toml` (currently 0.7.1) to the next minor, `uv lock`, CHANGELOG `[Unreleased]` → `[X.Y.0] - date` + fresh `[Unreleased]`, BUG-027 qemu baseline green with the assess modules, image built by `publish.yml` on tag and smoke-tested (`/health`, `/health/assess`, setup check), minimum plugin_version enforced at mint matches the released plugin
-- [ ] Image content boundary: `test_image_content_boundary.py` asserts assess UI assets present and no test fixtures, mail-sink, canary datasets or `.s2s/` in the image
+- [x] Image content boundary: `test_image_content_boundary.py` asserts assess UI assets present and no test fixtures, mail-sink, canary datasets or `.s2s/` in the image
 - [ ] Pilot go/no-go document `docs/guides/operators/assess-pilot-go-no-go.md` with the criteria below, signed off per item with evidence links
 
 ## State & Data Lifecycle
@@ -223,3 +223,17 @@ every release, with a manual exploratory session on top.
   reserve for heartbeats), not a notification-only limit; it belongs to the NFR-020 sizing work
   here, with a load test (2 delivery jobs x 3 rows, DB latency injected) proving heartbeats stay
   fresh.
+
+- **Split 13a / 13b (coordinator decision, 2026-11-10).** Plan 13 depends on every plan, the plugin
+  P3 included (run by the plugin session); it proceeds with the tasks that do not need P3.
+  - **13a** (branch `feat/assess-hardening-release`): "Chaos suite consolidation" (all four tasks),
+    `scripts/assess_nfr_report.py`, the image content boundary test, and the items earlier PRs
+    deferred here: the claim/settle duplication between the notify and transcript handlers
+    (CodeRabbit on #190), the DB-connection budget shared by every handler (CodeRabbit 4513956359),
+    the REQ-080 compose-stack canary grep left BLOCKED by 12b, and the key-rotation wiring where
+    it is code (the runbook text is 13b).
+  - **13b**: runbooks, operator docs, the reference-docs completion, the release checklist and the
+    pilot go/no-go document.
+  - NFR campaign items that need the target VM, HPC, the reference model (OQ-026), the production
+    relay, live Moodle with login-as or a manual screen reader are BLOCKED with the missing
+    environment and the command to run; never reported as PASS.

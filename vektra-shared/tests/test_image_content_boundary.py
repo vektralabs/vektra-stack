@@ -451,3 +451,100 @@ def test_the_shared_tests_import_no_other_vektra_package() -> None:
                 if top.startswith("vektra_") and top != "vektra_shared":
                     offenders.append(f"{path.name}:{node.lineno} {name}")
     assert offenders == []
+
+
+# --- plan assess-hardening-release: test assets never ship ----------------------------------
+# Test-only material that must stay out of the published image: the SMTP mail sink, the canary
+# datasets and planted canary strings, the fixtures, and the planning artefacts. Paths, not disk:
+# a directory the Dockerfile copies is checked against each class of test asset.
+TEST_ASSET_SEGMENTS = ("tests", "fixtures", ".s2s", "canary")
+
+
+def _shipped_roots() -> list[str]:
+    return copied_directories(DOCKERFILE.read_text(encoding="utf-8"))
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def test_no_copied_directory_is_a_test_or_planning_tree() -> None:
+    offenders = [
+        d
+        for d in _shipped_roots()
+        if any(seg in TEST_ASSET_SEGMENTS for seg in d.strip("/").split("/"))
+    ]
+    assert offenders == [], f"the Dockerfile copies test or planning trees: {offenders}"
+
+
+def test_tracked_test_assets_fall_outside_every_copied_directory() -> None:
+    """The mail sink, the canary datasets and every fixture live under a ``tests/`` tree; none of
+    those files may sit under a directory the Dockerfile copies."""
+    roots = _shipped_roots()
+    assets = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for pattern in ("vektra-*/tests/**/*", "tests/**/*")
+        for p in REPO_ROOT.glob(pattern)
+        if p.is_file() and "__pycache__" not in p.parts
+    ]
+    # the guard must have something to judge: the sink and the canary datasets exist in the tree
+    assert any(a.endswith("fixtures/mailsink.py") for a in assets), (
+        "mail sink not found"
+    )
+    assert any("/canary/" in a for a in assets), "canary datasets not found"
+    shipped = sorted(a for a in assets if any(_under(a, r) for r in roots))
+    assert shipped == [], f"test assets inside a copied directory: {shipped[:20]}"
+
+
+def test_planning_artefacts_are_excluded_from_the_build_context() -> None:
+    ignore = DockerIgnore(DOCKERIGNORE.read_text(encoding="utf-8"))
+    assert ignore.excludes(".s2s/plans/INDEX-ASSESS.md")
+    assert ignore.excludes(".s2s/requirements.md")
+
+
+def test_the_mail_sink_library_is_a_dev_dependency_only() -> None:
+    """``aiosmtpd`` (the test relay) is a dev dependency of the workspace root, never a runtime
+    dependency of a shipped package, and no shipped source imports it."""
+    import tomllib
+
+    root = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    assert any(d.startswith("aiosmtpd") for d in root["dependency-groups"]["dev"])
+    for pyproject in sorted(REPO_ROOT.glob("vektra-*/pyproject.toml")):
+        deps = (
+            tomllib.loads(pyproject.read_text())
+            .get("project", {})
+            .get("dependencies", [])
+        )
+        assert not any(d.startswith("aiosmtpd") for d in deps), pyproject
+    importers = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in REPO_ROOT.glob("vektra-*/src/**/*.py")
+        if re.search(
+            r"^\s*(import|from)\s+aiosmtpd", p.read_text(errors="replace"), re.M
+        )
+    ]
+    assert importers == []
+
+
+def test_no_planted_canary_string_is_in_shipped_source() -> None:
+    """Canary strings (``CNRY-<field>-...``) belong to the test datasets; one in shipped source
+    would make every leak test meaningless (the canary would be in the image's own bytes)."""
+    pattern = re.compile(r"CNRY-[a-z_]+-")
+    offenders = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in REPO_ROOT.glob("vektra-*/src/**/*")
+        if p.is_file()
+        and p.suffix
+        in {".py", ".js", ".html", ".css", ".jinja", ".j2", ".txt", ".json"}
+        and pattern.search(p.read_text(errors="replace"))
+    ]
+    assert offenders == []
+
+
+def test_the_test_asset_guard_can_say_no() -> None:
+    """Negative control: a Dockerfile that copies a tests tree is caught."""
+    bad = "FROM python:3.12\nCOPY vektra-assess/tests vektra-assess/tests\n"
+    dirs = copied_directories(bad)
+    assert any(
+        any(seg in TEST_ASSET_SEGMENTS for seg in d.strip("/").split("/")) for d in dirs
+    ), dirs

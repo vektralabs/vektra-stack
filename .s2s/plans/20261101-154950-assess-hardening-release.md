@@ -261,3 +261,11 @@ every release, with a manual exploratory session on top.
   of injected DB latency on a pool of 5: with the budget the rows hold at most 3 connections and
   the heartbeat never waits half a row's latency; the unbudgeted control takes all 5 and queues the
   heartbeat. The SMTP test send (single row) and the job loop stay outside the budget.
+- **Claim/settle duplication (13a, done; deferred from the review of #190).** The attempt outcome
+  (sent / failed / retrying, with the retry window) and the three audit events of an attempt now
+  live once, in `vektra_assess.delivery.attempt` (`decide`, `record`, `count`), used by both
+  `_settle` functions. The two handlers differ only in where a retry's `not_before` comes from
+  (the transcript schedule, or the notification's next run) and in the event names. The claim
+  stays per handler: its statement, its Message-ID scheme and the transcript window re-check are
+  specific to the row kind, so a shared claim would need a parameter for every one of them.
+  Behaviour is unchanged: the existing notify and delivery suites (89 tests) pass unmodified.

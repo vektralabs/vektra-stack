@@ -105,7 +105,7 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 - [ ] Create `tests/chaos/assess/` with the compose driver, fault-injecting LLM stub (latency, 5xx, stall) and mail-sink toggles reused from plan 10; `invariants.py` checker
 - [ ] Implement the scenario matrix (close reasons × kill points × Postgres restart); each test asserts invariants and the exact expected row deltas
 - [ ] Key-lifecycle chaos: API restart with live sessions (resume from handoff row without worker), worker down for 10 min (turns continue, closes deferred, then reconciled), epoch bump mid-stream
-- [ ] `make test-chaos-assess` and a nightly `chaos-assess` job in `integration.yml` (also required on release tags); results artifact = invariant report
+- [x] `make test-chaos-assess` and a nightly `chaos-assess` job in `integration.yml` (also required on release tags); results artifact = invariant report
 
 ### NFR verification campaign
 - [ ] `scripts/assess_nfr_report.py`: reads audit events + rows, computes p50/p95/p99 per NFR, commit rate, service_failure rate, capacity refusals, concurrency distribution
@@ -237,3 +237,10 @@ every release, with a manual exploratory session on top.
   - NFR campaign items that need the target VM, HPC, the reference model (OQ-026), the production
     relay, live Moodle with login-as or a manual screen reader are BLOCKED with the missing
     environment and the command to run; never reported as PASS.
+- **Chaos runner (13a).** `make test-chaos-assess` runs the suite with `CHAOS_REPORT_DIR` and then
+  `tests/chaos/assess/gate.py`: it fails on a skipped case, on fewer cases (41) or invariant
+  reports (12) than declared, or on any violation, and writes `invariants.md`. The PR job in
+  `integration.yml` calls the target; a separate `.github/workflows/chaos-assess.yml` runs it
+  nightly (02:17 UTC), on every `v*` tag and on demand, keeping the report 90 days. Drift: the plan
+  named a nightly job inside `integration.yml`; a schedule there would re-run every integration job
+  nightly, so the nightly run is its own workflow. First local run (2026-11-10): 41 passed, gate PASS.

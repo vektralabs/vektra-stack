@@ -986,7 +986,8 @@ def explain_settings_error(exc: Exception) -> tuple[str, str]:
     broke). The rejected VALUE is never echoed: the settings hold DSNs and the error goes
     to the startup log. The remediation names the variables to fix.
     """
-    errors = exc.errors() if hasattr(exc, "errors") else []  # type: ignore[union-attr]
+    errors_of = getattr(exc, "errors", None)
+    errors: list[Any] = list(errors_of()) if callable(errors_of) else []
     by_name = {n: (f.alias or n) for n, f in VektraAssessSettings.model_fields.items()}
     names: list[str] = []
     lines: list[str] = []

@@ -410,3 +410,38 @@ every release, with a manual exploratory session on top.
     "docstring coverage" pre-merge check (not a repository policy, no threshold is configured
     in this repo).
   - Declared: **71 cases, 27 scenarios**.
+
+- **13b (branch `docs/assess-hardening-release-13b`, 2026-11-10): runbooks, reference docs, release
+  checklist, go/no-go.** All "Runbooks and operator docs" tasks and both remaining "Release" tasks
+  are written. New: `docs/guides/operators/assess-deployment.md`, `assess-secrets.md`,
+  `assess-framing.md`, `assess-pilot-go-no-go.md`, `docs/guides/contributors/release-assess.md`.
+  Extended: `docs/guides/assess-keys-runbook.md` (rotation per key on `keys rewrap`, backup and
+  restore drill procedure), `docs/guides/assess-moodle-service-account.md` (token rotation, site
+  registration, the four plugin keys). Reference docs: an Assess overview in `api.md` (credentials,
+  route index, SSE wire format); `error-codes.md` was already complete; `configuration.md` and
+  `.env.example` completed; the new `vektra-assess/tests/test_reference_docs.py` pins the three
+  registries (codes with status, settings, routes) to the code, with negative controls.
+  Existing paths were kept, not moved under `operators/`, so links from the plugin repo do not
+  break. No version bumped, no release cut (owner's decision; assess is planned for 0.9.0).
+  Findings recorded while grounding the docs:
+  - **Release blocker: a production worker refuses to start.** `job:rotate_keys` (owned by this
+    plan) has no handler; `assert_all_bound` refuses outside the development override. Nothing
+    enqueues the kind (rotation is the `keys rewrap` command). Fix: bind a handler or drop the kind
+    (migration on `ck_assess_jobs_kind`). While it stays, `PENDING_OWNER_PLANS` keeps this plan
+    open, and `test_assess_processes.py` would fail if this plan were marked completed.
+  - **The chaos nightly has never run.** `chaos-assess.yml` is only on `develop`; GitHub runs a
+    `schedule` trigger only from the default branch. "Two consecutive nightly runs" needs the
+    workflow on `main` or a `workflow_dispatch` series.
+  - **No command wraps `reseal_teacher_configs` or `reseal_handoffs`.** The hand-off rotation
+    works by waiting for live sessions to close; the teacher-config private kid cannot be retired
+    until a command exists.
+  - **One API process only.** The event broker, the DEK cache and the rate limiters are in-process.
+  - **No subject-key secret exists.** The plan's "subject-key secret, not rotatable" does not
+    match the code (unkeyed `sha256(site|userid)`); the runbook says so.
+  - **The NFR-014 pen matrix (`tests/pen/assess/`) is not built.**
+  - The service-account guide's setup-check table was stale (one `required_reads` item; the code
+    has six) and is corrected.
+  - No route registers a site or binds a key: both are SQL as the database owner (documented).
+  - Traefik: no UI-origin router ships; recorded as not provided and untested.
+  Plan 13 stays `in_progress`: the acceptance criteria are FAIL / BLOCKED / OPEN as listed in the
+  go/no-go, and the drill run is BLOCKED on a clean host.

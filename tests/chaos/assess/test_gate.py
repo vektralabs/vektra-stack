@@ -84,3 +84,15 @@ def test_scenarios_are_counted_by_distinct_real_name(tmp_path: Path) -> None:
     problems = evaluate(j, d, 2, 2)
     assert any("1 invariant reports" in p for p in problems), problems
     assert evaluate(j, d, 2, 1) == []
+
+
+def test_a_malformed_report_line_fails_the_gate_and_the_summary_is_still_written(
+    tmp_path: Path,
+) -> None:
+    j, d = _write(tmp_path, JUNIT_OK, [_row("close:finished")])
+    with (d / "invariants.jsonl").open("a") as fh:
+        fh.write('{"scenario": "cut off\n')
+    problems = evaluate(j, d, 2, 1)
+    assert any("malformed" in p and "line 2" in p for p in problems), problems
+    summary = (d / "invariants.md").read_text()
+    assert "Verdict: FAIL" in summary and "close:finished" in summary

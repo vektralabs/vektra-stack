@@ -38,11 +38,21 @@ def evaluate(
     if failed:
         problems.append(f"failed: {failed}")
     lines_path = report_dir / "invariants.jsonl"
-    rows = (
-        [json.loads(line) for line in lines_path.read_text().splitlines() if line]
-        if lines_path.exists()
-        else []
-    )
+    rows: list[dict[str, object]] = []
+    text = lines_path.read_text() if lines_path.exists() else ""
+    for n, line in enumerate(text.splitlines(), start=1):
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            # a cut-off line (a crashed writer) fails the run, never the summary
+            problems.append(f"malformed invariant report: line {n}")
+            continue
+        if not isinstance(row, dict) or "scenario" not in row or "ok" not in row:
+            problems.append(f"malformed invariant report: line {n}")
+            continue
+        rows.append(row)
     # only real scenarios count towards the declared minimum, each name once: the negative
     # controls and the checker's self-tests are not scenarios, and a scenario reported twice
     # is still one scenario

@@ -49,14 +49,17 @@ key) so two deployments can be compared, then one line per check:
 - `MISMATCH ... (kid_not_loaded)`: the rows name a kid the keyring does not hold;
 - `MISMATCH ... (wrong_key:InvalidTag)`: the kid is there, but its bytes are not the ones the rows
   were written with: the keys come from another deployment or another backup;
-- `skipped ... (not_readable)`: this role may not read those rows; the other container checks them.
+- `skipped ... (not_readable)`: this role may not read those rows. For the hand-off key no
+  container checks them: the API holds `assess_handoff_private` but may not read
+  `assess_session_handoff`, and the worker can read the table but never holds the private key.
 
 Not every key is checked the same way. The check OPENS a row for `assess_kek` (a session DEK),
 `assess_transcript_kek` (a transcript, and the reset and termination reasons): a wrong key under
-the right kid is caught (`wrong_key`). For `assess_teacher_config_private` (worker) and
-`assess_handoff_private` (API) it confirms only that every referenced kid is present (`kid_present`):
-same-named keys with other bytes pass. `assess_teacher_config_public` (API), `assess_handoff_public`
-(worker) and `assess_token_signing` are listed with their fingerprints only. So exit 0 proves the
+the right kid is caught (`wrong_key`). For `assess_teacher_config_private` (worker) it confirms
+only that every referenced kid is present (`kid_present`): same-named keys with other bytes pass.
+The hand-off pair (`assess_handoff_private` on the API, reported `skipped`, and
+`assess_handoff_public` on the worker), `assess_teacher_config_public` (API) and
+`assess_token_signing` are checked by fingerprint only. So exit 0 proves the
 session and transcript keys; for the others compare the printed fingerprints with the backup's.
 
 Exit code 0 means every referenced key opened its rows, 1 means at least one mismatch, 2 means the

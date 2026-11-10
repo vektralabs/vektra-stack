@@ -61,24 +61,24 @@ async def run(what: str, from_kid: str, batch: int, out: TextIO) -> int:
 
     # the key matrix loads keyrings as ``AssessKeyring`` (only passwords carry ``.value``)
     ring = loaded.get(key_name)
-    if not isinstance(ring, AssessKeyring) or from_kid not in ring.keys:
-        print(f"cannot run: {key_name} does not hold kid {from_kid!r}", file=out)
-        await engine.dispose()
-        return 2
-    if ring.active == from_kid:
-        print(
-            f"cannot run: {from_kid!r} is still the active kid of {key_name}", file=out
-        )
-        await engine.dispose()
-        return 2
     failed: set[str] = set()
-    try:
-        left = await rotation.rewrap_to_done(
-            engine.connect, steps_for(what, ring, from_kid, batch, failed)
-        )
-    except Exception as exc:
-        print(f"cannot run: database {type(exc).__name__}", file=out)
-        return 2
+    try:  # one ``finally`` disposes the engine on every path after ``open_role``
+        if not isinstance(ring, AssessKeyring) or from_kid not in ring.keys:
+            print(f"cannot run: {key_name} does not hold kid {from_kid!r}", file=out)
+            return 2
+        if ring.active == from_kid:
+            print(
+                f"cannot run: {from_kid!r} is still the active kid of {key_name}",
+                file=out,
+            )
+            return 2
+        try:
+            left = await rotation.rewrap_to_done(
+                engine.connect, steps_for(what, ring, from_kid, batch, failed)
+            )
+        except Exception as exc:
+            print(f"cannot run: database {type(exc).__name__}", file=out)
+            return 2
     finally:
         await engine.dispose()
     print(f"{what}: {left + len(failed)} row(s) still under {from_kid}", file=out)

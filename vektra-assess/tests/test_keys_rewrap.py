@@ -90,3 +90,31 @@ def test_the_cli_refuses_an_out_of_range_batch(
         keys_rewrap.main(["--what", "session-keys", "--from-kid", "k1", "--batch", "0"])
         == 2
     )
+
+
+@pytest.mark.parametrize("active", ["k1", "k2"])
+async def test_every_refusal_after_open_role_disposes_the_engine(
+    monkeypatch: pytest.MonkeyPatch, active: str
+) -> None:
+    """A missing kid and a still-active kid both return 2 and release the engine (one finally)."""
+    import io
+
+    from vektra_assess import keys_verify
+    from vektra_assess.keys import AssessKeyring
+
+    class Engine:
+        disposed = 0
+
+        async def dispose(self) -> None:
+            Engine.disposed += 1
+
+    ring = AssessKeyring("assess_kek", active, {active: bytes(32)})
+
+    async def open_role(*_a: object, **_k: object) -> object:
+        return {"assess_kek": ring}, Engine()
+
+    monkeypatch.setattr(keys_verify, "open_role", open_role)
+    out = io.StringIO()
+    # kid k1 missing (active k2), or k1 still active
+    assert await keys_rewrap.run("session-keys", "k1", 10, out) == 2
+    assert out.getvalue().startswith("cannot run:") and Engine.disposed == 1

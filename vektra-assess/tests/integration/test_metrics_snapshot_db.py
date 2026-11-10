@@ -68,7 +68,9 @@ async def test_the_api_reads_counts_and_nothing_else(pg) -> None:  # type: ignor
     assert snap["sessions"]["ACTIVE"] >= 1 and snap["sessions"]["CLOSED"] >= 1
     assert snap["closed"]["finished"] >= 1
     assert snap["rollbacks"]["capture_failed_attempt_unreadable"] == 1
-    assert snap["capacity_refusals"] == 2  # one advisory, one pre-flight
+    assert (
+        snap["capacity_refusals"] == 1
+    )  # the pre-flight one; advisory ones are audit-only
     assert snap["jobs_oldest_ready_s"] >= 89
     assert snap["smtp_probe_ok"] is False  # busy: judged on the previous probe
     assert snap["purge_rows_deleted"] == 12 and snap["purge_last_ok"] is True

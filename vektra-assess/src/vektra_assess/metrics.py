@@ -180,7 +180,7 @@ def families(snap: Mapping[str, Any] | None, *, age_s: float | None) -> list[Met
     )
     counter(
         "vektra_assess_capacity_refusals",
-        "Start refusals for capacity (advisory and pre-flight) still held",
+        "Start rollbacks for capacity (pre-flight) still held",
         "capacity_refusals",
     )
     counter(

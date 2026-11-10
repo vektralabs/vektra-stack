@@ -6,9 +6,11 @@
   come from (session state, close reason, delivery status, Start rollback reason), and the
   collector maps any value outside its fixed enum to ``other`` before it becomes a label.
 - The definer may now SELECT the rows it counts: ``assess_jobs`` (oldest ready job),
-  ``assess_audit_events`` (advisory capacity refusals), ``assess_start_attempts`` (rollbacks and
+  ``assess_start_attempts`` (rollbacks and
   capacity rollbacks) and ``assess_heartbeat`` (worker, smtp probe and purge rows). The API role
-  gains nothing but the EXECUTE: it still cannot read jobs, audit events or deliveries.
+  gains nothing but the EXECUTE: it still cannot read jobs, audit events or deliveries. The audit table stays
+  insert-only for every role, so the API's ADVISORY capacity refusals (audit rows only) are not
+  counted: the series counts the pre-flight's capacity rollbacks.
 
 Revision ID: 0041
 Revises: 0040
@@ -26,10 +28,6 @@ SIG = "public.assess_metrics_snapshot()"
 
 #: (the statement it follows, the new statements), on revision 0040's frozen matrix
 _INSERT_AFTER = (
-    (
-        "GRANT INSERT ON assess_audit_events TO vektra_assess_definer",
-        ("GRANT SELECT ON assess_audit_events TO vektra_assess_definer",),
-    ),
     (
         "GRANT SELECT ON assess_deliveries TO vektra_assess_definer",
         ("GRANT SELECT ON assess_heartbeat TO vektra_assess_definer",),
@@ -95,9 +93,7 @@ SNAPSHOT_FN = """
                 FROM public.assess_deliveries WHERE status = 'RETRYING'),
             'tls_failures', (SELECT count(*) FROM public.assess_deliveries
                 WHERE last_error_class = 'tls'),
-            'capacity_refusals', (SELECT count(*) FROM public.assess_audit_events
-                WHERE event = 'assess_start_refused' AND reason_code = 'capacity')
-                + (SELECT count(*) FROM public.assess_start_attempts
+            'capacity_refusals', (SELECT count(*) FROM public.assess_start_attempts
                 WHERE outcome IN ('rolled_back', 'refused') AND reason_code = 'capacity'),
             'rollbacks', COALESCE((SELECT jsonb_object_agg(reason, n) FROM (
                 SELECT COALESCE(reason_code, 'none') AS reason, count(*) AS n

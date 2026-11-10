@@ -133,7 +133,7 @@ database). Labels are fixed enums: a value outside its enum is counted as `other
 | `vektra_assess_deliveries` | `status` | delivery rows by status (all kinds) |
 | `vektra_assess_deliveries_retrying_oldest_seconds` | - | age of the oldest RETRYING email |
 | `vektra_assess_tls_failures_total` | - | delivery rows whose last attempt failed on TLS |
-| `vektra_assess_capacity_refusals_total` | - | Start refusals for capacity (advisory and pre-flight) |
+| `vektra_assess_capacity_refusals_total` | - | Start rollbacks for capacity in the pre-flight (the API's advisory refusals are audit rows only, and the audit table is readable by no role) |
 | `vektra_assess_start_rollbacks_total` | `reason` | Start rollbacks by reason |
 | `vektra_assess_jobs_oldest_ready_seconds` | - | age of the oldest due job |
 | `vektra_assess_worker_heartbeat_age_seconds` | - | worker heartbeat age (database clock) |

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).with_name("assess_canary_grep.sh")
+SCRIPT = Path(__file__).resolve().parents[2] / "tests" / "nfr" / "assess_canary_grep.sh"
 CANARY = "CNRY-right_answer-multichoice-1a2b3c4d"
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")

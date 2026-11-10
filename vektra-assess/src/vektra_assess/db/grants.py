@@ -401,10 +401,10 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         "assess_session_keys": {"SELECT": ("session_id",)},
         "assess_snapshots": {"SELECT": _ALL},
         "assess_turns": {"SELECT": _ALL, "INSERT": _ALL},
-        # SELECT since revision 0041 (plan 12b): assess_metrics_snapshot() counts ready jobs,
-        # refusals and rollbacks; it returns counts only
+        # SELECT since revision 0041 (plan 12b): assess_metrics_snapshot() counts ready jobs and
+        # rollbacks; it returns counts only (the audit table stays insert-only for everyone)
         "assess_jobs": {"SELECT": _ALL, "INSERT": _ALL},
-        "assess_audit_events": {"SELECT": _ALL, "INSERT": _ALL},
+        "assess_audit_events": {"INSERT": _ALL},
         # revision 0038: the teacher's rollback of a STARTING session records its attempt
         "assess_start_attempts": {"SELECT": _ALL, "INSERT": _ALL},
         # revision 0041: the snapshot reads the worker, smtp and purge rows

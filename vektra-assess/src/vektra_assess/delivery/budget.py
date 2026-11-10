@@ -9,9 +9,10 @@ the SMTP send, so the pool waits rather than fails. Even so, a slow database let
 ahead of the heartbeat, which then goes stale.
 
 ``RowDbBudget`` is the one coordinator. Every row-level database step of both handlers takes a
-permit before it checks a connection out. The permits are the pool size minus a reserve kept for
-the heartbeat, the reapers and the job loop's own statements. The handlers never use the pool
-past the budget, so the reserve is always there for the rest of the worker.
+permit before it checks a connection out. The permits are the job pool's size minus a reserve
+kept for the job loop's own claim and settle. The heartbeat and the reapers do not depend on this
+reserve: the worker composition gives them their own engine (plan 13a review), because the
+budget binds only the two delivery handlers and every other pool user would bypass it.
 """
 
 from __future__ import annotations
@@ -21,8 +22,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
-#: connections kept free for the heartbeat, the lease reaper and the job loop's claim/settle
-RESERVED = 2
+#: connections of the job pool kept free for the job loop's claim and settle
+RESERVED = 1
 
 
 class RowDbBudget:

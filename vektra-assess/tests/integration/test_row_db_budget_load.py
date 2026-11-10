@@ -1,9 +1,11 @@
 """Load test of the shared row budget on a real pool (plan 13a, CodeRabbit 4513956359 on #190).
 
-Two delivery jobs x three rows each want a connection at once from the worker's pool (size 5,
-``max_overflow=0``), with DB latency injected (``pg_sleep``). A heartbeat on the same pool checks
-out a connection every 100 ms. With the budget, the rows never hold more than ``5 - RESERVED``
-connections and the heartbeat never waits for a connection. The unbudgeted control shows the
+Two delivery jobs x three rows each want a connection at once from the worker's job pool (size 4:
+the default 5 minus the liveness engine, ``max_overflow=0``), with DB latency injected
+(``pg_sleep``). A job-loop statement on the same pool checks out a connection every 100 ms. With
+the budget, the rows never hold more than ``4 - RESERVED`` connections and the job loop never
+waits for a connection. (The heartbeat and the reapers have their own engine:
+``tests/chaos/assess/test_chaos_liveness_pool.py``.) The unbudgeted control shows the
 heartbeat queued behind the rows, which proves the measurement can tell the two cases apart.
 """
 
@@ -20,7 +22,7 @@ from vektra_assess.delivery.budget import RowDbBudget, budgeted
 
 pytestmark = pytest.mark.integration
 
-POOL = 5
+POOL = 4  # the job pool of the default worker pool of 5
 LATENCY_S = 0.6
 
 

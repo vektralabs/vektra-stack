@@ -20,13 +20,15 @@ RESERVED = 3  # superuser_reserved_connections (Postgres default)
 
 def _budget() -> dict[str, int]:
     s = VektraAssessSettings()
-    worker_pool = assess_worker.make_engine(
+    jobs, live = assess_worker.make_engines(
         "postgresql+asyncpg://u@127.0.0.1:1/d", s.worker_pool_size
-    ).pool
+    )
+    worker = jobs.pool.size() + jobs.pool._max_overflow
+    worker += live.pool.size() + live.pool._max_overflow
     return {
         "main API pool (10 + 20)": db.DEFAULT_POOL_SIZE + db.DEFAULT_MAX_OVERFLOW,
         "assess API pool": s.api_pool_size + assess_wiring.API_MAX_OVERFLOW,
-        "assess worker pool": worker_pool.size() + worker_pool._max_overflow,
+        "assess worker pool": worker,  # job pool + liveness engine
         "assess worker control connection": 1,
         "migrate": MIGRATE,
         "reserved": RESERVED,
@@ -56,3 +58,12 @@ def test_the_documented_figures_match_the_code() -> None:
     ).read_text()
     for needle in ("Connection budget", "max_connections", "85"):
         assert needle in doc, f"docs/reference/configuration.md must document: {needle}"
+
+
+def test_the_liveness_engine_is_carved_out_of_the_worker_pool() -> None:
+    assert assess_worker.split_pool(5) == (4, 1)
+    assert assess_worker.split_pool(2) == (1, 1)
+    assert assess_worker.split_pool(1) == (
+        1,
+        1,
+    )  # cannot split: the one case above the pool

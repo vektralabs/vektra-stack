@@ -468,6 +468,50 @@ def _under(path: str, root: str) -> bool:
     return path == root or path.startswith(root.rstrip("/") + "/")
 
 
+def _tracked_files() -> list[str]:
+    """Every file git tracks, repo-relative (never ``node_modules`` or build output)."""
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+    )
+    return [line for line in out.stdout.splitlines() if line]
+
+
+def shipped_test_assets(roots: list[str], files: list[str]) -> list[str]:
+    """The files under a copied directory that have a test-asset segment ANYWHERE in their path
+    (``migrations/fixtures/...`` included), not only those under a top-level tests tree."""
+    return sorted(
+        f
+        for f in files
+        if any(_under(f, r) for r in roots)
+        and any(seg in TEST_ASSET_SEGMENTS for seg in f.split("/")[:-1])
+    )
+
+
+CANARY = re.compile(r"CNRY-[a-z_]+-")
+TEXT_SUFFIXES = {
+    ".py",
+    ".js",
+    ".html",
+    ".css",
+    ".jinja",
+    ".j2",
+    ".txt",
+    ".json",
+    ".sql",
+}
+
+
+def canary_offenders(roots: list[str], files: dict[str, str]) -> list[str]:
+    """Files under a copied directory whose text carries a planted canary string."""
+    return sorted(
+        f
+        for f, text in files.items()
+        if any(_under(f, r) for r in roots) and CANARY.search(text)
+    )
+
+
 def test_no_copied_directory_is_a_test_or_planning_tree() -> None:
     offenders = [
         d
@@ -528,17 +572,16 @@ def test_the_mail_sink_library_is_a_dev_dependency_only() -> None:
 
 def test_no_planted_canary_string_is_in_shipped_source() -> None:
     """Canary strings (``CNRY-<field>-...``) belong to the test datasets; one in shipped source
-    would make every leak test meaningless (the canary would be in the image's own bytes)."""
-    pattern = re.compile(r"CNRY-[a-z_]+-")
-    offenders = [
-        p.relative_to(REPO_ROOT).as_posix()
-        for p in REPO_ROOT.glob("vektra-*/src/**/*")
-        if p.is_file()
-        and p.suffix
-        in {".py", ".js", ".html", ".css", ".jinja", ".j2", ".txt", ".json"}
-        and pattern.search(p.read_text(errors="replace"))
-    ]
-    assert offenders == []
+    would make every leak test meaningless (the canary would be in the image's own bytes). Every
+    copied tree is scanned, the migrations included, not only ``vektra-*/src``."""
+    roots = _shipped_roots()
+    texts = {
+        f: (REPO_ROOT / f).read_text(errors="replace")
+        for f in _tracked_files()
+        if any(_under(f, r) for r in roots) and Path(f).suffix in TEXT_SUFFIXES
+    }
+    assert any(f.startswith("migrations/") for f in texts), "migrations not scanned"
+    assert canary_offenders(roots, texts) == []
 
 
 def test_the_test_asset_guard_can_say_no() -> None:
@@ -548,3 +591,37 @@ def test_the_test_asset_guard_can_say_no() -> None:
     assert any(
         any(seg in TEST_ASSET_SEGMENTS for seg in d.strip("/").split("/")) for d in dirs
     ), dirs
+
+
+def test_a_nested_test_asset_inside_a_copied_directory_is_caught() -> None:
+    """Negative control (CodeRabbit nitpick on #195): a fixture nested in a copied tree, such
+    as ``migrations/fixtures/``, is a test asset in the image and must be reported."""
+    roots = ["migrations", "vektra-assess/src"]
+    files = [
+        "migrations/versions/0001_initial.py",
+        "migrations/fixtures/seed.json",
+        "vektra-assess/src/vektra_assess/tests/helper.py",
+        "vektra-assess/tests/test_x.py",  # outside every copied root: not shipped
+    ]
+    assert shipped_test_assets(roots, files) == [
+        "migrations/fixtures/seed.json",
+        "vektra-assess/src/vektra_assess/tests/helper.py",
+    ]
+
+
+def test_no_tracked_test_asset_sits_anywhere_under_a_copied_directory() -> None:
+    files = _tracked_files()
+    assert any(f.startswith("migrations/") for f in files), "tracked files not listed"
+    assert shipped_test_assets(_shipped_roots(), files) == []
+
+
+def test_a_canary_string_in_shipped_migrations_is_caught() -> None:
+    """Negative control: the canary scan covers every copied tree, migrations included."""
+    files = {
+        "migrations/versions/0099_x.py": "SEED = 'CNRY-snapshot-1'",
+        "vektra-assess/src/vektra_assess/a.py": "x = 1",
+        "vektra-assess/tests/t.py": "CNRY-snapshot-2",  # tests are not shipped
+    }
+    assert canary_offenders(["migrations", "vektra-assess/src"], files) == [
+        "migrations/versions/0099_x.py"
+    ]

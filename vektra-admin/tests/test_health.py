@@ -206,3 +206,27 @@ async def test_a_readiness_check_answers_503_unless_ready():
     # an ordinary component keeps its 200 whatever its status (no behaviour change)
     body, code = await check_component_http(registry, "plain_comp")
     assert code == 200 and body.status == "degraded" and body.details is None
+
+
+async def test_the_shallow_check_runs_no_excluded_component():
+    """Review #7: the unauthenticated GET /health ran every check, the paid LLM call and the
+    assess readiness included, and threw their results away."""
+    from vektra_shared.registry import ProviderRegistry
+
+    calls: list[str] = []
+
+    def checker(name: str):
+        async def check():
+            calls.append(name)
+            return HealthStatus(status="healthy")
+
+        return check
+
+    registry = ProviderRegistry()
+    for name in ("database", "llm", "assess"):
+        registry.register("health", name, checker(name))
+    shallow, _ = await check_all(registry, "1", full=False)
+    assert shallow.status == "healthy" and calls == ["database"]
+    calls.clear()
+    await check_all(registry, "1")
+    assert sorted(calls) == ["assess", "database", "llm"]

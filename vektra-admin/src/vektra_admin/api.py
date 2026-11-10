@@ -203,7 +203,7 @@ async def health(
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 
-    shallow, deep = await _health.check_all(registry, version)
+    shallow, deep = await _health.check_all(registry, version, full=detail == "full")
 
     if detail == "full":
         # Require any valid Bearer token for deep view

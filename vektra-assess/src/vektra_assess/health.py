@@ -32,7 +32,7 @@ Owning plan: .s2s/plans/20261101-154950-assess-data-crypto.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from sqlalchemy import text
@@ -53,18 +53,18 @@ WORKER_COMPONENT = "worker"
 #: a parser status older than this many ping intervals is ``stale``
 PARSER_STALE_FACTOR = 3
 
+#: one query for every figure (review #7). ``configured_sites`` is computed here: the table's
+#: CHECKs enforce every bound at write time (revision 0040), so the one read-side rule left is
+#: that the notice URL names a host (``privacy.config._has_host``); no text column is read.
 _DETAILS_SQL = text(
     "SELECT extract(epoch FROM now()), "
     "(SELECT details FROM assess_heartbeat WHERE component = 'worker'), "
     "(SELECT extract(epoch FROM now() - beat_at) FROM assess_heartbeat WHERE component = 'smtp'), "
     "(SELECT details FROM assess_heartbeat WHERE component = 'smtp'), "
     "(SELECT details FROM assess_heartbeat WHERE component = 'purge'), "
-    "(SELECT count(*) FROM assess_sites WHERE disabled_at IS NULL)"
-)
-_PRIVACY_SQL = text(
-    "SELECT p.site_id, p.retention_days, p.legal_basis_label, p.legal_basis_text, "
-    "p.notice_url, p.notice_text, p.notice_version FROM assess_privacy_config p "
-    "JOIN assess_sites s ON s.id = p.site_id WHERE s.disabled_at IS NULL"
+    "(SELECT count(*) FROM assess_sites WHERE disabled_at IS NULL), "
+    "(SELECT count(*) FROM assess_privacy_config p JOIN assess_sites s ON s.id = p.site_id "
+    "WHERE s.disabled_at IS NULL AND p.notice_url ~ '^https://[^/?#@\\s\\[\\]]+')"
 )
 
 _AGE_SQL = text(
@@ -86,13 +86,11 @@ def readiness_details(
     *,
     worker_age_s: float | None,
     row: tuple[Any, ...] | None,
-    privacy_rows: Iterable[Any],
+    configured_sites: int,
     keys_present: bool,
     parser_interval_s: float,
 ) -> dict[str, Any]:
     """The content-free figures of ``/health/assess`` (plan 12b). Pure: easy to pin."""
-    from vektra_assess.privacy.config import passes
-
     now, worker, smtp_age, smtp, purge, sites = row if row is not None else (None,) * 6
     worker = worker if isinstance(worker, Mapping) else {}
     smtp = smtp if isinstance(smtp, Mapping) else {}
@@ -123,7 +121,7 @@ def readiness_details(
     )
     last_ok = purge.get("ok")
 
-    configured = sum(1 for r in privacy_rows if passes(r))
+    configured = int(configured_sites or 0)
     return {
         "worker_heartbeat_age_s": _num(worker_age_s),
         "worker_state": worker.get("state")
@@ -150,54 +148,47 @@ def make_readiness_check(
     parser_interval_s: float = 60.0,
 ) -> Callable[[], Awaitable[HealthStatus]]:
     async def assess_readiness() -> HealthStatus:
-        status, worker_age = await _verdict()
+        if not enabled:
+            return HealthStatus(status=DISABLED, message="VEKTRA_ASSESS_ENABLED=false")
         engine = get_engine() if get_engine is not None else None
-        if status.status == DISABLED or engine is None:
-            return status
+        if engine is None:
+            return HealthStatus(status="degraded", message=HEARTBEAT_SOURCE_MISSING)
         have_keys = keys_present() if keys_present is not None else True
-        if not have_keys and status.status == "healthy":
-            status = HealthStatus(status="degraded", message=KEYS_MISSING)
-        if status.message == HEARTBEAT_UNREADABLE:
+        try:
+            # one connection for the verdict and the figures (review #7)
+            async with engine.connect() as conn:
+                beat = (await conn.execute(_AGE_SQL, {"c": WORKER_COMPONENT})).first()
+                try:
+                    row = (await conn.execute(_DETAILS_SQL)).first()
+                except Exception:
+                    row = None
+        except Exception:
             return HealthStatus(
-                status=status.status,
-                message=status.message,
+                status="unhealthy",
+                message=HEARTBEAT_UNREADABLE,
                 details={"keys_present": have_keys, "figures": "unreadable"},
             )
-        try:
-            async with engine.connect() as conn:
-                row = (await conn.execute(_DETAILS_SQL)).first()
-                privacy = (await conn.execute(_PRIVACY_SQL)).all()
+        status, worker_age = _verdict(beat)
+        if not have_keys and status.status == "healthy":
+            status = HealthStatus(status="degraded", message=KEYS_MISSING)
+        if row is not None and len(row) == 7:
             details = readiness_details(
                 worker_age_s=worker_age,
-                row=tuple(row) if row is not None and len(row) == 6 else None,
-                privacy_rows=privacy,
+                row=tuple(row)[:6],
+                configured_sites=int(row[6] or 0),
                 keys_present=have_keys,
                 parser_interval_s=parser_interval_s,
             )
-        except Exception:
+        else:
             details = {"keys_present": have_keys, "figures": "unreadable"}
         return HealthStatus(
             status=status.status, message=status.message, details=details
         )
 
-    async def _verdict() -> tuple[HealthStatus, float | None]:
-        if not enabled:
-            return HealthStatus(
-                status=DISABLED, message="VEKTRA_ASSESS_ENABLED=false"
-            ), None
-        engine = get_engine() if get_engine is not None else None
-        if engine is None:
-            return HealthStatus(
-                status="degraded", message=HEARTBEAT_SOURCE_MISSING
-            ), None
-        try:
-            async with engine.connect() as conn:
-                row = (await conn.execute(_AGE_SQL, {"c": WORKER_COMPONENT})).first()
-        except Exception:
-            return HealthStatus(status="unhealthy", message=HEARTBEAT_UNREADABLE), None
-        if row is None or row[0] is None:
+    def _verdict(beat: Any) -> tuple[HealthStatus, float | None]:
+        if beat is None or beat[0] is None:
             return HealthStatus(status="degraded", message=NO_HEARTBEAT), None
-        age, state, backlog = row
+        age, state, backlog = beat
         age = float(age)
         if age > max_age_s:
             return HealthStatus(status="degraded", message=HEARTBEAT_STALE), age

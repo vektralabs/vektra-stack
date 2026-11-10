@@ -68,6 +68,27 @@ async def test_readiness_follows_the_worker_rows_and_answers_503(pg) -> None:  #
         assert d["parser"]["status"] == "stale"  # pinged at epoch 0
         assert site not in json.dumps(d) and str(sid) not in json.dumps(d)
 
+        # review #7: the configured count is computed in SQL; a URL without a host is not one
+        for url in ("https://uni.example/privacy", "https:///no-host"):
+            other_sid = await make_session(pg, "ACTIVE")
+            other = (
+                await pg.run(
+                    "super",
+                    "SELECT site_id FROM assess_sessions WHERE id = :s",
+                    {"s": other_sid},
+                )
+            )[0][0]
+            await pg.run(
+                "super",
+                "INSERT INTO assess_privacy_config (site_id, retention_days, "
+                "legal_basis_label, legal_basis_text, notice_url, notice_text, "
+                "notice_version, updated_by) VALUES (:s, 30, 'l', 't', :u, 'n', '1', 'op')",
+                {"s": other, "u": url},
+            )
+        body, _ = await check_component_http(registry, "assess")
+        assert body.details is not None
+        assert body.details["privacy"]["configured_sites"] == 1
+
         await _beat(
             pg, "worker", {"state": "ready"}, age_s=120
         )  # a kill -9: the row ages

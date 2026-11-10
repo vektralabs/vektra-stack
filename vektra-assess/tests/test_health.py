@@ -124,7 +124,7 @@ def test_details_are_figures_only() -> None:
             {"ok": True, "last_success": 400.0, "rows_deleted": 7},
             2,
         ),
-        privacy_rows=[_GOOD, _BAD],
+        configured_sites=1,
         keys_present=True,
         parser_interval_s=60,
     )  # fmt: skip
@@ -146,7 +146,7 @@ def test_an_old_parser_status_is_stale_and_none_is_unknown() -> None:
     d = readiness_details(
         worker_age_s=None,
         row=old,
-        privacy_rows=[],
+        configured_sites=0,
         keys_present=True,
         parser_interval_s=60,
     )
@@ -154,7 +154,7 @@ def test_an_old_parser_status_is_stale_and_none_is_unknown() -> None:
     d = readiness_details(
         worker_age_s=None,
         row=None,
-        privacy_rows=[],
+        configured_sites=0,
         keys_present=False,
         parser_interval_s=60,
     )

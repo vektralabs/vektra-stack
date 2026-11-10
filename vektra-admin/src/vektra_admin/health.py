@@ -123,7 +123,7 @@ async def _call_health_check(
 
 
 async def check_all(
-    registry: Any, version: str
+    registry: Any, version: str, *, full: bool = True
 ) -> tuple[ShallowHealthResponse, DeepHealthResponse]:
     """Run all registered health checks and return both shallow and deep responses.
 
@@ -154,9 +154,10 @@ async def check_all(
     ts = datetime.now(UTC).isoformat()
     shallow = ShallowHealthResponse(status=shallow_status, timestamp=ts)
 
-    # Deep: all components including LLM
+    # Deep: all components including LLM. Skipped for the shallow probe (full=False): it would
+    # pay for an LLM call and query the assess worker rows only to discard them.
     all_names = registry.list("health")
-    extra_names = [n for n in all_names if n not in infra_names]
+    extra_names = [n for n in all_names if n not in infra_names] if full else []
     extra_tasks = [
         _call_health_check(name, registry.get("health", name)) for name in extra_names
     ]

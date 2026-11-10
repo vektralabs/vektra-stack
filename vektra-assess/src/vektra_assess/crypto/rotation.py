@@ -8,6 +8,9 @@ from fighting over a row.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -239,3 +242,36 @@ async def rewrap_teacher_reasons(
             ).scalar_one()
         )
     return remaining
+
+
+async def rewrap_to_done(
+    connect: Callable[[], Any],
+    steps: Sequence[Callable[[AsyncConnection], Awaitable[int]]],
+    *,
+    stall_after: int = 3,
+) -> int:
+    """Run each re-wrap step in committed batches until it reports 0 rows left (plan 13a).
+
+    Returns what is still left: 0 means the old kid can be retired. A step whose remaining count
+    does not go down for ``stall_after`` batches in a row stops the run with that count, so a
+    row locked elsewhere ends it instead of spinning forever; the caller runs it again later.
+    The helpers are resumable (``SKIP LOCKED``), so a stopped run loses nothing.
+    """
+    left_total = 0
+    for step in steps:
+        best: int | None = None
+        stalled = 0
+        while True:
+            async with connect() as conn:
+                left = await step(conn)
+                await conn.commit()
+            if left == 0:
+                break
+            if best is not None and left >= best:
+                stalled += 1
+                if stalled >= stall_after:
+                    left_total += left
+                    break
+            else:
+                best, stalled = left, 0
+    return left_total

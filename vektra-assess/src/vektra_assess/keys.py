@@ -401,12 +401,21 @@ def main(argv: list[str] | None = None) -> int:
         from vektra_assess.keys_verify import main as verify_main
 
         return verify_main(argv[1:])
+    if argv[:1] == ["rewrap"]:
+        # plan 13a: the code half of a key rotation (session DEKs, or transcript DEKs + reasons)
+        from vektra_assess.keys_rewrap import main as rewrap_main
+
+        return rewrap_main(argv[1:])
     parser = argparse.ArgumentParser(prog="python -m vektra_assess.keys")
     sub = parser.add_subparsers(dest="cmd", required=True)
     gen = sub.add_parser("generate", help="write a complete set of assess keyrings")
     gen.add_argument("--out", type=Path, required=True)
     sub.add_parser(
         "verify", help="check the loaded keys against the database (exit 1 on mismatch)"
+    )
+    sub.add_parser(
+        "rewrap",
+        help="re-wrap the rows still under an old kid (exit 1 while rows remain)",
     )
     args = parser.parse_args(argv)
     if args.cmd == "generate":

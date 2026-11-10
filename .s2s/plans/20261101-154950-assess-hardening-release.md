@@ -269,3 +269,12 @@ every release, with a manual exploratory session on top.
   stays per handler: its statement, its Message-ID scheme and the transcript window re-check are
   specific to the row kind, so a shared claim would need a parameter for every one of them.
   Behaviour is unchanged: the existing notify and delivery suites (89 tests) pass unmodified.
+- **Key rotation, code half (13a, done).** `python -m vektra_assess.keys rewrap --what
+  {session-keys|transcripts} --from-kid K` runs the plan-2 helpers as the worker role, in committed
+  batches, until no row is left under `K` (exit 0), with rows left after a stall (exit 1), or when
+  it cannot run (exit 2: settings, keys, a kid the keyring does not hold, or a kid that is still
+  active). `transcripts` re-encrypts the transcript DEKs **and** the teachers' reasons in one
+  command, which closes the gap left open since 11b: `rewrap_teacher_reasons` had no caller. The
+  batch driver is `crypto.rotation.rewrap_to_done`, and its stall guard stops a run that a row
+  locked elsewhere would otherwise keep spinning. `keys_verify.open_role` is shared by `verify`
+  and `rewrap`. The cadence, ordering and retirement steps are runbook text, so they stay in 13b.

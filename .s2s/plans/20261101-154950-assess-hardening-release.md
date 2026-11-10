@@ -410,3 +410,16 @@ every release, with a manual exploratory session on top.
     "docstring coverage" pre-merge check (not a repository policy, no threshold is configured
     in this repo).
   - Declared: **71 cases, 27 scenarios**.
+- **`rotate_keys` job kind dropped (coordinator decision, 2026-11-10; branch
+  `fix/assess-drop-rotate-keys-job`).** Release blocker: the kind was this plan's only worker slot,
+  it had no handler and nothing enqueued it, so with `VEKTRA_ASSESS_ENABLED=true` and no
+  development override `slots.assert_all_bound` refused every production start. Decision: remove
+  the kind instead of writing a handler. A worker job that rewraps keys would need the old and the
+  new keyrings in the worker process; the operator CLI (`python -m vektra_assess.keys rewrap`, then
+  `keys verify`, `docs/guides/assess-keys-runbook.md`) already covers rotation with explicit
+  operator control. The "re-wrap job" in the key-rotation task above is that CLI, not a worker job.
+  Revision `0044` rewrites `ck_assess_jobs_kind` without the kind (deleting any row of it first,
+  as `0037` did; the downgrade restores the CHECK); the enum member, its policy and its slot are
+  gone. `slots.PENDING_OWNER_PLANS` is now empty, so `expected_unbound()` is the empty set, and
+  `vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without
+  `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and requires every slot bound.

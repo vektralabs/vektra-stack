@@ -315,3 +315,21 @@ every release, with a manual exploratory session on top.
   - NFR-014 pen matrix: blocked on live LMS 4.3/5.2 with login-as (OQ-031).
   - NFR-015 / NFR-017 canary suites on the target model: blocked on OQ-026.
   - NFR-016 manual NVDA/VoiceOver pass: blocked on a person with a screen reader.
+- **13a, second pass (coordinator request of 2026-11-10).** Built in this pass:
+  - the fault-injecting LLM stub (`tests/chaos/assess/llm_stub.py`): ok, latency, 5xx and stall,
+    each checked through litellm;
+  - the API killed in the middle of a lazy close;
+  - an epoch bump mid-stream, with a negative control;
+  - the worker killed in the middle of generation (`test_chaos_mid_generation_kill.py`).
+
+  The gate now declares 49 cases and 15 invariant reports.
+
+  **Still open, not started in this pass** (none of them needs the full compose stack, so none is
+  BLOCKED; the fork ran out of turns):
+  - a Postgres restart during delivery, and one during a Start burst;
+  - the parser killed mid-extraction;
+  - an API restart with live sessions, resuming from the hand-off row without the worker;
+  - the worker down 10 min on an injected clock.
+
+  The LLM stub is not yet wired into a scenario: it is meant for the three-failed-calls
+  service_failure path and the stalled reply.

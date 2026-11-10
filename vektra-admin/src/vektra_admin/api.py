@@ -203,8 +203,6 @@ async def health(
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 
-    shallow, deep = await _health.check_all(registry, version, full=detail == "full")
-
     if detail == "full":
         # Require any valid Bearer token for deep view
         if credentials is None:
@@ -234,6 +232,9 @@ async def health(
                 status_code=http_status_for(err), detail=err.to_envelope()
             )
 
+        # every check runs only once the caller is authenticated: an anonymous ?detail=full
+        # must not reach the LLM or the database (CodeRabbit 4524508921)
+        _, deep = await _health.check_all(registry, version, full=True)
         status_code = 503 if deep.status == "unhealthy" else 200
         return Response(
             content=deep.model_dump_json(),
@@ -242,6 +243,7 @@ async def health(
         )
 
     # Shallow - unauthenticated
+    shallow, _ = await _health.check_all(registry, version, full=False)
     status_code = 503 if shallow.status == "unhealthy" else 200
     return Response(
         content=shallow.model_dump_json(),

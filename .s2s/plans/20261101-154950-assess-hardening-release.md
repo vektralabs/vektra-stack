@@ -393,3 +393,20 @@ every release, with a manual exploratory session on top.
   - One source for the chaos run: both workflows call `make test-chaos-assess`; the
     suite-execution guard now follows a workflow's `make <target>` into the Makefile.
   - Declared after the review: **68 cases, 26 scenarios** (distinct names).
+- **PR #195, first CodeRabbit pass and CI (2026-11-10).**
+  - CI: the parser-kill scenario failed on Linux with `reset` (ECONNRESET) where macOS gives
+    `closed_without_reply` (EOF). Both are `_Unavailable` in the client, so the same
+    `ParserUnavailableError` and the same `internal_error` rollback: no mapping change. The
+    scenario accepts exactly those two killed-peer outcomes; a unit test pins the Linux one.
+  - Major 4530369375, valid and fixed: on the one-connection liveness engine the lease reaper held
+    the connection while its dead-job audit asked for one, so the audit timed out and an exhausted
+    job stayed leased. The reaper no longer holds a connection across an audit write.
+  - Nitpicks fixed: invariant checks scoped to the scenario's sites (order-independent gate); a
+    malformed report line fails the gate but keeps the summary; keys rewrap disposes in one
+    `finally`; no uv cache in the release-tag chaos workflow; the image-content guard walks every
+    copied tree for nested test assets and canaries (migrations included).
+  - Not applied, with reason: "async file reads" in `test_image_content_boundary.py` (the tests
+    are synchronous, no event loop runs there, an async read would only add one); the
+    "docstring coverage" pre-merge check (not a repository policy, no threshold is configured
+    in this repo).
+  - Declared: **71 cases, 27 scenarios**.

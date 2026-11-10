@@ -12,6 +12,9 @@
   insert-only for every role, so the API's ADVISORY capacity refusals (audit rows only) are not
   counted: the series counts the pre-flight's capacity rollbacks.
 
+The operator's SMTP test rows (``kind = 'smtp_test'``, revision 0042) are left out of the
+delivery figures: a test send must never fire a production delivery alert.
+
 Revision ID: 0041
 Revises: 0040
 """
@@ -87,12 +90,14 @@ SNAPSHOT_FN = """
                 SELECT close_reason, count(*) AS n FROM public.assess_sessions
                 WHERE state = 'CLOSED' GROUP BY close_reason) c), '{}'::jsonb),
             'deliveries', COALESCE((SELECT jsonb_object_agg(status, n) FROM (
-                SELECT status, count(*) AS n FROM public.assess_deliveries GROUP BY status) d),
-                '{}'::jsonb),
+                SELECT status, count(*) AS n FROM public.assess_deliveries
+                WHERE kind <> 'smtp_test' GROUP BY status) d), '{}'::jsonb),
             'retrying_oldest_s', (SELECT extract(epoch FROM now() - min(created_at))
-                FROM public.assess_deliveries WHERE status = 'RETRYING'),
+                FROM public.assess_deliveries WHERE status = 'RETRYING'
+                AND kind <> 'smtp_test'),
             'tls_failures', (SELECT count(*) FROM public.assess_deliveries
-                WHERE last_error_class = 'tls'),
+                WHERE last_error_class = 'tls' AND kind <> 'smtp_test'
+                AND status IN ('PENDING', 'RETRYING', 'FAILED')),
             'capacity_refusals', (SELECT count(*) FROM public.assess_start_attempts
                 WHERE outcome IN ('rolled_back', 'refused') AND reason_code = 'capacity'),
             'rollbacks', COALESCE((SELECT jsonb_object_agg(reason, n) FROM (

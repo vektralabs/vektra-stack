@@ -135,6 +135,16 @@ async def test_a_relay_failure_is_reported_by_class(pg, worker, sink) -> None:  
             )
         ).json()
         assert (got["status"], got["error_class"]) == ("FAILED", "connect")
+        # review #6: a test send never reaches the production delivery figures
+        snap = (await pg.run("api", "SELECT public.assess_metrics_snapshot()"))[0][0]
+        prod = (
+            await pg.run(
+                "super",
+                "SELECT count(*) FROM assess_deliveries WHERE status = 'FAILED' "
+                "AND kind <> 'smtp_test'",
+            )
+        )[0][0]
+        assert snap["deliveries"].get("FAILED", 0) == prod
 
 
 async def test_without_the_relay_the_test_is_refused(pg, worker) -> None:  # type: ignore[no-untyped-def]

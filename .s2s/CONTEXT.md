@@ -67,6 +67,7 @@ Split criteria defined in [ADR-0002](decisions/ADR-0002-repo-split-criteria.md).
 | vektra-analytics | QueryTrace storage, metrics aggregation, reporting API | 2 (completed) |
 | vektra-learn | E-learning vertical backend (LMS-agnostic), chatbot widget | 2 (completed) |
 | vektra-admin | System administration interface (HTMX + Jinja2 dashboard) | 1 (minimal), 2 (full) |
+| vektra-assess | Assessment discussion feature: API routes, worker (ADR-0029 Postgres job loop), parser sidecar, envelope encryption (ADR-0031); dormant unless `VEKTRA_ASSESS_ENABLED=true` | feature addendum (2026-11-01, in progress) |
 
 ### Separate repositories
 

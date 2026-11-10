@@ -225,7 +225,11 @@ def make_query(engine: Any) -> Query:
     return query
 
 
-async def _run(role: Literal["worker", "api"], out: TextIO) -> int:
+async def open_role(
+    role: Literal["worker", "api"], out: TextIO, step: str = "keys_verify"
+) -> tuple[Mapping[str, Loaded], Any] | int:
+    """The role's loaded keys and a database engine, or exit status 2 with the reason printed
+    (shared by ``verify`` and ``rewrap``). The DSN is never printed, only exception types."""
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from vektra_assess.config import VektraAssessSettings, explain_settings_error
@@ -239,9 +243,7 @@ async def _run(role: Literal["worker", "api"], out: TextIO) -> int:
         print(f"cannot run: {detail}", file=out)
         return 2
     try:
-        loaded = enforce_key_matrix(
-            role, secrets_dir=settings.secrets_dir, step="keys_verify"
-        )
+        loaded = enforce_key_matrix(role, secrets_dir=settings.secrets_dir, step=step)
     except Exception as exc:
         print(
             f"cannot run: {type(exc).__name__}: {getattr(exc, 'detail', '')}", file=out
@@ -264,11 +266,19 @@ async def _run(role: Literal["worker", "api"], out: TextIO) -> int:
         # (exit 2, never 1, which means a key mismatch); the exception text may hold the DSN,
         # so only its type is printed (CodeRabbit 4524508958)
         engine = create_async_engine(
-            dsn_with_password(url, loaded[secret].value, step="keys_verify")  # type: ignore[union-attr]
+            dsn_with_password(url, loaded[secret].value, step=step)  # type: ignore[union-attr]
         )
     except Exception as exc:
         print(f"cannot run: database URL {type(exc).__name__}", file=out)
         return 2
+    return loaded, engine
+
+
+async def _run(role: Literal["worker", "api"], out: TextIO) -> int:
+    opened = await open_role(role, out)
+    if isinstance(opened, int):
+        return opened
+    loaded, engine = opened
     query = make_query(engine)
 
     try:

@@ -1,0 +1,48 @@
+name: Assess chaos (nightly and release tags)
+
+# The assess chaos suite outside the pull-request flow (plan assess-hardening-release): every
+# night on develop, and on every release tag. The acceptance criterion is "0 invariant violations
+# on two consecutive nightly runs and on the release tag"; the invariant report of each run is the
+# evidence, kept as an artifact. Pull requests run the same target in integration.yml.
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chaos-assess:
+    name: Assess chaos and invariant gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # no cache: this run is release evidence on v* tags, and a cache written by another run
+      # (cache poisoning, zizmor) must not feed it; uv sync --frozen installs from the lock
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+
+      - name: Install dev dependencies
+        run: uv sync --dev --frozen
+
+      - name: Run the chaos harness and the invariant gate
+        # the one definition of the suite and its declared minimums is the Makefile target
+        # (the suite-execution guard follows `make <target>` into its recipe)
+        run: make test-chaos-assess
+
+      - name: Upload the invariant report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assess-chaos-report-${{ github.run_id }}
+          path: test-results/assess-chaos/
+          retention-days: 90

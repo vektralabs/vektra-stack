@@ -117,7 +117,44 @@ def assert_smtp_configured(settings: Any) -> None:
         )
 
 
-def make_engine(url: str, pool_size: int, command_timeout_s: float = 30.0) -> Any:
+#: the heartbeat, the lease reaper and the STARTING reaper get their own engine of this size,
+#: carved out of ``VEKTRA_ASSESS_WORKER_POOL_SIZE`` (plan 13a review): job work can exhaust the
+#: job pool without ever delaying a beat, and the INT-002 budget (pool + control) is unchanged
+LIVENESS_POOL_SIZE = 1
+LIVENESS_APPLICATION_NAME = "vektra-assess-worker-liveness"
+
+
+def split_pool(pool_size: int) -> tuple[int, int]:
+    """``(job pool, liveness pool)`` for the configured worker pool. A pool of 1 cannot be split:
+    the job pool keeps its 1 and the liveness engine adds 1 (the only case above the budget)."""
+    return max(1, pool_size - LIVENESS_POOL_SIZE), LIVENESS_POOL_SIZE
+
+
+def make_engines(
+    url: str, pool_size: int, command_timeout_s: float = 30.0
+) -> tuple[Any, Any]:
+    """The job engine and the liveness engine, together the configured pool size."""
+    jobs, live = split_pool(pool_size)
+    return (
+        make_engine(url, jobs, command_timeout_s),
+        make_engine(
+            url,
+            live,
+            command_timeout_s,
+            application_name=LIVENESS_APPLICATION_NAME,
+            pool_timeout=5,
+        ),
+    )
+
+
+def make_engine(
+    url: str,
+    pool_size: int,
+    command_timeout_s: float = 30.0,
+    *,
+    application_name: str = APPLICATION_NAME,
+    pool_timeout: float = 15,
+) -> Any:
     """The worker's single pool: it serves the job SQL and the handlers' transactions.
 
     Pool plus the control connection is the 5 + 1 of the connection budget (INT-002): no
@@ -132,10 +169,10 @@ def make_engine(url: str, pool_size: int, command_timeout_s: float = 30.0) -> An
         url,
         pool_size=pool_size,
         max_overflow=0,
-        pool_timeout=15,
+        pool_timeout=pool_timeout,
         pool_pre_ping=True,
         connect_args={
-            "server_settings": {"application_name": APPLICATION_NAME},
+            "server_settings": {"application_name": application_name},
             # a half-open connection (database restart, dropped network) answers nothing and
             # raises nothing: without these bounds every worker call would wait on it forever
             "timeout": 5,
@@ -150,6 +187,13 @@ class Checked:
     settings: Any  # VektraAssessSettings
     worker_url: str
     keys: Mapping[str, Any] = field(default_factory=dict)  # the loaded worker secrets
+    #: the heartbeat's and the reapers' own engine; None (tests composing without it) means
+    #: they share the job engine
+    liveness: Any = None
+
+    @property
+    def liveness_engine(self) -> Any:
+        return self.liveness if self.liveness is not None else self.engine
 
 
 async def run_checks() -> object:
@@ -239,15 +283,16 @@ async def _checks() -> Checked:
     assert_import_ceiling()
     assert_smtp_configured(settings)
 
-    engine = make_engine(
+    engine, liveness = make_engines(
         worker_url, settings.worker_pool_size, settings.worker_db_command_timeout_s
     )
     try:
         await assert_session_role(engine, WORKER_ROLE, step=STEP)
     except BaseException:
         await engine.dispose()
+        await liveness.dispose()
         raise
-    return Checked(engine, settings, worker_url, loaded)
+    return Checked(engine, settings, worker_url, loaded, liveness=liveness)
 
 
 def _asyncpg_dsn(sqlalchemy_url: str) -> str:
@@ -459,6 +504,11 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         log.warning(
             "assess_recipient_domains_empty", reason_code="every_address_refused"
         )
+    # one connection budget for every fan-out handler's rows (plan 13a, CodeRabbit 4513956359):
+    # the job pool minus a reserve for the job loop (the heartbeat and the reapers have their own)
+    from vektra_assess.delivery.budget import RowDbBudget
+
+    row_budget = RowDbBudget.for_pool(checked.engine.pool.size())
     deps = DeliveryDeps(
         transcript_kek=checked.keys["assess_transcript_kek"],
         recipients=ConfigRecipients(checked.keys["assess_teacher_config_private"]),
@@ -470,6 +520,7 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         schedule=parse_schedule(settings.smtp_retry_schedule),
         window=timedelta(hours=settings.smtp_retry_window_hours),
         stale_after=timedelta(seconds=lease),
+        db_budget=row_budget,
     )
     engine = checked.engine
 
@@ -530,6 +581,7 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
                 for k in (JobKind.TEACHER_NOTIFY, JobKind.OPERATOR_NOTIFY)
             )
         ),
+        db_budget=row_budget,
     )
     handlers[JobKind.TEACHER_NOTIFY] = make_notify_handler(
         notify_deps, JobKind.TEACHER_NOTIFY
@@ -668,7 +720,7 @@ def _session_ticks(checked: Checked) -> dict[str, Any]:
 
     async def starting_reaper() -> None:
         await reap_starting(
-            engine.connect,
+            checked.liveness_engine.connect,  # its own engine: never behind job work
             settings.start_t_s,
             limits=StartLimits.from_settings(settings),
         )
@@ -751,6 +803,16 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
             raw = await sa_conn.get_raw_connection()
             yield raw.driver_connection
 
+    liveness = checked.liveness_engine
+
+    @asynccontextmanager
+    async def acquire_liveness() -> AsyncIterator[Any]:
+        """The heartbeat's and the lease reaper's connection: their own small engine, so a job
+        pool exhausted by slow handlers never makes a beat wait (plan 13a review)."""
+        async with liveness.connect() as sa_conn:
+            raw = await sa_conn.get_raw_connection()
+            yield raw.driver_connection
+
     worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
     audit = make_audit(engine.connect)
     runtime = WorkerRuntime(
@@ -778,7 +840,7 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     # plan 12b: the parser status /health/assess reports, from the parser_ping tick
     parser_health = ParserHealth()
     heartbeat = Heartbeat(
-        acquire_raw,
+        acquire_liveness,
         worker_id=worker_id,
         version=_version(),
         file_path=settings.worker_heartbeat_file,
@@ -797,8 +859,11 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
         await fail_abandoned_reports(checked.engine.connect)
 
+    # the reaper's "dead" audit rows go through the liveness engine too
+    liveness_audit = make_audit(liveness.connect)
+
     async def lease_reaper() -> None:
-        await reap_exhausted(acquire_raw, audit)
+        await reap_exhausted(acquire_liveness, liveness_audit)
 
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
     delivery = _delivery_parts(checked)
@@ -1010,6 +1075,8 @@ async def _amain(bindings: Any | None = None) -> int:
         with contextlib.suppress(Exception):
             async with asyncio.timeout(5):
                 await checked.engine.dispose()
+                if checked.liveness is not None:
+                    await checked.liveness.dispose()
     return 0
 
 

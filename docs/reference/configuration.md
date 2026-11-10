@@ -301,8 +301,10 @@ silently exhaust the server:
 | Reserved | 3 | Postgres `superuser_reserved_connections` |
 | **Total** | **65** | ceiling 85 |
 
-The worker's 5 + 1 is the INT-002 budget: its single pool serves the job SQL and the handlers'
-transactions. INT-002 assumed about 15 for the API; the main API pool alone is larger by default,
+The worker's 5 + 1 is the INT-002 budget. The 5 are split: a job pool of 4 serves the job SQL and
+the handlers' transactions, and a liveness engine of 1 serves only the heartbeat, the lease reaper
+and the STARTING reaper, so handlers that hold every job connection never delay a beat. With
+`VEKTRA_ASSESS_WORKER_POOL_SIZE=1` the pool cannot be split and the worker opens 1 + 1 + 1. INT-002 assumed about 15 for the API; the main API pool alone is larger by default,
 which is why the margin is tracked here.
 
 ### Secret files and the key matrix

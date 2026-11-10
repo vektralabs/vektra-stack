@@ -23,6 +23,7 @@ from harness import (
     worker_ready,
     worker_secrets,
 )
+from invariants import assert_invariants
 
 pytestmark = pytest.mark.integration
 
@@ -91,6 +92,9 @@ async def test_postgres_container_restart_under_load_recovers_without_manual_act
         )[0][0]
         assert control == 1, "LISTEN is re-established: one control connection is back"
         print(f"CHAOS restart recovered with {sup.restarts} supervisor restart(s)")
+        await assert_invariants(
+            pg, "postgres-restart:job-load", expect_sessions=0, only=["no_stale_lease"]
+        )
     finally:
         sup.stop()
 

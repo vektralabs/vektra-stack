@@ -48,7 +48,9 @@ from sqlalchemy import text
 
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.delivery import message as mail
+from vektra_assess.delivery.attempt import AttemptEvents, count, decide, record
 from vektra_assess.delivery.backoff import next_not_before
+from vektra_assess.delivery.budget import RowDbBudget, budgeted
 from vektra_assess.delivery.recipients import (
     MAX_RECIPIENTS,
     ConfigRecipients,
@@ -95,6 +97,8 @@ class DeliveryDeps:
     #: (at least the job lease, so a job still inside its budget is never raced)
     stale_after: timedelta
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    #: the connection budget shared with the notification handler (plan 13a); None = unbounded
+    db_budget: RowDbBudget | None = None
 
 
 @dataclass
@@ -703,22 +707,20 @@ async def _settle(
 ) -> None:
     """Commit one attempt's outcome, fenced on its own start time, with its audit rows."""
     now = deps.clock()
-    cls = reason or (result.error_class.value if result.error_class else None)
+    d = decide(
+        result,
+        reason,
+        final=final,
+        next_retry=lambda: next_not_before(
+            c.attempts, c.created_at, now, deps.schedule, deps.window
+        ),
+    )
     base = {"i": c.id, "started": c.started, "mid": mid, "code": result.smtp_code}
-    if result.ok:
-        stmt, params, outcome = _SENT, {**base, "now": now}, "sent"
-    else:
-        nb = (
-            None
-            if final or (result.error_class is not None and not result.retryable)
-            else next_not_before(
-                c.attempts, c.created_at, now, deps.schedule, deps.window
-            )
-        )
-        if nb is None:
-            stmt, params, outcome = _FAIL, {**base, "cls": cls}, "failed"
-        else:
-            stmt, params, outcome = _RETRY, {**base, "cls": cls, "nb": nb}, "retrying"
+    stmt, params = {
+        "sent": (_SENT, {**base, "now": now}),
+        "failed": (_FAIL, {**base, "cls": d.cls}),
+        "retrying": (_RETRY, {**base, "cls": d.cls, "nb": d.not_before}),
+    }[d.outcome]
     ids: dict[str, Any] = {"round": c.round, "ref": c.ref, "delivery_id": str(c.id)}
     async with acquire() as conn, conn.begin():
         done = (await conn.execute(stmt, params)).rowcount
@@ -726,30 +728,32 @@ async def _settle(
             # another worker took the row over (our attempt went stale): its outcome rules
             log.warning("assess_delivery_fence_lost", session_id=str(t.id))
             return
-        await _audit(
+
+        async def audit(cn: Any, event: Any, **kw: Any) -> None:
+            await _audit(cn, event, t, **kw)
+
+        await record(
+            audit,
             conn,
-            AssessAuditEvent.DELIVERY_ATTEMPT,
-            t,
-            reason=cls,
+            _EVENTS,
+            d,
             attempt=c.attempts,
-            outcome=outcome,
             smtp_code=result.smtp_code,
             duplicate=c.duplicate,
-            **ids,
+            ids=ids,
         )
-        if outcome == "sent":
-            await _audit(conn, AssessAuditEvent.DELIVERY_SENT, t, **ids)
-        elif outcome == "failed":
-            await _audit(conn, AssessAuditEvent.DELIVERY_FAILED, t, reason=cls, **ids)
-    if outcome == "sent":
-        out.sent += 1
-    elif outcome == "failed":
-        out.failed += 1
-        _alert("delivery_failed", session_id=str(t.id), reason_code=cls)
-    else:
-        out.retrying += 1
+    count(out, d.outcome)
+    if d.outcome == "failed":
+        _alert("delivery_failed", session_id=str(t.id), reason_code=d.cls)
     if result.error_class in ALERTING:
         _alert(f"smtp_{result.error_class.value}", session_id=str(t.id))
+
+
+_EVENTS = AttemptEvents(
+    AssessAuditEvent.DELIVERY_ATTEMPT,
+    AssessAuditEvent.DELIVERY_SENT,
+    AssessAuditEvent.DELIVERY_FAILED,
+)
 
 
 def make_deliver_handler(
@@ -760,7 +764,7 @@ def make_deliver_handler(
             tid = UUID(str(ctx.args["transcript_id"]))
         except (KeyError, ValueError):
             return  # a malformed job is a stale no-op
-        await deliver_transcript(deps, ctx.acquire, tid)
+        await deliver_transcript(deps, budgeted(deps.db_budget, ctx.acquire), tid)
 
     return handle
 

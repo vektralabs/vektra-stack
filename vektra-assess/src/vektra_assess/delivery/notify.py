@@ -49,7 +49,9 @@ from sqlalchemy import text
 
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.delivery import message as mail
+from vektra_assess.delivery.attempt import AttemptEvents, count, decide, record
 from vektra_assess.delivery.backoff import next_not_before
+from vektra_assess.delivery.budget import RowDbBudget, budgeted
 from vektra_assess.delivery.handler import (
     DOMAIN_NOT_ALLOWED,
     RECIPIENTS_UNRESOLVED,
@@ -103,6 +105,8 @@ class NotifyDeps:
     #: a run still inside its budget is never raced)
     stale_after: timedelta = timedelta(seconds=240)
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    #: the connection budget shared with the transcript handler (plan 13a); None = unbounded
+    db_budget: RowDbBudget | None = None
 
 
 @dataclass(frozen=True)
@@ -457,14 +461,13 @@ async def _settle(
     final: bool = False,
 ) -> bool:
     """Commit one attempt's outcome, fenced on its start. True when the row is to be retried."""
-    cls = reason or (result.error_class.value if result.error_class else None)
+    d = decide(result, reason, final=final)
     base = {"i": c.id, "started": c.started, "code": result.smtp_code}
-    if result.ok:
-        stmt, params, outcome = _SENT, {**base, "now": deps.clock()}, "sent"
-    elif final or (result.error_class is not None and not result.retryable):
-        stmt, params, outcome = _FAIL, {**base, "cls": cls}, "failed"
-    else:
-        stmt, params, outcome = _RETRY, {**base, "cls": cls}, "retrying"
+    stmt, params = {
+        "sent": (_SENT, {**base, "now": deps.clock()}),
+        "failed": (_FAIL, {**base, "cls": d.cls}),
+        "retrying": (_RETRY, {**base, "cls": d.cls}),
+    }[d.outcome]
     ids = {"ref": c.ref, "delivery_id": str(c.id)}
     async with acquire() as conn, conn.begin():
         if not (await conn.execute(stmt, params)).rowcount:
@@ -472,31 +475,33 @@ async def _settle(
                 "assess_notify_fence_lost", kind=run.kind.value, job_id=run.root
             )
             return False
-        await _audit(
+
+        async def audit(cn: Any, event: Any, **kw: Any) -> None:
+            await _audit(cn, event, run, **kw)
+
+        await record(
+            audit,
             conn,
-            AssessAuditEvent.NOTIFY_ATTEMPT,
-            run,
-            reason=cls,
+            _EVENTS,
+            d,
             attempt=c.attempts,
-            outcome=outcome,
             smtp_code=result.smtp_code,
             duplicate=c.duplicate,
-            **ids,
+            ids=ids,
         )
-        if outcome == "sent":
-            await _audit(conn, AssessAuditEvent.NOTIFY_SENT, run, **ids)
-        elif outcome == "failed":
-            await _audit(conn, AssessAuditEvent.NOTIFY_FAILED, run, reason=cls, **ids)
-    if outcome == "sent":
-        out.sent += 1
-    elif outcome == "failed":
-        out.failed += 1
-        _alert("notify_failed", run.kind, reason_code=cls)
-    else:
-        out.retrying += 1
+    count(out, d.outcome)
+    if d.outcome == "failed":
+        _alert("notify_failed", run.kind, reason_code=d.cls)
     if result.error_class in ALERTING:
         _alert(f"smtp_{result.error_class.value}", run.kind)
-    return outcome == "retrying"
+    return d.outcome == "retrying"
+
+
+_EVENTS = AttemptEvents(
+    AssessAuditEvent.NOTIFY_ATTEMPT,
+    AssessAuditEvent.NOTIFY_SENT,
+    AssessAuditEvent.NOTIFY_FAILED,
+)
 
 
 async def _row(
@@ -777,7 +782,8 @@ def _run(kind: JobKind, ctx: Any, event: Event, now: datetime) -> _Run:
 async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
     """One run of a notification. ``None``: malformed or stale job (a no-op that completes)."""
     now = deps.clock()
-    async with ctx.acquire() as conn:
+    acquire = budgeted(deps.db_budget, ctx.acquire)
+    async with acquire() as conn:
         event = await read_event(conn, kind, ctx.args)
         await conn.rollback()
     if event is None:
@@ -785,13 +791,13 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
         return None
     run = _run(kind, ctx, event, now)
     out = Notified()
-    configured = await _recipients(deps, ctx.acquire, run)
+    configured = await _recipients(deps, acquire, run)
     by_ref = (
         None
         if configured is None
         else {notify_ref(kind, event.site_id, a): a for a in configured}
     )
-    async with ctx.acquire() as conn, conn.begin():
+    async with acquire() as conn, conn.begin():
         if "since" not in ctx.args:
             # a root job retried by the runner: the window counts from the rows it already
             # addressed, not from the retry (CodeRabbit 4513956336)
@@ -811,13 +817,13 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
     if by_ref is None:
         out.unresolved = True
         _alert(RECIPIENTS_UNRESOLVED, kind)
-        await _next_run(deps, ctx.acquire, run, out, busy_only=False)
+        await _next_run(deps, acquire, run, out, busy_only=False)
         return out
     if now >= _cutoff(deps, run):
         # a run that starts past the window and its grace (a worker down for hours) sends
         # nothing: its live rows are FAILED window_expired, as the transcript handler does
         # past its cutoff (CodeRabbit 4513956352)
-        await _expire(deps, ctx.acquire, run, out)
+        await _expire(deps, acquire, run, out)
         log.info("assess_notify_expired", kind=kind.value, job_id=run.root)
         return out
     # every row runs to its end even when one raises (review #1: no orphaned send a retried
@@ -827,7 +833,7 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
         *(
             _row(
                 deps,
-                ctx.acquire,
+                acquire,
                 run,
                 r.id,
                 r.recipient_ref,
@@ -835,7 +841,7 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
                 out,
             )
             if r.recipient_ref in by_ref
-            else _gone(deps, ctx.acquire, run, r.id, r.recipient_ref, out)
+            else _gone(deps, acquire, run, r.id, r.recipient_ref, out)
             for r in live
         ),
         return_exceptions=True,
@@ -856,7 +862,7 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
             retry.append(bool(res))
     if any(retry):
         busy_only = out.retrying == 0 and out.errors == 0
-        await _next_run(deps, ctx.acquire, run, out, busy_only=busy_only)
+        await _next_run(deps, acquire, run, out, busy_only=busy_only)
     log.info(
         "assess_notify_run",
         kind=kind.value,

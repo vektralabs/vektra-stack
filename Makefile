@@ -33,7 +33,7 @@ endif
 # Targets
 # --------------------------------------------------------------------------
 
-.PHONY: help up down health ingest query demo logs test test-assess-ui test-assess-e2e lint reindex batch-ingest eval-retrieval eval-e2e eval-assess assess-keys
+.PHONY: help up down health ingest query demo logs test test-assess-ui test-assess-e2e lint reindex batch-ingest eval-retrieval eval-e2e eval-assess assess-keys test-chaos-assess
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { \
@@ -86,6 +86,20 @@ test-assess-ui: ## Assess discussion UI: no-HTML-sink lint, type check, build, v
 test-assess-e2e: ## Assess discussion UI in Chromium: Playwright + axe, two origins, fake model (needs Docker, Node 22)
 	cd vektra-assess/ui && npm ci --ignore-scripts && npx playwright install chromium
 	VEKTRA_ASSESS_E2E_REQUIRED=1 uv run pytest vektra-assess/tests/integration/test_ui_e2e.py -m integration -v
+
+# The assess chaos suite (plan assess-hardening-release): real worker processes killed, Postgres
+# restarted, links blackholed; every scenario ends with tests/chaos/assess/invariants.py. The gate
+# fails on a skipped case, on fewer cases or invariant reports than declared, or on any violation.
+# This target is the one definition of the chaos run: the CI chaos jobs call `make test-chaos-assess`.
+CHAOS_DIR_OUT ?= test-results/assess-chaos
+CHAOS_MIN_CASES ?= 71
+CHAOS_MIN_SCENARIOS ?= 27
+test-chaos-assess: ## Assess chaos suite + invariant gate (needs Docker); report in test-results/assess-chaos
+	rm -rf $(CHAOS_DIR_OUT) && mkdir -p $(CHAOS_DIR_OUT)
+	CHAOS_REPORT_DIR=$(CHAOS_DIR_OUT) uv run pytest tests/chaos/assess vektra-assess/tests/integration/test_chaos_*.py -v --tb=short \
+		--junitxml=$(CHAOS_DIR_OUT)/junit.xml; status=$$?; \
+	uv run python tests/chaos/assess/gate.py $(CHAOS_DIR_OUT)/junit.xml $(CHAOS_DIR_OUT) \
+		$(CHAOS_MIN_CASES) $(CHAOS_MIN_SCENARIOS) && exit $$status
 
 assess-keys: ## Generate a complete set of assess keyrings in ./secrets/assess/ (mode 0400, never overwrites)
 	uv run python -m vektra_assess.keys generate --out ./secrets/assess

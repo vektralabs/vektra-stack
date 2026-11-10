@@ -194,12 +194,28 @@ def _resolve(token: str) -> list[Path]:
     return sorted(REPO_ROOT.glob(token.rstrip("/")))
 
 
-def _invocations(script: str, source: str) -> list[Invocation]:
+def _invocations(
+    script: str, source: str, *, follow_make: bool = False
+) -> list[Invocation]:
     found = []
     for line in script.replace("\\\n", " ").splitlines():
         line = line.strip()
         # A `#` line is a comment even inside a `run:` block, and a comment runs nothing.
-        if line.startswith("#") or "pytest" not in line:
+        if line.startswith("#"):
+            continue
+        if follow_make and line.startswith("make "):
+            # a workflow that runs `make <target>` runs that target's recipe: the pytest
+            # commands are read from the Makefile, the one place they are written
+            for target in shlex.split(line)[1:]:
+                if not target.startswith("-") and "=" not in target:
+                    found.extend(
+                        _invocations(
+                            _target_recipe(target),
+                            f"{source} via `make {target}`",
+                        )
+                    )
+            continue
+        if "pytest" not in line:
             continue
         try:
             tokens = shlex.split(line)
@@ -228,18 +244,23 @@ def _invocations(script: str, source: str) -> list[Invocation]:
     return found
 
 
-def _makefile_invocations() -> list[Invocation]:
+def _target_recipe(target: str) -> str:
+    """The recipe lines of one Makefile target (empty when the target does not exist)."""
     recipe: list[str] = []
     inside = False
     for line in MAKEFILE.read_text(encoding="utf-8").splitlines():
-        if line.startswith("test:"):
+        if line.startswith(f"{target}:"):
             inside = True
         elif inside:
             if line.startswith("\t"):
                 recipe.append(line)
             elif line.strip():
                 break  # the next target begins
-    return _invocations("\n".join(recipe), "the `test` target in the Makefile")
+    return "\n".join(recipe)
+
+
+def _makefile_invocations() -> list[Invocation]:
+    return _invocations(_target_recipe("test"), "the `test` target in the Makefile")
 
 
 def _workflow_invocations() -> list[Invocation]:
@@ -250,7 +271,9 @@ def _workflow_invocations() -> list[Invocation]:
             for step in job.get("steps") or []:
                 if run := step.get("run"):
                     found.extend(
-                        _invocations(run, f"job `{job_id}` in {workflow.name}")
+                        _invocations(
+                            run, f"job `{job_id}` in {workflow.name}", follow_make=True
+                        )
                     )
     return found
 
@@ -343,3 +366,15 @@ def test_every_integration_suite_runs_in_ci() -> None:
         "workflow runs them with `-m integration`. They are executed by nothing:\n  "
         + "\n  ".join(missing)
     )
+
+
+def test_a_make_target_called_by_a_workflow_is_followed_into_the_makefile() -> None:
+    """The chaos jobs run `make test-chaos-assess`: its pytest command lives only in the
+    Makefile, and the guard must see it there (an unfollowed `make` would leave the chaos
+    suites "run by nothing")."""
+    chaos = [
+        i for i in _workflow_invocations() if "via `make test-chaos-assess`" in i.source
+    ]
+    assert chaos, "the chaos jobs' `make test-chaos-assess` was not followed"
+    assert any(REPO_ROOT / "tests" / "chaos" / "assess" in i.paths for i in chaos)
+    assert _invocations("make no-such-target", "x", follow_make=True) == []

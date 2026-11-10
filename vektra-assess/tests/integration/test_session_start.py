@@ -205,8 +205,22 @@ async def test_advisory_refusals_write_nothing_but_their_audit(  # type: ignore[
             pg,
             "SELECT count(*) FROM assess_audit_events WHERE event='assess_start_refused'",
         )
+        live_before = await n(
+            pg, "SELECT count(*) FROM assess_sessions WHERE state <> 'CLOSED'"
+        )
         r = await start(w, token)
-        assert r.status_code == status, r.text
+        if r.status_code != status:
+            # evidence for an intermittent 401 seen once in a full run (plan 13a): what the
+            # advisory checks saw and which refusal, if any, the route audited
+            refusals = await pg.run(
+                "super",
+                "SELECT reason_code, data FROM assess_audit_events "
+                "WHERE event = 'assess_start_refused' ORDER BY id DESC LIMIT 3",
+            )
+            raise AssertionError(
+                f"{r.status_code} != {status}: {r.text}; live sessions before Start: "
+                f"{live_before}; K={settings_over or 'default'}; last refusals: {refusals}"
+            )
         if reason is not None:
             assert err(r)["details"]["reason"] == reason
         assert (

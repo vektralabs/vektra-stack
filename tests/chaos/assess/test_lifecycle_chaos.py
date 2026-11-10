@@ -35,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from invariants import assert_invariants
 from sqlalchemy.ext.asyncio import create_async_engine
 
 pytestmark = pytest.mark.integration
@@ -80,6 +81,8 @@ async def seed(pg: Any, state: str = "ACTIVE") -> tuple[uuid.UUID, uuid.UUID]:
         for sql in (
             "INSERT INTO assess_snapshots (session_id, ciphertext, content_hash) "
             "VALUES (:s, '\\x01', :g)",
+            "INSERT INTO assess_session_keys (session_id, kek_wrapped, kek_kid, key_version) "
+            "VALUES (:s, '\\x05', 'k1', 1)",
             "INSERT INTO assess_turns (session_id, turn_no, role, kind, ciphertext, turn_hash, "
             "prev_hash) VALUES (:s, 1, 'bot', 'opening', '\\x02', 'h1', :g)",
             "UPDATE assess_sessions SET state = 'ACTIVE' WHERE id = :s",
@@ -187,6 +190,7 @@ async def test_each_close_reason_by_row_count(pg, reason: str) -> None:  # type:
             assert exc.value.step == "closed"  # the old token reaches the closed check
     finally:
         await engine.dispose()
+    await assert_invariants(pg, f"close:{reason}", expect_sessions=1, sites=[site])
 
 
 async def test_kill9_mid_preflight_commit_leaves_the_student_eligible(pg) -> None:  # type: ignore[no-untyped-def]
@@ -225,12 +229,13 @@ async def test_kill9_mid_preflight_commit_leaves_the_student_eligible(pg) -> Non
         )
         == "start_timeout"
     )
+    await assert_invariants(pg, "kill9:preflight", expect_sessions=0)
 
 
 async def test_kill9_of_the_api_mid_reply_releases_the_claim(pg) -> None:  # type: ignore[no-untyped-def]
     from vektra_assess.turn_markers import REPLY_CLAIM_KEY_SQL
 
-    _site, sid = await seed(pg)
+    site, sid = await seed(pg)
     try_lock = f"SELECT pg_try_advisory_lock({REPLY_CLAIM_KEY_SQL})"
     unlock = f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"
     proc = hold(
@@ -260,13 +265,14 @@ async def test_kill9_of_the_api_mid_reply_releases_the_claim(pg) -> None:  # typ
     finally:
         if proc.poll() is None:
             kill9(proc)
+    await assert_invariants(pg, "kill9:api-mid-reply", expect_sessions=1, sites=[site])
 
 
 async def test_postgres_restart_mid_turn_never_duplicates_a_turn(pg_fixed_port) -> None:  # type: ignore[no-untyped-def]
     import docker
 
     pg = pg_fixed_port
-    _site, sid = await seed(pg)
+    site, sid = await seed(pg)
     append = (
         "SELECT assess_append_turn(CAST(:s AS uuid), 1, 0, 'student', 'normal', "
         "'\\x04'::bytea, 'h2', 'h1')"
@@ -297,3 +303,84 @@ async def test_postgres_restart_mid_turn_never_duplicates_a_turn(pg_fixed_port) 
         )
         is True
     )
+    await assert_invariants(
+        pg, "postgres-restart:mid-turn", expect_sessions=1, sites=[site]
+    )
+
+
+async def _session_rows(pg: Any, sid: Any) -> tuple[Any, ...]:
+    return tuple(
+        (
+            await pg.run(
+                "super",
+                "SELECT s.state, s.epoch, "
+                "(SELECT count(*) FROM assess_session_handoff h WHERE h.session_id = s.id), "
+                "(SELECT count(*) FROM assess_jobs j WHERE j.kind = 'transcript_generate' "
+                " AND j.args->>'session_id' = CAST(s.id AS text)), "
+                "(SELECT count(*) FROM assess_turns t WHERE t.session_id = s.id) "
+                "FROM assess_sessions s WHERE s.id = :s",
+                {"s": sid},
+            )
+        )[0]
+    )
+
+
+async def test_kill9_of_the_api_mid_lazy_close_leaves_the_session_live_then_closes_once(
+    pg,
+) -> None:  # type: ignore[no-untyped-def]
+    """The API's lazy close (gate step 5) killed inside its transaction: nothing of the close
+    survives (state, epoch, hand-off and job unchanged), and the next request closes exactly once."""
+    site, sid = await seed(pg)
+    before = await _session_rows(pg, sid)
+    assert before == ("ACTIVE", 1, 1, 0, 1)
+    close = "SELECT assess_close_session(CAST(:s AS uuid), 1, 'timed_out')"
+    proc = hold(pg.url("api"), close, {"s": str(sid)})
+    kill9(proc)
+    await asyncio.sleep(0.5)
+    assert await _session_rows(pg, sid) == before  # the killed close left no trace
+    await assert_invariants(
+        pg, "kill9:api-mid-lazy-close", expect_sessions=1, sites=[site]
+    )
+    assert (await pg.run("api", close, {"s": str(sid)}))[0][0] is True
+    # a second request racing the first: whatever it returns, it closes nothing again (no
+    # second job, no second epoch bump), the exactly-one close of REQ-067
+    await pg.run("api", close, {"s": str(sid)})
+    assert await _session_rows(pg, sid) == ("CLOSED", 2, 0, 1, 1)
+    await assert_invariants(
+        pg, "lazy-close:after-kill", expect_sessions=1, sites=[site]
+    )
+
+
+async def test_an_epoch_bump_mid_stream_refuses_the_late_append(pg) -> None:  # type: ignore[no-untyped-def]
+    """A reply streamed under epoch 1 when a close bumps the epoch to 2: its late persist is
+    refused, the turn count is unchanged, and the session stays closed exactly once."""
+    site, sid = await seed(pg)
+    append = (
+        "SELECT assess_append_turn(CAST(:s AS uuid), 1, 0, 'student', 'normal', "
+        "'\\x04'::bytea, 'h2', 'h1')"
+    )
+    assert (
+        await pg.run(
+            "worker",
+            "SELECT assess_close_session(CAST(:s AS uuid), 1, 'service_failure')",
+            {"s": str(sid)},
+        )
+    )[0][0] is True
+    late = (await pg.run("api", append, {"s": str(sid)}))[0][0]
+    assert late is None
+    assert await _session_rows(pg, sid) == ("CLOSED", 2, 0, 1, 1)
+    await assert_invariants(
+        pg, "epoch-bump:mid-stream", expect_sessions=1, sites=[site]
+    )
+
+
+async def test_control_the_same_append_succeeds_without_the_epoch_bump(pg) -> None:  # type: ignore[no-untyped-def]
+    """Negative control for the epoch scenario: without the close the append is accepted, so the
+    refusal above is caused by the epoch, not by a broken statement."""
+    _site, sid = await seed(pg)
+    append = (
+        "SELECT assess_append_turn(CAST(:s AS uuid), 1, 0, 'student', 'normal', "
+        "'\\x04'::bytea, 'h2', 'h1')"
+    )
+    assert (await pg.run("api", append, {"s": str(sid)}))[0][0] == 2
+    assert (await _session_rows(pg, sid))[4] == 2

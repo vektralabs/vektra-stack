@@ -1,10 +1,10 @@
 # Implementation Plan: Assess hardening, NFR verification campaign and release
 
 **ID**: 20261101-154950-assess-hardening-release
-**Status**: active
-**Branch**: N/A
+**Status**: in_progress
+**Branch**: feat/assess-hardening-release (13a)
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-01T20:58:19Z
+**Updated**: 2026-11-10T16:00:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -102,13 +102,13 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 ## Tasks
 
 ### Chaos suite consolidation
-- [ ] Create `tests/chaos/assess/` with the compose driver, fault-injecting LLM stub (latency, 5xx, stall) and mail-sink toggles reused from plan 10; `invariants.py` checker
-- [ ] Implement the scenario matrix (close reasons × kill points × Postgres restart); each test asserts invariants and the exact expected row deltas
-- [ ] Key-lifecycle chaos: API restart with live sessions (resume from handoff row without worker), worker down for 10 min (turns continue, closes deferred, then reconciled), epoch bump mid-stream
-- [ ] `make test-chaos-assess` and a nightly `chaos-assess` job in `integration.yml` (also required on release tags); results artifact = invariant report
+- [x] Create `tests/chaos/assess/` with the compose driver, fault-injecting LLM stub (latency, 5xx, stall) and mail-sink toggles reused from plan 10; `invariants.py` checker
+- [x] Implement the scenario matrix (close reasons × kill points × Postgres restart); each test asserts invariants and the exact expected row deltas
+- [x] Key-lifecycle chaos: API restart with live sessions (resume from handoff row without worker), worker down for 10 min (turns continue, closes deferred, then reconciled), epoch bump mid-stream
+- [x] `make test-chaos-assess` and a nightly `chaos-assess` job in `integration.yml` (also required on release tags); results artifact = invariant report
 
 ### NFR verification campaign
-- [ ] `scripts/assess_nfr_report.py`: reads audit events + rows, computes p50/p95/p99 per NFR, commit rate, service_failure rate, capacity refusals, concurrency distribution
+- [x] `scripts/assess_nfr_report.py`: reads audit events + rows, computes p50/p95/p99 per NFR, commit rate, service_failure rate, capacity refusals, concurrency distribution
 - [ ] NFR-020 / OQ-032: burst runs (20/30/40 Starts, 10-file submissions) at K = 5/10/15/20 on each candidate hardware configuration; write `docs/guides/operators/assess-sizing.md` with the evidence table and the recommended K and topology (decision input)
 - [ ] NFR-018: latency at the chosen K on the reference model (OQ-026) — Inizia→commit, first visible output, full ~150-word reply
 - [ ] NFR-019: 1-min probe over a 24 h soak with synthetic sessions; commit rate and service_failure rate excluding student-caused and capacity refusals
@@ -130,7 +130,7 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 
 ### Release
 - [ ] Release checklist `docs/guides/contributors/release-assess.md` (or the existing release section): version bump in every workspace `pyproject.toml` (currently 0.7.1) to the next minor, `uv lock`, CHANGELOG `[Unreleased]` → `[X.Y.0] - date` + fresh `[Unreleased]`, BUG-027 qemu baseline green with the assess modules, image built by `publish.yml` on tag and smoke-tested (`/health`, `/health/assess`, setup check), minimum plugin_version enforced at mint matches the released plugin
-- [ ] Image content boundary: `test_image_content_boundary.py` asserts assess UI assets present and no test fixtures, mail-sink, canary datasets or `.s2s/` in the image
+- [x] Image content boundary: `test_image_content_boundary.py` asserts assess UI assets present and no test fixtures, mail-sink, canary datasets or `.s2s/` in the image
 - [ ] Pilot go/no-go document `docs/guides/operators/assess-pilot-go-no-go.md` with the criteria below, signed off per item with evidence links
 
 ## State & Data Lifecycle
@@ -223,3 +223,190 @@ every release, with a manual exploratory session on top.
   reserve for heartbeats), not a notification-only limit; it belongs to the NFR-020 sizing work
   here, with a load test (2 delivery jobs x 3 rows, DB latency injected) proving heartbeats stay
   fresh.
+
+- **Split 13a / 13b (coordinator decision, 2026-11-10).** Plan 13 depends on every plan, the plugin
+  P3 included (run by the plugin session); it proceeds with the tasks that do not need P3.
+  - **13a** (branch `feat/assess-hardening-release`): "Chaos suite consolidation" (all four tasks),
+    `scripts/assess_nfr_report.py`, the image content boundary test, and the items earlier PRs
+    deferred here: the claim/settle duplication between the notify and transcript handlers
+    (CodeRabbit on #190), the DB-connection budget shared by every handler (CodeRabbit 4513956359),
+    the REQ-080 compose-stack canary grep left BLOCKED by 12b, and the key-rotation wiring where
+    it is code (the runbook text is 13b).
+  - **13b**: runbooks, operator docs, the reference-docs completion, the release checklist and the
+    pilot go/no-go document.
+  - NFR campaign items that need the target VM, HPC, the reference model (OQ-026), the production
+    relay, live Moodle with login-as or a manual screen reader are BLOCKED with the missing
+    environment and the command to run; never reported as PASS.
+- **Chaos runner (13a).** `make test-chaos-assess` runs the suite with `CHAOS_REPORT_DIR` and then
+  `tests/chaos/assess/gate.py`: it fails on a skipped case, on fewer cases (41) or invariant
+  reports (12) than declared, or on any violation, and writes `invariants.md`. The PR job in
+  `integration.yml` calls the target; a separate `.github/workflows/chaos-assess.yml` runs it
+  nightly (02:17 UTC), on every `v*` tag and on demand, keeping the report 90 days. Drift: the plan
+  named a nightly job inside `integration.yml`; a schedule there would re-run every integration job
+  nightly, so the nightly run is its own workflow. First local run (2026-11-10): 41 passed, gate PASS.
+- **NFR report (13a).** `scripts/assess_nfr_report.py` reads only rows: commit latency from
+  `assess_sessions.created_at` (the STARTING row the Start writes) to `committed_at`, full reply
+  from a student turn to the next bot turn, Start outcomes from `assess_start_attempts`, closes
+  from `close_reason`, and a sweep of live intervals for the concurrency distribution. First
+  visible output is in no row, so it is always BLOCKED, never estimated from a server proxy.
+  "Admitted" (NFR-019) excludes `capacity` (reported for NFR-020), `part_b_rejected` (student) and
+  `terminated_by_teacher`: an assumption to confirm with QA. A sample below its minimum is BLOCKED
+  and one BLOCKED item keeps the report from PASS. Exit 0/1/2 = PASS/FAIL/BLOCKED.
+- **Shared row connection budget (13a, done).** `vektra_assess.delivery.budget.RowDbBudget`: one
+  semaphore of `VEKTRA_ASSESS_WORKER_POOL_SIZE - 2` permits, never below 1, created once in
+  `assess_worker._delivery_parts` and passed to both `DeliveryDeps` and `NotifyDeps`. Every
+  row-level checkout of the transcript and notification handlers takes a permit first. No handler
+  nests a checkout inside another, which an AST check confirmed before wiring, so the budget cannot
+  deadlock. The load test `integration/test_row_db_budget_load.py` runs 2 jobs x 3 rows with 0.6 s
+  of injected DB latency on a pool of 5: with the budget the rows hold at most 3 connections and
+  the heartbeat never waits half a row's latency; the unbudgeted control takes all 5 and queues the
+  heartbeat. The SMTP test send (single row) and the job loop stay outside the budget.
+- **Claim/settle duplication (13a, done; deferred from the review of #190).** The attempt outcome
+  (sent / failed / retrying, with the retry window) and the three audit events of an attempt now
+  live once, in `vektra_assess.delivery.attempt` (`decide`, `record`, `count`), used by both
+  `_settle` functions. The two handlers differ only in where a retry's `not_before` comes from
+  (the transcript schedule, or the notification's next run) and in the event names. The claim
+  stays per handler: its statement, its Message-ID scheme and the transcript window re-check are
+  specific to the row kind, so a shared claim would need a parameter for every one of them.
+  Behaviour is unchanged: the existing notify and delivery suites (89 tests) pass unmodified.
+- **Key rotation, code half (13a, done).** `python -m vektra_assess.keys rewrap --what
+  {session-keys|transcripts} --from-kid K` runs the plan-2 helpers as the worker role, in committed
+  batches, until no row is left under `K` (exit 0), with rows left after a stall (exit 1), or when
+  it cannot run (exit 2: settings, keys, a kid the keyring does not hold, or a kid that is still
+  active). `transcripts` re-encrypts the transcript DEKs **and** the teachers' reasons in one
+  command, which closes the gap left open since 11b: `rewrap_teacher_reasons` had no caller. The
+  batch driver is `crypto.rotation.rewrap_to_done`, and its stall guard stops a run that a row
+  locked elsewhere would otherwise keep spinning. `keys_verify.open_role` is shared by `verify`
+  and `rewrap`. The cadence, ordering and retirement steps are runbook text, so they stay in 13b.
+- **Chaos consolidation status at the end of 13a.**
+  - Task 1 (harness, invariants): `invariants.py` is done, with a negative control for every
+    invariant, and the mail sink gained `hold_after_data`. Drift: the harness drives real worker
+    processes, child processes and a testcontainers Postgres, not `docker compose kill`. That kills
+    the same OS processes without needing the full stack, which cannot run in CI (see the BLOCKED
+    list). The fault-injecting LLM stub is not built: no 13a scenario needs it. It comes with the
+    API-turn scenarios. Task left open.
+  - Task 2 (matrix), covered so far:
+    - the six close reasons;
+    - kill -9 mid pre-flight commit;
+    - kill -9 of the API mid-reply;
+    - Postgres restart mid-turn;
+    - kill -9 of the worker mid-handler;
+    - Postgres restart under job load;
+    - **kill -9 of the delivering process between DATA and 250**
+      (`vektra-assess/tests/integration/test_chaos_mid_smtp_kill.py`, new).
+
+    Each one ends with the invariant checker. Not yet covered: the worker killed mid-generation,
+    Postgres restarted during delivery and during a Start burst, the parser killed mid-extraction,
+    and the cross product with the API lazy close. Task left open.
+  - Task 3 (key-lifecycle chaos: API restart resuming from the hand-off row, worker down
+    10 min, epoch bump mid-stream): not started in 13a. Task left open.
+  - **REQ-080 compose-stack canary grep: still BLOCKED.** The chaos harness does not bring up the
+    compose stack, and the stack still lacks an LMS site with a released attempt, an activated
+    model and a test relay (the NFR-021 gap). Command once they exist:
+    `tests/nfr/assess_canary_grep.sh` over the stack's logs, mail log and `/metrics` (plan 12
+    Notes).
+- **NFR campaign items, BLOCKED by environment (13a).** None is reported PASS:
+  - NFR-020 / OQ-032 K sweep, and NFR-018 latency: blocked on the target VM or HPC and the
+    reference model (OQ-026). Run `scripts/assess_burst.py` at K = 5/10/15/20, then
+    `VEKTRA_NFR_ASSESS_DSN=... VEKTRA_NFR_ASSESS_SINCE=... python scripts/assess_nfr_report.py`.
+  - NFR-019 24 h soak: blocked on the target VM. Same report script over the soak window.
+  - NFR-021: blocked on the target VM and the production-like relay. Run
+    `scripts/assess_transcript_timing.py` (plan 10).
+  - NFR-014 pen matrix: blocked on live LMS 4.3/5.2 with login-as (OQ-031).
+  - NFR-015 / NFR-017 canary suites on the target model: blocked on OQ-026.
+  - NFR-016 manual NVDA/VoiceOver pass: blocked on a person with a screen reader.
+- **13a, second pass (coordinator request of 2026-11-10).** Built in this pass:
+  - the fault-injecting LLM stub (`tests/chaos/assess/llm_stub.py`): ok, latency, 5xx and stall,
+    each checked through litellm;
+  - the API killed in the middle of a lazy close;
+  - an epoch bump mid-stream, with a negative control;
+  - the worker killed in the middle of generation (`test_chaos_mid_generation_kill.py`).
+
+  The gate now declares 49 cases and 15 invariant reports.
+
+  **Still open, not started in this pass** (none of them needs the full compose stack, so none is
+  BLOCKED; the fork ran out of turns):
+  - a Postgres restart during delivery, and one during a Start burst;
+  - the parser killed mid-extraction;
+  - an API restart with live sessions, resuming from the hand-off row without the worker;
+  - the worker down 10 min on an injected clock.
+
+  The LLM stub is not yet wired into a scenario: it is meant for the three-failed-calls
+  service_failure path and the stalled reply.
+
+- **13a, third pass (coordinator request of 2026-11-10): chaos tasks 1-3 complete.** Every
+  scenario below asserts exact row deltas by counting rows, ends with `assert_invariants`, has a
+  negative control and fails if its fault was not actually hit. Files in
+  `vektra-assess/tests/integration/` (they need the in-process API and the seeded sessions):
+  - `test_chaos_api_restart.py` (end of the second pass): the API's DEK cache dropped, the session
+    reads its history from the hand-off row, no worker; control: without the row the read fails.
+  - `test_chaos_worker_outage.py`: worker down 10 min on an injected clock (the rows the lifecycle
+    compares to `now()` are rewound; nothing sleeps). **Drift, measured:** turns continue only for
+    the enrolment freshness window (`VEKTRA_ASSESS_ENROLMENT_FRESHNESS_S`, 150 s); past it a turn is
+    refused 503 `enrolment_freshness`, state unchanged, audited. That is the designed fail-closed of
+    gate step 6 (NFR-014, M3.7), not a bug, so the plan line "turns continue" for 10 min does not
+    hold and the test asserts the refusal. Closes are deferred: the API's lazy close still closes a
+    timed-out session (job left `ready`), an abandoned one stays ACTIVE. When the worker returns
+    (re-check, sweeper, production claim + transcript handler + fenced complete) the abandoned one
+    closes `timed_out`, both transcripts are generated once, no job is left, turns are accepted
+    again, settled invariants pass. Control: without the returning worker the settled check fails.
+  - `test_chaos_postgres_restart.py` (new `pg_fixed_port` fixture): a real `docker restart` while
+    the mail sink holds DATA without its 250 (at least one settle lost; the retry gives one SENT per
+    recipient, one `possible_duplicate` per lost claimed row, at most 2 copies per Message-ID;
+    control: an empty relay fails `sink_copies`), and during a burst of 30 Starts (each student has
+    all four rows of a Start or none; the failed ones start again and get exactly one session;
+    control: a STARTING row without its job is reported).
+  - `test_chaos_parser_kill.py`: the real sidecar process group frozen with the capture's first
+    extraction request on its socket, then SIGKILL. The client reports `closed_without_reply`, the
+    pre-flight rolls back (`internal_error`: the parser outage has no reason code of its own), no
+    content row survives; the restarted sidecar and the same path unkilled commit once (control).
+  - `test_chaos_llm_faults.py`: `llm_stub.py` wired through the production runner composition
+    (`vektra_app.assess_llm`). 3 x 503 closes `service_failure` (2 outage intervals, transcript and
+    teacher-notify jobs, no bot reply); control: the stub back to `ok` before the third call answers
+    the turn. A stalled provider enters OUTAGE at the outage timeout (`first_token_timeout`), then
+    the same pending turn is answered once. Measured: a `service_failure` close leaves
+    `pending_reply_since` set on the CLOSED row; only ACTIVE rows read it, so it is harmless.
+  - Not a full cartesian product: the six close reasons are each run once through the one close
+    function, and each kill point is run with the close path it can actually interrupt.
+- **Chaos gate after the third pass.** `make test-chaos-assess`, the PR job in `integration.yml`
+  and `chaos-assess.yml` now also run `vektra-assess/tests/integration/test_chaos_*.py`, so every
+  chaos scenario reaches the gate and its report. The gate no longer counts the checker's own
+  negative controls towards the declared scenario minimum (before, a run made only of negative
+  controls could meet it). Declared: **61 cases, 26 invariant reports**.
+- **Review of the 13a branch (/code-review high, 2026-11-10): all eight findings and both
+  cleanups hold and are fixed, each with a test that failed first.** None was rejected.
+  - keys rewrap: `run()` read `.value` from an `AssessKeyring` and refused every run; fixed, with an
+    end-to-end test through `run()` on a two-kid keyring. A row that does not decrypt is now
+    skipped and named by id (exit 1, "a data or key problem"), the other rows are re-wrapped.
+  - NFR report: the API's advisory refusals (`capacity`, `worker_not_ready`, `worker_heartbeat`)
+    are read from `assess_start_refused` audit events: capacity to NFR-020 and out of "admitted",
+    worker-unavailable against the NFR-019 rate.
+  - Heartbeat isolation: the worker builds a one-connection liveness engine, carved out of
+    `VEKTRA_ASSESS_WORKER_POOL_SIZE` (job pool 4 + liveness 1 + control: INT-002 unchanged), for the
+    heartbeat, the lease reaper and the STARTING reaper. `RowDbBudget.RESERVED` is now 1 (the job
+    loop). Load test: the whole job pool held, the liveness ticks still run and the heartbeat row
+    is fresh; control without the engine starves.
+  - Gate and checker: distinct real scenario names (negative controls and `selftest:` rows not
+    counted); `expect_sessions` scoped to the scenario's sites (required when declared);
+    `sink_copies` excuses a second copy only for the row its duplicate audit names; the LLM stub
+    tracks its handlers so `stop()` ends a stall; the mail sink resets its hold events.
+  - One source for the chaos run: both workflows call `make test-chaos-assess`; the
+    suite-execution guard now follows a workflow's `make <target>` into the Makefile.
+  - Declared after the review: **68 cases, 26 scenarios** (distinct names).
+- **PR #195, first CodeRabbit pass and CI (2026-11-10).**
+  - CI: the parser-kill scenario failed on Linux with `reset` (ECONNRESET) where macOS gives
+    `closed_without_reply` (EOF). Both are `_Unavailable` in the client, so the same
+    `ParserUnavailableError` and the same `internal_error` rollback: no mapping change. The
+    scenario accepts exactly those two killed-peer outcomes; a unit test pins the Linux one.
+  - Major 4530369375, valid and fixed: on the one-connection liveness engine the lease reaper held
+    the connection while its dead-job audit asked for one, so the audit timed out and an exhausted
+    job stayed leased. The reaper no longer holds a connection across an audit write.
+  - Nitpicks fixed: invariant checks scoped to the scenario's sites (order-independent gate); a
+    malformed report line fails the gate but keeps the summary; keys rewrap disposes in one
+    `finally`; no uv cache in the release-tag chaos workflow; the image-content guard walks every
+    copied tree for nested test assets and canaries (migrations included).
+  - Not applied, with reason: "async file reads" in `test_image_content_boundary.py` (the tests
+    are synchronous, no event loop runs there, an async read would only add one); the
+    "docstring coverage" pre-merge check (not a repository policy, no threshold is configured
+    in this repo).
+  - Declared: **71 cases, 27 scenarios**.

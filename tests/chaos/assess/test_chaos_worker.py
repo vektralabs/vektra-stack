@@ -20,6 +20,7 @@ from harness import (
     worker_ready,
     worker_secrets,
 )
+from invariants import assert_invariants
 
 pytestmark = pytest.mark.integration
 
@@ -64,6 +65,9 @@ async def test_kill9_mid_handler_then_restart_completes_every_job_exactly_once(
             await pg.run("super", "SELECT count(*) FROM assess_jobs WHERE attempts = 2")
         )[0][0]
         assert reclaimed >= 1, "at least one job was re-run after its lease expired"
+        await assert_invariants(
+            pg, "kill9:worker-mid-handler", expect_sessions=0, only=["no_stale_lease"]
+        )
     finally:
         a.stop()
         if b is not None:

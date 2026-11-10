@@ -8,6 +8,9 @@ from fighting over a row.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -17,24 +20,48 @@ from vektra_assess.crypto.seal import open_sealed, seal
 from vektra_assess.crypto.transcript import unwrap_transcript_dek
 from vektra_assess.keys import AssessKeyring
 
+#: ``skip`` (plan 13a review): the rows of a re-wrap run that did not decrypt, as
+#: ``"<table>:<id>"``. They are left under the old kid, never retried in the same run and
+#: not counted as "left", so one corrupt row neither aborts the run nor stalls it; the
+#: caller reports them by id. Only ids go in, never content.
+_SKIP_SQL = "NOT (CAST({col} AS text) = ANY(CAST(:skip AS text[])))"
+
+
+def _skipped(skip: set[str] | None, table: str) -> list[str]:
+    prefix = f"{table}:"
+    return [k[len(prefix) :] for k in (skip or ()) if k.startswith(prefix)]
+
 
 async def rewrap_session_keys(
-    conn: AsyncConnection, keyring: AssessKeyring, from_kid: str, batch: int = 100
+    conn: AsyncConnection,
+    keyring: AssessKeyring,
+    from_kid: str,
+    batch: int = 100,
+    *,
+    skip: set[str] | None = None,
 ) -> int:
     """Re-wrap up to ``batch`` session DEKs from ``from_kid`` to the active kid."""
+    not_skipped = _SKIP_SQL.format(col="session_id")
+    excluded = _skipped(skip, "assess_session_keys")
     rows = (
         await conn.execute(
             text(
                 "SELECT session_id, kek_wrapped, key_version FROM assess_session_keys "
-                "WHERE kek_kid = :k AND kek_wrapped IS NOT NULL "
+                f"WHERE kek_kid = :k AND kek_wrapped IS NOT NULL AND {not_skipped} "
                 "ORDER BY session_id LIMIT :n FOR UPDATE SKIP LOCKED"
             ),
-            {"k": from_kid, "n": batch},
+            {"k": from_kid, "n": batch, "skip": excluded},
         )
     ).all()
     for sid, wrapped, version in rows:
-        dek = unwrap_dek(keyring, bytes(wrapped), sid, version)
-        blob, kid, new_version = wrap_dek(keyring, dek, sid, version + 1)
+        try:
+            dek = unwrap_dek(keyring, bytes(wrapped), sid, version)
+            blob, kid, new_version = wrap_dek(keyring, dek, sid, version + 1)
+        except Exception:
+            if skip is None:
+                raise
+            skip.add(f"assess_session_keys:{sid}")
+            continue
         await conn.execute(
             text(
                 "UPDATE assess_session_keys SET kek_wrapped = :b, kek_kid = :k, "
@@ -46,9 +73,9 @@ async def rewrap_session_keys(
         await conn.execute(
             text(
                 "SELECT count(*) FROM assess_session_keys "
-                "WHERE kek_kid = :k AND kek_wrapped IS NOT NULL"
+                f"WHERE kek_kid = :k AND kek_wrapped IS NOT NULL AND {not_skipped}"
             ),
-            {"k": from_kid},
+            {"k": from_kid, "skip": _skipped(skip, "assess_session_keys")},
         )
     ).scalar_one()
     return int(result)
@@ -159,28 +186,40 @@ async def reseal_teacher_configs(
 
 
 async def rewrap_transcript_deks(
-    conn: AsyncConnection, keyring: AssessKeyring, from_kid: str, batch: int = 100
+    conn: AsyncConnection,
+    keyring: AssessKeyring,
+    from_kid: str,
+    batch: int = 100,
+    *,
+    skip: set[str] | None = None,
 ) -> int:
     """Re-wrap up to ``batch`` transcript DEKs from ``from_kid``. Returns the remaining count."""
+    not_skipped = _SKIP_SQL.format(col="id")
     rows = (
         await conn.execute(
             text(
                 "SELECT id, dek_wrapped FROM assess_transcripts "
-                "WHERE transcript_kid = :k AND dek_wrapped IS NOT NULL "
+                f"WHERE transcript_kid = :k AND dek_wrapped IS NOT NULL AND {not_skipped} "
                 "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
             ),
-            {"k": from_kid, "n": batch},
+            {"k": from_kid, "n": batch, "skip": _skipped(skip, "assess_transcripts")},
         )
     ).all()
     for tid, wrapped in rows:
-        dek = unwrap_transcript_dek(keyring, tid, bytes(wrapped))
-        fresh = envelope.aead_encrypt(
-            keyring.active_key,
-            keyring.active,
-            dek,
-            purpose=envelope.Purpose.TRANSCRIPT_DEK,
-            binding=[tid],
-        )
+        try:
+            dek = unwrap_transcript_dek(keyring, tid, bytes(wrapped))
+            fresh = envelope.aead_encrypt(
+                keyring.active_key,
+                keyring.active,
+                dek,
+                purpose=envelope.Purpose.TRANSCRIPT_DEK,
+                binding=[tid],
+            )
+        except Exception:
+            if skip is None:
+                raise
+            skip.add(f"assess_transcripts:{tid}")
+            continue
         await conn.execute(
             text(
                 "UPDATE assess_transcripts SET dek_wrapped = :b, transcript_kid = :k WHERE id = :i"
@@ -191,16 +230,21 @@ async def rewrap_transcript_deks(
         await conn.execute(
             text(
                 "SELECT count(*) FROM assess_transcripts "
-                "WHERE transcript_kid = :k AND dek_wrapped IS NOT NULL"
+                f"WHERE transcript_kid = :k AND dek_wrapped IS NOT NULL AND {not_skipped}"
             ),
-            {"k": from_kid},
+            {"k": from_kid, "skip": _skipped(skip, "assess_transcripts")},
         )
     ).scalar_one()
     return int(result)
 
 
 async def rewrap_teacher_reasons(
-    conn: AsyncConnection, keyring: AssessKeyring, from_kid: str, batch: int = 100
+    conn: AsyncConnection,
+    keyring: AssessKeyring,
+    from_kid: str,
+    batch: int = 100,
+    *,
+    skip: set[str] | None = None,
 ) -> int:
     """Re-encrypt up to ``batch`` teacher reasons (resets and terminations, plan 11b) from
     ``from_kid`` to the active transcript KEK, per table. Returns the remaining count."""
@@ -211,19 +255,26 @@ async def rewrap_teacher_reasons(
     )
 
     remaining = 0
+    not_skipped = _SKIP_SQL.format(col="id")
     for table in TABLES:  # a closed list of table names, never input
         rows = (
             await conn.execute(
                 text(
                     f"SELECT id, reason_ct FROM {table} WHERE reason_kid = :k "
-                    "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
+                    f"AND {not_skipped} ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
                 ),
-                {"k": from_kid, "n": batch},
+                {"k": from_kid, "n": batch, "skip": _skipped(skip, table)},
             )
         ).all()
         for rid, blob in rows:
-            plain = decrypt_reason(keyring, table, rid, bytes(blob))
-            fresh, kid = encrypt_reason(keyring, table, rid, plain)
+            try:
+                plain = decrypt_reason(keyring, table, rid, bytes(blob))
+                fresh, kid = encrypt_reason(keyring, table, rid, plain)
+            except Exception:
+                if skip is None:
+                    raise
+                skip.add(f"{table}:{rid}")
+                continue
             await conn.execute(
                 text(
                     f"UPDATE {table} SET reason_ct = :b, reason_kid = :k WHERE id = :i"
@@ -233,9 +284,45 @@ async def rewrap_teacher_reasons(
         remaining += int(
             (
                 await conn.execute(
-                    text(f"SELECT count(*) FROM {table} WHERE reason_kid = :k"),
-                    {"k": from_kid},
+                    text(
+                        f"SELECT count(*) FROM {table} WHERE reason_kid = :k "
+                        f"AND {not_skipped}"
+                    ),
+                    {"k": from_kid, "skip": _skipped(skip, table)},
                 )
             ).scalar_one()
         )
     return remaining
+
+
+async def rewrap_to_done(
+    connect: Callable[[], Any],
+    steps: Sequence[Callable[[AsyncConnection], Awaitable[int]]],
+    *,
+    stall_after: int = 3,
+) -> int:
+    """Run each re-wrap step in committed batches until it reports 0 rows left (plan 13a).
+
+    Returns what is still left: 0 means the old kid can be retired. A step whose remaining count
+    does not go down for ``stall_after`` batches in a row stops the run with that count, so a
+    row locked elsewhere ends it instead of spinning forever; the caller runs it again later.
+    The helpers are resumable (``SKIP LOCKED``), so a stopped run loses nothing.
+    """
+    left_total = 0
+    for step in steps:
+        best: int | None = None
+        stalled = 0
+        while True:
+            async with connect() as conn:
+                left = await step(conn)
+                await conn.commit()
+            if left == 0:
+                break
+            if best is not None and left >= best:
+                stalled += 1
+                if stalled >= stall_after:
+                    left_total += left
+                    break
+            else:
+                best, stalled = left, 0
+    return left_total

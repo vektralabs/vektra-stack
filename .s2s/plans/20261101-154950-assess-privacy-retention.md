@@ -1,7 +1,7 @@
 # Implementation Plan: Assess privacy configuration, retention purge, erasure, export and metadata-only monitoring
 
 **ID**: 20261101-154950-assess-privacy-retention
-**Status**: in_progress (12a on `feat/assess-privacy-retention`; 12b later)
+**Status**: completed (12a merged, PR #191; 12b on `feat/assess-privacy-retention-12b`. BLOCKED: the compose run of the REQ-080 canary grep over a seeded discussion, moved to plan 13)
 **Branch**: feat/assess-privacy-retention
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-09T18:30:00Z

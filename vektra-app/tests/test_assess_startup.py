@@ -802,4 +802,6 @@ async def test_the_metrics_refresher_feeds_the_process_collector() -> None:
         assert 'vektra_assess_sessions{state="ACTIVE"} 3.0' in text
         assert "vektra_assess_metrics_up 1.0" in text
     finally:
-        app.state.assess_metrics_task.cancel()
+        await assess_wiring.stop_metrics_refresher(app)
+        # review #10: awaited, not only cancelled, before the engine is disposed
+        assert app.state.assess_metrics_task.done()

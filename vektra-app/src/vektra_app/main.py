@@ -622,9 +622,9 @@ async def _run_shutdown(app: FastAPI) -> None:
                 await aclose()
             except Exception as exc:
                 log.warning("provider_close_failed", category=category, error=str(exc))
-    metrics_task = getattr(app.state, "assess_metrics_task", None)
-    if metrics_task is not None:
-        metrics_task.cancel()
+    from vektra_app.assess_wiring import stop_metrics_refresher
+
+    await stop_metrics_refresher(app)
     assess_engine = getattr(app.state, "assess_engine", None)
     if assess_engine is not None:
         await assess_engine.dispose()

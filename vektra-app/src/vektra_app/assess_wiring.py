@@ -188,6 +188,19 @@ async def step_12_assess_check(
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
 
 
+async def stop_metrics_refresher(app: FastAPI) -> None:
+    """Shutdown: cancel the refresh and WAIT for it, so no query runs on a disposed engine."""
+    import asyncio
+    import contextlib
+
+    task = getattr(app.state, "assess_metrics_task", None)
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
 def start_metrics_refresher(app: FastAPI, engine: Any) -> None:
     """Plan assess-privacy-retention 12b: the content-free assess series on ``/metrics``,
     read from ``assess_metrics_snapshot()`` by a background refresh (a scrape never waits on

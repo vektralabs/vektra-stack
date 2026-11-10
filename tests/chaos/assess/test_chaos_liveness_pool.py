@@ -113,3 +113,46 @@ async def test_control_without_the_liveness_engine_the_heartbeat_starves(
     finally:
         await jobs.dispose()
         await live.dispose()
+
+
+async def test_the_lease_reaper_kills_an_exhausted_job_on_the_one_connection_engine(
+    pg, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    """CodeRabbit 4530369375: the reaper audits each dead job before marking it. On the
+    one-connection liveness engine it must not hold that connection while the audit asks for
+    one, or the audit times out and the row stays ``leased`` forever. Rows: the expired,
+    exhausted job becomes ``dead`` with exactly one ``assess_job_dead`` audit row."""
+    await pg.run("super", "DELETE FROM assess_jobs")
+    await pg.run(
+        "super", "DELETE FROM assess_audit_events WHERE event = 'assess_job_dead'"
+    )
+    job = (
+        await pg.run(
+            "super",
+            "INSERT INTO assess_jobs (kind, args, state, attempts, max_attempts, leased_by, "
+            "lease_until) VALUES ('purge', '{}', 'leased', 3, 3, 'gone', "
+            "now() - interval '1 minute') RETURNING id",
+        )
+    )[0][0]
+    jobs, live, bodies = _compose(monkeypatch, tmp_path, pg, liveness=True)
+    try:
+        await asyncio.wait_for(bodies["lease_reaper"](), 20)
+        state = await pg.run(
+            "super", "SELECT state FROM assess_jobs WHERE id = :i", {"i": job}
+        )
+        audits = await pg.run(
+            "super",
+            "SELECT count(*) FROM assess_audit_events WHERE event = 'assess_job_dead' "
+            "AND (data->>'job_id')::bigint = :i",
+            {"i": job},
+        )
+        assert (state[0][0], audits[0][0]) == ("dead", 1)
+        await assert_invariants(
+            pg,
+            "liveness-pool:lease-reaper-dead",
+            expect_sessions=0,
+            only=["no_stale_lease"],
+        )
+    finally:
+        await jobs.dispose()
+        await live.dispose()

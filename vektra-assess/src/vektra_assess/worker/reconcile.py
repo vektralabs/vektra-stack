@@ -73,27 +73,34 @@ async def _audit_then_kill_exhausted(conn: sql.Conn, audit: Audit) -> tuple[int,
     return dead, failed
 
 
+async def _audit_dead(audit: Audit, job_id: int, kind: Any, attempts: int) -> bool:
+    """Write the ``assess_job_dead`` audit row; False (logged) when the write fails."""
+    try:
+        await audit(
+            "assess_job_dead",
+            {
+                "job_id": job_id,
+                "kind": kind.value,
+                "attempts": attempts,
+                "error_code": "lease_expired_exhausted",
+            },
+        )
+    except Exception as exc:
+        log.warning(
+            "assess_reconcile_audit_failed",
+            extra={"job_id": job_id, "error_type": type(exc).__name__},
+        )
+        return False
+    return True
+
+
 async def _handle_batch(
     conn: sql.Conn, audit: Audit, batch: list[tuple[int, Any, int]]
 ) -> tuple[int, int]:
     dead = failed = 0
     for job_id, kind, attempts in batch:
-        try:
-            await audit(
-                "assess_job_dead",
-                {
-                    "job_id": job_id,
-                    "kind": kind.value,
-                    "attempts": attempts,
-                    "error_code": "lease_expired_exhausted",
-                },
-            )
-        except Exception as exc:
+        if not await _audit_dead(audit, job_id, kind, attempts):
             failed += 1
-            log.warning(
-                "assess_reconcile_audit_failed",
-                extra={"job_id": job_id, "error_type": type(exc).__name__},
-            )
             continue
         if await sql.kill_exhausted(conn, job_id):
             dead += 1
@@ -109,8 +116,27 @@ async def reap_exhausted(
     on the last attempt would leave the row ``leased`` until the next worker restart, and its
     dedupe key would keep covering it.
     """
-    async with acquire() as conn:
-        dead, failed = await _audit_then_kill_exhausted(conn, audit)
+    # No connection is held across an audit write (CodeRabbit 4530369375): the reaper runs on
+    # the worker's one-connection liveness engine, and an audit that waited for the connection
+    # its own caller holds would time out, leaving the row ``leased`` for good. Audit first,
+    # then a fresh checkout for the conditional update, as before.
+    dead = failed = 0
+    cursor = 0
+    while True:
+        async with acquire() as conn:
+            batch = await sql.list_exhausted_expired(conn, cursor, _BATCH)
+        if not batch:
+            break
+        cursor = batch[-1][0]
+        for job_id, kind, attempts in batch:
+            if not await _audit_dead(audit, job_id, kind, attempts):
+                failed += 1
+                continue
+            async with acquire() as conn:
+                if await sql.kill_exhausted(conn, job_id):
+                    dead += 1
+        if len(batch) < _BATCH:
+            break
     if dead or failed:
         log.info(
             "assess_lease_reaper", extra={"marked_dead": dead, "audit_failed": failed}

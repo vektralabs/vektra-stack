@@ -85,12 +85,15 @@ def test_scalar_series() -> None:
     assert "vektra_assess_worker_heartbeat_age_seconds 4.0" in text
     assert "vektra_assess_jobs_oldest_ready_seconds 1.5" in text
     assert "vektra_assess_purge_last_success_timestamp 1.76e+09" in text
+    assert "vektra_assess_log_keys_dropped_total" in text
 
 
 def test_no_snapshot_reports_down_and_nothing_else() -> None:
     text = _exposition(None, None)
     assert "vektra_assess_metrics_up 0.0" in text
     assert "vektra_assess_sessions" not in text
+    # the process's own figure needs no snapshot
+    assert "vektra_assess_log_keys_dropped_total" in text
 
 
 def test_a_stalled_cache_is_not_served() -> None:

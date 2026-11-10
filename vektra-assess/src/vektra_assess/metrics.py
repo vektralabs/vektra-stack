@@ -108,6 +108,14 @@ def families(snap: Mapping[str, Any] | None, *, age_s: float | None) -> list[Met
     )
     up.add_metric([], 1.0 if snap is not None else 0.0)
     out: list[Metric] = [up]
+    from vektra_shared.log_safety import dropped_keys_total
+
+    dropped = CounterMetricFamily(
+        "vektra_assess_log_keys_dropped",
+        "Log keys of vektra_assess.* loggers replaced by the allowlist in this process",
+    )
+    dropped.add_metric([], float(dropped_keys_total()))
+    out.append(dropped)
     if snap is None:
         return out
     if age_s is not None:
@@ -234,7 +242,8 @@ class SnapshotCache:
                 value = (await conn.execute(text(SNAPSHOT_SQL))).scalar_one()
         except Exception as exc:
             log.warning(
-                "assess_metrics_snapshot_failed", extra={"error": type(exc).__name__}
+                "assess_metrics_snapshot_failed",
+                extra={"error_type": type(exc).__name__},
             )
             self.snapshot = None
             return

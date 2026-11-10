@@ -93,6 +93,21 @@ _STRUCTLOG_KEYS = frozenset({"level", "timestamp"})
 _MAX_VALUE_LEN = 200  # an allowlisted key still cannot carry a paragraph
 
 
+#: keys replaced with ``[dropped]`` since the process started, both logging stacks together
+#: (plan assess-privacy-retention 12b: exposed on the API's /metrics). A plain int: the GIL
+#: makes the increment atomic enough for a monitoring figure.
+_dropped_keys = 0
+
+
+def dropped_keys_total() -> int:
+    return _dropped_keys
+
+
+def _count_dropped(n: int) -> None:
+    global _dropped_keys
+    _dropped_keys += n
+
+
 def is_assess_logger(name: str | None) -> bool:
     return bool(name) and (
         name == ASSESS_LOGGER_PREFIX or str(name).startswith(ASSESS_LOGGER_PREFIX + ".")
@@ -132,6 +147,8 @@ def scrub_event_dict(event_dict: MutableMapping[str, Any]) -> MutableMapping[str
         if key in ALLOWED_KEYS:
             event_dict[key] = _safe_value(event_dict[key])
         else:
+            if event_dict[key] is not DROPPED:  # a record filtered twice counts once
+                _count_dropped(1)
             event_dict[key] = DROPPED
     if error_type and "error_type" not in event_dict:
         event_dict["error_type"] = error_type
@@ -200,6 +217,8 @@ class AssessAllowlistFilter(logging.Filter):
             if key in ALLOWED_KEYS:
                 record.__dict__[key] = _safe_value(record.__dict__[key])
             else:
+                if record.__dict__[key] is not DROPPED:  # two handlers, one record
+                    _count_dropped(1)
                 record.__dict__[key] = DROPPED
         if error_type and "error_type" not in record.__dict__:
             record.__dict__["error_type"] = error_type

@@ -142,3 +142,68 @@ async def test_the_report_reads_exactly_the_planted_rows(pg) -> None:  # type: i
     assert res["nfr_020_inputs"]["capacity_refusals"] == 1
     # three sessions are far below the declared minimums: judged nowhere, BLOCKED everywhere
     assert {i["verdict"] for i in res["items"]} == {"BLOCKED"}
+
+
+async def test_advisory_refusals_are_read_from_the_audit_events(pg) -> None:  # type: ignore[no-untyped-def]
+    """The API's advisory refusals write no attempt row, only an ``assess_start_refused`` audit
+    event: capacity goes to NFR-020 and out of "admitted", a worker that is not ready is a
+    service-caused refusal and counts against the NFR-019 commit rate."""
+    await pg.run("super", "DELETE FROM assess_audit_events")
+    await pg.run("super", "DELETE FROM assess_start_attempts")
+    site = uuid.uuid4()
+    t = T0 + timedelta(minutes=5)
+    audit = (
+        "INSERT INTO assess_audit_events (site_id, event, reason_code, actor_kind, created_at) "
+        "VALUES (:s, :e, :r, 'api', :t)"
+    )
+    stmts: list[tuple[str, dict]] = [  # type: ignore[type-arg]
+        (audit, {"s": site, "e": "assess_start_refused", "r": "capacity", "t": t}),
+        (audit, {"s": site, "e": "assess_start_refused", "r": "capacity", "t": t}),
+        (
+            audit,
+            {"s": site, "e": "assess_start_refused", "r": "worker_not_ready", "t": t},
+        ),
+        (
+            audit,
+            {"s": site, "e": "assess_start_refused", "r": "worker_heartbeat", "t": t},
+        ),
+        # a student-side refusal and an event outside the window are not read
+        (
+            audit,
+            {"s": site, "e": "assess_start_refused", "r": "start_rate_cap", "t": t},
+        ),
+        (
+            audit,
+            {
+                "s": site,
+                "e": "assess_start_refused",
+                "r": "capacity",
+                "t": T0 - timedelta(hours=3),
+            },
+        ),
+    ]
+    await _plant(pg, *stmts)
+    cfg = r.Config(
+        dsn=pg.super_url.replace("postgresql+asyncpg://", "postgresql://"),
+        since=T0,
+        until=T0 + timedelta(hours=1),
+        label="db-refusals",
+    )
+    data = await r.load(cfg)
+    assert sorted(data.attempts, key=str) == sorted(
+        [
+            ("refused", "capacity"),
+            ("refused", "capacity"),
+            ("refused", "worker_not_ready"),
+            ("refused", "worker_heartbeat"),
+        ],
+        key=str,
+    )
+    data.attempts += [("committed", None)] * 98
+    res = r.evaluate(data)
+    assert res["nfr_020_inputs"]["capacity_refusals"] == 2
+    item = next(i for i in res["items"] if i["item"] == "NFR-019 commit rate")
+    assert (item["admitted"], item["committed"]) == (100, 98)
+    assert (
+        item["verdict"] == "FAIL"
+    )  # 98% < 99%: the worker outage is the service's fault

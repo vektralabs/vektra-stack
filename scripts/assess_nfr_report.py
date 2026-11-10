@@ -13,7 +13,9 @@ database, with a read-only role or the superuser, over a time window. It compute
   client, so this is always reported BLOCKED with the reason, never computed from a proxy.
 - **NFR-019 commit rate**: committed Start attempts over admitted ones. Pass: >= 99%. Admitted
   leaves out capacity refusals (they belong to NFR-020) and rollbacks caused by the student or
-  the teacher (``part_b_rejected``, ``terminated_by_teacher``).
+  the teacher (``part_b_rejected``, ``terminated_by_teacher``). The API's advisory refusals,
+  which exist only as ``assess_start_refused`` audit events, are read too: ``capacity`` goes to
+  NFR-020, a worker that is not ready counts against the rate.
 - **NFR-019 service_failure rate**: ``service_failure`` closes over all closes. Pass: <= 2%.
 - **NFR-020 inputs**: capacity refusals, and the distribution of concurrently live sessions
   (the maximum and the time spent at each level). The K decision is made by people, not here.
@@ -263,6 +265,17 @@ SQL_ATTEMPTS = (
     "SELECT outcome, reason_code FROM assess_start_attempts WHERE outcome <> 'requested' "
     "AND created_at >= :since AND created_at < :until"
 )
+#: the API's advisory refusals write no attempt row, only an ``assess_start_refused`` audit
+#: event. ``capacity`` belongs to NFR-020 (and stays out of "admitted"); a worker that is not
+#: ready (``worker_not_ready``, ``worker_heartbeat``) is a service-caused refusal and counts
+#: against the NFR-019 commit rate. Student- or configuration-caused refusals (rate cap, an
+#: activity not configured, a Moodle-side gate) are not Start attempts the service failed.
+SQL_REFUSALS = (
+    "SELECT 'refused', reason_code FROM assess_audit_events "
+    "WHERE event = 'assess_start_refused' "
+    "AND reason_code IN ('capacity', 'worker_not_ready', 'worker_heartbeat') "
+    "AND created_at >= :since AND created_at < :until"
+)
 SQL_CLOSES = (
     "SELECT close_reason FROM assess_sessions WHERE state = 'CLOSED' "
     "AND closed_at >= :since AND closed_at < :until"
@@ -291,7 +304,11 @@ async def load(cfg: Config) -> Data:
             return Data(
                 commit_s=[float(r[0]) for r in await rows(SQL_COMMIT)],
                 reply_s=[float(r[0]) for r in await rows(SQL_REPLY)],
-                attempts=[(str(r[0]), r[1]) for r in await rows(SQL_ATTEMPTS)],
+                attempts=[
+                    (str(r[0]), r[1])
+                    for sql in (SQL_ATTEMPTS, SQL_REFUSALS)
+                    for r in await rows(sql)
+                ],
                 close_reasons=[str(r[0]) for r in await rows(SQL_CLOSES)],
                 live_intervals=[
                     (float(r[0]), float(r[1])) for r in await rows(SQL_LIVE)

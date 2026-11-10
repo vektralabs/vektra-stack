@@ -102,6 +102,25 @@ async def _prepare(pg: Pg) -> None:
 
 @pytest.fixture(scope="module")
 def pg() -> Iterator[Pg]:
+    yield from _container(None)
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@pytest.fixture(scope="module")
+def pg_fixed_port() -> Iterator[Pg]:
+    """Postgres on a fixed host port, for the chaos scenarios that restart the container: a
+    restarted container must come back where every engine's DSN points."""
+    yield from _container(_free_port())
+
+
+def _container(fixed_port: int | None) -> Iterator[Pg]:
     docker = pytest.importorskip("docker", reason="docker SDK not installed")
     try:
         docker.from_env().ping()
@@ -109,7 +128,10 @@ def pg() -> Iterator[Pg]:
         pytest.skip(f"Docker not available: {exc}")
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("pgvector/pgvector:pg16") as c:
+    container = PostgresContainer("pgvector/pgvector:pg16")
+    if fixed_port is not None:
+        container = container.with_bind_ports(5432, fixed_port)
+    with container as c:
         url = c.get_connection_url().replace("psycopg2", "asyncpg")
         res = _alembic(url, "upgrade", "head")
         assert res.returncode == 0, res.stderr

@@ -25,11 +25,11 @@ PRODUCTION_KINDS = {
     "enrolment_recheck", "erasure", "gate_refresh", "preflight", "purge",
     "reconcile_reply", "render_check",
     "rotate_keys", "setup_check", "teacher_notify", "operator_notify", "transcript_deliver",
-    "transcript_generate", "teacher_gate",
+    "transcript_generate", "teacher_gate", "smtp_test_send",
 }  # fmt: skip
 PRODUCTION_TICKS = [
     "heartbeat", "job_cleanup", "lease_reaper", "sweeper", "starting_reaper", "outage_probe",
-    "enrolment_recheck", "gate_refresh", "delivery_retry", "smtp_probe", "purge", "setup_check",
+    "enrolment_recheck", "gate_refresh", "delivery_retry", "smtp_probe", "purge", "parser_ping", "setup_check",
 ]  # fmt: skip
 
 
@@ -60,8 +60,10 @@ def test_every_tick_has_its_own_lock_from_the_registry_and_a_sane_schedule() -> 
     assert by["job_cleanup"].interval_s == 3600
     assert by["setup_check"].run_on_startup and by["setup_check"].interval_s == 86_400
     # the SMTP probe (plan 10b) reports the relay's readiness as soon as the worker is up
+    # ... and so does the parser ping (plan 12b), for /health/assess
     assert [t.name for t in slots.ticks if t.run_on_startup] == [
         "smtp_probe",
+        "parser_ping",
         "setup_check",
     ]
 
@@ -119,3 +121,15 @@ def test_the_smtp_probe_tick_fits_a_whole_probe(timeout_s: int) -> None:
     )
     assert tick.timeout_s > 2 * timeout_s + QUIT_TIMEOUT_S
     assert tick.timeout_s < tick.interval_s
+
+
+def test_the_health_check_judges_the_parser_on_the_ping_interval() -> None:
+    import inspect
+
+    from vektra_assess.health import make_readiness_check
+    from vektra_assess.worker.slots import PARSER_PING_INTERVAL_S
+
+    default = (
+        inspect.signature(make_readiness_check).parameters["parser_interval_s"].default
+    )
+    assert default == PARSER_PING_INTERVAL_S

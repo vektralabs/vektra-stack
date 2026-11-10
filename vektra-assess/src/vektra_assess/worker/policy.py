@@ -86,6 +86,9 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     # to 3 teacher recipients); their lease is also their crash window (OQ-029)
     JobKind.TEACHER_NOTIFY: KindPolicy("delivery", 120, 240),
     JobKind.OPERATOR_NOTIFY: KindPolicy("delivery", 120, 240),
+    # the operator's test send (plan 12b): one message, one attempt: a test reports what the
+    # relay did the first time, it is never retried behind the operator's back
+    JobKind.SMTP_TEST_SEND: KindPolicy("delivery", 120, 240, 1),
     # the setup check makes about twenty live Moodle calls: own pool, 120 s hard timeout
     JobKind.SETUP_CHECK: KindPolicy("setup", 120, 240),
     JobKind.PURGE: _MAINT,

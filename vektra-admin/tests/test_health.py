@@ -172,3 +172,61 @@ def test_shallow_excluded_set():
     from vektra_admin.health import SHALLOW_EXCLUDED
 
     assert frozenset({"llm", "assess"}) == SHALLOW_EXCLUDED
+
+
+# --- readiness components (plan assess-privacy-retention 12b, COMP-002) ---
+
+
+async def test_a_readiness_check_answers_503_unless_ready():
+    from vektra_admin.health import check_component_http
+    from vektra_shared.registry import ProviderRegistry
+
+    state = {"status": "degraded"}
+
+    async def readiness():
+        return HealthStatus(
+            status=state["status"], message="heartbeat_stale", details={"age_s": 99}
+        )
+
+    readiness.readiness = True  # type: ignore[attr-defined]
+
+    async def plain():
+        return HealthStatus(status="degraded", message="slow")
+
+    registry = ProviderRegistry()
+    registry.register("health", "ready_comp", readiness)
+    registry.register("health", "plain_comp", plain)
+
+    body, code = await check_component_http(registry, "ready_comp")
+    assert code == 503 and body.details == {"age_s": 99}
+    state["status"] = "disabled"
+    assert (await check_component_http(registry, "ready_comp"))[1] == 200
+    state["status"] = "healthy"
+    assert (await check_component_http(registry, "ready_comp"))[1] == 200
+    # an ordinary component keeps its 200 whatever its status (no behaviour change)
+    body, code = await check_component_http(registry, "plain_comp")
+    assert code == 200 and body.status == "degraded" and body.details is None
+
+
+async def test_the_shallow_check_runs_no_excluded_component():
+    """Review #7: the unauthenticated GET /health ran every check, the paid LLM call and the
+    assess readiness included, and threw their results away."""
+    from vektra_shared.registry import ProviderRegistry
+
+    calls: list[str] = []
+
+    def checker(name: str):
+        async def check():
+            calls.append(name)
+            return HealthStatus(status="healthy")
+
+        return check
+
+    registry = ProviderRegistry()
+    for name in ("database", "llm", "assess"):
+        registry.register("health", name, checker(name))
+    shallow, _ = await check_all(registry, "1", full=False)
+    assert shallow.status == "healthy" and calls == ["database"]
+    calls.clear()
+    await check_all(registry, "1")
+    assert sorted(calls) == ["assess", "database", "llm"]

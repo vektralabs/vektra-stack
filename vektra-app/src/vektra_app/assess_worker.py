@@ -158,7 +158,9 @@ async def run_checks() -> object:
 
 
 async def _checks() -> Checked:
-    from vektra_assess.config import VektraAssessSettings
+    from pydantic import ValidationError
+
+    from vektra_assess.config import VektraAssessSettings, explain_settings_error
     from vektra_assess.crypto.selftest import run_crypto_selftest
     from vektra_assess.db.roles import (
         assert_distinct_dsn,
@@ -167,7 +169,13 @@ async def _checks() -> Checked:
     )
     from vektra_assess.keys import enforce_key_matrix
 
-    settings = VektraAssessSettings()
+    try:
+        settings = VektraAssessSettings()
+    except ValidationError as exc:
+        detail, remediation = explain_settings_error(exc)
+        raise StartupValidationError(
+            step=STEP, detail=detail, remediation=remediation
+        ) from None
     if not settings.enabled:
         raise DisabledError(
             "VEKTRA_ASSESS_ENABLED is not true: the assess worker does not run on a "
@@ -415,7 +423,11 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         delivery_retry_tick,
         make_deliver_handler,
     )
-    from vektra_assess.delivery.notify import NotifyDeps, make_notify_handler
+    from vektra_assess.delivery.notify import (
+        NotifyDeps,
+        make_notify_handler,
+        rescue_dead_chains,
+    )
     from vektra_assess.delivery.probe import run_probe
     from vektra_assess.delivery.recipients import ConfigRecipients, parse_domains
     from vektra_assess.delivery.smtp import SmtpSender
@@ -465,6 +477,17 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         await delivery_retry_tick(
             engine.connect, stale_after=deps.stale_after, window=deps.window
         )
+        # plan 12b: a notification chain whose job died gets its next run back, and an SMTP test
+        # whose single-attempt job died ends FAILED interrupted (review #2)
+        await rescue_dead_chains(engine.connect)
+        from vektra_assess.delivery.smtp_test import reap_interrupted_tests
+
+        await reap_interrupted_tests(
+            engine.connect,
+            stale_after=timedelta(
+                seconds=policy_all.kinds[JobKind.SMTP_TEST_SEND].lease_s
+            ),
+        )
 
     async def smtp_probe() -> None:
         # one whole probe; the tick's own timeout (slots.probe_tick_timeout_s) is longer
@@ -472,7 +495,12 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
 
     handlers: dict[Any, Any] = {JobKind.TRANSCRIPT_DELIVER: make_deliver_handler(deps)}
     # the notification emails (REQ-071, REQ-086): the same relay, recipients and schedule
-    for kind in (JobKind.TEACHER_NOTIFY, JobKind.OPERATOR_NOTIFY):
+    # ... and the operator's test send (plan 12b, review #5): one send through the same relay
+    for kind in (
+        JobKind.TEACHER_NOTIFY,
+        JobKind.OPERATOR_NOTIFY,
+        JobKind.SMTP_TEST_SEND,
+    ):
         kp = policy_all.kinds[kind]
         if kp.budget_s < need:
             raise StartupValidationError(
@@ -510,6 +538,20 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         # without the address the slot stays unbound (refused at startup outside development)
         handlers[JobKind.OPERATOR_NOTIFY] = make_notify_handler(
             notify_deps, JobKind.OPERATOR_NOTIFY
+        )
+        from vektra_assess.delivery.smtp_test import (
+            SmtpTestDeps,
+            make_smtp_test_handler,
+        )
+
+        # plan 12b: the operator's test send, to the same fixed address, through the same sender
+        handlers[JobKind.SMTP_TEST_SEND] = make_smtp_test_handler(
+            SmtpTestDeps(
+                sender=sender,
+                sender_address=deps.sender_address,
+                message_id_domain=deps.message_id_domain,
+                operator_address=settings.operator_email,
+            )
         )
     return DeliveryParts(
         handlers,
@@ -731,17 +773,29 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     control = ControlConnection(
         _asyncpg_dsn(checked.worker_url), on_notify=runtime.wake, on_lost=on_lost
     )
+    from vektra_assess.worker.parser_health import ParserHealth
+
+    # plan 12b: the parser status /health/assess reports, from the parser_ping tick
+    parser_health = ParserHealth()
     heartbeat = Heartbeat(
         acquire_raw,
         worker_id=worker_id,
         version=_version(),
         file_path=settings.worker_heartbeat_file,
-        stats=lambda: {**runtime.stats(), **wiring["scheduler"].stats()},
+        stats=lambda: {
+            **runtime.stats(),
+            **wiring["scheduler"].stats(),
+            **parser_health.stats(),
+        },
     )
 
     async def cleanup() -> None:
         await cleanup_done_jobs(acquire_raw, settings.job_done_retention_h)
         await cleanup_expired_jtis(acquire_raw)
+        # plan 12b: setup-check reports whose job died would read "queued" forever
+        from vektra_assess.worker.setup_check import fail_abandoned_reports
+
+        await fail_abandoned_reports(checked.engine.connect)
 
     async def lease_reaper() -> None:
         await reap_exhausted(acquire_raw, audit)
@@ -752,6 +806,14 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     ws = _ws_client(checked) if bindings is None else None
     setup = _setup_check_parts(checked, ws, delivery.ticks.get("smtp_probe"))
     privacy_handlers, privacy_ticks = _privacy_parts(checked)
+    from vektra_assess.worker.parser_client import ParserClient
+
+    parser_for_health = ParserClient.from_settings(settings)
+
+    async def parser_ping() -> None:
+        await parser_health.check(parser_for_health)
+
+    privacy_ticks = {**privacy_ticks, "parser_ping": parser_ping}
     extra = bindings or Bindings(
         handlers={
             **_session_handlers(checked, audit, ws),
@@ -907,12 +969,24 @@ def check_imports() -> None:
 
 
 async def _amain(bindings: Any | None = None) -> int:
+    # A heartbeat left by a previous run must not vouch for this one. The settings may be
+    # invalid here: then the path comes from the variable or the default, and the guarded
+    # ``_checks`` below reports the error by name, never with the rejected value (CodeRabbit
+    # 4525094921)
+    from pydantic import ValidationError
+
     from vektra_assess.config import VektraAssessSettings
     from vektra_assess.worker.shutdown import install_signal_handlers
 
-    # A heartbeat left by a previous run must not vouch for this one.
+    try:
+        heartbeat_file = VektraAssessSettings().worker_heartbeat_file
+    except ValidationError:
+        field = VektraAssessSettings.model_fields["worker_heartbeat_file"]
+        from pathlib import Path
+
+        heartbeat_file = Path(os.environ.get(str(field.alias), str(field.default)))
     with contextlib.suppress(FileNotFoundError):
-        VektraAssessSettings().worker_heartbeat_file.unlink()
+        heartbeat_file.unlink()
     try:
         checked = await _checks()
     except DisabledError as exc:

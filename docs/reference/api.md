@@ -72,7 +72,8 @@ curl -s \
     "name": "llm",
     "status": "healthy",
     "latency_ms": 42,
-    "message": null
+    "message": null,
+    "details": null
 }
 ```
 
@@ -83,6 +84,83 @@ Components: `llm`, `embedding`, `vector_store`, `assess`.
 worker heartbeat row. Like `llm`, it is left
 out of the shallow `GET /health`, so a stopped assess worker (a separate container) does not make the API
 container look unhealthy; it is included in `?detail=full`.
+
+It is a **readiness probe**: it answers **503** unless its status is `healthy` or `disabled`, so a load
+balancer or an orchestrator can act on the code alone. Every other component keeps answering 200 with
+its status in the body. Not ready means: no worker heartbeat, a heartbeat older than
+`VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S`, a worker not in state `ready` (starting, draining, stopped), a due
+job waiting more than 30 s, the database unreachable, or the API's own assess keys missing
+(`message`: `no_heartbeat`, `heartbeat_stale`, `worker_not_ready`, `job_backlog`,
+`heartbeat_unreadable`, `keys_missing`).
+
+`details` carries content-free figures (no id, site, address or error message); they never change the
+verdict above, the alert rules cover them:
+
+```json
+{
+    "name": "assess",
+    "status": "healthy",
+    "latency_ms": 4,
+    "message": null,
+    "details": {
+        "worker_heartbeat_age_s": 3.1,
+        "worker_state": "ready",
+        "oldest_ready_job_age_s": 0.0,
+        "parser": {"status": "ok", "age_s": 21.4},
+        "smtp_probe": {"status": "ok", "age_s": 140.2},
+        "privacy": {"active_sites": 2, "configured_sites": 1},
+        "keys_present": true,
+        "purge": {"last_success_age_s": 3600.0, "last_run_ok": true}
+    }
+}
+```
+
+`parser.status` is `ok`, `down`, `stale` (the worker's `parser_ping` tick has not reported for three
+intervals) or `unknown`; `smtp_probe.status` is `ok`, `failed` or `unknown` (while a probe is running it
+is the previous probe's verdict).
+
+### Assess metrics (`/metrics`)
+
+With assess enabled, the API's existing `/metrics` also exposes content-free series read from
+`assess_metrics_snapshot()` (refreshed every 15 s in the background; a scrape never waits on the
+database). Labels are fixed enums: a value outside its enum is counted as `other`, never emitted.
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `vektra_assess_metrics_up` | - | 1 when the snapshot was read within its budget |
+| `vektra_assess_sessions` | `state` | sessions by state |
+| `vektra_assess_sessions_closed` | `reason` | closed sessions still held, by close reason |
+| `vektra_assess_deliveries` | `status` | delivery rows by status (all kinds) |
+| `vektra_assess_deliveries_retrying_oldest_seconds` | - | age of the oldest RETRYING email |
+| `vektra_assess_tls_failures` | - | live or failed delivery rows whose last attempt failed on TLS |
+| `vektra_assess_capacity_refusals` | - | Start rollbacks for capacity in the pre-flight (the API's advisory refusals are audit rows only, and the audit table is readable by no role) |
+| `vektra_assess_start_rollbacks` | `reason` | Start rollbacks by reason |
+| `vektra_assess_jobs_oldest_ready_seconds` | - | age of the oldest due job |
+| `vektra_assess_worker_heartbeat_age_seconds` | - | worker heartbeat age (database clock) |
+| `vektra_assess_smtp_probe_ok` | - | 1 when the last SMTP probe passed |
+| `vektra_assess_purge_last_success_timestamp` | - | Unix time of the last purge that left no row behind |
+| `vektra_assess_purge_last_run_ok` | - | 1 when the last purge run left no row behind |
+| `vektra_assess_purge_rows_deleted_total` | - | content rows deleted by the purge (cumulative) |
+| `vektra_assess_log_keys_dropped_total` | - | log keys the `vektra_assess.*` allowlist replaced in this API process |
+
+Counts of rows the database still holds are gauges (the retention purge lowers them): alert on their
+level. The two `_total` series are monotonic counters. SMTP test rows are never counted. Example rules: `deploy/prometheus/assess-alerts.yml.example`.
+
+### Assess operator: SMTP test send
+
+Exact `admin` scope. Mounted with assess.
+
+| Method | Path | Body | Success | Errors |
+|---|---|---|---|---|
+| POST | `/api/v1/assess/ops/smtp-test` | none (or `{}`); any field is refused | `202 {"id"}` | `400 ERR-ASSESS-014` (`no_fields_accepted`), `429 ERR-ASSESS-012` (`smtp_test_pending`: one test at a time), `503 ERR-ASSESS-001` (`smtp_relay`: relay or `VEKTRA_ASSESS_OPERATOR_EMAIL` not configured) |
+| GET | `/api/v1/assess/ops/smtp-test/{id}` | - | `200 {"id", "status", "error_class", "smtp_code", "created_at", "sent_at"}` | `400 ERR-ASSESS-014` (`id`) |
+
+The worker sends ONE fixed, content-free message to `VEKTRA_ASSESS_OPERATOR_EMAIL` through the
+transcript relay; the request never names a recipient. `status` is `queued` until the worker has
+written its row (an id that was never queued also reads `queued`: the API cannot read jobs), then
+`PENDING`, `SENT` or `FAILED` with `error_class` `tls`, `connect`, `temp_4xx`, `perm_5xx`, `auth`,
+`relay_busy`, `internal_error` or `interrupted` (a rerun after a crash never sends a second copy). One attempt only.
+Result rows are deleted after 7 days. Audited: `assess_smtp_test_requested`, `assess_smtp_test_result`.
 
 ### Assess setup check (assess)
 

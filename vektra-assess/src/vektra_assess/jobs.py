@@ -66,6 +66,8 @@ class JobKind(enum.StrEnum):
     # the activity-level teacher facts (editors, graders, REQ-077 enable facts) a teacher request
     # is verified against (revision 0036, plan assess-teacher-ops)
     TEACHER_GATE = "teacher_gate"
+    # the operator's SMTP test send (revision 0042, plan assess-privacy-retention 12b)
+    SMTP_TEST_SEND = "smtp_test_send"
 
 
 def teacher_gate_dedupe_key(

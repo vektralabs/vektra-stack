@@ -102,10 +102,24 @@ async def test_worker_refuses_the_flags_not_in_this_release(
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
     monkeypatch.setenv(flag, "true")
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError, match="not available in this release"):
+    with pytest.raises(StartupValidationError, match="not available in this release"):
         await assess_worker.run_checks()
+
+
+async def test_worker_reports_an_out_of_bounds_setting_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan 12b: a rejected setting is a StartupValidationError naming the variable, and the
+    rejected value (a DSN can carry a password) is not echoed."""
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.setenv("VEKTRA_ASSESS_WORKER_POOL_SIZE", "4242")
+    with pytest.raises(StartupValidationError) as exc:
+        await assess_worker.run_checks()
+    assert "VEKTRA_ASSESS_WORKER_POOL_SIZE" in exc.value.detail
+    assert "4242" not in exc.value.detail
+    assert "VEKTRA_ASSESS_WORKER_POOL_SIZE" in exc.value.remediation
 
 
 async def test_worker_refuses_api_only_key(
@@ -900,7 +914,9 @@ def test_the_delivery_budget_must_cover_the_worst_send(
         assess_worker._compose(keyed)
 
 
-@pytest.mark.parametrize("kind", ["teacher_notify", "operator_notify"])
+@pytest.mark.parametrize(
+    "kind", ["teacher_notify", "operator_notify", "smtp_test_send"]
+)
 def test_the_notify_budget_must_cover_the_worst_send(
     monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
@@ -960,3 +976,19 @@ def test_the_parser_loads_its_settings_under_the_ceiling(
         timeout=120,
     )
     assert out.stdout.strip() == "ceiling ok", out.stderr[-600:]
+
+
+async def test_the_worker_entrypoint_reports_a_bad_setting_without_its_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CodeRabbit 4525094921: the heartbeat-file cleanup built the settings before the guarded
+    checks, so a rejected value escaped as a raw traceback."""
+    hb = tmp_path / "hb"
+    hb.write_text("old")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE", str(hb))
+    monkeypatch.setenv("VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S", "60123")
+    assert await assess_worker._amain() == 1
+    err = capsys.readouterr().err
+    assert "VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S" in err and "60123" not in err
+    assert not hb.exists()  # the stale heartbeat is still removed

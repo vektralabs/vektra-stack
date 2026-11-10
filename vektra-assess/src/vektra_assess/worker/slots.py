@@ -48,6 +48,7 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.SETUP_CHECK: MOODLE_WS,
     JobKind.ROTATE_KEYS: HARDENING,
     JobKind.TEACHER_GATE: TEACHER,
+    JobKind.SMTP_TEST_SEND: PRIVACY,
 }
 
 # tick name -> plan that binds its body
@@ -63,6 +64,7 @@ TICK_OWNERS: dict[str, str] = {
     "delivery_retry": TRANSCRIPT,
     "smtp_probe": TRANSCRIPT,
     "purge": PRIVACY,
+    "parser_ping": PRIVACY,  # plan 12b: the parser status /health/assess reports
     "setup_check": MOODLE_WS,
 }
 
@@ -120,6 +122,8 @@ PROBE_QUIT_S = 5.0
 PROBE_ROW_MARGIN_S = 10.0
 #: the smtp_probe tick's interval; the setup-check item ``smtp_probe`` judges freshness from it
 SMTP_PROBE_INTERVAL_S = 300.0
+#: the parser_ping tick's interval; /health/assess calls a parser status older than 3x stale
+PARSER_PING_INTERVAL_S = 60.0
 
 
 def probe_tick_timeout_s(smtp_timeout_s: float) -> float:
@@ -167,6 +171,15 @@ def _tick_table(s: VektraAssessSettings) -> list[TickSpec]:
             run_on_startup=True,
         ),
         t("purge", 86_400, 600, locks.PURGE, jitter_s=3600),  # daily
+        # plan 12b: the parser sidecar's status, published in the heartbeat row for /health/assess
+        t(
+            "parser_ping",
+            PARSER_PING_INTERVAL_S,
+            15,
+            locks.PARSER_PING,
+            jitter_s=10,
+            run_on_startup=True,
+        ),
         t(
             "setup_check",
             86_400,

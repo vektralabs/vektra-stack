@@ -215,3 +215,16 @@ def test_processor_reads_the_logger_key_too() -> None:
         None, "info", {"event": "e", "logger": "vektra_assess.a", "text": CANARY}
     )
     assert out["text"] == DROPPED
+
+
+def test_dropped_keys_are_counted_on_both_stacks(stream: io.StringIO) -> None:
+    """Plan assess-privacy-retention 12b: "unknown keys are dropped and counted"."""
+    from vektra_shared.log_safety import dropped_keys_total
+
+    before = dropped_keys_total()
+    structlog.get_logger("vektra_assess.x").info(
+        "e", answer=CANARY, text=CANARY, count=1
+    )
+    logging.getLogger("vektra_assess.worker").warning("e2", extra={"payload": CANARY})
+    structlog.get_logger("vektra_core.other").info("e3", answer=CANARY)  # not assess
+    assert dropped_keys_total() - before == 3

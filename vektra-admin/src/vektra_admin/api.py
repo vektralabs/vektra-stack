@@ -203,8 +203,6 @@ async def health(
     registry = getattr(request.app.state, "registry", None)
     version = getattr(request.app.state, "version", "unknown")
 
-    shallow, deep = await _health.check_all(registry, version)
-
     if detail == "full":
         # Require any valid Bearer token for deep view
         if credentials is None:
@@ -234,6 +232,9 @@ async def health(
                 status_code=http_status_for(err), detail=err.to_envelope()
             )
 
+        # every check runs only once the caller is authenticated: an anonymous ?detail=full
+        # must not reach the LLM or the database (CodeRabbit 4524508921)
+        _, deep = await _health.check_all(registry, version, full=True)
         status_code = 503 if deep.status == "unhealthy" else 200
         return Response(
             content=deep.model_dump_json(),
@@ -242,6 +243,7 @@ async def health(
         )
 
     # Shallow - unauthenticated
+    shallow, _ = await _health.check_all(registry, version, full=False)
     status_code = 503 if shallow.status == "unhealthy" else 200
     return Response(
         content=shallow.model_dump_json(),
@@ -262,11 +264,17 @@ async def health_memory(
 async def health_component(
     component: str,
     request: Request,
+    response: Response,
     _key: ApiKeyInfo = Depends(_require_any_token),
 ) -> _health.ComponentHealth:
-    """Return health status for a single component. Requires any valid Bearer token."""
+    """Return health status for a single component. Requires any valid Bearer token.
+
+    A readiness component (``readiness = True`` on its check) answers 503 when not ready."""
     registry = getattr(request.app.state, "registry", None)
-    return await _health.check_component(registry, component)
+    body, code = await _health.check_component_http(registry, component)
+    if code != 200:
+        response.status_code = code
+    return body
 
 
 # ---------------------------------------------------------------------------

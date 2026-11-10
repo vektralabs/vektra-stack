@@ -130,6 +130,7 @@ async def test_no_route_accepts_a_query_string_or_cookie_credential(pg) -> None:
                 "tid": str(s.session_id),
                 "cmid": str(s.cmid),
                 "userid": str(s.sub),
+                "test_id": str(uuid.uuid4()),  # plan 12b: the operator's SMTP test
             }
             before = (
                 await pg.run(

@@ -281,6 +281,13 @@ def admin_key() -> str:
 
 
 def test_stopped_worker_leaves_shallow_health_healthy(admin_key: str) -> None:
+    # plan 12b (COMP-002): while the worker runs, /health/assess is a 200 with content-free
+    # figures; once it stops, a 503 (a readiness probe acts on the code alone)
+    code, body = _get("/health/assess", admin_key)
+    assert code == 200 and body["status"] == "healthy", body
+    details = body["details"]
+    assert details["keys_present"] is True and details["worker_state"] == "ready"
+    assert set(details) >= {"parser", "smtp_probe", "privacy", "purge"}
     _compose("stop", "vektra-assess-worker", check=True)
     try:
         code, body = _get("/health")
@@ -293,13 +300,17 @@ def test_stopped_worker_leaves_shallow_health_healthy(admin_key: str) -> None:
         deadline = time.time() + 15
         while True:
             code, body = _get("/health/assess", admin_key)
-            assert code == 200, body
             if body["status"] not in ("healthy", "disabled") or time.time() > deadline:
                 break
+            assert code == 200, body
             time.sleep(2)
         assert body["status"] not in ("healthy", "disabled"), (
             f"/health/assess still {body} 15 s after docker stop"
         )
+        assert code == 503, (code, body)
+        # the API's own liveness is untouched by the worker
+        code, body = _get("/health")
+        assert code == 200 and body["status"] == "healthy", body
         state = _exec(
             "postgres",
             "psql",

@@ -339,3 +339,25 @@ def test_the_worker_gets_every_smtp_setting(
     missing = sorted(k for k in smtp if k not in worker)
     assert missing == [], missing
     assert not any("USERNAME" in k or "PASSWORD" in k for k in worker)
+
+
+def test_the_api_sees_the_relay_and_the_operator_address(  # type: ignore[type-arg]
+    rendered: dict,
+) -> None:
+    """CodeRabbit 4524508939: settings exported in the shell reached the worker only, so the
+    API refused the operator's SMTP test send (503) although the worker could send it."""
+    env = rendered["services"]["vektra"].get("environment", {})
+    for name in (
+        "VEKTRA_ASSESS_SMTP_HOST",
+        "VEKTRA_ASSESS_SMTP_FROM",
+        "VEKTRA_ASSESS_OPERATOR_EMAIL",
+    ):
+        assert name in env, name
+    # and the API gets the SAME interpolated value as the worker
+    worker = rendered["services"]["vektra-assess-worker"].get("environment", {})
+    for name in (
+        "VEKTRA_ASSESS_SMTP_HOST",
+        "VEKTRA_ASSESS_SMTP_FROM",
+        "VEKTRA_ASSESS_OPERATOR_EMAIL",
+    ):
+        assert env[name] == worker.get(name), name

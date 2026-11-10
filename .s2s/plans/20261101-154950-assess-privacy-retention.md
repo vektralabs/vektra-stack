@@ -1,7 +1,7 @@
 # Implementation Plan: Assess privacy configuration, retention purge, erasure, export and metadata-only monitoring
 
 **ID**: 20261101-154950-assess-privacy-retention
-**Status**: in_progress (12a on `feat/assess-privacy-retention`; 12b later)
+**Status**: completed (12a merged, PR #191; 12b on `feat/assess-privacy-retention-12b`. BLOCKED: the compose run of the REQ-080 canary grep over a seeded discussion, moved to plan 13)
 **Branch**: feat/assess-privacy-retention
 **Created**: 2026-11-01T14:49:50Z
 **Updated**: 2026-11-09T18:30:00Z
@@ -147,25 +147,34 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [x] `GET /privacy/subjects/{userid}/transcripts`: subject-key resolution, pagination, no enrolment check, rate limit, audit
 
 ### Operator config and monitoring
-- [ ] Settings bounds validation for all operator-facing `VEKTRA_ASSESS_*` values (one startup step, `StartupValidationError` with remediation)
-- [ ] SMTP test-send endpoints + worker handler (uses plan 10's sender; recipient fixed by setting)
-- [ ] Prometheus collector over `assess_metrics_snapshot()`; label-enum guard test
-- [ ] `/health/assess` readiness payload; test that killing the worker makes `/health/assess` 503 while shallow `/health` stays 200
-- [ ] Assess log allowlist processor in `vektra_app/main.py configure_structlog()` scoped to `vektra_assess.*`
-- [ ] `deploy/prometheus/assess-alerts.yml.example`: heartbeat > 60 s, oldest ready job > 30 s, FAILED deliveries > 0, RETRYING oldest > 1 h, TLS failures, purge last success > 26 h, purge verification failure, smtp probe down
+- [x] Settings bounds validation for all operator-facing `VEKTRA_ASSESS_*` values (one startup step, `StartupValidationError` with remediation)
+  (12b: every numeric setting bounded on both sides, guarded by a test; `explain_settings_error` names each rejected variable without echoing its value, used by API step 12 and by the worker before it opens a connection)
+- [x] SMTP test-send endpoints + worker handler (uses plan 10's sender; recipient fixed by setting)
+  (12b, revision 0042. Decisions: the fixed recipient is `VEKTRA_ASSESS_OPERATOR_EMAIL` (already mandatory with the relay) rather than a second `VEKTRA_ASSESS_OPS_TEST_RECIPIENT`: one operator address, one setting. The API cannot read a job back, so it generates the test id and the worker writes the result as an `assess_deliveries` row of kind `smtp_test` with THAT id; GET reads status / error class over the columns the API already may read, `queued` until the row exists. One attempt (`max_attempts=1`), one pending test at a time (429), a rerun after a crash never sends twice (`interrupted`). Rows deleted by the purge tick after 7 days. Audited: `assess_smtp_test_requested` (API), `assess_smtp_test_result` (worker))
+- [x] Prometheus collector over `assess_metrics_snapshot()`; label-enum guard test
+  (12b: revision 0041; the API refreshes the snapshot every 15 s in a background task, a scrape never waits on the database; values outside an enum are counted as `other`; `*_total` series count retained rows, so a purge can lower them; the purge records its runs in the `purge` heartbeat row: `ok`, `last_success`, cumulative `rows_deleted`)
+- [x] `/health/assess` readiness payload; test that killing the worker makes `/health/assess` 503 while shallow `/health` stays 200
+  (12b: content-free `details`: worker heartbeat age and state, oldest ready job, parser status from the new `parser_ping` tick, SMTP probe (the `last` verdict while busy), active vs configured privacy sites, API keys present, last successful purge age. A check marked `readiness = True` answers 503 unless `healthy`/`disabled`; every other component keeps its 200. Only the worker rows and the API's keys decide readiness: SMTP, parser and purge have alerts. Proven on real Postgres (`test_health_readiness_db.py`) and on the compose stack (`tests/assess/test_assess_stack.py`, CI job `assess-stack`))
+- [x] Assess log allowlist processor in `vektra_app/main.py configure_structlog()` scoped to `vektra_assess.*`
+  (12b: the processor itself shipped with plan assess-context (`vektra_shared.log_safety`, wired in `configure_structlog()` and in the worker's logging); 12b adds the missing "counted": every replaced key is counted once per record on both stacks and exposed as `vektra_assess_log_keys_dropped_total` on the API's /metrics)
+- [x] `deploy/prometheus/assess-alerts.yml.example`: heartbeat > 60 s, oldest ready job > 30 s, FAILED deliveries > 0, RETRYING oldest > 1 h, TLS failures, purge last success > 26 h, purge verification failure, smtp probe down
+  (12b: plus `VektraAssessMetricsDown` (every other rule is blind while the snapshot cannot be read); a unit test parses the file and fails if a rule names a series the collector does not emit)
 
 ### Keys
-- [ ] `python -m vektra_assess.keys verify` CLI: compares fingerprints of loaded keys (KEK, transcript key, teacher-config key, hand-off key, token signing key, subject-key secret) with the `key_version`/kid values referenced in the DB; non-zero exit on mismatch (detects a restore with the wrong key set)
-- [ ] `docs/guides/operators/assess-keys.md` (key inventory, which process holds what, loss consequences, offline backup separate from DB dumps; full rotation and restore drill in plan 13)
+- [x] `python -m vektra_assess.keys verify` CLI: compares fingerprints of loaded keys (KEK, transcript key, teacher-config key, hand-off key, token signing key, subject-key secret) with the `key_version`/kid values referenced in the DB; non-zero exit on mismatch (detects a restore with the wrong key set)
+  (12b: the DB stores kids, not fingerprints, so a kid match alone cannot catch a restore with other bytes under the same kid; the check therefore also OPENS one row per referenced kid (session DEK, transcript, reset and termination reasons) and reports `wrong_key`. Teacher-config and hand-off kids are checked for presence. Fingerprints are printed for comparing deployments. The token signing key has no DB reference, and there is no subject-key secret (the subject ref is an unkeyed hash): both stated in the output and the runbook. Exit 0 / 1 mismatch / 2 cannot run; `--role worker|api`)
+- [x] `docs/guides/operators/assess-keys.md` (key inventory, which process holds what, loss consequences, offline backup separate from DB dumps; full rotation and restore drill in plan 13)
+  (12b: written into the existing `docs/guides/assess-keys-runbook.md` (backup apart from dumps, restore drill and rotation were already there) rather than a second guide: key inventory with holder, DB reference and loss consequence, and the verify check)
 
 ### Tests, docs
 - [x] Integration (testcontainers): sessions aged past retention → after purge, content row count 0 per table, only tombstones + audit remain; RETRYING delivery → ABANDONED, audited, purge_notice on the mail sink; injected failure mid-batch → rollback, 0 tombstones, alert; non-zero verification → alert and failure surfaced
 - [x] Crypto-shred check: after deleting `kek_wrapped`, decryption of a pre-purge ciphertext copy taken in the test fails with the live KEK (proves the key, not just the row, is gone)
 - [x] Erasure: subject with 3 sessions (one ACTIVE) → counts match, 0 rows remain, ACTIVE closed as access_revoked with 0 deliveries sent; repeat → counts 0; retain mode → 0 deletions + audit; other subjects' row counts unchanged
 - [x] Export: unenrolled subject → transcripts #1..#N, each sha256 equal to the in-course download; cross-user → 0 foreign records; another key/site → 403; after purge → 0 items
-- [ ] REQ-080: admin key on download-token mint / transcript / export → 403; canary run (full flow with canaries in turns, files, solution) then grep of captured API, worker, parser logs, mail-sink server log and `/metrics` output → 0 hits; purge leaves 0 content rows
+- [x] REQ-080: admin key on download-token mint / transcript / export → 403; canary run (full flow with canaries in turns, files, solution) then grep of captured API, worker, parser logs, mail-sink server log and `/metrics` output → 0 hits; purge leaves 0 content rows
+  (12b. Done: admin 403 on the download-token mint (`test_transcript_api.py::test_keys_are_exact_and_site_bound`, `test_session_mint.py`) and on export (`test_privacy_retention.py`); the canary grep script `tests/nfr/assess_canary_grep.sh` with its false-pass guards (a canary absent from the seed, a missing or empty sink, no canary: exit 2, never 0; `tests/nfr/test_assess_canary_grep.py`); `/metrics` label values outside the fixed enums are impossible by construction (`test_metrics.py`); the in-process canary matrix already greps the structured logs of every sink case (`test_canary_matrix.py`); purge leaves 0 content rows (12a). **BLOCKED: the compose run of the script over a full seeded discussion.** It needs a real discussion end to end on the compose stack (an LMS site with a released attempt carrying the canaries, an activated model, a relay sink in compose): none of the three is in the compose stack today (NFR-021 is BLOCKED on the same relay sink). Runner command for when they are: capture `docker compose logs` of `vektra`, `vektra-assess-worker`, `vektra-assess-parser` and the sink, plus `curl /metrics`, then `tests/nfr/assess_canary_grep.sh --canaries <list> --seed <seeded input> <files>`. Moved to plan 13 (NFR campaign).)
 - [x] REQ-089: any privacy field unset → enable refused (plan 11 path) and setup check reports `privacy_config`; Start audit event carries `notice_version`; pre-session summary contains the mailbox sentence
-- [ ] Docs: `docs/reference/api.md` privacy, ops and health sections; `docs/reference/configuration.md` + `.env.example`; `CHANGELOG.md` [Unreleased] (12a: the privacy routes, purge, erasure, export and their settings are documented; ops and health go with 12b)
+- [x] Docs: `docs/reference/api.md` privacy, ops and health sections; `docs/reference/configuration.md` + `.env.example`; `CHANGELOG.md` [Unreleased] (12a: the privacy routes, purge, erasure, export and their settings are documented; ops and health go with 12b) (12b: health readiness and details, metrics table and the SMTP test send in api.md; bounds and the operator address on the API in configuration.md and .env.example; CHANGELOG entry)
 
 ## State & Data Lifecycle
 
@@ -188,8 +197,8 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [x] Erasure removes all the subject's content (row count 0 per table), leaves other subjects untouched, is idempotent, and never returns success without having erased or recorded a `retained` outcome (OQ-033)
 - [x] Per-activity listing returns exactly the subjects with rows for that cmid; per-activity erasure leaves row counts of other activities and other sites unchanged (count-verified)
 - [x] Export for an unenrolled subject returns #1..#N hash-equal to the in-course copy; cross-user returns 0 foreign records; after purge 0 transcripts (REQ-093)
-- [ ] An operator (admin) credential reading content gets 403; a canary grep of logs, mail logs and metrics returns 0; resend/test-send accept no recipient (REQ-080)
-- [ ] `/health/assess` reports readiness from worker-written rows and returns 503 with the worker stopped while `/health` stays 200 (COMP-002)
+- [x] An operator (admin) credential reading content gets 403; a canary grep of logs, mail logs and metrics returns 0; resend/test-send accept no recipient (REQ-080) (12b: 403 and no-recipient proven; the compose canary grep is BLOCKED as noted in Tests, moved to plan 13)
+- [x] `/health/assess` reports readiness from worker-written rows and returns 503 with the worker stopped while `/health` stays 200 (COMP-002)
 
 ## Testing Approach
 
@@ -360,3 +369,28 @@ no log files fails rather than passing.
 > - echo the `notice_version` the student saw in the Start request, so the API can refuse a
 >   Start whose notice changed meanwhile (CodeRabbit 4516399732). Until then the Start records
 >   the site's version at commit; the window is the pre-session token's TTL (at most 120 s).
+
+> **12b, the items moved from 12a (2026-11-10).**
+> - `delivery_retry` safety net for the notification chains (`delivery.notify.rescue_dead_chains`,
+>   run by the tick after the transcript sweep): live `teacher_notify` / `operator_notify` rows
+>   older than 5 min whose chain has no ready or leased job get ONE new run with the newest chain
+>   job's arguments (event, root, try and window start: the chain keeps its own backoff and
+>   window). A chain whose jobs were all cleaned up has nothing to rebuild from: its rows become
+>   FAILED `chain_lost` with the alert `notify_chain_lost`. Transcript rows already had their net
+>   (`_DUE` re-queues every due transcript).
+> - Abandoned setup-check reports (`worker.setup_check.fail_abandoned_reports`, hourly in the
+>   `job_cleanup` tick): a `queued` / `running` report older than the kind's lease with no
+>   `setup_check` job that could still run it becomes `failed` (it would otherwise read "queued"
+>   forever and never be trimmed).
+
+> **12b `/code-review` high (2026-11-10), 10 findings, all valid, all fixed** (each with a test
+> that fails on the earlier code): #1 the notification net ends a chain it cannot help
+> (`chain_ended`, `rescue_cap` after 3, `chain_lost`); #2 SMTP tests whose single-attempt job died
+> are reaped to `interrupted` by the `delivery_retry` tick; #3 row counts are gauges and every alert
+> rule reads a level; #4 every purge run is recorded (`ok` false on a raise, a failed count or a
+> backlog) and `VektraAssessPurgeNeverSucceeded` covers the absent series; #5 the worker's budget
+> check covers `smtp_test_send`; #6 `smtp_test` rows are out of the delivery figures (0041 edited:
+> not on develop yet); #7 one connection for `/health/assess`, the configured count in SQL, and the
+> shallow `/health` runs no excluded check; #8 `ix_assess_jobs_root` (revision 0043) and two
+> anti-joins; #9 `terminated_by_teacher` and `none` rollback buckets; #10 the metrics task is
+> awaited before the engine is disposed.

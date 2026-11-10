@@ -33,6 +33,11 @@ services:
       VEKTRA_ASSESS_ERASURE_MODE: ${VEKTRA_ASSESS_ERASURE_MODE:-}
       VEKTRA_ASSESS_ERASURE_WAIT_S: ${VEKTRA_ASSESS_ERASURE_WAIT_S:-4}
       VEKTRA_ASSESS_PRIVACY_RPM: ${VEKTRA_ASSESS_PRIVACY_RPM:-30}
+      # the operator's SMTP test send (plan 12b) is refused unless the API sees the relay and the
+      # operator address too; interpolated like the worker's, so a shell export reaches both
+      VEKTRA_ASSESS_SMTP_HOST: ${VEKTRA_ASSESS_SMTP_HOST:-}
+      VEKTRA_ASSESS_SMTP_FROM: ${VEKTRA_ASSESS_SMTP_FROM:-}
+      VEKTRA_ASSESS_OPERATOR_EMAIL: ${VEKTRA_ASSESS_OPERATOR_EMAIL:-}
     secrets:
       - { source: assess_token_signing, <<: *secret }
       - { source: assess_handoff_private, <<: *secret }

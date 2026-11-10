@@ -360,10 +360,21 @@ async def test_health_deep_requires_token(client, bootstrap_key):
     assert isinstance(body["components"], list)
 
 
-async def test_health_deep_without_token_returns_401(client):
-    """GET /health?detail=full without token must return 401."""
+async def test_health_deep_without_token_returns_401(client, registry):
+    """GET /health?detail=full without token must return 401, and run no check before it
+    (CodeRabbit 4524508921: an anonymous full request reached every component)."""
+    from vektra_shared.types import HealthStatus
+
+    calls: list[str] = []
+
+    async def spy():
+        calls.append("deep_only")
+        return HealthStatus(status="healthy")
+
+    registry.register("health", "llm", spy)
     resp = await client.get("/health?detail=full")
     assert resp.status_code == 401
+    assert calls == []
 
 
 async def test_admin_dashboard_redirects(client, bootstrap_key):

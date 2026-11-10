@@ -107,6 +107,22 @@ def test_broken_assess_config_mounts_nothing(
     assert _assess_paths(create_app()) == []
 
 
+def test_an_out_of_bounds_setting_is_named_without_its_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan 12b: the API's settings step names the variable and its bound, never the value
+    (pydantic's own message echoes the input, and a DSN carries a password)."""
+    monkeypatch.setenv(
+        "VEKTRA_ASSESS_API_DATABASE_URL", "postgresql+asyncpg://a:s3cr3t@db/x"
+    )
+    monkeypatch.setenv("VEKTRA_ASSESS_API_POOL_SIZE", "0")
+    with pytest.raises(StartupValidationError) as exc:
+        assess_wiring.load_assess_settings()
+    assert "VEKTRA_ASSESS_API_POOL_SIZE" in exc.value.detail
+    assert "s3cr3t" not in exc.value.to_plain_text()
+    assert "VEKTRA_ASSESS_API_POOL_SIZE" in exc.value.remediation
+
+
 # --- 6.5: step 12 refusals ------------------------------------------------------
 
 
@@ -748,3 +764,44 @@ async def test_a_site_on_http_is_named_with_its_own_remedy(
     assert err.detail == "assess site site-1 refused: moodle_origin_not_https"
     assert "https" in err.remediation and "disable" in err.remediation
     assert "VEKTRA_ASSESS_UI_ORIGIN" not in err.remediation
+
+
+async def test_the_metrics_refresher_feeds_the_process_collector() -> None:
+    """Plan 12b: step 12 attaches a snapshot cache to the /metrics collector and refreshes it
+    in the background; shutdown cancels the task."""
+    import asyncio
+
+    from prometheus_client import generate_latest
+
+    class _Conn:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_a):  # type: ignore[no-untyped-def]
+            return False
+
+        async def execute(self, *_a, **_k):  # type: ignore[no-untyped-def]
+            class _R:
+                def scalar_one(self):  # type: ignore[no-untyped-def]
+                    return {"sessions": {"ACTIVE": 3}}
+
+            return _R()
+
+    class _Engine:
+        def connect(self):  # type: ignore[no-untyped-def]
+            return _Conn()
+
+    app = _state_app()
+    assess_wiring.start_metrics_refresher(app, _Engine())  # type: ignore[arg-type]
+    try:
+        for _ in range(50):
+            if app.state.assess_metrics_cache.snapshot is not None:
+                break
+            await asyncio.sleep(0.01)
+        text = generate_latest().decode()
+        assert 'vektra_assess_sessions{state="ACTIVE"} 3.0' in text
+        assert "vektra_assess_metrics_up 1.0" in text
+    finally:
+        await assess_wiring.stop_metrics_refresher(app)
+        # review #10: awaited, not only cancelled, before the engine is disposed
+        assert app.state.assess_metrics_task.done()

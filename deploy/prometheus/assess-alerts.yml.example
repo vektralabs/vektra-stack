@@ -1,0 +1,99 @@
+# Prometheus alert rules for the assessment discussion feature (vektra-assess).
+#
+# Copy next to your Prometheus configuration and list it under `rule_files:`. Every series
+# comes from the API's /metrics (scrape the API container; the worker exposes no port). The
+# series are content-free counts and ages; labels are fixed enums.
+#
+# The thresholds below are the plan's defaults (plan assess-privacy-retention 12b). Tune `for:`
+# to your paging policy. Counts of rows the database still holds are gauges (the retention purge
+# lowers them): every rule reads a level, none uses rate() or increase() on them.
+
+groups:
+  - name: vektra-assess
+    rules:
+      - alert: VektraAssessMetricsDown
+        expr: vektra_assess_metrics_up == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "The API cannot read the assess metrics snapshot"
+          description: "Every other vektra-assess rule is blind while this fires. Check the assess database role and GET /health/assess."
+
+      - alert: VektraAssessWorkerHeartbeatStale
+        expr: vektra_assess_worker_heartbeat_age_seconds > 60
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "The assess worker heartbeat is older than 60 s"
+          description: "Sessions cannot start and no job runs. GET /health/assess answers 503."
+
+      # the series is absent when the worker never wrote its row (never started): the rule above
+      # cannot fire on a series that does not exist
+      - alert: VektraAssessWorkerHeartbeatAbsent
+        expr: absent(vektra_assess_worker_heartbeat_age_seconds) and on() vektra_assess_metrics_up == 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "The assess worker has never written its heartbeat"
+
+      - alert: VektraAssessJobBacklog
+        expr: vektra_assess_jobs_oldest_ready_seconds > 30
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "A due assess job has waited more than 30 s for a worker"
+
+      - alert: VektraAssessDeliveryFailed
+        expr: vektra_assess_deliveries{status="FAILED"} > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "At least one transcript or notification email failed for good"
+          description: "See the delivery audit events; the in-course download still works."
+
+      - alert: VektraAssessDeliveryRetryingTooLong
+        expr: vektra_assess_deliveries_retrying_oldest_seconds > 3600
+        labels: {severity: warning}
+        annotations:
+          summary: "An email has been retrying for more than 1 h"
+
+      - alert: VektraAssessSmtpTlsFailures
+        expr: vektra_assess_tls_failures > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "The SMTP relay failed TLS (no STARTTLS, handshake or certificate)"
+          description: "Mail is never sent without TLS; fix the relay or VEKTRA_ASSESS_SMTP_CA_FILE."
+
+      - alert: VektraAssessSmtpProbeDown
+        expr: vektra_assess_smtp_probe_ok == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "The SMTP relay probe fails"
+          description: "Use POST /api/v1/assess/ops/smtp-test to send a test message to the operator address."
+
+      - alert: VektraAssessPurgeLate
+        expr: time() - vektra_assess_purge_last_success_timestamp > 26 * 3600
+        labels: {severity: critical}
+        annotations:
+          summary: "No successful retention purge for more than 26 h"
+          description: "Content may outlive its retention period (REQ-089)."
+
+      # the timestamp is absent until a purge has succeeded once: a first purge that keeps failing
+      # (or never runs) must page too, not leave the rule above silent forever
+      - alert: VektraAssessPurgeNeverSucceeded
+        expr: absent(vektra_assess_purge_last_success_timestamp) and on() vektra_assess_metrics_up == 1
+        for: 26h
+        labels: {severity: critical}
+        annotations:
+          summary: "No retention purge has ever succeeded on this deployment"
+
+      # 0 for three reasons: a batch failed its count (rolled back), the run raised, or it left a
+      # backlog. A backlog is worked off by a follow-up purge job every few minutes, so the rule
+      # waits long enough for a draining backlog not to page.
+      - alert: VektraAssessPurgeVerificationFailed
+        expr: vektra_assess_purge_last_run_ok == 0
+        for: 1h
+        labels: {severity: critical}
+        annotations:
+          summary: "The retention purge has not completed cleanly for an hour"
+          description: "A batch failed its count and rolled back (worker log: assess.purge.alert purge_verification_failed), a run raised (purge_run_unrecorded or the tick failure), or a backlog is not draining."

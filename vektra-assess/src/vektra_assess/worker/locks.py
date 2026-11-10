@@ -35,6 +35,7 @@ ADMISSION = _key(
 SMTP_PROBE = _key(
     14
 )  # plan transcript-delivery 10b: EHLO/STARTTLS/AUTH/QUIT, never sends
+PARSER_PING = _key(15)  # plan privacy-retention 12b: parser status for /health/assess
 
 
 def all_keys() -> dict[str, int]:

@@ -39,11 +39,12 @@ def load_assess_settings() -> VektraAssessSettings:
     try:
         return VektraAssessSettings()
     except ValidationError as exc:
+        from vektra_assess.config import explain_settings_error
+
+        detail, remediation = explain_settings_error(exc)
         raise StartupValidationError(
-            step=STEP,
-            detail=str(exc),
-            remediation="Fix the VEKTRA_ASSESS_* variables (docs/reference/configuration.md).",
-        ) from exc
+            step=STEP, detail=detail, remediation=remediation
+        ) from None
 
 
 def include_assess_router(app: FastAPI) -> bool:
@@ -122,6 +123,7 @@ async def step_12_assess_check(
                 enabled=settings.enabled,
                 get_engine=lambda: getattr(app.state, "assess_engine", None),
                 max_age_s=settings.heartbeat_max_age_s,
+                keys_present=lambda: bool(getattr(app.state, "assess_keys", None)),
             ),
         )
     if not settings.enabled:
@@ -182,7 +184,37 @@ async def step_12_assess_check(
     # assess-local limiters (plan assess-session-lifecycle): the dormant global per-key limiter
     # (app.state.rate_limiter) stays unset
     app.state.assess_limiters = build_assess_limiters()
+    start_metrics_refresher(app, engine)
     log.info("startup_step", step=STEP, status="ok", keys=sorted(loaded))
+
+
+async def stop_metrics_refresher(app: FastAPI) -> None:
+    """Shutdown: cancel the refresh and WAIT for it, so no query runs on a disposed engine."""
+    import asyncio
+    import contextlib
+
+    task = getattr(app.state, "assess_metrics_task", None)
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+def start_metrics_refresher(app: FastAPI, engine: Any) -> None:
+    """Plan assess-privacy-retention 12b: the content-free assess series on ``/metrics``,
+    read from ``assess_metrics_snapshot()`` by a background refresh (a scrape never waits on
+    the database). Cancelled at shutdown before the engine is disposed."""
+    import asyncio
+
+    from vektra_assess.metrics import SnapshotCache, install
+
+    cache = SnapshotCache()
+    install(cache)
+    app.state.assess_metrics_cache = cache
+    app.state.assess_metrics_task = asyncio.get_running_loop().create_task(
+        cache.run(engine), name="assess-metrics-refresh"
+    )
 
 
 async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:

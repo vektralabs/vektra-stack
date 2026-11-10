@@ -304,3 +304,53 @@ def test_the_purge_marker_is_never_a_key_id(full_set: Path, tmp_path: Path) -> N
     p.write_text(json.dumps({"active": "purged", "keys": {"purged": key}}))
     os.chmod(p, 0o400)
     assert "kid 'purged' is reserved" in _refusal("worker", d)
+
+
+def test_verify_without_a_configured_role_cannot_run(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Plan 12b: ``python -m vektra_assess.keys verify`` exits 2 when it cannot run (here: no
+    secrets), never 0."""
+    from vektra_assess import keys as k
+
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(tmp_path))
+    assert k.main(["verify", "--role", "worker"]) == 2
+
+
+async def test_verify_reports_a_present_kid_without_a_sample_as_present() -> None:
+    from vektra_assess import keys_verify as kv
+    from vektra_assess.keys import AssessKeyring
+
+    async def query(sql, params):  # type: ignore[no-untyped-def]
+        if "DISTINCT" in sql:
+            return [("k1",)]
+        return []  # no sample row
+
+    ring = AssessKeyring("assess_kek", "k1", {"k1": bytes(32)})
+    rep = await kv.verify({"assess_kek": ring, "assess_token_signing": ring}, query)
+    assert not rep.mismatched
+    reasons = {f.reason for f in rep.findings}
+    assert "kid_present" in reasons
+    assert any(r and r.startswith("not_referenced") for r in reasons)
+
+
+async def test_a_dsn_with_a_password_cannot_run_and_is_not_printed(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch
+) -> None:
+    """CodeRabbit 4524508958: the DSN error escaped the handler (exit 1 = 'mismatch')."""
+    import io
+
+    from vektra_assess import keys
+    from vektra_assess import keys_verify as kv
+
+    keys.generate(tmp_path / "s")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv(
+        "VEKTRA_ASSESS_WORKER_DATABASE_URL", "postgresql+asyncpg://w:s3cr3t@db/x"
+    )
+    monkeypatch.setattr(
+        keys,
+        "enforce_key_matrix",
+        lambda *a, **k: {"assess_db_worker_password": keys.Password("p", "x" * 30)},
+    )
+    out = io.StringIO()
+    assert await kv._run("worker", out) == 2
+    assert "s3cr3t" not in out.getvalue()

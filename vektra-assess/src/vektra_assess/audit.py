@@ -102,6 +102,9 @@ class AssessAuditEvent(enum.StrEnum):
     ERASURE_RETAINED = "assess_erasure_retained"
     PRIVACY_EXPORT = "assess_privacy_export"
     PRIVACY_SUBJECTS_LISTED = "assess_privacy_subjects_listed"
+    # plan 12b: the operator's SMTP test send (requested by the API, its outcome by the worker)
+    SMTP_TEST_REQUESTED = "assess_smtp_test_requested"
+    SMTP_TEST_RESULT = "assess_smtp_test_result"
 
 
 class Conn(Protocol):

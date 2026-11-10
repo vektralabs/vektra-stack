@@ -23,6 +23,7 @@
 ### Assessment discussion (operators)
 
 - [Deployment](guides/operators/assess-deployment.md) - the `assess` Compose profile, roles and DSNs, limits, health checks, setup check
+- [Secrets and the key matrix](guides/operators/assess-secrets.md) - which process must and must not hold each secret, file formats, generation, startup refusals
 
 ## Workflows
 

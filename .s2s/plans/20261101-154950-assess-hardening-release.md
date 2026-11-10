@@ -120,7 +120,7 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 
 ### Runbooks and operator docs
 - [x] `docs/guides/operators/assess-deployment.md`: compose `assess` profile, roles and DSNs, connection budget, `log_statement=none`, worker/parser limits, healthchecks, TLS UI origin, setup check walkthrough
-- [ ] `docs/guides/operators/assess-secrets.md`: per-service secret files and the ARCH-071 key matrix (who must and must not hold what), generation commands, startup refusal messages
+- [x] `docs/guides/operators/assess-secrets.md`: per-service secret files and the ARCH-071 key matrix (who must and must not hold what), generation commands, startup refusal messages
 - [ ] Key rotation runbooks: KEK (re-wrap job, retire/destroy cadence tied to backup retention), API X25519 hand-off key (re-seal ≤ K live hand-off rows), transcript key (re-wrap per-transcript DEKs with `crypto.rotation.rewrap_transcript_deks` AND the teachers' reset / termination reasons with `rewrap_teacher_reasons`, plan teacher-ops 11b, before the old kid is retired), teacher-config key (re-seal blobs), token signing key (kid overlap), subject-key secret (not rotatable without full rekey — documented)
 - [ ] Offline key backup + restore drill: back up keys separately from DB dumps; drill = restore DB dump + keys into a clean host, run `python -m vektra_assess.keys verify`, download a retained transcript and compare its sha256 to the pre-backup value, confirm purged sessions stay unrecoverable; record drill date and result
 - [ ] Framing runbook: per-site `moodle_origin`, nginx/traefik exemption of `/api/v1/assess/ui` from `X-Frame-Options` (plan 9), distinct-origin requirement, verifying with the setup check

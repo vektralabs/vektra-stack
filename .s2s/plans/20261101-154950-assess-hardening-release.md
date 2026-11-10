@@ -373,3 +373,23 @@ every release, with a manual exploratory session on top.
   chaos scenario reaches the gate and its report. The gate no longer counts the checker's own
   negative controls towards the declared scenario minimum (before, a run made only of negative
   controls could meet it). Declared: **61 cases, 26 invariant reports**.
+- **Review of the 13a branch (/code-review high, 2026-11-10): all eight findings and both
+  cleanups hold and are fixed, each with a test that failed first.** None was rejected.
+  - keys rewrap: `run()` read `.value` from an `AssessKeyring` and refused every run; fixed, with an
+    end-to-end test through `run()` on a two-kid keyring. A row that does not decrypt is now
+    skipped and named by id (exit 1, "a data or key problem"), the other rows are re-wrapped.
+  - NFR report: the API's advisory refusals (`capacity`, `worker_not_ready`, `worker_heartbeat`)
+    are read from `assess_start_refused` audit events: capacity to NFR-020 and out of "admitted",
+    worker-unavailable against the NFR-019 rate.
+  - Heartbeat isolation: the worker builds a one-connection liveness engine, carved out of
+    `VEKTRA_ASSESS_WORKER_POOL_SIZE` (job pool 4 + liveness 1 + control: INT-002 unchanged), for the
+    heartbeat, the lease reaper and the STARTING reaper. `RowDbBudget.RESERVED` is now 1 (the job
+    loop). Load test: the whole job pool held, the liveness ticks still run and the heartbeat row
+    is fresh; control without the engine starves.
+  - Gate and checker: distinct real scenario names (negative controls and `selftest:` rows not
+    counted); `expect_sessions` scoped to the scenario's sites (required when declared);
+    `sink_copies` excuses a second copy only for the row its duplicate audit names; the LLM stub
+    tracks its handlers so `stop()` ends a stall; the mail sink resets its hold events.
+  - One source for the chaos run: both workflows call `make test-chaos-assess`; the
+    suite-execution guard now follows a workflow's `make <target>` into the Makefile.
+  - Declared after the review: **68 cases, 26 scenarios** (distinct names).

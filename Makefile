@@ -92,7 +92,7 @@ test-assess-e2e: ## Assess discussion UI in Chromium: Playwright + axe, two orig
 # fails on a skipped case, on fewer cases or invariant reports than declared, or on any violation.
 # This target is the one definition of the chaos run: the CI chaos jobs call `make test-chaos-assess`.
 CHAOS_DIR_OUT ?= test-results/assess-chaos
-CHAOS_MIN_CASES ?= 61
+CHAOS_MIN_CASES ?= 68
 CHAOS_MIN_SCENARIOS ?= 26
 test-chaos-assess: ## Assess chaos suite + invariant gate (needs Docker); report in test-results/assess-chaos
 	rm -rf $(CHAOS_DIR_OUT) && mkdir -p $(CHAOS_DIR_OUT)

@@ -26,6 +26,7 @@
 - [Secrets and the key matrix](guides/operators/assess-secrets.md) - which process must and must not hold each secret, file formats, generation, startup refusals
 - [Framing](guides/operators/assess-framing.md) - the UI origin, the per-site LMS origin, the reverse proxy and how to verify them
 - [LMS service account and plugin keys](guides/assess-moodle-service-account.md) - the read-only web-service account, its token, site registration, the four `assess:*` keys
+- [Pilot go/no-go](guides/operators/assess-pilot-go-no-go.md) - the pilot criteria, each with its evidence or the reason it is blocked
 - [Keys runbook](guides/assess-keys-runbook.md) - key verification, offline backup, restore drill, rotation per key
 
 ## Workflows

@@ -11,7 +11,8 @@ the helpers as the worker role, in committed batches, until no row carries the o
   cannot be retired with reasons left behind.
 
 The loaded keyring must hold the old kid and the new active one. Exit status: 0 when nothing is
-left (the old kid can go), 1 when rows remain (locked or failing; run it again), 2 when the
+left (the old kid can go), 1 when rows remain (locked: run it again; or rows that do not
+decrypt, listed by id: a data or key problem, the other rows are still re-wrapped), 2 when the
 command cannot run. Only counts and kids are printed, never keys or the DSN.
 """
 
@@ -35,11 +36,15 @@ WHAT = {
 
 
 def steps_for(
-    what: str, ring: Any, from_kid: str, batch: int
+    what: str, ring: Any, from_kid: str, batch: int, skip: set[str] | None = None
 ) -> list[Callable[[Any], Any]]:
+    """The re-wrap steps of ``what``. With ``skip``, a row that does not decrypt is recorded
+    there by ``"<table>:<id>"`` and left alone instead of aborting the batch."""
     _, names = WHAT[what]
     return [
-        (lambda fn: lambda conn: fn(conn, ring, from_kid, batch))(getattr(rotation, n))
+        (lambda fn: lambda conn: fn(conn, ring, from_kid, batch, skip=skip))(
+            getattr(rotation, n)
+        )
         for n in names
     ]
 
@@ -66,17 +71,26 @@ async def run(what: str, from_kid: str, batch: int, out: TextIO) -> int:
         )
         await engine.dispose()
         return 2
+    failed: set[str] = set()
     try:
         left = await rotation.rewrap_to_done(
-            engine.connect, steps_for(what, ring, from_kid, batch)
+            engine.connect, steps_for(what, ring, from_kid, batch, failed)
         )
     except Exception as exc:
         print(f"cannot run: database {type(exc).__name__}", file=out)
         return 2
     finally:
         await engine.dispose()
-    print(f"{what}: {left} row(s) still under {from_kid}", file=out)
-    return 0 if left == 0 else 1
+    print(f"{what}: {left + len(failed)} row(s) still under {from_kid}", file=out)
+    if failed:
+        # ids only, never content: a corrupt row or a key that is not the one it was sealed under
+        print(
+            f"{len(failed)} row(s) did not decrypt under {key_name} kid {from_kid!r} and were "
+            "left as they are (a data or key problem, not a database one): "
+            + ", ".join(sorted(failed)),
+            file=out,
+        )
+    return 0 if left == 0 and not failed else 1
 
 
 def main(argv: Sequence[str]) -> int:

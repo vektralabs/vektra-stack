@@ -127,3 +127,31 @@ async def test_the_command_rewraps_end_to_end_with_a_two_kid_keyring(  # type: i
     assert code == 0, out.getvalue()
     assert (await _under(pg, "k1"), await _under(pg, "k2")) == (0, len(sids))
     assert "0 row(s) still under k1" in out.getvalue()
+
+
+async def test_a_row_that_does_not_decrypt_is_skipped_by_id_and_the_rest_rewrapped(  # type: ignore[no-untyped-def]
+    pg, tmp_path, monkeypatch
+) -> None:
+    import io
+
+    await pg.run("super", "TRUNCATE assess_sites CASCADE")
+    old = sym("k1")
+    sids = [await make_real_session(pg, old, x_ring("a1")[0]) for _ in range(4)]
+    bad = sorted(sids)[
+        1
+    ]  # not the first of a batch, so a batch holds good and bad rows
+    await pg.run(
+        "super",
+        "UPDATE assess_session_keys SET kek_wrapped = :b WHERE session_id = :s",
+        {"b": b"\x00" * 60, "s": bad},
+    )
+    two = AssessKeyring("assess_kek", "k2", {**old.keys, "k2": os.urandom(32)})
+    _worker_secrets(tmp_path / "secrets", two)
+    _env(monkeypatch, pg, tmp_path / "secrets")
+    out = io.StringIO()
+    code = await keys_rewrap.run("session-keys", "k1", 2, out)
+    text = out.getvalue()
+    assert code == 1, text
+    assert (await _under(pg, "k1"), await _under(pg, "k2")) == (1, len(sids) - 1)
+    assert str(bad) in text and "did not decrypt" in text and "cannot run" not in text
+    assert old.keys["k1"].hex() not in text

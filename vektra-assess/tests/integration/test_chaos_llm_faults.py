@@ -176,7 +176,7 @@ async def test_three_consecutive_5xx_from_the_provider_close_service_failure(
             )
             assert [a[0] for a in audit] == ["1", "2"]
             await assert_invariants(
-                pg, "llm-stub:5xx-service-failure", expect_sessions=1
+                pg, "llm-stub:5xx-service-failure", expect_sessions=1, sites=[w.site]
             )
     finally:
         await stub.stop()
@@ -205,7 +205,9 @@ async def test_control_the_provider_back_before_the_third_call_answers_the_turn(
                 2,
                 False,
             )
-            await assert_invariants(pg, "llm-stub:5xx-recovered", expect_sessions=1)
+            await assert_invariants(
+                pg, "llm-stub:5xx-recovered", expect_sessions=1, sites=[w.site]
+            )
     finally:
         await stub.stop()
 
@@ -251,6 +253,8 @@ async def test_a_stalled_provider_enters_outage_at_the_timeout_then_answers_once
             bot = [t for t in got.json()["turns"] if t["role"] == "bot"]
             assert bot[-1]["kind"] == "normal" and REPLY.split()[0] in bot[-1]["text"]
             await asyncio.sleep(0)
-            await assert_invariants(pg, "llm-stub:stalled-reply", expect_sessions=1)
+            await assert_invariants(
+                pg, "llm-stub:stalled-reply", expect_sessions=1, sites=[w.site]
+            )
     finally:
         await stub.stop()

@@ -190,7 +190,7 @@ async def test_each_close_reason_by_row_count(pg, reason: str) -> None:  # type:
             assert exc.value.step == "closed"  # the old token reaches the closed check
     finally:
         await engine.dispose()
-    await assert_invariants(pg, f"close:{reason}", expect_sessions=1)
+    await assert_invariants(pg, f"close:{reason}", expect_sessions=1, sites=[site])
 
 
 async def test_kill9_mid_preflight_commit_leaves_the_student_eligible(pg) -> None:  # type: ignore[no-untyped-def]
@@ -235,7 +235,7 @@ async def test_kill9_mid_preflight_commit_leaves_the_student_eligible(pg) -> Non
 async def test_kill9_of_the_api_mid_reply_releases_the_claim(pg) -> None:  # type: ignore[no-untyped-def]
     from vektra_assess.turn_markers import REPLY_CLAIM_KEY_SQL
 
-    _site, sid = await seed(pg)
+    site, sid = await seed(pg)
     try_lock = f"SELECT pg_try_advisory_lock({REPLY_CLAIM_KEY_SQL})"
     unlock = f"SELECT pg_advisory_unlock({REPLY_CLAIM_KEY_SQL})"
     proc = hold(
@@ -265,14 +265,14 @@ async def test_kill9_of_the_api_mid_reply_releases_the_claim(pg) -> None:  # typ
     finally:
         if proc.poll() is None:
             kill9(proc)
-    await assert_invariants(pg, "kill9:api-mid-reply", expect_sessions=1)
+    await assert_invariants(pg, "kill9:api-mid-reply", expect_sessions=1, sites=[site])
 
 
 async def test_postgres_restart_mid_turn_never_duplicates_a_turn(pg_fixed_port) -> None:  # type: ignore[no-untyped-def]
     import docker
 
     pg = pg_fixed_port
-    _site, sid = await seed(pg)
+    site, sid = await seed(pg)
     append = (
         "SELECT assess_append_turn(CAST(:s AS uuid), 1, 0, 'student', 'normal', "
         "'\\x04'::bytea, 'h2', 'h1')"
@@ -303,7 +303,9 @@ async def test_postgres_restart_mid_turn_never_duplicates_a_turn(pg_fixed_port) 
         )
         is True
     )
-    await assert_invariants(pg, "postgres-restart:mid-turn", expect_sessions=1)
+    await assert_invariants(
+        pg, "postgres-restart:mid-turn", expect_sessions=1, sites=[site]
+    )
 
 
 async def _session_rows(pg: Any, sid: Any) -> tuple[Any, ...]:
@@ -328,7 +330,7 @@ async def test_kill9_of_the_api_mid_lazy_close_leaves_the_session_live_then_clos
 ) -> None:  # type: ignore[no-untyped-def]
     """The API's lazy close (gate step 5) killed inside its transaction: nothing of the close
     survives (state, epoch, hand-off and job unchanged), and the next request closes exactly once."""
-    _site, sid = await seed(pg)
+    site, sid = await seed(pg)
     before = await _session_rows(pg, sid)
     assert before == ("ACTIVE", 1, 1, 0, 1)
     close = "SELECT assess_close_session(CAST(:s AS uuid), 1, 'timed_out')"
@@ -336,19 +338,23 @@ async def test_kill9_of_the_api_mid_lazy_close_leaves_the_session_live_then_clos
     kill9(proc)
     await asyncio.sleep(0.5)
     assert await _session_rows(pg, sid) == before  # the killed close left no trace
-    await assert_invariants(pg, "kill9:api-mid-lazy-close", expect_sessions=1)
+    await assert_invariants(
+        pg, "kill9:api-mid-lazy-close", expect_sessions=1, sites=[site]
+    )
     assert (await pg.run("api", close, {"s": str(sid)}))[0][0] is True
     # a second request racing the first: whatever it returns, it closes nothing again (no
     # second job, no second epoch bump), the exactly-one close of REQ-067
     await pg.run("api", close, {"s": str(sid)})
     assert await _session_rows(pg, sid) == ("CLOSED", 2, 0, 1, 1)
-    await assert_invariants(pg, "lazy-close:after-kill", expect_sessions=1)
+    await assert_invariants(
+        pg, "lazy-close:after-kill", expect_sessions=1, sites=[site]
+    )
 
 
 async def test_an_epoch_bump_mid_stream_refuses_the_late_append(pg) -> None:  # type: ignore[no-untyped-def]
     """A reply streamed under epoch 1 when a close bumps the epoch to 2: its late persist is
     refused, the turn count is unchanged, and the session stays closed exactly once."""
-    _site, sid = await seed(pg)
+    site, sid = await seed(pg)
     append = (
         "SELECT assess_append_turn(CAST(:s AS uuid), 1, 0, 'student', 'normal', "
         "'\\x04'::bytea, 'h2', 'h1')"
@@ -363,7 +369,9 @@ async def test_an_epoch_bump_mid_stream_refuses_the_late_append(pg) -> None:  # 
     late = (await pg.run("api", append, {"s": str(sid)}))[0][0]
     assert late is None
     assert await _session_rows(pg, sid) == ("CLOSED", 2, 0, 1, 1)
-    await assert_invariants(pg, "epoch-bump:mid-stream", expect_sessions=1)
+    await assert_invariants(
+        pg, "epoch-bump:mid-stream", expect_sessions=1, sites=[site]
+    )
 
 
 async def test_control_the_same_append_succeeds_without_the_epoch_bump(pg) -> None:  # type: ignore[no-untyped-def]

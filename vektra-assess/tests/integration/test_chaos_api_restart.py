@@ -67,7 +67,9 @@ async def test_a_restarted_api_resumes_live_sessions_from_the_handoff_row(
         assert (
             await _rows(pg, s.session_id) == before
         )  # no job, hand-off and turns intact
-        await assert_invariants(pg, "api-restart:resume", expect_sessions=1)
+        await assert_invariants(
+            pg, "api-restart:resume", expect_sessions=1, sites=[w.site]
+        )
 
         # negative control: a second restart with the hand-off row gone cannot read the history
         del w.app.state.assess_dek_cache

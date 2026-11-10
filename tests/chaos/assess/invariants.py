@@ -21,7 +21,9 @@ Invariants (each query returns the offending ids, so an empty list is the only p
 - ``key_present``: every committed, retained session keeps a wrapped key (no accidental shred).
 
 False-pass guard: ``expect_sessions`` declares how many sessions the scenario created; fewer rows
-than declared fails the check instead of passing on an empty table.
+than declared fails the check instead of passing on an empty table. The count is scoped to the
+scenario's own ``sites`` (required whenever something is declared), so rows that an earlier test
+left on a module-scoped database cannot stand in for sessions this scenario never made.
 """
 
 from __future__ import annotations
@@ -142,12 +144,31 @@ async def check(
     grace_s: float = 5.0,
     sink_copies: Callable[[str], int] | None = None,
     only: Iterable[str] | None = None,
+    sites: Iterable[Any] | None = None,
 ) -> Report:
-    """Run every invariant and return the report (never raises: ``assert_ok`` does)."""
+    """Run every invariant and return the report (never raises on a violation: ``assert_ok``
+    does). ``sites``: the sites the scenario created, required when ``expect_sessions > 0``."""
     names = list(only) if only is not None else list(ALWAYS)
     if settled and only is None:
         names.append("transcript_per_closed")
-    sessions = (await pg.run("super", "SELECT count(*) FROM assess_sessions"))[0][0]
+    scope = [str(s) for s in sites] if sites is not None else None
+    if expect_sessions > 0 and not scope:
+        raise ValueError(
+            f"{scenario}: expect_sessions={expect_sessions} needs the scenario's sites, or "
+            "sessions left by earlier tests would satisfy it"
+        )
+    sessions = (
+        (
+            await pg.run(
+                "super",
+                "SELECT count(*) FROM assess_sessions "
+                "WHERE CAST(site_id AS text) = ANY(CAST(:sites AS text[]))",
+                {"sites": scope},
+            )
+        )[0][0]
+        if scope
+        else 0
+    )
     report = Report(scenario, int(sessions), expect_sessions)
     for name in names:
         rows = await pg.run("super", QUERIES[name], {"grace_s": grace_s})

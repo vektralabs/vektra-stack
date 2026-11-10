@@ -102,20 +102,44 @@ async def report_for(pg: Any, name: str, **kw: Any) -> list[str]:
 
 async def test_a_clean_database_passes_every_invariant(pg) -> None:  # type: ignore[no-untyped-def]
     await wipe(pg)
-    await session(pg, "ACTIVE", opening=True)
-    await session(pg, "CLOSED", opening=True, student=2)
-    await session(pg, "STARTING", opening=False, key=False, student=3)
-    report = await check(pg, "selftest:clean", expect_sessions=3)
+    site = uuid.uuid4()
+    await session(pg, "ACTIVE", opening=True, site=site)
+    await session(pg, "CLOSED", opening=True, student=2, site=site)
+    await session(pg, "STARTING", opening=False, key=False, student=3, site=site)
+    report = await check(pg, "selftest:clean", expect_sessions=3, sites=[site])
     assert report.checked == list(ALWAYS)
     assert_ok(report)
 
 
 async def test_fewer_sessions_than_declared_fails(pg) -> None:  # type: ignore[no-untyped-def]
     await wipe(pg)
-    report = await check(pg, "selftest:empty", expect_sessions=1)
+    report = await check(pg, "selftest:empty", expect_sessions=1, sites=[uuid.uuid4()])
     assert not report.ok
     with pytest.raises(AssertionError, match="declared 1"):
         assert_ok(report)
+
+
+async def test_rows_left_by_an_earlier_test_cannot_satisfy_the_declared_count(
+    pg,
+) -> None:  # type: ignore[no-untyped-def]
+    """``expect_sessions`` counts the scenario's own sites only: three sessions an earlier test
+    left on the module-scoped database do not stand in for the one this scenario never made."""
+    await wipe(pg)
+    earlier = uuid.uuid4()
+    for student in (1, 2, 3):
+        await session(pg, "CLOSED", opening=True, student=student, site=earlier)
+    mine = uuid.uuid4()
+    report = await check(pg, "selftest:scoped", expect_sessions=1, sites=[mine])
+    assert report.sessions == 0 and not report.ok
+    with pytest.raises(AssertionError, match="declared 1"):
+        assert_ok(report)
+    await session(pg, "ACTIVE", opening=True, site=mine)
+    assert (await check(pg, "selftest:scoped", expect_sessions=1, sites=[mine])).ok
+
+
+async def test_a_declared_count_without_its_sites_is_refused(pg) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="sites"):
+        await check(pg, "selftest:unscoped", expect_sessions=1)
 
 
 async def test_two_live_sessions_for_one_student_are_caught(pg) -> None:  # type: ignore[no-untyped-def]

@@ -247,7 +247,9 @@ async def test_parser_killed_mid_extraction_rolls_the_start_back_then_restarts_c
             ) == (1, 1, 1)
             assert committed["turns"] >= 1
             assert (committed["rolled_back"], committed["rb_audit"]) == (1, 1)
-            await assert_invariants(pg, "parser-kill:restarted", expect_sessions=1)
+            await assert_invariants(
+                pg, "parser-kill:restarted", expect_sessions=1, sites=[w.site]
+            )
     finally:
         sidecar.stop()
         await worker.dispose()

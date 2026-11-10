@@ -156,5 +156,6 @@ async def test_kill9_mid_generation_commits_nothing_and_the_retry_generates_once
             pg,
             "kill9:mid-generation",
             expect_sessions=1,
+            sites=[w.site],
             only=["no_orphan_content", "one_sent_per_recipient", "handoff_only_live"],
         )

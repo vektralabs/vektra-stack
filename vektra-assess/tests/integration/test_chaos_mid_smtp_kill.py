@@ -174,6 +174,7 @@ async def test_kill9_between_data_and_250_leaves_one_sent_row_per_recipient(
                 pg,
                 "kill9:mid-smtp",
                 expect_sessions=1,
+                sites=[w.site],
                 only=["one_sent_per_recipient", "no_orphan_content"],
                 sink_copies=lambda mid: len(sink.by_message_id(mid)),
             )

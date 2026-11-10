@@ -353,7 +353,11 @@ async def test_worker_down_ten_minutes_closes_deferred_then_reconciled(
             == []
         )
         await assert_invariants(
-            pg, "worker-down-10min:reconciled", expect_sessions=3, settled=True
+            pg,
+            "worker-down-10min:reconciled",
+            expect_sessions=3,
+            sites=[w.site],
+            settled=True,
         )
 
 
@@ -369,6 +373,7 @@ async def test_control_without_the_returning_worker_the_settled_check_fails(
             pg,
             "negative:worker-down-unreconciled",
             expect_sessions=3,
+            sites=[w.site],
             settled=True,
         )
         assert not report.ok

@@ -137,6 +137,7 @@ async def test_postgres_restart_between_data_and_250_leaves_one_sent_row_per_rec
                 pg,
                 "postgres-restart:mid-delivery",
                 expect_sessions=1,
+                sites=[w.site],
                 only=[
                     "one_sent_per_recipient",
                     "no_orphan_content",
@@ -149,6 +150,7 @@ async def test_postgres_restart_between_data_and_250_leaves_one_sent_row_per_rec
                 pg,
                 "negative:mid-delivery-empty-relay",
                 expect_sessions=1,
+                sites=[w.site],
                 only=["one_sent_per_recipient"],
                 sink_copies=lambda _mid: 0,
             )
@@ -262,7 +264,7 @@ async def test_postgres_restart_during_a_start_burst_keeps_each_start_whole(
         )[0][0]
         assert total == N_STARTS
         await assert_invariants(
-            pg, "postgres-restart:start-burst", expect_sessions=N_STARTS
+            pg, "postgres-restart:start-burst", expect_sessions=N_STARTS, sites=[w.site]
         )
 
         # negative control: a STARTING row whose job is missing is reported by the same check

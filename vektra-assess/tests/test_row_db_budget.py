@@ -28,7 +28,8 @@ class FakePool:
 
 
 def test_the_budget_is_the_pool_minus_the_reserve_never_below_one() -> None:
-    assert RowDbBudget.for_pool(5).permits == 5 - RESERVED == 3
+    # the job pool of the default worker pool of 5 is 4 (1 goes to the liveness engine)
+    assert RowDbBudget.for_pool(4).permits == 4 - RESERVED == 3
     assert RowDbBudget.for_pool(2).permits == 1
     assert RowDbBudget.for_pool(1).permits == 1
     with pytest.raises(ValueError):

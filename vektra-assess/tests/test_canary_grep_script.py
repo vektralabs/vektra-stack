@@ -73,3 +73,10 @@ def test_an_unknown_option_is_refused(tmp_path: Path) -> None:
         ["bash", str(SCRIPT), "--bogus"], capture_output=True, check=False
     )
     assert res.returncode == 2
+
+
+@pytest.mark.parametrize("opt", ["--canaries", "--seed"])
+def test_a_trailing_option_without_value_is_a_usage_error(opt: str) -> None:
+    """CodeRabbit 4524508901: ``shift 2`` on a lone trailing option exited 1, the leak code."""
+    res = subprocess.run(["bash", str(SCRIPT), opt], capture_output=True, check=False)
+    assert res.returncode == 2

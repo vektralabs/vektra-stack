@@ -28,8 +28,8 @@ usage() {
 canaries="" seed=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --canaries) canaries="${2:-}"; shift 2 ;;
-        --seed) seed="${2:-}"; shift 2 ;;
+        --canaries) [ $# -ge 2 ] || usage; canaries="$2"; shift 2 ;;
+        --seed) [ $# -ge 2 ] || usage; seed="$2"; shift 2 ;;
         --help|-h) usage ;;
         --*) echo "unknown option: $1" >&2; usage ;;
         *) break ;;

@@ -26,10 +26,12 @@ jobs:
 
     # Every compose call of this job, the tests' own included, also loads the CI
     # Hugging Face cache overlay (.github/ci/compose.hf-cache.yml): NFR-004 below must
-    # measure our startup, not a model download from the Hub.
+    # measure our startup, not a model download from the Hub. The cache lives outside
+    # the checkout (not in the image build context) at an absolute path: actions/cache
+    # refuses a path with "..".
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.override.yml:.github/ci/compose.hf-cache.yml
-      HF_CACHE_DIR: ${{ github.workspace }}/../hf-cache
+      HF_CACHE_DIR: /home/runner/hf-cache
 
     steps:
       - uses: actions/checkout@v7
@@ -326,7 +328,7 @@ jobs:
     # embedding model and the default cross-encoder reranker come from this cache, not
     # from the Hub. Its own key: these suites also load models the compose jobs do not.
     env:
-      HF_HOME: ${{ github.workspace }}/../hf-cache
+      HF_HOME: /home/runner/hf-cache
       HF_HUB_DISABLE_TELEMETRY: "1"
 
     steps:
@@ -421,7 +423,7 @@ jobs:
     # overlay serves it from the cache shared with the integration job (same image, same
     # models). The tests' own compose calls touch only the worker and the parser.
     env:
-      HF_CACHE_DIR: ${{ github.workspace }}/../hf-cache
+      HF_CACHE_DIR: /home/runner/hf-cache
     steps:
       - uses: actions/checkout@v7
         with:

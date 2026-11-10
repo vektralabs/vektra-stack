@@ -78,9 +78,13 @@ groups:
         annotations:
           summary: "No retention purge has ever succeeded on this deployment"
 
+      # 0 for three reasons: a batch failed its count (rolled back), the run raised, or it left a
+      # backlog. A backlog is worked off by a follow-up purge job every few minutes, so the rule
+      # waits long enough for a draining backlog not to page.
       - alert: VektraAssessPurgeVerificationFailed
         expr: vektra_assess_purge_last_run_ok == 0
+        for: 1h
         labels: {severity: critical}
         annotations:
-          summary: "The last purge run left content rows behind and rolled back"
-          description: "Search the worker log for assess.purge.alert purge_verification_failed."
+          summary: "The retention purge has not completed cleanly for an hour"
+          description: "A batch failed its count and rolled back (worker log: assess.purge.alert purge_verification_failed), a run raised (purge_run_unrecorded or the tick failure), or a backlog is not draining."

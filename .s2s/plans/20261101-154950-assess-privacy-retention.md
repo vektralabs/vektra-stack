@@ -152,7 +152,8 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [ ] SMTP test-send endpoints + worker handler (uses plan 10's sender; recipient fixed by setting)
 - [x] Prometheus collector over `assess_metrics_snapshot()`; label-enum guard test
   (12b: revision 0041; the API refreshes the snapshot every 15 s in a background task, a scrape never waits on the database; values outside an enum are counted as `other`; `*_total` series count retained rows, so a purge can lower them; the purge records its runs in the `purge` heartbeat row: `ok`, `last_success`, cumulative `rows_deleted`)
-- [ ] `/health/assess` readiness payload; test that killing the worker makes `/health/assess` 503 while shallow `/health` stays 200
+- [x] `/health/assess` readiness payload; test that killing the worker makes `/health/assess` 503 while shallow `/health` stays 200
+  (12b: content-free `details`: worker heartbeat age and state, oldest ready job, parser status from the new `parser_ping` tick, SMTP probe (the `last` verdict while busy), active vs configured privacy sites, API keys present, last successful purge age. A check marked `readiness = True` answers 503 unless `healthy`/`disabled`; every other component keeps its 200. Only the worker rows and the API's keys decide readiness: SMTP, parser and purge have alerts. Proven on real Postgres (`test_health_readiness_db.py`) and on the compose stack (`tests/assess/test_assess_stack.py`, CI job `assess-stack`))
 - [ ] Assess log allowlist processor in `vektra_app/main.py configure_structlog()` scoped to `vektra_assess.*`
 - [ ] `deploy/prometheus/assess-alerts.yml.example`: heartbeat > 60 s, oldest ready job > 30 s, FAILED deliveries > 0, RETRYING oldest > 1 h, TLS failures, purge last success > 26 h, purge verification failure, smtp probe down
 
@@ -191,7 +192,7 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 - [x] Per-activity listing returns exactly the subjects with rows for that cmid; per-activity erasure leaves row counts of other activities and other sites unchanged (count-verified)
 - [x] Export for an unenrolled subject returns #1..#N hash-equal to the in-course copy; cross-user returns 0 foreign records; after purge 0 transcripts (REQ-093)
 - [ ] An operator (admin) credential reading content gets 403; a canary grep of logs, mail logs and metrics returns 0; resend/test-send accept no recipient (REQ-080)
-- [ ] `/health/assess` reports readiness from worker-written rows and returns 503 with the worker stopped while `/health` stays 200 (COMP-002)
+- [x] `/health/assess` reports readiness from worker-written rows and returns 503 with the worker stopped while `/health` stays 200 (COMP-002)
 
 ## Testing Approach
 

@@ -40,6 +40,7 @@ class ComponentHealth(BaseModel):
     status: str
     latency_ms: int | None = None
     message: str | None = None
+    details: dict[str, Any] | None = None
 
 
 class ShallowHealthResponse(BaseModel):
@@ -108,6 +109,7 @@ async def _call_health_check(
             if result.latency_ms is not None
             else elapsed_ms,
             message=result.message,
+            details=result.details,
         )
     except Exception as exc:
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -179,6 +181,28 @@ async def check_component(registry: Any, name: str) -> ComponentHealth:
         )
     checker = registry.get("health", name)
     return await _call_health_check(name, checker)
+
+
+#: the statuses a READINESS component answers 200 with; anything else is 503
+READY_STATUSES: frozenset[str] = frozenset({"healthy", "disabled"})
+
+
+async def check_component_http(registry: Any, name: str) -> tuple[ComponentHealth, int]:
+    """``check_component`` plus the HTTP status of ``GET /health/{name}``.
+
+    A component whose check is marked ``readiness = True`` is a readiness probe: it answers 503
+    unless its status is in ``READY_STATUSES``, so an orchestrator or a load balancer can act
+    on the code alone. Every other component keeps answering 200 with its status in the body.
+    """
+    body = await check_component(registry, name)
+    checker = (
+        registry.get("health", name)
+        if registry is not None and registry.has("health", name)
+        else None
+    )
+    if checker is not None and getattr(checker, "readiness", False):
+        return body, (200 if body.status in READY_STATUSES else 503)
+    return body, 200
 
 
 def check_memory() -> MemoryHealthResponse:

@@ -123,6 +123,7 @@ async def step_12_assess_check(
                 enabled=settings.enabled,
                 get_engine=lambda: getattr(app.state, "assess_engine", None),
                 max_age_s=settings.heartbeat_max_age_s,
+                keys_present=lambda: bool(getattr(app.state, "assess_keys", None)),
             ),
         )
     if not settings.enabled:

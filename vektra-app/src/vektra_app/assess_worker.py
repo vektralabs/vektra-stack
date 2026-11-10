@@ -739,12 +739,20 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     control = ControlConnection(
         _asyncpg_dsn(checked.worker_url), on_notify=runtime.wake, on_lost=on_lost
     )
+    from vektra_assess.worker.parser_health import ParserHealth
+
+    # plan 12b: the parser status /health/assess reports, from the parser_ping tick
+    parser_health = ParserHealth()
     heartbeat = Heartbeat(
         acquire_raw,
         worker_id=worker_id,
         version=_version(),
         file_path=settings.worker_heartbeat_file,
-        stats=lambda: {**runtime.stats(), **wiring["scheduler"].stats()},
+        stats=lambda: {
+            **runtime.stats(),
+            **wiring["scheduler"].stats(),
+            **parser_health.stats(),
+        },
     )
 
     async def cleanup() -> None:
@@ -760,6 +768,14 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     ws = _ws_client(checked) if bindings is None else None
     setup = _setup_check_parts(checked, ws, delivery.ticks.get("smtp_probe"))
     privacy_handlers, privacy_ticks = _privacy_parts(checked)
+    from vektra_assess.worker.parser_client import ParserClient
+
+    parser_for_health = ParserClient.from_settings(settings)
+
+    async def parser_ping() -> None:
+        await parser_health.check(parser_for_health)
+
+    privacy_ticks = {**privacy_ticks, "parser_ping": parser_ping}
     extra = bindings or Bindings(
         handlers={
             **_session_handlers(checked, audit, ws),

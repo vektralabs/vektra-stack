@@ -262,11 +262,17 @@ async def health_memory(
 async def health_component(
     component: str,
     request: Request,
+    response: Response,
     _key: ApiKeyInfo = Depends(_require_any_token),
 ) -> _health.ComponentHealth:
-    """Return health status for a single component. Requires any valid Bearer token."""
+    """Return health status for a single component. Requires any valid Bearer token.
+
+    A readiness component (``readiness = True`` on its check) answers 503 when not ready."""
     registry = getattr(request.app.state, "registry", None)
-    return await _health.check_component(registry, component)
+    body, code = await _health.check_component_http(registry, component)
+    if code != 200:
+        response.status_code = code
+    return body
 
 
 # ---------------------------------------------------------------------------

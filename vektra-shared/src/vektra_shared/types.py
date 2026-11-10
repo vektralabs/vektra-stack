@@ -269,6 +269,8 @@ class HealthStatus:
     status: str  # "healthy" | "degraded" | "unhealthy"
     message: str | None = None
     latency_ms: int | None = None
+    #: optional content-free figures a component reports with its status (ages, counts, flags)
+    details: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------

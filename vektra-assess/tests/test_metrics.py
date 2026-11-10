@@ -152,3 +152,15 @@ def test_every_alert_rule_reads_a_series_the_collector_emits() -> None:
         "VektraAssessPurgeVerificationFailed",
         "VektraAssessSmtpProbeDown",
     } <= names
+
+
+def test_a_teacher_terminate_and_an_unknown_reason_have_their_own_buckets() -> None:
+    """Review #9: ``assess_rollback_starting`` records ``terminated_by_teacher``; a NULL reason
+    arrives as ``none``. Neither is ``other``."""
+    text = _exposition({"rollbacks": {"terminated_by_teacher": 2, "none": 1}})
+    assert (
+        'vektra_assess_start_rollbacks_total{reason="terminated_by_teacher"} 2.0'
+        in text
+    )
+    assert 'vektra_assess_start_rollbacks_total{reason="none"} 1.0' in text
+    assert 'vektra_assess_start_rollbacks_total{reason="other"} 0.0' in text

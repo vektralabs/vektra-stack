@@ -57,6 +57,10 @@ ROLLBACK_REASONS = (
     "rag_not_available",
     "internal_error",
     "commit_failed",
+    # a teacher's terminate rolls a STARTING session back (revision 0038, assess_rollback_starting)
+    "terminated_by_teacher",
+    # a rollback recorded without a reason (the snapshot's COALESCE)
+    "none",
 )
 
 #: label name -> every value it may take

@@ -353,3 +353,11 @@ def test_the_api_sees_the_relay_and_the_operator_address(  # type: ignore[type-a
         "VEKTRA_ASSESS_OPERATOR_EMAIL",
     ):
         assert name in env, name
+    # and the API gets the SAME interpolated value as the worker
+    worker = rendered["services"]["vektra-assess-worker"].get("environment", {})
+    for name in (
+        "VEKTRA_ASSESS_SMTP_HOST",
+        "VEKTRA_ASSESS_SMTP_FROM",
+        "VEKTRA_ASSESS_OPERATOR_EMAIL",
+    ):
+        assert env[name] == worker.get(name), name

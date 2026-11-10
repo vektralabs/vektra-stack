@@ -363,6 +363,18 @@ async def test_a_report_whose_job_died_is_failed_not_queued_forever(pg):
         return rid
 
     dead, alive, young = await report(900), await report(900), await report(5)
+    # a RUNNING report with no job of its own: kept while a live job of its site holds a lease,
+    # failed once none does (nitpick: the running branch)
+    running = await report(900, "running")
+    lease = (
+        await pg.run(
+            "super",
+            "INSERT INTO assess_jobs (kind, args, state, lease_until) VALUES ('setup_check', "
+            "jsonb_build_object('site_id', CAST(:s AS text)), 'leased', now() + interval '5 min') "
+            "RETURNING id",
+            {"s": str(site)},
+        )
+    )[0][0]
     for rid, state in ((dead, "dead"), (alive, "ready")):
         await pg.run(
             "super",
@@ -373,6 +385,10 @@ async def test_a_report_whose_job_died_is_failed_not_queued_forever(pg):
     async with worker_engine(pg) as engine:
         assert await fail_abandoned_reports(engine.connect, after_s=600) == 1
         assert await fail_abandoned_reports(engine.connect, after_s=600) == 0
+        await pg.run(
+            "super", "UPDATE assess_jobs SET state = 'dead' WHERE id = :j", {"j": lease}
+        )
+        assert await fail_abandoned_reports(engine.connect, after_s=600) == 1
     status = {
         r[0]: r[1]
         for r in await pg.run(
@@ -381,4 +397,9 @@ async def test_a_report_whose_job_died_is_failed_not_queued_forever(pg):
             {"s": site},
         )
     }
-    assert status == {dead: "failed", alive: "queued", young: "queued"}
+    assert status == {
+        dead: "failed",
+        alive: "queued",
+        young: "queued",
+        running: "failed",
+    }

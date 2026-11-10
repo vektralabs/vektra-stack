@@ -52,6 +52,9 @@ class LlmStub:
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        task = asyncio.current_task()
+        if task is not None:  # tracked so that stop() can end a stalled handler
+            self._tasks.add(task)
         try:
             head = await reader.readuntil(b"\r\n\r\n")
             length = 0
@@ -86,6 +89,8 @@ class LlmStub:
             pass
         finally:
             writer.close()
+            if task is not None:
+                self._tasks.discard(task)
 
 
 def _completion() -> bytes:

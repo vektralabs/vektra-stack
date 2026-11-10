@@ -94,3 +94,38 @@ async def test_the_mode_switches_while_running() -> None:
         assert stub.requests["5xx"] >= 1 and stub.requests["ok"] == 1
     finally:
         await stub.stop()
+
+
+async def test_stop_ends_a_stalled_handler_and_leaves_no_pending_task() -> None:
+    import asyncio
+
+    stub = await LlmStub(mode="stall").start()
+    body = b'{"model": "stub", "messages": []}'
+    reader, writer = await asyncio.open_connection("127.0.0.1", stub.port)
+    writer.write(
+        b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body
+    )
+    await writer.drain()
+    for _ in range(100):
+        if stub.requests["stall"]:
+            break
+        await asyncio.sleep(0.02)
+    assert stub.requests["stall"] == 1
+
+    def handlers() -> list[asyncio.Task[object]]:
+        return [
+            t
+            for t in asyncio.all_tasks()
+            if not t.done() and getattr(t.get_coro(), "__name__", "") == "_handle"
+        ]
+
+    assert len(handlers()) == 1  # the stalled request is being held
+    await stub.stop()
+    await asyncio.sleep(0)
+    assert handlers() == [] and not stub._tasks
+    assert (
+        await asyncio.wait_for(reader.read(), 2) == b""
+    )  # the stalled socket was closed
+    writer.close()

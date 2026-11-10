@@ -68,6 +68,85 @@ On a development site: `php docker/provision/assess_service_account.php` (idempo
 account whose service lists a grade-write function, and a stand-in for the ingestion account.
 Never run it against a production site.
 
+## Token creation and rotation
+
+The token belongs to the service account and to the `vektra_assess` external service only. On
+the LMS, as a site administrator, create it under the web-service token management page (in
+Moodle: *Site administration > Server > Web services > Manage tokens*), for this account and this
+service, with no expiry and no IP restriction unless your network requires one. Then put it into
+the worker's `assess_ws_tokens` secret, keyed by the site's `assess_sites.id`:
+
+```json
+{"3f0c8c1e-0000-4000-8000-000000000001": "<token>"}
+```
+
+The worker re-reads this file on every LMS call, so no restart is needed. To rotate:
+
+1. create a second token for the same account and service;
+2. replace the site's value in `assess_ws_tokens`;
+3. run the setup check: `token_works` must be `OK`;
+4. delete the old token on the LMS.
+
+A token is never in the environment, the database or a log; the worker logs the web-service
+function, the site id, the HTTP status and timings only. A suspected leak is handled the same way,
+starting from step 4 (delete first, then create and install the new token). In between, the
+LMS refuses the worker's calls and the reads of that site are reported unreadable, which keeps
+the START gates closed rather than opening them.
+
+The LMS menu path above is Moodle's, quoted for orientation; this repository does not test it.
+
+## Register the site and mint the plugin's keys
+
+No API route creates a site or binds a key to it. Both are rows the operator writes.
+
+1. **The site**, as the database owner:
+
+   ```sql
+   INSERT INTO assess_sites (moodle_site_uuid, base_url, moodle_origin)
+   VALUES ('<unique site identifier>', 'https://moodle.uni.example', 'https://moodle.uni.example')
+   RETURNING id;
+   ```
+
+   `id` is the site id used everywhere else: the `assess_ws_tokens` key, the setup-check and
+   privacy routes, the UI's `?site=`. `moodle_site_uuid` must be unique; no code reads it beyond
+   that, so use an identifier you can trace to the LMS site (which value the plugin expects there,
+   if any, is not verified in this repository). `moodle_origin` is the framing origin
+   ([framing](operators/assess-framing.md)). `min_plugin_version` (optional) raises the minimum
+   plugin release for this site above `VEKTRA_ASSESS_MIN_PLUGIN_VERSION`.
+2. **Four API keys**, one per purpose, each with a single `assess:*` scope (an `assess:*` scope
+   cannot be combined with `admin`, `ingest` or `query` on one key). With an `admin` key:
+
+   ```bash
+   for scope in mint teacher privacy-export privacy-erase; do
+     curl -s -H "Authorization: Bearer $VEKTRA_ADMIN_KEY" -H "Content-Type: application/json" \
+       -d "{\"label\": \"assess $scope <site>\", \"scopes\": [\"assess:$scope\"]}" \
+       https://vektra.uni.example/api/v1/api-keys
+   done
+   ```
+
+   Each answer shows the key once (`key`) and its `id`.
+3. **Bind each key to the site**, as the database owner, with the purpose matching its scope:
+
+   ```sql
+   INSERT INTO assess_site_keys (site_id, api_key_id, purpose) VALUES
+     ('<site id>', '<id of the assess:mint key>',           'mint'),
+     ('<site id>', '<id of the assess:teacher key>',        'teacher'),
+     ('<site id>', '<id of the assess:privacy-export key>', 'privacy-export'),
+     ('<site id>', '<id of the assess:privacy-erase key>',  'privacy-erase');
+   ```
+
+   A key is bound to at most one site (`api_key_id` is unique). Every site-bound route checks
+   both the exact scope and the binding for its purpose: a key bound to no site, or for another
+   purpose, gets `403 ERR-ASSESS-007`, and the `admin` key never satisfies these routes.
+4. **Give the keys to the plugin**, in its site settings (the plugin's own documentation). The
+   `mint` key mints the discussion tokens and the student's own transcript download token,
+   server-side; `teacher` for the activity configuration,
+   the teacher operations, the setup check and transcript download or resend by a grader;
+   `privacy-export` and `privacy-erase` for the LMS privacy provider.
+
+To rotate a plugin key: mint and bind a new key for the same purpose, update the plugin, then
+revoke the old one (`DELETE /api/v1/api-keys/{key_id}`).
+
 ## What the setup check verifies
 
 Run it from the Moodle plugin ("Verifica configurazione") or `POST /api/v1/assess/sites/{site}/setup-check`.
@@ -77,7 +156,7 @@ verified is never assumed fine.
 | Item | Meaning |
 |------|---------|
 | `token_works` | `core_webservice_get_site_info` answers with the token |
-| `required_reads` | every reader group (quiz, assignment, grading, enrolment, graders) returns a well-formed answer |
+| `required_reads_quiz`, `required_reads_assign`, `required_reads_grade`, `required_reads_grading`, `required_reads_enrol`, `required_reads_files` | each reader group returns a well-formed answer (one item per group) |
 | `interactive_login_disabled` | the account's `auth` is `webservice` |
 | `not_site_admin` | `userissiteadmin` is false |
 | `not_ingestion_account` | the account is not the ingestion account (`VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME`); unset means `UNVERIFIABLE` |
@@ -86,7 +165,10 @@ verified is never assumed fine.
 | `ws_tls_ok` | the connection is https verified against the configured CA |
 | `ui_not_same_origin` | the discussion UI origin is not same-site with Moodle or the API |
 | `ui_origin_distinct` | the discussion UI origin is https (outside development) and is not this site's Moodle origin: the precondition of the iframe's `allow-same-origin` sandbox (ARCH-076); the API also refuses to start otherwise |
-| `parser_sidecar_running`, `smtp_probe`, `db_log_statement_none` | registered by other components; an unregistered item is `MISSING` (fail closed) |
+| `parser_sidecar_running`, `smtp_probe`, `db_log_statement_none`, `privacy_config` | registered by the worker (parser deep ping, SMTP probe, Postgres logging settings, the site's REQ-089 privacy settings); an item no component registered would be `MISSING` (fail closed) |
+
+The full walkthrough, with what to fix for each item, is in the
+[deployment guide](operators/assess-deployment.md#setup-check-walkthrough).
 
 ## Capability flags and their fail-closed fallbacks
 

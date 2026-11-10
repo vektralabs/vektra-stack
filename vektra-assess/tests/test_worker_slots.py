@@ -25,7 +25,7 @@ PRODUCTION_KINDS = {
     "enrolment_recheck", "erasure", "gate_refresh", "preflight", "purge",
     "reconcile_reply", "render_check",
     "rotate_keys", "setup_check", "teacher_notify", "operator_notify", "transcript_deliver",
-    "transcript_generate", "teacher_gate",
+    "transcript_generate", "teacher_gate", "smtp_test_send",
 }  # fmt: skip
 PRODUCTION_TICKS = [
     "heartbeat", "job_cleanup", "lease_reaper", "sweeper", "starting_reaper", "outage_probe",

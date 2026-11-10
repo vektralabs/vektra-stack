@@ -66,6 +66,8 @@ BACKLOG_DELAY = timedelta(minutes=5)
 BACKLOG_KEY = "purge:backlog"
 #: notification rows carry ids and codes only; kept this long for the operator, then deleted
 NOTIFY_RETENTION = timedelta(days=30)
+#: the operator's SMTP test results (``delivery.smtp_test.RETENTION``)
+SMTP_TEST_RETENTION = timedelta(days=7)
 ABANDONED_NOTICE = "delivery_abandoned_on_purge"
 PURGED_KID = RESERVED_KID  # refused as a real kid by load_keyring
 
@@ -113,6 +115,7 @@ class PurgeReport:
     notify_rows: int = 0
     tokens: int = 0
     stale_erasures: int = 0
+    smtp_tests: int = 0
     #: a site reached the batch cap: a follow-up ``purge`` job was queued
     backlog: bool = False
 
@@ -341,6 +344,11 @@ _NOTIFY_ROWS = text(
     "AND status IN ('SENT', 'FAILED', 'ABANDONED', 'REPLACED') "
     "AND created_at < now() - make_interval(days => :days)"
 )
+#: any status: a test row stuck PENDING (its job died) is as stale after a week as a settled one
+_SMTP_TEST_ROWS = text(
+    "DELETE FROM assess_deliveries WHERE kind = 'smtp_test' "
+    "AND created_at < now() - make_interval(days => :days)"
+)
 _STALE_ERASURES = text(
     "UPDATE assess_erasure_records SET completed_at = now(), outcome = 'failed', "
     "error_code = 'abandoned', subject_userids = NULL, subject_userid_hash = NULL "
@@ -435,6 +443,9 @@ async def run_purge(
     async with connect() as conn, conn.begin():
         res = await conn.execute(_NOTIFY_ROWS, {"days": NOTIFY_RETENTION.days})
         report.notify_rows = max(res.rowcount, 0)
+        # plan 12b: the operator's SMTP test results, ids and codes only, kept a week
+        res = await conn.execute(_SMTP_TEST_ROWS, {"days": SMTP_TEST_RETENTION.days})
+        report.smtp_tests = max(res.rowcount, 0)
         res = await conn.execute(_OLD_TOKENS)
         report.tokens = max(res.rowcount, 0)
         # an erasure request whose job died never completes: after a day it is recorded failed

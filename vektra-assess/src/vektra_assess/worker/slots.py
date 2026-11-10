@@ -48,6 +48,7 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.SETUP_CHECK: MOODLE_WS,
     JobKind.ROTATE_KEYS: HARDENING,
     JobKind.TEACHER_GATE: TEACHER,
+    JobKind.SMTP_TEST_SEND: PRIVACY,
 }
 
 # tick name -> plan that binds its body

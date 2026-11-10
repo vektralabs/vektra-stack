@@ -149,7 +149,8 @@ the content rows for the affected ids and fails loudly if the count is not 0.
 ### Operator config and monitoring
 - [x] Settings bounds validation for all operator-facing `VEKTRA_ASSESS_*` values (one startup step, `StartupValidationError` with remediation)
   (12b: every numeric setting bounded on both sides, guarded by a test; `explain_settings_error` names each rejected variable without echoing its value, used by API step 12 and by the worker before it opens a connection)
-- [ ] SMTP test-send endpoints + worker handler (uses plan 10's sender; recipient fixed by setting)
+- [x] SMTP test-send endpoints + worker handler (uses plan 10's sender; recipient fixed by setting)
+  (12b, revision 0042. Decisions: the fixed recipient is `VEKTRA_ASSESS_OPERATOR_EMAIL` (already mandatory with the relay) rather than a second `VEKTRA_ASSESS_OPS_TEST_RECIPIENT`: one operator address, one setting. The API cannot read a job back, so it generates the test id and the worker writes the result as an `assess_deliveries` row of kind `smtp_test` with THAT id; GET reads status / error class over the columns the API already may read, `queued` until the row exists. One attempt (`max_attempts=1`), one pending test at a time (429), a rerun after a crash never sends twice (`interrupted`). Rows deleted by the purge tick after 7 days. Audited: `assess_smtp_test_requested` (API), `assess_smtp_test_result` (worker))
 - [x] Prometheus collector over `assess_metrics_snapshot()`; label-enum guard test
   (12b: revision 0041; the API refreshes the snapshot every 15 s in a background task, a scrape never waits on the database; values outside an enum are counted as `other`; `*_total` series count retained rows, so a purge can lower them; the purge records its runs in the `purge` heartbeat row: `ok`, `last_success`, cumulative `rows_deleted`)
 - [x] `/health/assess` readiness payload; test that killing the worker makes `/health/assess` 503 while shallow `/health` stays 200

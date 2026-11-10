@@ -15,6 +15,7 @@ from vektra_assess.api import (
     housekeeping,
     mint,
     model_activations,
+    ops,
     privacy,
     retry,
     sessions,
@@ -55,3 +56,4 @@ router.include_router(teacher_sessions.router)
 router.include_router(teacher_ops.router)
 # plan assess-privacy-retention: privacy settings (operator), subject export and erasure
 router.include_router(privacy.router)
+router.include_router(ops.router)  # plan 12b: the operator's SMTP test send

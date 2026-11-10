@@ -76,6 +76,9 @@ ELSEWHERE = {
     E.ERASURE_RETAINED: "test_privacy_retention.py",
     E.PRIVACY_EXPORT: "test_privacy_retention.py",
     E.PRIVACY_SUBJECTS_LISTED: "test_privacy_retention.py",
+    # plan 12b
+    E.SMTP_TEST_REQUESTED: "test_smtp_test_send.py",
+    E.SMTP_TEST_RESULT: "test_smtp_test_send.py",
 }
 NOT_DRIVABLE = {E.ATTEMPT_MISMATCH_REJECTED}
 

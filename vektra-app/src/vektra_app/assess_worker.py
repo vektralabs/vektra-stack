@@ -519,6 +519,20 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         handlers[JobKind.OPERATOR_NOTIFY] = make_notify_handler(
             notify_deps, JobKind.OPERATOR_NOTIFY
         )
+        from vektra_assess.delivery.smtp_test import (
+            SmtpTestDeps,
+            make_smtp_test_handler,
+        )
+
+        # plan 12b: the operator's test send, to the same fixed address, through the same sender
+        handlers[JobKind.SMTP_TEST_SEND] = make_smtp_test_handler(
+            SmtpTestDeps(
+                sender=sender,
+                sender_address=deps.sender_address,
+                message_id_domain=deps.message_id_domain,
+                operator_address=settings.operator_email,
+            )
+        )
     return DeliveryParts(
         handlers,
         {"delivery_retry": delivery_retry, "smtp_probe": smtp_probe},

@@ -1059,6 +1059,8 @@ async def test_a_backlog_queues_another_bounded_run(pg, worker, monkeypatch) -> 
         monkeypatch.setattr(purge_mod, "BATCH", 1)
         report = await run_purge(worker.connect, max_batches=1)
         assert report.sessions == 1 and report.backlog is True
+        # review #4: a run that left a backlog is not a successful run
+        assert (await _purge_beat(pg))["ok"] is False
         assert await one(pg, "SELECT count(*) FROM assess_jobs WHERE kind = 'purge' "
                          "AND dedupe_key = 'purge:backlog:tick'") == 1  # fmt: skip
         # the follow-up job, leased while it runs, queues its own follow-up (CodeRabbit
@@ -1090,3 +1092,22 @@ async def test_a_backlog_queues_another_bounded_run(pg, worker, monkeypatch) -> 
             )
             == 1
         )
+
+
+async def test_a_run_that_raises_is_recorded_as_failed(pg, worker, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Review #4: any exit records the run; a first run that fails writes the row too (so the
+    metrics never show the last good run, and the never-succeeded alert has a series)."""
+    async with world(pg) as w:
+        s, _ = await ready(w, worker)
+        await configure_privacy(pg, w.site, retention_days=1)
+        await age(pg, s.session_id, 2)
+        await pg.run("super", "DELETE FROM assess_heartbeat WHERE component = 'purge'")
+
+        async def boom(*_a: Any, **_k: Any) -> Any:
+            raise ConnectionError("db went away")
+
+        monkeypatch.setattr(purge_mod, "purge_batch", boom)
+        with pytest.raises(ConnectionError):
+            await run_purge(worker.connect)
+        beat = await _purge_beat(pg)
+        assert beat["ok"] is False and beat["last_success"] is None

@@ -414,62 +414,79 @@ async def run_purge(
     run stops for that site; the other sites still run, and the run raises at the end so the
     tick records a failure (a purge that left rows never reads as a success)."""
     report = PurgeReport()
-    async with connect() as conn, conn.begin():
-        sites = [
-            r for r in (await conn.execute(_SITES)).all() if privacy_config.passes(r)
-        ]
     failed: list[str] = []
-    for site in sites:
-        for batch_no in range(max_batches):
-            try:
-                async with connect() as conn, conn.begin():
-                    n, shredded = await purge_batch(
-                        conn, site.site_id, int(site.retention_days)
+    ok = False
+    try:
+        async with connect() as conn, conn.begin():
+            sites = [
+                r
+                for r in (await conn.execute(_SITES)).all()
+                if privacy_config.passes(r)
+            ]
+        for site in sites:
+            for batch_no in range(max_batches):
+                try:
+                    async with connect() as conn, conn.begin():
+                        n, shredded = await purge_batch(
+                            conn, site.site_id, int(site.retention_days)
+                        )
+                except PurgeVerificationFailed as exc:
+                    log.error(
+                        "assess.purge.alert",
+                        alert="purge_verification_failed",
+                        site_id=str(site.site_id),
+                        left=str(exc)[:200],
                     )
-            except PurgeVerificationFailed as exc:
-                log.error(
-                    "assess.purge.alert",
-                    alert="purge_verification_failed",
-                    site_id=str(site.site_id),
-                    left=str(exc)[:200],
-                )
-                failed.append(str(site.site_id))
-                break
-            report.merge(shredded, n)
-            if n < BATCH:
-                break
-            if batch_no == max_batches - 1:
-                report.backlog = True  # more is due than one run may take
-    async with connect() as conn, conn.begin():
-        res = await conn.execute(_NOTIFY_ROWS, {"days": NOTIFY_RETENTION.days})
-        report.notify_rows = max(res.rowcount, 0)
-        # plan 12b: the operator's SMTP test results, ids and codes only, kept a week
-        res = await conn.execute(_SMTP_TEST_ROWS, {"days": SMTP_TEST_RETENTION.days})
-        report.smtp_tests = max(res.rowcount, 0)
-        res = await conn.execute(_OLD_TOKENS)
-        report.tokens = max(res.rowcount, 0)
-        # an erasure request whose job died never completes: after a day it is recorded failed
-        # and the ids it carried are dropped (the plugin's retry makes a new request)
-        res = await conn.execute(_STALE_ERASURES)
-        report.stale_erasures = max(res.rowcount, 0)
-        if report.backlog:
-            # a site with more due than a run's cap: another bounded run soon, as a ``purge``
-            # job, instead of letting content outlive its retention until tomorrow
-            # (CodeRabbit outside-diff on run_purge)
-            await enqueue_job(
-                conn,
-                JobKind.PURGE,
-                {},
-                # one key per generation: a follow-up queued by the ``purge`` job that is running
-                # (leased, holding its own key) must not collide with it (CodeRabbit 4517939449)
-                dedupe_key=f"{BACKLOG_KEY}:{generation}",
-                not_before=datetime.now(UTC) + BACKLOG_DELAY,
+                    failed.append(str(site.site_id))
+                    break
+                report.merge(shredded, n)
+                if n < BATCH:
+                    break
+                if batch_no == max_batches - 1:
+                    report.backlog = True  # more is due than one run may take
+        async with connect() as conn, conn.begin():
+            res = await conn.execute(_NOTIFY_ROWS, {"days": NOTIFY_RETENTION.days})
+            report.notify_rows = max(res.rowcount, 0)
+            # plan 12b: the operator's SMTP test results, ids and codes only, kept a week
+            res = await conn.execute(
+                _SMTP_TEST_ROWS, {"days": SMTP_TEST_RETENTION.days}
             )
-    async with connect() as conn, conn.begin():
-        await conn.execute(
-            _RECORD_RUN,
-            {"ok": not failed, "rows": sum(report.deleted.values())},
-        )
+            report.smtp_tests = max(res.rowcount, 0)
+            res = await conn.execute(_OLD_TOKENS)
+            report.tokens = max(res.rowcount, 0)
+            # an erasure request whose job died never completes: after a day it is recorded failed
+            # and the ids it carried are dropped (the plugin's retry makes a new request)
+            res = await conn.execute(_STALE_ERASURES)
+            report.stale_erasures = max(res.rowcount, 0)
+            if report.backlog:
+                # a site with more due than a run's cap: another bounded run soon, as a ``purge``
+                # job, instead of letting content outlive its retention until tomorrow
+                # (CodeRabbit outside-diff on run_purge)
+                await enqueue_job(
+                    conn,
+                    JobKind.PURGE,
+                    {},
+                    # one key per generation: a follow-up queued by the ``purge`` job that is running
+                    # (leased, holding its own key) must not collide with it (CodeRabbit 4517939449)
+                    dedupe_key=f"{BACKLOG_KEY}:{generation}",
+                    not_before=datetime.now(UTC) + BACKLOG_DELAY,
+                )
+        # a run that left a backlog did not bring every site within its retention (review #4)
+        ok = not failed and not report.backlog
+    finally:
+        # recorded on EVERY exit (review #4): a run that raised (database down mid-run) reads as
+        # a failed run on /metrics and /health/assess, never as the last good one
+        try:
+            async with connect() as conn, conn.begin():
+                await conn.execute(
+                    _RECORD_RUN, {"ok": ok, "rows": sum(report.deleted.values())}
+                )
+        except Exception as exc:
+            log.error(
+                "assess.purge.alert",
+                alert="purge_run_unrecorded",
+                error_type=type(exc).__name__,
+            )
     log.info(
         "assess.purge.done",
         sessions=report.sessions,

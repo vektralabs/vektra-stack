@@ -35,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from invariants import assert_invariants
 from sqlalchemy.ext.asyncio import create_async_engine
 
 pytestmark = pytest.mark.integration
@@ -80,6 +81,8 @@ async def seed(pg: Any, state: str = "ACTIVE") -> tuple[uuid.UUID, uuid.UUID]:
         for sql in (
             "INSERT INTO assess_snapshots (session_id, ciphertext, content_hash) "
             "VALUES (:s, '\\x01', :g)",
+            "INSERT INTO assess_session_keys (session_id, kek_wrapped, kek_kid, key_version) "
+            "VALUES (:s, '\\x05', 'k1', 1)",
             "INSERT INTO assess_turns (session_id, turn_no, role, kind, ciphertext, turn_hash, "
             "prev_hash) VALUES (:s, 1, 'bot', 'opening', '\\x02', 'h1', :g)",
             "UPDATE assess_sessions SET state = 'ACTIVE' WHERE id = :s",
@@ -187,6 +190,7 @@ async def test_each_close_reason_by_row_count(pg, reason: str) -> None:  # type:
             assert exc.value.step == "closed"  # the old token reaches the closed check
     finally:
         await engine.dispose()
+    await assert_invariants(pg, f"close:{reason}", expect_sessions=1)
 
 
 async def test_kill9_mid_preflight_commit_leaves_the_student_eligible(pg) -> None:  # type: ignore[no-untyped-def]
@@ -225,6 +229,7 @@ async def test_kill9_mid_preflight_commit_leaves_the_student_eligible(pg) -> Non
         )
         == "start_timeout"
     )
+    await assert_invariants(pg, "kill9:preflight", expect_sessions=0)
 
 
 async def test_kill9_of_the_api_mid_reply_releases_the_claim(pg) -> None:  # type: ignore[no-untyped-def]
@@ -260,6 +265,7 @@ async def test_kill9_of_the_api_mid_reply_releases_the_claim(pg) -> None:  # typ
     finally:
         if proc.poll() is None:
             kill9(proc)
+    await assert_invariants(pg, "kill9:api-mid-reply", expect_sessions=1)
 
 
 async def test_postgres_restart_mid_turn_never_duplicates_a_turn(pg_fixed_port) -> None:  # type: ignore[no-untyped-def]
@@ -297,3 +303,4 @@ async def test_postgres_restart_mid_turn_never_duplicates_a_turn(pg_fixed_port) 
         )
         is True
     )
+    await assert_invariants(pg, "postgres-restart:mid-turn", expect_sessions=1)

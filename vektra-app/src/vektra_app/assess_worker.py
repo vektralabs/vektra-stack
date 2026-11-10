@@ -459,6 +459,11 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         log.warning(
             "assess_recipient_domains_empty", reason_code="every_address_refused"
         )
+    # one connection budget for every fan-out handler's rows (plan 13a, CodeRabbit 4513956359):
+    # the pool minus a reserve for the heartbeat, the reapers and the job loop
+    from vektra_assess.delivery.budget import RowDbBudget
+
+    row_budget = RowDbBudget.for_pool(settings.worker_pool_size)
     deps = DeliveryDeps(
         transcript_kek=checked.keys["assess_transcript_kek"],
         recipients=ConfigRecipients(checked.keys["assess_teacher_config_private"]),
@@ -470,6 +475,7 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         schedule=parse_schedule(settings.smtp_retry_schedule),
         window=timedelta(hours=settings.smtp_retry_window_hours),
         stale_after=timedelta(seconds=lease),
+        db_budget=row_budget,
     )
     engine = checked.engine
 
@@ -530,6 +536,7 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
                 for k in (JobKind.TEACHER_NOTIFY, JobKind.OPERATOR_NOTIFY)
             )
         ),
+        db_budget=row_budget,
     )
     handlers[JobKind.TEACHER_NOTIFY] = make_notify_handler(
         notify_deps, JobKind.TEACHER_NOTIFY

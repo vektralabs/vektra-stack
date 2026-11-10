@@ -252,3 +252,12 @@ every release, with a manual exploratory session on top.
   "Admitted" (NFR-019) excludes `capacity` (reported for NFR-020), `part_b_rejected` (student) and
   `terminated_by_teacher`: an assumption to confirm with QA. A sample below its minimum is BLOCKED
   and one BLOCKED item keeps the report from PASS. Exit 0/1/2 = PASS/FAIL/BLOCKED.
+- **Shared row connection budget (13a, done).** `vektra_assess.delivery.budget.RowDbBudget`: one
+  semaphore of `VEKTRA_ASSESS_WORKER_POOL_SIZE - 2` permits, never below 1, created once in
+  `assess_worker._delivery_parts` and passed to both `DeliveryDeps` and `NotifyDeps`. Every
+  row-level checkout of the transcript and notification handlers takes a permit first. No handler
+  nests a checkout inside another, which an AST check confirmed before wiring, so the budget cannot
+  deadlock. The load test `integration/test_row_db_budget_load.py` runs 2 jobs x 3 rows with 0.6 s
+  of injected DB latency on a pool of 5: with the budget the rows hold at most 3 connections and
+  the heartbeat never waits half a row's latency; the unbudgeted control takes all 5 and queues the
+  heartbeat. The SMTP test send (single row) and the job loop stay outside the budget.

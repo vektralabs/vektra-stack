@@ -49,6 +49,7 @@ from sqlalchemy import text
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.delivery import message as mail
 from vektra_assess.delivery.backoff import next_not_before
+from vektra_assess.delivery.budget import RowDbBudget, budgeted
 from vektra_assess.delivery.recipients import (
     MAX_RECIPIENTS,
     ConfigRecipients,
@@ -95,6 +96,8 @@ class DeliveryDeps:
     #: (at least the job lease, so a job still inside its budget is never raced)
     stale_after: timedelta
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    #: the connection budget shared with the notification handler (plan 13a); None = unbounded
+    db_budget: RowDbBudget | None = None
 
 
 @dataclass
@@ -760,7 +763,7 @@ def make_deliver_handler(
             tid = UUID(str(ctx.args["transcript_id"]))
         except (KeyError, ValueError):
             return  # a malformed job is a stale no-op
-        await deliver_transcript(deps, ctx.acquire, tid)
+        await deliver_transcript(deps, budgeted(deps.db_budget, ctx.acquire), tid)
 
     return handle
 

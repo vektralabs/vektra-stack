@@ -27,8 +27,9 @@ def test_walk_text_reaches_nested_values() -> None:
     value = Readable(
         (LmsSite("s", "https://lms.example.org"), ReviewHtml("<b>x</b>", profile)),
     )
-    text = "\n".join(kit.walk_text(value))
-    assert "https://lms.example.org" in text and "qt" in text and "p1" in text
+    # exact membership in the walked values, not a substring of their join
+    walked = list(kit.walk_text(value))
+    assert {"https://lms.example.org", "qt", "p1"} <= set(walked)
 
 
 def test_walk_text_reaches_numbers() -> None:

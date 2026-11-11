@@ -65,6 +65,35 @@ def build_assess_safeguard(
     return hook
 
 
+def check_safeguard_locality(settings: VektraAssessSettings) -> None:
+    """``VEKTRA_ASSESS_SAFEGUARD_MODE=none`` is a development switch unless the model runs on
+    the institution's own hardware (plan 2a-1.11, decided by the product owner on 2026-11-11).
+
+    | ``VEKTRA_ENV``  | ``VEKTRA_ASSESS_PROVIDER_LOCALITY`` | ``SAFEGUARD_MODE=none`` |
+    | development     | any                                 | accepted                |
+    | not development | ``onprem``                          | accepted                |
+    | not development | ``cloud`` (the default)             | refused here            |
+    """
+    if settings.safeguard_mode != "none" or settings.env == "development":
+        return
+    if settings.provider_locality == "onprem":
+        return
+    raise StartupValidationError(
+        step=STEP,
+        detail=(
+            "VEKTRA_ASSESS_SAFEGUARD_MODE=none with VEKTRA_ASSESS_PROVIDER_LOCALITY=cloud is "
+            "only honoured with VEKTRA_ENV=development (this process runs with "
+            f"VEKTRA_ENV={settings.env})"
+        ),
+        remediation=(
+            "with a cloud model the safeguard is required: set "
+            "VEKTRA_ASSESS_SAFEGUARD_MODE=presidio, or declare "
+            "VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem if the model runs on the institution's "
+            "hardware."
+        ),
+    )
+
+
 def build_assess_llm(settings: VektraAssessSettings) -> LLMProvider:
     from vektra_core.providers.litellm_provider import LitellmProvider
     from vektra_shared.config import LLMConfig
@@ -332,6 +361,7 @@ async def step_13_assess_llm_check(
             ),
             remediation="Unset it, and activate the model through the NFR-023 endpoint.",
         )
+    check_safeguard_locality(settings)
     app.state.assess_safeguard = build_assess_safeguard(
         settings.safeguard_mode, factory=safeguard_factory
     )

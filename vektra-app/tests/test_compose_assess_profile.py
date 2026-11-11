@@ -296,6 +296,30 @@ def test_the_dev_file_only_opts_the_worker_in_and_pins_the_environment() -> None
         assert svc == base["services"][name], f"the dev file must not change {name}"
 
 
+def test_the_dev_file_passes_the_safeguard_locality_rule() -> None:
+    """Plan 2a-1.11: the dev overlay sets SAFEGUARD_MODE=none, which the API accepts only because
+    the same file pins VEKTRA_ENV=development. The rendered API environment must pass the rule."""
+    from vektra_app.assess_llm import check_safeguard_locality
+    from vektra_assess.config import VektraAssessSettings
+
+    dev = _render(
+        "docker-compose.yml",
+        "docker-compose.assess.yml",
+        "docker-compose.assess.dev.yml",
+    )
+    api_env = dev["services"]["vektra"]["environment"]
+    keys = (
+        "VEKTRA_ENV",
+        "VEKTRA_ASSESS_SAFEGUARD_MODE",
+        "VEKTRA_ASSESS_PROVIDER_LOCALITY",
+    )
+    settings = VektraAssessSettings.model_validate(
+        {k: api_env[k] for k in keys if api_env.get(k)}
+    )
+    assert settings.safeguard_mode == "none" and settings.env == "development"
+    check_safeguard_locality(settings)  # accepted: no StartupValidationError
+
+
 def _without_permitted_overrides(
     dev_env: dict[str, str], base_env: dict[str, str], permitted: set[str]
 ) -> dict[str, str]:

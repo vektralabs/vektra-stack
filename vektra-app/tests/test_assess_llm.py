@@ -421,6 +421,100 @@ async def test_the_dev_bypass_is_refused_outside_development(
     assert app.state.assess_llm_activated is True
 
 
+# --- the safeguard and the model's locality (plan 2a-1.11, product owner 2026-11-11) -------------
+#
+# | VEKTRA_ENV      | VEKTRA_ASSESS_PROVIDER_LOCALITY | VEKTRA_ASSESS_SAFEGUARD_MODE=none |
+# | development     | any                             | accepted                          |
+# | not development | onprem                          | accepted                          |
+# | not development | cloud (the default)             | refused at startup                |
+
+_CLOUD_REFUSAL = (
+    "VEKTRA_ASSESS_SAFEGUARD_MODE=none with VEKTRA_ASSESS_PROVIDER_LOCALITY=cloud is only "
+    "honoured with VEKTRA_ENV=development"
+)
+
+
+@pytest.mark.parametrize("locality", ["cloud", "onprem"])
+async def test_none_is_accepted_in_development_with_any_locality(
+    monkeypatch: pytest.MonkeyPatch, locality: str
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _enabled(
+        monkeypatch,
+        VEKTRA_ENV="development",
+        VEKTRA_ASSESS_SAFEGUARD_MODE="none",
+        VEKTRA_ASSESS_PROVIDER_LOCALITY=locality,
+    )
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    await step_13_assess_llm_check(app)
+    assert isinstance(app.state.assess_safeguard, PassthroughSafeguard)
+
+
+@pytest.mark.parametrize("env", ["production", "staging"])
+async def test_none_is_accepted_outside_development_with_an_onprem_model(
+    monkeypatch: pytest.MonkeyPatch, env: str
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    _enabled(
+        monkeypatch,
+        VEKTRA_ENV=env,
+        VEKTRA_ASSESS_SAFEGUARD_MODE="none",
+        VEKTRA_ASSESS_PROVIDER_LOCALITY="onprem",
+    )
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    await step_13_assess_llm_check(app)
+    assert isinstance(app.state.assess_safeguard, PassthroughSafeguard)
+
+
+@pytest.mark.parametrize("locality", [None, "cloud"])  # None: the default, cloud
+@pytest.mark.parametrize("env", ["production", "staging"])
+async def test_none_is_refused_outside_development_with_a_cloud_model(
+    monkeypatch: pytest.MonkeyPatch, env: str, locality: str | None
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    extra = {"VEKTRA_ASSESS_PROVIDER_LOCALITY": locality} if locality else {}
+    monkeypatch.delenv("VEKTRA_ASSESS_PROVIDER_LOCALITY", raising=False)
+    _enabled(monkeypatch, VEKTRA_ENV=env, VEKTRA_ASSESS_SAFEGUARD_MODE="none", **extra)
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    with pytest.raises(StartupValidationError) as e:
+        await step_13_assess_llm_check(app)
+    err = e.value
+    assert err.step == "assess_llm_check"
+    assert _CLOUD_REFUSAL in err.detail and f"VEKTRA_ENV={env}" in err.detail
+    assert "with a cloud model the safeguard is required" in err.remediation
+    assert "VEKTRA_ASSESS_SAFEGUARD_MODE=presidio" in err.remediation
+    assert "VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem" in err.remediation
+    assert not hasattr(
+        app.state, "assess_safeguard"
+    )  # refused before anything is built
+
+
+async def test_presidio_is_still_the_default_and_starts_with_a_cloud_model_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.delenv("VEKTRA_ASSESS_SAFEGUARD_MODE", raising=False)
+    monkeypatch.delenv("VEKTRA_ASSESS_PROVIDER_LOCALITY", raising=False)
+    _enabled(monkeypatch, VEKTRA_ENV="production")
+    assert _settings().safeguard_mode == "presidio"
+    assert _settings().provider_locality == "cloud"
+    app = _App()
+    app.state.assess_engine = _Engine(active=True)
+    real = _Real()
+    seen: list[str] = []
+    await step_13_assess_llm_check(
+        app, safeguard_factory=lambda m: seen.append(m) or real
+    )
+    assert seen == ["presidio"] and app.state.assess_safeguard is real
+
+
 def test_prometheus_metrics_count_with_code_labels() -> None:
     from prometheus_client import REGISTRY
 

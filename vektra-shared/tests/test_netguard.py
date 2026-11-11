@@ -151,6 +151,30 @@ def test_ipv6_is_pinned_in_brackets_and_v4_mapped_is_normalised():
         )
 
 
+def test_v4_mapped_address_is_not_inside_an_ipv6_allowlist():
+    """``::/0`` opens IPv6, not IPv4 smuggled in a mapped address: once normalised,
+    ``::ffff:10.0.0.1`` is the IPv4 10.0.0.1, which no IPv6 network contains."""
+    with pytest.raises(EgressDenied, match="outside the allowed networks"):
+        resolve_pinned(
+            "https://m.example.org/",
+            allowed_hosts=["m.example.org"],
+            allowed_cidrs=["::/0"],
+            resolver=fake("::ffff:10.0.0.1"),
+        )
+
+
+def test_v4_mapped_address_matches_its_ipv4_network_and_pins_as_ipv4():
+    t = resolve_pinned(
+        "https://m.example.org/p",
+        allowed_hosts=["m.example.org"],
+        allowed_cidrs=["10.0.0.0/8"],
+        resolver=fake("::ffff:10.0.0.5"),
+    )
+    assert t.ip == "10.0.0.5"
+    assert t.pinned_base == "https://10.0.0.5"  # an IPv4 URL: no brackets
+    assert t.pinned_url == "https://10.0.0.5/p"
+
+
 def test_host_allowlist_is_required_and_case_insensitive():
     with pytest.raises(EgressDenied, match="not on the allowlist"):
         resolve_pinned(

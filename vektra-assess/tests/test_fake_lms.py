@@ -244,6 +244,116 @@ async def test_a_provider_that_answers_nothing_is_red() -> None:
         await kit.check_recorded_reads(_target(_AnswersNothing))
 
 
+# --- CodeRabbit round on #203 -------------------------------------------------------------------
+
+
+class _RefusesOnlyWithAHint(FakeLmsProvider):
+    """Refuses a foreign activity when a hint is passed, resolves it when none is (4543186557)."""
+
+    async def resolve_activity(self, site, *, user_id, activity_id, kind, course_hint):  # type: ignore[no-untyped-def,override]
+        if course_hint is None:
+            ref = self.world.activities.get((kind, activity_id))
+            if ref is not None:
+                return Readable(ref)
+        return await super().resolve_activity(
+            site,
+            user_id=user_id,
+            activity_id=activity_id,
+            kind=kind,
+            course_hint=course_hint,
+        )
+
+
+async def test_a_foreign_activity_resolved_without_a_hint_is_red() -> None:
+    with pytest.raises(AssertionError, match="without a course hint"):
+        await kit.check_re_resolution(_target(_RefusesOnlyWithAHint))
+
+
+class _UnreadableForTheWrongReason(FakeLmsProvider):
+    def __init__(self, *a, **kw) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(*a, **kw)
+        self.fail("grade_item", Unreadable(UnreadableReason.TIMEOUT))
+
+
+async def test_a_declared_unreadable_for_another_reason_is_red() -> None:
+    """4543186544: the declared reason is checked, not only that the read was Unreadable."""
+    target = dataclasses.replace(
+        _target(_UnreadableForTheWrongReason),
+        unreadable_when_recorded={"grade_item": UnreadableReason.PARTIAL.value},
+    )
+    with pytest.raises(AssertionError, match="declared partial"):
+        await kit.check_recorded_reads(target)
+    right = dataclasses.replace(
+        target, unreadable_when_recorded={"grade_item": UnreadableReason.TIMEOUT.value}
+    )
+    await kit.check_recorded_reads(right)
+
+
+class _InventsASetupResult(FakeLmsProvider):
+    async def service_account_check(self, site, info, manifest):  # type: ignore[no-untyped-def,override]
+        items = await super().service_account_check(site, info, manifest)
+        return tuple(dataclasses.replace(i, result="OKAY") for i in items)
+
+
+async def test_an_unknown_setup_result_is_red() -> None:
+    """4543186570."""
+    with pytest.raises(AssertionError, match="OKAY"):
+        await kit.check_setup_items(_target(_InventsASetupResult))
+
+
+class _MisspellsAState(FakeLmsProvider):
+    async def probe_capabilities(self, site, manifest, flags):  # type: ignore[no-untyped-def,override]
+        res = await super().probe_capabilities(site, manifest, flags)
+        return tuple(dataclasses.replace(r, state="readble") for r in res)
+
+
+class _ReadableWithAReason(FakeLmsProvider):
+    async def probe_capabilities(self, site, manifest, flags):  # type: ignore[no-untyped-def,override]
+        res = await super().probe_capabilities(site, manifest, flags)
+        return tuple(dataclasses.replace(r, reason_code="timeout") for r in res)
+
+
+@pytest.mark.parametrize("cls", [_MisspellsAState, _ReadableWithAReason])
+async def test_an_invalid_capability_state_or_reason_is_red(
+    cls: type[FakeLmsProvider],
+) -> None:
+    """4543186579."""
+    with pytest.raises(AssertionError, match="capability"):
+        await kit.check_capabilities(_target(cls))
+
+
+class _Counted(FakeLmsProvider):
+    built: list[FakeLmsProvider] = []
+
+    def __init__(self, *a, **kw) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(*a, **kw)
+        _Counted.built.append(self)
+
+
+async def test_every_provider_a_check_builds_is_closed_even_on_failure() -> None:
+    """4543186536: a provider backed by an async client must not outlive its check."""
+    _Counted.built.clear()
+    target = _target(_Counted)
+    await kit.check_recorded_reads(target)
+    await kit.check_re_resolution(target)
+    await kit.check_no_canary(target)
+    await kit.check_setup_items(target)
+    await kit.check_capabilities(target)
+    for mode in kit.FAULT_MODES:
+        await kit.check_fault_mode(target, mode)
+    failing = dataclasses.replace(target, flags=("not_requested",), canaries=CANARIES)
+    with pytest.raises(AssertionError):
+        await kit.check_setup_items(
+            dataclasses.replace(failing, factory=lambda m: _ForgetsAnItemCounted())
+        )
+    assert _Counted.built and all(p.closed for p in _Counted.built)
+
+
+class _ForgetsAnItemCounted(_Counted):
+    async def service_account_check(self, site, info, manifest):  # type: ignore[no-untyped-def,override]
+        return (await super().service_account_check(site, info, manifest))[1:]
+
+
 # --- the fake's own contract ------------------------------------------------------------------
 
 

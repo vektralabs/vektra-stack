@@ -92,6 +92,11 @@ is not development for assess, even though the platform default is `development`
 **Put these values in the deployment `.env`, not in a shell export.** The API reads them from
 `.env` (its `env_file`); a value exported in the shell that runs `docker compose` is not passed
 to the API container, so the API would not see it and would start with whatever `.env` says.
+The development overlay `docker-compose.assess.dev.yml` sets `VEKTRA_ENV=development` and
+`VEKTRA_ASSESS_SAFEGUARD_MODE=none` in the API's `environment`, which wins over `.env`: with that
+overlay, `VEKTRA_ASSESS_SAFEGUARD_MODE=presidio` in `.env` has no effect. To run Presidio in a
+development stack, add a local Compose override after the overlay that sets the API's
+`VEKTRA_ASSESS_SAFEGUARD_MODE` to `presidio`.
 
 With `none` and a cloud model outside development, the API stops at startup with:
 

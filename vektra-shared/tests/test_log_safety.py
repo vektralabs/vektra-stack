@@ -320,6 +320,57 @@ def test_the_prefixes_are_an_immutable_snapshot_swapped_under_a_lock(
             lg.removeHandler(h)
 
 
+def test_a_reinstall_never_leaves_the_prefix_without_a_scrub_handler(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """CodeRabbit 4543758782: the re-install removed the old scrub handler before adding the
+    new one, so a record logged in between reached the root handlers unscrubbed. A record
+    logged at the very moment the old handler is removed must still arrive scrubbed."""
+    from vektra_shared import log_safety
+
+    monkeypatch.setattr(log_safety, "_STRICT_PREFIXES", ())
+    log_safety.register_strict_logger_prefix("vektra_lms_reinstall")
+    target = logging.getLogger("vektra_lms_reinstall")
+    install_assess_stdlib_handler()
+    real_remove = logging.Logger.removeHandler
+
+    def remove_and_log(self: logging.Logger, h: logging.Handler) -> None:
+        real_remove(self, h)
+        if self is target:  # the window: right after a scrub handler left
+            target.info("in_window", extra={"payload": CANARY})
+
+    monkeypatch.setattr(logging.Logger, "removeHandler", remove_and_log)
+    try:
+        with caplog.at_level(logging.INFO, logger="vektra_lms_reinstall"):
+            install_assess_stdlib_handler()  # a repeat install replaces the handler
+        recs = [r for r in caplog.records if r.getMessage() == "in_window"]
+        assert recs and all(r.payload == DROPPED for r in recs)  # type: ignore[attr-defined]
+        assert CANARY not in caplog.text
+        scrubbers = [h for h in target.handlers if getattr(h, "_vektra_assess", False)]
+        assert len(scrubbers) == 1
+    finally:
+        monkeypatch.undo()
+        for h in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:
+            target.removeHandler(h)
+        target.setLevel(logging.NOTSET)
+        _reset()
+
+
+def test_a_record_scrubbed_twice_is_counted_once() -> None:
+    """During the overlap of a re-install a record passes two scrub handlers: the second pass
+    changes nothing and does not inflate the dropped-key count."""
+    from vektra_shared.log_safety import dropped_keys_total
+
+    rec = logging.makeLogRecord(
+        {"name": "vektra_assess.x", "msg": "e", "payload": CANARY, "job_id": 1}
+    )
+    before = dropped_keys_total()
+    AssessAllowlistFilter().filter(rec)
+    once = dict(rec.__dict__)
+    AssessAllowlistFilter().filter(rec)
+    assert rec.__dict__ == once and dropped_keys_total() - before == 1
+
+
 @pytest.mark.parametrize("bad", ["", "a..b", ".a", "a.", "with space", "Upper-Case"])
 def test_a_malformed_prefix_is_refused(bad: str) -> None:
     from vektra_shared.log_safety import register_strict_logger_prefix

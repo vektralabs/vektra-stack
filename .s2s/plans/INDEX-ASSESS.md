@@ -3,7 +3,7 @@
 **Generated**: 2026-11-01
 **Updated**: 2026-11-11
 **Approved**: 2026-11-01 (coordinator)
-**Total plans**: 16, with 490 tasks in total: 13 backend plans (425 tasks) in this repo, and 3 Moodle plugin plans (65 tasks) in `vektralabs/vektra-moodle-discuss`. Outside the waves and not counted there: S1, the LMS separation plan (64 tasks, see "Separation" below).
+**Total plans**: 16, with 490 tasks in total: 13 backend plans (425 tasks) in this repo, and 3 Moodle plugin plans (65 tasks) in `vektralabs/vektra-moodle-discuss`. Outside the waves and not counted there: S1, the LMS separation plan (65 tasks, see "Separation" below).
 **Status legend**: `pending` | `in_progress` | `completed`
 
 This file is the single source of truth for progress across BOTH repositories. When a plugin plan
@@ -188,7 +188,7 @@ gains an entry.
 
 | # | Plan | Title | Tasks | Depends on | Status |
 |---|------|-------|-------|------------|--------|
-| S1 | [assess-lms-separation](20261111-185453-assess-lms-separation.md) | `LmsProvider` Protocol; vertical on the Protocol; Moodle provider out of the platform; assess schema branch; shared-module hygiene; RLS for the API role | 64 | the remaining waves; #199, #200 | pending (ADR-0033 accepted; phase 4, the ADR, is in review; PR split 2a-1 … 3-3 in the plan) |
+| S1 | [assess-lms-separation](20261111-185453-assess-lms-separation.md) | `LmsProvider` Protocol; vertical on the Protocol; Moodle provider out of the platform; assess schema branch; shared-module hygiene; RLS for the API role | 65 | the remaining waves; #199, #200 | in_progress (ADR-0033 accepted; phase 4, the ADR, is in review in #201; 2a-1 in review). Phase 2a is 4 PRs (product owner, 2026-11-11): 2a-1; 2a-2 (vertical on the Protocol + integration suites on the fake, the only PR with a CodeRabbit round); 2a-3; 2a-4 (fixture move + adapter out, may exceed ~100 files as mostly renames). 3.1 runs in parallel with 2a-2, 3.2 with 2a-4; 3.3-3.5 done in #199. Others: local `/code-review` + green CI |
 
 **Gate (two ratchets)**:
 - phase 2a: the 8 non-migration entries are removed (the `vektra-assess` directory and the 7 platform files), the guard is green, and no PR added an entry;

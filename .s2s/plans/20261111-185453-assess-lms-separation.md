@@ -60,22 +60,24 @@ Done is measured, not declared, and it is measured by the guard's baseline, whic
 - **A dormant gap the move would arm**: once the client's loggers leave the `vektra_assess.*` namespace, they lose the strict redaction of `log_safety` (the hard-coded `ASSESS_LOGGER_PREFIX`). The registration API lands in 2a-1, and a test proves that a provider logger is redacted, before any code moves.
 - **The vertical's gate logic does not move.** `MoodleStartSource` becomes `LmsStartSource` and keeps every derivation: the grace rule, the `own_close_at` rule, `fully_graded`, the release rule of BR-010. It reads neutral types instead of Moodle ones. A test is "moved" only when it tests transport; a test of a gate decision stays in the vertical, on the fake provider.
 - **Composition by entry point**: `VEKTRA_ASSESS_LMS_PROVIDER=<name>` and the group `vektra.lms_providers`. Unset with `VEKTRA_ASSESS_ENABLED=true` means the worker refuses to start, with a remediation, and the setup item `lms_provider_registered` is `MISSING`.
-- **The size cap.** About 100 files per PR (the review bot's cap). The one declared exception is 2a-4a, a rename-only PR of the 328 recorded fixtures, proved content-identical by `git diff --find-renames=100% --stat` (0 files modified, only renamed). It is the same kind of exception W1 was.
+- **The size cap.** About 100 files per PR (the review bot's cap). A PR that is mostly renames may exceed it (product owner, 2026-11-11): 2a-4 carries the 328 recorded fixtures in a rename-only commit, proved content-identical by `git diff --find-renames=100% --stat` (0 files modified, only renamed). CodeRabbit reviews 2a-2 only, so the cap binds that PR first.
 
 ## PR split
 
-| PR | Branch | Phase | Content | Est. files | Baseline effect |
-|---|---|---|---|---:|---|
-| 2a-1 | `feat/lms-provider-protocol` | 2a | Protocol, neutral types, registry slot, `log_safety` registration, conformance kit skeleton, `FakeLmsProvider`. No behaviour change. | ~25 | none |
-| 2a-2a | `refactor/assess-lms-start-source` | 2a | The vertical consumes the Protocol: `MoodleLmsProvider` adapter class over the existing readers (still in `moodle/`), `LmsStartSource`, capture on neutral types, setup-check split, `QuestionState` and `QuestionKind`, the review-HTML profile, unit tests | ~60 | none (the directory entry still covers `moodle/`) |
-| 2a-2b | `test/assess-fake-lms` | 2a | Integration and e2e suites moved onto `FakeLmsProvider`; the old ports deleted; the static `site_id` predicate test (D9). Merged into 2a-2a if the two together stay under 100 files. | ~45 | none |
-| 2a-3 | `feat/assess-schema-branch` | 2a (closes ratchet 2, OD-1) | The assess Alembic branch, gated by `VEKTRA_ASSESS_ENABLED`; squash with the neutral names; the in-place renames of D5; the squash-equivalence test; docs | ~70 | the 18 migration entries removed; `assess_wiring.py` lowered |
-| 2a-4a | `chore/lms-moodle-fixtures-move` | 2a | rename-only: `vektra-assess/tests/fixtures/moodle_ws/` to `adapters/vektra-lms-moodle/tests/fixtures/moodle_ws/`, and the one path constant | 329 (declared exception) | none |
-| 2a-4b | `refactor/lms-moodle-adapter` | 2a | `vektra_assess/moodle/` to `adapters/vektra-lms-moodle/src/vektra_lms_moodle/`; its tests; entry-point composition in `vektra-app`; wording in the 5 comment-only platform files; settings move; opt-in image build argument; guard and image-boundary additions | ~90 | **the directory entry and the 7 platform entries removed (ratchet 1)** |
-| 2b-1 | `chore/lms-moodle-adapter-out` | 2b | `adapters/` removed; the image installs the pinned wheel (OD-6) | ~10 + `adapters/` | none |
-| 3-1 | `refactor/testkit` | 3 | `vektra-testkit` dev-only distribution: `testing_recorders.py` and the conformance kit | ~30 | none |
-| 3-2 | `feat/assess-api-rls` | 3 | RLS for `vektra_assess_api` on the site-scoped tables (D9) | ~15 | none |
-| 3-3 | `chore/assess-shared-hygiene` | 3 | `netguard` unification DEBT entry, the JSONRenderer CHANGELOG note, and the managed-Postgres note proven on its positive case | ~10 | none |
+Regrouped by the product owner on 2026-11-11 (relayed by the coordinator): phase 2a is **4 PRs**. The task IDs are unchanged; only their grouping into PRs changed. 2a-2 is the former 2a-2a and 2a-2b together, and 2a-4 is the former 2a-4a and 2a-4b together.
+
+| PR | Branch | Phase | Tasks | Content | Est. files | Baseline effect |
+|---|---|---|---|---|---:|---|
+| 2a-1 | `feat/lms-provider-protocol` | 2a | 2a-1.1 to 2a-1.11 | Protocol, neutral types, registry slot, `log_safety` registration, entry-point loader, conformance kit skeleton, `FakeLmsProvider`; the safeguard/locality startup rule (2a-1.11, product owner, 2026-11-11). No other behaviour change. | ~30 | none |
+| 2a-2 | `refactor/assess-lms-start-source` | 2a | 2a-2a.\* and 2a-2b.\* | The vertical consumes the Protocol: `MoodleLmsProvider` adapter class over the existing readers (still in `moodle/`), `LmsStartSource`, capture on neutral types, setup-check split, `QuestionState` and `QuestionKind`, the review-HTML profile, unit tests; **and**, in the same PR, the integration and e2e suites on `FakeLmsProvider`, the old ports deleted, the static `site_id` predicate test (D9) | ~105 | none (the directory entry still covers `moodle/`) |
+| 2a-3 | `feat/assess-schema-branch` | 2a (closes ratchet 2, OD-1) | 2a-3.\* | The assess Alembic branch, gated by `VEKTRA_ASSESS_ENABLED`; squash with the neutral names; the in-place renames of D5; the squash-equivalence test; docs | ~70 | the 18 migration entries removed; `assess_wiring.py` lowered |
+| 2a-4 | `refactor/lms-moodle-adapter` | 2a | 2a-4a.\* and 2a-4b.\* | The 328 recorded fixtures moved in a rename-only commit (proved by `git diff --find-renames=100% --stat`), then `vektra_assess/moodle/` to `adapters/vektra-lms-moodle/src/vektra_lms_moodle/`; its tests; entry-point composition in `vektra-app`; wording in the 5 comment-only platform files; settings move; opt-in image build argument; guard and image-boundary additions | ~420, mostly renames | **the directory entry and the 7 platform entries removed (ratchet 1)** |
+| 2b-1 | `chore/lms-moodle-adapter-out` | 2b | 2b.\* | `adapters/` removed; the image installs the pinned wheel (OD-6) | ~10 + `adapters/` | none |
+| 3-1 | `refactor/testkit` | 3, **in parallel with 2a-2** | 3.1 | `vektra-testkit` dev-only distribution: `testing_recorders.py` and the conformance kit | ~30 | none |
+| 3-2 | `feat/assess-api-rls` | 3, **in parallel with 2a-4** | 3.2 | RLS for `vektra_assess_api` on the site-scoped tables (D9) | ~15 | none |
+| ~~3-3~~ | ~~`chore/assess-shared-hygiene`~~ | 3 | 3.3 to 3.5 | **Done in #199**: DEBT-042, the CHANGELOG `ensure_ascii` entry, the proven GRANT recipe with "up to the current head" | 0 | none |
+
+**Review.** CodeRabbit gets one round, on 2a-2 only. Every other PR gets a local `/code-review` and green CI. The ~100-file cap may be exceeded by a PR that is mostly renames (2a-4), whose body carries the rename proof.
 
 **Fallback only.** This applies if task 2a-3.0 finds the OD-1 validity condition false: a release ships assess or the plugin is tagged. Under **OD-1 = no**, 2a-3 shrinks to a `git mv` of the 36 revisions plus gating, with no squash and no renames of stored names. The renames then need a rename revision, which would add a migration entry, and that is not allowed (see Design Notes). So OD-1 = no means 2a cannot close ratchet 1 without the product owner first accepting one dated, temporary entry. Stop and ask before 2a-3 in that case.
 
@@ -101,7 +103,7 @@ Done is measured, not declared, and it is measured by the guard's baseline, whic
 - [ ] 2a-1.9 `pyproject.toml` import-linter: `vektra_shared.lms` imports no component and no `httpx`
 - [ ] 2a-1.10 `make lint`, `make test`, guard green, baseline unchanged
 
-### Phase 2a, PR 2a-2a: the vertical on the Protocol
+### Phase 2a, PR 2a-2 (part a): the vertical on the Protocol
 - [ ] 2a-2a.1 `vektra-assess/src/vektra_assess/moodle/provider.py`: `MoodleLmsProvider`, implementing `LmsProvider` over `moodle/readers/*`, `moodle/probes.py` and the Moodle items of `moodle/setup_check.py`; normalises `overduehandling`, `grademethod`, the attempt and question states, and `qtype` into the neutral enums. The conformance kit runs on it with the recorded fixtures.
 - [ ] 2a-2a.2 `vektra-assess/src/vektra_assess/worker/start_source.py`: `MoodleStartSource` becomes `LmsStartSource(provider: LmsProvider, …)`; same methods (`gate_facts`, `capture`, `enrolled`, `graders`, `teacher_facts`, `close_facts`, `forget`); no import from `vektra_assess.moodle`
 - [ ] 2a-2a.3 `vektra-assess/src/vektra_assess/worker/preflight.py`: `MoodleGateFacts` becomes `LmsGateFacts`; `StartSource` docstring; `worker/render.py`, `worker/enrolment.py`, `worker/teacher_gate.py`, `worker/transcript_gen.py`, `transcript/facts.py` follow
@@ -114,7 +116,7 @@ Done is measured, not declared, and it is measured by the guard's baseline, whic
 - [ ] 2a-2a.10 unit tests moved to the fake, among them `test_start_source_cache.py`, `test_teacher_gate.py`, `test_context_capture.py`, `test_context_selection.py`, `test_capabilities.py`, `test_idor.py`, `test_render_moodle_reasons.py` (renamed in 2a-3), `test_parser_client.py`, `test_boundaries.py`
 - [ ] 2a-2a.11 `make lint`, `make test`, `make test-integration`; guard green, baseline unchanged (the moved mentions stay inside the directory entry)
 
-### Phase 2a, PR 2a-2b: the integration suites on the fake provider
+### Phase 2a, PR 2a-2 (part b, same PR): the integration suites on the fake provider
 - [ ] 2a-2b.1 `vektra-assess/tests/integration/`: `test_session_preflight*.py`, `test_session_start_guard.py`, `test_session_state.py`, `test_session_get.py`, `test_session_burst_inprocess.py`, `test_chaos_parser_kill.py`, `test_snapshot_store_db.py`, `test_transcript_generation.py`, `test_teacher_config_format.py`, `test_setup_check_{handler,render,run,worker_items}.py`, `test_ui_e2e.py`, `test_probes_db.py`, and `support/{sessions,teacher_ops}.py` on `FakeLmsProvider`
 - [ ] 2a-2b.2 `tests/chaos/assess/worker_main.py`, `tests/nfr/test_assess_burst.py`, `scripts/assess_burst.py`: the fake is loaded through a development-only entry point; a production registry refuses it (test)
 - [ ] 2a-2b.3 D9 backstop: `vektra-assess/tests/test_site_predicate_static.py` parses every SQL text in `vektra_assess.api` and fails when a statement reads a site-scoped `assess_*` table without a `site_id` predicate; a planted route without the predicate turns it red (positive control)
@@ -155,11 +157,11 @@ Done is measured, not declared, and it is measured by the guard's baseline, whic
 
   Record in `## Notes` the result of the check, and what was recreated, by whom and when.
 
-### Phase 2a, PR 2a-4a: the recorded fixtures (rename-only)
+### Phase 2a, PR 2a-4 (part a): the recorded fixtures (rename-only commit)
 - [ ] 2a-4a.1 `git mv vektra-assess/tests/fixtures/moodle_ws adapters/vektra-lms-moodle/tests/fixtures/moodle_ws` (328 files), and the fixture path constant in `vektra-assess/tests/assess_moodle_support.py`
 - [ ] 2a-4a.2 proof in the PR body: `git diff --find-renames=100% --stat origin/develop...HEAD` shows 328 renames and 1 modified file, and `make test` is green
 
-### Phase 2a, PR 2a-4b: the adapter leaves the platform (ratchet 1)
+### Phase 2a, PR 2a-4 (part b, same PR): the adapter leaves the platform (ratchet 1)
 - [ ] 2a-4b.1 `adapters/vektra-lms-moodle/pyproject.toml` (distribution `vektra-lms-moodle`, depends on `vektra-shared` only, entry point `vektra.lms_providers: moodle = vektra_lms_moodle:build_provider`); `git mv vektra-assess/src/vektra_assess/moodle adapters/vektra-lms-moodle/src/vektra_lms_moodle`; imports rewritten
 - [ ] 2a-4b.2 provider settings class `vektra_lms_moodle/config.py`: the 11 settings of `vektra_assess/config.py:236-295` move here, with the names per OD-4; `startup_problems(env)` replaces `vektra-app/src/vektra_app/assess_worker.py:229-236`
 - [ ] 2a-4b.3 the provider's tests move to `adapters/vektra-lms-moodle/tests/`:
@@ -182,14 +184,14 @@ Done is measured, not declared, and it is measured by the guard's baseline, whic
 - [ ] 2b.3 the image-boundary test (2a-4b.10) asserts the variant's wheel hash
 
 ### Phase 3: the costs an operator feels
-- [ ] 3.1 `vektra-testkit` (new dev-only distribution, `testkit/` at the root, dev dependency group): `vektra-shared/src/vektra_shared/testing_recorders.py` and `vektra-shared/tests/lms_conformance/` move there; the `ProviderRegistry` refusal of test doubles stays; `test_image_content_boundary.py` asserts the production image has no `testing_recorders`
-- [ ] 3.2 RLS for `vektra_assess_api` (ADR-0033 D9), a new revision of the assess branch:
+- [ ] 3.1 (in parallel with 2a-2) `vektra-testkit` (new dev-only distribution, `testkit/` at the root, dev dependency group): `vektra-shared/src/vektra_shared/testing_recorders.py` and `vektra-shared/tests/lms_conformance/` move there; the `ProviderRegistry` refusal of test doubles stays; `test_image_content_boundary.py` asserts the production image has no `testing_recorders`
+- [ ] 3.2 (in parallel with 2a-4) RLS for `vektra_assess_api` (ADR-0033 D9), a new revision of the assess branch:
   - policies on the site-scoped tables the API reads;
   - `SET LOCAL app.assess_site_id` from the key's site binding at the start of each request transaction (`vektra-assess/src/vektra_assess/api/deps.py`);
   - test: an API connection bound to site A, with the route's `site_id` predicate removed, reads 0 rows of site B
-- [ ] 3.3 `.s2s/BACKLOG.md`: DEBT item "unify `vektra_shared.netguard` with `vektra_learn.api._resolve_and_validate_url`" (owner: the author)
-- [ ] 3.4 CHANGELOG `Changed`: JSON logs are written with `ensure_ascii=False` (every deployment)
-- [ ] 3.5 managed-Postgres upgrade note: prove the positive case (roles pre-created + the documented GRANT + assess migrated to head) on a cluster without superuser, then write it; "up to the current head" instead of a hand-written revision number
+- [x] 3.3 `.s2s/BACKLOG.md`: DEBT item "unify `vektra_shared.netguard` with `vektra_learn.api._resolve_and_validate_url`" (owner: the author). Done in #199 (DEBT-042).
+- [x] 3.4 CHANGELOG `Changed`: JSON logs are written with `ensure_ascii=False` (every deployment). Done in #199 (the CHANGELOG `ensure_ascii` entry).
+- [x] 3.5 managed-Postgres upgrade note: prove the positive case (roles pre-created + the documented GRANT + assess migrated to head) on a cluster without superuser, then write it; "up to the current head" instead of a hand-written revision number. Done in #199 (the proven GRANT recipe, and "up to the current head").
 - [ ] 3.6 fallback only, if task 2a-3.0 forces OD-1 = no: the second ratchet (squash after every retained database has been migrated; see ADR-0033 D7)
 
 ## State & Data Lifecycle

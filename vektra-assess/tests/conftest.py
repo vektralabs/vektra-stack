@@ -22,6 +22,13 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+# What the API and worker composition roots do before they configure logging: these tests
+# configure it themselves, so they register the vertical's strict prefix the same way.
+from vektra_assess import LOGGER_PREFIX  # noqa: E402
+from vektra_shared.log_safety import register_strict_logger_prefix  # noqa: E402
+
+register_strict_logger_prefix(LOGGER_PREFIX)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _preload_recorded_manifests() -> None:

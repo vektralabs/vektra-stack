@@ -185,6 +185,55 @@ def test_parser_import_ceiling_in_a_fresh_process() -> None:
     assert out.stdout.strip() == "ceiling ok", out.stderr
 
 
+def test_a_parsing_child_holds_no_shared_kernel_and_no_structlog() -> None:
+    """Review of #203: the forkserver preloads ``vektra_assess.parser_sidecar.child`` and every
+    parsing child inherits what that import loaded, package ``__init__`` included. A child
+    holds the parser and the stdlib, never ``vektra_shared`` or ``structlog``."""
+    code = (
+        "import sys; import vektra_assess.parser_sidecar.child; "
+        "loaded = list(sys.modules); "  # what the forkserver preload leaves to a child
+        "from vektra_app import assess_parser; "
+        "assess_parser.assert_child_import_ceiling(loaded); print('child ok')"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.stdout.strip() == "child ok", out.stderr[-2000:]
+
+
+def test_the_api_logging_setup_registers_the_assess_prefix() -> None:
+    """The registration moved out of ``vektra_assess/__init__`` (review of #203) into the
+    composition roots that configure logging: the API's ``configure_structlog``..."""
+    code = (
+        "import vektra_app.main as m; from vektra_shared import log_safety as s; "
+        "before = s.strict_logger_prefixes(); m.configure_structlog(); "
+        "print(before, s.strict_logger_prefixes())"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.stdout.strip() == "() ('vektra_assess',)", out.stderr[-2000:]
+
+
+def test_the_worker_registers_the_assess_prefix_before_configuring_logging() -> None:
+    """... and the worker's ``main`` (checked on the source: running it starts the job loop)."""
+    import inspect
+
+    src = inspect.getsource(assess_worker.main)
+    assert src.index("register_strict_logger_prefix(LOGGER_PREFIX)") < src.index(
+        "configure_assess_worker_logging()"
+    )
+
+
+def test_the_child_ceiling_refuses_the_shared_kernel_and_structlog() -> None:
+    for bad in ("vektra_shared", "vektra_shared.log_safety", "structlog", "httpx"):
+        with pytest.raises(StartupValidationError, match="parsing child"):
+            assess_parser.assert_child_import_ceiling(["vektra_assess", bad])
+    assess_parser.assert_child_import_ceiling(
+        ["vektra_assess", "vektra_assess.parser_sidecar.child", "json"]
+    )
+
+
 def test_parser_ceiling_refuses_forbidden_and_stray_modules() -> None:
     for bad in ("sqlalchemy", "httpx", "torch", "vektra_shared.db", "vektra_index.x"):
         with pytest.raises(StartupValidationError, match="forbidden modules"):

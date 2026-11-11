@@ -57,6 +57,7 @@ PROTOCOL_VIOLATION_CODE = "assess_parser_protocol_violation"
 _CTRL = {c: None for c in [*range(0, 9), *range(11, 32), 127]}  # keep \t and \n
 _TEXT_STATUSES = frozenset({FileStatus.READ, FileStatus.READ_PARTIAL})
 _QUEUE_ALLOWANCE_S = 15.0
+_MAX_PROFILES = 16
 
 
 class ParserUnavailableError(Exception):
@@ -134,6 +135,7 @@ class ParserClient:
         self.connect_timeout_s = connect_timeout_s
         self.busy_retries = busy_retries
         self.busy_backoff_s = busy_backoff_s
+        self._profiles: dict[tuple[Any, ...], dict[str, Any] | None] = {}
 
     @classmethod
     def from_settings(cls, settings: VektraAssessSettings) -> ParserClient:
@@ -171,19 +173,15 @@ class ParserClient:
         would refuse: the item then degrades, it is never read as text."""
         import json
 
-        try:
-            wire = ReviewProfile.build(
-                profile.keep, profile.drop_classes, profile.profile_version
-            )
-        except ValueError:
-            log.warning("assess_review_profile_invalid", reason_code="profile_invalid")
+        wire = self._wire_profile(profile)
+        if wire is None:
             return None, None, False
         res = await self._call(
             "review_item",
             html,
             "html",
             limits or self.limits,
-            extra={"profile": wire.to_wire()},
+            extra={"profile": wire},
         )
         if res.status is not FileStatus.READ:
             return None, None, False
@@ -206,6 +204,28 @@ class ParserClient:
             r if isinstance(r, str) else None,
             t,
         )
+
+    def _wire_profile(self, profile: HtmlExtractionProfile) -> dict[str, Any] | None:
+        """The profile's validated wire form, built once per profile (a provider constant) and
+        then reused for every item; None for one the sidecar would refuse (cached too)."""
+        key = (
+            tuple(sorted(profile.keep.items())),
+            profile.drop_classes,
+            profile.profile_version,
+        )
+        if key not in self._profiles:
+            if len(self._profiles) >= _MAX_PROFILES:
+                self._profiles.clear()  # bounded: profiles are per provider, a handful
+            try:
+                self._profiles[key] = ReviewProfile.build(
+                    profile.keep, profile.drop_classes, profile.profile_version
+                ).to_wire()
+            except ValueError:
+                self._profiles[key] = None
+        wire = self._profiles[key]
+        if wire is None:
+            log.warning("assess_review_profile_invalid", reason_code="profile_invalid")
+        return wire
 
     async def ping(self, deep: bool = False) -> float:
         """Round-trip in seconds. ``ParserUnavailableError`` unless the sidecar answers
@@ -291,7 +311,13 @@ class ParserClient:
             raise _Unavailable(type(exc).__name__) from None
         try:
             try:
-                writer.write(encode_frame({"v": PROTOCOL_VERSION, **header}, payload))
+                frame = encode_frame({"v": PROTOCOL_VERSION, **header}, payload)
+            except FrameError:
+                # a request this client cannot even frame (a header over MAX_HEADER): the item
+                # degrades like any other protocol violation, the Start does not crash
+                raise _Violation("request_header_too_large") from None
+            try:
+                writer.write(frame)
                 await writer.drain()
             except (ConnectionError, OSError):
                 pass  # the sidecar may answer (e.g. TOO_LARGE) and close before reading it all

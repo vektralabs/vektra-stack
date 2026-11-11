@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from vektra_assess.parser_protocol import (
+    PROTOCOL_VERSION,
     Extracted,
     FileStatus,
     encode_frame,
@@ -70,7 +71,14 @@ async def _call(
 
 
 def _req(op: str = "parse", **kw: object) -> dict:  # type: ignore[type-arg]
-    return {"v": 1, "op": op, "req_id": "r1", "ext_hint": "txt", "limits": {}, **kw}
+    return {
+        "v": PROTOCOL_VERSION,
+        "op": op,
+        "req_id": "r1",
+        "ext_hint": "txt",
+        "limits": {},
+        **kw,
+    }
 
 
 async def test_socket_is_0600(srv: StubServer) -> None:
@@ -80,11 +88,13 @@ async def test_socket_is_0600(srv: StubServer) -> None:
 @pytest.mark.parametrize(
     "bad",
     [
-        {"v": 2, "op": "parse", "req_id": "r"},
-        {"v": 1, "op": "format_disk", "req_id": "r"},
-        {"v": 1, "op": "parse"},
-        {"v": 1, "op": "parse", "req_id": "x" * 65},
-        {"v": 1, "op": "parse", "req_id": 5},
+        {"v": PROTOCOL_VERSION + 1, "op": "parse", "req_id": "r"},
+        # a worker of the previous protocol (before the review_item profile): refused loudly
+        {"v": PROTOCOL_VERSION - 1, "op": "parse", "req_id": "r"},
+        {"v": PROTOCOL_VERSION, "op": "format_disk", "req_id": "r"},
+        {"v": PROTOCOL_VERSION, "op": "parse"},
+        {"v": PROTOCOL_VERSION, "op": "parse", "req_id": "x" * 65},
+        {"v": PROTOCOL_VERSION, "op": "parse", "req_id": 5},
     ],
 )
 async def test_bad_requests_get_bad_request(srv: StubServer, bad: dict) -> None:  # type: ignore[type-arg]
@@ -108,7 +118,7 @@ async def test_garbage_and_oversize_header_do_not_kill_the_server(
         w.write_eof()
         await asyncio.wait_for(r.read(), 5)
         w.close()
-    header, _ = await _call(srv, {"v": 1, "op": "ping", "req_id": "p"})
+    header, _ = await _call(srv, {"v": PROTOCOL_VERSION, "op": "ping", "req_id": "p"})
     assert header["code"] == "pong"
 
 
@@ -167,7 +177,7 @@ async def test_queue_is_bounded_and_beyond_it_busy(srv: StubServer) -> None:
 
 async def test_shallow_ping_needs_no_child(srv: StubServer) -> None:
     before = srv.calls
-    header, _ = await _call(srv, {"v": 1, "op": "ping", "req_id": "p2"})
+    header, _ = await _call(srv, {"v": PROTOCOL_VERSION, "op": "ping", "req_id": "p2"})
     assert header["code"] == "pong" and header["status"] is None and srv.calls == before
 
 

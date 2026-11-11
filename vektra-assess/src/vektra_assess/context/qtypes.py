@@ -8,7 +8,7 @@ cannot place onto ``QuestionKind.OTHER`` (kept at mark-and-feedback level and fl
 
 from __future__ import annotations
 
-from vektra_shared.lms import QuestionKind, QuestionState
+from vektra_shared.lms import QuestionKind, QuestionState, ReviewHtml
 
 DISCUSSABLE_KINDS: frozenset[QuestionKind] = frozenset(
     {
@@ -37,10 +37,10 @@ NO_MARK_FINAL_STATES: frozenset[QuestionState] = frozenset(
     {QuestionState.FINAL_NO_MARK}
 )
 
-#: kinds whose question text and response are extracted from the review HTML by allowlist
-#: (ADR-0032 amendment 2026-11-04), with the provider's extraction profile (ADR-0033 D4). A kind
-#: is enabled only where the provider's per-type oracle on its recorded reviews proves the right
-#: answer, the feedback and the canaries absent from the output. Not enabled, and why:
+#: kinds whose question text and response the vertical is willing to extract from the review
+#: HTML by allowlist (ADR-0032 amendment 2026-11-04). Vektra's ceiling only: each provider's
+#: profile declares the kinds its own per-type oracle proved (``HtmlExtractionProfile.kinds``),
+#: and an item is extracted only when its kind is in both (``extractable``). Not here, and why:
 #: - embedded answers (cloze): no question-text / response block, the gaps live in the text;
 #: - matching, gap select: extraction looks clean, but every recorded attempt is unanswered, so
 #:   no per-item feedback or correctness markup has been seen yet. Enable after a graded
@@ -54,6 +54,13 @@ EXTRACTION_KINDS: frozenset[QuestionKind] = frozenset(
         QuestionKind.ESSAY,
     }
 )
+
+
+def extractable(kind: QuestionKind, html: ReviewHtml | None) -> bool:
+    """Whether the question text and response of an item may be extracted from its review
+    HTML: the kind is in Vektra's list AND among the kinds the provider declares its profile
+    proved for (``HtmlExtractionProfile.kinds``). Either alone is not enough."""
+    return html is not None and kind in EXTRACTION_KINDS and kind in html.profile.kinds
 
 
 def is_discussable(kind: QuestionKind) -> bool:

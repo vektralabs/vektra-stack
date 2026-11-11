@@ -11,7 +11,7 @@ import pytest
 
 from vektra_app import lms_providers
 from vektra_app.lms_providers import GROUP, available_lms_providers, load_lms_provider
-from vektra_shared.lms import LmsProvider
+from vektra_shared.lms import GuardedLmsProvider, LmsProvider
 from vektra_shared.registry import TEST_DOUBLE_MARKER
 from vektra_shared.startup import StartupValidationError
 
@@ -261,7 +261,9 @@ def test_the_fake_loads_with_explicit_development(
     )
     _Startup.seen = []
     provider = _run_load(assess_worker, settings, _eps(_EP("fake", _Startup)))
-    assert isinstance(provider, _Startup) and _Startup.seen == [True]
+    # behind the one fail-closed wrapper (review finding 8), the loaded provider inside it
+    assert isinstance(provider, GuardedLmsProvider)
+    assert isinstance(provider.inner, _Startup) and _Startup.seen == [True]
 
 
 @pytest.mark.parametrize("env", [None, "production"])

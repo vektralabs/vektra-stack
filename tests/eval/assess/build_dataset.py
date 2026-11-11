@@ -36,6 +36,7 @@ from vektra_assess.context.snapshot import (
     SnapshotHeader,
     SubmissionItem,
 )
+from vektra_shared.lms import QuestionKind, QuestionState
 
 HERE = Path(__file__).resolve().parent
 RNG = random.Random(20261105)
@@ -52,22 +53,22 @@ CLASSES = (
 # --- disciplines and question banks (invented) --------------------------------------------------
 
 MATH = [
-    ("multichoice", "Qual è la derivata di x^2 + 3x?", "Ho scelto 2x + 3."),
+    ("multiple_choice", "Qual è la derivata di x^2 + 3x?", "Ho scelto 2x + 3."),
     (
-        "multichoice",
+        "multiple_choice",
         "Quale matrice è invertibile tra A e B?",
         "Ho scelto la matrice A.",
     ),
-    ("truefalse", "Ogni funzione continua è derivabile.", "Vero."),
-    ("shortanswer", "Scrivi il valore di lim x->0 sin(x)/x.", "0"),
+    ("true_false", "Ogni funzione continua è derivabile.", "Vero."),
+    ("short_answer", "Scrivi il valore di lim x->0 sin(x)/x.", "0"),
     ("numerical", "Calcola l'integrale di 2x tra 0 e 3.", "9"),
     (
         "essay",
         "Dimostra che la somma di due numeri pari è pari.",
         "Se a=2k e b=2h allora a+b=2(k+h).",
     ),
-    ("multichoice", "Qual è il rango della matrice identità 3x3?", "Ho scelto 2."),
-    ("truefalse", "Il determinante di una matrice singolare è nullo.", "Vero."),
+    ("multiple_choice", "Qual è il rango della matrice identità 3x3?", "Ho scelto 2."),
+    ("true_false", "Il determinante di una matrice singolare è nullo.", "Vero."),
     ("numerical", "Risolvi 3x - 6 = 0.", "2"),
     (
         "essay",
@@ -77,13 +78,13 @@ MATH = [
 ]
 HISTORY = [
     (
-        "multichoice",
+        "multiple_choice",
         "In che anno fu firmato il trattato di Roma?",
         "Ho scelto il 1957.",
     ),
-    ("truefalse", "La Costituzione italiana entrò in vigore nel 1948.", "Vero."),
+    ("true_false", "La Costituzione italiana entrò in vigore nel 1948.", "Vero."),
     (
-        "shortanswer",
+        "short_answer",
         "Chi fu il primo presidente della Repubblica italiana?",
         "Enrico De Nicola",
     ),
@@ -93,23 +94,23 @@ HISTORY = [
         "Il sistema delle alleanze e il nazionalismo.",
     ),
     (
-        "multichoice",
+        "multiple_choice",
         "Quale evento segna la fine dell'Impero romano d'Occidente?",
         "Ho scelto il 476.",
     ),
-    ("truefalse", "Il Congresso di Vienna si tenne nel 1815.", "Falso."),
-    ("shortanswer", "In quale città fu firmata la Magna Carta?", "Londra"),
+    ("true_false", "Il Congresso di Vienna si tenne nel 1815.", "Falso."),
+    ("short_answer", "In quale città fu firmata la Magna Carta?", "Londra"),
     (
         "essay",
         "Spiega il ruolo delle corporazioni nel Medioevo.",
         "Regolavano i mestieri e i prezzi.",
     ),
     (
-        "multichoice",
+        "multiple_choice",
         "Quale trattato chiuse la guerra dei Trent'anni?",
         "Ho scelto Vestfalia.",
     ),
-    ("truefalse", "La rivoluzione francese iniziò nel 1789.", "Vero."),
+    ("true_false", "La rivoluzione francese iniziò nel 1789.", "Vero."),
 ]
 CRITERIA_IT = [
     (
@@ -146,13 +147,11 @@ def _quiz(
         items.append(
             QuizItem(
                 label=str(k),
-                qtype=qtype,
+                qtype=QuestionKind(qtype).value,  # a bank typo fails the build
                 discussable=True,
-                state="gradedright"
-                if mark == maxm
-                else "gradedpartial"
-                if mark
-                else "gradedwrong",
+                # the neutral vocabulary of ADR-0033 D2: every graded item is final, the
+                # status label says how it went
+                state=QuestionState.FINAL_MARKED.value,
                 status="Corretta"
                 if mark == maxm
                 else "Parzialmente corretta"

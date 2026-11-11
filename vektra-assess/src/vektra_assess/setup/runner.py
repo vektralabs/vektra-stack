@@ -46,7 +46,6 @@ from vektra_assess.setup.registry import (
     unverifiable,
 )
 from vektra_shared.lms import (
-    PROVIDER_ERROR,
     CapabilityResult,
     LmsProvider,
     LmsSite,
@@ -55,6 +54,7 @@ from vektra_shared.lms import (
     Reading,
     Unreadable,
     UnreadableReason,
+    guarded,
 )
 
 log = structlog.get_logger(__name__)
@@ -72,14 +72,11 @@ def _declared(
     provider: LmsProvider | None, reserved: set[str]
 ) -> tuple[str, ...] | None:
     """The provider's declared item names, or None when they cannot be trusted (an invalid or
-    reserved name, a duplicate, a provider that raised): the run then fails closed."""
+    reserved name, a duplicate, a declaration the guard could not read): the run then fails
+    closed."""
     if provider is None:
         return ()
-    try:
-        names = tuple(provider.setup_items)
-    except Exception as exc:
-        log.warning("setup_check_items_unreadable", error_type=type(exc).__name__)
-        return None
+    names = tuple(provider.setup_items)
     if len(set(names)) != len(names) or any(
         not isinstance(n, str) or not NAME.fullmatch(n) or n in reserved for n in names
     ):
@@ -92,13 +89,8 @@ async def _provider_items(
     names: tuple[str, ...],
     ctx: CheckContext,
 ) -> list[ItemResult]:
-    try:
-        returned = await provider.service_account_check(
-            ctx.site, ctx.info, ctx.manifest
-        )
-    except Exception as exc:
-        log.warning("setup_check_provider_error", error_type=type(exc).__name__)
-        return [ItemResult(n, UNVERIFIABLE, "check_error") for n in names]
+    # behind the guard: a raise is every declared item UNVERIFIABLE/check_error
+    returned = await provider.service_account_check(ctx.site, ctx.info, ctx.manifest)
     by_name: dict[str, ItemResult] = {}
     for item in returned:
         if item.name in names and item.name not in by_name:
@@ -165,15 +157,11 @@ async def probe(
     flags: Sequence[str] = FLAGS,
 ) -> tuple[CapabilityResult, ...]:
     """One result per flag, in ``flags`` order: what the provider returned for it, or
-    ``unreadable/not_probed`` when it returned nothing usable (fail closed)."""
+    ``unreadable/not_probed`` when it returned nothing usable (fail closed). A provider that
+    raised returns ``not_probed`` for every flag (the guard), so the site's release does not
+    move on a matrix that probed nothing."""
     release = site.release or ""
-    try:
-        returned = await provider.probe_capabilities(site, manifest, tuple(flags))
-    except Exception as exc:
-        log.warning("capability_probe_provider_error", error_type=type(exc).__name__)
-        return tuple(
-            _not_probed(f, release, UnreadableReason.UNKNOWN_SHAPE.value) for f in flags
-        )
+    returned = await guarded(provider).probe_capabilities(site, manifest, tuple(flags))
     by_flag: dict[str, CapabilityResult] = {}
     for r in returned:
         if r.flag in flags and r.flag not in by_flag and r.state in _STATES:
@@ -246,11 +234,7 @@ async def _site_info(
 ) -> Reading[LmsSiteInfo]:
     if provider is None:
         return Unreadable(UnreadableReason.NOT_PROBED, "no_provider")
-    try:
-        return await provider.site_info(site)
-    except Exception as exc:
-        log.warning("setup_check_provider_error", error_type=type(exc).__name__)
-        return Unreadable(UnreadableReason.UNKNOWN_SHAPE, PROVIDER_ERROR)
+    return await provider.site_info(site)
 
 
 async def evaluate(
@@ -263,7 +247,11 @@ async def evaluate(
     probe_flags: bool = True,
     moodle_origin: str | None = None,
 ) -> CheckOutcome:
-    """Network only: no database. Reads site_info once, runs the items, then the probes."""
+    """Network only: no database. Reads site_info once, runs the items, then the probes.
+
+    The provider is used behind ``guarded`` (the one fail-closed wrapper; a no-op when the
+    composition already wrapped it): no provider exception reaches this run."""
+    provider = None if provider is None else guarded(provider)
     info = await _site_info(provider, site)
     release: str | None = None
     ref = site

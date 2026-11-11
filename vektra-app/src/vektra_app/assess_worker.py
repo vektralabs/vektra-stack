@@ -213,11 +213,14 @@ async def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
     double loads only with ``VEKTRA_ENV=development`` set explicitly. The provider's own
     startup problems (a development-only switch outside development...) refuse here too."""
     from vektra_app.lms_providers import load_lms_provider
+    from vektra_shared.lms import guarded
 
     kwargs: dict[str, Any] = {"allow_test_doubles": settings.is_development}
     if entry_points is not None:
         kwargs["entry_points"] = entry_points
-    provider = await load_lms_provider(settings.lms_provider, **kwargs)
+    # behind the one fail-closed wrapper (ADR-0033 D2, invariant 1): every caller of this
+    # worker reads through it
+    provider = guarded(await load_lms_provider(settings.lms_provider, **kwargs))
     # the resolved flag (2a-1.11): development only when VEKTRA_ENV=development is explicit
     problems = provider.startup_problems(settings.is_development)
     if problems:
@@ -233,12 +236,6 @@ async def _checks(lms_entry_points: Any | None = None) -> Checked:
     from pydantic import ValidationError
 
     from vektra_assess.config import VektraAssessSettings, explain_settings_error
-    from vektra_assess.crypto.selftest import run_crypto_selftest
-    from vektra_assess.db.roles import (
-        assert_distinct_dsn,
-        assert_session_role,
-        dsn_with_password,
-    )
     from vektra_assess.keys import enforce_key_matrix
 
     try:
@@ -255,6 +252,24 @@ async def _checks(lms_entry_points: Any | None = None) -> Checked:
         )
     loaded = enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
     lms = await _load_lms(settings, lms_entry_points)
+    try:
+        return await _checks_with_lms(settings, loaded, lms)
+    except BaseException:
+        # a later check refused: the provider it loaded is closed, not leaked
+        with contextlib.suppress(Exception):
+            await lms.aclose()
+        raise
+
+
+async def _checks_with_lms(settings: Any, loaded: Any, lms: Any) -> Checked:
+    """Checks 2-5, after the LMS provider was loaded (``_checks`` closes it if one refuses)."""
+    from vektra_assess.crypto.selftest import run_crypto_selftest
+    from vektra_assess.db.roles import (
+        assert_distinct_dsn,
+        assert_session_role,
+        dsn_with_password,
+    )
+
     if settings.worker_allow_unbound and not settings.is_development:
         raise StartupValidationError(
             step=STEP,
@@ -288,7 +303,7 @@ async def _checks(lms_entry_points: Any | None = None) -> Checked:
         )
     worker_url = dsn_with_password(
         settings.worker_database_url,
-        loaded["assess_db_worker_password"].value,  # type: ignore[union-attr]
+        loaded["assess_db_worker_password"].value,
         step=STEP,
     )
     main_url = os.environ.get("VEKTRA_DATABASE_URL")
@@ -658,9 +673,9 @@ def _setup_check_parts(
     checked: Checked, smtp_probe: Any | None = None
 ) -> SetupCheckParts:
     """The REQ-079 ``setup_check`` handler and its daily tick (the web-service plan, task F4, carried
-    over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the
-    provider's token keyring) and with the worker's LMS provider; otherwise both stay unbound
-    and ``assert_all_bound`` refuses to start.
+    over to plan assess-job-loop). Bound only from a key set that passed the key matrix and
+    holds every secret the worker's LMS provider declares (``required_secrets``); otherwise
+    both stay unbound and ``assert_all_bound`` refuses to start.
 
     The item registry is built per composition (never the module-level default, which a second
     composition would register into twice): the built-ins plus the parser's
@@ -668,7 +683,9 @@ def _setup_check_parts(
     setup-check slot"), and the worker's own ``smtp_probe`` and ``db_log_statement_none`` items
     (``worker/setup_items.py``, coordinator decisions 2026-11-08).
     """
-    if checked.lms is None or "assess_ws_tokens" not in checked.keys:
+    if checked.lms is None or not all(
+        name in checked.keys for name in checked.lms.required_secrets
+    ):
         return SetupCheckParts({}, {})
     from vektra_assess.jobs import JobKind
     from vektra_assess.worker.parser_client import ParserClient, register_parser_check

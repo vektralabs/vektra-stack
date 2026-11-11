@@ -28,7 +28,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validat
 
 from vektra_assess.parser_protocol import FileStatus
 
-SCHEMA_VERSION: Literal[1] = 1
+#: 2 (ADR-0033 D2, PR 2a-2): ``QuizItem.qtype`` and ``state`` hold the neutral ``QuestionKind`` /
+#: ``QuestionState`` values (``multiple_choice``, ``final_marked``), no longer an LMS's own type
+#: and state names. Under OD-1 no assess data survives the separation, so there is no v1 reader:
+#: a v1 snapshot does not validate.
+SCHEMA_VERSION: Literal[2] = 2
 
 
 def mark_str(value: float | int | None) -> str | None:
@@ -88,9 +92,9 @@ class QuizItem(_Frozen):
     """One question of the selected attempt, as the student may see it."""
 
     label: str  # display numbering as on the review page: "3", "i"
-    qtype: str
+    qtype: str  # a ``vektra_shared.lms.QuestionKind`` value (schema 2)
     discussable: bool  # REQ-101 list; others are mark-and-feedback level and flagged
-    state: str | None
+    state: str | None  # a ``QuestionState`` value; None when the marks are hidden
     status: str | None  # the student-visible state label ("Corretta" ...)
     mark: Mark | None  # None when hidden or not applicable (see marks_hidden)
     max_mark: Mark | None
@@ -209,7 +213,7 @@ class FrozenFlags(_Frozen):
 
 
 class SnapshotHeader(_Frozen):
-    schema_version: Literal[1] = SCHEMA_VERSION
+    schema_version: Literal[2] = SCHEMA_VERSION
     activity_kind: ActivityKind
     moodle_release: str
     attempt_number: int  # "#k"

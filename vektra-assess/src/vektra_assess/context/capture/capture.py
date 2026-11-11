@@ -45,8 +45,8 @@ from vektra_assess.context.policy import (
     freeze,
 )
 from vektra_assess.context.qtypes import (
-    EXTRACTION_KINDS,
     INFORMATION_KINDS,
+    extractable,
     is_discussable,
 )
 from vektra_assess.context.snapshot import (
@@ -67,6 +67,8 @@ from vektra_assess.context.snapshot import (
 )
 from vektra_assess.parser_protocol import FileStatus
 from vektra_shared.lms import (
+    FILE_NOT_IN_SUBMISSION,
+    SUBMISSION_MISMATCH,
     AssignmentRelease,
     AssignmentSettings,
     AttemptReview,
@@ -395,7 +397,7 @@ async def capture_quiz(
         paths.append(f"{p}.review_html")  # never kept whole, whatever the path
         question_text = response_text = None
         item_degraded = item_truncated = False
-        if slot.question_kind in EXTRACTION_KINDS:
+        if extractable(slot.question_kind, slot.html):
             question_text, response_text, item_truncated = await _item_text(
                 parser, slot.html
             )
@@ -713,7 +715,7 @@ async def _files(
             target.assignid, ref, target.userid, st.submission_id
         )
         if isinstance(data, Unreadable):
-            if data.detail_code in ("submission_mismatch", "file_not_in_submission"):
+            if data.detail_code in (SUBMISSION_MISMATCH, FILE_NOT_IN_SUBMISSION):
                 audit.append(
                     AuditEvent(
                         "assess_file_rejected", data.detail_code, {"file": label}

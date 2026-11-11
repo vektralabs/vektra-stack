@@ -23,6 +23,7 @@ Every item is ``OK``, ``MISSING`` or ``UNVERIFIABLE``, content-free, and an item
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -60,33 +61,26 @@ from vektra_shared.lms import (
 
 log = structlog.get_logger(__name__)
 
-OK = SETUP_OK
-MISSING = SETUP_MISSING
-UNVERIFIABLE = SETUP_UNVERIFIABLE
 
 DENIED_FUNCTION = "core_course_get_categories"
 
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
 
 
-@dataclass(frozen=True)
-class Outcome:
-    """What one item decided (the runner adds the name)."""
-
-    result: str
-    reason_code: str | None = None
+# An item's outcome is the Protocol's ``SetupItem`` itself, its name left empty here and set
+# by ``run_service_account_items``: the vocabulary is the one the runner and the report use.
 
 
-def ok(reason: str | None = None) -> Outcome:
-    return Outcome(OK, reason)
+def ok(reason: str | None = None) -> SetupItem:
+    return SetupItem("", SETUP_OK, reason)
 
 
-def missing(reason: str) -> Outcome:
-    return Outcome(MISSING, reason)
+def missing(reason: str) -> SetupItem:
+    return SetupItem("", SETUP_MISSING, reason)
 
 
-def unverifiable(reason: str) -> Outcome:
-    return Outcome(UNVERIFIABLE, reason)
+def unverifiable(reason: str) -> SetupItem:
+    return SetupItem("", SETUP_UNVERIFIABLE, reason)
 
 
 @dataclass(frozen=True)
@@ -98,7 +92,7 @@ class CheckContext:
     info: Reading[SiteInfo]  # site_info, read once for the whole run
 
 
-ItemCheck = Callable[[CheckContext], Awaitable[Outcome]]
+ItemCheck = Callable[[CheckContext], Awaitable[SetupItem]]
 
 
 def _code(value: str, default: str = "other") -> str:
@@ -106,14 +100,14 @@ def _code(value: str, default: str = "other") -> str:
     return v if _CODE.fullmatch(v) else default
 
 
-def _unreadable_outcome(u: Unreadable) -> Outcome:
+def _unreadable_outcome(u: Unreadable) -> SetupItem:
     return unverifiable(u.reason.value)
 
 
 # --- items ----------------------------------------------------------------------------------------
 
 
-def _info(ctx: CheckContext) -> SiteInfo | Outcome:
+def _info(ctx: CheckContext) -> SiteInfo | SetupItem:
     """The site_info, or the outcome every WS-dependent item reports without calling."""
     if isinstance(ctx.info, Readable):
         return ctx.info.value
@@ -122,7 +116,7 @@ def _info(ctx: CheckContext) -> SiteInfo | Outcome:
     return unverifiable("site_unreachable")
 
 
-async def token_works(ctx: CheckContext) -> Outcome:
+async def token_works(ctx: CheckContext) -> SetupItem:
     if isinstance(ctx.info, Readable):
         return ok()
     code = _code(ctx.info.detail_code, ctx.info.reason.value)
@@ -131,9 +125,9 @@ async def token_works(ctx: CheckContext) -> Outcome:
     return unverifiable(ctx.info.reason.value)
 
 
-async def interactive_login_disabled(ctx: CheckContext) -> Outcome:
+async def interactive_login_disabled(ctx: CheckContext) -> SetupItem:
     info = _info(ctx)
-    if isinstance(info, Outcome):
+    if isinstance(info, SetupItem):
         return info
     auth = await read_own_auth(ctx.client, ctx.site, info.userid)
     if isinstance(auth, Unreadable):
@@ -143,16 +137,16 @@ async def interactive_login_disabled(ctx: CheckContext) -> Outcome:
     return missing(_code(f"auth_{auth.value}", "auth_other"))
 
 
-async def not_site_admin(ctx: CheckContext) -> Outcome:
+async def not_site_admin(ctx: CheckContext) -> SetupItem:
     info = _info(ctx)
-    if isinstance(info, Outcome):
+    if isinstance(info, SetupItem):
         return info
     return missing("site_admin") if info.user_is_site_admin else ok()
 
 
-async def not_ingestion_account(ctx: CheckContext) -> Outcome:
+async def not_ingestion_account(ctx: CheckContext) -> SetupItem:
     info = _info(ctx)
-    if isinstance(info, Outcome):
+    if isinstance(info, SetupItem):
         return info
     ingest = ctx.settings.ingest_account_username
     if not ingest:
@@ -162,10 +156,10 @@ async def not_ingestion_account(ctx: CheckContext) -> Outcome:
     return ok()
 
 
-async def denied_function_probe(ctx: CheckContext) -> Outcome:
+async def denied_function_probe(ctx: CheckContext) -> SetupItem:
     """Calls a read-only function that is NOT in the service: it must be refused."""
     info = _info(ctx)
-    if isinstance(info, Outcome):
+    if isinstance(info, SetupItem):
         return info
     res = await ctx.client.call(ctx.site, DENIED_FUNCTION, {})
     if isinstance(res, Readable):
@@ -206,16 +200,16 @@ def is_grade_write_function(name: str) -> bool:
     return name in GRADE_WRITE_FUNCTIONS or bool(_GRADE_WRITE_PATTERN.match(name))
 
 
-async def no_grade_write(ctx: CheckContext) -> Outcome:
+async def no_grade_write(ctx: CheckContext) -> SetupItem:
     info = _info(ctx)
-    if isinstance(info, Outcome):
+    if isinstance(info, SetupItem):
         return info
     if any(is_grade_write_function(f) for f in info.functions):
         return missing("grade_write_function_in_service")
     return ok()
 
 
-async def ws_tls_ok(ctx: CheckContext) -> Outcome:
+async def ws_tls_ok(ctx: CheckContext) -> SetupItem:
     """The WS call went through verified TLS. Plain http can only have worked in
     ``VEKTRA_ENV=development`` with ``..._ALLOW_HTTP=true`` (the client refuses it otherwise):
     it is reported as OK with its own reason code so a dev run is never mistaken for TLS."""
@@ -230,16 +224,16 @@ async def ws_tls_ok(ctx: CheckContext) -> Outcome:
 # --- required reads (one item per reader group) -----------------------------------------------------
 
 
-def _first_failure(readings: Sequence[Reading[Any]]) -> Outcome | None:
+def _first_failure(readings: Sequence[Reading[Any]]) -> SetupItem | None:
     for r in readings:
         if isinstance(r, Unreadable):
             return missing(f"unreadable_{r.reason.value}")
     return None
 
 
-def _reads(ctx: CheckContext, group: str) -> Mapping[str, Any] | Outcome:
+def _reads(ctx: CheckContext, group: str) -> Mapping[str, Any] | SetupItem:
     info = _info(ctx)
-    if isinstance(info, Outcome):
+    if isinstance(info, SetupItem):
         return info
     args = (ctx.manifest or {}).get("required_reads", {}).get(group)
     if not args:
@@ -247,9 +241,9 @@ def _reads(ctx: CheckContext, group: str) -> Mapping[str, Any] | Outcome:
     return {**args, "courseid": int((ctx.manifest or {}).get("courseid", 0))}
 
 
-async def required_reads_quiz(ctx: CheckContext) -> Outcome:
+async def required_reads_quiz(ctx: CheckContext) -> SetupItem:
     a = _reads(ctx, "quiz")
-    if isinstance(a, Outcome):
+    if isinstance(a, SetupItem):
         return a
     c, s = ctx.client, ctx.site
     readings: list[Reading[Any]] = [
@@ -261,9 +255,9 @@ async def required_reads_quiz(ctx: CheckContext) -> Outcome:
     return _first_failure(readings) or ok()
 
 
-async def required_reads_assign(ctx: CheckContext) -> Outcome:
+async def required_reads_assign(ctx: CheckContext) -> SetupItem:
     a = _reads(ctx, "assign")
-    if isinstance(a, Outcome):
+    if isinstance(a, SetupItem):
         return a
     c, s = ctx.client, ctx.site
     readings: list[Reading[Any]] = [
@@ -274,9 +268,9 @@ async def required_reads_assign(ctx: CheckContext) -> Outcome:
     return _first_failure(readings) or ok()
 
 
-async def required_reads_grade(ctx: CheckContext) -> Outcome:
+async def required_reads_grade(ctx: CheckContext) -> SetupItem:
     a = _reads(ctx, "grade")
-    if isinstance(a, Outcome):
+    if isinstance(a, SetupItem):
         return a
     res = await read_grade_release(
         ctx.client, ctx.site, a["courseid"], a["userid"], a["cmid"]
@@ -284,9 +278,9 @@ async def required_reads_grade(ctx: CheckContext) -> Outcome:
     return _first_failure([res]) or ok()
 
 
-async def required_reads_grading(ctx: CheckContext) -> Outcome:
+async def required_reads_grading(ctx: CheckContext) -> SetupItem:
     a = _reads(ctx, "grading")
-    if isinstance(a, Outcome):
+    if isinstance(a, SetupItem):
         return a
     readings: list[Reading[Any]] = [
         await read_grading_view(ctx.client, ctx.site, a["cmid"]),
@@ -295,9 +289,9 @@ async def required_reads_grading(ctx: CheckContext) -> Outcome:
     return _first_failure(readings) or ok()
 
 
-async def required_reads_enrol(ctx: CheckContext) -> Outcome:
+async def required_reads_enrol(ctx: CheckContext) -> SetupItem:
     a = _reads(ctx, "enrol")
-    if isinstance(a, Outcome):
+    if isinstance(a, SetupItem):
         return a
     readings: list[Reading[Any]] = [
         await read_enrolment(ctx.client, ctx.site, a["courseid"], a["userid"]),
@@ -306,14 +300,14 @@ async def required_reads_enrol(ctx: CheckContext) -> Outcome:
     return _first_failure(readings) or ok()
 
 
-async def required_reads_files(ctx: CheckContext) -> Outcome:
+async def required_reads_files(ctx: CheckContext) -> SetupItem:
     """The service may download files and the smallest file of the probe submission arrives
     with the size Moodle announced."""
     a = _reads(ctx, "files")
-    if isinstance(a, Outcome):
+    if isinstance(a, SetupItem):
         return a
     info = _info(ctx)
-    assert not isinstance(info, Outcome)
+    assert not isinstance(info, SetupItem)
     if not info.downloadfiles:
         return missing("downloadfiles_disabled")
     status = await read_submission_status(
@@ -368,7 +362,7 @@ async def run_service_account_items(ctx: CheckContext) -> tuple[SetupItem, ...]:
                 "setup_check_item_error", item=name, error_type=type(exc).__name__
             )
             outcome = unverifiable("check_error")
-        if outcome.result not in (OK, MISSING, UNVERIFIABLE):
+        if outcome.result not in (SETUP_OK, SETUP_MISSING, SETUP_UNVERIFIABLE):
             outcome = unverifiable("check_error")
-        out.append(SetupItem(name, outcome.result, outcome.reason_code))
+        out.append(dataclasses.replace(outcome, name=name))
     return tuple(out)

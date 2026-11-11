@@ -93,7 +93,7 @@ class StartupProblem:
 
 @runtime_checkable
 class LmsProvider(Protocol):
-    """Read access to one LMS product, for every site of a deployment (23 members)."""
+    """Read access to one LMS product, for every site of a deployment (24 members)."""
 
     @property
     def name(self) -> str:
@@ -103,6 +103,12 @@ class LmsProvider(Protocol):
     @property
     def setup_items(self) -> tuple[str, ...]:
         """The service-account items ``service_account_check`` returns (ADR-0033 D3)."""
+        ...
+
+    @property
+    def required_secrets(self) -> tuple[str, ...]:
+        """The worker secrets (key-matrix names) the provider reads, its LMS credentials among
+        them: the composition binds the provider's jobs only when every one was loaded."""
         ...
 
     # --- lifecycle --------------------------------------------------------------------------

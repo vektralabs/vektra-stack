@@ -35,10 +35,12 @@ from typing import Any
 import structlog
 
 from vektra_shared.lms import (
+    FILE_NOT_IN_SUBMISSION,
     NOT_IN_USER_COURSES,
     PROVIDER_ERROR,
     SETUP_OK,
     SETUP_UNVERIFIABLE,
+    SUBMISSION_MISMATCH,
     ActivityKind,
     ActivityRef,
     AssignmentDates,
@@ -139,12 +141,14 @@ class FakeLmsProvider:
         setup_items: Sequence[str] = ("token_works", "required_reads"),
         secret: str = "fake-transport-credential",
         problems: Sequence[StartupProblem] = (),
+        required_secrets: Sequence[str] = (),
     ) -> None:
         self.world = world if world is not None else default_world()
         self._name = name
         self._setup_items = tuple(setup_items)
         self.secret = secret
         self._problems = tuple(problems)
+        self._required_secrets = tuple(required_secrets)
         self.calls: list[FakeCall] = []
         #: members whose wire answer was consumed (a read that reached the transport)
         self.consumed: list[str] = []
@@ -239,6 +243,10 @@ class FakeLmsProvider:
     @property
     def setup_items(self) -> tuple[str, ...]:
         return self._setup_items
+
+    @property
+    def required_secrets(self) -> tuple[str, ...]:
+        return self._required_secrets
 
     def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
         self.calls.append(FakeCall("startup_problems", {"development": development}))
@@ -401,20 +409,22 @@ class FakeLmsProvider:
         submission_id: int,
     ) -> Reading[bytes]:
         sub = self.world.submissions.get((assignment_id, owner_user_id))
-        owned = (
-            sub is not None
-            and sub.submission_id == submission_id
-            and any(f.locator == ref.locator for f in sub.files)
-        )
-        return self._read(
+        res: Reading[bytes] = self._read(
             "submission_file",
             {
                 "assignment_id": assignment_id,
                 "owner_user_id": owner_user_id,
                 "submission_id": submission_id,
             },
-            self.world.files.get(ref.locator) if owned else None,
+            self.world.files.get(ref.locator),
         )
+        if isinstance(res, Readable):
+            # the ownership re-check, with the Protocol's neutral refusal codes
+            if sub is None or sub.submission_id != submission_id:
+                return Unreadable(UnreadableReason.PARTIAL, SUBMISSION_MISMATCH)
+            if not any(f.locator == ref.locator for f in sub.files):
+                return Unreadable(UnreadableReason.PARTIAL, FILE_NOT_IN_SUBMISSION)
+        return res
 
     async def assignment_release(
         self, site: LmsSite, course_id: int, assignment_id: int, user_id: int
@@ -470,6 +480,15 @@ PROFILE = HtmlExtractionProfile(
     keep={"question_text": "fake-qtext", "response": "fake-response"},
     drop_classes=frozenset({"fake-rightanswer", "fake-feedback"}),
     profile_version="fake-1",
+    kinds=frozenset(
+        {
+            QuestionKind.MULTIPLE_CHOICE,
+            QuestionKind.TRUE_FALSE,
+            QuestionKind.SHORT_ANSWER,
+            QuestionKind.NUMERICAL,
+            QuestionKind.ESSAY,
+        }
+    ),
 )
 
 

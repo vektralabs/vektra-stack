@@ -6,6 +6,7 @@ client. A provider implements ``LmsProvider`` in its own distribution and depend
 ``vektra_shared``.
 """
 
+from vektra_shared.lms.guard import GuardedLmsProvider, guarded
 from vektra_shared.lms.protocol import (
     SETUP_MISSING,
     SETUP_OK,
@@ -16,8 +17,10 @@ from vektra_shared.lms.protocol import (
     StartupProblem,
 )
 from vektra_shared.lms.types import (
+    FILE_NOT_IN_SUBMISSION,
     NOT_IN_USER_COURSES,
     PROVIDER_ERROR,
+    SUBMISSION_MISMATCH,
     ActivityKind,
     ActivityRef,
     AssignmentDates,
@@ -62,11 +65,13 @@ from vektra_shared.lms.types import (
 )
 
 __all__ = [
+    "FILE_NOT_IN_SUBMISSION",
     "NOT_IN_USER_COURSES",
     "PROVIDER_ERROR",
     "SETUP_MISSING",
     "SETUP_OK",
     "SETUP_UNVERIFIABLE",
+    "SUBMISSION_MISMATCH",
     "ActivityKind",
     "ActivityRef",
     "AssignmentDates",
@@ -82,6 +87,7 @@ __all__ = [
     "GradeItem",
     "GradeMethod",
     "GradingDefinition",
+    "GuardedLmsProvider",
     "HtmlExtractionProfile",
     "LmsProvider",
     "LmsSite",
@@ -112,4 +118,5 @@ __all__ = [
     "SubmissionFileRef",
     "Unreadable",
     "UnreadableReason",
+    "guarded",
 ]

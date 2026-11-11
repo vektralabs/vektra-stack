@@ -24,7 +24,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, NewType
 
-PROTOCOL_VERSION = 1
+#: 2: ``review_item`` requires the provider's ``profile`` in the header and answers
+#: ``{"question_text", "response", "truncated"}`` (ADR-0033 D4). A worker and a sidecar of
+#: different versions refuse each other (``BAD_REQUEST`` / a ``version`` violation).
+PROTOCOL_VERSION = 2
 MAX_HEADER = 4096
 _LEN = struct.Struct(">I")
 
@@ -118,6 +121,10 @@ REVIEW_BLOCKS: tuple[str, ...] = ("question_text", "response")
 _CSS_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")
 _PROFILE_VERSION = re.compile(r"[A-Za-z0-9_.-]{1,32}")
 MAX_DROP_CLASSES = 64
+#: the encoded profile's share of the ``MAX_HEADER`` request header: the rest carries op,
+#: req_id, ext_hint, limits and payload_len (well under 512 bytes). Checked on the encoded
+#: form, because the per-class limits alone (64 classes of 64 characters) would overflow it
+MAX_PROFILE_BYTES = MAX_HEADER - 1024
 
 
 @dataclass(frozen=True)
@@ -178,10 +185,21 @@ class ReviewProfile:
             return None
         if not isinstance(version, str) or not _PROFILE_VERSION.fullmatch(version):
             return None
-        return cls(
+        profile = cls(
             tuple((b, keep[b]) for b in REVIEW_BLOCKS if b in keep),
             frozenset(drop),
             version,
+        )
+        if profile.encoded_size() > MAX_PROFILE_BYTES:
+            return None  # would not fit the request header: refused, never truncated
+        return profile
+
+    def encoded_size(self) -> int:
+        """Bytes of the profile as it travels in the JSON request header."""
+        return len(
+            json.dumps(
+                self.to_wire(), separators=(",", ":"), ensure_ascii=True
+            ).encode()
         )
 
 

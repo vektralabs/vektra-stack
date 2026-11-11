@@ -37,7 +37,9 @@ from vektra_assess.moodle.setup_check import (
     run_service_account_items,
 )
 from vektra_shared.lms import (
+    FILE_NOT_IN_SUBMISSION,
     NOT_IN_USER_COURSES,
+    SUBMISSION_MISMATCH,
     ActivityKind,
     ActivityRef,
     AssignmentDates,
@@ -117,6 +119,21 @@ MOODLE_REVIEW_PROFILE = HtmlExtractionProfile(
         }
     ),
     profile_version="moodle-1",
+    # the kinds whose per-type oracle on the recorded 4.3 and 5.2 reviews proves the right
+    # answer, the feedback and the canaries absent from the output. Not declared, and why:
+    # - embedded answers (multianswer, cloze): no qtext / ablock block, the gaps live in the
+    #   formulation;
+    # - matching, gap select: extraction looks clean, but every recorded attempt is unanswered,
+    #   so no per-item feedback or correctness markup has been seen yet.
+    kinds=frozenset(
+        {
+            QuestionKind.MULTIPLE_CHOICE,
+            QuestionKind.TRUE_FALSE,
+            QuestionKind.SHORT_ANSWER,
+            QuestionKind.NUMERICAL,
+            QuestionKind.ESSAY,
+        }
+    ),
 )
 
 #: Moodle question types -> Vektra's kinds. Verified on 4.3 and 5.2 by the OQ-025 spike and
@@ -169,6 +186,13 @@ _ATTEMPT: Mapping[m.AttemptState, AttemptState] = {
 }
 _GRADE_TYPES = ("point", "scale", "none")
 _NOT_IN_STUDENT_COURSES = "activity_not_in_student_courses"
+#: the file reader's ownership refusals -> the Protocol's neutral codes (the vertical audits them)
+_FILE_REFUSALS: Mapping[str, str] = {
+    "submission_mismatch": SUBMISSION_MISMATCH,
+    "file_not_in_submission": FILE_NOT_IN_SUBMISSION,
+}
+#: the worker secret holding the per-site web-service tokens (``moodle/tokens.py``)
+TOKEN_SECRET = "assess_ws_tokens"
 
 
 def question_state(state: str | None) -> QuestionState:
@@ -487,6 +511,10 @@ class MoodleLmsProvider:
     def setup_items(self) -> tuple[str, ...]:
         return SERVICE_ACCOUNT_ITEMS
 
+    @property
+    def required_secrets(self) -> tuple[str, ...]:
+        return (TOKEN_SECRET,)
+
     # --- lifecycle ----------------------------------------------------------------------------
 
     def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
@@ -674,7 +702,7 @@ class MoodleLmsProvider:
             fileurl=ref.locator,
             timemodified=ref.time_modified,
         )
-        return await r.fetch_submission_file(
+        res = await r.fetch_submission_file(
             self._client,
             _ref(site),
             assignment_id,
@@ -682,6 +710,9 @@ class MoodleLmsProvider:
             owner_user_id,
             submission_id,
         )
+        if isinstance(res, Unreadable) and res.detail_code in _FILE_REFUSALS:
+            return Unreadable(res.reason, _FILE_REFUSALS[res.detail_code])
+        return res
 
     async def assignment_release(
         self, site: LmsSite, course_id: int, assignment_id: int, user_id: int

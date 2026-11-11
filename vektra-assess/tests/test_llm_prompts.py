@@ -63,6 +63,18 @@ def test_changing_a_string_file_or_the_lexicon_changes_the_version(
     assert compute_prompt_version(t, s, "lex1") != edited
 
 
+def test_the_payload_version_changes_the_prompt_version(tmp_path: Path) -> None:
+    """The model reads the payload's vocabulary too (ADR-0033 D2 changed an item type's
+    spelling): a bump of ``PAYLOAD_VERSION`` needs a new NFR-023 activation."""
+    from vektra_assess.context.payload import PAYLOAD_VERSION
+
+    t, s = _copy(tmp_path)
+    assert PAYLOAD_VERSION == 2
+    current = compute_prompt_version(t, s, "lex1")
+    assert compute_prompt_version(t, s, "lex1", PAYLOAD_VERSION) == current
+    assert compute_prompt_version(t, s, "lex1", PAYLOAD_VERSION - 1) != current
+
+
 def test_the_builtin_version_covers_the_shipped_strings_dir() -> None:
     assert PromptRenderer("x").prompt_version == compute_prompt_version(
         TEMPLATES_DIR, STRINGS_DIR, "x"

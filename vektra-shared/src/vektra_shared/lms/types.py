@@ -80,6 +80,10 @@ type Reading[T] = Readable[T] | Unreadable
 NOT_IN_USER_COURSES = "activity_not_in_user_courses"
 #: the ``detail_code`` the vertical uses when a provider let an exception escape (D2 invariant 1)
 PROVIDER_ERROR = "provider_error"
+#: ``submission_file`` refusals of an ownership re-check (the vertical audits them): the
+#: submission is not the given one of the given owner, or the file is not in it
+SUBMISSION_MISMATCH = "submission_mismatch"
+FILE_NOT_IN_SUBMISSION = "file_not_in_submission"
 
 # --- vocabulary ----------------------------------------------------------------------------
 
@@ -278,11 +282,16 @@ class HtmlExtractionProfile:
     to the CSS class that marks it in this provider's markup. ``drop_classes`` are removed
     wherever they appear inside a kept block. The sidecar holds the parsing, the isolation and
     the escaping; the profile holds every class name.
+
+    ``kinds`` are the question kinds the provider has proved the profile safe for (its own
+    per-kind oracle on its recorded reviews): the vertical extracts text only for a kind that
+    is both in its own list and here. Empty means none (fail closed).
     """
 
     keep: Mapping[str, str]
     drop_classes: frozenset[str]
     profile_version: str
+    kinds: frozenset[QuestionKind] = frozenset()
 
 
 @dataclass(frozen=True)

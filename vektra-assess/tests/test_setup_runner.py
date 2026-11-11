@@ -21,6 +21,7 @@ from vektra_assess.setup import (
     PLUGGABLE_ITEMS,
     UNVERIFIABLE,
     evaluate,
+    persist_matrix,
     probe,
 )
 from vektra_shared.lms import (
@@ -189,11 +190,28 @@ class _ProbeRaises(FakeLmsProvider):
         raise RuntimeError("boom")
 
 
-async def test_a_probe_that_raises_is_unreadable_for_every_flag() -> None:
+async def test_a_probe_that_raises_is_not_probed_for_every_flag() -> None:
+    """Review finding 7: a raise proves nothing about any flag. Recorded ``not_probed`` (not
+    ``unknown_shape``), so ``persist_matrix`` does not move ``assess_sites.release`` on it."""
     got = await probe(_ProbeRaises(), SITE, None)
     assert [(r.flag, r.state, r.reason_code) for r in got] == [
-        (f, "unreadable", "unknown_shape") for f in FLAGS
+        (f, "unreadable", "not_probed") for f in FLAGS
     ]
+
+
+async def test_a_raising_probe_does_not_move_the_release() -> None:
+    """The rule ``persist_matrix`` applies to the result above: only a probed matrix moves
+    ``assess_sites.release``. Recorded on a stand-in connection: no UPDATE of the release."""
+    executed: list[str] = []
+
+    class Conn:
+        async def execute(self, stmt: Any, params: Any = None) -> None:
+            executed.append(str(stmt))
+
+    got = await probe(_ProbeRaises(), SITE, None)
+    await persist_matrix(Conn(), "site-1", "9.9", got)  # type: ignore[arg-type]
+    assert not [s for s in executed if "UPDATE assess_sites" in s]
+    assert len(executed) == len(FLAGS)  # the rows are still written, as not_probed
 
 
 async def test_a_rejected_token_is_reported_and_a_local_refusal_is_not() -> None:

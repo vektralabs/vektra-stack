@@ -44,9 +44,9 @@ def make(text: str = "risposta", **kw: object) -> Snapshot:
         quiz_items=(
             QuizItem(
                 label="1",
-                qtype="multichoice",
+                qtype="multiple_choice",
                 discussable=True,
-                state="gradedright",
+                state="final_marked",
                 status="Corretta",
                 mark="1",
                 max_mark="1",
@@ -55,7 +55,7 @@ def make(text: str = "risposta", **kw: object) -> Snapshot:
                 label="2",
                 qtype="essay",
                 discussable=True,
-                state="mangrpartial",
+                state="final_marked",
                 status=None,
                 mark="2.5",
                 max_mark="5",
@@ -77,6 +77,18 @@ def make(text: str = "risposta", **kw: object) -> Snapshot:
         ),
         **kw,  # type: ignore[arg-type]
     )
+
+
+def test_the_schema_is_version_2_and_a_v1_snapshot_does_not_validate() -> None:
+    """Schema 2 (ADR-0033 D2): items carry the neutral kind and state. OD-1: no assess data
+    survives the separation, so there is no v1 reader and a v1 header is refused."""
+    snap = make()
+    assert snap.header.schema_version == 2
+    doc = json.loads(canonical_bytes(snap))
+    assert doc["header"]["schema_version"] == 2
+    doc["header"]["schema_version"] = 1
+    with pytest.raises(ValidationError):
+        Snapshot.model_validate(doc)
 
 
 def test_hash_is_stable_and_changes_with_content() -> None:

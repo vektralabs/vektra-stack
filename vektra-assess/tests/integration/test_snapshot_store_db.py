@@ -77,6 +77,8 @@ async def test_committed_hash_equals_the_recomputed_hash(pg: Pg) -> None:
         loaded = await load_snapshot(c, sid, dek)
         await c.commit()
     assert isinstance(res, Ok) and loaded == _snapshot()
+    # the sealed snapshot is schema 2: neutral item kind and state (ADR-0033 D2)
+    assert loaded.header.schema_version == 2
     # the stored bytes are ciphertext: the canary is not in the row
     rows = await pg.run(
         "super",

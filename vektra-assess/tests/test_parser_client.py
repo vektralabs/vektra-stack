@@ -19,7 +19,13 @@ from typing import Any
 import pytest
 import structlog
 
-from vektra_assess.parser_protocol import FileStatus, Limits, encode_frame, read_frame
+from vektra_assess.parser_protocol import (
+    PROTOCOL_VERSION,
+    FileStatus,
+    Limits,
+    encode_frame,
+    read_frame,
+)
 from vektra_assess.setup import MISSING, OK, ItemRegistry
 from vektra_assess.worker.parser_client import (
     ParserClient,
@@ -43,7 +49,7 @@ Responder = Callable[[dict[str, Any], bytes], Awaitable[bytes | None]]
 def reply(req: dict[str, Any], **over: Any) -> bytes:
     text = over.pop("text", "")
     head = {
-        "v": 1,
+        "v": PROTOCOL_VERSION,
         "req_id": req["req_id"],
         "status": "READ",
         "upto_page": None,
@@ -109,7 +115,11 @@ async def test_happy_path_and_request_shape(fake: Fake) -> None:
     res = await client_for(fake).parse_file(b"abc", "txt")
     assert (res.status, res.text, res.chars) == (FileStatus.READ, "ok", 2)
     req = fake.requests[0]
-    assert req["op"] == "parse" and req["ext_hint"] == "txt" and req["v"] == 1
+    assert (
+        req["op"] == "parse"
+        and req["ext_hint"] == "txt"
+        and req["v"] == PROTOCOL_VERSION
+    )
     assert req["payload_len"] == 3 and "filename" not in req
     assert req["limits"] == {"max_pages": 50, "max_chars": 1000, "timeout_ms": 1000}
 
@@ -198,7 +208,7 @@ def _frame_with_header(raw_header: bytes, payload: bytes = b"") -> bytes:
 
 def _hdr(req: dict[str, Any], **over: Any) -> bytes:
     h = {
-        "v": 1,
+        "v": PROTOCOL_VERSION,
         "req_id": req["req_id"],
         "status": "READ",
         "upto_page": None,
@@ -220,7 +230,7 @@ MALFORMED: dict[str, Callable[[dict[str, Any]], bytes]] = {
     "over_max_files": lambda r: reply(r, status="OVER_MAX_FILES"),
     "status_missing": lambda r: reply(r, status=None),
     "req_id_mismatch": lambda r: reply({"req_id": "someone-else"}, text="hi"),
-    "wrong_version": lambda r: reply(r, v=2, text="hi"),
+    "wrong_version": lambda r: reply(r, v=PROTOCOL_VERSION - 1, text="hi"),
     "truncated_payload": lambda r: _frame_with_header(_hdr(r, payload_len=50), b"hi"),
     "truncated_header": lambda r: struct.pack(">I", 200) + b'{"v":1',
     "header_oversize": lambda r: struct.pack(">I", 1 << 20) + b"x" * 64,
@@ -282,7 +292,12 @@ async def test_busy_is_retried_then_succeeds(fake: Fake) -> None:
         n["i"] += 1
         if n["i"] < 3:
             return encode_frame(
-                {"v": 1, "req_id": req["req_id"], "status": None, "code": "BUSY"}
+                {
+                    "v": PROTOCOL_VERSION,
+                    "req_id": req["req_id"],
+                    "status": None,
+                    "code": "BUSY",
+                }
             )
         return reply(req, text="ok")
 
@@ -294,7 +309,12 @@ async def test_busy_is_retried_then_succeeds(fake: Fake) -> None:
 async def test_busy_forever_is_unavailable(fake: Fake) -> None:
     fake.responder = lie(
         lambda r: encode_frame(
-            {"v": 1, "req_id": r["req_id"], "status": None, "code": "BUSY"}
+            {
+                "v": PROTOCOL_VERSION,
+                "req_id": r["req_id"],
+                "status": None,
+                "code": "BUSY",
+            }
         )
     )
     with pytest.raises(ParserUnavailableError, match="busy"):
@@ -335,7 +355,12 @@ async def test_socket_missing_refused_silent_and_stalled(
 async def test_ping_shallow_and_deep(fake: Fake) -> None:
     fake.responder = lie(
         lambda r: encode_frame(
-            {"v": 1, "req_id": r["req_id"], "status": "READ", "code": "pong"}
+            {
+                "v": PROTOCOL_VERSION,
+                "req_id": r["req_id"],
+                "status": "READ",
+                "code": "pong",
+            }
         )
     )
     c = client_for(fake)
@@ -344,14 +369,19 @@ async def test_ping_shallow_and_deep(fake: Fake) -> None:
     assert fake.requests[-1]["deep"] is True
     fake.responder = lie(
         lambda r: encode_frame(
-            {"v": 1, "req_id": r["req_id"], "status": "CORRUPT", "code": "pong"}
+            {
+                "v": PROTOCOL_VERSION,
+                "req_id": r["req_id"],
+                "status": "CORRUPT",
+                "code": "pong",
+            }
         )
     )
     with pytest.raises(ParserUnavailableError, match="deep_ping_failed"):
         await c.ping(deep=True)
     fake.responder = lie(
         lambda r: encode_frame(
-            {"v": 1, "req_id": "other", "status": None, "code": "pong"}
+            {"v": PROTOCOL_VERSION, "req_id": "other", "status": None, "code": "pong"}
         )
     )
     with pytest.raises(ParserUnavailableError):
@@ -361,7 +391,12 @@ async def test_ping_shallow_and_deep(fake: Fake) -> None:
 async def test_setup_check_contributor(fake: Fake) -> None:
     fake.responder = lie(
         lambda r: encode_frame(
-            {"v": 1, "req_id": r["req_id"], "status": "READ", "code": "pong"}
+            {
+                "v": PROTOCOL_VERSION,
+                "req_id": r["req_id"],
+                "status": "READ",
+                "code": "pong",
+            }
         )
     )
     check = parser_setup_check(client_for(fake))

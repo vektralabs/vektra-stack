@@ -12,10 +12,10 @@ assess work ships in the next minor, `0.9.0`. Nothing in this repository has bee
 ## 1. Gates that must already be green
 
 - [ ] **No unbound worker slot.** `vektra-app/tests/test_assess_processes.py` passes with
-      `vektra_assess.worker.slots.PENDING_OWNER_PLANS` empty. Today it holds plan
-      assess-hardening-release because `job:rotate_keys` has no handler, and a production worker
-      refuses to start ([deployment](../operators/assess-deployment.md#current-release-blocker)).
-      This is a release blocker, not a documentation item.
+      `vektra_assess.worker.slots.PENDING_OWNER_PLANS` empty (it is, since the `rotate_keys`
+      kind was removed in revision `0044`), so a production worker starts
+      ([deployment](../operators/assess-deployment.md#worker-start-check)). A new job kind
+      without a handler reopens this gate.
 - [ ] **Chaos suite.** `make test-chaos-assess` exits 0 (its gate fails on a skipped case, on
       fewer cases or scenarios than declared, or on any invariant violation), on two consecutive
       nightly runs of `.github/workflows/chaos-assess.yml` (keep each run's `invariants.md`

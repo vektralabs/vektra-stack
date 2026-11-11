@@ -144,3 +144,27 @@ async def test_job_kind_enum_equals_the_table_check(pg):
     assert in_table == {k.value for k in JobKind}, sorted(
         in_table ^ {k.value for k in JobKind}
     )
+
+
+async def test_0044_drops_rotate_keys_and_the_downgrade_restores_it(pg):
+    """``rotate_keys`` had no handler, so no production worker could start (2026-11-10): the
+    kind leaves the CHECK; a stray row is deleted by the upgrade; the downgrade accepts it again."""
+    from .conftest import _alembic
+
+    rotate = "INSERT INTO assess_jobs (kind, args) VALUES ('rotate_keys', '{}'::jsonb)"
+    with pytest.raises(Exception, match="ck_assess_jobs_kind"):
+        await pg.run("super", rotate)
+    down = _alembic(pg.super_url, "downgrade", "0043")
+    assert down.returncode == 0, down.stderr
+    try:
+        await pg.run("super", rotate)
+        up = _alembic(pg.super_url, "upgrade", "head")
+        assert up.returncode == 0, up.stderr
+    finally:
+        _alembic(pg.super_url, "upgrade", "head")
+    left = await pg.run(
+        "super", "SELECT count(*) FROM assess_jobs WHERE kind = 'rotate_keys'"
+    )
+    assert left[0][0] == 0
+    with pytest.raises(Exception, match="ck_assess_jobs_kind"):
+        await pg.run("super", rotate)

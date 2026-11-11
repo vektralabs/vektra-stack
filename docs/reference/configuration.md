@@ -169,10 +169,9 @@ Three things to know before turning it on:
 Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route is mounted, and the
 `assess-worker` / `assess-parser` entrypoints exit with code 2. Enable it with the Compose overlay:
 `make assess-keys`, then `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d`.
-A production worker refuses to start while any job handler is unbound. One still is: the `rotate_keys` job kind
-(owned by plan assess-hardening-release, never enqueued; key rotation is the `python -m vektra_assess.keys rewrap` command),
-so today only development and CI run the worker, with `-f docker-compose.assess.dev.yml`, which sets
-`VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development` (see the [deployment guide](../guides/operators/assess-deployment.md#current-release-blocker)).
+A production worker refuses to start while any job handler is unbound; in the current tree none is. Development and CI
+also use `-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development`
+(see the [deployment guide](../guides/operators/assess-deployment.md#worker-start-check)).
 These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
 process environment, never from an env file. Every numeric setting has a lower and an upper
 bound; a value outside its range (or any invalid value) stops the API at startup step

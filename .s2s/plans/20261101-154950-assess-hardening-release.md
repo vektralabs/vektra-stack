@@ -427,8 +427,7 @@ every release, with a manual exploratory session on top.
   - **Release blocker: a production worker refuses to start.** `job:rotate_keys` (owned by this
     plan) has no handler; `assert_all_bound` refuses outside the development override. Nothing
     enqueues the kind (rotation is the `keys rewrap` command). Fix: bind a handler or drop the kind
-    (migration on `ck_assess_jobs_kind`). While it stays, `PENDING_OWNER_PLANS` keeps this plan
-    open, and `test_assess_processes.py` would fail if this plan were marked completed.
+    (migration on `ck_assess_jobs_kind`). Resolved: the kind is dropped (PR #197, entry below).
   - **The chaos nightly has never run.** `chaos-assess.yml` is only on `develop`; GitHub runs a
     `schedule` trigger only from the default branch. "Two consecutive nightly runs" needs the
     workflow on `main` or a `workflow_dispatch` series.
@@ -445,3 +444,17 @@ every release, with a manual exploratory session on top.
   - Traefik: no UI-origin router ships; recorded as not provided and untested.
   Plan 13 stays `in_progress`: the acceptance criteria are FAIL / BLOCKED / OPEN as listed in the
   go/no-go, and the drill run is BLOCKED on a clean host.
+
+- **`rotate_keys` job kind dropped (coordinator decision, 2026-11-10; branch
+  `fix/assess-drop-rotate-keys-job`).** Release blocker: the kind was this plan's only worker slot,
+  it had no handler and nothing enqueued it, so with `VEKTRA_ASSESS_ENABLED=true` and no
+  development override `slots.assert_all_bound` refused every production start. Decision: remove
+  the kind instead of writing a handler. A worker job that rewraps keys would need the old and the
+  new keyrings in the worker process; the operator CLI (`python -m vektra_assess.keys rewrap`, then
+  `keys verify`, `docs/guides/assess-keys-runbook.md`) already covers rotation with explicit
+  operator control. The "re-wrap job" in the key-rotation task above is that CLI, not a worker job.
+  Revision `0044` rewrites `ck_assess_jobs_kind` without the kind (deleting any row of it first,
+  as `0037` did; the downgrade restores the CHECK); the enum member, its policy and its slot are
+  gone. `slots.PENDING_OWNER_PLANS` is now empty, so `expected_unbound()` is the empty set, and
+  `vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without
+  `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and requires every slot bound.

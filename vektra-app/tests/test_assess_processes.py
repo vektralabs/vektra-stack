@@ -410,7 +410,7 @@ def test_unbound_slots_refuse_to_compose_with_the_owner_named(
     with pytest.raises(StartupValidationError) as exc:
         assess_worker._compose(checked)
     text = exc.value.to_plain_text()
-    assert "job:transcript_generate" in text and "job:rotate_keys" in text
+    assert "job:transcript_generate" in text and "job:setup_check" in text
     assert "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND" in text
 
 
@@ -727,26 +727,20 @@ def _plan_statuses() -> dict[str, str]:
     return out
 
 
-def test_the_unbound_production_slots_are_exactly_the_documented_allowlist(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Guard (2026-11-08): the setup_check binding was "carried over" between two completed plans
-    and bound by neither, so the production worker could not start. The real composition, with
-    every worker key and a relay, may leave unbound only the slots of plans still pending in
-    INDEX-ASSESS and the open decisions recorded in ``slots.OPEN_DECISIONS``."""
+def _fully_keyed(monkeypatch: pytest.MonkeyPatch, **env: str) -> assess_worker.Checked:
+    """The production worker's composition input with every worker key and a relay."""
     import os
 
     from vektra_assess.keys import AssessKeyring, Credentials
-    from vektra_assess.worker import slots
 
     checked = _checked(
         monkeypatch,
-        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
         VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
         VEKTRA_ASSESS_SMTP_HOST="relay.uni.example",
         VEKTRA_ASSESS_SMTP_FROM="vektra@uni.example",
         VEKTRA_ASSESS_RECIPIENT_DOMAINS="uni.example",
         VEKTRA_ASSESS_OPERATOR_EMAIL="ops@uni.example",
+        **env,
     )
     ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
     keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
@@ -754,9 +748,39 @@ def test_the_unbound_production_slots_are_exactly_the_documented_allowlist(
         "assess_smtp": Credentials("assess_smtp", {}),
         "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
     }
-    full = assess_worker.Checked(
+    return assess_worker.Checked(
         checked.engine, checked.settings, checked.worker_url, keys
     )
+
+
+def test_a_fully_keyed_production_worker_composes_with_no_unbound_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Release blocker (2026-11-10): ``rotate_keys`` had no handler, so with assess enabled and
+    no development override ``assert_all_bound`` refused every production start. Key rotation is
+    the operator CLI (``python -m vektra_assess.keys rewrap``); the job kind is gone (0044), and a
+    fully keyed production composition must now bind every slot."""
+    from vektra_assess.worker import slots
+
+    full = _fully_keyed(monkeypatch)
+    assert full.settings.worker_allow_unbound is False
+    runtime, scheduler, *_ = assess_worker._compose(full)  # no StartupValidationError
+    assert all(s.bound for s in runtime._handlers.values())
+    assert all(t.bound for t in scheduler._ticks)
+    assert slots.expected_unbound() == set()
+    assert slots.PENDING_OWNER_PLANS == frozenset()
+
+
+def test_the_unbound_production_slots_are_exactly_the_documented_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard (2026-11-08): the setup_check binding was "carried over" between two completed plans
+    and bound by neither, so the production worker could not start. The real composition, with
+    every worker key and a relay, may leave unbound only the slots of plans still pending in
+    INDEX-ASSESS and the open decisions recorded in ``slots.OPEN_DECISIONS``."""
+    from vektra_assess.worker import slots
+
+    full = _fully_keyed(monkeypatch, VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true")
     runtime, scheduler, *_ = assess_worker._compose(full)
     unbound = {f"job:{k.value}" for k, s in runtime._handlers.items() if not s.bound}
     unbound |= {f"tick:{t.name}" for t in scheduler._ticks if not t.bound}

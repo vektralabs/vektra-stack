@@ -14,17 +14,15 @@ Related operator documents:
 - [The LMS service account and the plugin's API keys](../assess-moodle-service-account.md)
 - [Pilot go/no-go](assess-pilot-go-no-go.md)
 
-## Current release blocker
+## Worker start check
 
-A production worker does not start in the current tree. The `rotate_keys` job kind
-(`vektra_assess.jobs.JobKind.ROTATE_KEYS`) has a slot owned by plan assess-hardening-release and no
-handler, and `vektra_assess.worker.slots.assert_all_bound` refuses to start a worker with an
-unbound slot unless `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true`, which is honoured only with
-`VEKTRA_ENV=development`. The guard test `vektra-app/tests/test_assess_processes.py` pins
-`job:rotate_keys` as the only unbound slot. Nothing enqueues a `rotate_keys` job (key rotation is
-the `python -m vektra_assess.keys rewrap` command), so the fix is either a handler or removing the
-kind (it is in the `ck_assess_jobs_kind` CHECK, so a migration). Until then only the development
-overlay below runs the worker. See the [pilot go/no-go](assess-pilot-go-no-go.md).
+`vektra_assess.worker.slots.assert_all_bound` refuses to start a worker while any job kind or
+reaper has no handler, unless `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true`, which is honoured only with
+`VEKTRA_ENV=development`. In the current tree every slot is bound: the `rotate_keys` job kind,
+which had no handler and blocked every production start, was removed (revision `0044`; key
+rotation is the `python -m vektra_assess.keys rewrap` command). The guard test
+`vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without the
+override and requires every slot bound. See the [pilot go/no-go](assess-pilot-go-no-go.md).
 
 ## Processes
 

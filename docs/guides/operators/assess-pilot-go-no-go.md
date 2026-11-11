@@ -9,8 +9,8 @@ counts, mail-sink messages, report files and exit codes are.
 Status values: `PASS` (evidence linked), `FAIL`, `BLOCKED` (missing environment or input),
 `OPEN` (a decision someone has to take), `NOT BUILT` (the test or tool does not exist yet).
 
-**Verdict at the time of writing (2026-11-10): NO-GO.** One release blocker is in the code (the
-worker does not start in production), and most criteria are blocked on the target environment.
+**Verdict at the time of writing (2026-11-11): NO-GO.** The code release blocker (the worker did
+not start in production) is fixed; most criteria are blocked on the target environment.
 
 ## Versions tested together
 
@@ -24,11 +24,11 @@ worker does not start in production), and most criteria are blocked on the targe
 
 ## Criteria
 
-### Release blocker in the code
+### Worker start (code)
 
 | # | Criterion | Status | Evidence or what is missing |
 |---|---|---|---|
-| 0 | A production worker starts: no unbound slot | **FAIL** | `job:rotate_keys` has no handler; `assert_all_bound` refuses to start without the development override. Pinned by `vektra-app/tests/test_assess_processes.py` (`PENDING_OWNER_PLANS`). Fix: bind a handler or remove the kind (migration on `ck_assess_jobs_kind`). See [deployment](assess-deployment.md#current-release-blocker) |
+| 0 | A production worker starts: no unbound slot | **PASS** | The unhandled `rotate_keys` kind was removed (revision `0044`). `vektra-app/tests/test_assess_processes.py` composes a fully keyed production worker without the development override and requires every slot bound. See [deployment](assess-deployment.md#worker-start-check) |
 
 ### Robustness (REQ-067, REQ-071, REQ-075, ARCH-068)
 

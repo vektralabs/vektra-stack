@@ -29,7 +29,6 @@ TRANSCRIPT = "20261101-154950-assess-transcript-delivery"
 PRIVACY = "20261101-154950-assess-privacy-retention"
 MOODLE_WS = "20261101-154950-assess-moodle-ws"
 JOB_LOOP = "20261101-154950-assess-job-loop"
-HARDENING = "20261101-154950-assess-hardening-release"
 TEACHER = "20261101-154950-assess-teacher-ops"
 
 # job kind -> plan that binds its handler
@@ -46,7 +45,6 @@ HANDLER_OWNERS: dict[JobKind, str] = {
     JobKind.PURGE: PRIVACY,
     JobKind.ERASURE: PRIVACY,
     JobKind.SETUP_CHECK: MOODLE_WS,
-    JobKind.ROTATE_KEYS: HARDENING,
     JobKind.TEACHER_GATE: TEACHER,
     JobKind.SMTP_TEST_SEND: PRIVACY,
 }
@@ -77,8 +75,10 @@ TICK_OWNERS: dict[str, str] = {
 
 #: plans not yet completed in .s2s/plans/INDEX-ASSESS.md: their slots are unbound by schedule (the
 #: guard test checks each is still not ``completed`` there)
-#: (plan 12a binds every privacy slot: purge tick and job, erasure job)
-PENDING_OWNER_PLANS: frozenset[str] = frozenset({HARDENING})
+#: (plan 12a binds every privacy slot: purge tick and job, erasure job; the hardening plan's only
+#: slot, ``rotate_keys``, was dropped in 0044: key rotation is the operator CLI ``keys rewrap``)
+#: empty since 2026-11-10: a fully keyed production worker binds every slot
+PENDING_OWNER_PLANS: frozenset[str] = frozenset()
 
 #: slots whose owner plan IS completed but whose behaviour is not specified anywhere: a decision is
 #: needed (recorded as an open item in the owner plan's Notes), not an invented body

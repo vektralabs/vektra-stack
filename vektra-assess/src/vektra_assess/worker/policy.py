@@ -92,7 +92,6 @@ KIND_DEFAULTS: dict[JobKind, KindPolicy] = {
     # the setup check makes about twenty live Moodle calls: own pool, 120 s hard timeout
     JobKind.SETUP_CHECK: KindPolicy("setup", 120, 240),
     JobKind.PURGE: _MAINT,
-    JobKind.ROTATE_KEYS: _MAINT,
     JobKind.ERASURE: _MAINT,
     # unwrap the DEK, append one marked turn: short, its own budget in the maintenance pool
     JobKind.RECONCILE_REPLY: KindPolicy("maintenance", 20, 40, 3),

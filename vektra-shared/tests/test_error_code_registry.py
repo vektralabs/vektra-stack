@@ -62,7 +62,11 @@ def _rows(text: str) -> dict[str, dict[str, str]]:
         if not header or not _CODE.fullmatch(cells[0]):
             continue
         assert cells[0] not in rows, f"{cells[0]} has two rows"
-        rows[cells[0]] = dict(zip(header, cells, strict=False))
+        # a row shorter than its header (a remediation cell left out) must not read as a row
+        # of a table without that column: pad, so the missing cell is an empty one
+        rows[cells[0]] = dict(
+            zip(header, cells + [""] * (len(header) - len(cells)), strict=False)
+        )
     return rows
 
 
@@ -110,6 +114,18 @@ def test_negative_control_empty_remediation_is_reported() -> None:
     )
     assert _problems({"ERR-NOPE-001": "synthetic"}, text) == [
         "ERR-NOPE-001 has an empty remediation"
+    ]
+
+
+def test_negative_control_omitted_remediation_cell_is_reported() -> None:
+    """The row stops after its message: no Remediation cell at all, not an empty one."""
+    text = (
+        "| Code | Category | HTTP | Message | Remediation |\n"
+        "|------|----------|------|---------|-------------|\n"
+        "| ERR-NOPE-005 | PERMANENT | 400 | Something failed |\n"
+    )
+    assert _problems({"ERR-NOPE-005": "synthetic"}, text) == [
+        "ERR-NOPE-005 has an empty remediation"
     ]
 
 

@@ -8,8 +8,10 @@ allowlisted keys survive**, at every level, and every other key is replaced with
 Exception text and tracebacks are replaced by the exception type, because an exception message can
 carry the content that raised it. Other packages keep their current behaviour.
 
-A package opts in with ``register_strict_logger_prefix(prefix)`` at import time: ``vektra_assess``
-registers ``"vektra_assess"``, and each LMS provider registers its own (ADR-0033 D8). Once a
+A logger namespace opts in with ``register_strict_logger_prefix(prefix)``, called by the
+composition root that configures logging: the API and the worker register ``vektra_assess``,
+and each LMS provider's prefix is registered the same way (ADR-0033 D8). Not from a package
+``__init__``: the parser sidecar's children inherit everything their preload imported. Once a
 provider's loggers leave the ``vektra_assess.*`` namespace, the registration is what keeps them
 strict; nothing is hard-coded here.
 
@@ -29,6 +31,7 @@ import json
 import logging
 import re
 import sys
+import threading
 from collections.abc import Iterable, MutableMapping
 from typing import Any, TextIO
 
@@ -116,8 +119,11 @@ def _count_dropped(n: int) -> None:
 # --- the strict prefixes ----------------------------------------------------------------------
 
 _PREFIX = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)*")
-#: logger-name prefixes held to the allowlist. Registration only adds: a package cannot opt out
-_STRICT_PREFIXES: set[str] = set()
+#: logger-name prefixes held to the allowlist. Registration only adds: a package cannot opt out.
+#: An immutable tuple, replaced whole under ``_PREFIXES_LOCK``: the filter iterates it on every
+#: record, from any thread, without a lock, and always sees a complete snapshot
+_STRICT_PREFIXES: tuple[str, ...] = ()
+_PREFIXES_LOCK = threading.Lock()
 #: the level ``install_assess_stdlib_handler`` ran with; None until it ran. A prefix registered
 #: later gets its scrub handler at registration, so the order of imports and startup is irrelevant
 _installed_level: int | None = None
@@ -126,15 +132,20 @@ _installed_level: int | None = None
 def register_strict_logger_prefix(prefix: str) -> None:
     """Hold every logger named ``prefix`` or ``prefix.*`` to the allowlist, on both stacks.
 
-    Idempotent. Call it at import time of the package that owns the loggers, before it logs.
+    Idempotent and thread-safe. Call it from the composition root that configures logging
+    (the API and the worker register ``vektra_assess``), before the package logs.
     """
+    global _STRICT_PREFIXES
     if not isinstance(prefix, str) or not _PREFIX.fullmatch(prefix):
         raise ValueError(
             "a strict logger prefix is a dotted lower-case module path, e.g. 'vektra_assess'"
         )
-    _STRICT_PREFIXES.add(prefix)
-    if _installed_level is not None:
-        _install_scrub_handler(prefix, _installed_level)
+    with _PREFIXES_LOCK:
+        if prefix not in _STRICT_PREFIXES:
+            _STRICT_PREFIXES = (*_STRICT_PREFIXES, prefix)
+        level = _installed_level
+    if level is not None:
+        _install_scrub_handler(prefix, level)
 
 
 def strict_logger_prefixes() -> tuple[str, ...]:
@@ -295,17 +306,23 @@ class _ScrubHandler(logging.Handler):
         return None
 
 
+_INSTALL_LOCK = (
+    threading.Lock()
+)  # remove-then-add of one prefix's handler is not atomic
+
+
 def _install_scrub_handler(prefix: str, level: int) -> logging.Handler:
-    target = logging.getLogger(prefix)
-    for old in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:
-        target.removeHandler(old)
-    handler = _ScrubHandler(logging.NOTSET)
-    install_stdlib_filter([handler])
-    handler._vektra_assess = True  # type: ignore[attr-defined]
-    target.addHandler(handler)
-    if target.level == logging.NOTSET or target.level > level:
-        target.setLevel(level)
-    return handler
+    with _INSTALL_LOCK:
+        target = logging.getLogger(prefix)
+        for old in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:
+            target.removeHandler(old)
+        handler = _ScrubHandler(logging.NOTSET)
+        install_stdlib_filter([handler])
+        handler._vektra_assess = True  # type: ignore[attr-defined]
+        target.addHandler(handler)
+        if target.level == logging.NOTSET or target.level > level:
+            target.setLevel(level)
+        return handler
 
 
 def install_assess_stdlib_handler(level: int = logging.INFO) -> list[logging.Handler]:
@@ -320,8 +337,12 @@ def install_assess_stdlib_handler(level: int = logging.INFO) -> list[logging.Han
     gets its handler at registration. Idempotent.
     """
     global _installed_level
-    _installed_level = level
-    return [_install_scrub_handler(p, level) for p in strict_logger_prefixes()]
+    with (
+        _PREFIXES_LOCK
+    ):  # a registration racing this call installs its own handler either way
+        _installed_level = level
+        prefixes = _STRICT_PREFIXES
+    return [_install_scrub_handler(p, level) for p in sorted(prefixes)]
 
 
 def structlog_processors(

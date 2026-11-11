@@ -235,9 +235,7 @@ def provider_prefix(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """Register the provider prefix for one test only, and take its handler off afterwards."""
     from vektra_shared import log_safety
 
-    monkeypatch.setattr(
-        log_safety, "_STRICT_PREFIXES", set(log_safety._STRICT_PREFIXES)
-    )
+    monkeypatch.setattr(log_safety, "_STRICT_PREFIXES", log_safety._STRICT_PREFIXES)
     log_safety.register_strict_logger_prefix(PROVIDER_PREFIX)
     yield PROVIDER_PREFIX
     lg = logging.getLogger(PROVIDER_PREFIX)
@@ -287,6 +285,39 @@ def test_an_unregistered_prefix_is_not_redacted(stream: io.StringIO) -> None:
     )
     (line,) = _lines(stream)
     assert line["body"] == "visible"
+
+
+def test_the_prefixes_are_an_immutable_snapshot_swapped_under_a_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #203: a record is filtered while another thread may register a prefix. The
+    filter iterates an immutable tuple, which registration replaces whole, under a lock, so
+    no iteration sees a set change size and no concurrent registration is lost."""
+    import threading
+
+    from vektra_shared import log_safety
+
+    monkeypatch.setattr(log_safety, "_STRICT_PREFIXES", ())
+    assert isinstance(log_safety._STRICT_PREFIXES, tuple)
+    names = [f"vektra_lms_t{i}" for i in range(64)]
+    start = threading.Barrier(len(names))
+
+    def reg(n: str) -> None:
+        start.wait()
+        log_safety.register_strict_logger_prefix(n)
+        assert log_safety.is_strict_logger(f"{n}.x")
+
+    threads = [threading.Thread(target=reg, args=(n,)) for n in names]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert isinstance(log_safety._STRICT_PREFIXES, tuple)
+    assert sorted(log_safety._STRICT_PREFIXES) == sorted(names)
+    for n in names:
+        lg = logging.getLogger(n)
+        for h in [h for h in lg.handlers if getattr(h, "_vektra_assess", False)]:
+            lg.removeHandler(h)
 
 
 @pytest.mark.parametrize("bad", ["", "a..b", ".a", "a.", "with space", "Upper-Case"])

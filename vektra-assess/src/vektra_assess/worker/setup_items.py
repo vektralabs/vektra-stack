@@ -47,7 +47,7 @@ from vektra_assess.worker.slots import SMTP_PROBE_INTERVAL_S
 SMTP_PROBE_MAX_AGE_S = 3 * SMTP_PROBE_INTERVAL_S
 #: the cap on the item's own probe: a quarter of the 120 s setup-check budget. A healthy relay
 #: answers EHLO/STARTTLS/AUTH in seconds; the rest of the budget is kept for the Moodle items,
-#: the capability probes and the report (CodeRabbit 4506662233)
+#: the capability probes and the report
 SMTP_ITEM_PROBE_MAX_S = 30.0
 
 _SMTP_ROW = text(
@@ -112,8 +112,8 @@ def smtp_probe_item(
         if not configured:
             return missing("smtp_not_configured")
         row = await read()
-        # at most ONE probe per item run (CodeRabbit 4506450166), and that one capped at
-        # ``probe_timeout_s`` (4506662233): the rest of the 120 s budget belongs to the Moodle
+        # at most ONE probe per item run, and that one capped at
+        # ``probe_timeout_s``: the rest of the 120 s budget belongs to the Moodle
         # items, the capability probes and the report. Hitting the cap is UNVERIFIABLE.
         probed = False
         if probe is not None and (row is None or float(row.age) > SMTP_PROBE_MAX_AGE_S):
@@ -141,8 +141,8 @@ def smtp_probe_item(
 
 def _judge(raw: Any, now: float) -> Outcome | None:
     """OK / MISSING from one probe row; ``busy`` is judged by the last real result it carries
-    (review finding 2) while that result is itself at most ``SMTP_PROBE_MAX_AGE_S`` old
-    (CodeRabbit 4506450148); None when there is no such result."""
+    while that result is itself at most ``SMTP_PROBE_MAX_AGE_S`` old; None when there is no
+    such result."""
     details = raw if isinstance(raw, dict) else {}
     if details.get("state") == "busy":
         last = details.get("last")
@@ -179,7 +179,7 @@ def db_log_statement_item(acquire: AcquireDb) -> ItemCheck:
         unknown = False
         for name in ("log_statement", "log_parameter_max_length"):
             # what this session reads is the server value only when no role or database
-            # default applies to its own role (CodeRabbit 4507313007)
+            # default applies to its own role
             server = (
                 str(session[name]) if _effective(levels, me, name) is None else None
             )

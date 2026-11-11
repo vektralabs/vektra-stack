@@ -313,7 +313,7 @@ version.
 - [x] Chaos suite: six close reasons + rollback verified by row counts (hand-off 0, transcript job 1, epoch bumped) (B.1 priority 3) — evidence: tests/chaos/assess/test_lifecycle_chaos.py::test_each_close_reason_by_row_count, ::test_kill9_mid_preflight_commit_leaves_the_student_eligible (chaos run 2026-11-06: 23 passed)
 - [x] Moodle grade/rubric/feedback byte-identical before and after a session on 4.3 and 5.2 (REQ-073) — evidence: vektra-assess/tests/integration/test_req073_live.py::test_a_full_session_leaves_moodle_byte_identical and ::test_the_service_account_cannot_write_grades on the live 4.3 and 5.2 dev sites (4/4, 2026-11-08, W3 gate follow-up); plus the setup check refusing a grade-write function (test_moodle_setup_check.py::test_bad_grader_fails_no_grade_write_by_name)
 - [x] API route inventory contains no regenerate/edit/delete/upload; turn hashes stored at persist (REQ-102); flag after CLOSED → 409, one flag → one marker (REQ-103, if built) — evidence: vektra-assess/tests/integration/test_route_credentials.py::test_req102_no_route_regenerates_edits_deletes_or_uploads, vektra-assess/tests/integration/test_session_turns.py::test_each_turn_hash_is_recorded_and_chained_at_persist, vektra-assess/tests/integration/test_session_flag.py::test_a_flag_after_closed_is_rejected, ::test_one_flag_is_exactly_one_marker_and_the_hashes_stay_equal
-- [ ] Burst: 40 concurrent Starts with 10-file submissions recorded; commit p50 ≤ 10 s, p95 ≤ 30 s, max < 60 s at the chosen K, or the breach reported per provider/model; excess Starts refused without consumption (NFR-018, NFR-020) — BLOCKED: no target configured (API, mint key, DSN, dev Moodle, model; tests/nfr/results/assess-burst-20261106T201527Z.json); verified instead: vektra-assess/tests/integration/test_session_burst_inprocess.py (40 Starts, K=10, 10 commits, 30 capacity, 0 rows left), with no NFR latency evidence
+- [ ] Burst: 40 concurrent Starts with 10-file submissions recorded; commit p50 ≤ 10 s, p95 ≤ 30 s, max < 60 s at the chosen K, or the breach reported per provider/model; excess Starts refused without consumption (NFR-018, NFR-020) — BLOCKED: no target configured (API, mint key, DSN, dev Moodle, model; the run of 2026-11-06T20:15:27Z recorded BLOCKED, and that result file is no longer committed); verified instead: vektra-assess/tests/integration/test_session_burst_inprocess.py (40 Starts, K=10, 10 commits, 30 capacity, 0 rows left), with no NFR latency evidence
 
 ## Testing Approach
 
@@ -479,7 +479,8 @@ Every acceptance check reads rows, bytes or real responses, never a status field
     open append. The real pre-flight under kill -9 against Moodle is not reproduced (it needs the
     dev Moodle): its DB-level effect, an aborted commit transaction, is.
   - **M5.12 status: BLOCKED (environment).** Re-run on 2026-11-06 with every M3-M5 gate, limit
-    and audit in the code: `tests/nfr/results/assess-burst-20261106T201527Z.json` is BLOCKED (no
+    and audit in the code: the burst run (2026-11-06T20:15:27Z) recorded BLOCKED (its result
+    file is no longer committed: `tests/nfr/results/*.json` is gitignored) (no
     API, mint key, DSN, dev Moodle, model or manifest configured), so no NFR-018 percentiles and
     no NFR-020 refusal counts are recorded and K stays the documented placeholder 10 (OQ-026).
     The in-process run against fakes (`test_session_burst_inprocess.py`: 40 Starts, K=10, 10

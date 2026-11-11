@@ -99,7 +99,7 @@ _CONFIG = text(
     "FROM assess_activity_config WHERE site_id = :s AND cmid = :c FOR UPDATE"
 )
 #: the wall clock read AFTER the locks: ``now()`` is the transaction start, and a reset may have
-#: waited for the activity lock past the end date (CodeRabbit 4512009218)
+#: waited for the activity lock past the end date
 _CLOCK = text("SELECT extract(epoch FROM clock_timestamp())::bigint AS db_now")
 _RENDER = text(
     "SELECT inputs, extract(epoch FROM now() - refreshed_at) AS age_s FROM assess_gate_inputs "
@@ -228,7 +228,7 @@ async def reset_session(
         sessions = (await conn.execute(_STUDENT_SESSIONS, params)).all()
         if not any(s.id == row.id for s in sessions):
             # rolled back (a terminate's STARTING rollback) while this reset waited for the
-            # activity lock: the session is gone (CodeRabbit 4506916908)
+            # activity lock: the session is gone
             raise _Refused(fail(session_not_found()))
         if any(s.state in OPEN_STATES for s in sessions):
             raise _Refused(fail(reset_refused("not_closed")))
@@ -236,7 +236,7 @@ async def reset_session(
         if latest.id != row.id:
             raise _Refused(fail(reset_refused("not_latest")))
         # a session the retention purge emptied (plan 12): its content is gone, and a reset
-        # reason written now would outlive it unscrubbed (CodeRabbit 4516399820)
+        # reason written now would outlive it unscrubbed
         if (await conn.execute(_PURGED, {"sid": row.id})).scalar() is not None:
             raise _Refused(fail(reset_refused("purged")))
         grants = int((await conn.execute(_GRANTS, params)).scalar_one())
@@ -288,7 +288,7 @@ async def reset_session(
         if code is not None:
             raise refuse_gate(code)
         # the LOCKED row's close reason: the worker may have closed the session between the
-        # unlocked read and the lock (CodeRabbit 4512009201)
+        # unlocked read and the lock
         include = v.include_previous_turns(
             latest.close_reason, body.include_previous_turns
         )

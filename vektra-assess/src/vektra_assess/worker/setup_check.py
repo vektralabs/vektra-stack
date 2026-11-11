@@ -81,7 +81,7 @@ _FAIL_ORPHANS = text(
     "WHERE site_id = :s AND status = 'running' "
     "AND created_at < now() - make_interval(secs => :after) "
     "AND id IS DISTINCT FROM :own "
-    # lease ownership, not age alone (CodeRabbit 4506450159): while another setup_check job
+    # lease ownership, not age alone: while another setup_check job
     # of this site holds a live lease, its report may be the old running one; leave them all
     "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.kind = 'setup_check' "
     "AND j.state = 'leased' AND j.lease_until > now() AND j.id <> :job "

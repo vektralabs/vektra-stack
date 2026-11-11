@@ -116,7 +116,7 @@ async def reap_exhausted(
     on the last attempt would leave the row ``leased`` until the next worker restart, and its
     dedupe key would keep covering it.
     """
-    # No connection is held across an audit write (CodeRabbit 4530369375): the reaper runs on
+    # No connection is held across an audit write: the reaper runs on
     # the worker's one-connection liveness engine, and an audit that waited for the connection
     # its own caller holds would time out, leaving the row ``leased`` for good. Audit first,
     # then a fresh checkout for the conditional update, as before.

@@ -324,8 +324,7 @@ async def session_events(
             lock=False,
             allow_closed=True,  # a reconnect may still drain ``closed``; nothing is decrypted here
             # the stream carries reply text: opening or reconnecting needs a fresh 'enrolled'
-            # check (gate step 6, live rows only, so a CLOSED session still drains;
-            # CodeRabbit review 5809548168)
+            # check (gate step 6, live rows only, so a CLOSED session still drains)
             require_enrolment=True,
         ) as (_conn, row)
     ):
@@ -372,7 +371,7 @@ async def session_events(
             if any(e.type in CONTENT_EVENTS for e in batch):
                 # reply text is delivered only while the row is live AT THIS TOKEN's epoch: a
                 # close or a revocation (both bump the epoch) stops it, and an event produced
-                # under another epoch is never sent (review 4493120906). The row read used for
+                # under another epoch is never sent. The row read used for
                 # that check is at most poll_s old (review fix 6): a burst of deltas reuses the
                 # last read instead of one read per batch, so a revocation can let through at
                 # most poll_s of reply text, never more

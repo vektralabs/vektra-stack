@@ -230,7 +230,7 @@ def _jobs_where(
     a job of one of its sessions. Not leased (``leased=False``): every one that still names the
     subject, ready or finished (done, failed, dead: their arguments and dedupe keys carry the
     ids), deleted with the rows. Leased: a run in flight that could write rows back after the
-    erasure commits; the erasure waits for it (CodeRabbit 4516399770 / 4516399779)."""
+    erasure commits; the erasure waits for it."""
     student = "args->>'site_id' = :site_text AND args ? 'student_userid'"
     if cmid is not None:
         student += " AND args->>'cmid' = :cmid_text"

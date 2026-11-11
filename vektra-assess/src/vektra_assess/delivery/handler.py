@@ -188,7 +188,7 @@ _EXPIRE = text(
     "RETURNING id, round, recipient_ref"
 )
 #: the unresolved path takes only rows with no attempt in flight or crashed: a crash marker
-#: stays until a real resend audits the possible duplicate (CodeRabbit 4504367050)
+#: stays until a real resend audits the possible duplicate
 _CLAIM_IDLE = text(
     "UPDATE assess_deliveries SET attempt_started_at = :now, attempts = attempts + 1 "
     "WHERE id IN (SELECT id FROM assess_deliveries WHERE transcript_id = :t "
@@ -361,7 +361,7 @@ async def _unresolved(
     """No readable recipient: due rows wait (RETRYING, backoff) or end FAILED past the window."""
     out.unresolved = True
     # a crash-marked row keeps its marker (the resend must audit the possible duplicate) but
-    # waits like the others instead of being offered again on every tick (4504591109)
+    # waits like the others instead of being offered again on every tick
     waiting = (
         await conn.execute(
             _STALE_WAITING, {"t": t.id, "now": now, "stale": now - deps.stale_after}
@@ -375,11 +375,11 @@ async def _unresolved(
             await conn.execute(_DEFER, {"i": w.id, "nb": nb})
             continue
         # the window is over (as _settle decides for a failed attempt): ended now, not left
-        # due for the tick until the lease grace runs out (CodeRabbit 4504755706)
+        # due for the tick until the lease grace runs out
         gone = (await conn.execute(_WINDOW_OVER, {"i": w.id})).first()
         if gone is not None:
             # the marker read under the row lock above names an attempt with no outcome:
-            # the relay may hold it, so the failure says so (CodeRabbit 4504990083)
+            # the relay may hold it, so the failure says so
             await _audit(
                 conn,
                 AssessAuditEvent.DELIVERY_FAILED,
@@ -546,7 +546,7 @@ async def _claim(
     )
     async with acquire() as conn, conn.begin():
         # the window may have ended while the job waited for a relay session: checked again
-        # in the claim's own transaction (CodeRabbit 4504591114)
+        # in the claim's own transaction
         gone = (
             await conn.execute(
                 _EXPIRE_ONE,
@@ -671,7 +671,7 @@ async def _send(
     doc: bytes,
     out: Delivered,
 ) -> None:
-    mid = c.message_id  # stored at the first claim (CodeRabbit 4504367056)
+    mid = c.message_id  # stored at the first claim
     # the short name read at close (sanitised for the header by ``message``)
     course = t.course_shortname or "corso non disponibile"
     msg = mail.build(

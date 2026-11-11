@@ -66,7 +66,7 @@ def view(
     flagged: frozenset[int] = frozenset(),
 ) -> dict[str, Any]:
     """``paused_at``: the open outage's start while the session is in OUTAGE: the timer is
-    paused there, so the time left is measured against it (CodeRabbit 4498473565)."""
+    paused there, so the time left is measured against it."""
     turns = []
     if material is not None:
         turns = [
@@ -136,7 +136,7 @@ async def get_session(
                 lock=resume,
                 start_t_s=start_t_s,
                 token_budget=settings_of(request).session_token_budget,
-                # gate step 6 here too (CodeRabbit 4498473572): the history is decrypted and a
+                # gate step 6 here too: the history is decrypted and a
                 # resume token minted only for a freshly confirmed enrolment (fail closed)
                 enrolment_fresh_s=settings_of(request).enrolment_freshness_s,
             )

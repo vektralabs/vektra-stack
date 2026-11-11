@@ -310,8 +310,8 @@ _ROWS = text(
     "WHERE job_id = :j AND kind = :k ORDER BY created_at, id"
 )
 #: ``created_at`` on the WORKER clock: it is the retry window's origin for a root job retried
-#: by the runner (``_ORIGIN``), and every other window instant is the worker's (CodeRabbit
-#: 4514485538: a DB-side default would mix two clocks)
+#: by the runner (``_ORIGIN``), and every other window instant is the worker's (a
+#: DB-side default would mix two clocks)
 _ADD = text(
     "INSERT INTO assess_deliveries (kind, job_id, recipient_kind, recipient_ref, status, "
     "not_before, created_at) VALUES (:k, :j, 'address', :ref, 'PENDING', :now, :now) "
@@ -664,7 +664,7 @@ async def _expire_row(
     conn: Any, deps: NotifyDeps, run: _Run, row_id: UUID, ref: str, out: Notified
 ) -> bool:
     """FAIL one live row ``window_expired``, audited and alerted. False: its attempt is still
-    inside its lease and is left alone (CodeRabbit 4514485552)."""
+    inside its lease and is left alone."""
     gone = (
         await conn.execute(
             _EXPIRE_ROW,
@@ -800,7 +800,7 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
     async with acquire() as conn, conn.begin():
         if "since" not in ctx.args:
             # a root job retried by the runner: the window counts from the rows it already
-            # addressed, not from the retry (CodeRabbit 4513956336)
+            # addressed, not from the retry
             origin = (
                 await conn.execute(_ORIGIN, {"j": run.root, "k": kind.value})
             ).first()
@@ -822,7 +822,7 @@ async def notify(deps: NotifyDeps, kind: JobKind, ctx: Any) -> Notified | None:
     if now >= _cutoff(deps, run):
         # a run that starts past the window and its grace (a worker down for hours) sends
         # nothing: its live rows are FAILED window_expired, as the transcript handler does
-        # past its cutoff (CodeRabbit 4513956352)
+        # past its cutoff
         await _expire(deps, acquire, run, out)
         log.info("assess_notify_expired", kind=kind.value, job_id=run.root)
         return out

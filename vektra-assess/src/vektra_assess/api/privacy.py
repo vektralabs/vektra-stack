@@ -243,7 +243,7 @@ async def _erase_and_wait(
 
 
 #: one request per scope at a time: two identical requests arriving together would both miss
-#: the pending lookup and queue twice (CodeRabbit 4516411675)
+#: the pending lookup and queue twice
 _SCOPE_LOCK = text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))")
 
 
@@ -268,7 +268,7 @@ async def _pending_or_queue(
         ).scalar()
         if pending is not None:
             # its job may have died (attempts spent waiting for work in flight): queue it again;
-            # the dedupe key keeps one ready or leased job per request (CodeRabbit 4517939437)
+            # the dedupe key keeps one ready or leased job per request
             await enqueue_job(
                 conn,
                 JobKind.ERASURE,
@@ -311,7 +311,7 @@ async def _wait(request: Request, engine: Any, erasure_id: int) -> JSONResponse:
             raise fail(erasure_not_completed("pending"))
         try:
             # the deadline covers the pool wait and the query too: a busy pool answers
-            # pending on time, never after the pool's own timeout (CodeRabbit 4516399711)
+            # pending on time, never after the pool's own timeout
             row = await asyncio.wait_for(_read_done(engine, erasure_id), remaining)
         except TimeoutError:
             raise fail(erasure_not_completed("pending")) from None
@@ -360,7 +360,6 @@ def _userids(doc: dict[str, Any]) -> list[int] | None:
         return None  # the whole activity
     raw = doc["userids"]
     # an explicit null is a failed selection on the caller's side, never "everyone"
-    # (CodeRabbit 4516399722)
     if not isinstance(raw, list) or not raw or len(raw) > MAX_USERIDS:
         raise fail(bad_request("userids"))
     out: list[int] = []

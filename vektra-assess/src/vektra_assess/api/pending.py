@@ -46,7 +46,7 @@ _PENDING = text(
     "AND pending_reply_since <= now() - make_interval(secs => :age) "
     "AND deadline_at + make_interval(secs => reply_grace_s) > now() "
     # a turn another driver is answering (any API process) does not take a place in the
-    # batch (CodeRabbit 4498473548): the poll reaches the unclaimed ones
+    # batch: the poll reaches the unclaimed ones
     "AND NOT " + reply_claimed_sql("id") + " "
     "ORDER BY pending_reply_since LIMIT :n"
 )
@@ -71,7 +71,7 @@ class PendingTurnDriver:
     async def stop(self) -> None:
         """Stop polling, then cancel the answers this driver started and WAIT for them to
         release their provider stream, slot and connections, so shutdown never disposes the
-        engine under a recovered reply (CodeRabbit review 5808100754)."""
+        engine under a recovered reply."""
         task, self._task = self._task, None
         if task is not None:
             task.cancel()

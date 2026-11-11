@@ -4,7 +4,7 @@ Used by the assess Moodle WS client (plan assess-moodle-ws, ARCH-070). It is a C
 idea in ``vektra_learn.api._resolve_and_validate_url``, not a move: learn denies every
 private address (right for a public document URL), while an on-prem Moodle usually sits on a
 private address, so assess needs an allowlist policy instead. Learn is untouched; unifying
-the two is a follow-up DEBT item.
+the two (one implementation, the policy as a parameter) is DEBT-042 in ``.s2s/BACKLOG.md``.
 
 Policy, applied to EVERY address the name resolves to (not only the first):
 

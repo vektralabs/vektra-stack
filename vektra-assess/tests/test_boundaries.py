@@ -138,8 +138,8 @@ def _construction_sites() -> tuple[bool, list[str]]:
 
 def test_contextbundle_constructed_only_in_context() -> None:
     defined, sites = _construction_sites()
-    if not defined:
-        pytest.skip("ContextBundle not defined yet (plan assess-context)")
+    # a scan that never finds the class definition proves nothing about its call sites
+    assert defined, "ContextBundle definition not found under vektra_assess.context"
     assert sites == [], (
         f"ContextBundle constructed outside vektra_assess.context: {sites}"
     )
@@ -233,11 +233,12 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
 def test_planted_forbidden_import_breaks_lint_imports(
     tmp_path: Path, module: str, code: str, broken: str
 ) -> None:
-    if not (
+    # import-linter is a root dev dependency (make lint, CI): a missing tool is a broken
+    # environment, not a reason to stop proving the contracts bite
+    assert (
         shutil.which("lint-imports")
         or (Path(sys.executable).parent / "lint-imports").exists()
-    ):
-        pytest.skip("lint-imports not installed in this environment")
+    ), "lint-imports is not installed (uv sync --dev)"
     srcs = _copy_sources(tmp_path)
     clean = _lint_imports(tmp_path, srcs)
     assert clean.returncode == 0, (

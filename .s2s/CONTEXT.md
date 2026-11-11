@@ -167,7 +167,7 @@ See [architecture.md](architecture.md) for complete architecture documentation.
 - [ADR-0023](decisions/ADR-0023-conversational-query-rewriting.md): Conversational query rewriting (Phase 2)
 - [ADR-0024](decisions/ADR-0024-admin-ui-server-side.md): Admin UI with server-side rendering (HTMX + Jinja2)
 - [ADR-0025](decisions/ADR-0025-learn-chatbot-widget.md): Learn chatbot widget as backend-served JS bundle
-- [ADR-0033](decisions/ADR-0033-lms-provider-protocol.md): LmsProvider Protocol (11th) separating vektra-assess from the LMS (proposed; amends ADR-0027; plan `20261111-185453-assess-lms-separation`)
+- [ADR-0033](decisions/ADR-0033-lms-provider-protocol.md): LmsProvider Protocol (11th) separating vektra-assess from the LMS (accepted 2026-11-11; amends ADR-0027; plan `20261111-185453-assess-lms-separation`)
 
 ## Open Questions
 

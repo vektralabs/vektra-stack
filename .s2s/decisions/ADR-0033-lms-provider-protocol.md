@@ -1,6 +1,6 @@
 # ADR-0033: LMS provider Protocol: the assessment vertical stays authoritative, the LMS client becomes an adapter
 
-**Status**: proposed (2026-11-11). Becomes accepted when the product owner has answered the open decisions in section 6.
+**Status**: accepted (2026-11-11). The product owner decided OD-1 to OD-6 on 2026-11-11 (section 6). Nothing stays open at the decision level. OD-1 carries a validity condition, re-checked at the 2a-3 cut.
 **Date**: 2026-11-11
 **Amends**: [ADR-0027](ADR-0027-assessment-discussion-as-a-top-level-vektra-assess.md) (ARCH-065: who owns the WS client and the setup check; ARCH-073: the names that are costly to reverse)
 **Deviates from**: [ADR-0009](ADR-0009-namespace-isolation-rls.md). The deviation is recorded in D9.
@@ -60,7 +60,7 @@ ARCH-073 lists names as the costly things: the route baked into the deployed plu
 - `vektra-moodle-discuss` has **no tag**. Its `version.php` says `0.1.0`, and its plugin plans P2 and P3 are still in progress and pending (`INDEX-ASSESS.md`). The plugin calls `/api/v1/assess/tokens`, `/state` and `/transcripts/*` (`classes/local/student_endpoint.php:45,48`, `transcript_proxy.php:99,135`), and none of the names that carry "moodle";
 - the pilot go/no-go is NO-GO (plan 13), so no pilot database holds exam data.
 
-So the window in which renames cost an edit, rather than an alias plus a deprecation, is open now. It closes at the first release that ships `vektra-assess`, or at the first plugin tag. OD-1 asks the product owner to confirm that the window is open.
+So the window in which renames cost an edit, rather than an alias plus a deprecation, is open now. It closes at the first release that ships `vektra-assess`, or at the first plugin tag. The product owner confirmed on 2026-11-11 that the window is open (OD-1), and the confirmation is re-checked at the 2a-3 cut.
 
 ## 2. Decision
 
@@ -204,7 +204,7 @@ BR-011 for LMS-rendered HTML therefore becomes a **joint** guarantee, and this A
 
 ### D5. Names: what is renamed, what is kept, and the migration path
 
-The cost column assumes **OD-1 = yes**: no assess data has to survive the separation. If the product owner answers no, the right-hand column applies, and D10 explains what that does to the ratchet.
+The product owner decided **OD-1 = yes** on 2026-11-11: no assess data has to survive the separation, so the "OD-1 = yes" column applies. The right-hand column is kept as the fallback if the validity condition of section 6 fails at the 2a-3 cut, and D10 explains what that does to the ratchet.
 
 | Name | Where | Decision | Cost if OD-1 = yes | Cost if OD-1 = no |
 |---|---|---|---|---|
@@ -253,7 +253,7 @@ In phase 2b, `adapters/vektra-lms-moodle/` moves to its home repository (OD-5) a
 
 **How the 36 revisions get there** depends on OD-1:
 
-- **OD-1 = yes (recommended): squash.** The 36 revisions are replaced by one assess base revision that creates the head schema with the neutral names from D5 and fixes the 0009 error message so that it names all three roles. Equivalence is proven, not asserted: the old chain and the squash are run on two empty databases, and the normalised `pg_dump --schema-only`, the effective privileges (the grant matrix's existing two-way drift test) and the definer functions must be identical except for the renamed identifiers. Development and staging databases are dropped and re-created. All 18 migration entries clear at once.
+- **OD-1 = yes (decided 2026-11-11): squash.** The 36 revisions are replaced by one assess base revision that creates the head schema with the neutral names from D5 and fixes the 0009 error message so that it names all three roles. Equivalence is proven, not asserted: the old chain and the squash are run on two empty databases, and the normalised `pg_dump --schema-only`, the effective privileges (the grant matrix's existing two-way drift test) and the definer functions must be identical except for the renamed identifiers. The only database known to hold assess data is the local F1 stack's Postgres (the `vektra-f1-postgres` container on the developer machine), and it is re-created. Testcontainers are ephemeral. The deploy VM is believed to run v0.8.0, which has no assess. A read-only check confirms that at the cut, and only if it finds `assess_*` tables does it become a recreate request. All 18 migration entries clear at once.
 - **OD-1 = no: move and rename.** The 36 files move unchanged by `git mv` (revision ids kept, so an existing database at 0044 still finds them), and a 37th revision renames the columns. The files still name Moodle, so the 18 entries stay and one more appears for the rename revision. The second ratchet can then only close by a squash after every retained database has been migrated: one assess release later at the earliest.
 
 The migration ratchet closes in **2a-3 under OD-1 = yes**, in the same PR series as the code. With OD-1 = no it moves to phase 3 and later, as the review planned.
@@ -288,7 +288,7 @@ It is not a live hole: the routes do check. The gap is that one missing `site_id
 
 | Phase | What | Ratchet | Done when |
 |---|---|---|---|
-| **2a** | Protocol and neutral types; the vertical depends only on the Protocol; neutral names; provider staged in `adapters/`; composition by entry point; the schema base (under OD-1 = yes) | **Ratchet 1**: the 8 non-migration entries (the `vektra-assess` directory and the 7 platform files) | `lms_boundary_baseline.toml` contains no `directory` entry and no file entry outside `migrations/`; `test_lms_boundary.py` is green; no PR of the phase added an entry. Under OD-1 = yes, ratchet 2 closes here too. |
+| **2a** | Protocol and neutral types; the vertical depends only on the Protocol; neutral names; provider staged in `adapters/`; composition by entry point; the schema base (under OD-1 = yes) | **Ratchet 1**: the 8 non-migration entries (the `vektra-assess` directory and the 7 platform files) | `lms_boundary_baseline.toml` contains no `directory` entry and no file entry outside `migrations/`; `test_lms_boundary.py` is green; no PR of the phase added an entry. **Ratchet 2 closes here too (OD-1 = yes, decided)**: the baseline file is empty after 2a. |
 | **2b** | `adapters/vektra-lms-moodle/` moves to its home repository and is published; the opt-in image installs the pinned wheel; the 328 recorded fixtures and `assess-moodle-contract.yml` go with it | none (it is a relocation) | `adapters/` is gone from this repository; the provider's CI runs the conformance kit against a released `vektra-stack` |
 | **3** | migrations gated (and, under OD-1 = no, the second ratchet); `testing_recorders` and the conformance kit in `vektra-testkit`; `netguard` unification DEBT; RLS for the API role (D9); JSONRenderer announced; the managed-Postgres note proven on its positive case | **Ratchet 2**: the 18 `migrations/versions/*` entries | the baseline file is **empty** and the guard is green; with `VEKTRA_ASSESS_ENABLED=false`, a clean cluster has 0 `assess_*` tables, 0 `vektra_assess_*` roles and 0 assess functions after the entrypoint ran (counted with `\dt`, `\du`, `\df`) |
 | **4** | this ADR | none | accepted, with ADR-0027 annotated |
@@ -336,7 +336,7 @@ A provider is registrable for production only with a green conformance run again
 - (−) BR-011 for LMS-rendered HTML becomes a joint guarantee, and the conformance kit is a maintained asset (it joins the OQ-027 canary matrix).
 - (−) Ids are the LMS's integers (`BIGINT` columns, int claims). An LMS with string ids needs a schema change. This is recorded, not solved.
 - (−) The image gains an opt-in variant, so the release process has one more artefact (OD-6).
-- (−) Under OD-1 = yes, development and staging assess databases are re-created, and the dev sites' test data is lost.
+- (−) At the 2a-3 cut (OD-1), the local F1 stack's Postgres (the `vektra-f1-postgres` container on the developer machine) is re-created, and its test data is lost. This is a destructive step outside the repository and it runs only after an explicit go from the owner. The deploy VM is believed to run v0.8.0, which has no assess. The internal-ops session checks it read-only, and it becomes a recreate request to that session only if `assess_*` tables exist there.
 - (−) The rename churn is large. The neutral rename touches about 60 files outside `moodle/`, plus the tests. That is why the plan splits it into PRs of about 100 files.
 
 ## 5. Amendment to ADR-0027
@@ -345,18 +345,25 @@ A provider is registrable for production only with a green conformance run again
 - ARCH-073 "Names": keep `/api/v1/assess`, `assess_*` and `ERR-ASSESS-*`. The Moodle-named columns, values and settings get neutral names as in D5. "Owned revision files in the single root Alembic chain (0009+)" is replaced by the separate `assess` branch of D7. Contract (c) becomes "only `vektra_assess.worker` imports an `LmsProvider` implementation's composition"; in practice `vektra_assess` imports no provider at all, and the import-linter rule forbids `vektra_lms_*` everywhere in the platform.
 - The consequence "(−) Vektra depends on Moodle WS availability" becomes "Vektra depends on the configured LMS provider's availability", with the same fail-closed behaviour.
 
-## 6. Open decisions (product owner)
+## 6. Decisions of the product owner (2026-11-11)
 
-Each has a recommended default. Section 2 assumes the defaults.
+Each was put to the product owner as an open decision with a recommended default. The options and their costs stay below as the record. OD-1 was decided explicitly ("they are test data, recreate"). For OD-2 to OD-6, the owner asked the coordinator for a recommendation and took the defaults.
 
-| ID | Decision | Options and their cost | Recommended default |
+**Validity condition of OD-1.** OD-1 = (a) holds only while both of these are true:
+
+1. no published Vektra release ships `vektra-assess`;
+2. `vektra-moodle-discuss` has no tag.
+
+Both are checked at the moment of the 2a-3 cut (plan task 2a-3.0). If either is false, 2a-3 stops and OD-1 is decided again. The "OD-1 = no" paths in section 2 stay as the fallback for that case.
+
+| ID | Decision | Options and their cost | Decided |
 |---|---|---|---|
-| **OD-1** | Must any assess data survive the separation? | **(a) No**: development and staging databases are re-created; names change in place; the migrations are squashed; both ratchets close in 2a. Cost: the dev sites' test data, and a squash-equivalence proof. **(b) Yes**: aliases, dual reads, a v2 snapshot schema with the v1 reader kept for the longest `retention_days`, a rename revision, and the 36 files moved unchanged. Cost: the directory entry and the migration entries stay until the compatibility code can be deleted, at least one assess release later; and 2a cannot meet "no new entries" without a dated exception for the rename revision. | **(a)**, valid only while no release ships `vektra-assess` and no plugin tag exists. Re-check both facts the day 2a-3 starts. |
-| **OD-2** | Rename the plugin-facing wire vocabulary `cmid`, `loginas`, `realuser_id`? | **Keep**: no cost, the guard does not see them, and the Protocol maps `activity_id` to `cmid` in one place. **Rename to `activity_id` / `impersonated`** with the old names accepted for one plugin release: about 586 occurrences in 44 files, 9 route paths, the token claim (`tokens.py:42`), 4 plugin PHP files and the IDOR suites. | **Keep for v1.** Rename only with an API v2. |
-| **OD-3** | `rubric_source` wire value `"moodle"` (teacher config API, used by P3 when it is written) | **Rename to `"lms"` now**: in place under OD-1(a), and P3 is written against the new value. **Keep**: one Moodle word in a wire value, and the directory entry cannot clear. | **Rename now.** P3 has not started, so it costs nothing on the plugin side. |
-| **OD-4** | Prefix of the settings that move to the provider (`VEKTRA_ASSESS_MOODLE_*`, `VEKTRA_ASSESS_WS_*`, `VEKTRA_ASSESS_BREAKER_*`) | **Keep the names**, read by the provider: zero churn for operators and dev environments. **Rename to `VEKTRA_LMS_MOODLE_*`**: the prefix says who reads them; docs and compose files change, with no alias needed because nothing has been released. | **Rename at the move (2a-4), no alias.** |
-| **OD-5** | Home repository of the provider in 2b | **`vektra-moodle-discuss`** (the review's target): the PHP plugin and the Python provider share the 4.3/5.2 matrix and change together. Its release zip must exclude the Python tree, and its CI gains a Python job. **A new repository `vektra-lms-moodle`**: separate lifecycle and toolchain, per ADR-0002's split criteria, but a third Moodle repository. **`vektra-moodle`**: rejected, because it is `block_vektra`'s repository with its own cadence. | **`vektra-moodle-discuss`**, with the Python provider in a top-level `provider/` directory excluded from the plugin zip |
-| **OD-6** | How the provider reaches a deployment | **(a)** `publish.yml` builds a second image tag (`<version>-lms-moodle`) with the pinned wheel; **(b)** operators build with `--build-arg INSTALL_LMS_PROVIDER=moodle`; **(c)** install at container start: rejected (network at start, no pinning). | **(a)**, because it is the only option where the image that is tested is the image that runs |
+| **OD-1** | Must any assess data survive the separation? | **(a) No**: the local F1 assess database is re-created (the only one known to hold assess data); names change in place; the migrations are squashed; both ratchets close in 2a. Cost: the local test data, and a squash-equivalence proof. **(b) Yes**: aliases, dual reads, a v2 snapshot schema with the v1 reader kept for the longest `retention_days`, a rename revision, and the 36 files moved unchanged. Cost: the directory entry and the migration entries stay until the compatibility code can be deleted, at least one assess release later; and 2a cannot meet "no new entries" without a dated exception for the rename revision. | **(a) No assess data survives.** At the 2a-3 cut, the local F1 assess database is re-created after an explicit go from the owner. The internal-ops session runs a read-only check for `assess_*` tables on the deploy VM, and it is asked to recreate only if the check finds any. The 36 revisions are squashed into the `assess` branch with `lms_*` names, and both ratchets close in 2a. Decided explicitly, 2026-11-11. |
+| **OD-2** | Rename the plugin-facing wire vocabulary `cmid`, `loginas`, `realuser_id`? | **Keep**: no cost, the guard does not see them, and the Protocol maps `activity_id` to `cmid` in one place. **Rename to `activity_id` / `impersonated`** with the old names accepted for one plugin release: about 586 occurrences in 44 files, 9 route paths, the token claim (`tokens.py:42`), 4 plugin PHP files and the IDOR suites. | **Keep** `cmid`, `loginas` and `realuser_id`. Decided (default, owner consulted 2026-11-11). |
+| **OD-3** | `rubric_source` wire value `"moodle"` (teacher config API, used by P3 when it is written) | **Rename to `"lms"` now**: in place under OD-1(a), and P3 is written against the new value. **Keep**: one Moodle word in a wire value, and the directory entry cannot clear. | **`rubric_source` becomes `"lms"` in place.** Decided (default, owner consulted 2026-11-11). |
+| **OD-4** | Prefix of the settings that move to the provider (`VEKTRA_ASSESS_MOODLE_*`, `VEKTRA_ASSESS_WS_*`, `VEKTRA_ASSESS_BREAKER_*`) | **Keep the names**, read by the provider: zero churn for operators and dev environments. **Rename to `VEKTRA_LMS_MOODLE_*`**: the prefix says who reads them; docs and compose files change, with no alias needed because nothing has been released. | **`VEKTRA_LMS_MOODLE_*`, no alias**, at the move (2a-4b). Decided (default, owner consulted 2026-11-11). |
+| **OD-5** | Home repository of the provider in 2b | **`vektra-moodle-discuss`** (the review's target): the PHP plugin and the Python provider share the 4.3/5.2 matrix and change together. Its release zip must exclude the Python tree, and its CI gains a Python job. **A new repository `vektra-lms-moodle`**: separate lifecycle and toolchain, per ADR-0002's split criteria, but a third Moodle repository. **`vektra-moodle`**: rejected, because it is `block_vektra`'s repository with its own cadence. | **`vektra-moodle-discuss`**, with the Python provider in a top-level `provider/` directory that is excluded from the plugin zip. Decided (default, owner consulted 2026-11-11). |
+| **OD-6** | How the provider reaches a deployment | **(a)** `publish.yml` builds a second image tag (`<version>-lms-moodle`) with the pinned wheel; **(b)** operators build with `--build-arg INSTALL_LMS_PROVIDER=moodle`; **(c)** install at container start: rejected (network at start, no pinning). | **(a) A second image tag** (`<version>-lms-moodle`) with the pinned wheel. Decided (default, owner consulted 2026-11-11). |
 
 ## 7. Measurement (predicates and references)
 

@@ -1,7 +1,7 @@
 # Implementation Plan: Separating `vektra-assess` from the LMS (the `LmsProvider` Protocol)
 
 **ID**: 20261111-185453-assess-lms-separation
-**Status**: pending (waiting for the ADR-0033 open decisions; phase 4, the ADR itself, is this plan's first deliverable)
+**Status**: pending (ADR-0033 accepted 2026-11-11, with OD-1 to OD-6 decided; phase 4, the ADR itself, is this plan's first deliverable; phase 2a starts after the author's remaining waves)
 **Branch**: `docs/assess-lms-separation-adr` (phase 4). Each later PR has its own branch, listed in the PR split below.
 **Created**: 2026-11-11T18:54:53Z
 **Updated**: 2026-11-11T18:54:53Z
@@ -40,7 +40,9 @@
 ### Dependencies
 - The author's remaining waves are closed first (`separation-handoff.md` §4: the separation is done in one pass, on a surface that no longer moves). Plan 13 can stay `in_progress` on its environment blockers; it does not block this plan.
 - #199 and #200 are merged. Re-run the measurement predicates of ADR-0033 §7 on the merged `develop` before PR 2a-1, and record the numbers in `## Notes`.
-- The ADR-0033 open decisions are answered. OD-1 changes the shape of PR 2a-3, and of phase 3; every other open decision only changes names or the home repository.
+- ADR-0033 decisions, all taken 2026-11-11:
+  - OD-1 = (a): no assess data survives; squash; both ratchets close in 2a. It is valid only while no release ships assess and no plugin tag exists, which task 2a-3.0 re-checks.
+  - OD-2 to OD-6: the defaults, decided after the owner consulted the coordinator.
 
 ## Overview
 
@@ -49,7 +51,7 @@ The vertical keeps the authority: it decides, it re-resolves every id it is give
 Done is measured, not declared, and it is measured by the guard's baseline, which may only shrink:
 
 - **ratchet 1** (phase 2a): the 8 non-migration entries are gone;
-- **ratchet 2** (phase 3, or already in 2a under OD-1 = yes): the 18 migration entries are gone and the file is empty.
+- **ratchet 2** (in 2a, PR 2a-3, because OD-1 = yes is decided): the 18 migration entries are gone and the file is empty.
 
 ## Design Notes
 
@@ -67,7 +69,7 @@ Done is measured, not declared, and it is measured by the guard's baseline, whic
 | 2a-1 | `feat/lms-provider-protocol` | 2a | Protocol, neutral types, registry slot, `log_safety` registration, conformance kit skeleton, `FakeLmsProvider`. No behaviour change. | ~25 | none |
 | 2a-2a | `refactor/assess-lms-start-source` | 2a | The vertical consumes the Protocol: `MoodleLmsProvider` adapter class over the existing readers (still in `moodle/`), `LmsStartSource`, capture on neutral types, setup-check split, `QuestionState` and `QuestionKind`, the review-HTML profile, unit tests | ~60 | none (the directory entry still covers `moodle/`) |
 | 2a-2b | `test/assess-fake-lms` | 2a | Integration and e2e suites moved onto `FakeLmsProvider`; the old ports deleted; the static `site_id` predicate test (D9). Merged into 2a-2a if the two together stay under 100 files. | ~45 | none |
-| 2a-3 | `feat/assess-schema-branch` | 2a (+3 under OD-1 = yes) | The assess Alembic branch, gated by `VEKTRA_ASSESS_ENABLED`; squash with the neutral names; the in-place renames of D5; the squash-equivalence test; docs | ~70 | the 18 migration entries removed; `assess_wiring.py` lowered |
+| 2a-3 | `feat/assess-schema-branch` | 2a (closes ratchet 2, OD-1) | The assess Alembic branch, gated by `VEKTRA_ASSESS_ENABLED`; squash with the neutral names; the in-place renames of D5; the squash-equivalence test; docs | ~70 | the 18 migration entries removed; `assess_wiring.py` lowered |
 | 2a-4a | `chore/lms-moodle-fixtures-move` | 2a | rename-only: `vektra-assess/tests/fixtures/moodle_ws/` to `adapters/vektra-lms-moodle/tests/fixtures/moodle_ws/`, and the one path constant | 329 (declared exception) | none |
 | 2a-4b | `refactor/lms-moodle-adapter` | 2a | `vektra_assess/moodle/` to `adapters/vektra-lms-moodle/src/vektra_lms_moodle/`; its tests; entry-point composition in `vektra-app`; wording in the 5 comment-only platform files; settings move; opt-in image build argument; guard and image-boundary additions | ~90 | **the directory entry and the 7 platform entries removed (ratchet 1)** |
 | 2b-1 | `chore/lms-moodle-adapter-out` | 2b | `adapters/` removed; the image installs the pinned wheel (OD-6) | ~10 + `adapters/` | none |
@@ -75,16 +77,16 @@ Done is measured, not declared, and it is measured by the guard's baseline, whic
 | 3-2 | `feat/assess-api-rls` | 3 | RLS for `vektra_assess_api` on the site-scoped tables (D9) | ~15 | none |
 | 3-3 | `chore/assess-shared-hygiene` | 3 | `netguard` unification DEBT entry, the JSONRenderer CHANGELOG note, and the managed-Postgres note proven on its positive case | ~10 | none |
 
-Under **OD-1 = no**, 2a-3 shrinks to a `git mv` of the 36 revisions plus gating, with no squash and no renames of stored names. The renames then need a rename revision, which would add a migration entry, and that is not allowed (see Design Notes). So OD-1 = no means 2a cannot close ratchet 1 without the product owner first accepting one dated, temporary entry. Stop and ask before 2a-3 in that case.
+**Fallback only.** This applies if task 2a-3.0 finds the OD-1 validity condition false: a release ships assess or the plugin is tagged. Under **OD-1 = no**, 2a-3 shrinks to a `git mv` of the 36 revisions plus gating, with no squash and no renames of stored names. The renames then need a rename revision, which would add a migration entry, and that is not allowed (see Design Notes). So OD-1 = no means 2a cannot close ratchet 1 without the product owner first accepting one dated, temporary entry. Stop and ask before 2a-3 in that case.
 
 ## Tasks
 
 ### Phase 4: the decision (this PR, `docs/assess-lms-separation-adr`)
 - [x] Measure the real LMS surface on `origin/develop` `f95c148b` with the guard's matcher and `rg`, file:line references included (ADR-0033 §1, §7)
-- [x] Write ADR-0033 (proposed), with the open decisions OD-1 to OD-6
+- [x] Write ADR-0033, with the open decisions OD-1 to OD-6
 - [x] Annotate ADR-0027 "Amended by ADR-0033"
 - [x] Add the Separation section to `INDEX-ASSESS.md` and a one-line pointer to `.s2s/CONTEXT.md`
-- [ ] Product owner answers OD-1 to OD-6; ADR-0033 set to `accepted`, with the answers recorded in its section 6
+- [x] Product owner answers OD-1 to OD-6 (2026-11-11); ADR-0033 set to `accepted`, with the answers recorded in its section 6
 - [ ] `.s2s/architecture.md`: ARCH-039 says 11 Protocols and lists the `lms` slot; the ARCH-065 and ARCH-073 rows point at ADR-0033 (on acceptance)
 
 ### Phase 2a, PR 2a-1: Protocol and neutral types
@@ -118,7 +120,12 @@ Under **OD-1 = no**, 2a-3 shrinks to a `git mv` of the 36 revisions plus gating,
 - [ ] 2a-2b.3 D9 backstop: `vektra-assess/tests/test_site_predicate_static.py` parses every SQL text in `vektra_assess.api` and fails when a statement reads a site-scoped `assess_*` table without a `site_id` predicate; a planted route without the predicate turns it red (positive control)
 - [ ] 2a-2b.4 delete `vektra_assess/readable.py` (re-export) and `context/capture/readers.py` if still present; `make test-integration` green with 0 skipped (the existing JUnit-skip CI steps)
 
-### Phase 2a, PR 2a-3: the assess schema branch and the neutral names (OD-1 = yes)
+### Phase 2a, PR 2a-3: the assess schema branch and the neutral names (OD-1 = yes, decided 2026-11-11)
+- [ ] 2a-3.0 **validity check, at the moment of the cut and before any other 2a-3 task.** Both facts must hold, and each must be measured:
+  1. no published release ships `vektra-assess`: no `vektra-assess` package or `assess_*` revision in any `v*` tag, checked with `git tag -l 'v*'` and then `git ls-tree -r <tag> -- vektra-assess migrations/versions | rg assess` for each tag;
+  2. `vektra-moodle-discuss` has no tag: `gh api repos/vektralabs/vektra-moodle-discuss/tags` returns `[]`.
+
+  Record both results in `## Notes`. If either is false, **stop**: OD-1 is decided again by the owner, and 2a-3 follows the fallback above.
 - [ ] 2a-3.1 before deleting anything: run 0001 to 0044 on an empty cluster and commit the normalised schema golden `vektra-assess/tests/golden/assess_schema_head.sql` (`pg_dump --schema-only`, normalised), with the D5 rename map applied, plus the effective-privilege dump of the grant matrix
 - [ ] 2a-3.2 `vektra-assess/src/vektra_assess/migrations/versions/a0001_assess_base.py`: one revision, `branch_labels=("assess",)`, `depends_on="0008"`, creating the head schema with `lms_site_uuid`, `lms_origin` (CHECK `ck_assess_sites_lms_origin`) and `lms_release`; the CREATEROLE error message names all three roles; delete `migrations/versions/0009…0044` (36 files)
 - [ ] 2a-3.3 `alembic.ini` `version_locations`; `migrations/env.py`; branch label `platform` on `migrations/versions/0001_initial_schema.py`; `docker/entrypoint.sh` (lines 21, 33) runs `alembic upgrade platform@head`, and `assess@head` only when `VEKTRA_ASSESS_ENABLED=true`
@@ -137,7 +144,16 @@ Under **OD-1 = no**, 2a-3 shrinks to a `git mv` of the 36 revisions plus gating,
   - `docs/reference/{api,configuration,error-codes}.md`; the upgrade note: "re-create the development assess schema"
   - CHANGELOG `[Unreleased]`
 - [ ] 2a-3.8 baseline: delete the 18 `migrations/versions/*` entries and lower `assess_wiring.py`, in the same commit; guard green
-- [ ] 2a-3.9 drop and re-create the development and staging assess schemas (the user's machines and the dev sites; this touches real dev environments, so stop and ask first); record which databases in `## Notes`
+- [ ] 2a-3.9 the databases. What is known:
+  - the only database with assess data is the local F1 stack's Postgres (the `vektra-f1-postgres` container on the developer machine);
+  - testcontainers are ephemeral;
+  - the deploy VM is believed to run v0.8.0, which has no assess.
+
+  At the moment of the 2a-3 cut:
+  - **Local F1 database**: recreate its assess schema from `assess@head`. This is destructive, so stop and ask first, and run it **only after an explicit go from the owner**.
+  - **Deploy VM**: a request to the internal-ops session, which operates it. This session does not touch it. The request is for a **read-only** check of whether any `assess_*` tables exist there. Only if they do does it become a recreate request to that session, again after the owner's go.
+
+  Record in `## Notes` the result of the check, and what was recreated, by whom and when.
 
 ### Phase 2a, PR 2a-4a: the recorded fixtures (rename-only)
 - [ ] 2a-4a.1 `git mv vektra-assess/tests/fixtures/moodle_ws adapters/vektra-lms-moodle/tests/fixtures/moodle_ws` (328 files), and the fixture path constant in `vektra-assess/tests/assess_moodle_support.py`
@@ -174,7 +190,7 @@ Under **OD-1 = no**, 2a-3 shrinks to a `git mv` of the 36 revisions plus gating,
 - [ ] 3.3 `.s2s/BACKLOG.md`: DEBT item "unify `vektra_shared.netguard` with `vektra_learn.api._resolve_and_validate_url`" (owner: the author)
 - [ ] 3.4 CHANGELOG `Changed`: JSON logs are written with `ensure_ascii=False` (every deployment)
 - [ ] 3.5 managed-Postgres upgrade note: prove the positive case (roles pre-created + the documented GRANT + assess migrated to head) on a cluster without superuser, then write it; "up to the current head" instead of a hand-written revision number
-- [ ] 3.6 under OD-1 = no only: the second ratchet (squash after every retained database has been migrated; see ADR-0033 D7)
+- [ ] 3.6 fallback only, if task 2a-3.0 forces OD-1 = no: the second ratchet (squash after every retained database has been migrated; see ADR-0033 D7)
 
 ## State & Data Lifecycle
 
@@ -184,7 +200,7 @@ Under **OD-1 = no**, 2a-3 shrinks to a `git mv` of the 36 revisions plus gating,
 | `alembic_version` rows of the `assess` branch | `alembic upgrade assess@head` (2a-3.3) | each assess revision | `alembic downgrade assess@base`; re-creation of a dev schema (2a-3.9) |
 | `vektra-assess/tests/golden/assess_schema_head.sql` | 2a-3.1, from the old chain | a new assess revision regenerates it (the test says how) | never deleted; it is the equivalence oracle |
 | `LmsStartSource` resolution cache (`_BoundedCache`, size and TTL bounded) | `gate_facts` / `_resolve` | `put` | `pop` after `enrolled` and `close_facts`, TTL, size bound (unchanged from today) |
-| development and staging assess schemas | the old chain 0009 to 0044 | | dropped and re-created in 2a-3.9 (OD-1 = yes) |
+| the assess schema of the local F1 Postgres (`vektra-f1-postgres`) | the old chain 0009 to 0044 | | re-created in 2a-3.9 after the owner's go (OD-1); the deploy VM only on internal-ops' read-only check finding `assess_*` tables |
 | `HtmlExtractionProfile` | provider constant, versioned (`profile_version`) | a provider release | not stored; the snapshot header records `profile_version` for provenance |
 
 ## Acceptance Criteria
@@ -201,7 +217,7 @@ Each criterion is checked against the guard's data file. A status line or a gree
 - [ ] The vertical's suites (unit, integration, chaos) use no Moodle fixture: `rg -l moodle_ws vektra-assess/tests tests/` returns nothing.
 - [ ] With `VEKTRA_ASSESS_ENABLED=true` and `VEKTRA_ASSESS_LMS_PROVIDER` unset, the worker refuses to start, and the setup item `lms_provider_registered` is `MISSING`.
 - [ ] The default image contains no `vektra_lms_*` package (image content test), and the `INSTALL_LMS_PROVIDER=moodle` build does.
-- [ ] Under OD-1 = yes, ratchet 2 also closes in 2a: the baseline file has no entries, and the squash-equivalence test is green.
+- [ ] Ratchet 2 also closes in 2a (OD-1 = yes, decided): the baseline file has no entries, and the squash-equivalence test is green.
 
 **Phase 2b**
 - [ ] `adapters/` does not exist in this repository, and the image variant installs a wheel pinned by hash.
@@ -240,10 +256,11 @@ Each criterion is checked against the guard's data file. A status line or a gree
 
 - **Plugin side** (requests for the plugin session; never edited from here):
   1. P3 is written against `rubric_source: "lms"` and the reason codes `lms_rubric_missing` and `lms_facts_unreadable` (OD-3), and, if the site-admin page shows it, against the setup report field `lms_release`.
-  2. No change for the kept wire names `cmid`, `loginas`, `realuser_id` (OD-2 default).
-  3. If OD-5 = `vektra-moodle-discuss`: a top-level `provider/` tree holding `vektra-lms-moodle`, excluded from the plugin release zip (the release script's content check gains an assertion), a Python CI job running the provider's tests and the conformance kit against a pinned `vektra-stack`, and a wheel release.
+  2. No change for the kept wire names `cmid`, `loginas`, `realuser_id` (OD-2, decided).
+  3. OD-5 (decided): a top-level `provider/` tree holding `vektra-lms-moodle`, excluded from the plugin release zip (the release script's content check gains an assertion), a Python CI job running the provider's tests and the conformance kit against a pinned `vektra-stack`, and a wheel release.
   4. Check the plugin's docs and settings help for `moodle_origin` and `moodle_site_uuid` provisioning text (they become `lms_origin` and `lms_site_uuid` in 2a-3).
-- **Operators**: development and staging assess schemas are re-created in 2a-3 (OD-1 = yes); the settings move to the provider (OD-4); the image needs `INSTALL_LMS_PROVIDER=moodle` (2a), then the published variant (2b).
+- **Internal ops (deploy VM)**: a request, not a task of this repository. At the 2a-3 cut, check read-only whether any `assess_*` tables exist. Only if they do, recreate them, after the owner's go (task 2a-3.9).
+- **Operators**: the local F1 assess schema is re-created in 2a-3 (OD-1); the settings move to the provider as `VEKTRA_LMS_MOODLE_*` with no alias (OD-4); the image needs `INSTALL_LMS_PROVIDER=moodle` (2a), then the published `<version>-lms-moodle` tag (2b, OD-6).
 - **`vektra-learn`** is unaffected. `enrolment` and `course_staff` are available to it later through the same Protocol.
 
 ## Notes
@@ -252,4 +269,6 @@ Each criterion is checked against the guard's data file. A status line or a gree
   - `vektra-assess`: 96 files and 551 mentions (35 files and 247 mentions in `moodle/`);
   - the platform: 7 files and 31 mentions;
   - migrations: 18 files and 37 mentions.
-- The open decisions OD-1 to OD-6 are the product owner's. They are listed in ADR-0033 §6, each with a recommended default.
+- 2026-11-11, decisions of the product owner (ADR-0033 §6, now `accepted`):
+  - OD-1 = (a), no assess data survives ("they are test data, recreate"): squash into the `assess` branch with `lms_*` names, and both ratchets close in 2a. It is valid only while no release ships assess and no plugin tag exists, which task 2a-3.0 checks at the cut. Only the local F1 Postgres is known to hold assess data, and it is recreated after the owner's explicit go. For the deploy VM (believed to run v0.8.0, without assess), the internal-ops session is asked for a read-only check, and a recreate only if `assess_*` tables exist.
+  - OD-2 to OD-6: the defaults, decided after the owner consulted the coordinator: keep `cmid`/`loginas`/`realuser_id`; `rubric_source` `"lms"` in place; `VEKTRA_LMS_MOODLE_*` with no alias; the provider in `vektra-moodle-discuss`, excluded from the plugin zip; a second image tag with the pinned wheel.

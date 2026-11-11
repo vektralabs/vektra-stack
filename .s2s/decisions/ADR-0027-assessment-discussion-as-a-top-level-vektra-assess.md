@@ -3,7 +3,7 @@
 **Status**: accepted
 **Date**: 2026-11-01
 **Context**: design session `20261101-143802-design-assessment-discussion-chatbot` (assessment discussion chatbot); covers ARCH-065, ARCH-073
-**Amended by**: [ADR-0033](ADR-0033-lms-provider-protocol.md) (proposed 2026-11-11). This ADR asked "sub-package or top-level package?". ADR-0033 asks the question it did not ask: "platform or adapter?". Its answer:
+**Amended by**: [ADR-0033](ADR-0033-lms-provider-protocol.md) (accepted 2026-11-11). This ADR asked "sub-package or top-level package?". ADR-0033 asks the question it did not ask: "platform or adapter?". Its answer:
 
 - Vektra keeps the authority (state machine, gates, attempt selection, re-resolution, scheduling, the setup-check runner).
 - The Moodle WS client, its version models, its probes and the service-account setup items become an `LmsProvider` behind an 11th Protocol.

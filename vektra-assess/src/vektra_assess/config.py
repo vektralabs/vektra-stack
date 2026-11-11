@@ -447,8 +447,23 @@ class VektraAssessSettings(BaseSettings):
     provider_locality: Literal["onprem", "cloud"] = Field(
         "cloud",
         alias="VEKTRA_ASSESS_PROVIDER_LOCALITY",
-        description="Where the discussion model runs. 'cloud' (the safe default) makes the eval adapter refuse any dataset whose data_basis is not 'synthetic' before a single request (NFR-022 data basis); set 'onprem' only for a model on the institution's own hardware.",
+        description="Where the discussion model runs. 'cloud' (the safe default) makes the eval adapter refuse any dataset whose data_basis is not 'synthetic' before a single request (NFR-022 data basis), and makes the API refuse VEKTRA_ASSESS_SAFEGUARD_MODE=none outside development; set 'onprem' only for a model on the institution's own hardware.",
     )
+    # --- LMS provider (ADR-0033, plan 2a-1.6) -------------------------------------------------
+    lms_provider: str | None = Field(
+        None,
+        alias="VEKTRA_ASSESS_LMS_PROVIDER",
+        pattern=r"^[a-z][a-z0-9_-]{0,63}$",
+        description="Name of the LMS provider to load from the entry-point group vektra.lms_providers (ADR-0033 D2). Read by nothing yet: the worker composes its LMS client directly until plan task 2a-4b.5.",
+    )
+
+    @field_validator("lms_provider", mode="before")
+    @classmethod
+    def _empty_provider_is_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     # --- student session lifecycle (plan assess-session-lifecycle) ---------------------------
     token_issuer: str = Field(
         "vektra-assess",

@@ -248,3 +248,20 @@ def test_a_field_validator_message_is_never_copied(
         "VEKTRA_ASSESS_API_POOL_SIZE: Input should be greater than or equal to 1"
         in detail
     )
+
+
+# --- LMS provider name (ADR-0033, plan 2a-1.6) ------------------------------------------------
+
+
+def test_the_lms_provider_is_unset_by_default_and_read_by_its_alias() -> None:
+    assert VektraAssessSettings().lms_provider is None
+    s = VektraAssessSettings.model_validate({"VEKTRA_ASSESS_LMS_PROVIDER": "example"})
+    assert s.lms_provider == "example"
+    blank = VektraAssessSettings.model_validate({"VEKTRA_ASSESS_LMS_PROVIDER": " "})
+    assert blank.lms_provider is None  # an empty compose value means unset
+
+
+@pytest.mark.parametrize("bad", ["Example", "a b", "x" * 65, "../evil", "1abc"])
+def test_a_malformed_lms_provider_name_is_refused(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        VektraAssessSettings.model_validate({"VEKTRA_ASSESS_LMS_PROVIDER": bad})

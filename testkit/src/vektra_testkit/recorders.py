@@ -1,9 +1,10 @@
 """Recording test doubles for the provider Protocols (plan assess-context, task group A).
 
-These are **test assets** that ship in the package, like ``testing.py``, so every package's suite
-(and the eval adapter) can use the same doubles. They must never be registered in a
-``ProviderRegistry``: the startup steps assert that no registered provider is a ``Recording*``
-class.
+These are **test assets**, in the dev-only ``vektra-testkit`` distribution (plan task 3.1) so that
+every package's suite (and the eval adapter) can use the same doubles while the production wheel
+and image carry none of them. They must never be registered in a ``ProviderRegistry``: a
+production registry refuses any ``Recording*`` instance, and the startup steps assert that no
+registered provider is one.
 
 What they are for: BR-011 / NFR-017 say excluded material must be *absent* from model input, and
 NFR-015 says RAG OFF means zero retrieval calls. Both are proven on bytes and on call counts, not

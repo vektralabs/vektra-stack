@@ -12,7 +12,8 @@ import pytest
 from vektra_shared.errors import ActiveIndexVersionError
 from vektra_shared.protocols import LLMProvider, SafeguardHook, VectorStoreProvider
 from vektra_shared.registry import ProviderRegistry
-from vektra_shared.testing_recorders import (
+from vektra_shared.types import Message, QueryEmbedding, SafeguardContext
+from vektra_testkit.recorders import (
     ForbiddenProviderCall,
     RecordingLLMProvider,
     RecordingSafeguardHook,
@@ -23,7 +24,6 @@ from vektra_shared.testing_recorders import (
     find_canaries,
     is_recorder,
 )
-from vektra_shared.types import Message, QueryEmbedding, SafeguardContext
 
 # mypy checks these assignments structurally: a missing or mistyped method fails type-checking
 _llm: LLMProvider = RecordingLLMProvider()

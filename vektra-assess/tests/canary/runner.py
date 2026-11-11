@@ -43,14 +43,14 @@ from vektra_assess.context.snapshot import canonical_bytes
 from vektra_assess.crypto import envelope
 from vektra_assess.moodle.readers import read_submission_status
 from vektra_assess.moodle.result import Readable
-from vektra_shared.testing_recorders import (
+from vektra_shared.types import Message
+from vektra_testkit.recorders import (
     RecordingLLMProvider,
     RecordingVectorStoreProvider,
 )
-from vektra_shared.testing_recorders import (
+from vektra_testkit.recorders import (
     canonical_bytes as canon,
 )
-from vektra_shared.types import Message
 
 SINKS = (
     "snapshot",

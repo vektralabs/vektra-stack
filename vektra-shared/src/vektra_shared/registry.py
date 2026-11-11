@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-#: same marker as ``vektra_shared.testing_recorders.TEST_DOUBLE_MARKER`` (not imported: the
+#: same marker as ``vektra_testkit.recorders.TEST_DOUBLE_MARKER`` (not imported: the
 #: registry is product code and the recorders are a test asset)
 _TEST_DOUBLE_MARKER = "__vektra_test_double__"
 
@@ -38,9 +38,9 @@ class ProviderRegistry:
 
     def __init__(self, *, allow_test_doubles: bool = False) -> None:
         self._store: dict[str, dict[str, Any]] = {}
-        # The Recording* doubles in vektra_shared.testing_recorders ship in the package but are
-        # test assets: a production registry refuses them (plan assess-context). Only a test
-        # that builds its own registry may opt in.
+        # The Recording* doubles live in vektra_testkit.recorders, a dev-only distribution that
+        # the image never installs (plan task 3.1); a production registry still refuses them,
+        # as defence in depth (ADR-0033 D8). Only a test that builds its own registry may opt in.
         self._allow_test_doubles = allow_test_doubles
 
     def register(self, category: str, name: str, instance: Any) -> None:

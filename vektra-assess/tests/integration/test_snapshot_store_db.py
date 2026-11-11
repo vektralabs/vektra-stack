@@ -257,7 +257,7 @@ async def test_canary_matrix_subset_leaves_no_canary_in_any_row(pg: Pg) -> None:
     from canary.runner import run_case
 
     from vektra_assess.context.capture.capture import persist_capture
-    from vektra_shared.testing_recorders import find_canaries
+    from vektra_testkit.recorders import find_canaries
 
     from .conftest import dump_data
 

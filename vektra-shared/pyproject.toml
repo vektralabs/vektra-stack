@@ -26,6 +26,9 @@ packages = ["src/vektra_shared"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+[tool.uv.sources]
+vektra-testkit = { workspace = true }
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
@@ -36,4 +39,6 @@ dev = [
     # Declared here so a `uv sync --package vektra-shared` has it, rather than
     # relying on the root dev group leaking in.
     "pyyaml>=6.0.3",
+    # test doubles and the LMS conformance kit (plan task 3.1): dev only
+    "vektra-testkit",
 ]

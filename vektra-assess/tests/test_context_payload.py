@@ -8,7 +8,7 @@ from test_context_snapshot import make
 from vektra_assess.context.assemble import assemble_context
 from vektra_assess.context.payload import BEGIN, END, bundle_to_model_payload
 from vektra_assess.context.snapshot import MarksHidden
-from vektra_shared.testing_recorders import RecordingLLMProvider
+from vektra_testkit.recorders import RecordingLLMProvider
 
 
 async def test_payload_bytes_reach_the_provider_exactly() -> None:

@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "tests" / "eval"))
 
 import assess_judge as J  # noqa: E402
 
-from vektra_shared.testing_recorders import RecordingLLMProvider  # noqa: E402
+from vektra_testkit.recorders import RecordingLLMProvider  # noqa: E402
 
 CLEAN = {k: False for k in J.CRITERIA}
 #: the fixed reply a human label describes (J.LABEL_REPLY_KEYS)

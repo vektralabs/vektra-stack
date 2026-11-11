@@ -35,7 +35,7 @@ _LIVE = text(
     "FROM assess_enrolment_checks c WHERE c.session_id = s.id) c ON true "
     "WHERE s.state IN ('ACTIVE', 'OUTAGE') "
     # a session whose re-check is still queued or running does not take a place in the batch
-    # (CodeRabbit 4498466303): the batch reaches the others instead of re-selecting it
+    # (so the batch reaches the others instead of re-selecting it)
     "AND NOT EXISTS (SELECT 1 FROM assess_jobs j WHERE j.dedupe_key = "
     "'enrolment_recheck:' || s.id::text AND j.state IN ('ready', 'leased')) "
     "ORDER BY c.last ASC NULLS FIRST, s.id LIMIT :n"
@@ -46,7 +46,7 @@ _SESSION = text(
     "ON c.site_id = s.site_id AND c.cmid = s.cmid WHERE s.id = :sid"
 )
 #: dated when the Moodle read STARTED (database clock), not when its answer is written: a
-#: slow read must not make the observation look fresher (CodeRabbit review 5809548168)
+#: slow read must not make the observation look fresher
 _RECORD = text(
     "INSERT INTO assess_enrolment_checks (session_id, result, checked_at) "
     "VALUES (:s, :r, :observed)"

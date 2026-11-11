@@ -123,7 +123,7 @@ _SITES_API_READ = (
     "moodle_origin",  # revision 0033 (plan 9): the one origin allowed to frame the UI
 )  # fmt: skip
 #: columns of assess_deliveries the API may read: the status, never the recipient ref nor the
-#: Message-ID, which hashes the ref too (0035, CodeRabbit 4504362581)
+#: Message-ID, which hashes the ref too (0035)
 _DELIVERY_API_READ = (
     "id", "transcript_id", "kind", "round", "recipient_kind", "recipient_userid", "status",
     "attempts", "not_before", "attempt_started_at", "last_error_class", "smtp_code",

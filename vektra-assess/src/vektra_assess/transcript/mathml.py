@@ -28,7 +28,7 @@ MATH_ATTRS = frozenset(
 #: attribute values the filter accepts (a value is never user text, but it is still checked)
 _VALUE = re.compile(r"^[A-Za-z0-9 .\-]{0,32}$")
 MAX_TEX_CHARS = 2000
-#: deepest MathML nesting rendered as MathML (CodeRabbit 4503029399); deeper -> escaped TeX
+#: deepest MathML nesting rendered as MathML; deeper -> escaped TeX
 MAX_DEPTH = 32
 
 _DELIMS = re.compile(r"\\\((.+?)\\\)|\\\[(.+?)\\\]|\$\$(.+?)\$\$", re.DOTALL)

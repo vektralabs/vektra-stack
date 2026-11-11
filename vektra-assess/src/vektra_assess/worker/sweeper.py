@@ -22,7 +22,7 @@ _DUE = text(
     "AND deadline_at + make_interval(secs => reply_grace_s) < now() "
     "ORDER BY deadline_at LIMIT :n"
 )
-#: the timeout re-checked under the row lock (CodeRabbit 4498473601): a session that went into
+#: the timeout re-checked under the row lock: a session that went into
 #: OUTAGE, or got a later deadline from an outage credit, after the scan is left alone
 _RECHECK = text(
     "SELECT epoch FROM assess_sessions WHERE id = :sid AND state = 'ACTIVE' "

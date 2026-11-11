@@ -287,7 +287,7 @@ async def start_session(
                         start_breaker_open(int(float(breaker.wait_s or 0))),
                         "start_breaker_open",
                     )
-            # REQ-071 Start cap, authoritative (CodeRabbit 4498466271): under a lock per
+            # REQ-071 Start cap, authoritative: under a lock per
             # (site, student, activity) held until this Start commits, the attempts are counted
             # again in a new statement, so concurrent Starts that passed the advisory check
             # cannot add a sixth attempt between them

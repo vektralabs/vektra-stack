@@ -285,7 +285,7 @@ _ACTIVATE = text(
 )
 #: dated at the pre-flight's admission (database clock, before Moodle was read), never at the
 #: commit: the enrolment was observed then, and a slow capture must not make it look fresher
-#: than it is (CodeRabbit 4498466313)
+#: than it is
 _ENROLLED = text(
     "INSERT INTO assess_enrolment_checks (session_id, result, checked_at) "
     "VALUES (:s, 'enrolled', to_timestamp(:observed))"

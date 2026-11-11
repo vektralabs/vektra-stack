@@ -174,14 +174,14 @@ async def after_rollback(
             reason_code=reason,
             data={"cmid": cmid, "streak": n},
         )
-    # serialise the per-site count through commit (CodeRabbit 4498466324): two rollbacks
+    # serialise the per-site count through commit: two rollbacks
     # reaching the threshold together would otherwise each miss the other's uncommitted row.
     # The same per-site key as the API's half-open Start check; held until this commit, and
     # the count below is a new statement (a new snapshot) taken after the lock
     await conn.execute(_SITE_LOCK, {"s": str(site_id)})
     # half-open (the cooldown is over): only one Start at a time goes through, so a system
     # rollback now is the probe failing; the cooldown restarts whatever the window count
-    # says (CodeRabbit review 5808100754)
+    # says
     await conn.execute(_PROBE_FAILED, {"s": site_id, "cd": limits.breaker_cooldown_s})
     recent = int(
         (
@@ -211,7 +211,7 @@ async def after_rollback(
 
 
 async def after_commit(conn: Any, site_id: UUID, session_id: UUID) -> None:
-    """A committed half-open probe closes the site's breaker (CodeRabbit review 5808100754)."""
+    """A committed half-open probe closes the site's breaker."""
     if (await conn.execute(_CLOSE, {"s": site_id, "sid": session_id})).rowcount:
         await write_event(
             conn, AssessAuditEvent.START_BREAKER_CLOSE, actor="worker", site_id=site_id

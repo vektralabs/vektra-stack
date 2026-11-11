@@ -210,7 +210,7 @@ async def gate(
         and (row.server_now - row.created_at).total_seconds() >= start_t_s
     ):
         raise GateRejected(start_refused("start_timeout"), "start_timeout")
-    # the clock again, in THIS transaction (CodeRabbit 4498473554): a close that fell due
+    # the clock again, in THIS transaction: a close that fell due
     # after the lazy close ran is refused as closed here, never answered with material (the
     # next request closes it). ``enforce_clock`` itself reads with check_clock=False.
     if (
@@ -255,7 +255,7 @@ async def due_close(
       timed out (its clock is frozen; the credit moves the deadline when it ends).
     """
     # REQ-083: usage already at the budget (the close after the last reply was lost: an
-    # audit failure, a crash) is enforced here, before another turn (CodeRabbit 4498473586)
+    # audit failure, a crash) is enforced here, before another turn
     if (
         row.state in LIVE
         and token_budget

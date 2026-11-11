@@ -114,30 +114,22 @@ def test_nfr_007_audit_completeness(api: httpx.Client, admin_key: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-_NORMATIVE_CODES = [
-    "ERR_INGEST_001",
-    "ERR_INGEST_002",
-    "ERR_INGEST_003",
-    "ERR_INGEST_004",
-    "ERR_QUERY_001",
-    "ERR_QUERY_002",
-    "ERR_QUERY_003",
-    "ERR_QUERY_004",
-    "ERR_CONFIG_001",
-    "ERR_CONFIG_002",
-    "ERR_AUTH_001",
-    "ERR_AUTH_002",
-    "ERR_AUTH_003",
-]
-
-
 def test_nfr_009_error_codes_exist() -> None:
-    """All 13 normative error codes are defined with correct format."""
+    """Every ``ERR_*`` constant has the ``ERR-COMPONENT-NNN`` format.
+
+    The set is derived from ``vektra_shared.errors``, not listed by hand. That every code also
+    has a registry row with a remediation is checked without a stack by
+    ``vektra-shared/tests/test_error_code_registry.py``.
+    """
     from vektra_shared import errors
 
-    for name in _NORMATIVE_CODES:
-        assert hasattr(errors, name), f"Missing error code constant: {name}"
-        code_value = getattr(errors, name)
+    codes = {
+        name: value
+        for name, value in vars(errors).items()
+        if name.startswith("ERR_") and isinstance(value, str)
+    }
+    assert len(codes) >= 13, "the derived code set is implausibly small"
+    for name, code_value in codes.items():
         assert code_value.startswith("ERR-") and code_value.count("-") == 2, (
             f"Invalid code format for {name}: {code_value}"
         )

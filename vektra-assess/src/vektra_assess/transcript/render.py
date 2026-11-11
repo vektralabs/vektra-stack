@@ -228,7 +228,7 @@ def _minutes(seconds: int) -> str:
 def _lang_tag(lang: str | None) -> str:
     """The BCP 47 tag of a turn: ``it`` / ``en``; a passage the detector classed ``other`` is
     ``und`` (undetermined), never Italian, so a screen reader does not read it with Italian
-    pronunciation (CodeRabbit 4503025958); no recorded language (older turns) is ``it``."""
+    pronunciation; no recorded language (older turns) is ``it``."""
     if lang in ("it", "en"):
         return lang
     return "und" if lang == "other" else "it"
@@ -259,7 +259,7 @@ def _contests(
             latest.pop(label, None)
             latest[label] = (status, t.no)
     # contest markers carry the bundle's CANONICAL labels ("Criterio 1", references.
-    # canonical_labels), not the snapshot-local "C1" (CodeRabbit 4503025945)
+    # canonical_labels), not the snapshot-local "C1"
     remarks = {
         CRITERION_LABEL.format(n=n): c.remark
         for n, c in enumerate(snapshot.criteria, start=1)

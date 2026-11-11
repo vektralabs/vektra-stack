@@ -54,7 +54,7 @@ export function isTerminal(s: UiState): boolean {
 export function reduce(s: UiState, a: Action): UiState {
   if (s.name === "closed") {
     // a closed session never reopens; a close learnt without its reason (a 409) takes the
-    // reason of the closed event that follows, once (CodeRabbit 4501067255)
+    // reason of the closed event that follows, once
     return a.type === "closed" && s.reason === "unknown" && a.reason && REASONS.has(a.reason)
       ? closed(a.reason)
       : s;

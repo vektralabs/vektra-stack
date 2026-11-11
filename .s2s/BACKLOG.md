@@ -73,6 +73,26 @@
 
 ---
 
+### DEBT-042: two SSRF guards, `vektra_shared.netguard` and learn's `_resolve_and_validate_url`
+
+**Status**: draft | **Priority**: low | **Created**: 2026-11-11
+**Origin**: the external review of `vektra-assess`. The `netguard.py` module docstring promised "a follow-up DEBT item" for unifying the two guards, and no item existed.
+
+**Context**: both guards resolve the name once, validate every resolved address and pin the connection to one IP, but they enforce **different policies**, and the difference is deliberate:
+- `vektra_shared.netguard` (the assess web-service client, ARCH-070) is a **host allowlist**: the URL host must be one of `allowed_hosts`, every address must lie inside `allowed_cidrs` when given, and only without CIDRs are private/loopback/reserved addresses refused. An on-prem LMS usually sits on a private address, so this is the only policy that lets it through without opening all of RFC 1918.
+- `vektra_learn.api._resolve_and_validate_url` (a document URL a client gives to learn content ingest) is **deny-private**: any host, but every private, loopback, reserved or link-local address is refused. That is right for a public document URL and would break an LMS on a private address.
+
+So "unify" means one implementation with the policy as a parameter, not one policy. Today the copies can drift: a resolution or pinning fix made in one is not made in the other.
+
+**Proposed approach**: move learn onto `netguard` with a deny-private policy (no `allowed_hosts`, `deny_private=True`, link-local refused as today), keeping learn's redirect re-validation, then delete `_resolve_and_validate_url`.
+
+**Acceptance criteria**:
+- [ ] Learn content ingest refuses exactly the addresses it refuses today (private, loopback, reserved, link-local, on every resolved address and on every redirect hop), shown by a test that runs on both the old and the new code
+- [ ] The assess web-service client's policy is unchanged (its netguard tests pass untouched)
+- [ ] One resolve-validate-pin implementation is left in `*/src`
+
+---
+
 ### BUG-029: the documented `namespace` form field of `POST /api/v1/ingest` was ignored
 
 **Status**: completed (2026-11-07) | **Priority**: high | **Created**: 2026-11-07

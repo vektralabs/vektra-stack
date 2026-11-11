@@ -3,8 +3,8 @@
 The transcript handler and the notification handler each run their rows concurrently, up to 3
 rows per job, and the delivery pool runs 2 jobs at once. So up to 6 rows can want a connection
 at the same instant from a worker pool of ``VEKTRA_ASSESS_WORKER_POOL_SIZE`` (5 by default,
-``max_overflow=0``). That pool is shared with the heartbeat and the other pools (CodeRabbit
-4513956359 on PR #190). A row holds a connection only for its claim and its settle, never across
+``max_overflow=0``). That pool is shared with the heartbeat and the other pools.
+A row holds a connection only for its claim and its settle, never across
 the SMTP send, so the pool waits rather than fails. Even so, a slow database lets the rows queue
 ahead of the heartbeat, which then goes stale.
 

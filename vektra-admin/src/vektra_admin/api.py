@@ -233,7 +233,7 @@ async def health(
             )
 
         # every check runs only once the caller is authenticated: an anonymous ?detail=full
-        # must not reach the LLM or the database (CodeRabbit 4524508921)
+        # must not reach the LLM or the database
         _, deep = await _health.check_all(registry, version, full=True)
         status_code = 503 if deep.status == "unhealthy" else 200
         return Response(

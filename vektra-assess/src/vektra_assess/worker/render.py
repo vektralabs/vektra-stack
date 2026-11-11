@@ -80,7 +80,7 @@ _UPSERT_STATE = text(
 )
 #: ``refreshed_at`` is the database clock read BEFORE the Moodle reads (``_CLOCK``), as the
 #: teacher_gate job does: a slow read never makes its facts look fresher than they are (a reset
-#: and the grader checks compare it with the same clock; CodeRabbit 4506916946)
+#: and the grader checks compare it with the same clock)
 _CLOCK = text("SELECT clock_timestamp()")
 _UPSERT_INPUTS = text(
     "INSERT INTO assess_gate_inputs (site_id, student_userid, cmid, inputs, refreshed_at) "
@@ -139,7 +139,7 @@ async def evaluate_render(
         return GateDecision(Code.NOT_ENABLED, ButtonState.NOT_ENABLED), None
     if seen is not None:
         # the REQ-091 date this evaluation used: a reset takes the Moodle half only while the
-        # date is still the same (CodeRabbit 4506916913)
+        # date is still the same
         seen["attested_at"] = act.attested_at
     target = StartTarget(
         session_id=uuid.uuid4(),  # no session: a scratch key for the source's resolution cache

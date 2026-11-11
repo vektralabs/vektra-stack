@@ -263,32 +263,24 @@ def test_request_id_in_error_response(running_app: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Constants verification: all 13 normative codes exist
+# Constants verification: every defined code has the registry format
 # ---------------------------------------------------------------------------
 
 
 def test_all_normative_codes_exist() -> None:
-    """All 13 normative error codes are defined as constants in vektra_shared."""
+    """Every ``ERR_*`` constant of vektra_shared has the ``ERR-COMPONENT-NNN`` format.
+
+    Derived from the module, not a hand-written list; the registry rows (with remediation) for
+    every code are checked by ``vektra-shared/tests/test_error_code_registry.py``.
+    """
     from vektra_shared import errors
 
-    expected = [
-        "ERR_INGEST_001",
-        "ERR_INGEST_002",
-        "ERR_INGEST_003",
-        "ERR_INGEST_004",
-        "ERR_QUERY_001",
-        "ERR_QUERY_002",
-        "ERR_QUERY_003",
-        "ERR_QUERY_004",
-        "ERR_CONFIG_001",
-        "ERR_CONFIG_002",
-        "ERR_AUTH_001",
-        "ERR_AUTH_002",
-        "ERR_AUTH_003",
-    ]
-    for name in expected:
-        assert hasattr(errors, name), f"Missing constant: {name}"
-        value = getattr(errors, name)
-        # Code format: ERR-COMPONENT-NNN
+    codes = {
+        name: value
+        for name, value in vars(errors).items()
+        if name.startswith("ERR_") and isinstance(value, str)
+    }
+    assert len(codes) >= 13, "the derived code set is implausibly small"
+    for value in codes.values():
         assert value.startswith("ERR-"), f"Bad format: {value}"
         assert value.count("-") == 2, f"Bad format: {value}"

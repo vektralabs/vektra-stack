@@ -358,7 +358,7 @@ async def download_transcript(
                     str(row.content_hash),
                 )
             except store.TranscriptKeyUnavailable:
-                # rotation or configuration (CodeRabbit 4503029403): retryable, the token is
+                # rotation or configuration: retryable, the token is
                 # NOT consumed and nothing is reported as an integrity failure
                 log.error(
                     "assess.transcript.alert",

@@ -65,12 +65,12 @@ def _is_test_double(obj: Any) -> bool:
 
 async def _close(built: Any) -> None:
     """Best effort: a refused provider must not keep its client, pool or thread alive."""
-    aclose = getattr(built, "aclose", None)
-    if callable(aclose):
-        try:
+    try:  # the lookup too: a property can run code, and raise
+        aclose = getattr(built, "aclose", None)
+        if callable(aclose):
             await aclose()
-        except Exception:  # the refusal is what the operator needs to see
-            pass
+    except Exception:  # the refusal is what the operator needs to see
+        pass
 
 
 async def load_lms_provider(
@@ -131,11 +131,22 @@ async def load_lms_provider(
         )
     elif _is_test_double(provider) and not allow_test_doubles:
         problem = test_double
-    elif provider.name != name:
-        problem = _refuse(
-            f"the entry point {name} built a provider that calls itself {provider.name}",
-            "The entry point name and the provider's name must agree (it is the registry key).",
-        )
+    else:
+        # the Protocol check does not call the property; reading it can raise
+        try:
+            own_name = provider.name
+        except Exception as exc:
+            own_name = None
+            problem = _refuse(
+                f"the LMS provider {name} failed to report its name ({type(exc).__name__})",
+                "Fix the provider: its name property must return the entry point name.",
+            )
+        if problem is None and own_name != name:
+            problem = _refuse(
+                f"the entry point {name} built a provider that calls itself {own_name}",
+                "The entry point name and the provider's name must agree (it is the "
+                "registry key).",
+            )
     if problem is not None:
         await _close(provider)
         raise problem

@@ -30,8 +30,15 @@ import dataclasses
 import io
 import logging
 import re
-from collections.abc import Awaitable, Callable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from html.parser import HTMLParser
@@ -41,7 +48,9 @@ import structlog
 
 from vektra_shared.lms import (
     NOT_IN_USER_COURSES,
+    SETUP_MISSING,
     SETUP_OK,
+    SETUP_UNVERIFIABLE,
     CapabilityResult,
     LmsProvider,
     LmsSite,
@@ -120,8 +129,9 @@ class ConformanceTarget:
     #: capability flags to probe (the vertical's ``capabilities.FLAGS``)
     flags: tuple[str, ...]
     manifest: Mapping[str, Any] | None = None
-    #: data members that are Unreadable even on the recording, with the reason: declared, so a
-    #: provider cannot pass the kit by answering Unreadable everywhere
+    #: data members that are Unreadable even on the recording, mapped to the ``UnreadableReason``
+    #: value they must come back with: declared, so a provider cannot pass the kit by answering
+    #: Unreadable everywhere, nor for a reason other than the declared one
     unreadable_when_recorded: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -239,7 +249,10 @@ class _ProfileText(HTMLParser):
             "input",
             "link",
             "meta",
+            "param",
             "source",
+            "track",
+            "wbr",
         }
     )
 
@@ -306,19 +319,39 @@ def walk_text(value: Any) -> Iterator[str]:
 
 @contextmanager
 def captured_logs() -> Iterator[io.StringIO]:
-    """Every log line, both stacks, at DEBUG, through the production log-safety chain."""
-    from vektra_shared.log_safety import configure_assess_worker_logging
+    """Every log line, both stacks, at DEBUG, through the production log-safety chain. On exit
+    the root logger, every strict prefix logger (handlers and level) and the scrub-installation
+    state are put back as they were, for prefixes registered during the capture too."""
+    from vektra_shared import log_safety
 
     buf = io.StringIO()
     root = logging.getLogger()
-    before = (list(root.handlers), root.level)
-    configure_assess_worker_logging(buf, level=logging.DEBUG)
+    saved_root = (list(root.handlers), root.level)
+    saved_level = log_safety._installed_level
+    saved_prefixes = set(log_safety.strict_logger_prefixes())
+    saved = {
+        p: (list(logging.getLogger(p).handlers), logging.getLogger(p).level)
+        for p in saved_prefixes
+    }
+    log_safety.configure_assess_worker_logging(buf, level=logging.DEBUG)
     try:
         yield buf
     finally:
         structlog.reset_defaults()
-        root.handlers[:] = before[0]
-        root.setLevel(before[1])
+        root.handlers[:] = saved_root[0]
+        root.setLevel(saved_root[1])
+        for p in log_safety.strict_logger_prefixes():
+            lg = logging.getLogger(p)
+            if p in saved:
+                lg.handlers[:] = saved[p][0]
+                lg.setLevel(saved[p][1])
+            elif saved_level is None:
+                # registered during the capture, before any install: as if never installed
+                lg.handlers[:] = [
+                    h for h in lg.handlers if not getattr(h, "_vektra_assess", False)
+                ]
+                lg.setLevel(logging.NOTSET)
+        log_safety._installed_level = saved_level
 
 
 # --- the checks ----------------------------------------------------------------------------
@@ -336,80 +369,110 @@ def check_protocol(provider: LmsProvider) -> None:
     assert not bad, f"setup item names break [a-z][a-z0-9_]{{1,48}}: {bad}"
 
 
+@asynccontextmanager
+async def built(
+    target: ConformanceTarget, mode: TransportMode
+) -> AsyncIterator[LmsProvider]:
+    """A fresh provider for one check, closed when the check ends, failed or not: a provider
+    backed by an async client must not keep its connections for the rest of the run."""
+    provider = target.factory(mode)
+    try:
+        yield provider
+    finally:
+        await provider.aclose()
+
+
 async def check_recorded_reads(target: ConformanceTarget) -> None:
-    provider = target.factory(TransportMode.RECORDED)
-    results = await read_all(provider, target)
+    async with built(target, TransportMode.RECORDED) as provider:
+        results = await read_all(provider, target)
     assert set(results) == set(READING_MEMBERS), "every Reading member was called"
     for member, res in results.items():
         assert isinstance(res, (Readable, Unreadable)), (
             f"{member} returned {type(res).__name__}, not a Reading"
         )
-        if member in target.unreadable_when_recorded:
+        declared = target.unreadable_when_recorded.get(member)
+        if declared is not None:
             assert isinstance(res, Unreadable), (
                 f"{member} is declared Unreadable on the recording but answered"
+            )
+            assert res.reason.value == declared, (
+                f"{member} is declared {declared} on the recording but is {res.reason.value}"
             )
         else:
             assert isinstance(res, Readable), (
                 f"{member} is Unreadable on its own recording ({res}); declare it in "
-                "unreadable_when_recorded with the reason, or fix the provider"
+                "unreadable_when_recorded with its UnreadableReason, or fix the provider"
             )
 
 
 async def check_fault_mode(target: ConformanceTarget, mode: TransportMode) -> None:
-    provider = target.factory(mode)
-    results = await read_all(provider, target)
+    async with built(target, mode) as provider:
+        results = await read_all(provider, target)
+        info = await provider.site_info(target.site)
+        items = await provider.service_account_check(target.site, info, target.manifest)
+        flags = await provider.probe_capabilities(
+            target.site, target.manifest, target.flags
+        )
     for member, res in results.items():
         assert isinstance(res, Unreadable), f"{member} under {mode} answered {res!r}"
         if mode.expected_reason is not None:
             assert res.reason is mode.expected_reason, (
                 f"{member} under {mode} is {res.reason}, expected {mode.expected_reason}"
             )
-    info = await provider.site_info(target.site)
-    items = await provider.service_account_check(target.site, info, target.manifest)
-    assert all(isinstance(i, SetupItem) for i in items)
+    _check_setup_results(items)
     assert not [i.name for i in items if i.result == SETUP_OK], (
         f"setup items OK under {mode}: a fault never proves an item"
     )
-    flags = await provider.probe_capabilities(
-        target.site, target.manifest, target.flags
-    )
-    assert all(isinstance(f, CapabilityResult) for f in flags)
+    _check_capability_results(flags)
     assert not [f.flag for f in flags if f.state == "readable"], (
         f"flags readable under {mode}"
     )
 
 
 async def check_re_resolution(target: ConformanceTarget) -> None:
-    provider = target.factory(TransportMode.RECORDED)
     ids = target.ids
-    own = await provider.resolve_activity(
-        target.site,
-        user_id=ids.user_id,
-        activity_id=ids.quiz_activity_id,
-        kind="quiz",
-        course_hint=ids.foreign_course_id,  # a wrong hint is only a hint
-    )
+    async with built(target, TransportMode.RECORDED) as provider:
+        own = await provider.resolve_activity(
+            target.site,
+            user_id=ids.user_id,
+            activity_id=ids.quiz_activity_id,
+            kind="quiz",
+            course_hint=ids.foreign_course_id,  # a wrong hint is only a hint
+        )
+        hinted = await provider.resolve_activity(
+            target.site,
+            user_id=ids.user_id,
+            activity_id=ids.foreign_activity_id,
+            kind="quiz",
+            course_hint=ids.foreign_course_id,
+        )
+        unhinted = await provider.resolve_activity(
+            target.site,
+            user_id=ids.user_id,
+            activity_id=ids.foreign_activity_id,
+            kind="quiz",
+            course_hint=None,
+        )
     assert isinstance(own, Readable) and own.value.course_id == ids.course_id, (
         f"the user's own activity resolves to its own course whatever the hint: {own!r}"
     )
-    foreign = await provider.resolve_activity(
-        target.site,
-        user_id=ids.user_id,
-        activity_id=ids.foreign_activity_id,
-        kind="quiz",
-        course_hint=ids.foreign_course_id,
-    )
-    assert isinstance(foreign, Unreadable), (
-        f"an activity outside the user's courses resolved: {foreign!r} (REQ-095)"
-    )
-    assert foreign.detail_code == NOT_IN_USER_COURSES, foreign
+    for how, foreign in (
+        ("with the course hint", hinted),
+        ("without a course hint", unhinted),
+    ):
+        assert isinstance(foreign, Unreadable), (
+            f"an activity outside the user's courses resolved {how}: {foreign!r} (REQ-095)"
+        )
+        assert foreign.detail_code == NOT_IN_USER_COURSES, (
+            f"the refusal {how} is {foreign!r}, not {NOT_IN_USER_COURSES}"
+        )
 
 
 async def check_no_canary(target: ConformanceTarget) -> None:
     assert target.canaries, "a conformance target plants at least one canary"
-    provider = target.factory(TransportMode.RECORDED)
-    results = await read_all(provider, target)
-    witness = target.canary_witness(provider)
+    async with built(target, TransportMode.RECORDED) as provider:
+        results = await read_all(provider, target)
+        witness = target.canary_witness(provider)
     missing = [c for c in target.canaries if c not in witness]
     assert not missing, (
         f"canaries no read path consumed in this run (vacuous check): {missing}"
@@ -424,11 +487,10 @@ async def check_no_secret_in_logs(target: ConformanceTarget) -> None:
     assert target.secrets, "a conformance target names the credentials it uses"
     with captured_logs() as buf:
         for mode in TransportMode:
-            provider = target.factory(mode)
-            await read_all(provider, target)
-            info = await provider.site_info(target.site)
-            await provider.service_account_check(target.site, info, target.manifest)
-            await provider.aclose()
+            async with built(target, mode) as provider:
+                await read_all(provider, target)
+                info = await provider.site_info(target.site)
+                await provider.service_account_check(target.site, info, target.manifest)
         for h in logging.getLogger().handlers:
             h.flush()
     text = buf.getvalue()
@@ -436,13 +498,42 @@ async def check_no_secret_in_logs(target: ConformanceTarget) -> None:
     assert not hits, f"{len(hits)} credential(s) in the log output"
 
 
+_SETUP_RESULTS = frozenset({SETUP_OK, SETUP_MISSING, SETUP_UNVERIFIABLE})
+_CAPABILITY_STATES = frozenset({"readable", "partial", "unreadable"})
+_REASONS = frozenset(r.value for r in UnreadableReason)
+
+
+def _check_setup_results(items: Sequence[SetupItem]) -> None:
+    assert all(isinstance(i, SetupItem) for i in items)
+    bad = sorted({i.result for i in items} - _SETUP_RESULTS)
+    assert not bad, f"setup results outside {sorted(_SETUP_RESULTS)}: {bad}"
+
+
+def _check_capability_results(flags: Sequence[CapabilityResult]) -> None:
+    assert all(isinstance(f, CapabilityResult) for f in flags)
+    for f in flags:
+        assert f.state in _CAPABILITY_STATES, (
+            f"capability {f.flag}: state {f.state!r} is not one of {sorted(_CAPABILITY_STATES)}"
+        )
+        if f.state == "readable":
+            assert f.reason_code is None, (
+                f"capability {f.flag} is readable but carries reason {f.reason_code!r}"
+            )
+        else:
+            assert f.reason_code in _REASONS, (
+                f"capability {f.flag} is {f.state} with reason {f.reason_code!r}, "
+                "not an UnreadableReason"
+            )
+
+
 async def check_setup_items(target: ConformanceTarget) -> None:
-    provider = target.factory(TransportMode.RECORDED)
-    info = await provider.site_info(target.site)
-    items = await provider.service_account_check(target.site, info, target.manifest)
+    async with built(target, TransportMode.RECORDED) as provider:
+        info = await provider.site_info(target.site)
+        items = await provider.service_account_check(target.site, info, target.manifest)
+        declared = set(provider.setup_items)
+    _check_setup_results(items)
     returned = [i.name for i in items]
     assert len(set(returned)) == len(returned), f"an item returned twice: {returned}"
-    declared = set(provider.setup_items)
     assert set(returned) == declared, (
         f"declared but not returned: {sorted(declared - set(returned))}; "
         f"returned but not declared: {sorted(set(returned) - declared)}"
@@ -450,19 +541,19 @@ async def check_setup_items(target: ConformanceTarget) -> None:
 
 
 async def check_capabilities(target: ConformanceTarget) -> None:
-    provider = target.factory(TransportMode.RECORDED)
-    flags = await provider.probe_capabilities(
-        target.site, target.manifest, target.flags
-    )
+    async with built(target, TransportMode.RECORDED) as provider:
+        flags = await provider.probe_capabilities(
+            target.site, target.manifest, target.flags
+        )
     assert sorted(f.flag for f in flags) == sorted(target.flags), (
-        "exactly one result per requested flag"
+        "exactly one capability result per requested flag"
     )
+    _check_capability_results(flags)
 
 
 async def check_lifecycle(target: ConformanceTarget) -> None:
-    provider = target.factory(TransportMode.RECORDED)
-    for development in (True, False):
-        problems = provider.startup_problems(development)
-        assert isinstance(problems, tuple)
-        assert all(isinstance(p, StartupProblem) for p in problems)
-    await provider.aclose()
+    async with built(target, TransportMode.RECORDED) as provider:
+        for development in (True, False):
+            problems = provider.startup_problems(development)
+            assert isinstance(problems, tuple)
+            assert all(isinstance(p, StartupProblem) for p in problems)

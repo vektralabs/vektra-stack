@@ -314,12 +314,15 @@ _INSTALL_LOCK = (
 def _install_scrub_handler(prefix: str, level: int) -> logging.Handler:
     with _INSTALL_LOCK:
         target = logging.getLogger(prefix)
-        for old in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:
-            target.removeHandler(old)
+        stale = [h for h in target.handlers if getattr(h, "_vektra_assess", False)]
         handler = _ScrubHandler(logging.NOTSET)
         install_stdlib_filter([handler])
         handler._vektra_assess = True  # type: ignore[attr-defined]
+        # the replacement first, then the old ones: a record logged meanwhile by another thread
+        # always meets a scrub handler (it may meet two; the scrub is idempotent and counts once)
         target.addHandler(handler)
+        for old in stale:
+            target.removeHandler(old)
         if target.level == logging.NOTSET or target.level > level:
             target.setLevel(level)
         return handler

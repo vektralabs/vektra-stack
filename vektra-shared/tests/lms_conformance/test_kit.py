@@ -69,3 +69,32 @@ def test_the_fault_modes_name_their_reason() -> None:
     assert kit.TransportMode.TIMEOUT.expected_reason is UnreadableReason.TIMEOUT
     assert kit.TransportMode.RAISING.expected_reason is None  # any Unreadable will do
     assert kit.TransportMode.RECORDED not in kit.FAULT_MODES
+
+
+@pytest.mark.parametrize("void", ["wbr", "track", "br", "img"])
+def test_a_void_element_inside_a_dropped_block_does_not_unbalance_the_stack(
+    void: str,
+) -> None:
+    """CodeRabbit 4543758785: a void element pushed on the stack made the next end tag pop it
+    instead of the dropped block, so the kept block's text was lost and a canary there missed."""
+    profile = HtmlExtractionProfile({"question_text": "qt"}, frozenset({"right"}), "p1")
+    html = f'<div class="right"><{void}></div><div class="qt">KEPT-CANARY</div>'
+    assert "KEPT-CANARY" in kit.profile_text(ReviewHtml(html, profile))
+
+
+def test_captured_logs_leaves_the_strict_log_state_as_it_found_it() -> None:
+    """CodeRabbit 4543186523: the capture configured DEBUG and scrub handlers on every strict
+    prefix and never put them back."""
+    import logging
+
+    from vektra_shared import log_safety
+
+    log_safety.register_strict_logger_prefix("vektra_lms_kit_probe")
+    probe = logging.getLogger("vektra_lms_kit_probe")
+    before = (list(probe.handlers), probe.level, log_safety._installed_level)
+    root = logging.getLogger()
+    root_before = (list(root.handlers), root.level)
+    with kit.captured_logs():
+        assert probe.level == logging.DEBUG
+    assert (list(probe.handlers), probe.level, log_safety._installed_level) == before
+    assert (list(root.handlers), root.level) == root_before

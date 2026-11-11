@@ -61,8 +61,12 @@ Every file must be a regular file (a symlink is refused), owned by the process u
 with mode `0440` or stricter. The containers run as uid 1000; on a Linux engine Compose does not
 remap the owner of a file secret, so `chown` the directory to `1000:1000` (see the keys runbook).
 
-`assess_ws_tokens` is re-read on every LMS call, so a token change needs no restart. Every other
-secret is loaded when the process starts: restart the process after changing it.
+Every secret except `assess_ws_tokens` is loaded when the process starts. `assess_ws_tokens` is
+re-read on every LMS call, but that does not make a change safe without a restart: Compose
+bind-mounts each secret file, and a replacement that writes a new file (an editor's save, `mv`,
+`rm` and recreate) leaves the running container on the old one. After changing any secret,
+recreate the service that holds it
+(`docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d --force-recreate <service>`).
 
 ## Generate a set
 
@@ -76,17 +80,25 @@ hand-off and the teacher configuration, random role passwords, and `{}` for the 
 files. Every keyring gets the kid `k1`. It writes nothing if any of the files already exists
 (all or nothing), and it prints file names only.
 
-Then fill the two credentials files:
+Then fill the two credentials files. The generated files are mode `0400`, so make them
+writable first and restore the mode afterwards; the values go through a JSON serializer, so a
+`"` or a `\` in a token or password cannot break the file:
 
 ```bash
+# typed at prompts, so the values stay out of the shell history
+read -r SITE_ID; read -rs WS_TOKEN; read -r SMTP_USER; read -rs SMTP_PASSWORD
+export SITE_ID WS_TOKEN SMTP_USER SMTP_PASSWORD
+chmod u+w secrets/assess/assess_ws_tokens secrets/assess/assess_smtp
 # one entry per registered site; the key is the site's assess_sites.id
-printf '{"%s": "%s"}' "$SITE_ID" "$WS_TOKEN" > secrets/assess/assess_ws_tokens
-printf '{"username": "%s", "password": "%s"}' "$SMTP_USER" "$SMTP_PASSWORD" > secrets/assess/assess_smtp
+python3 -c 'import json,os,sys
+json.dump({os.environ["SITE_ID"]: os.environ["WS_TOKEN"]}, sys.stdout)' > secrets/assess/assess_ws_tokens
+python3 -c 'import json,os,sys
+json.dump({"username": os.environ["SMTP_USER"], "password": os.environ["SMTP_PASSWORD"]}, sys.stdout)' > secrets/assess/assess_smtp
 chmod 0400 secrets/assess/assess_ws_tokens secrets/assess/assess_smtp
+unset WS_TOKEN SMTP_PASSWORD
 ```
 
-The generated files are mode `0400`, so remove or `chmod u+w` them before overwriting. Keep
-`secrets/` out of version control (it is gitignored) and out of every database dump.
+Keep `secrets/` out of version control (it is gitignored) and out of every database dump.
 
 ## Startup refusals
 
@@ -111,7 +123,7 @@ The messages, with `<name>` the secret and `<role>` the process:
 | `<file>: forbidden for <role> (WS tokens belong to the worker) but mounted at <path>` | a per-site WS token file in the API or the parser |
 | `<name>: not a regular file (symlinks are refused)` | a symlink or a directory |
 | `<name>: owned by uid <n>, not by this process or root` | wrong owner (see the `chown` above) |
-| `<name>: mode <mode> is too open (at most 0440)` | group-writable or world-readable file |
+| `<name>: mode <mode> is too open (at most 0440)` | any permission bit outside `0440`: owner-writable (`0600`), group-writable, or any bit for others |
 | `<name>: not valid JSON` / `not valid UTF-8` / `expected a JSON object` | a malformed file |
 | `<name>: expected {'active': kid, 'keys': {kid: base64}}` | a keyring without `active` or `keys` |
 | `<name>: active kid '<kid>' is not in keys` | `active` names a kid the file does not hold |

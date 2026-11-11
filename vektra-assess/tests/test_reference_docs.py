@@ -85,7 +85,9 @@ def _aliases() -> set[str]:
 @pytest.mark.parametrize("doc", [CONFIG_DOC, ENV_EXAMPLE], ids=lambda p: p.name)
 def test_every_assess_setting_is_documented(doc: Path) -> None:
     text = doc.read_text(encoding="utf-8")
-    missing = sorted(a for a in _aliases() if not re.search(rf"\b{a}\b", text))
+    missing = sorted(
+        a for a in _aliases() if not re.search(rf"\b{re.escape(a)}\b", text)
+    )
     assert missing == [], f"{doc.name} does not name: {missing}"
 
 

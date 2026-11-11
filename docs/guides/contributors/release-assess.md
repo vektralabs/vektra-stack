@@ -18,8 +18,10 @@ assess work ships in the next minor, `0.9.0`. Nothing in this repository has bee
       This is a release blocker, not a documentation item.
 - [ ] **Chaos suite.** `make test-chaos-assess` exits 0 (its gate fails on a skipped case, on
       fewer cases or scenarios than declared, or on any invariant violation), on two consecutive
-      nightly runs of `.github/workflows/chaos-assess.yml` and on the release tag (the same
-      workflow runs on every `v*` tag; keep its `invariants.md` artifact as release evidence).
+      nightly runs of `.github/workflows/chaos-assess.yml` (keep each run's `invariants.md`
+      artifact as release evidence). GitHub starts `schedule` and `workflow_dispatch` runs only
+      for a workflow file on the default branch, so this needs the workflow on `main` first. The
+      tag run is checked in section 3.
 - [ ] **Reference docs.** `vektra-assess/tests/test_reference_docs.py` passes (error codes,
       settings and routes match the code).
 - [ ] **LMS boundary.** `vektra-shared/tests/test_lms_boundary.py` passes with no new baseline
@@ -31,8 +33,11 @@ assess work ships in the next minor, `0.9.0`. Nothing in this repository has bee
       `integration.yml` is green. Its import list already includes `vektra_assess`,
       `vektra_app.assess_worker`, `vektra_app.assess_parser`, the job loop and the parser stack;
       a new native dependency of assess must be added there.
-- [ ] **Assess stack jobs.** The `assess-stack` and `assess-chaos` jobs of `integration.yml` and
-      the `assess-ui-e2e` job (`make test-assess-e2e`) are green.
+- [ ] **Assess stack jobs.** The `assess-stack`, `assess-chaos` and `assess-ui-e2e` jobs of
+      `integration.yml` are green. To rerun the browser job locally, `make test-assess-e2e` is not
+      enough: it runs only `test_ui_e2e.py`, while the CI job also runs
+      `test_transcript_inert_browser.py` and `test_transcript_a11y.py` (all three in
+      `vektra-assess/tests/integration/`, `-m integration`).
 - [ ] **LMS reader contract.** The latest run of `.github/workflows/assess-moodle-contract.yml`
       (manual and weekly; the web-service readers against real LMS 4.3 and 5.2 sites) is green.
       It does not test the plugin itself: the plugin release is tested in its own repository.
@@ -63,7 +68,8 @@ Follow CONTRIBUTING.md, with these points for assess:
 - [ ] Signed tag on `main` after the release PR is merged (`git tag -s`, `git verify-tag`, then
       push): CONTRIBUTING.md.
 - [ ] `publish.yml` built and pushed `ghcr.io/vektralabs/vektra:X.Y.Z` and `:X.Y.Z-ocr`.
-- [ ] The `chaos-assess.yml` run triggered by the tag passed.
+- [ ] The `chaos-assess.yml` run triggered by the tag passed (0 invariant violations; keep its
+      `invariants.md` artifact as release evidence).
 
 ## 4. Smoke test of the published image
 

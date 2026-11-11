@@ -68,7 +68,11 @@ empty JSON objects for you to fill (see [secrets](assess-secrets.md)). Set
 For development and CI only, add `-f docker-compose.assess.dev.yml`: it sets
 `VEKTRA_ENV=development`, `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true`,
 `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED=true`, `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET=true` and
-`VEKTRA_ASSESS_SAFEGUARD_MODE=none`. Every one of these is refused outside development.
+`VEKTRA_ASSESS_SAFEGUARD_MODE=none`. The three boolean overrides are refused
+outside development. **`VEKTRA_ASSESS_SAFEGUARD_MODE=none` is not**: the
+API accepts it in any environment and runs the discussion with a passthrough safeguard, so a
+production `.env` must not carry it (the default is `presidio`, which refuses to start when
+Presidio cannot load).
 
 ## Settings the API and the worker must share
 
@@ -81,17 +85,26 @@ settings and `VEKTRA_ASSESS_OPERATOR_EMAIL` (the API needs the relay and the ope
 the SMTP test send). To change a worker-only setting that the overlay does not name, add it to the
 worker's `environment` in a local override file.
 
+**Set shared values in `.env`, not as shell exports.** Compose interpolation (`${VAR:-}` in the
+overlay) takes a variable from the shell before `.env`, while the API container also reads `.env`
+itself (`env_file`). For a setting the overlay passes to the worker only, such as
+`VEKTRA_ASSESS_LLM_MODEL`, a shell export reaches the worker and not the API: the API then starts
+without a model (refused) or with the `.env` model, and the two processes disagree. Put every
+assess setting in `.env` and do not export a different value in the shell that runs
+`docker compose`.
+
 Settings a production deployment must set (each is refused or unset by default):
 
 | Setting | Read by | Without it |
 |---|---|---|
 | `VEKTRA_ASSESS_ENABLED=true` | all | no route is mounted; the assess targets exit with code 2 |
 | `VEKTRA_ASSESS_API_DATABASE_URL`, `VEKTRA_ASSESS_WORKER_DATABASE_URL` | API, worker | startup refused (set by the overlay) |
-| `VEKTRA_ASSESS_LLM_MODEL` | API, worker | startup refused; no fallback model |
+| `VEKTRA_ASSESS_LLM_MODEL` | API, worker | startup refused; no fallback model. Set it in `.env` (see above) so both processes use the same model |
 | `VEKTRA_ASSESS_UI_ORIGIN` | API | an `https` origin distinct from every LMS origin, or the API refuses to start outside development |
 | `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` | API (setup check) | `ui_not_same_origin` cannot compare the two origins |
 | `VEKTRA_ASSESS_SMTP_HOST`, `VEKTRA_ASSESS_SMTP_FROM`, `VEKTRA_ASSESS_OPERATOR_EMAIL` | worker (and API for the test send) | the worker refuses to start |
 | `VEKTRA_ASSESS_RECIPIENT_DOMAINS` | worker | every transcript address is refused (`FAILED`, `domain_not_allowed`) |
+| `VEKTRA_ASSESS_SAFEGUARD_MODE` | API | the default `presidio` is right; `none` is accepted and disables the safeguard (see above) |
 | `VEKTRA_ASSESS_ERASURE_MODE` | API | the API refuses to start outside development (OQ-033, no implicit choice) |
 | `VEKTRA_ASSESS_DB_BACKUP_RETENTION_DAYS` | worker | a startup warning: the crypto-shredding scope is unknown |
 | `VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME` | worker (setup check) | the `not_ingestion_account` item is `UNVERIFIABLE`, so the setup check is not green |
@@ -125,7 +138,9 @@ docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile asse
   run --rm vektra-assess-db-init
 ```
 
-then restart the process that holds that password.
+then recreate the service that holds that password (`... up -d --force-recreate vektra` or
+`vektra-assess-worker`): Compose bind-mounts the secret file, and a restarted container keeps
+the old file if the replacement wrote a new one.
 
 ## Connection budget
 

@@ -108,57 +108,83 @@ are standard ones that no test in this repository runs.
 
 ### Before the backup: pick the evidence
 
-On the production deployment, before the dump and the key backup you will restore:
+On the production deployment, when you take the dump and the key backup you will restore:
 
 1. Choose one **retained** transcript (its session CLOSED, not purged) and fetch it through the
    subject export, which returns the exact bytes the in-course download serves. It needs the
-   site's `assess:privacy-export` key:
+   site's `assess:privacy-export` key. The export is an exam record, so it goes to a private
+   temporary file that is removed on success or failure:
 
    ```bash
-   curl -s -H "Authorization: Bearer $EXPORT_KEY" \
-     https://vektra.uni.example/api/v1/assess/privacy/subjects/$USERID/transcripts \
-     > export-before.json
-   python3 -c 'import base64,hashlib,json,sys; d=json.load(open(sys.argv[1]))
-   for i in d["items"]: print(i["transcript_id"], i["sha256"], hashlib.sha256(base64.b64decode(i["content_base64"])).hexdigest())' export-before.json
+   (
+     umask 077
+     export_file=$(mktemp) || exit 1
+     trap 'rm -f -- "$export_file"' EXIT
+     trap 'exit 1' HUP INT TERM
+     curl -sf -H "Authorization: Bearer $EXPORT_KEY" \
+       "https://vektra.uni.example/api/v1/assess/privacy/subjects/$USERID/transcripts" \
+       > "$export_file" &&
+     python3 -c 'import base64,hashlib,json,sys; d=json.load(open(sys.argv[1]))
+   for i in d["items"]: print(i["transcript_id"], i["sha256"], hashlib.sha256(base64.b64decode(i["content_base64"])).hexdigest())' "$export_file"
+   )
    ```
 
    Record the transcript id and the sha256 you computed (the third column; it must equal the
-   second, the stored hash). Delete `export-before.json`: it is an exam record.
-2. Note a few **purged** sessions: ids from `assess_purge_records` (the tombstones) whose
-   `purged_at` is before the dump.
-3. Take the database dump and the key backup (with the fingerprints) as usual, at the same time.
+   second, the stored hash).
+2. Take the dump and the drill's reference figures from **one database snapshot**, so the
+   figures describe exactly what the dump contains. As the database owner, open a session and
+   keep it open until step 3:
+
+   ```sql
+   BEGIN ISOLATION LEVEL REPEATABLE READ;
+   SELECT pg_export_snapshot();   -- e.g. 00000003-0000001B-1
+   ```
+
+   In another shell, dump that snapshot:
+
+   ```bash
+   pg_dump -Fc --snapshot=00000003-0000001B-1 -d vektra -f vektra-drill.dump
+   ```
+
+3. Back in the open session (it still sees the exported snapshot), record:
+
+   ```sql
+   -- the number of sessions whose DEK the restore must give back
+   SELECT count(*) FROM assess_session_keys WHERE kek_wrapped IS NOT NULL;
+   -- a few purged sessions (tombstones) the restore must keep unrecoverable
+   SELECT session_id FROM assess_purge_records ORDER BY purged_at DESC LIMIT 5;
+   COMMIT;
+   ```
+
+   If `assess_purge_records` is empty, no purge has run yet: record that, and the
+   "purged data stays unrecoverable" part of the drill cannot pass until a later drill.
+4. Take the key backup (with the fingerprints) at the same time.
 
 ### On the clean host
 
-`compose` stands for `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess`.
+Define the Compose command once in the shell you run the drill from:
+
+```bash
+compose() { docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess "$@"; }
+```
 
 1. Use the same image version as the deployment that took the backup. Start Postgres alone on an
    empty volume (`compose up -d postgres`): its init script creates the extensions and the two
    assess roles (NOLOGIN).
-2. Restore the dump as the database owner (for example `pg_restore -d vektra <dump>`).
-3. Put the backed-up `secrets/assess/` in place (owner uid 1000, mode `0400`), then bring the
-   stack up: `compose up -d`. `vektra-assess-db-init` sets the role passwords from the restored
-   secret files, and the API's `alembic upgrade head` finds the schema already at its revision.
-   The drill host must not reach production systems: before the start, replace the restored
-   `assess_ws_tokens` with `{}` (no LMS call can succeed) and point `VEKTRA_ASSESS_SMTP_HOST`,
-   `assess_smtp` and `VEKTRA_ASSESS_OPERATOR_EMAIL` at a mail sink, so a delivery still pending in
-   the dump cannot mail a teacher. Neither credentials file is checked by `verify`.
-4. Verify the keys:
+2. Restore the dump as the database owner (`pg_restore -d vektra vektra-drill.dump`).
+3. **Before any assess process starts** (the worker's purge and delivery ticks would change the
+   data), check the dump against the figures of preparation step 3, as the database owner:
 
-   ```bash
-   compose exec vektra-assess-worker python -m vektra_assess.keys verify --role worker; echo "exit $?"
-   compose exec vektra python -m vektra_assess.keys verify --role api; echo "exit $?"
+   ```sql
+   -- must equal the count recorded from the snapshot
+   SELECT count(*) FROM assess_session_keys WHERE kek_wrapped IS NOT NULL;
+   -- every selected tombstone came back: must equal the number of ids you selected
+   SELECT count(*) FROM assess_purge_records
+    WHERE session_id IN ('<id 1>', '<id 2>', '<id 3>', '<id 4>', '<id 5>');
    ```
 
-   Both must exit 0, and every printed fingerprint must equal the one recorded with the backup
-   (the keys that `verify` lists but cannot open by a row: the hand-off pair,
-   `assess_teacher_config_public` and `assess_token_signing`).
-5. Fetch the chosen transcript again on the drill host, with the same export key (its row came
-   back with the dump), and compute its sha256 the same way. It must equal the value recorded
-   before the backup. A `500 ERR-ASSESS-020` means the restored bytes do not decrypt or do not
-   re-hash to the stored value: the drill failed.
-6. Confirm that the purged sessions stay unrecoverable. As the database owner, each query must
-   return 0:
+   Only when both match, check that the tombstoned sessions keep nothing that opens. Each
+   query must return 0:
 
    ```sql
    -- no wrapped DEK survives for a tombstoned session
@@ -174,22 +200,42 @@ On the production deployment, before the dump and the key backup you will restor
     WHERE t.ciphertext IS NOT NULL OR t.dek_wrapped IS NOT NULL;
    ```
 
-   This checks the dump, not the keys: a purge removes the wrapped DEK, so the KEK cannot open
-   the session whatever key set is mounted. A dump taken BEFORE a purge still holds the wrapped
-   DEK; that is the backup-retention exposure described in the rotation cadence, and the reason
-   to use a dump taken after the purges you list in step 2 of the preparation.
-7. Count what came back: `SELECT count(*) FROM assess_session_keys WHERE kek_wrapped IS NOT NULL`
-   must equal the figure recorded on production at dump time. `verify` opens one row per kid,
-   not every row; a wrong key for some rows under a kid is found only when those rows are opened.
-8. Destroy the drill host's copies of the dump and the keys.
+   The tombstone check comes first because these joins return 0 just as well on a dump that
+   holds no tombstones at all. They check the dump, not the keys: a purge removes the wrapped
+   DEK, so the KEK cannot open the session whatever key set is mounted. A dump taken BEFORE a
+   purge still holds the wrapped DEK; that is the backup-retention exposure described in the
+   rotation cadence.
+4. Put the backed-up `secrets/assess/` in place (owner uid 1000, mode `0400`). The drill host must
+   not reach production systems: replace the restored `assess_ws_tokens` with `{}` (no LMS call
+   can succeed) and point `VEKTRA_ASSESS_SMTP_HOST`, `assess_smtp` and
+   `VEKTRA_ASSESS_OPERATOR_EMAIL` at a mail sink, so a delivery still pending in the dump cannot
+   mail a teacher. Neither credentials file is checked by `verify`. Then bring the stack up:
+   `compose up -d`. `vektra-assess-db-init` sets the role passwords from the restored secret
+   files, and the API's `alembic upgrade head` finds the schema already at its revision.
+5. Verify the keys:
+
+   ```bash
+   compose exec vektra-assess-worker python -m vektra_assess.keys verify --role worker; echo "exit $?"
+   compose exec vektra python -m vektra_assess.keys verify --role api; echo "exit $?"
+   ```
+
+   Both must exit 0, and every printed fingerprint must equal the one recorded with the backup
+   (the keys that `verify` lists but cannot open by a row: the hand-off pair,
+   `assess_teacher_config_public` and `assess_token_signing`). `verify` opens one row per kid,
+   not every row: a wrong key for some rows under a kid is found only when those rows are opened.
+6. Fetch the chosen transcript again on the drill host, with the same export key (its row came
+   back with the dump), the same way as in preparation step 1. Its sha256 must equal the value
+   recorded before the backup. A `500 ERR-ASSESS-020` means the restored bytes do not decrypt or
+   do not re-hash to the stored value: the drill failed.
+7. Destroy the drill host's copies of the dump and the keys.
 
 ### Record the result
 
 Record every drill in the pilot go/no-go document
 ([assess-pilot-go-no-go.md](operators/assess-pilot-go-no-go.md#restore-drill-record)): date,
 operator, image version, dump and key backup identifiers, both `verify` exit codes, the
-fingerprint comparison, the transcript id with both sha256 values, the four purge counts, and
-PASS or FAIL. A FAIL is an incident: the backup cannot be relied on until a drill passes.
+fingerprint comparison, the transcript id with both sha256 values, the snapshot count and the
+restored count, the tombstone count and the four purge counts, and PASS or FAIL. A FAIL is an incident: the backup cannot be relied on until a drill passes.
 
 ## Key rotation
 
@@ -204,12 +250,15 @@ middle one differs per key:
 2. **Move** the rows still under the old kid to the new one.
 3. **Prove** that nothing references the old kid: the command exits 0 or the count query below
    returns 0, and `python -m vektra_assess.keys verify` exits 0 in both containers.
-4. **Retire** the old kid from the live keyring, restart, verify again. Keep the retired key in
+4. **Retire** the old kid from the live keyring, recreate, verify again. Keep the retired key in
    the offline backup until it may be destroyed (see the cadence below).
 
 Every process loads its keyrings when it starts, so each "deploy" below means: replace the secret
-file, then restart the process (`docker compose ... up -d --force-recreate <service>`). The one
-exception is `assess_ws_tokens`, which the worker re-reads on every LMS call.
+file, then recreate the service (`compose up -d --force-recreate <service>`). Recreate, not
+restart: Compose bind-mounts each secret file, and a replacement that writes a new file (an
+editor's save, `mv`, `rm` and recreate) leaves a running or merely restarted container on the
+old one. That holds for `assess_ws_tokens` too, although the worker re-reads it on every LMS
+call.
 
 **New key material.** There is no command that adds one kid to an existing keyring. Generate a
 complete scratch set and take the value you need from it:
@@ -226,11 +275,15 @@ Editing a live keyring by hand is the step most likely to break a deployment: a 
 wrong mode stops the process at start (see [secrets](operators/assess-secrets.md#startup-refusals)),
 so keep the previous file until `verify` has passed.
 
-`compose` stands for `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess`.
+`compose` is the shell function defined in [the restore drill](#on-the-clean-host):
+
+```bash
+compose() { docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess "$@"; }
+```
 
 ### Session KEK (`assess_kek`, worker only)
 
-1. Add `k2` to `assess_kek` with `"active": "k2"`, keep `k1`. Restart the worker. New sessions
+1. Add `k2` to `assess_kek` with `"active": "k2"`, keep `k1`. Recreate the worker. New sessions
    are wrapped under `k2`.
 2. Re-wrap the session DEKs still under `k1`:
 
@@ -244,7 +297,7 @@ so keep the previous file until `verify` has passed.
    investigate before going on). Exit 2: it could not run (settings, secrets, a kid the keyring
    does not hold, or `k1` still the active kid).
 3. `compose exec vektra-assess-worker python -m vektra_assess.keys verify --role worker` exits 0.
-4. Remove `k1` from the live `assess_kek`, restart the worker, run `verify` again.
+4. Remove `k1` from the live `assess_kek`, recreate the worker, run `verify` again.
 
 The hand-off rows of live sessions are sealed to the API's hand-off key, not wrapped under the
 KEK, so a KEK rotation does not touch them. A purged or erased session has no wrapped DEK
@@ -288,8 +341,8 @@ duration) carry an old kid, and they go away on their own.
 
 1. Take a new pair from a scratch set. Add it as kid `h2` to `assess_handoff_private` on EVERY API
    instance (keep `h1`; the API opens by kid) and, where the API mounts it, to its
-   `assess_handoff_public`. Restart the API instances.
-2. Add `h2` to the worker's `assess_handoff_public` with `"active": "h2"`. Restart the worker. New
+   `assess_handoff_public`. Recreate the API instances.
+2. Add `h2` to the worker's `assess_handoff_public` with `"active": "h2"`. Recreate the worker. New
    hand-offs are sealed to `h2`.
 3. Wait until no live session carries `h1`. As the database owner (neither assess role can be
    used: the API role may not read `assess_session_handoff`):
@@ -301,7 +354,7 @@ duration) carry an old kid, and they go away on their own.
    The longest a session can stay live is its frozen duration (at most 240 minutes) plus its
    credited outage time (at most 15 minutes) plus the reply grace, so the count reaches 0 within
    a few hours; read the count, do not rely on the clock.
-4. Remove `h1` from the API's keyring and restart the API. Removing it earlier makes every live
+4. Remove `h1` from the API's keyring and recreate the API. Removing it earlier makes every live
    session under `h1` fail to load its material.
 
 `crypto.rotation.reseal_handoffs(conn, kek_keyring, new_api_pub, new_kid)` re-seals the live rows
@@ -315,9 +368,9 @@ The API seals each write-only field (solution, pasted rubric, recipients) to the
 Sealed fields stay until a teacher changes them, so waiting does not move them.
 
 1. Take a new pair from a scratch set. Add the private key as `t2` to the worker's
-   `assess_teacher_config_private` (keep `t1`) and restart the worker.
+   `assess_teacher_config_private` (keep `t1`) and recreate the worker.
 2. Add the public key as `t2` with `"active": "t2"` to the API's `assess_teacher_config_public`
-   (and to the worker's, where it is mounted). Restart the API instances. New saves are sealed to
+   (and to the worker's, where it is mounted). Recreate the API instances. New saves are sealed to
    `t2`.
 3. Count the fields still sealed under another kid, as the database owner:
 
@@ -339,11 +392,11 @@ Tokens are signed with the active kid and verified against every kid the keyring
 is stored. With more than one API instance, roll it out in two phases like the transcript KEK
 (an instance that does not hold the new kid refuses tokens signed with it):
 
-1. Add `s2` as an inactive kid on every API instance and restart them.
-2. Set `"active": "s2"` everywhere and restart.
+1. Add `s2` as an inactive kid on every API instance and recreate them.
+2. Set `"active": "s2"` everywhere and recreate.
 3. Wait for the longest token lifetime: `VEKTRA_ASSESS_SESSION_TOKEN_TTL_S` (default 900 s; the
    pre-session and download tokens live at most 120 s).
-4. Remove `s1` and restart. A token still signed with `s1` is then refused with `401`; the plugin
+4. Remove `s1` and recreate. A token still signed with `s1` is then refused with `401`; the plugin
    mints a new one (and `GET /sessions/{sid}` re-mints the session token on resume).
 
 `verify` lists this keyring by fingerprint only: nothing in the database references it.
@@ -358,13 +411,15 @@ plan named a "subject-key secret, not rotatable without a full rekey"; the code 
 ### Credentials and passwords
 
 - **LMS web-service token** (`assess_ws_tokens`): create the new token on the LMS, replace the
-  site's entry in the file (no restart: it is re-read on every call), run the setup check
+  site's entry in the file, recreate the worker (`compose up -d --force-recreate
+  vektra-assess-worker`: the bind mount may still show the old file), run the setup check
   (`token_works` must be `OK`), then delete the old token on the LMS. See the
   [service account](assess-moodle-service-account.md#token-creation-and-rotation).
-- **SMTP account** (`assess_smtp`): replace the file, restart the worker, then
+- **SMTP account** (`assess_smtp`): replace the file, recreate the worker, then
   `POST /api/v1/assess/ops/smtp-test` and read its result.
 - **Role passwords** (`assess_db_api_password`, `assess_db_worker_password`): replace the file,
-  `compose run --rm vektra-assess-db-init`, restart the process that holds the password.
+  `compose run --rm vektra-assess-db-init`, then recreate the service that holds the password
+  (`compose up -d --force-recreate <service>`).
 
 ### Cadence: rotation, retirement and backup retention
 

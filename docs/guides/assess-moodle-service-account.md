@@ -80,16 +80,21 @@ the worker's `assess_ws_tokens` secret, keyed by the site's `assess_sites.id`:
 {"3f0c8c1e-0000-4000-8000-000000000001": "<token>"}
 ```
 
-The worker re-reads this file on every LMS call, so no restart is needed. To rotate:
+([secrets](operators/assess-secrets.md#generate-a-set) shows how to write it safely.) The
+worker re-reads this file on every LMS call, but Compose bind-mounts it: a replacement that
+writes a new file (an editor's save, `mv`, `rm` and recreate) leaves the running worker on the
+old one. To rotate:
 
 1. create a second token for the same account and service;
 2. replace the site's value in `assess_ws_tokens`;
-3. run the setup check: `token_works` must be `OK`;
-4. delete the old token on the LMS.
+3. recreate the worker:
+   `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d --force-recreate vektra-assess-worker`;
+4. run the setup check: `token_works` must be `OK`, which now proves the new token;
+5. delete the old token on the LMS.
 
 A token is never in the environment, the database or a log; the worker logs the web-service
 function, the site id, the HTTP status and timings only. A suspected leak is handled the same way,
-starting from step 4 (delete first, then create and install the new token). In between, the
+starting from step 5 (delete first, then create, install and recreate). In between, the
 LMS refuses the worker's calls and the reads of that site are reported unreadable, which keeps
 the START gates closed rather than opening them.
 

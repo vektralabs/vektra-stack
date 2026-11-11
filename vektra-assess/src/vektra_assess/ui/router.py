@@ -59,7 +59,7 @@ def _not_found(what: str) -> ErrorResponse:
 
 def _refused(status: int, err: ErrorResponse, headers: dict[str, str]) -> Response:
     """An error envelope (code and remediation, REQ-009/010) with the page or asset headers:
-    the framing restrictions and any Retry-After are kept (CodeRabbit review 5811279241)."""
+    the framing restrictions and any Retry-After are kept."""
     return JSONResponse(err.to_envelope(), status_code=status, headers=headers)
 
 
@@ -71,7 +71,7 @@ def public_assess_ui() -> None:
 router = APIRouter(
     prefix=PREFIX,
     # the in-process sweeps of the assess API (DEK cache, broker, limiters: the ui_page
-    # windows of past clients) also run on page-only traffic (CodeRabbit review 5811279241)
+    # windows of past clients) also run on page-only traffic
     dependencies=[Depends(public_assess_ui), Depends(assess_housekeeping)],
 )
 
@@ -87,7 +87,7 @@ def static_dir_of(app: Any) -> Path:
 
 def framable(app: Any, path: str) -> bool:
     """The paths that may be framed (no ``X-Frame-Options``): the page itself and the asset
-    names the built manifest lists, nothing else under ``/ui/`` (CodeRabbit 4501067221)."""
+    names the built manifest lists, nothing else under ``/ui/``."""
     if path == PREFIX:
         return True
     assets = PREFIX + "/assets/"
@@ -222,7 +222,7 @@ async def ui_page(request: Request, site: str = "") -> Response:
     if origin is None:
         return _refused(404, _not_found("page"), page_headers(None))
     # the startup check, again for THIS site now: an origin changed after startup that is the
-    # UI origin (or not https outside development) is never framed (CodeRabbit 4501067228)
+    # UI origin (or not https outside development) is never framed
     settings = settings_of(request)
     if ui_origin_problem(
         settings.ui_origin, [origin], development=settings.env == "development"
@@ -237,7 +237,7 @@ async def ui_page(request: Request, site: str = "") -> Response:
                 "site": site,
                 "moodleOrigin": origin,
                 "apiBase": "/api/v1/assess",
-                # the composer's limit is the server's (CodeRabbit 4501070009)
+                # the composer's limit is the server's
                 "maxMessageChars": settings.max_message_chars,
             }
         ),

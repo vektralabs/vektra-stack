@@ -255,8 +255,8 @@ class SnapshotCache:
                 return (await conn.execute(text(SNAPSHOT_SQL))).scalar_one()
 
         try:
-            # bounded: a half-open connection must not stop every later refresh (CodeRabbit
-            # 4525094941); a timeout is an ordinary failure below
+            # bounded: a half-open connection must not stop every later refresh;
+            # a timeout is an ordinary failure below
             value = await asyncio.wait_for(read(), self._timeout_s)
         except Exception as exc:
             log.warning(

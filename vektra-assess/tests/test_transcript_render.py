@@ -217,38 +217,79 @@ def test_the_baseline_document_passes() -> None:
     allowlist.check(_doc("<p>ok</p>"))
 
 
+#: placeholder for the template's own stylesheet (its hash matches), filled in by the test
+_TEMPLATE_CSS = "@@TEMPLATE_CSS@@"
+
+
 @pytest.mark.parametrize(
-    ("body", "head"),
+    ("body", "head", "reason"),
     [
-        ("<script>1</script>", ""),
-        ('<p onclick="x">a</p>', ""),
-        ('<p style="color:red">a</p>', ""),
-        ("", "<style>@import 'x.css';</style>"),
-        ('<p class="data:text/html,x">a</p>', ""),
-        ('<p class="javascript:alert(1)">a</p>', ""),
-        ('<img srcset="x.png 1x">', ""),
-        ("", '<base href="https://evil.example/">'),
-        ("", '<meta http-equiv="refresh" content="0">'),
-        ('<form action="https://evil.example"><p>a</p></form>', ""),
-        ('<iframe src="x"></iframe>', ""),
-        ('<object data="x"></object>', ""),
-        ('<embed src="x">', ""),
-        ("<svg><foreignObject><p>a</p></foreignObject></svg>", ""),
-        ("<math><semantics><annotation-xml>x</annotation-xml></semantics></math>", ""),
-        ("<!-- c --><p>a</p>", ""),
-        ('<time datetime="javascript:1">a</time>', ""),
+        ("<script>1</script>", "", "tag:script"),
+        ('<p onclick="x">a</p>', "", "attr:p:onclick"),
+        ('<p style="color:red">a</p>', "", "attr:p:style"),
+        ("", "<style>@import 'x.css';</style>", "style_position"),
+        ('<p class="data:text/html,x">a</p>', "", "attr_value:p:class"),
+        ('<p class="javascript:alert(1)">a</p>', "", "attr_value:p:class"),
+        ('<img srcset="x.png 1x">', "", "tag:img"),
+        ("", '<base href="https://evil.example/">', "tag:base"),
+        ("", '<meta http-equiv="refresh" content="0">', "attr:meta:http-equiv"),
+        ('<form action="https://evil.example"><p>a</p></form>', "", "tag:form"),
+        ('<iframe src="x"></iframe>', "", "tag:iframe"),
+        ('<object data="x"></object>', "", "tag:object"),
+        ('<embed src="x">', "", "tag:embed"),
+        ("<svg><foreignObject><p>a</p></foreignObject></svg>", "", "tag:svg"),
+        (
+            "<math><semantics><annotation-xml>x</annotation-xml></semantics></math>",
+            "",
+            "tag:semantics",
+        ),
+        ("<!-- c --><p>a</p>", "", "comment"),
+        ('<time datetime="javascript:1">a</time>', "", "attr_value:time:datetime"),
+        # one vector per check that no other check catches
+        ("<?xml-stylesheet type='text/css'?><p>a</p>", "", "processing_instruction"),
+        ("<math><mrow><math><mi>x</mi></math></mrow></math>", "", "nested_math"),
+        (
+            '<p class="' + "a" * (allowlist.MAX_ATTR + 1) + '">a</p>',
+            "",
+            "attr_value:p:class",
+        ),
+        # a second copy of the template's stylesheet: the hash matches, the position does not
+        ("", "<style>" + _TEMPLATE_CSS + "</style>", "style_position"),
+        ("<style>" + _TEMPLATE_CSS + "</style><p>a</p>", "", "style_position"),
     ],
 )
-def test_every_listed_vector_is_refused(body: str, head: str) -> None:
-    with pytest.raises(allowlist.AllowlistViolation):
+def test_every_listed_vector_is_refused(body: str, head: str, reason: str) -> None:
+    css = (render.TEMPLATES / "transcript.css").read_text().rstrip("\n")
+    body, head = body.replace(_TEMPLATE_CSS, css), head.replace(_TEMPLATE_CSS, css)
+    with pytest.raises(allowlist.AllowlistViolation) as exc:
         allowlist.check(_doc(body, head))
+    assert exc.value.reason == reason
+
+
+def test_an_attribute_of_exactly_max_attr_passes() -> None:
+    allowlist.check(_doc('<p class="' + "a" * allowlist.MAX_ATTR + '">a</p>'))
+
+
+def test_the_only_stylesheet_outside_head_is_refused_even_with_the_right_hash() -> None:
+    """The document's one ``<style>``, hash intact, moved into ``<body>``: the count and the
+    hash are both right, so only the position check refuses it."""
+    css = (render.TEMPLATES / "transcript.css").read_text().rstrip("\n")
+    doc = (
+        '<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>t</title>'
+        "</head><body><style>" + css + "</style><p>a</p></body></html>"
+    ).encode()
+    with pytest.raises(allowlist.AllowlistViolation) as exc:
+        allowlist.check(doc)
+    assert exc.value.reason == "style_position"
 
 
 def test_a_second_or_altered_stylesheet_is_refused() -> None:
-    with pytest.raises(allowlist.AllowlistViolation):
+    with pytest.raises(allowlist.AllowlistViolation) as exc:
         allowlist.check(_doc("<p>a</p>").replace(b"body{", b"body{x:1;"))
-    with pytest.raises(allowlist.AllowlistViolation):
+    assert exc.value.reason == "style_hash"
+    with pytest.raises(allowlist.AllowlistViolation) as exc:
         allowlist.check(_doc("<style>p{}</style>"))
+    assert exc.value.reason == "style_position"
 
 
 def test_non_utf8_is_refused() -> None:

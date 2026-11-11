@@ -131,8 +131,8 @@ CHECKS: tuple[Check, ...] = (
     ),
     # in practice fingerprint-only: the API, which holds the private key, may not read the
     # hand-off table (it reads a live hand-off through a definer function), so this reports
-    # ``skipped``; the worker reads the table but never holds the private key (CodeRabbit
-    # 4525094929). Kept so a future grant makes it a real presence check.
+    # ``skipped``; the worker reads the table but never holds the private key.
+    # Kept so a future grant makes it a real presence check.
     Check(
         "assess_handoff_private",
         "assess_session_handoff.handoff_kid",
@@ -264,7 +264,7 @@ async def open_role(
     try:
         # a DSN that carries a password, or one the driver refuses, means the check cannot run
         # (exit 2, never 1, which means a key mismatch); the exception text may hold the DSN,
-        # so only its type is printed (CodeRabbit 4524508958)
+        # so only its type is printed
         engine = create_async_engine(
             dsn_with_password(url, loaded[secret].value, step=step)  # type: ignore[union-attr]
         )

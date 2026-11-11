@@ -22,7 +22,7 @@ REPLY_CLAIM_KEY_SQL = "hashtextextended('assess_reply:' || CAST(:sid AS text), 0
 def reply_claimed_sql(sid_sql: str) -> str:
     """SQL that is true while ANY session holds the live-reply claim of ``sid_sql`` (a column or
     expression), read from ``pg_locks`` without taking the lock: scans that pick turns to answer
-    or to mark skip the claimed ones and reach the next (CodeRabbit review 5808100754). A bigint
+    or to mark skip the claimed ones and reach the next. A bigint
     advisory key appears in ``pg_locks`` split in ``classid`` (high 32 bits) and ``objid`` (low
     32 bits) with ``objsubid = 1``."""
     return (

@@ -30,7 +30,7 @@ ORIGIN_RE = r"^https?://([a-z0-9.\-]+|\[[0-9a-f:.]+\])(:[0-9]{1,5})?$"
 
 def _host(host: str) -> str:
     # an IPv6 zone id (fe80::1%eth0, %25 in a URL) names an interface of one machine: no
-    # browser origin carries it and ORIGIN_RE excludes it (CodeRabbit 4501694787)
+    # browser origin carries it and ORIGIN_RE excludes it
     if "%" in host:
         raise ValueError("an origin's host has no IPv6 zone id")
     try:
@@ -93,7 +93,7 @@ def site_origin_or_problem(
     """``(origin, None)``, or ``(None, "moodle_origin_invalid")`` when the site has no usable
     origin (a stored ``moodle_origin`` that is not a bare origin, or no column and a
     ``base_url`` without one): reported by startup and the setup check, never skipped
-    (CodeRabbit 4501070007; the page answers 404 for such a site)."""
+    (the page answers 404 for such a site)."""
     origin = site_origin(moodle_origin, base_url)
     return (origin, None) if origin else (None, "moodle_origin_invalid")
 

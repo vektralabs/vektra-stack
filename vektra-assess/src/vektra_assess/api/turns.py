@@ -137,7 +137,7 @@ def turn_notes(result: TurnResult) -> TurnNotes:
     one contest entry per label (the LAST one wins, as in the transcript), the latest
     ``MAX_NOTE_CONTESTS`` labels, each label cut to ``MAX_NOTE_LABEL`` UTF-8 BYTES (multibyte
     text cannot inflate it), and the oldest entries dropped until the encoded JSON fits
-    ``MAX_NOTE_CONTESTS_BYTES`` (CodeRabbit 4503025930): never over the 4096-byte CHECK."""
+    ``MAX_NOTE_CONTESTS_BYTES``: never over the 4096-byte CHECK."""
     latest: dict[str, str] = {}
     for entry in result.contest_entries:
         label = _cut_utf8(str(entry.label), MAX_NOTE_LABEL)
@@ -304,7 +304,7 @@ class TurnDriver:
         is stopped then and the released part is persisted as a marked interrupted turn.
         ``expected_seq``: the session's ``seq`` right after the student turn this reply
         answers; once the claim is held the turn is checked to be still that pending one."""
-        # the cut is an absolute time (CodeRabbit review 5808100754): time spent waiting for
+        # the cut is an absolute time: time spent waiting for
         # a slot or the claim is not added to it
         cut_at = (
             asyncio.get_running_loop().time() + cut_after_s
@@ -335,7 +335,7 @@ class TurnDriver:
         claimed = False
         # whether the session may still hold the lock in a way we could not undo: such a
         # connection is invalidated (closed for good), never returned to the pool, where the
-        # session-level lock would survive and block the turn (CodeRabbit review 5808100754)
+        # session-level lock would survive and block the turn
         uncertain = False
         try:
             conn = await self.engine.connect()
@@ -390,8 +390,7 @@ class TurnDriver:
             if not claimed:
                 log.info("assess_reply_not_claimed")  # another driver answers this turn
                 return
-            # the claim may come after another driver answered (CodeRabbit review
-            # 5808100754): generate only while this very student turn is still pending
+            # the claim may come after another driver answered: generate only while this very student turn is still pending
             if expected_seq is not None and not await self._still_pending(
                 sid, epoch, expected_seq
             ):

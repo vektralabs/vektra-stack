@@ -238,7 +238,7 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
     for site_id, moodle_origin, base_url in rows:
         origin, site_problem = site_origin_or_problem(moodle_origin, base_url)
         if site_problem is not None:
-            # the SITE is misconfigured, not the UI origin (CodeRabbit 4501246170)
+            # the SITE is misconfigured, not the UI origin
             raise StartupValidationError(
                 step=STEP,
                 detail=f"assess site {site_id} refused: {site_problem}",
@@ -252,7 +252,7 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
             and settings.env != "development"
             and not origin.startswith("https://")
         ):
-            # also the SITE's problem: its Moodle origin is not https (review 5812478913)
+            # also the SITE's problem: its Moodle origin is not https
             raise StartupValidationError(
                 step=STEP,
                 detail=f"assess site {site_id} refused: moodle_origin_not_https",

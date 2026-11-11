@@ -82,7 +82,7 @@ async def read_capped_body(
     declared = request.headers.get("content-length", "")
     if declared.isascii() and declared.isdigit():
         # leading zeros stripped, and a length too long to be a size at all is over the cap by
-        # itself: ``int()`` refuses more than 4300 digits (CodeRabbit 4512009230)
+        # itself: ``int()`` refuses more than 4300 digits
         digits = declared.lstrip("0") or "0"
         if len(digits) > len(str(max_bytes)) or int(digits) > max_bytes:
             raise fail(bad_request("body_too_large"))

@@ -83,10 +83,35 @@ def test_stages_do_not_cross() -> None:
     ses = t.mint_session(
         sub=1, site=SITE, cmid=2, sid=SID, seq=1, epoch=1, deadline=None
     ).token
-    with pytest.raises(TokenError):
+    with pytest.raises(TokenError) as exc:
         t.verify(pre, stage="session")
-    with pytest.raises(TokenError):
+    # a minted pre token lacks the session claims, so the require list stops it first
+    assert exc.value.code == "MissingRequiredClaimError"
+    with pytest.raises(TokenError) as exc:
         t.verify(ses, stage="pre")
+    assert exc.value.code == "stage"
+
+
+def test_pre_stage_token_with_every_session_claim_is_not_a_session_token() -> None:
+    # The other direction of the stage check: a token carrying sid/seq/epoch, signed with
+    # the right key, still says stage "pre" and must not verify as a session token.
+    r = ring("k1")
+    tok = _forge(_base(stage="pre", sid=str(SID), seq=1, epoch=1), r.keys["k1"])
+    with pytest.raises(TokenError) as exc:
+        tokens(r).verify(tok, stage="session")
+    assert exc.value.code == "stage"
+
+
+def test_short_lived_session_token_is_not_a_presession_token() -> None:
+    # With a session TTL at or below the 120 s pre-session cap, the TTL check cannot tell
+    # the two stages apart: only the stage claim stops a session token passing as pre.
+    t = tokens(**{"VEKTRA_ASSESS_SESSION_TOKEN_TTL_S": 60})
+    ses = t.mint_session(
+        sub=1, site=SITE, cmid=2, sid=SID, seq=1, epoch=1, deadline=None
+    ).token
+    with pytest.raises(TokenError) as exc:
+        t.verify(ses, stage="pre")
+    assert exc.value.code == "stage"
 
 
 def test_rotation_previous_kid_verifies_unknown_kid_does_not() -> None:

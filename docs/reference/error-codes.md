@@ -139,6 +139,12 @@ These codes are used by specific components and are not part of the REQ-011 regi
 | ERR-ASSESS-027 | vektra-assess | 503 | Subject erasure not completed (OQ-033): `details.reason` `pending` (the worker has not finished yet: retry with the same request, it is idempotent) or `failed` (the count check after the deletion found rows left: the deletion was rolled back, the operator is alerted; live sessions the erasure closed beforehand, in their own transaction, stay closed). Never a success without an erasure or a `retained` outcome |
 | ERR-ASSESS-028 | vektra-assess | 400 | Privacy configuration refused (REQ-089): `details.fields` lists `{field, code}` per invalid field (`retention_days` outside 1..3650, an empty or over-length text, a URL that is not https). Explicit envelope, never the framework 422 |
 
+### Namespace errors
+
+| Code | Category | HTTP | Message | Remediation |
+|------|----------|------|---------|-------------|
+| ERR-NAMESPACE-001 | PERMANENT | 403 | The namespace is reserved by Vektra (today `assess-discussion`): it cannot hold content or be configured. Returned by ingest, batch ingest, learn content ingest and the admin namespace config | Use a different namespace. Reserved namespaces are managed by Vektra and are never written through the API. |
+
 ### Deliberately not listed
 
 `ERR-QUOTA-001` (namespace quota exceeded) is defined in `vektra_shared/errors.py` and

@@ -32,10 +32,9 @@ _UPSERT = text(
 
 
 #: a busy outcome keeps the previous real result as ``last`` = ``{state, ok, error_class, at}``
-#: (``at``: epoch seconds of that probe, CodeRabbit 4506450148), carried unchanged over a busy
+#: (``at``: epoch seconds of that probe), carried unchanged over a busy
 #: row's own ``last``; null when there is none. Taken from the row the UPSERT conflicts with,
-#: in the same statement, so a result another probe writes concurrently is never dropped
-#: (CodeRabbit 4507743858).
+#: in the same statement, so a result another probe writes concurrently is never dropped.
 _UPSERT_BUSY = text(
     "INSERT INTO assess_heartbeat (component, beat_at, details) "
     "VALUES (:c, now(), CAST(:d AS jsonb) || jsonb_build_object('last', NULL)) "

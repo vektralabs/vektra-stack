@@ -395,7 +395,7 @@ class VektraAssessSettings(BaseSettings):
     @model_validator(mode="after")
     def _known_zone_when_enabled(self) -> VektraAssessSettings:
         """An unknown zone is refused only while assess is ENABLED: a dormant feature must not
-        stop the API from starting (CodeRabbit 4503025935)."""
+        stop the API from starting."""
         if not self.enabled:
             return self
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1024,7 +1024,7 @@ def explain_settings_error(exc: Exception) -> tuple[str, str]:
             # model-level validator's message is ours and names settings, not values
             msg = str(err.get("msg", "invalid value"))
         else:
-            # a field validator's message may quote the rejected text (CodeRabbit 4524508948)
+            # a field validator's message may quote the rejected text
             msg = "invalid value"
         lines.append(f"{var}: {msg}")
     detail = "; ".join(lines) or type(exc).__name__

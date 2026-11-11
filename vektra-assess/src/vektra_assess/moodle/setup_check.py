@@ -479,7 +479,7 @@ async def ui_origin_distinct(ctx: CheckContext) -> Outcome:
     if problem is not None:
         return missing(problem)
     # another SITE, not only another origin, than both the framing origin (the column) and
-    # base_url: either one same-site fails the item (CodeRabbit review 5812478913)
+    # base_url: either one same-site fails the item
     ui = str(ctx.settings.ui_origin)
     if moodle and same_site(ui, moodle):
         return missing("same_site_as_moodle_origin")
@@ -671,7 +671,7 @@ async def run_setup_check(
             # 4506450163): FOR UPDATE holds off a concurrent disable until this commits, and a
             # disable that committed first is seen here. FOR UPDATE, not FOR SHARE: it is the
             # lock observe_release asks for, taken first so two persists of one site serialise
-            # instead of deadlocking (CodeRabbit 4506662217)
+            # instead of deadlocking
             if (await conn.execute(_SITE_ENABLED, {"s": site_id})).scalar() is not True:
                 await conn.execute(_FAIL_RUNNING, {"r": report_id})
                 abandoned = True

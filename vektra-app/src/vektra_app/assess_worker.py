@@ -504,7 +504,7 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
         log.warning(
             "assess_recipient_domains_empty", reason_code="every_address_refused"
         )
-    # one connection budget for every fan-out handler's rows (plan 13a, CodeRabbit 4513956359):
+    # one connection budget for every fan-out handler's rows (plan 13a):
     # the job pool minus a reserve for the job loop (the heartbeat and the reapers have their own)
     from vektra_assess.delivery.budget import RowDbBudget
 

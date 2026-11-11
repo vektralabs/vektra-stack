@@ -264,7 +264,7 @@ async def open_role(
     try:
         # a DSN that carries a password, or one the driver refuses, means the check cannot run
         # (exit 2, never 1, which means a key mismatch); the exception text may hold the DSN,
-        # so only its type is printed (CodeRabbit 4524508958)
+        # so only its type is printed
         engine = create_async_engine(
             dsn_with_password(url, loaded[secret].value, step=step)  # type: ignore[union-attr]
         )

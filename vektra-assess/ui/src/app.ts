@@ -230,7 +230,7 @@ export class App {
       });
       if (r.status === 409) {
         // only ERR-ASSESS-009 is the close; another conflict (material being re-sealed, a
-        // state the read does not allow) leaves the session open (CodeRabbit 4501070018)
+        // state the read does not allow) leaves the session open
         if ((await errorCode(r)) === "ERR-ASSESS-009") this.dispatch({ type: "closed", reason: null });
         return null;
       }
@@ -490,7 +490,7 @@ export class App {
 
   /** Tell the parent once, with the reason. A close learnt from a 409 has no reason yet: the
    *  closed event normally follows on the stream, so the notice waits for it, at most
-   *  ``closeReasonWaitMs``, then goes out as "unknown" (CodeRabbit 4501067255). */
+   *  ``closeReasonWaitMs``, then goes out as "unknown". */
   private noticeClosed(reason: string): void {
     if (this.closedNoticed) return;
     if (reason === "unknown") {

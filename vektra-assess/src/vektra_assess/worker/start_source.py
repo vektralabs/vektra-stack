@@ -206,7 +206,7 @@ class MoodleStartSource:
     ) -> ActivityRef | None:
         """The activity's course for the GRADER side (graders, close facts): resolved inside the
         student's courses, or, once the student has left the course, inside the hinted course
-        when the cmid is found there (CodeRabbit 4503025969). Gates never use this fallback."""
+        when the cmid is found there. Gates never use this fallback."""
         ref, not_found = await self._resolve(site, target)
         if ref is not None or not not_found or not target.courseid_hint:
             return ref
@@ -592,7 +592,7 @@ def _override_holder(q: Any) -> int | None:
 
 
 def _automatic_close(q: Any) -> int | None:
-    """BR-006(d) automatic close of a quiz for the teacher pages (CodeRabbit 4506916932): the
+    """BR-006(d) automatic close of a quiz for the teacher pages: the
     latest of the quiz close and every participant's override close, plus the grace period,
     the same formula the Start gate uses (``gates._effective_gate``); None unless the close,
     every override and the grace are readable (the gate then takes the REQ-091 fallback path,

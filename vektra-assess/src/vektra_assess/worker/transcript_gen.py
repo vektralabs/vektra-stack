@@ -108,7 +108,7 @@ _SESSION = text(
     "AND a.cmid = s.cmid AND a.student_userid = s.student_userid "
     "AND a.outcome = 'rolled_back' AND a.created_at <= s.created_at) AS failed_starts, "
     # a purged session is done for good (plan 12): its tombstone outlives the transcript, so a
-    # retried job never regenerates what the retention purge removed (CodeRabbit 4503029411)
+    # retried job never regenerates what the retention purge removed
     "(EXISTS (SELECT 1 FROM assess_transcripts t WHERE t.session_id = s.id) "
     "OR EXISTS (SELECT 1 FROM assess_purge_records p WHERE p.session_id = s.id)) AS done "
     "FROM assess_sessions s LEFT JOIN assess_activity_config c ON c.site_id = s.site_id "
@@ -234,7 +234,7 @@ async def generate_transcript(
         verify_turns(genesis, chain)
         if len(chain) != int(row.seq):
             # a deleted trailing turn leaves a prefix that still verifies: the session's own
-            # turn counter must agree (CodeRabbit 4503029416)
+            # turn counter must agree
             await _integrity_failed(acquire, row, "turn_count_mismatch", len(chain))
             raise IntegrityFailure("turn_count_mismatch", len(chain))
     except ChainError as exc:
@@ -267,7 +267,7 @@ async def generate_transcript(
             else Unreadable(UnreadableReason.PARTIAL, "not_read"),
         ),
         # frozen at the commit; the configuration's value only for sessions committed before
-        # revision 0034 (CodeRabbit 4503025981)
+        # revision 0034
         cap_minutes=(int(row.cap_s) // 60) if row.cap_s else row.cap_minutes,
         duration_s=row.duration_s,
         committed_at=row.committed_at,
@@ -311,7 +311,7 @@ async def generate_transcript(
     async with acquire() as conn, conn.begin():
         # FOR KEY SHARE waits for a purge holding the session row (FOR UPDATE); the INSERT is
         # then a new statement with a new snapshot, so it sees that purge's tombstone and
-        # inserts nothing (CodeRabbit 4516399835: the check alone used a snapshot from before
+        # inserts nothing (the check alone used a snapshot from before
         # the purge committed)
         await conn.execute(_LOCK_SESSION, {"sid": sid})
         got = (

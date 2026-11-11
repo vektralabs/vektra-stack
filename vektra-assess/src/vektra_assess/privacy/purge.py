@@ -467,7 +467,7 @@ async def run_purge(
                     JobKind.PURGE,
                     {},
                     # one key per generation: a follow-up queued by the ``purge`` job that is running
-                    # (leased, holding its own key) must not collide with it (CodeRabbit 4517939449)
+                    # (leased, holding its own key) must not collide with it
                     dedupe_key=f"{BACKLOG_KEY}:{generation}",
                     not_before=datetime.now(UTC) + BACKLOG_DELAY,
                 )

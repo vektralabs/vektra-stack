@@ -1,7 +1,7 @@
 # Assessment discussion chatbot: implementation plan index
 
 **Generated**: 2026-11-01
-**Updated**: 2026-11-01
+**Updated**: 2026-11-11
 **Approved**: 2026-11-01 (coordinator)
 **Total plans**: 16, with 490 tasks in total: 13 backend plans (425 tasks) in this repo, and 3 Moodle plugin plans (65 tasks) in `vektralabs/vektra-moodle-discuss`.
 **Status legend**: `pending` | `in_progress` | `completed`
@@ -162,8 +162,8 @@ bot, finishes, and the transcript is delivered to the graders and downloadable b
 |---|------|-------|-------|------------|--------|
 | 11 | [assess-teacher-ops](20261101-154950-assess-teacher-ops.md) | Teacher config (write-only), list, reset, terminate, extra time | 21 | 8, 10 | completed (11a merged, PR #170; 11b on `feat/assess-teacher-ops-11b`: list, reset, terminate, extra time, opening fallback, IDOR matrix. Annotated: REQ-087 continuity deferred by the product owner 2026-11-08 (no previous-turns block in the context; plan 13 or a dedicated plan); REQ-092 out of v1, its flag refused at startup; live LMS reads of editors / override managers BLOCKED (dev envs). Migration 0038 waits for 0037 to rebase) |
 | 12 | [assess-privacy-retention](20261101-154950-assess-privacy-retention.md) | Retention, crypto-shred purge, erasure, export, monitoring | 27 | 10 | completed (12a merged, PR #191: privacy settings, retention purge with tombstones, subject and activity erasure, export; 12b on `feat/assess-privacy-retention-12b`: settings bounds, /health/assess readiness (503) with details, content-free /metrics (revision 0041) and alert rules, operator SMTP test send (revision 0042), keys verify CLI and key inventory, notify-chain safety net, abandoned setup reports. BLOCKED: the compose canary grep over a seeded discussion (no LMS, model or relay sink in compose), moved to plan 13) |
-| P3 | [discuss-teacher-privacy](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-teacher-privacy.md) | Settings section, teacher pages, download proxy, Privacy API | 22 | P1, 10, 11, 12 | pending |
-| 13 | [assess-hardening-release](20261101-154950-assess-hardening-release.md) | Chaos suite, NFR campaign, runbooks, pilot go/no-go | 24 | all | in_progress (13a merged (#195): chaos consolidation, NFR report script, image boundary, deferred items; 13b on `docs/assess-hardening-release-13b`: runbooks, reference docs, release checklist, go/no-go (NO-GO). Open: `job:rotate_keys` unbound (production worker refuses to start), NFR campaign and restore drill BLOCKED on the target environment) |
+| P3 | [discuss-teacher-privacy](../../../vektra-moodle-discuss/.s2s/plans/20261101-154950-discuss-teacher-privacy.md) | Settings section, teacher pages, download proxy, Privacy API | 22 | P1, 10, 11, 12 | pending (read-only check 2026-11-11, vektra-moodle-discuss `origin/develop` `4cee292`: not started, 0 of 37 checkboxes ticked, no branch or PR; P2b still draft #3) |
+| 13 | [assess-hardening-release](20261101-154950-assess-hardening-release.md) | Chaos suite, NFR campaign, runbooks, pilot go/no-go | 24 | all | in_progress (all code and docs merged: 13a #195 (chaos consolidation, NFR report script, image boundary, deferred items), #197 (the `rotate_keys` job kind dropped, revision 0044: the production worker starts), 13b #196 (runbooks, reference docs, release checklist, go/no-go: NO-GO). Stays `in_progress` because its acceptance criteria are BLOCKED on the environment: NFR campaign, restore drill, target VM / HPC, OQ-026 model, relay, P3) |
 
 **Working at the end**: the complete feature, ready for the pilot.
 
@@ -173,6 +173,10 @@ bot, finishes, and the transcript is delivered to the graders and downloadable b
 - Privacy API export and delete end to end; an unhandled delete never succeeds silently;
 - download proxy streams with attachment + nosniff + CSP sandbox + no-store;
 - the pilot go/no-go criteria in plan 13.
+
+Gate run 2026-11-11 on `develop` `87f22d0a`: [assess-w4-review.md](../waves/assess-w4-review.md). Purge/erasure
+and the sealed-config grant PASS; Privacy API and download proxy PASS on the Vektra side, joined runs BLOCKED on
+P3; go/no-go NO-GO.
 
 ---
 

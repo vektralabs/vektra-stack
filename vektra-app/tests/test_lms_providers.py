@@ -168,6 +168,54 @@ def test_the_real_group_is_read_and_lists_the_staged_provider() -> None:
     assert available_lms_providers() == ("moodle",)
 
 
+async def test_an_aclose_property_that_raises_does_not_replace_the_refusal() -> None:
+    """CodeRabbit 4543758772: the best-effort close must not let its own lookup escape."""
+
+    class BadClose:
+        @property
+        def aclose(self) -> Any:
+            raise RuntimeError("boom")
+
+    with pytest.raises(StartupValidationError, match="does not implement"):
+        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", BadClose)))
+
+
+async def test_a_name_property_that_raises_is_refused_and_the_provider_closed() -> None:
+    """CodeRabbit 4543758779: the runtime Protocol check does not call the property."""
+    cls = _provider_class("alpha")
+
+    def bad_name(self: Any) -> str:
+        raise RuntimeError("secret=hunter2")
+
+    broken = type("Broken", (cls,), {"name": property(bad_name)})
+    with pytest.raises(StartupValidationError) as e:
+        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", broken)))
+    assert "name" in e.value.detail and "RuntimeError" in e.value.detail
+    assert "hunter2" not in e.value.detail and e.value.__cause__ is None
+    assert len(BUILT) == 1 and BUILT[0].closed
+
+
+def test_the_real_group_is_the_one_read() -> None:
+    """CodeRabbit 4543186516: discovery reads ``vektra.lms_providers`` from the installed
+    metadata; checked on an injected metadata function, so an installed provider does not
+    make the suite fail."""
+    seen: list[str] = []
+
+    def fake_entry_points(*, group: str) -> list[_EP]:
+        seen.append(group)
+        return [_EP("beta", object), _EP("alpha", object)]
+
+    import importlib.metadata as md
+
+    real = md.entry_points
+    md.entry_points = fake_entry_points  # type: ignore[assignment]
+    try:
+        assert available_lms_providers() == ("alpha", "beta")
+    finally:
+        md.entry_points = real
+    assert seen == [GROUP]
+
+
 def test_only_the_worker_composition_loads_a_provider() -> None:
     """The worker loads its provider at startup (2a-2); the API process never does."""
     import inspect

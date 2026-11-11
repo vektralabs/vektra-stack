@@ -82,11 +82,15 @@ def configure_structlog() -> None:
     """Configure structlog with JSON output, timestamps, and PII redaction."""
     # The assess allowlist runs first and only touches vektra_assess.* loggers (it needs the
     # logger name, hence the named factory); _pii_redactor keeps its behaviour for the rest.
+    from vektra_assess import LOGGER_PREFIX
     from vektra_shared.log_safety import (
         NamedPrintLoggerFactory,
         install_assess_stdlib_handler,
+        register_strict_logger_prefix,
         structlog_processors,
     )
+
+    register_strict_logger_prefix(LOGGER_PREFIX)
 
     structlog.configure(
         processors=structlog_processors(extra=[_pii_redactor]),

@@ -253,7 +253,8 @@ class VektraAssessSettings(BaseSettings):
     @property
     def env_described(self) -> str:
         """The environment as a refusal message states it."""
-        if "env" not in self.model_fields_set:
+        # empty is unset too: compose passes ${VEKTRA_ENV:-} to the processes without env_file
+        if "env" not in self.model_fields_set or not self.env.strip():
             return (
                 "VEKTRA_ENV unset; the default 'development' does not count for assess: "
                 "set VEKTRA_ENV=development explicitly"

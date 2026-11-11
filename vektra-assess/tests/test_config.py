@@ -268,6 +268,9 @@ def test_development_must_be_set_explicitly(monkeypatch: pytest.MonkeyPatch) -> 
     )
     explicit = VektraAssessSettings.model_validate({"VEKTRA_ENV": "development"})
     assert explicit.is_development is True
+    # compose forwards ${VEKTRA_ENV:-}: an empty value is unset, never development
+    empty = VektraAssessSettings.model_validate({"VEKTRA_ENV": ""})
+    assert empty.is_development is False and "VEKTRA_ENV unset" in empty.env_described
 
 
 def test_the_erasure_default_needs_an_explicit_development(

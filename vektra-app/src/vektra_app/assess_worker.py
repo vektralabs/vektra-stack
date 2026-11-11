@@ -1087,8 +1087,13 @@ def main(bindings: Any | None = None) -> None:
         raise SystemExit(0)
     # JSON on stderr with the assess allowlist on structlog AND stdlib records (plan
     # assess-context A): before this the worker's stdlib INFO lines went nowhere.
-    from vektra_shared.log_safety import configure_assess_worker_logging
+    from vektra_assess import LOGGER_PREFIX
+    from vektra_shared.log_safety import (
+        configure_assess_worker_logging,
+        register_strict_logger_prefix,
+    )
 
+    register_strict_logger_prefix(LOGGER_PREFIX)
     configure_assess_worker_logging()
     raise SystemExit(asyncio.run(_amain(bindings)))
 

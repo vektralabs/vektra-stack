@@ -32,6 +32,9 @@ def _settings(**kw: object) -> VektraAssessSettings:
         {
             "VEKTRA_ASSESS_LLM_MODEL": "ollama/m",
             "VEKTRA_ASSESS_SAFEGUARD_MODE": "none",
+            # the CI tier is a development run: no Presidio, a fake model (review of #203: the
+            # safeguard/locality rule now holds inside build_assess_safeguard)
+            "VEKTRA_ENV": "development",
             **kw,
         }
     )

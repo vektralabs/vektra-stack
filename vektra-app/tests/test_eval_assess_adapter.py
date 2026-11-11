@@ -25,6 +25,24 @@ def _settings(**kw: object) -> VektraAssessSettings:
     )
 
 
+def test_the_eval_path_refuses_no_safeguard_with_a_cloud_model() -> None:
+    """Review of #203: the eval adapter builds the safeguard itself, not through startup step
+    13, so the safeguard/locality rule must hold inside ``build_assess_safeguard``."""
+    from vektra_shared.startup import StartupValidationError
+
+    llm = RecordingLLMProvider(["x"])
+    for env in ({}, {"VEKTRA_ENV": "production"}):  # none, cloud, unset or production
+        with pytest.raises(StartupValidationError, match="LOCALITY=cloud") as e:
+            A.build_runner(_settings(**env), llm=llm)
+        assert "safeguard is required" in e.value.remediation
+    dev = A.build_runner(_settings(VEKTRA_ENV="development"), llm=llm)
+    onprem = A.build_runner(
+        _settings(VEKTRA_ENV="production", VEKTRA_ASSESS_PROVIDER_LOCALITY="onprem"),
+        llm=llm,
+    )
+    assert dev and onprem
+
+
 def test_fixtures_load_only_through_assemble_context() -> None:
     fx = A.load_fixtures()
     assert "quiz-math-4.3-0" in fx

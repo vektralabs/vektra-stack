@@ -9,11 +9,18 @@ recording, the canaries planted in its LMS-side forbidden fields, and the creden
 Each check is a plain function that raises ``AssertionError``, so a consumer can also run it
 against a deliberately broken provider and prove that it says no (the negative controls).
 
+The canary check walks every returned value, numbers included. ``ReviewHtml.html`` is the
+teacher-visible rendering by design, so it is walked **as its own profile leaves it**: only the
+text inside the profile's kept blocks, minus every dropped class (``profile_text``, a stdlib
+parse of the declarative profile). A profile that keeps what the LMS hides fails the check.
+
+The anti-vacuous guard: ``canary_witness`` must return the text of what the provider's read
+paths actually consumed during the run (its recorded documents), never a list of the canaries
+themselves; a canary that no read path touched proves nothing and fails the check.
+
 Skeleton scope (2a-1). Not yet here, and owned by later tasks:
 
-- the canary check covers every returned value **except** ``ReviewHtml.html``, which is the
-  teacher-visible rendering by design. Its cleanliness after profile extraction is proved by the
-  vertical's canary sinks over a full capture, including the exact LLM request bytes (2a-2);
+- the exact LLM request bytes of a full capture (the vertical's canary sinks, 2a-2);
 - the run on the second provider (the recorded fixtures of the existing client) is task 2a-2a.1.
 """
 
@@ -27,6 +34,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
+from html.parser import HTMLParser
 from typing import Any
 
 import structlog
@@ -103,8 +111,10 @@ class ConformanceTarget:
     #: planted in LMS-side forbidden fields of the recording (right answers, hidden feedback,
     #: unreleased grades...): never in a returned value
     canaries: tuple[str, ...]
-    #: the raw recording as text: proves the canaries ARE in what the provider reads
-    canary_witness: Callable[[], str]
+    #: called after a recorded run with the provider that ran: the text of the recorded documents
+    #: its read paths consumed in that run. Proves the canaries were in what it read; a list of
+    #: the canaries themselves would make the guard pass by construction
+    canary_witness: Callable[[LmsProvider], str]
     #: credentials the transport uses: never in a log line, at any level
     secrets: tuple[str, ...]
     #: capability flags to probe (the vertical's ``capabilities.FLAGS``)
@@ -212,10 +222,64 @@ async def read_all(provider: LmsProvider, target: ConformanceTarget) -> dict[str
     return out
 
 
+class _ProfileText(HTMLParser):
+    """The text a declarative ``HtmlExtractionProfile`` keeps: inside a kept block, outside
+    every dropped class. A reference reading of the profile, for the canary check only; the
+    sidecar is the production extractor (ADR-0033 D4)."""
+
+    _VOID = frozenset(
+        {
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "meta",
+            "source",
+        }
+    )
+
+    def __init__(self, keep: frozenset[str], drop: frozenset[str]) -> None:
+        super().__init__(convert_charrefs=True)
+        self._keep, self._drop = keep, drop
+        self._stack: list[tuple[bool, bool]] = []  # (opens a kept block, opens a drop)
+        self.out: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._VOID:
+            return
+        classes = set((dict(attrs).get("class") or "").split())
+        self._stack.append((bool(classes & self._keep), bool(classes & self._drop)))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag not in self._VOID and self._stack:
+            self._stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        kept = any(k for k, _ in self._stack)
+        dropped = any(d for _, d in self._stack)
+        if kept and not dropped:
+            self.out.append(data)
+
+
+def profile_text(review: ReviewHtml) -> str:
+    parser = _ProfileText(
+        frozenset(review.profile.keep.values()), frozenset(review.profile.drop_classes)
+    )
+    parser.feed(review.html)
+    parser.close()
+    return " ".join(parser.out)
+
+
 def walk_text(value: Any) -> Iterator[str]:
-    """Every string and bytes value inside a returned value, ``ReviewHtml.html`` excepted
-    (see the module docstring)."""
+    """Every string, bytes and number inside a returned value; review HTML as its own profile
+    leaves it (see the module docstring)."""
     if isinstance(value, ReviewHtml):
+        yield profile_text(value)
         yield from walk_text(value.profile)
         return
     if isinstance(value, str):
@@ -224,6 +288,10 @@ def walk_text(value: Any) -> Iterator[str]:
         yield value.decode("utf-8", errors="replace")
     elif isinstance(value, Enum):
         yield str(value.value)
+    elif isinstance(
+        value, (int, float)
+    ):  # an unreleased grade is a number (bool included)
+        yield repr(value)
     elif dataclasses.is_dataclass(value) and not isinstance(value, type):
         for f in dataclasses.fields(value):
             yield from walk_text(getattr(value, f.name))
@@ -339,13 +407,13 @@ async def check_re_resolution(target: ConformanceTarget) -> None:
 
 async def check_no_canary(target: ConformanceTarget) -> None:
     assert target.canaries, "a conformance target plants at least one canary"
-    witness = target.canary_witness()
-    missing = [c for c in target.canaries if c not in witness]
-    assert not missing, (
-        f"canaries not planted in the recording (vacuous check): {missing}"
-    )
     provider = target.factory(TransportMode.RECORDED)
     results = await read_all(provider, target)
+    witness = target.canary_witness(provider)
+    missing = [c for c in target.canaries if c not in witness]
+    assert not missing, (
+        f"canaries no read path consumed in this run (vacuous check): {missing}"
+    )
     for member, res in results.items():
         text = "\n".join(walk_text(res))
         hits = [c for c in target.canaries if c in text]
@@ -393,8 +461,8 @@ async def check_capabilities(target: ConformanceTarget) -> None:
 
 async def check_lifecycle(target: ConformanceTarget) -> None:
     provider = target.factory(TransportMode.RECORDED)
-    for env in ("development", "production"):
-        problems = provider.startup_problems(env)
+    for development in (True, False):
+        problems = provider.startup_problems(development)
         assert isinstance(problems, tuple)
         assert all(isinstance(p, StartupProblem) for p in problems)
     await provider.aclose()

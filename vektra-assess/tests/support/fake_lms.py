@@ -15,13 +15,19 @@ move onto it in 2a-2, so they stop depending on one LMS's recordings.
   assertion holds even for a member scripted to fail (``assert_never_read``).
 - It is a test double: ``ProviderRegistry`` and ``load_lms_provider`` refuse it unless the caller
   opted in.
-- ``hidden`` holds the LMS-side content the fake must never return (the conformance kit plants
-  its canaries there). ``secret`` is the fake transport's credential; it is never logged.
+- ``wire`` holds, per member, what the LMS's answer carried beyond the neutral value: the
+  content the vertical has no slot for (a right answer, hidden feedback, an unreleased grade).
+  The member's read path consumes that document and drops it, as a real provider drops it from
+  its wire answer; ``consumed_text()`` is the text of the documents consumed so far, which is
+  the conformance kit's witness that its canaries were really read. The review HTML is part of
+  ``attempt_review``'s answer and carries the right answer inside its question block, under a
+  class the profile drops. ``secret`` is the fake transport's credential; it is never logged.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -118,8 +124,8 @@ class FakeLmsWorld:
     grade_items: dict[tuple[int, int, int], GradeItem] = field(default_factory=dict)
     gradings: dict[int, GradingDefinition] = field(default_factory=dict)
     fillings: dict[int, tuple[RubricFilling, ...]] = field(default_factory=dict)
-    #: LMS-side content that exists but that no returned value may carry
-    hidden: dict[str, str] = field(default_factory=dict)
+    #: member -> the rest of the LMS's answer to that read: content no returned value may carry
+    wire: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class FakeLmsProvider:
@@ -140,6 +146,8 @@ class FakeLmsProvider:
         self.secret = secret
         self._problems = tuple(problems)
         self.calls: list[FakeCall] = []
+        #: members whose wire answer was consumed (a read that reached the transport)
+        self.consumed: list[str] = []
         self.closed = False
         self._fail: dict[str, Unreadable] = {}
         self._transport: dict[str, BaseException] = {}
@@ -190,11 +198,26 @@ class FakeLmsProvider:
                 return self._fail[key]
         return None
 
+    def consumed_text(self) -> str:
+        """The wire documents this instance's read paths consumed, as text (JSON)."""
+        docs = {m: self.world.wire.get(m, {}) for m in dict.fromkeys(self.consumed)}
+        review_html = [
+            i.html.html
+            for r in self.world.reviews.values()
+            for i in r.items
+            if i.html is not None and "attempt_review" in docs
+        ]
+        return json.dumps(docs, default=str, sort_keys=True) + "".join(review_html)
+
     def _read[T](
         self, member: str, args: Mapping[str, Any], value: T | None
     ) -> Reading[T]:
         self.calls.append(FakeCall(member, dict(args)))
         scripted = self._scripted(member)
+        if scripted is None and value is not None:
+            # the transport answered: the whole wire document is read, and only the neutral
+            # value leaves the read path
+            self.consumed.append(member)
         result: Reading[T] = (
             scripted
             if scripted is not None
@@ -217,8 +240,8 @@ class FakeLmsProvider:
     def setup_items(self) -> tuple[str, ...]:
         return self._setup_items
 
-    def startup_problems(self, env: str) -> tuple[StartupProblem, ...]:
-        self.calls.append(FakeCall("startup_problems", {"env": env}))
+    def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
+        self.calls.append(FakeCall("startup_problems", {"development": development}))
         return self._problems
 
     async def aclose(self) -> None:
@@ -450,19 +473,19 @@ PROFILE = HtmlExtractionProfile(
 )
 
 
-def default_world(canaries: Mapping[str, str] | None = None) -> FakeLmsWorld:
+#: the default canaries, planted in the wire answers of real read paths
+RIGHT_ANSWER = "CNRY-fake-right_answer-0001"
+HIDDEN_FEEDBACK = "CNRY-fake-hidden_feedback-0002"
+UNRELEASED_GRADE = 987654.321  # a number: an unreleased grade is never text
+CANARIES = (RIGHT_ANSWER, HIDDEN_FEEDBACK, repr(UNRELEASED_GRADE))
+
+
+def default_world() -> FakeLmsWorld:
     """One student in one course, with one quiz (one finished, graded attempt) and one
-    assignment (one submitted file, rubric-graded, released). ``canaries`` maps a hidden field
-    name to the text planted in it; the review HTML carries the right-answer canary, as the
-    teacher-visible rendering of a real LMS would."""
-    hidden = dict(
-        canaries
-        or {
-            "right_answer": "CNRY-fake-right_answer-0001",
-            "hidden_feedback": "CNRY-fake-hidden_feedback-0002",
-            "unreleased_grade": "CNRY-fake-unreleased_grade-0003",
-        }
-    )
+    assignment (one submitted file, rubric-graded, released). The wire answers of
+    ``attempt_review``, ``submission`` and ``grade_item`` carry the canaries; the review HTML
+    carries the right answer inside its question block, under a class the profile drops, as
+    the teacher-visible rendering of a real LMS would."""
     visible = ReviewVisibility(True, True, False, True, 2)
     item = ReviewItem(
         slot=1,
@@ -474,8 +497,9 @@ def default_world(canaries: Mapping[str, str] | None = None) -> FakeLmsWorld:
         max_mark=1.0,
         needs_grading=False,
         html=ReviewHtml(
-            '<div class="fake-qtext">2 + 2?</div>'
-            f'<div class="fake-rightanswer">{hidden.get("right_answer", "")}</div>',
+            '<div class="fake-qtext">2 + 2? '
+            f'<span class="fake-rightanswer">{RIGHT_ANSWER}</span></div>'
+            '<div class="fake-response"><p>4</p></div>',
             PROFILE,
         ),
     )
@@ -621,8 +645,22 @@ def default_world(canaries: Mapping[str, str] | None = None) -> FakeLmsWorld:
                 ),
             )
         },
-        hidden=hidden,
+        wire={
+            "attempt_review": {"rightanswer": RIGHT_ANSWER},
+            "submission": {"feedback_hidden_from_student": HIDDEN_FEEDBACK},
+            "grade_item": {"grade_before_release": UNRELEASED_GRADE},
+        },
     )
 
 
-__all__ = ["ALL", "FakeCall", "FakeLmsProvider", "FakeLmsWorld", "default_world"]
+__all__ = [
+    "ALL",
+    "CANARIES",
+    "HIDDEN_FEEDBACK",
+    "RIGHT_ANSWER",
+    "UNRELEASED_GRADE",
+    "FakeCall",
+    "FakeLmsProvider",
+    "FakeLmsWorld",
+    "default_world",
+]

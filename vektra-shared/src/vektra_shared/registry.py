@@ -16,6 +16,7 @@ Categories used by Vektra (ARCH-039, ARCH-057 step 5):
     "safeguard"         - SafeguardHook implementations
     "event_emitter"     - EventEmitter implementations
     "key_store"         - KeyStoreProvider (for auth middleware)
+    "lms"               - LmsProvider implementations (ADR-0033), loaded by entry point
 """
 
 from __future__ import annotations

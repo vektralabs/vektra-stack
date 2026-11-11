@@ -1,7 +1,9 @@
-"""Protocol interfaces for the Vektra platform (ARCH-029, ARCH-035 to ARCH-038).
+"""Protocol interfaces for the Vektra platform (ARCH-029, ARCH-035 to ARCH-039).
 
-All 9 Protocol interfaces are defined here. Components implement these
-interfaces - they never import each other directly (ADR-0005).
+The platform has 11 Protocol interfaces. Nine are defined here; ``KeyStoreProvider`` is
+defined in ``vektra_shared.auth``, and ``LmsProvider`` (ADR-0033) in ``vektra_shared.lms``
+and re-exported here. Components implement these interfaces - they never import each other
+directly (ADR-0005).
 
 Phase 1 implementations live in their respective component packages:
 - LLMProvider: vektra_core (LitellmProvider)
@@ -13,6 +15,7 @@ Phase 1 implementations live in their respective component packages:
 - QueryPipeline: vektra_core (SimpleQueryPipeline)
 - SafeguardHook: vektra_shared (PassthroughSafeguard - Phase 1 default)
 - EventEmitter: vektra_shared (NoOpEventEmitter - Phase 1 default)
+- LmsProvider: an LMS provider distribution, loaded by entry point (``vektra.lms_providers``)
 """
 
 from __future__ import annotations
@@ -21,6 +24,8 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
+# the 11th Protocol (ADR-0033 D2): defined beside its neutral types, re-exported here
+from vektra_shared.lms.protocol import LmsProvider as LmsProvider
 from vektra_shared.types import (
     ChunkEmbedding,
     CompletionChunk,

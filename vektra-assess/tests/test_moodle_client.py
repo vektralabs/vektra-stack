@@ -66,7 +66,7 @@ async def test_token_goes_in_the_post_body_and_the_connection_is_pinned():
     assert isinstance(res, Readable) and res.value == {"release": "5.2.4+"}
     assert (
         res.evidence is not None
-        and res.evidence.wsfunction == "core_webservice_get_site_info"
+        and res.evidence.call == "core_webservice_get_site_info"
     )
     assert seen["method"] == "POST"
     assert (

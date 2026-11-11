@@ -189,6 +189,14 @@ type = "forbidden"
 source_modules = ["vektra_learn"]
 forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_app", "vektra_assess"]
 
+# the LMS Protocol and its neutral types (ADR-0033 D2): a provider in another repository depends on
+# them alone, so they reach no component and no transport. A provider owns its HTTP client.
+[[tool.importlinter.contracts]]
+name = "vektra_shared.lms imports no component and no HTTP client"
+type = "forbidden"
+source_modules = ["vektra_shared.lms"]
+forbidden_modules = ["vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_assess", "vektra_app", "httpx"]
+
 [[tool.importlinter.contracts]]
 name = "No component shall import the app entrypoint"
 type = "forbidden"

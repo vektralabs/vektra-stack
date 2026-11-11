@@ -59,7 +59,10 @@ There is no subject-key secret: the subject reference of a tombstone or an erasu
 
 Every file must be a regular file (a symlink is refused), owned by the process uid or by root,
 with mode `0440` or stricter. The containers run as uid 1000; on a Linux engine Compose does not
-remap the owner of a file secret, so `chown` the directory to `1000:1000` (see the keys runbook).
+remap the owner of a file secret, so once the credentials are filled run
+`sudo chown -R 1000:1000 secrets/assess` (recursive: the files, not only the directory). From then
+on, change a file only with [the replacement procedure](#change-a-credentials-file), which keeps
+that owner and the mode.
 
 Every secret except `assess_ws_tokens` is loaded when the process starts. `assess_ws_tokens` is
 re-read on every LMS call, but that does not make a change safe without a restart: Compose
@@ -80,23 +83,53 @@ hand-off and the teacher configuration, random role passwords, and `{}` for the 
 files. Every keyring gets the kid `k1`. It writes nothing if any of the files already exists
 (all or nothing), and it prints file names only.
 
-Then fill the two credentials files. The generated files are mode `0400`, so make them
-writable first and restore the mode afterwards; the values go through a JSON serializer, so a
-`"` or a `\` in a token or password cannot break the file:
+Then fill the two credentials files, with the procedure below.
+
+### Change a credentials file
+
+Use the same procedure for the first fill and for every later change (a new site's token, a
+token rotation, a new relay account). It never edits a file in place: it writes the complete new
+file next to the old one with its final mode (`0400`) and owner, then renames it over the old one.
+A worker reading the file meanwhile sees either the old or the new file, never a half-written or
+`0600` one (which the loader refuses: the worker would answer `no_token` without calling the
+LMS). It **merges** into `assess_ws_tokens`: the other sites' tokens are kept. The values go
+through `json.dump`, so a `"` or a `\` cannot break the file, and they are typed at prompts so
+they stay out of the shell history.
 
 ```bash
-# typed at prompts, so the values stay out of the shell history
-read -r SITE_ID; read -rs WS_TOKEN; read -r SMTP_USER; read -rs SMTP_PASSWORD
-export SITE_ID WS_TOKEN SMTP_USER SMTP_PASSWORD
-chmod u+w secrets/assess/assess_ws_tokens secrets/assess/assess_smtp
-# one entry per registered site; the key is the site's assess_sites.id
-python3 -c 'import json,os,sys
-json.dump({os.environ["SITE_ID"]: os.environ["WS_TOKEN"]}, sys.stdout)' > secrets/assess/assess_ws_tokens
-python3 -c 'import json,os,sys
-json.dump({"username": os.environ["SMTP_USER"], "password": os.environ["SMTP_PASSWORD"]}, sys.stdout)' > secrets/assess/assess_smtp
-chmod 0400 secrets/assess/assess_ws_tokens secrets/assess/assess_smtp
-unset WS_TOKEN SMTP_PASSWORD
+# assess_ws_tokens: add or replace ONE site's token, keep the others
+read -r SITE_ID; read -rs WS_TOKEN; export SITE_ID WS_TOKEN
+sudo --preserve-env=SITE_ID,WS_TOKEN python3 - secrets/assess/assess_ws_tokens <<'PY'
+import json, os, sys, tempfile
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+except FileNotFoundError:
+    doc = {}
+doc[os.environ["SITE_ID"]] = os.environ["WS_TOKEN"]
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".assess_ws_tokens.")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(doc, f)
+os.chmod(tmp, 0o400)
+if os.geteuid() == 0:
+    os.chown(tmp, 1000, 1000)   # the containers' uid (Linux engines)
+os.replace(tmp, path)
+PY
+unset WS_TOKEN
 ```
+
+For `assess_smtp` the same script writes `{"username": ..., "password": ...}` as a whole (read
+`SMTP_USER` and `SMTP_PASSWORD` the same way, and replace the `doc` lines with
+`doc = {"username": os.environ["SMTP_USER"], "password": os.environ["SMTP_PASSWORD"]}`; `{}` for
+a relay without AUTH).
+
+- On Docker Desktop, where the files belong to you, drop the `sudo --preserve-env=...` prefix.
+- On a Linux engine run it as root, as shown: after `chown -R 1000:1000 secrets/assess` the
+  files are no longer yours to read or write.
+- The rename gives the file a new inode, so the running container still sees the old one through
+  its bind mount: recreate the service that holds the secret afterwards (below), which for these
+  two files is the worker.
 
 Keep `secrets/` out of version control (it is gitignored) and out of every database dump.
 

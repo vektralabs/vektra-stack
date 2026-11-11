@@ -80,13 +80,14 @@ the worker's `assess_ws_tokens` secret, keyed by the site's `assess_sites.id`:
 {"3f0c8c1e-0000-4000-8000-000000000001": "<token>"}
 ```
 
-([secrets](operators/assess-secrets.md#generate-a-set) shows how to write it safely.) The
+([secrets: change a credentials file](operators/assess-secrets.md#change-a-credentials-file) adds
+or replaces one site's entry atomically and keeps the other sites' tokens.) The
 worker re-reads this file on every LMS call, but Compose bind-mounts it: a replacement that
 writes a new file (an editor's save, `mv`, `rm` and recreate) leaves the running worker on the
 old one. To rotate:
 
 1. create a second token for the same account and service;
-2. replace the site's value in `assess_ws_tokens`;
+2. replace the site's value in `assess_ws_tokens` with that procedure;
 3. recreate the worker:
    `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d --force-recreate vektra-assess-worker`;
 4. run the setup check: `token_works` must be `OK`, which now proves the new token;
@@ -140,9 +141,14 @@ No API route creates a site or binds a key to it. Both are rows the operator wri
      ('<site id>', '<id of the assess:privacy-erase key>',  'privacy-erase');
    ```
 
-   A key is bound to at most one site (`api_key_id` is unique). Every site-bound route checks
-   both the exact scope and the binding for its purpose: a key bound to no site, or for another
-   purpose, gets `403 ERR-ASSESS-007`, and the `admin` key never satisfies these routes.
+   A key is bound to at most one site (`api_key_id` is unique). Every route that takes one of
+   these plugin keys checks both the exact scope and the binding for its purpose: a key bound to
+   no site, or for another purpose, gets `403 ERR-ASSESS-007`. The `admin` key satisfies none of
+   the routes that require only a plugin key (token mint, teacher configuration and operations,
+   privacy export and erasure, the download-token mint). Two site routes also accept the
+   operator's `admin` key: the setup check (`POST`/`GET .../sites/{site_id}/setup-check`) and the
+   transcript resend; see the route index in the
+   [API reference](../reference/api.md#assess-overview-credentials-and-route-index).
 4. **Give the keys to the plugin**, in its site settings (the plugin's own documentation). The
    `mint` key mints the discussion tokens and the student's own transcript download token,
    server-side; `teacher` for the activity configuration,

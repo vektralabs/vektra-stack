@@ -38,11 +38,17 @@ assess work ships in the next minor, `0.9.0`. Nothing in this repository has bee
       enough: it runs only `test_ui_e2e.py`, while the CI job also runs
       `test_transcript_inert_browser.py` and `test_transcript_a11y.py` (all three in
       `vektra-assess/tests/integration/`, `-m integration`).
-- [ ] **LMS reader contract.** The latest run of `.github/workflows/assess-moodle-contract.yml`
-      (manual and weekly; the web-service readers against real LMS 4.3 and 5.2 sites) is green.
+- [ ] **LMS reader contract.** `.github/workflows/assess-moodle-contract.yml` (the web-service
+      readers against real LMS 4.3 and 5.2 sites) is checked in section 2, on the release-prep
+      commit itself: the latest scheduled run can predate a reader change or test another branch.
       It does not test the plugin itself: the plugin release is tested in its own repository.
 
 ## 2. Release-prep PR (`chore/vX.Y.Z-release`)
+
+- [ ] A green run of `assess-moodle-contract.yml` on the head commit of this PR:
+      `gh workflow run assess-moodle-contract.yml --ref chore/vX.Y.Z-release`, then check that
+      the run's commit is the PR head. Like `chaos-assess.yml`, it can be dispatched only once the
+      workflow file is on the default branch; until then this gate cannot be met.
 
 Follow CONTRIBUTING.md, with these points for assess:
 
@@ -74,16 +80,22 @@ Follow CONTRIBUTING.md, with these points for assess:
 ## 4. Smoke test of the published image
 
 On a scratch host, with the published image (`deploy/docker-compose.image.yml.example`) and the
-assess overlay, a generated key set (`make assess-keys`) and a test relay:
+assess overlay, a generated key set (`make assess-keys`) and a test relay. Every command runs in
+the container of its role, so it uses that role's secrets and settings and the published image,
+not the host installation; `compose` is
+`docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess`:
 
 - [ ] `GET /health` answers.
 - [ ] `GET /health/assess` answers `200` `healthy` once the worker is up (`503` with
       `no_heartbeat` before).
-- [ ] `python -m vektra_assess.keys verify --role worker` and `--role api` exit 0 (on an empty
-      database every check is vacuous; this proves the keys load and the command runs).
+- [ ] `compose exec vektra-assess-worker python -m vektra_assess.keys verify --role worker` and
+      `compose exec vektra python -m vektra_assess.keys verify --role api` both exit 0 (on an
+      empty database every check is vacuous; this proves the keys load and the command runs).
 - [ ] A setup check against a test LMS site reaches `done`, with every item `OK`
       ([walkthrough](../operators/assess-deployment.md#setup-check-walkthrough)).
-- [ ] `POST /api/v1/assess/ops/smtp-test` ends `SENT` on the test relay.
+- [ ] `POST /api/v1/assess/ops/smtp-test` (admin key) answers `202 {"id"}`; poll
+      `GET /api/v1/assess/ops/smtp-test/{id}` until `status` is `SENT` or `FAILED`. It must be
+      `SENT`, and the test relay must hold the message.
 
 Not verified at the time of writing: the image examples do not include the assess overlay,
 so step 4 needs the overlay's services pointed at the published image (`image:` of

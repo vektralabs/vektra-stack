@@ -31,9 +31,13 @@ that frames it. The code enforces, and the setup check reports:
   `same_site_as_moodle`, `same_site_as_moodle_origin`). "Same site" here means the same host, one
   host a subdomain of the other, or the same last two host labels. The last rule is an
   approximation of the registrable domain: under a public suffix of more than one label (for
-  example `ac.example-cc`) two different institutions' hosts can be refused as the same site. The
-  refusal is visible and fixable; a same-site deployment is never accepted. In practice: put the
-  UI on a domain of its own, not on a subdomain of the API's or the LMS's domain.
+  example `ac.example-cc`) two different institutions' hosts can be refused as the same site.
+  **This rule is enforced by the setup check only, when it runs**: the API's startup and the UI
+  route check equality and `https` (the two items above), not same-site, so an API whose UI is
+  on a subdomain of the API's domain starts and serves the page. A green report stays green until
+  the next check, so **re-run the setup check after every change of `VEKTRA_ASSESS_UI_ORIGIN`,
+  `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` or a site's `moodle_origin` / `base_url`**. In practice: put
+  the UI on a domain of its own, not on a subdomain of the API's or the LMS's domain.
 
 ## Set each site's LMS origin
 
@@ -46,8 +50,16 @@ UPDATE assess_sites SET moodle_origin = 'https://moodle.uni.example' WHERE id = 
 
 The column accepts only a bare origin (a CHECK constraint with the same pattern as the code,
 `vektra_assess.ui.origins.ORIGIN_RE`). A site without it falls back to the origin of its
-`base_url`. The UI reads it on every request, so a change needs no restart; the API's startup
-check reads it at start. A disabled or unknown site gets `404` with `frame-ancestors 'none'`.
+`base_url`. No restart is needed, but a change is not immediate: the UI route caches each
+site's framing origin (or its absence) for 30 seconds per API process (`SITE_TTL_S` in
+`vektra_assess/ui/router.py`), so for up to 30 s after an update the page still carries the old
+`frame-ancestors`, and a site just disabled is still served. Wait 30 s before verifying. A
+disabled or unknown site then gets `404` with `frame-ancestors 'none'`.
+
+The API checks every site's origin at startup (equal to the UI origin, or not `https` outside
+development: a startup refusal). A change made **after** startup is not a startup refusal until
+the next restart: the UI route repeats the same check per request and, once the cache expires,
+answers that site's page with `503 ERR-ASSESS-001` and the remediation naming `site_origin`.
 
 ## Reverse proxy
 
@@ -87,7 +99,10 @@ listed above, forwards the client's `Host`, and adds no frame-related header mid
 
 ## Verify
 
-1. The API starts. A wrong UI origin or LMS origin is a startup refusal, not a runtime error.
+1. The API starts. A wrong UI origin, or a wrong LMS origin already stored at startup, is a
+   startup refusal. An LMS origin changed afterwards to the UI origin, or to `http` outside
+   development, shows instead as `503 ERR-ASSESS-001` (`site_origin`) on that site's page, at
+   most 30 s after the change. Wait 30 s after any `moodle_origin` change before the next step.
 2. Headers on the UI origin (no credential needed: the page is public and carries no data):
 
    ```bash

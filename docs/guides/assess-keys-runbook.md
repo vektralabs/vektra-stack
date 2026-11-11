@@ -7,8 +7,11 @@ purposes and the rotation order are in [configuration](../reference/configuratio
 
 The assess containers run as uid 1000 and refuse a secret file owned by any other user (or not by
 root), or with a mode looser than 0440. Docker Compose on a Linux engine does not remap the owner of
-a file secret, so after `make assess-keys` run `sudo chown -R 1000:1000 secrets/assess` (Docker
-Desktop on macOS maps ownership for you). The CI job does exactly this.
+a file secret, so after `make assess-keys` **and after filling the two credentials files** run
+`sudo chown -R 1000:1000 secrets/assess` (Docker Desktop on macOS maps ownership for you). The CI
+job does exactly this. Later changes to a file then need root; the
+[secrets guide](operators/assess-secrets.md#change-a-credentials-file) shows a replacement that
+keeps the owner and the mode.
 
 ## Key inventory
 
@@ -84,8 +87,10 @@ What to back up, and when:
    to any file in it (a rotation step, a new site's WS token, a new SMTP account). A backup taken
    in the middle of a rotation must contain both the old and the new kid.
 2. **The fingerprints**, next to each key backup: the output of
-   `python -m vektra_assess.keys verify` in both containers (it prints, per keyring, every kid with
-   `sha256(key)[:12]`, never the key). The restore drill compares against them.
+   `python -m vektra_assess.keys verify --role worker` in the worker container and of
+   `... verify --role api` in the API container (`verify` defaults to the worker role, whose
+   key-matrix check fails in the API container). It prints, per keyring, every kid with
+   `sha256(key)[:12]`, never the key. The restore drill compares against them.
 3. **Retired kids**, in the offline backup only, until the cadence in
    [key rotation](#cadence-rotation-retirement-and-backup-retention) allows destroying them.
    Superseded copies of a keyring that hold nothing the current backup lacks may be destroyed.
@@ -108,57 +113,87 @@ are standard ones that no test in this repository runs.
 
 ### Before the backup: pick the evidence
 
-On the production deployment, when you take the dump and the key backup you will restore:
+On the production deployment, when you take the dump and the key backup you will restore.
+`compose` is the shell function defined at the start of [the clean-host steps](#on-the-clean-host);
+define it here too.
 
 1. Choose one **retained** transcript (its session CLOSED, not purged) and fetch it through the
    subject export, which returns the exact bytes the in-course download serves. It needs the
-   site's `assess:privacy-export` key. The export is an exam record, so it goes to a private
-   temporary file that is removed on success or failure:
+   site's `assess:privacy-export` key. The export is paged (at most 10 transcripts per page,
+   `next_cursor` sent back as `X-Assess-Cursor`), and it is an exam record, so the script below
+   follows every page and keeps the bytes in memory only:
 
    ```bash
-   (
-     umask 077
-     export_file=$(mktemp) || exit 1
-     trap 'rm -f -- "$export_file"' EXIT
-     trap 'exit 1' HUP INT TERM
-     curl -sf -H "Authorization: Bearer $EXPORT_KEY" \
-       "https://vektra.uni.example/api/v1/assess/privacy/subjects/$USERID/transcripts" \
-       > "$export_file" &&
-     python3 -c 'import base64,hashlib,json,sys; d=json.load(open(sys.argv[1]))
-   for i in d["items"]: print(i["transcript_id"], i["sha256"], hashlib.sha256(base64.b64decode(i["content_base64"])).hexdigest())' "$export_file"
-   )
+   read -rs EXPORT_KEY; export EXPORT_KEY USERID=<moodle user id> VEKTRA_URL=https://vektra.uni.example
+   python3 - <<'PY'
+   import base64, hashlib, json, os, urllib.request
+   url = f'{os.environ["VEKTRA_URL"]}/api/v1/assess/privacy/subjects/{os.environ["USERID"]}/transcripts'
+   cursor = None
+   while True:
+       req = urllib.request.Request(url, headers={"Authorization": f'Bearer {os.environ["EXPORT_KEY"]}'})
+       if cursor:
+           req.add_header("X-Assess-Cursor", cursor)
+       with urllib.request.urlopen(req) as resp:
+           page = json.load(resp)
+       for item in page["items"]:
+           digest = hashlib.sha256(base64.b64decode(item["content_base64"])).hexdigest()
+           print(item["transcript_id"], item["sha256"], digest)
+       cursor = page.get("next_cursor")
+       if not cursor:
+           break
+   PY
+   unset EXPORT_KEY
    ```
 
-   Record the transcript id and the sha256 you computed (the third column; it must equal the
-   second, the stored hash).
-2. Take the dump and the drill's reference figures from **one database snapshot**, so the
-   figures describe exactly what the dump contains. As the database owner, open a session and
-   keep it open until step 3:
+   Record the chosen transcript id and the sha256 you computed (the third column; it must equal
+   the second, the stored hash).
+2. Record the key fingerprints **before** the dump: `verify` in each container, with its role
+   (`verify` defaults to `--role worker`, and the worker-only check fails in the API container):
+
+   ```bash
+   compose exec vektra-assess-worker python -m vektra_assess.keys verify --role worker
+   compose exec vektra python -m vektra_assess.keys verify --role api
+   ```
+
+   From here until step 5, make **no rotation step** (no kid added, activated or retired).
+3. Take the dump and the drill's reference figures from **one database snapshot**, so the figures
+   describe exactly what the dump contains. The Compose database publishes no host port, so both
+   commands run inside the `postgres` container. Open a session and keep it open until step 4:
+
+   ```bash
+   compose exec postgres psql -U vektra -d vektra
+   ```
 
    ```sql
    BEGIN ISOLATION LEVEL REPEATABLE READ;
    SELECT pg_export_snapshot();   -- e.g. 00000003-0000001B-1
    ```
 
-   In another shell, dump that snapshot:
+   In another shell, dump that snapshot to a file on the host:
 
    ```bash
-   pg_dump -Fc --snapshot=00000003-0000001B-1 -d vektra -f vektra-drill.dump
+   compose exec -T postgres pg_dump -U vektra -Fc --snapshot=00000003-0000001B-1 vektra > vektra-drill.dump
    ```
 
-3. Back in the open session (it still sees the exported snapshot), record:
+4. Back in the open session (it still sees the exported snapshot), record:
 
    ```sql
    -- the number of sessions whose DEK the restore must give back
    SELECT count(*) FROM assess_session_keys WHERE kek_wrapped IS NOT NULL;
    -- a few purged sessions (tombstones) the restore must keep unrecoverable
    SELECT session_id FROM assess_purge_records ORDER BY purged_at DESC LIMIT 5;
+   -- the hand-off kids of live sessions: verify cannot open these rows, so the key backup
+   -- must be shown to hold each of them (step 5)
+   SELECT DISTINCT handoff_kid FROM assess_session_handoff;
    COMMIT;
    ```
 
    If `assess_purge_records` is empty, no purge has run yet: record that, and the
    "purged data stays unrecoverable" part of the drill cannot pass until a later drill.
-4. Take the key backup (with the fingerprints) at the same time.
+5. Take the key backup, then run the two `verify` commands of step 2 again. The output must be
+   identical to step 2 (same kids, same fingerprints): that proves no key changed between the
+   snapshot and the backup. Every hand-off kid listed in step 4 must appear among the kids of
+   `assess_handoff_private` in that output.
 
 ### On the clean host
 
@@ -171,9 +206,18 @@ compose() { docker compose -f docker-compose.yml -f docker-compose.assess.yml --
 1. Use the same image version as the deployment that took the backup. Start Postgres alone on an
    empty volume (`compose up -d postgres`): its init script creates the extensions and the two
    assess roles (NOLOGIN).
-2. Restore the dump as the database owner (`pg_restore -d vektra vektra-drill.dump`).
+2. Restore the dump as the database owner, stopping at the first error. `pg_restore` otherwise
+   carries on after a failed statement and exits 0 only if nothing failed; a partial restore can
+   still pass the count checks below:
+
+   ```bash
+   compose exec -T postgres pg_restore -U vektra -d vektra --exit-on-error < vektra-drill.dump \
+     || { echo "restore failed: the drill FAILS here"; exit 1; }
+   ```
+
 3. **Before any assess process starts** (the worker's purge and delivery ticks would change the
-   data), check the dump against the figures of preparation step 3, as the database owner:
+   data), check the dump against the figures of preparation step 4, as the database owner
+   (`compose exec postgres psql -U vektra -d vektra`):
 
    ```sql
    -- must equal the count recorded from the snapshot
@@ -198,13 +242,21 @@ compose() { docker compose -f docker-compose.yml -f docker-compose.assess.yml --
    SELECT count(*) FROM assess_transcripts t
      JOIN assess_purge_records p ON p.transcript_id = t.id
     WHERE t.ciphertext IS NOT NULL OR t.dek_wrapped IS NOT NULL;
+   -- no teacher reset reason survives for a retention-purged session (the purge overwrites it:
+   -- reason_kid 'purged', no bytes; the same check as privacy/purge.py)
+   SELECT count(*) FROM assess_reset_grants g
+     JOIN assess_sessions s ON s.site_id = g.site_id AND s.cmid = g.cmid
+      AND s.student_userid = g.student_userid AND s.session_no = g.session_no
+     JOIN assess_purge_records p ON p.session_id = s.id
+    WHERE g.reason_kid <> 'purged' OR length(g.reason_ct) > 0;
    ```
 
    The tombstone check comes first because these joins return 0 just as well on a dump that
    holds no tombstones at all. They check the dump, not the keys: a purge removes the wrapped
    DEK, so the KEK cannot open the session whatever key set is mounted. A dump taken BEFORE a
    purge still holds the wrapped DEK; that is the backup-retention exposure described in the
-   rotation cadence.
+   rotation cadence. (An erasure deletes the session row and its resets outright; the reason
+   query covers the retention purge, which keeps the session row.)
 4. Put the backed-up `secrets/assess/` in place (owner uid 1000, mode `0400`). The drill host must
    not reach production systems: replace the restored `assess_ws_tokens` with `{}` (no LMS call
    can succeed) and point `VEKTRA_ASSESS_SMTP_HOST`, `assess_smtp` and
@@ -224,9 +276,10 @@ compose() { docker compose -f docker-compose.yml -f docker-compose.assess.yml --
    `assess_teacher_config_public` and `assess_token_signing`). `verify` opens one row per kid,
    not every row: a wrong key for some rows under a kid is found only when those rows are opened.
 6. Fetch the chosen transcript again on the drill host, with the same export key (its row came
-   back with the dump), the same way as in preparation step 1. Its sha256 must equal the value
-   recorded before the backup. A `500 ERR-ASSESS-020` means the restored bytes do not decrypt or
-   do not re-hash to the stored value: the drill failed.
+   back with the dump) and the script of preparation step 1 (`VEKTRA_URL` set to the drill
+   host's API). Its sha256 must equal the value recorded before the backup. A
+   `500 ERR-ASSESS-020` means the restored bytes do not decrypt or do not re-hash to the stored
+   value: the drill failed.
 7. Destroy the drill host's copies of the dump and the keys.
 
 ### Record the result
@@ -370,8 +423,10 @@ Sealed fields stay until a teacher changes them, so waiting does not move them.
 1. Take a new pair from a scratch set. Add the private key as `t2` to the worker's
    `assess_teacher_config_private` (keep `t1`) and recreate the worker.
 2. Add the public key as `t2` with `"active": "t2"` to the API's `assess_teacher_config_public`
-   (and to the worker's, where it is mounted). Recreate the API instances. New saves are sealed to
-   `t2`.
+   and to the worker's copy (the shipped overlay mounts it in the worker too). Recreate the API
+   instances **and the worker**: a worker left on the old file reports other fingerprints than
+   the backed-up file, and the restore drill's fingerprint comparison fails. New saves are sealed
+   to `t2`.
 3. Count the fields still sealed under another kid, as the database owner:
 
    ```sql

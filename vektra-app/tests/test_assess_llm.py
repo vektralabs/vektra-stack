@@ -32,17 +32,39 @@ def _settings(**kw: Any) -> VektraAssessSettings:
 
 def test_presidio_falling_open_is_a_startup_error() -> None:
     with pytest.raises(StartupValidationError, match="fell back to passthrough"):
-        build_assess_safeguard("presidio", factory=lambda _m: PassthroughSafeguard())
+        build_assess_safeguard(_settings(), factory=lambda _m: PassthroughSafeguard())
 
 
 def test_a_loaded_presidio_is_returned() -> None:
     real = _Real()
-    assert build_assess_safeguard("presidio", factory=lambda _m: real) is real
+    assert build_assess_safeguard(_settings(), factory=lambda _m: real) is real
 
 
 def test_none_only_when_explicit() -> None:
-    assert isinstance(build_assess_safeguard("none"), PassthroughSafeguard)
+    none_dev = _settings(VEKTRA_ASSESS_SAFEGUARD_MODE="none", VEKTRA_ENV="development")
+    assert isinstance(build_assess_safeguard(none_dev), PassthroughSafeguard)
     assert _settings().safeguard_mode == "presidio"  # the default is the safe one
+
+
+@pytest.mark.parametrize(
+    "env",
+    [{}, {"VEKTRA_ENV": "production"}, {"VEKTRA_ENV": "staging"}],
+    ids=["unset", "production", "staging"],
+)
+def test_the_builder_itself_refuses_none_with_a_cloud_model(
+    env: dict[str, str],
+) -> None:
+    """Review of #203: the rule holds wherever the safeguard is built, not only at step 13."""
+    settings = _settings(VEKTRA_ASSESS_SAFEGUARD_MODE="none", **env)
+    with pytest.raises(StartupValidationError, match="LOCALITY=cloud") as e:
+        build_assess_safeguard(settings)
+    assert "with a cloud model the safeguard is required" in e.value.remediation
+    onprem = _settings(
+        VEKTRA_ASSESS_SAFEGUARD_MODE="none",
+        VEKTRA_ASSESS_PROVIDER_LOCALITY="onprem",
+        **env,
+    )
+    assert isinstance(build_assess_safeguard(onprem), PassthroughSafeguard)
 
 
 def test_the_assess_llm_has_its_own_model_and_no_fallback(
@@ -281,7 +303,7 @@ def test_a_real_presidio_load_failure_refuses_startup(
     monkeypatch.delitem(sys.modules, "vektra_core.safeguards.presidio", raising=False)
     monkeypatch.setattr(builtins, "__import__", failing)
     with pytest.raises(StartupValidationError, match="fell back to passthrough"):
-        build_assess_safeguard("presidio")
+        build_assess_safeguard(_settings())
 
 
 # --- NFR-023 activation at startup ---------------------------------------------------------------
@@ -599,13 +621,13 @@ def test_a_lazily_failing_presidio_is_caught_at_startup() -> None:
             return False  # no spaCy model installed
 
     with pytest.raises(StartupValidationError, match="engines failed to load"):
-        build_assess_safeguard("presidio", factory=lambda _m: LazyPresidio())
+        build_assess_safeguard(_settings(), factory=lambda _m: LazyPresidio())
 
     class LoadedPresidio(_Real):
         def _ensure_engines(self) -> bool:
             return True
 
     assert isinstance(
-        build_assess_safeguard("presidio", factory=lambda _m: LoadedPresidio()),
+        build_assess_safeguard(_settings(), factory=lambda _m: LoadedPresidio()),
         LoadedPresidio,
     )

@@ -23,10 +23,12 @@ from support.fake_lms import (
     ASSIGN_ACTIVITY,
     ASSIGNMENT,
     ATTEMPT,
+    CANARIES,
     COURSE,
     PROFILE,
     QUIZ,
     QUIZ_ACTIVITY,
+    RIGHT_ANSWER,
     SITE,
     USER,
     FakeLmsProvider,
@@ -124,10 +126,10 @@ async def test_a_quiz_is_captured_on_neutral_values_with_the_providers_profile()
 
 async def test_the_hidden_material_never_reaches_the_snapshot() -> None:
     fake = FakeLmsProvider()
-    canaries = list(fake.world.hidden.values())
+    canaries = list(CANARIES)
     # the right-answer canary IS in the teacher-visible review HTML: the check is not vacuous
     html = fake.world.reviews[ATTEMPT].items[0].html
-    assert html is not None and fake.world.hidden["right_answer"] in html.html
+    assert html is not None and RIGHT_ANSWER in html.html
     for out, _parser in (await _quiz(fake), await _assign(fake)):
         assert isinstance(out, Built), out
         assert out.snapshot.solution_text is None  # toggle OFF: never in the snapshot

@@ -489,8 +489,8 @@ class MoodleLmsProvider:
 
     # --- lifecycle ----------------------------------------------------------------------------
 
-    def startup_problems(self, env: str) -> tuple[StartupProblem, ...]:
-        if self._settings.moodle_allow_http and env != "development":
+    def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
+        if self._settings.moodle_allow_http and not development:
             return (
                 StartupProblem(
                     setting="VEKTRA_ASSESS_MOODLE_ALLOW_HTTP",

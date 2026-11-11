@@ -191,7 +191,7 @@ def test_capture_catches_extra_rendered_output(canary_log_capture) -> None:  # t
         canary_log_capture.assert_clean([CANARY])
 
 
-# --- the strict prefix is registered by the package itself (plan 2a-1.4, ADR-0033 D8) --------
+# --- the strict prefix is registered by the composition roots (plan 2a-1.4, ADR-0033 D8) -----
 
 
 def _prefixes_after(imports: str) -> str:
@@ -213,10 +213,19 @@ def test_log_safety_alone_hard_codes_no_prefix() -> None:
     assert _prefixes_after("import vektra_shared.log_safety") == ""
 
 
-def test_importing_vektra_assess_registers_its_prefix() -> None:
-    assert _prefixes_after("import vektra_assess") == "vektra_assess"
+def test_importing_vektra_assess_registers_nothing_and_loads_no_logging_stack() -> None:
+    """Review of #203: the package ``__init__`` is on every parsing child's import path, so it
+    imports nothing; the composition roots register the prefix."""
+    assert _prefixes_after("import vektra_assess") == ""
+    import subprocess
+    import sys
 
-
-def test_a_leaf_module_import_registers_it_too() -> None:
-    """Any import of any assess module runs the package ``__init__`` first."""
-    assert _prefixes_after("import vektra_assess.capabilities") == "vektra_assess"
+    code = (
+        "import sys, vektra_assess; "
+        "print([m for m in sys.modules if m.split('.')[0] in ('structlog', 'vektra_shared')])"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "[]"
+    # the composition roots that do register it: vektra-app/tests/test_assess_processes.py

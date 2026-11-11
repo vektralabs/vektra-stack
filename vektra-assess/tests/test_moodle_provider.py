@@ -8,6 +8,7 @@ unknown shape, timeout, breaker open, raising).
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import sys
@@ -117,6 +118,11 @@ def _file_ref(branch: str, assignid: int, userid: int) -> tuple[SubmissionFileRe
     raise AssertionError(f"no recorded file for assign {assignid}")
 
 
+#: replay id -> the bodies its transport served; provider id -> its replay id
+_SERVED: dict[int, list[str]] = {}
+_REPLAY_OF: dict[int, int] = {}
+
+
 def _client(replay: Replay, mode: kit.TransportMode) -> MoodleWsClient:
     settings = VektraAssessSettings(**ENV)  # type: ignore[arg-type]
     # only the breaker mode trips it: in the other modes every call must reach the transport
@@ -137,8 +143,13 @@ def _client(replay: Replay, mode: kit.TransportMode) -> MoodleWsClient:
                 return httpx.Response(
                     200, json={"release": release, "unexpected_shape": [1, 2, 3]}
                 )
-        return replay.handler(request)
+        response = replay.handler(request)
+        # what the transport actually served: the conformance kit's canary witness
+        served.append(response.content.decode("utf-8", "replace"))
+        return response
 
+    served: list[str] = []
+    _SERVED[id(replay)] = served
     client = MoodleWsClient(
         settings,
         token_provider=lambda _site: TOKEN,
@@ -166,12 +177,13 @@ def _target(branch: str) -> kit.ConformanceTarget:
         replay = Replay(branch)
         _files_served(replay, branch, files["id"])
         client = _client(replay, mode)
-        return MoodleLmsProvider(client, client._s, clock=lambda: 1_800_000_000)
+        provider = MoodleLmsProvider(client, client._s, clock=lambda: 1_800_000_000)
+        _REPLAY_OF[id(provider)] = id(replay)
+        return provider
 
-    def witness() -> str:
-        return "".join(
-            p.read_text() for p in sorted((FIXTURES / branch).glob("*.json"))
-        )
+    def witness(provider: LmsProvider) -> str:
+        """The documents THIS provider's transport served in the run (never the canaries)."""
+        return "\n".join(_SERVED[_REPLAY_OF[id(provider)]])
 
     return kit.ConformanceTarget(
         name=f"moodle-{branch}",
@@ -200,7 +212,16 @@ def _target(branch: str) -> kit.ConformanceTarget:
 
 
 def _with_release(t: kit.ConformanceTarget, branch: str) -> kit.ConformanceTarget:
-    return dataclasses.replace(t, site=lms_site(branch))
+    """The target on the branch's site, its canaries narrowed to the no-slot canaries the
+    target's own read paths serve (a canary in a recording the kit never reads would make the
+    witness check fail as vacuous, rightly): a dry run lists them, and at least one remains."""
+    t = dataclasses.replace(t, site=lms_site(branch))
+    provider = t.factory(kit.TransportMode.RECORDED)
+    asyncio.run(kit.read_all(provider, t))
+    served = t.canary_witness(provider)
+    canaries = tuple(c for c in t.canaries if c in served)
+    assert canaries, f"no no-slot canary in the {branch} documents the kit reads"
+    return dataclasses.replace(t, canaries=canaries)
 
 
 class TestMoodle43Conformance(LmsConformanceSuite):
@@ -354,11 +375,11 @@ def test_startup_refuses_plain_http_outside_development() -> None:
     )
     p = make_provider(Replay("4.3"))
     p_http = MoodleLmsProvider(p.client, allow)
-    assert p_http.startup_problems("development") == ()
-    (problem,) = p_http.startup_problems("production")
+    assert p_http.startup_problems(True) == ()
+    (problem,) = p_http.startup_problems(False)
     assert problem.setting == "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP"
     assert "VEKTRA_ENV=development" in problem.detail
-    assert p.startup_problems("production") == ()
+    assert p.startup_problems(False) == ()
 
 
 def test_the_provider_implements_the_protocol_and_names_itself() -> None:

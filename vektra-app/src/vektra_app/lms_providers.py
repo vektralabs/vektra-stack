@@ -6,8 +6,9 @@ uses with ``VEKTRA_ASSESS_LMS_PROVIDER``. ``load_lms_provider`` resolves that na
 factory with no argument (a provider reads its own settings) and checks what came back.
 
 Every failure is a ``StartupValidationError`` that names the setting and lists the names that
-are installed, so the operator sees what to set instead. The assess worker loads its one
-provider through here at startup (``assess_worker._load_lms``).
+are installed, so the operator sees what to set instead. A test double is refused before it is
+built when its factory carries the marker; anything built and then refused is closed. The assess
+worker loads its one provider through here at startup (``assess_worker._load_lms``).
 """
 
 from __future__ import annotations
@@ -17,13 +18,20 @@ from collections.abc import Callable, Iterable
 from typing import Any, Protocol
 
 from vektra_shared.lms import LmsProvider
+from vektra_shared.registry import TEST_DOUBLE_MARKER
 from vektra_shared.startup import StartupValidationError
 
 GROUP = "vektra.lms_providers"
 SETTING = "VEKTRA_ASSESS_LMS_PROVIDER"
 STEP = "lms_provider"
-#: same marker as ``ProviderRegistry`` refuses (a test double is never a production provider)
-_TEST_DOUBLE_MARKER = "__vektra_test_double__"
+
+__all__ = [
+    "GROUP",
+    "SETTING",
+    "TEST_DOUBLE_MARKER",
+    "available_lms_providers",
+    "load_lms_provider",
+]
 
 
 class _EntryPoint(Protocol):
@@ -46,7 +54,26 @@ def _refuse(detail: str, remediation: str) -> StartupValidationError:
     return StartupValidationError(step=STEP, detail=detail, remediation=remediation)
 
 
-def load_lms_provider(
+def _is_test_double(obj: Any) -> bool:
+    """The marker on a class, on an instance's class, or on a factory function."""
+    holder = obj if isinstance(obj, type) or callable(obj) else type(obj)
+    return bool(
+        getattr(holder, TEST_DOUBLE_MARKER, False)
+        or getattr(type(obj), TEST_DOUBLE_MARKER, False)
+    )
+
+
+async def _close(built: Any) -> None:
+    """Best effort: a refused provider must not keep its client, pool or thread alive."""
+    aclose = getattr(built, "aclose", None)
+    if callable(aclose):
+        try:
+            await aclose()
+        except Exception:  # the refusal is what the operator needs to see
+            pass
+
+
+async def load_lms_provider(
     name: str | None,
     *,
     entry_points: Callable[[], Iterable[_EntryPoint]] = _installed,
@@ -73,30 +100,44 @@ def load_lms_provider(
             f"{SETTING}={name} is declared by {len(matches)} installed distributions",
             "Uninstall all but one distribution that declares this provider name.",
         )
+    test_double = _refuse(
+        f"the LMS provider {name} is a test double",
+        f"Set {SETTING} to a real provider; test doubles load only in development tests.",
+    )
     try:
         factory = matches[0].load()
-        provider = factory()
     except Exception as exc:
         # only the type: the provider's own error text may carry configuration values
+        raise _refuse(
+            f"the LMS provider {name} failed to load ({type(exc).__name__})",
+            "Check that the provider's distribution is installed completely.",
+        ) from None
+    if _is_test_double(factory) and not allow_test_doubles:
+        raise test_double  # refused before anything is built
+    try:
+        provider = factory()
+    except Exception as exc:
         raise _refuse(
             f"the LMS provider {name} failed to load ({type(exc).__name__})",
             "Check the provider's own settings and that its distribution is installed "
             "completely.",
         ) from None
+    problem: StartupValidationError | None = None
     if not isinstance(provider, LmsProvider):
-        raise _refuse(
+        problem = _refuse(
             f"the entry point {name} returned {type(provider).__name__}, which does not "
             "implement LmsProvider",
             "Use a provider built for this platform version (its conformance run names it).",
         )
-    if getattr(type(provider), _TEST_DOUBLE_MARKER, False) and not allow_test_doubles:
-        raise _refuse(
-            f"the LMS provider {name} is a test double",
-            f"Set {SETTING} to a real provider; test doubles load only in development tests.",
-        )
-    if provider.name != name:
-        raise _refuse(
+    elif _is_test_double(provider) and not allow_test_doubles:
+        problem = test_double
+    elif provider.name != name:
+        problem = _refuse(
             f"the entry point {name} built a provider that calls itself {provider.name}",
             "The entry point name and the provider's name must agree (it is the registry key).",
         )
-    return provider
+    if problem is not None:
+        await _close(provider)
+        raise problem
+    checked: LmsProvider = provider  # isinstance-checked above
+    return checked

@@ -23,9 +23,10 @@ from __future__ import annotations
 
 from typing import Any
 
-#: same marker as ``vektra_shared.testing_recorders.TEST_DOUBLE_MARKER`` (not imported: the
-#: registry is product code and the recorders are a test asset)
-_TEST_DOUBLE_MARKER = "__vektra_test_double__"
+#: the class attribute that marks a test double. Defined here, in product code, once: the
+#: recorders (a test asset) and the LMS provider loader import it from here.
+TEST_DOUBLE_MARKER = "__vektra_test_double__"
+_TEST_DOUBLE_MARKER = TEST_DOUBLE_MARKER  # the name this module used before
 
 
 class ProviderRegistry:

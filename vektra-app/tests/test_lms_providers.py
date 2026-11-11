@@ -12,7 +12,11 @@ import pytest
 from vektra_app import lms_providers
 from vektra_app.lms_providers import GROUP, available_lms_providers, load_lms_provider
 from vektra_shared.lms import LmsProvider
+from vektra_shared.registry import TEST_DOUBLE_MARKER
 from vektra_shared.startup import StartupValidationError
+
+#: instances built by the provider classes below, so a test can see what was closed
+BUILT: list[Any] = []
 
 
 def _provider_class(name: str, *, double: bool = False) -> type:
@@ -21,15 +25,21 @@ def _provider_class(name: str, *, double: bool = False) -> type:
     def method(*_a: Any, **_k: Any) -> None:
         return None
 
+    async def aclose(self: Any) -> None:
+        self.closed = True
+
+    def init(self: Any) -> None:
+        self.closed = False
+        BUILT.append(self)
+
     attrs: dict[str, Any] = {
         m: method
         for m in LmsProvider.__protocol_attrs__  # type: ignore[attr-defined]
         if m not in ("name", "setup_items")
     }
-    attrs["name"] = name
-    attrs["setup_items"] = ()
+    attrs.update(name=name, setup_items=(), aclose=aclose, __init__=init)
     if double:
-        attrs["__vektra_test_double__"] = True
+        attrs[TEST_DOUBLE_MARKER] = True
     return type(f"Provider_{name}", (), attrs)
 
 
@@ -46,70 +56,110 @@ def _eps(*eps: _EP) -> Callable[[], list[_EP]]:
     return lambda: list(eps)
 
 
+@pytest.fixture(autouse=True)
+def _clear_built() -> None:
+    BUILT.clear()
+
+
 def test_the_group_is_the_one_adr_0033_names() -> None:
     assert GROUP == "vektra.lms_providers"
 
 
-def test_a_named_provider_is_built_and_checked() -> None:
+def test_the_test_double_marker_is_the_registry_constant() -> None:
+    """Review of #203: one definition of the marker, not a literal per module."""
+    assert lms_providers.TEST_DOUBLE_MARKER is TEST_DOUBLE_MARKER
+    assert not hasattr(lms_providers, "_TEST_DOUBLE_MARKER")
+
+
+async def test_a_named_provider_is_built_and_checked() -> None:
     cls = _provider_class("alpha")
-    provider = load_lms_provider("alpha", entry_points=_eps(_EP("alpha", cls)))
+    provider = await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", cls)))
     assert isinstance(provider, cls) and isinstance(provider, LmsProvider)
 
 
-def test_an_unknown_name_is_refused_with_the_available_ones() -> None:
+async def test_an_unknown_name_is_refused_with_the_available_ones() -> None:
     eps = _eps(
         _EP("beta", _provider_class("beta")), _EP("alpha", _provider_class("alpha"))
     )
     with pytest.raises(StartupValidationError) as e:
-        load_lms_provider("gamma", entry_points=eps)
+        await load_lms_provider("gamma", entry_points=eps)
     assert e.value.step == "lms_provider"
     assert "VEKTRA_ASSESS_LMS_PROVIDER=gamma" in e.value.detail
     assert "available providers: alpha, beta" in e.value.detail
 
 
 @pytest.mark.parametrize("name", [None, ""])
-def test_an_unset_name_is_refused(name: str | None) -> None:
+async def test_an_unset_name_is_refused(name: str | None) -> None:
     with pytest.raises(
         StartupValidationError, match="is unset; available providers: none installed"
     ):
-        load_lms_provider(name, entry_points=_eps())
+        await load_lms_provider(name, entry_points=_eps())
 
 
-def test_two_distributions_with_one_name_are_refused() -> None:
+async def test_two_distributions_with_one_name_are_refused() -> None:
     cls = _provider_class("alpha")
     with pytest.raises(StartupValidationError, match="declared by 2"):
-        load_lms_provider(
+        await load_lms_provider(
             "alpha", entry_points=_eps(_EP("alpha", cls), _EP("alpha", cls))
         )
 
 
-def test_a_factory_error_is_refused_without_its_text() -> None:
+async def test_a_factory_error_is_refused_without_its_text() -> None:
     def boom() -> Any:
         raise RuntimeError("password=hunter2")
 
     with pytest.raises(StartupValidationError) as e:
-        load_lms_provider("alpha", entry_points=_eps(_EP("alpha", boom)))
+        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", boom)))
     assert "RuntimeError" in e.value.detail and "hunter2" not in str(e.value.detail)
     assert e.value.__cause__ is None
 
 
-def test_something_that_is_not_a_provider_is_refused() -> None:
+async def test_something_that_is_not_a_provider_is_refused() -> None:
     with pytest.raises(StartupValidationError, match="does not implement LmsProvider"):
-        load_lms_provider("alpha", entry_points=_eps(_EP("alpha", object)))
+        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", object)))
 
 
-def test_a_test_double_is_refused_unless_opted_in() -> None:
+async def test_a_marked_test_double_is_refused_before_it_is_built() -> None:
+    """Review of #203: building a test double can already have effects (a socket, a thread):
+    the marker on the entry point's object is checked before the factory runs."""
     eps = _eps(_EP("fake", _provider_class("fake", double=True)))
     with pytest.raises(StartupValidationError, match="test double"):
-        load_lms_provider("fake", entry_points=eps)
-    assert load_lms_provider("fake", entry_points=eps, allow_test_doubles=True)
+        await load_lms_provider("fake", entry_points=eps)
+    assert BUILT == []
+    assert await load_lms_provider("fake", entry_points=eps, allow_test_doubles=True)
 
 
-def test_the_entry_point_name_and_the_provider_name_must_agree() -> None:
+async def test_a_double_returned_by_a_plain_factory_is_refused_and_closed() -> None:
+    cls = _provider_class("fake", double=True)
+    with pytest.raises(StartupValidationError, match="test double"):
+        await load_lms_provider("fake", entry_points=_eps(_EP("fake", lambda: cls())))
+    assert len(BUILT) == 1 and BUILT[0].closed
+
+
+async def test_a_name_mismatch_is_refused_and_the_built_provider_closed() -> None:
     with pytest.raises(StartupValidationError, match="calls itself beta"):
-        load_lms_provider(
+        await load_lms_provider(
             "alpha", entry_points=_eps(_EP("alpha", _provider_class("beta")))
         )
+    assert len(BUILT) == 1 and BUILT[0].closed
+
+
+async def test_a_non_provider_with_an_aclose_is_closed_too() -> None:
+    class Half:
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    made: list[Half] = []
+
+    def factory() -> Half:
+        made.append(Half())
+        return made[-1]
+
+    with pytest.raises(StartupValidationError, match="does not implement"):
+        await load_lms_provider("alpha", entry_points=_eps(_EP("alpha", factory)))
+    assert made[0].closed
 
 
 def test_the_real_group_is_read_and_lists_the_staged_provider() -> None:
@@ -133,6 +183,12 @@ def test_only_the_worker_composition_loads_a_provider() -> None:
 # --- the assess worker's startup step (assess_worker._load_lms) ------------------------------
 
 
+def _run_load(worker: Any, *args: Any) -> Any:
+    import asyncio
+
+    return asyncio.run(worker._load_lms(*args))
+
+
 class _Startup:
     """A provider with lifecycle only (every read member a stub): ``problems`` are its startup
     problems, ``seen`` the environments it was asked about."""
@@ -141,10 +197,10 @@ class _Startup:
     setup_items: tuple[str, ...] = ()
     __vektra_test_double__ = True
     problems: tuple[Any, ...] = ()
-    seen: list[str] = []
+    seen: list[bool] = []
 
-    def startup_problems(self, env: str) -> tuple[Any, ...]:
-        type(self).seen.append(env)
+    def startup_problems(self, development: bool) -> tuple[Any, ...]:
+        type(self).seen.append(development)
         return self.problems
 
     async def aclose(self) -> None:
@@ -177,7 +233,7 @@ def test_the_worker_refuses_to_start_without_a_provider(
 
     settings = _settings(monkeypatch, VEKTRA_ASSESS_LMS_PROVIDER=None)
     with pytest.raises(StartupValidationError) as e:
-        assess_worker._load_lms(settings)
+        _run_load(assess_worker, settings)
     assert "VEKTRA_ASSESS_LMS_PROVIDER is unset" in e.value.detail
     assert "moodle" in e.value.detail
 
@@ -192,7 +248,7 @@ def test_the_fake_is_refused_outside_development(
 
     settings = _settings(monkeypatch, VEKTRA_ASSESS_LMS_PROVIDER="fake", VEKTRA_ENV=env)
     with pytest.raises(StartupValidationError, match="test double"):
-        assess_worker._load_lms(settings, _eps(_EP("fake", _Startup)))
+        _run_load(assess_worker, settings, _eps(_EP("fake", _Startup)))
 
 
 def test_the_fake_loads_with_explicit_development(
@@ -204,15 +260,13 @@ def test_the_fake_loads_with_explicit_development(
         monkeypatch, VEKTRA_ASSESS_LMS_PROVIDER="fake", VEKTRA_ENV="development"
     )
     _Startup.seen = []
-    provider = assess_worker._load_lms(settings, _eps(_EP("fake", _Startup)))
-    assert isinstance(provider, _Startup) and _Startup.seen == ["development"]
+    provider = _run_load(assess_worker, settings, _eps(_EP("fake", _Startup)))
+    assert isinstance(provider, _Startup) and _Startup.seen == [True]
 
 
-@pytest.mark.parametrize(
-    ("env", "seen"), [(None, "unset"), ("production", "production")]
-)
+@pytest.mark.parametrize("env", [None, "production"])
 def test_the_provider_is_never_told_development_unless_it_is_set(
-    monkeypatch: pytest.MonkeyPatch, env: str | None, seen: str
+    monkeypatch: pytest.MonkeyPatch, env: str | None
 ) -> None:
     """2a-1.11: development counts only when VEKTRA_ENV says so explicitly; the provider's own
     development-only switches are judged on the same rule."""
@@ -223,8 +277,8 @@ def test_the_provider_is_never_told_development_unless_it_is_set(
 
     Real.seen = []
     settings = _settings(monkeypatch, VEKTRA_ASSESS_LMS_PROVIDER="fake", VEKTRA_ENV=env)
-    assess_worker._load_lms(settings, _eps(_EP("fake", Real)))
-    assert Real.seen == [seen]
+    _run_load(assess_worker, settings, _eps(_EP("fake", Real)))
+    assert Real.seen == [False]
 
 
 def test_a_provider_startup_problem_refuses_the_worker(
@@ -241,7 +295,7 @@ def test_a_provider_startup_problem_refuses_the_worker(
         monkeypatch, VEKTRA_ASSESS_LMS_PROVIDER="fake", VEKTRA_ENV="production"
     )
     with pytest.raises(StartupValidationError) as e:
-        assess_worker._load_lms(settings, _eps(_EP("fake", Problem)))
+        _run_load(assess_worker, settings, _eps(_EP("fake", Problem)))
     assert e.value.detail == "X_SETTING is wrong" and e.value.remediation == "Unset it."
 
 
@@ -260,6 +314,6 @@ def test_the_moodle_plain_http_switch_is_refused_by_the_provider(
         VEKTRA_ENV=env,
     )
     with pytest.raises(StartupValidationError, match="ALLOW_HTTP"):
-        assess_worker._load_lms(settings)
+        _run_load(assess_worker, settings)
     monkeypatch.setenv("VEKTRA_ENV", "development")
-    assert assess_worker._load_lms(_settings(monkeypatch)).name == "moodle"
+    assert _run_load(assess_worker, _settings(monkeypatch)).name == "moodle"

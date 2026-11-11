@@ -22,6 +22,11 @@ export VEKTRA_ASSESS_JUDGE_MODEL=<judge model>       # pinned; temperature 0
 make eval-assess
 ```
 
+The eval builds the discussion safeguard through the same function as the API, so the same rule
+applies: `VEKTRA_ASSESS_SAFEGUARD_MODE=none` with a `cloud` model is refused unless
+`VEKTRA_ENV=development` is exported explicitly (see the
+[configuration reference](../../reference/configuration.md#safeguard-and-model-locality-assess)).
+
 The report lands in `tests/eval/assess/results/` (gitignored): `<model>-<prompt_version>.json`,
 `.md`, and `.review.jsonl` (every judge-flagged turn plus 10% of the unflagged contest turns, for
 human review). The command exits 0 only on `status: PASS`.

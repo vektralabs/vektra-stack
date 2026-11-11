@@ -205,7 +205,7 @@ async def run_checks() -> object:
     return (await _checks()).engine
 
 
-def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
+async def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
     """The configured LMS provider (ADR-0033 D2), or a refusal naming the setting.
 
     Unset, unknown or broken is a ``StartupValidationError``: with assess enabled and no
@@ -217,18 +217,14 @@ def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
     kwargs: dict[str, Any] = {"allow_test_doubles": settings.is_development}
     if entry_points is not None:
         kwargs["entry_points"] = entry_points
-    provider = load_lms_provider(settings.lms_provider, **kwargs)
-    # development only when set explicitly (2a-1.11): the field's default is "development",
-    # so an unset VEKTRA_ENV must not reach the provider as "development"
-    if settings.is_development:
-        env = "development"
-    elif settings.env == "development":
-        env = "unset"
-    else:
-        env = str(settings.env)
-    for problem in provider.startup_problems(env):
+    provider = await load_lms_provider(settings.lms_provider, **kwargs)
+    # the resolved flag (2a-1.11): development only when VEKTRA_ENV=development is explicit
+    problems = provider.startup_problems(settings.is_development)
+    if problems:
+        with contextlib.suppress(Exception):
+            await provider.aclose()
         raise StartupValidationError(
-            step=STEP, detail=problem.detail, remediation=problem.remediation
+            step=STEP, detail=problems[0].detail, remediation=problems[0].remediation
         )
     return provider
 
@@ -258,7 +254,7 @@ async def _checks(lms_entry_points: Any | None = None) -> Checked:
             "deployment where assess is disabled."
         )
     loaded = enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
-    lms = _load_lms(settings, lms_entry_points)
+    lms = await _load_lms(settings, lms_entry_points)
     if settings.worker_allow_unbound and not settings.is_development:
         raise StartupValidationError(
             step=STEP,
@@ -1105,8 +1101,13 @@ def main(bindings: Any | None = None, lms_entry_points: Any | None = None) -> No
         raise SystemExit(0)
     # JSON on stderr with the assess allowlist on structlog AND stdlib records (plan
     # assess-context A): before this the worker's stdlib INFO lines went nowhere.
-    from vektra_shared.log_safety import configure_assess_worker_logging
+    from vektra_assess import LOGGER_PREFIX
+    from vektra_shared.log_safety import (
+        configure_assess_worker_logging,
+        register_strict_logger_prefix,
+    )
 
+    register_strict_logger_prefix(LOGGER_PREFIX)
     configure_assess_worker_logging()
     raise SystemExit(asyncio.run(_amain(bindings, lms_entry_points)))
 

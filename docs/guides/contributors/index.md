@@ -99,3 +99,7 @@ Changing what the assessment bot may show the model (a snapshot field, a reader,
 
 A discussion model answers students only after `make eval-assess` passed and the report was activated (NFR-023). How to run it, what PASS and BLOCKED mean, the data-basis rule and the judge calibration labels: [assess-eval-suite.md](assess-eval-suite.md).
 
+
+## Releases
+
+- [Release checklist for the release that ships vektra-assess](release-assess.md)

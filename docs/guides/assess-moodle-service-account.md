@@ -68,6 +68,96 @@ On a development site: `php docker/provision/assess_service_account.php` (idempo
 account whose service lists a grade-write function, and a stand-in for the ingestion account.
 Never run it against a production site.
 
+## Token creation and rotation
+
+The token belongs to the service account and to the `vektra_assess` external service only. On
+the LMS, as a site administrator, create it under the web-service token management page (in
+Moodle: *Site administration > Server > Web services > Manage tokens*), for this account and this
+service, with no expiry and no IP restriction unless your network requires one. Then put it into
+the worker's `assess_ws_tokens` secret, keyed by the site's `assess_sites.id`:
+
+```json
+{"3f0c8c1e-0000-4000-8000-000000000001": "<token>"}
+```
+
+([secrets: change a credentials file](operators/assess-secrets.md#change-a-credentials-file) adds
+or replaces one site's entry atomically and keeps the other sites' tokens.) The
+worker re-reads this file on every LMS call, but Compose bind-mounts it: a replacement that
+writes a new file (an editor's save, `mv`, `rm` and recreate) leaves the running worker on the
+old one. To rotate:
+
+1. create a second token for the same account and service;
+2. replace the site's value in `assess_ws_tokens` with that procedure;
+3. recreate the worker:
+   `docker compose -f docker-compose.yml -f docker-compose.assess.yml --profile assess up -d --force-recreate vektra-assess-worker`;
+4. run the setup check: `token_works` must be `OK`, which now proves the new token;
+5. delete the old token on the LMS.
+
+A token is never in the environment, the database or a log; the worker logs the web-service
+function, the site id, the HTTP status and timings only. A suspected leak is handled the same way,
+starting from step 5 (delete first, then create, install and recreate). In between, the
+LMS refuses the worker's calls and the reads of that site are reported unreadable, which keeps
+the START gates closed rather than opening them.
+
+The LMS menu path above is Moodle's, quoted for orientation; this repository does not test it.
+
+## Register the site and mint the plugin's keys
+
+No API route creates a site or binds a key to it. Both are rows the operator writes.
+
+1. **The site**, as the database owner:
+
+   ```sql
+   INSERT INTO assess_sites (moodle_site_uuid, base_url, moodle_origin)
+   VALUES ('<unique site identifier>', 'https://moodle.uni.example', 'https://moodle.uni.example')
+   RETURNING id;
+   ```
+
+   `id` is the site id used everywhere else: the `assess_ws_tokens` key, the setup-check and
+   privacy routes, the UI's `?site=`. `moodle_site_uuid` must be unique; no code reads it beyond
+   that, so use an identifier you can trace to the LMS site (which value the plugin expects there,
+   if any, is not verified in this repository). `moodle_origin` is the framing origin
+   ([framing](operators/assess-framing.md)). `min_plugin_version` (optional) raises the minimum
+   plugin release for this site above `VEKTRA_ASSESS_MIN_PLUGIN_VERSION`.
+2. **Four API keys**, one per purpose, each with a single `assess:*` scope (an `assess:*` scope
+   cannot be combined with `admin`, `ingest` or `query` on one key). With an `admin` key:
+
+   ```bash
+   for scope in mint teacher privacy-export privacy-erase; do
+     curl -s -H "Authorization: Bearer $VEKTRA_ADMIN_KEY" -H "Content-Type: application/json" \
+       -d "{\"label\": \"assess $scope <site>\", \"scopes\": [\"assess:$scope\"]}" \
+       https://vektra.uni.example/api/v1/api-keys
+   done
+   ```
+
+   Each answer shows the key once (`key`) and its `id`.
+3. **Bind each key to the site**, as the database owner, with the purpose matching its scope:
+
+   ```sql
+   INSERT INTO assess_site_keys (site_id, api_key_id, purpose) VALUES
+     ('<site id>', '<id of the assess:mint key>',           'mint'),
+     ('<site id>', '<id of the assess:teacher key>',        'teacher'),
+     ('<site id>', '<id of the assess:privacy-export key>', 'privacy-export'),
+     ('<site id>', '<id of the assess:privacy-erase key>',  'privacy-erase');
+   ```
+
+   A key is bound to at most one site (`api_key_id` is unique). Every route that takes one of
+   these plugin keys checks both the exact scope and the binding for its purpose: a key bound to
+   no site, or for another purpose, gets `403 ERR-ASSESS-007`. The `admin` key satisfies none of
+   the routes that require only a plugin key (token mint, teacher configuration and operations,
+   privacy export and erasure, the download-token mint). Two site routes also accept the
+   operator's `admin` key: the setup check (`POST`/`GET .../sites/{site_id}/setup-check`) and the
+   transcript resend; see the route index in the
+   [API reference](../reference/api.md#assess-overview-credentials-and-route-index).
+4. **Give the keys to the plugin**, in its site settings (the plugin's own documentation). The
+   `mint` key mints the discussion tokens and the student's own transcript download token,
+   server-side; `teacher` for the activity configuration,
+   the teacher operations, the setup check and transcript download or resend by a grader;
+   `privacy-export` and `privacy-erase` for the LMS privacy provider.
+
+To rotate a plugin key: mint and bind a new key for the same purpose, update the plugin, then
+revoke the old one (`DELETE /api/v1/api-keys/{key_id}`).
+
 ## What the setup check verifies
 
 Run it from the Moodle plugin ("Verifica configurazione") or `POST /api/v1/assess/sites/{site}/setup-check`.
@@ -77,7 +167,7 @@ verified is never assumed fine.
 | Item | Meaning |
 |------|---------|
 | `token_works` | `core_webservice_get_site_info` answers with the token |
-| `required_reads` | every reader group (quiz, assignment, grading, enrolment, graders) returns a well-formed answer |
+| `required_reads_quiz`, `required_reads_assign`, `required_reads_grade`, `required_reads_grading`, `required_reads_enrol`, `required_reads_files` | each reader group returns a well-formed answer (one item per group) |
 | `interactive_login_disabled` | the account's `auth` is `webservice` |
 | `not_site_admin` | `userissiteadmin` is false |
 | `not_ingestion_account` | the account is not the ingestion account (`VEKTRA_ASSESS_INGEST_ACCOUNT_USERNAME`); unset means `UNVERIFIABLE` |
@@ -86,7 +176,10 @@ verified is never assumed fine.
 | `ws_tls_ok` | the connection is https verified against the configured CA |
 | `ui_not_same_origin` | the discussion UI origin is not same-site with Moodle or the API |
 | `ui_origin_distinct` | the discussion UI origin is https (outside development) and is not this site's Moodle origin: the precondition of the iframe's `allow-same-origin` sandbox (ARCH-076); the API also refuses to start otherwise |
-| `parser_sidecar_running`, `smtp_probe`, `db_log_statement_none` | registered by other components; an unregistered item is `MISSING` (fail closed) |
+| `parser_sidecar_running`, `smtp_probe`, `db_log_statement_none`, `privacy_config` | registered by the worker (parser deep ping, SMTP probe, Postgres logging settings, the site's REQ-089 privacy settings); an item no component registered would be `MISSING` (fail closed) |
+
+The full walkthrough, with what to fix for each item, is in the
+[deployment guide](operators/assess-deployment.md#setup-check-walkthrough).
 
 ## Capability flags and their fail-closed fallbacks
 
@@ -106,35 +199,11 @@ every row at once and queues a new check; Starts are blocked until it passes.
 | `module_visibility_per_student`, `loginas_crosscheck` | unreadable: the retrieval of course material stays off, and login-as is trusted to the plugin |
 | `release_state`, `grading_state`, `graders_resolvable`, `enrolment_readable`, `per_student_timelimit` | the matching gate stays closed |
 
-## The discussion UI origin and framing (plan 9)
+## The discussion UI origin and framing
 
-The student discussion runs in an iframe on the Moodle results page, but the page inside it is
-served by Vektra (`GET /api/v1/assess/ui?site=<site id>`) on its own origin,
-`VEKTRA_ASSESS_UI_ORIGIN`. Three settings must agree:
-
-- `VEKTRA_ASSESS_UI_ORIGIN` is an `https` origin (scheme, host, port; no path), different from
-  every Moodle origin. The API refuses to start otherwise, and the setup check reports
-  `ui_origin_distinct`. The plugin's iframe sandbox includes `allow-same-origin`, which is safe
-  only because the two origins differ.
-- Each site's `moodle_origin` (on `assess_sites`, a bare origin) is the one origin allowed to
-  frame the page (CSP `frame-ancestors`) and to exchange postMessage with it. A site without it
-  falls back to the origin of its `base_url`.
-- The UI origin has its own server on the reverse proxy. The origin model: ONE backend, TWO
-  public origins. The API origin (`VEKTRA_ASSESS_API_PUBLIC_ORIGIN`) serves Moodle's
-  server-side calls (token mint), admin and every other route, with `X-Frame-Options: DENY`.
-  The UI origin (`VEKTRA_ASSESS_UI_ORIGIN`) serves the page, its assets and only the student
-  routes the page calls on its own origin (CSP `connect-src 'self'`): `GET /state`,
-  `/sessions...` (Start, resume, turns, retry, flag, Fine, the event stream) and, with plan 10,
-  `/transcripts/...`; everything else there is 404, and it never sends `X-Frame-Options`. "The
-  UI calls the API on its own origin" and "the UI origin is distinct from the API origin" do
-  not conflict: the rule is about the browser-visible origin (another site than the API and
-  than Moodle, so `ui_not_same_origin` and `ui_origin_distinct` pass), not about the backend
-  behind it. The shipped nginx example (`deploy/nginx/vektra.conf.example`) has both servers;
-  the UI page answers only when the request's scheme and `Host` are the UI origin, so the
-  proxy must forward `Host` (and, from another container, be in uvicorn's
-  `FORWARDED_ALLOW_IPS`). A deployment that copied an older example serves the page on the API
-  origin, where it is now 503.
-
+The discussion page is served by Vektra on its own origin and framed by the LMS. The origins, the
+per-site `moodle_origin`, the reverse proxy and how to verify them are in the
+[framing runbook](operators/assess-framing.md).
 
 ## Transcript recipients and the domain allowlist (plan 10b)
 

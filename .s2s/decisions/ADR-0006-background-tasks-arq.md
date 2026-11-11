@@ -88,3 +88,10 @@ This ADR is **superseded for the assess feature only** by
 leased job loop (`vektra-assess-worker`, claim with `FOR UPDATE SKIP LOCKED`, fenced completion, transactional outbox, no Redis),
 and does not use arq or this table. The ingest path is unchanged and is not fixed by that work: the drift above remains for
 ingestion and is recorded here so it is not mistaken for a working mechanism.
+
+**Re-checked 2026-11-10 (plan assess-hardening-release, 13b).** The state above is unchanged in the code. One more
+consequence belongs in the record: the two retention crons that only an arq worker would run never run either.
+`vektra_ingest/jobs.py` registers `cleanup_soft_deleted_task` (`VEKTRA_RETENTION_DAYS`) and `vektra_app/worker.py` adds
+`cleanup_analytics_traces_task` (`VEKTRA_ANALYTICS_RETENTION_DAYS`), but no deployed process starts those worker settings,
+so soft-deleted ingest records and stored QueryTraces are not cleaned up by those settings. The assess retention purge is
+separate: a `purge` tick and job of the ADR-0029 loop, which does run in `vektra-assess-worker`.

@@ -2,9 +2,9 @@
 
 **ID**: 20261101-154950-assess-hardening-release
 **Status**: in_progress
-**Branch**: feat/assess-hardening-release (13a)
+**Branch**: feat/assess-hardening-release (13a), docs/assess-hardening-release-13b (13b)
 **Created**: 2026-11-01T14:49:50Z
-**Updated**: 2026-11-10T16:00:00Z
+**Updated**: 2026-11-10T20:00:00Z
 **Approved**: 2026-11-01 (coordinator)
 
 ## Traceability
@@ -119,19 +119,19 @@ rows, points, messages on the mail sink or bytes on disk have been counted.
 - [ ] REQ-080 canary grep on the target deployment logs, mail logs and `/metrics` (plan 12 script)
 
 ### Runbooks and operator docs
-- [ ] `docs/guides/operators/assess-deployment.md`: compose `assess` profile, roles and DSNs, connection budget, `log_statement=none`, worker/parser limits, healthchecks, TLS UI origin, setup check walkthrough
-- [ ] `docs/guides/operators/assess-secrets.md`: per-service secret files and the ARCH-071 key matrix (who must and must not hold what), generation commands, startup refusal messages
-- [ ] Key rotation runbooks: KEK (re-wrap job, retire/destroy cadence tied to backup retention), API X25519 hand-off key (re-seal ≤ K live hand-off rows), transcript key (re-wrap per-transcript DEKs with `crypto.rotation.rewrap_transcript_deks` AND the teachers' reset / termination reasons with `rewrap_teacher_reasons`, plan teacher-ops 11b, before the old kid is retired), teacher-config key (re-seal blobs), token signing key (kid overlap), subject-key secret (not rotatable without full rekey — documented)
-- [ ] Offline key backup + restore drill: back up keys separately from DB dumps; drill = restore DB dump + keys into a clean host, run `python -m vektra_assess.keys verify`, download a retained transcript and compare its sha256 to the pre-backup value, confirm purged sessions stay unrecoverable; record drill date and result
-- [ ] Framing runbook: per-site `moodle_origin`, nginx/traefik exemption of `/api/v1/assess/ui` from `X-Frame-Options` (plan 9), distinct-origin requirement, verifying with the setup check
-- [ ] Moodle service account runbook: dedicated account and role, required read functions, no grade-write, interactive login disabled, not site admin, not the ingestion account, token creation and rotation, assess:* API keys for the plugin (mint, teacher, privacy-export, privacy-erase) — aligned with plan 4 and P1
-- [ ] `docs/reference/api.md`: complete Assess section (all INT-001 endpoints, scopes, error codes, SSE wire format, postMessage protocol); `docs/reference/error-codes.md` all `ERR-ASSESS-*`; `docs/reference/configuration.md` all `VEKTRA_ASSESS_*`; `.env.example` reviewed end to end
-- [ ] ADR-0006 status note (drift record) pointing to ADR-0029; update `.s2s/CONTEXT.md` components table with vektra-assess (only if not already done by plan 1)
+- [x] `docs/guides/operators/assess-deployment.md`: compose `assess` profile, roles and DSNs, connection budget, `log_statement=none`, worker/parser limits, healthchecks, TLS UI origin, setup check walkthrough
+- [x] `docs/guides/operators/assess-secrets.md`: per-service secret files and the ARCH-071 key matrix (who must and must not hold what), generation commands, startup refusal messages
+- [x] Key rotation runbooks: KEK (re-wrap job, retire/destroy cadence tied to backup retention), API X25519 hand-off key (re-seal ≤ K live hand-off rows), transcript key (re-wrap per-transcript DEKs with `crypto.rotation.rewrap_transcript_deks` AND the teachers' reset / termination reasons with `rewrap_teacher_reasons`, plan teacher-ops 11b, before the old kid is retired), teacher-config key (re-seal blobs), token signing key (kid overlap), subject-key secret (not rotatable without full rekey — documented)
+- [x] Offline key backup + restore drill (13b: procedure written in `docs/guides/assess-keys-runbook.md`; the drill RUN is BLOCKED on a clean host, see Notes): back up keys separately from DB dumps; drill = restore DB dump + keys into a clean host, run `python -m vektra_assess.keys verify`, download a retained transcript and compare its sha256 to the pre-backup value, confirm purged sessions stay unrecoverable; record drill date and result
+- [x] Framing runbook (`docs/guides/operators/assess-framing.md`): per-site `moodle_origin`, nginx/traefik exemption of `/api/v1/assess/ui` from `X-Frame-Options` (plan 9), distinct-origin requirement, verifying with the setup check
+- [x] Moodle service account runbook (13b: `docs/guides/assess-moodle-service-account.md` extended): dedicated account and role, required read functions, no grade-write, interactive login disabled, not site admin, not the ingestion account, token creation and rotation, assess:* API keys for the plugin (mint, teacher, privacy-export, privacy-erase) — aligned with plan 4 and P1
+- [x] `docs/reference/api.md`: complete Assess section (all INT-001 endpoints, scopes, error codes, SSE wire format, postMessage protocol); `docs/reference/error-codes.md` all `ERR-ASSESS-*`; `docs/reference/configuration.md` all `VEKTRA_ASSESS_*`; `.env.example` reviewed end to end
+- [x] ADR-0006 status note (drift record) pointing to ADR-0029; update `.s2s/CONTEXT.md` components table with vektra-assess (only if not already done by plan 1)
 
 ### Release
-- [ ] Release checklist `docs/guides/contributors/release-assess.md` (or the existing release section): version bump in every workspace `pyproject.toml` (currently 0.7.1) to the next minor, `uv lock`, CHANGELOG `[Unreleased]` → `[X.Y.0] - date` + fresh `[Unreleased]`, BUG-027 qemu baseline green with the assess modules, image built by `publish.yml` on tag and smoke-tested (`/health`, `/health/assess`, setup check), minimum plugin_version enforced at mint matches the released plugin
+- [x] Release checklist `docs/guides/contributors/release-assess.md` (13b: the checklist only; no version bumped, no release cut: the owner's decision) (or the existing release section): version bump in every workspace `pyproject.toml` (currently 0.7.1) to the next minor, `uv lock`, CHANGELOG `[Unreleased]` → `[X.Y.0] - date` + fresh `[Unreleased]`, BUG-027 qemu baseline green with the assess modules, image built by `publish.yml` on tag and smoke-tested (`/health`, `/health/assess`, setup check), minimum plugin_version enforced at mint matches the released plugin
 - [x] Image content boundary: `test_image_content_boundary.py` asserts assess UI assets present and no test fixtures, mail-sink, canary datasets or `.s2s/` in the image
-- [ ] Pilot go/no-go document `docs/guides/operators/assess-pilot-go-no-go.md` with the criteria below, signed off per item with evidence links
+- [x] Pilot go/no-go document `docs/guides/operators/assess-pilot-go-no-go.md` (13b: written; verdict NO-GO, every unmet criterion FAIL/BLOCKED/OPEN with what is missing) with the criteria below, signed off per item with evidence links
 
 ## State & Data Lifecycle
 
@@ -410,6 +410,41 @@ every release, with a manual exploratory session on top.
     "docstring coverage" pre-merge check (not a repository policy, no threshold is configured
     in this repo).
   - Declared: **71 cases, 27 scenarios**.
+
+- **13b (branch `docs/assess-hardening-release-13b`, 2026-11-10): runbooks, reference docs, release
+  checklist, go/no-go.** All "Runbooks and operator docs" tasks and both remaining "Release" tasks
+  are written. New: `docs/guides/operators/assess-deployment.md`, `assess-secrets.md`,
+  `assess-framing.md`, `assess-pilot-go-no-go.md`, `docs/guides/contributors/release-assess.md`.
+  Extended: `docs/guides/assess-keys-runbook.md` (rotation per key on `keys rewrap`, backup and
+  restore drill procedure), `docs/guides/assess-moodle-service-account.md` (token rotation, site
+  registration, the four plugin keys). Reference docs: an Assess overview in `api.md` (credentials,
+  route index, SSE wire format); `error-codes.md` was already complete; `configuration.md` and
+  `.env.example` completed; the new `vektra-assess/tests/test_reference_docs.py` pins the three
+  registries (codes with status, settings, routes) to the code, with negative controls.
+  Existing paths were kept, not moved under `operators/`, so links from the plugin repo do not
+  break. No version bumped, no release cut (owner's decision; assess is planned for 0.9.0).
+  Findings recorded while grounding the docs:
+  - **Release blocker: a production worker refuses to start.** `job:rotate_keys` (owned by this
+    plan) has no handler; `assert_all_bound` refuses outside the development override. Nothing
+    enqueues the kind (rotation is the `keys rewrap` command). Fix: bind a handler or drop the kind
+    (migration on `ck_assess_jobs_kind`). Resolved: the kind is dropped (PR #197, entry below).
+  - **The chaos nightly has never run.** `chaos-assess.yml` is only on `develop`; GitHub runs a
+    `schedule` trigger only from the default branch. "Two consecutive nightly runs" needs the
+    workflow on `main` or a `workflow_dispatch` series.
+  - **No command wraps `reseal_teacher_configs` or `reseal_handoffs`.** The hand-off rotation
+    works by waiting for live sessions to close; the teacher-config private kid cannot be retired
+    until a command exists.
+  - **One API process only.** The event broker, the DEK cache and the rate limiters are in-process.
+  - **No subject-key secret exists.** The plan's "subject-key secret, not rotatable" does not
+    match the code (unkeyed `sha256(site|userid)`); the runbook says so.
+  - **The NFR-014 pen matrix (`tests/pen/assess/`) is not built.**
+  - The service-account guide's setup-check table was stale (one `required_reads` item; the code
+    has six) and is corrected.
+  - No route registers a site or binds a key: both are SQL as the database owner (documented).
+  - Traefik: no UI-origin router ships; recorded as not provided and untested.
+  Plan 13 stays `in_progress`: the acceptance criteria are FAIL / BLOCKED / OPEN as listed in the
+  go/no-go, and the drill run is BLOCKED on a clean host.
+
 - **`rotate_keys` job kind dropped (coordinator decision, 2026-11-10; branch
   `fix/assess-drop-rotate-keys-job`).** Release blocker: the kind was this plan's only worker slot,
   it had no handler and nothing enqueued it, so with `VEKTRA_ASSESS_ENABLED=true` and no

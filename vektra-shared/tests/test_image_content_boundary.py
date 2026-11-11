@@ -333,6 +333,37 @@ def test_no_forbidden_file_can_reach_the_image() -> None:
     )
 
 
+COMPOSE_ASSESS = REPO_ROOT / "docker-compose.assess.yml"
+_SECRET_FILE = re.compile(r"\$\{VEKTRA_ASSESS_SECRETS_PATH:-[^}]*\}/([A-Za-z0-9_.-]+)")
+
+
+def test_assess_keyrings_under_an_overridden_secrets_path_cannot_reach_the_image() -> (
+    None
+):
+    """``VEKTRA_ASSESS_SECRETS_PATH`` can point anywhere, including a copied directory
+    (``./migrations/private``): every keyring file name the compose overlay mounts is
+    excluded wherever it sits, not only under a directory called ``secrets``."""
+    names = sorted(
+        set(_SECRET_FILE.findall(COMPOSE_ASSESS.read_text(encoding="utf-8")))
+    )
+    assert len(names) >= 10, f"only {names} parsed out of {COMPOSE_ASSESS.name}"
+    ignore = DockerIgnore(DOCKERIGNORE.read_text(encoding="utf-8"))
+    directories = copied_directories(DOCKERFILE.read_text(encoding="utf-8"))
+    leaks = [
+        candidate
+        for base in directories
+        for name in names
+        for candidate in (f"{base}/private/{name}", f"{base}/a/b/{name}")
+        if not ignore.excludes(candidate)
+    ]
+    assert leaks == [], f"keyring paths not excluded by .dockerignore: {leaks}"
+    # the control: without the per-name rules, only a `secrets/` directory is covered
+    weaker = DockerIgnore("**/secrets/\n")
+    assert not weaker.excludes(f"migrations/private/{names[0]}")
+    # the rules are exact names: the assess source modules still ship
+    assert not ignore.excludes("vektra-app/src/vektra_app/assess_worker.py")
+
+
 # --- plan 9: the assess discussion UI bundle -----------------------------------------------
 
 

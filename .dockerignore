@@ -44,6 +44,21 @@ coverage/
 # Assess keyrings (`make assess-keys` writes ./secrets/assess/, gitignored): mounted as
 # Compose secrets at run time, never baked into the image, at the root or nested.
 **/secrets/
+# VEKTRA_ASSESS_SECRETS_PATH may point the keyrings at any directory, including one the
+# Dockerfile copies (e.g. ./migrations/private), so the fixed file names are excluded too,
+# wherever they are. The list is docker-compose.assess.yml's `secrets:` file names;
+# test_image_content_boundary.py fails if one is missing here.
+**/assess_db_api_password
+**/assess_db_worker_password
+**/assess_handoff_private
+**/assess_handoff_public
+**/assess_kek
+**/assess_smtp
+**/assess_teacher_config_private
+**/assess_teacher_config_public
+**/assess_token_signing
+**/assess_transcript_kek
+**/assess_ws_tokens
 
 # S2S planning artifacts
 .s2s/

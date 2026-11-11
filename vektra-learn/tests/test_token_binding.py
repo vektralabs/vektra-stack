@@ -112,6 +112,19 @@ async def test_missing_course_id_rejected() -> None:
         await SVC.validate_token(token)
 
 
+async def test_missing_sub_rejected() -> None:
+    """A bound, well-signed token with a course but no student is refused at decode."""
+    token = encode_jwt(
+        {"course_id": "C1"},
+        key=LEARN_KEY,
+        audience=WIDGET_AUDIENCE,
+        issuer=TOKEN_ISSUER,
+        ttl=timedelta(minutes=5),
+    )
+    with pytest.raises(jwt.MissingRequiredClaimError, match="sub"):
+        await SVC.validate_token(token)
+
+
 async def test_still_rejected_cases() -> None:
     """Cases the 0.7 decoder already refused stay refused."""
     base = {

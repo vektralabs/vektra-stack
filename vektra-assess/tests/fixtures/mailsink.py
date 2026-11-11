@@ -55,8 +55,22 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-def make_ca_and_leaf(out: Path) -> tuple[Path, Path, Path]:
-    """(ca.pem, leaf.pem, leaf.key) for 127.0.0.1 / localhost, valid for a day."""
+#: the names the sink's leaf certificate covers by default
+DEFAULT_LEAF_NAMES: tuple[str, ...] = ("localhost", HOST)
+
+
+def _san(name: str) -> x509.GeneralName:
+    try:
+        return x509.IPAddress(ipaddress.ip_address(name))
+    except ValueError:
+        return x509.DNSName(name)
+
+
+def make_ca_and_leaf(
+    out: Path, names: tuple[str, ...] = DEFAULT_LEAF_NAMES
+) -> tuple[Path, Path, Path]:
+    """(ca.pem, leaf.pem, leaf.key) for ``names`` (default 127.0.0.1 / localhost), valid
+    for a day."""
     now = dt.datetime.now(dt.UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name(
@@ -90,19 +104,14 @@ def make_ca_and_leaf(out: Path) -> tuple[Path, Path, Path]:
     key = ec.generate_private_key(ec.SECP256R1())
     leaf = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, names[0])]))
         .issuer_name(ca_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - dt.timedelta(minutes=5))
         .not_valid_after(now + dt.timedelta(days=1))
         .add_extension(
-            x509.SubjectAlternativeName(
-                [
-                    x509.DNSName("localhost"),
-                    x509.IPAddress(ipaddress.ip_address(HOST)),
-                ]
-            ),
+            x509.SubjectAlternativeName([_san(n) for n in names]),
             critical=False,
         )
         .add_extension(
@@ -216,6 +225,8 @@ class MailSink:
     require_auth: bool = True
     implicit: bool = False  # TLS from the first byte (port 465 style)
     fault: str | None = None
+    #: the names on the leaf certificate; a sink for another hostname still listens on HOST
+    leaf_names: tuple[str, ...] = DEFAULT_LEAF_NAMES
     port: int = field(default_factory=_free_port)
     messages: list[Stored] = field(default_factory=list)
     auth_attempts: list[bool] = field(
@@ -229,7 +240,9 @@ class MailSink:
     _controller: Controller | None = None
 
     def __post_init__(self) -> None:
-        self.ca_file, self._leaf, self._key = make_ca_and_leaf(self.workdir)
+        self.ca_file, self._leaf, self._key = make_ca_and_leaf(
+            self.workdir, self.leaf_names
+        )
 
     # --- lifecycle ---------------------------------------------------------------------
 
@@ -295,14 +308,17 @@ class MailSink:
         handshake trusting only the sink's CA."""
         with socket.create_connection((HOST, self.port), timeout=5):
             pass
+        ctx = ssl.create_default_context(cafile=str(self.ca_file))
+        if HOST not in self.leaf_names:
+            # a sink for another hostname: the guard still proves the chain (CERT_REQUIRED),
+            # only the name check is the client's to fail
+            ctx.check_hostname = False
         if self.implicit:
-            ctx = ssl.create_default_context(cafile=str(self.ca_file))
             with smtplib.SMTP_SSL(HOST, self.port, timeout=5, context=ctx) as client:
                 client.ehlo()
             return
         if not self.starttls:
             return
-        ctx = ssl.create_default_context(cafile=str(self.ca_file))
         with smtplib.SMTP(HOST, self.port, timeout=5) as client:
             client.ehlo()
             assert client.has_extn("starttls"), "mail sink does not offer STARTTLS"

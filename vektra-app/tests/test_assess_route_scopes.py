@@ -101,6 +101,6 @@ def test_assess_routes_use_exact_scopes(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     count, bad = _violations(create_app())
-    if count == 0:
-        pytest.skip("no assess routes registered yet (plan assess-session-lifecycle)")
+    # an app that registered no assess route would make the scope check vacuous
+    assert count > 0, "no assess routes registered with VEKTRA_ASSESS_ENABLED=true"
     assert bad == []

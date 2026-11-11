@@ -935,6 +935,40 @@ class TestCourseQueryTopKBounds:
         assert resp.json()["error"]["code"] == "ERR-LEARN-003"
 
 
+class TestCourseQueryTokenWithoutSubject:
+    """The real token dependency in front of /query: a token with a course but no
+    student must stop at decode. Without enrollment the handler itself never asks for
+    ``sub``, so a decoder that let it through would run the pipeline for nobody."""
+
+    async def test_token_without_sub_is_401_and_never_reaches_the_pipeline(
+        self,
+    ) -> None:
+        from vektra_learn.api import _get_session, router
+
+        pipeline = AsyncMock()
+        app = FastAPI()
+        app.include_router(router)
+        register_error_handlers(app)
+        app.state.learn_service = LearnService(jwt_secret=JWT_SECRET)
+        app.state.learn_require_enrollment = False
+        app.state.registry = _registry_returning(pipeline)
+        app.dependency_overrides[_get_session] = lambda: AsyncMock()
+        token = _bound_token(
+            {"course_id": "CS101", "exp": datetime.now(UTC) + timedelta(minutes=5)}
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/learn/query",
+                json={"question": "What is ML?"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 401
+        assert resp.json()["error"]["code"] == "ERR-LEARN-003"
+        pipeline.execute.assert_not_called()
+
+
 class TestConversationOwnership:
     """Per-student ownership of conversations (FEAT-027)."""
 

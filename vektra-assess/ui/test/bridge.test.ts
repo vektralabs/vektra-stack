@@ -94,4 +94,16 @@ describe("parseInbound", () => {
     });
     expect(parseInbound(null)).toBeNull();
   });
+
+  it("refuses a token message whose mode is unknown or missing", () => {
+    expect(parseInbound({ v: 1, type: "vektra-assess-token", token: "T", mode: "x" })).toBeNull();
+    expect(parseInbound({ v: 1, type: "vektra-assess-token", token: "T" })).toBeNull();
+  });
+
+  it("refuses a download token whose tid or token is not a string", () => {
+    const ok = { v: 1, type: "vektra-assess-download-token", tid: "d1", token: "T" };
+    expect(parseInbound(ok)).toEqual(ok);
+    expect(parseInbound({ ...ok, tid: 1 })).toBeNull();
+    expect(parseInbound({ ...ok, token: {} })).toBeNull();
+  });
 });

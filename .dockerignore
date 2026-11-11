@@ -41,6 +41,9 @@ coverage/
 **/CLAUDE.local.md
 **/.claude/
 **/.local/
+# Assess keyrings (`make assess-keys` writes ./secrets/assess/, gitignored): mounted as
+# Compose secrets at run time, never baked into the image, at the root or nested.
+**/secrets/
 
 # S2S planning artifacts
 .s2s/
@@ -64,4 +67,3 @@ Thumbs.db
 # image gets the bundle from the assess-ui-builder stage only
 **/node_modules
 vektra-assess/src/vektra_assess/ui/static
-

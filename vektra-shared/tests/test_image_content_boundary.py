@@ -57,6 +57,10 @@ FORBIDDEN: dict[str, str] = {
         "the gitignored scratch directory used across this crew's repos for local "
         "archives, exports and private denylists"
     ),
+    "secrets/assess/assess_token_signing": (
+        "an assess keyring written by `make assess-keys`: the HS256 key that signs every "
+        "discussion and download token, so a copy forges any student's session"
+    ),
 }
 
 # Instructions whose source is a build stage or a pinned image, not the build

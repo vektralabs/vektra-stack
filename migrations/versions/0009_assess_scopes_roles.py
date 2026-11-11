@@ -64,9 +64,12 @@ def upgrade() -> None:
                     EXCEPTION WHEN insufficient_privilege THEN
                         RAISE EXCEPTION
                             'migration 0009: cannot create role % (the migration user '
-                            'lacks CREATEROLE). On managed Postgres, pre-create the roles '
-                            'vektra_assess_api and vektra_assess_worker as {_ROLE_ATTRS} '
-                            'and re-run the migration.', r;
+                            'lacks CREATEROLE). On managed Postgres, pre-create all three '
+                            'assess roles, vektra_assess_api, vektra_assess_worker and '
+                            'vektra_assess_definer, as {_ROLE_ATTRS}; make the migration '
+                            'user a member of vektra_assess_definer, so that it can '
+                            'SET ROLE vektra_assess_definer (revision 0014 needs it); '
+                            'then re-run the migration.', r;
                     END;
                 END IF;
             END LOOP;

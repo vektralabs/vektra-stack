@@ -488,9 +488,15 @@ async def check_no_secret_in_logs(target: ConformanceTarget) -> None:
     with captured_logs() as buf:
         for mode in TransportMode:
             async with built(target, mode) as provider:
+                # every member that can reach the transport or the settings, not only the reads
+                for development in (True, False):
+                    provider.startup_problems(development)
                 await read_all(provider, target)
                 info = await provider.site_info(target.site)
                 await provider.service_account_check(target.site, info, target.manifest)
+                await provider.probe_capabilities(
+                    target.site, target.manifest, target.flags
+                )
         for h in logging.getLogger().handlers:
             h.flush()
     text = buf.getvalue()

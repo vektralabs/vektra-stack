@@ -222,7 +222,7 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
     development, not https outside development, or equal to a registered site's Moodle origin
     (the iframe's ``allow-same-origin`` sandbox is safe only across distinct origins). In
     development an unset origin starts; the UI page then answers 503 until it is set."""
-    if not settings.ui_origin and settings.env == "development":
+    if not settings.ui_origin and settings.is_development:
         return
     from sqlalchemy import text
 
@@ -247,11 +247,7 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
                     "(https://host[:port]), or disable the site (assess_sites.disabled_at)."
                 ),
             )
-        if (
-            origin
-            and settings.env != "development"
-            and not origin.startswith("https://")
-        ):
+        if origin and not settings.is_development and not origin.startswith("https://"):
             # also the SITE's problem: its Moodle origin is not https
             raise StartupValidationError(
                 step=STEP,
@@ -264,7 +260,7 @@ async def check_ui_origin(engine: Any, settings: VektraAssessSettings) -> None:
         if origin:
             origins.append(origin)
     problem = ui_origin_problem(
-        settings.ui_origin, origins, development=settings.env == "development"
+        settings.ui_origin, origins, development=settings.is_development
     )
     if problem is not None:
         raise StartupValidationError(

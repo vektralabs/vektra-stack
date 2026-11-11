@@ -54,6 +54,9 @@ def secrets_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     d = tmp_path / "secrets"
     d.mkdir()
     monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    # these tests check the key matrix, not the production-only settings (erasure mode, UI
+    # origin): an EXPLICIT development env, since the default no longer counts for assess
+    monkeypatch.setenv("VEKTRA_ENV", "development")
     return d
 
 

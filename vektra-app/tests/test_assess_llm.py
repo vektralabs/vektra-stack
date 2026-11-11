@@ -515,6 +515,57 @@ async def test_presidio_is_still_the_default_and_starts_with_a_cloud_model_in_pr
     assert seen == ["presidio"] and app.state.assess_safeguard is real
 
 
+# --- the API's dev switches need VEKTRA_ENV=development set EXPLICITLY ------------------------
+
+_API_DEV_SWITCHES = (
+    {"VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED": "true"},
+    {"VEKTRA_ASSESS_SAFEGUARD_MODE": "none"},  # with the default cloud locality
+)
+
+
+async def _step_13_with(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str], env: str | None
+) -> Any:
+    from vektra_app.assess_llm import step_13_assess_llm_check
+
+    monkeypatch.delenv("VEKTRA_ASSESS_PROVIDER_LOCALITY", raising=False)
+    _enabled(monkeypatch, **switch)
+    if env is None:
+        monkeypatch.delenv("VEKTRA_ENV", raising=False)
+    else:
+        monkeypatch.setenv("VEKTRA_ENV", env)
+    app = _App()
+    app.state.assess_engine = _Engine(active=False)
+    await step_13_assess_llm_check(app, safeguard_factory=lambda _m: _Real())
+    return app
+
+
+@pytest.mark.parametrize("switch", _API_DEV_SWITCHES, ids=lambda s: next(iter(s)))
+async def test_an_api_dev_switch_with_vektra_env_unset_is_refused(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]
+) -> None:
+    with pytest.raises(StartupValidationError) as e:
+        await _step_13_with(monkeypatch, switch, None)
+    assert "VEKTRA_ENV unset" in e.value.detail
+    assert "set VEKTRA_ENV=development explicitly" in e.value.detail
+
+
+@pytest.mark.parametrize("switch", _API_DEV_SWITCHES, ids=lambda s: next(iter(s)))
+async def test_an_api_dev_switch_with_explicit_development_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]
+) -> None:
+    app = await _step_13_with(monkeypatch, switch, "development")
+    assert app.state.assess_runner is not None
+
+
+@pytest.mark.parametrize("switch", _API_DEV_SWITCHES, ids=lambda s: next(iter(s)))
+async def test_an_api_dev_switch_with_explicit_production_is_refused(
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]
+) -> None:
+    with pytest.raises(StartupValidationError, match="VEKTRA_ENV=production"):
+        await _step_13_with(monkeypatch, switch, "production")
+
+
 def test_prometheus_metrics_count_with_code_labels() -> None:
     from prometheus_client import REGISTRY
 

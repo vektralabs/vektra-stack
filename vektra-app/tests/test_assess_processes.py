@@ -1016,3 +1016,57 @@ async def test_the_worker_entrypoint_reports_a_bad_setting_without_its_value(
     err = capsys.readouterr().err
     assert "VEKTRA_ASSESS_HEARTBEAT_MAX_AGE_S" in err and "60123" not in err
     assert not hb.exists()  # the stale heartbeat is still removed
+
+
+# --- development-only switches need VEKTRA_ENV=development set EXPLICITLY ------------------
+# The platform default of VEKTRA_ENV is "development" (vektra_shared, out of scope here), so a
+# production .env that forgets it would otherwise honour every dev switch. The worker's ones:
+
+_WORKER_DEV_SWITCHES = (
+    "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND",
+    "VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET",
+    "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP",
+)
+
+
+async def _worker_checks_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str, env: str | None
+) -> StartupValidationError:
+    d = _worker_keys(tmp_path / "w")
+    monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
+    monkeypatch.setenv("VEKTRA_ASSESS_SECRETS_DIR", str(d))
+    monkeypatch.delenv("VEKTRA_ASSESS_WORKER_DATABASE_URL", raising=False)
+    monkeypatch.setenv(switch, "true")
+    if env is None:
+        monkeypatch.delenv("VEKTRA_ENV", raising=False)
+    else:
+        monkeypatch.setenv("VEKTRA_ENV", env)
+    with pytest.raises(StartupValidationError) as e:
+        await assess_worker.run_checks()
+    return e.value
+
+
+@pytest.mark.parametrize("switch", _WORKER_DEV_SWITCHES)
+async def test_a_worker_dev_switch_with_vektra_env_unset_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    err = await _worker_checks_with(tmp_path, monkeypatch, switch, None)
+    assert switch in err.detail and "VEKTRA_ENV unset" in err.detail
+    assert "set VEKTRA_ENV=development explicitly" in err.detail
+
+
+@pytest.mark.parametrize("switch", _WORKER_DEV_SWITCHES)
+async def test_a_worker_dev_switch_with_explicit_development_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    err = await _worker_checks_with(tmp_path, monkeypatch, switch, "development")
+    # past every dev-switch check: the next refusal is the missing worker DSN
+    assert "VEKTRA_ASSESS_WORKER_DATABASE_URL is unset" in err.detail, err.detail
+
+
+@pytest.mark.parametrize("switch", _WORKER_DEV_SWITCHES)
+async def test_a_worker_dev_switch_with_explicit_production_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    err = await _worker_checks_with(tmp_path, monkeypatch, switch, "production")
+    assert switch in err.detail and "VEKTRA_ENV=production" in err.detail

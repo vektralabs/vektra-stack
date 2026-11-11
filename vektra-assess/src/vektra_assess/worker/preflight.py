@@ -459,11 +459,11 @@ async def _admit(
                 conn, deps.runner.model, deps.runner.prompt_version
             )
             if not activated and not (
-                settings.llm_allow_unactivated and settings.env == "development"
+                settings.llm_allow_unactivated and settings.is_development
             ):
                 raise _Rollback(Reason.MODEL_NOT_ACTIVATED)
             privacy = await deps.privacy(conn, row.site_id) or (
-                settings.privacy_allow_unset and settings.env == "development"
+                settings.privacy_allow_unset and settings.is_development
             )
             db = DbGateFacts(
                 now=int(act.db_now),

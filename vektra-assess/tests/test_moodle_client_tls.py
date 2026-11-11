@@ -111,6 +111,8 @@ def client_for(ca_file: Path | None, lookups: list[str], answer: list[str]):
     env: dict[str, str] = {
         "VEKTRA_ASSESS_ENABLED": "true",
         "VEKTRA_ASSESS_MOODLE_ALLOWED_CIDRS": "127.0.0.0/8",
+        # the local TLS server is on loopback, allowed only in an EXPLICIT development env
+        "VEKTRA_ENV": "development",
     }
     if ca_file is not None:
         env["VEKTRA_ASSESS_MOODLE_CA_FILE"] = str(ca_file)

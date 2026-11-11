@@ -172,6 +172,10 @@ Dormant by default. With `VEKTRA_ASSESS_ENABLED=false` no `/api/v1/assess` route
 A production worker refuses to start while any job handler is unbound; in the current tree none is. Development and CI
 also use `-f docker-compose.assess.dev.yml`, which sets `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND` and `VEKTRA_ENV=development`
 (see the [deployment guide](../guides/operators/assess-deployment.md#worker-start-check)).
+Every assess development-only switch (the `*_ALLOW_*` settings, `VEKTRA_ASSESS_SAFEGUARD_MODE=none`
+with a cloud model, an unset `VEKTRA_ASSESS_ERASURE_MODE` or `VEKTRA_ASSESS_UI_ORIGIN`) needs
+`VEKTRA_ENV=development` set explicitly: the platform default of `VEKTRA_ENV` is `development`, and
+assess does not count the default, so a production `.env` should set `VEKTRA_ENV=production`.
 These variables are read only by the assess code (`vektra_assess.config.VektraAssessSettings`), from the
 process environment, never from an env file. Every numeric setting has a lower and an upper
 bound; a value outside its range (or any invalid value) stops the API at startup step
@@ -296,12 +300,13 @@ development (decided by the product owner on 2026-11-11):
 
 | `VEKTRA_ENV` | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `VEKTRA_ASSESS_SAFEGUARD_MODE=none` |
 |---|---|---|
-| `development` | any | accepted |
-| anything else | `onprem` | accepted |
-| anything else | `cloud` (the default) | refused at startup: with a cloud model the safeguard is required |
+| `development`, set explicitly | any | accepted |
+| anything else, or unset | `onprem` | accepted |
+| anything else, or unset | `cloud` (the default) | refused at startup: with a cloud model the safeguard is required |
 
-`VEKTRA_ENV` defaults to `development`: a production deployment sets `VEKTRA_ENV=production`,
-or the first row applies. Set the three in the deployment `.env`. The exact startup error and
+`VEKTRA_ENV` defaults to `development` for the platform, but assess counts only an explicit
+`VEKTRA_ENV=development`; a production deployment sets `VEKTRA_ENV=production`. Set the three in
+the deployment `.env`. The exact startup error and
 its fix are in the [deployment guide](../guides/operators/assess-deployment.md#the-safeguard-and-the-models-locality).
 
 #### Connection budget (assess)

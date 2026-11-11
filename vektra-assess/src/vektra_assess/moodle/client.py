@@ -175,7 +175,7 @@ class MoodleWsClient:
         await self._http.aclose()
 
     def _allow_http(self) -> bool:
-        return self._s.moodle_allow_http and self._s.env == "development"
+        return self._s.moodle_allow_http and self._s.is_development
 
     def _cidrs(self) -> list[str]:
         return [c.strip() for c in self._s.moodle_allowed_cidrs.split(",") if c.strip()]
@@ -348,7 +348,7 @@ class MoodleWsClient:
                 site.base_url.rstrip("/") + path,
                 allowed_hosts=[parts.hostname or ""],
                 allowed_cidrs=self._cidrs(),
-                allow_loopback=self._s.env == "development",
+                allow_loopback=self._s.is_development,
                 resolver=self._resolver,
             )
         except ResolutionFailed:

@@ -67,7 +67,9 @@ For development and CI only, add `-f docker-compose.assess.dev.yml`: it sets
 `VEKTRA_ENV=development`, `VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND=true`,
 `VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED=true`, `VEKTRA_ASSESS_PRIVACY_ALLOW_UNSET=true` and
 `VEKTRA_ASSESS_SAFEGUARD_MODE=none`. The three boolean overrides are refused
-outside development. `VEKTRA_ASSESS_SAFEGUARD_MODE=none` is accepted outside development only
+outside development. Every assess development-only switch needs `VEKTRA_ENV=development` set
+explicitly: the platform default of `VEKTRA_ENV` is `development`, but assess does not count the
+default, so a production `.env` should set `VEKTRA_ENV=production`. `VEKTRA_ASSESS_SAFEGUARD_MODE=none` is accepted outside development only
 with a model on the institution's own hardware: see
 [the safeguard and the model's locality](#the-safeguard-and-the-models-locality). The default
 is `presidio`, which refuses to start when Presidio cannot load.
@@ -80,13 +82,12 @@ the API accepts it depends on the environment and on where the model runs
 
 | Environment | `VEKTRA_ASSESS_PROVIDER_LOCALITY` | `VEKTRA_ASSESS_SAFEGUARD_MODE=none` |
 |---|---|---|
-| development (`VEKTRA_ENV=development`) | any | accepted |
-| not development | `onprem` | accepted |
-| not development | `cloud` (the default) | refused at startup |
+| development (`VEKTRA_ENV=development`, set explicitly) | any | accepted |
+| not development, or `VEKTRA_ENV` unset | `onprem` | accepted |
+| not development, or `VEKTRA_ENV` unset | `cloud` (the default) | refused at startup |
 
-Declare `onprem` only when the model runs on the institution's hardware. `VEKTRA_ENV` itself
-defaults to `development`, so a production deployment sets `VEKTRA_ENV=production`; without it
-the first row applies.
+Declare `onprem` only when the model runs on the institution's hardware. An unset `VEKTRA_ENV`
+is not development for assess, even though the platform default is `development`.
 
 **Put these values in the deployment `.env`, not in a shell export.** The API reads them from
 `.env` (its `env_file`); a value exported in the shell that runs `docker compose` is not passed
@@ -99,6 +100,10 @@ With `none` and a cloud model outside development, the API stops at startup with
   Detail: VEKTRA_ASSESS_SAFEGUARD_MODE=none with VEKTRA_ASSESS_PROVIDER_LOCALITY=cloud is only honoured with VEKTRA_ENV=development (this process runs with VEKTRA_ENV=production)
   Remediation: with a cloud model the safeguard is required: set VEKTRA_ASSESS_SAFEGUARD_MODE=presidio, or declare VEKTRA_ASSESS_PROVIDER_LOCALITY=onprem if the model runs on the institution's hardware.
 ```
+
+With `VEKTRA_ENV` unset the parenthesis reads `(this process runs with VEKTRA_ENV unset; the
+default 'development' does not count for assess: set VEKTRA_ENV=development explicitly)`; every
+other development-only switch is refused with the same parenthesis.
 
 To fix it, in `.env`, either remove `VEKTRA_ASSESS_SAFEGUARD_MODE=none` (the default `presidio`
 applies; the image needs the Presidio extra and a spaCy model), or, only if the model really runs

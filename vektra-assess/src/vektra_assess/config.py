@@ -239,6 +239,27 @@ class VektraAssessSettings(BaseSettings):
         alias="VEKTRA_ENV",
         description="Environment mode (shared with the main settings). Plain http to Moodle needs development.",
     )
+
+    @property
+    def is_development(self) -> bool:
+        """True only when ``VEKTRA_ENV=development`` was SET, never when it merely defaulted.
+
+        The platform default is ``development`` (``vektra_shared.config``, shared with every
+        component and left as is), so a production ``.env`` that forgets ``VEKTRA_ENV`` would
+        otherwise honour every assess development-only switch. Every such switch asks this.
+        """
+        return self.env == "development" and "env" in self.model_fields_set
+
+    @property
+    def env_described(self) -> str:
+        """The environment as a refusal message states it."""
+        if "env" not in self.model_fields_set:
+            return (
+                "VEKTRA_ENV unset; the default 'development' does not count for assess: "
+                "set VEKTRA_ENV=development explicitly"
+            )
+        return f"VEKTRA_ENV={self.env}"
+
     moodle_ca_file: Path | None = Field(
         None,
         alias="VEKTRA_ASSESS_MOODLE_CA_FILE",
@@ -985,7 +1006,7 @@ def erasure_mode_problem(settings: VektraAssessSettings) -> str | None:
     if (
         settings.enabled
         and settings.erasure_mode is None
-        and settings.env != "development"
+        and not settings.is_development
     ):
         return (
             "VEKTRA_ASSESS_ERASURE_MODE must be set while assess is enabled outside development: "

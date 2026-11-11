@@ -76,7 +76,9 @@ class Source:
 
 
 def deps(source: Any = None, **kw: Any) -> r.RenderDeps:
-    settings = SimpleNamespace(privacy_allow_unset=False, env="production")
+    settings = SimpleNamespace(
+        privacy_allow_unset=False, env="production", is_development=False
+    )
 
     async def privacy(conn: Any, site: Any) -> bool:
         return True

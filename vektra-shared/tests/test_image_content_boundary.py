@@ -373,12 +373,18 @@ def _nginx_servers(conf: str) -> dict[tuple[str, str], str]:
 
 
 def _locations(block: str) -> dict[str, str]:
+    """``location modifier+path -> body``, braces balanced: a body can hold a nested block
+    (``limit_except GET { deny all; }``), so the first ``}`` is not the end of the location."""
     import re
 
-    return {
-        m.group(1).strip(): m.group(2)
-        for m in re.finditer(r"location\s+([^{]+)\{([^}]*)\}", block)
-    }
+    out: dict[str, str] = {}
+    for m in re.finditer(r"location\s+([^{]+)\{", block):
+        depth, i = 1, m.end()
+        while depth:
+            depth += {"{": 1, "}": -1}.get(block[i], 0)
+            i += 1
+        out[m.group(1).strip()] = block[m.end() : i - 1]
+    return out
 
 
 def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
@@ -412,12 +418,16 @@ def test_the_nginx_example_serves_the_assess_ui_on_its_own_origin() -> None:
         "^~ /api/v1/assess/ui",
         "= /api/v1/assess/state",
         "^~ /api/v1/assess/sessions",
-        "^~ /api/v1/assess/transcripts/",
+        "~ ^/api/v1/assess/transcripts/[^/]+$",
         "/",
     }
     assert (
         ui_locations["/"].strip() == "return 404;"
     )  # no mint, teacher or admin route here
+    # the transcript download only: the download-token mint and the resend are POSTs under
+    # the same prefix and stay on the API origin (CodeRabbit 4531676327)
+    transcripts = ui_locations["~ ^/api/v1/assess/transcripts/[^/]+$"]
+    assert "limit_except GET" in transcripts and "deny all;" in transcripts
     assert (
         "proxy_buffering off;" in ui_locations["^~ /api/v1/assess/sessions"]
     )  # the events

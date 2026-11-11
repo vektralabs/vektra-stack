@@ -3,10 +3,15 @@
 The older ``_pii_redactor`` in ``vektra_app.main`` is WARNING+ only and key-name based: it removes
 a few known keys and lets everything else through. That is not a control for the assessment bot,
 where a student's answer, a hidden right answer or a teacher's solution must never reach a log at
-any level. For loggers under ``vektra_assess.*`` this module inverts the rule: **only allowlisted
-keys survive**, at every level, and every other key is replaced with ``[dropped]``. Exception text
-and tracebacks are replaced by the exception type, because an exception message can carry the
-content that raised it. Other packages keep their current behaviour.
+any level. For loggers under a **registered strict prefix** this module inverts the rule: **only
+allowlisted keys survive**, at every level, and every other key is replaced with ``[dropped]``.
+Exception text and tracebacks are replaced by the exception type, because an exception message can
+carry the content that raised it. Other packages keep their current behaviour.
+
+A package opts in with ``register_strict_logger_prefix(prefix)`` at import time: ``vektra_assess``
+registers ``"vektra_assess"``, and each LMS provider registers its own (ADR-0033 D8). Once a
+provider's loggers leave the ``vektra_assess.*`` namespace, the registration is what keeps them
+strict; nothing is hard-coded here.
 
 Two logging stacks are covered, because the assess code uses both:
 
@@ -22,13 +27,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections.abc import Iterable, MutableMapping
 from typing import Any, TextIO
 
 import structlog
 
-ASSESS_LOGGER_PREFIX = "vektra_assess"
 DROPPED = "[dropped]"
 
 # The plan's allowlist (content-free identifiers, codes and measures) ...
@@ -108,10 +113,42 @@ def _count_dropped(n: int) -> None:
     _dropped_keys += n
 
 
-def is_assess_logger(name: str | None) -> bool:
-    return bool(name) and (
-        name == ASSESS_LOGGER_PREFIX or str(name).startswith(ASSESS_LOGGER_PREFIX + ".")
-    )
+# --- the strict prefixes ----------------------------------------------------------------------
+
+_PREFIX = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)*")
+#: logger-name prefixes held to the allowlist. Registration only adds: a package cannot opt out
+_STRICT_PREFIXES: set[str] = set()
+#: the level ``install_assess_stdlib_handler`` ran with; None until it ran. A prefix registered
+#: later gets its scrub handler at registration, so the order of imports and startup is irrelevant
+_installed_level: int | None = None
+
+
+def register_strict_logger_prefix(prefix: str) -> None:
+    """Hold every logger named ``prefix`` or ``prefix.*`` to the allowlist, on both stacks.
+
+    Idempotent. Call it at import time of the package that owns the loggers, before it logs.
+    """
+    if not isinstance(prefix, str) or not _PREFIX.fullmatch(prefix):
+        raise ValueError(
+            "a strict logger prefix is a dotted lower-case module path, e.g. 'vektra_assess'"
+        )
+    _STRICT_PREFIXES.add(prefix)
+    if _installed_level is not None:
+        _install_scrub_handler(prefix, _installed_level)
+
+
+def strict_logger_prefixes() -> tuple[str, ...]:
+    return tuple(sorted(_STRICT_PREFIXES))
+
+
+def is_strict_logger(name: str | None) -> bool:
+    if not name:
+        return False
+    return any(name == p or name.startswith(p + ".") for p in _STRICT_PREFIXES)
+
+
+#: the name every caller already uses: an "assess" logger is any strict one
+is_assess_logger = is_strict_logger
 
 
 def _safe_value(value: Any) -> Any:
@@ -158,7 +195,7 @@ def scrub_event_dict(event_dict: MutableMapping[str, Any]) -> MutableMapping[str
 def assess_allowlist_processor(
     logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
-    """structlog processor: allowlist for ``vektra_assess.*`` loggers, untouched otherwise."""
+    """structlog processor: allowlist for loggers under a strict prefix, untouched otherwise."""
     # either name makes it an assess event: a caller cannot opt out by passing logger="other"
     names = (getattr(logger, "name", None), event_dict.get("logger"))
     if any(is_assess_logger(n if isinstance(n, str) else None) for n in names):
@@ -258,17 +295,8 @@ class _ScrubHandler(logging.Handler):
         return None
 
 
-def install_assess_stdlib_handler(level: int = logging.INFO) -> logging.Handler:
-    """Scrub every stdlib record of ``vektra_assess.*`` before the root handlers see it.
-
-    A handler on the ``vektra_assess`` logger runs before the root's (the logger hierarchy is
-    walked upwards), and its filter mutates the record. Handlers already attached to
-    ``vektra_assess``, and handlers on a child logger such as ``vektra_assess.worker``, run
-    BEFORE the scrub and see unscrubbed records: do not attach handlers there (none does today).
-    ``propagate`` stays True, so the records keep reaching the root handlers and flushing the
-    root still flushes them. Idempotent.
-    """
-    target = logging.getLogger(ASSESS_LOGGER_PREFIX)
+def _install_scrub_handler(prefix: str, level: int) -> logging.Handler:
+    target = logging.getLogger(prefix)
     for old in [h for h in target.handlers if getattr(h, "_vektra_assess", False)]:
         target.removeHandler(old)
     handler = _ScrubHandler(logging.NOTSET)
@@ -278,6 +306,22 @@ def install_assess_stdlib_handler(level: int = logging.INFO) -> logging.Handler:
     if target.level == logging.NOTSET or target.level > level:
         target.setLevel(level)
     return handler
+
+
+def install_assess_stdlib_handler(level: int = logging.INFO) -> list[logging.Handler]:
+    """Scrub every stdlib record of a strict logger before the root handlers see it.
+
+    One scrub handler per registered prefix, on the prefix's own logger: it runs before the
+    root's (the logger hierarchy is walked upwards), and its filter mutates the record. Handlers
+    already attached to the prefix logger, and handlers on a child logger such as
+    ``vektra_assess.worker``, run BEFORE the scrub and see unscrubbed records: do not attach
+    handlers there (none does today). ``propagate`` stays True, so the records keep reaching the
+    root handlers and flushing the root still flushes them. A prefix registered after this call
+    gets its handler at registration. Idempotent.
+    """
+    global _installed_level
+    _installed_level = level
+    return [_install_scrub_handler(p, level) for p in strict_logger_prefixes()]
 
 
 def structlog_processors(

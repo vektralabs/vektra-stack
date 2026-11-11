@@ -189,3 +189,34 @@ def test_capture_catches_extra_rendered_output(canary_log_capture) -> None:  # t
     canary_log_capture.extra_text.append(f"sidecar stderr: {CANARY}\n")
     with pytest.raises(AssertionError, match="canary hit"):
         canary_log_capture.assert_clean([CANARY])
+
+
+# --- the strict prefix is registered by the package itself (plan 2a-1.4, ADR-0033 D8) --------
+
+
+def _prefixes_after(imports: str) -> str:
+    import subprocess
+    import sys
+
+    code = (
+        f"{imports}; from vektra_shared.log_safety import strict_logger_prefixes; "
+        "print(','.join(strict_logger_prefixes()))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    return out.stdout.strip()
+
+
+def test_log_safety_alone_hard_codes_no_prefix() -> None:
+    """Nothing in vektra_shared names the vertical: the strictness is the package's to claim."""
+    assert _prefixes_after("import vektra_shared.log_safety") == ""
+
+
+def test_importing_vektra_assess_registers_its_prefix() -> None:
+    assert _prefixes_after("import vektra_assess") == "vektra_assess"
+
+
+def test_a_leaf_module_import_registers_it_too() -> None:
+    """Any import of any assess module runs the package ``__init__`` first."""
+    assert _prefixes_after("import vektra_assess.capabilities") == "vektra_assess"

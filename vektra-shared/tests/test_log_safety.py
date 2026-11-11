@@ -1,4 +1,5 @@
-"""Allowlist log safety for vektra_assess.* loggers (plan assess-context A)."""
+"""Allowlist log safety for strict loggers: ``vektra_assess.*`` and every registered prefix
+(plan assess-context A; plan 2a-1.4, ADR-0033 D8)."""
 
 from __future__ import annotations
 
@@ -18,9 +19,17 @@ from vektra_shared.log_safety import (
     configure_assess_worker_logging,
     install_assess_stdlib_handler,
     is_assess_logger,
+    register_strict_logger_prefix,
 )
 
 CANARY = "CNRY-right_answer-multichoice-1a2b3c4d"
+
+
+@pytest.fixture(autouse=True)
+def _assess_prefix_registered() -> None:
+    """What ``import vektra_assess`` does (its ``__init__``): this package's tests do not import
+    the vertical, so they register its prefix themselves. Registration is idempotent."""
+    register_strict_logger_prefix("vektra_assess")
 
 
 def _reset() -> None:
@@ -215,6 +224,77 @@ def test_processor_reads_the_logger_key_too() -> None:
         None, "info", {"event": "e", "logger": "vektra_assess.a", "text": CANARY}
     )
     assert out["text"] == DROPPED
+
+
+#: a provider's logger namespace (plan 2a-1.4): neutral, and not registered by anything else
+PROVIDER_PREFIX = "vektra_lms_example"
+
+
+@pytest.fixture
+def provider_prefix(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Register the provider prefix for one test only, and take its handler off afterwards."""
+    from vektra_shared import log_safety
+
+    monkeypatch.setattr(
+        log_safety, "_STRICT_PREFIXES", set(log_safety._STRICT_PREFIXES)
+    )
+    log_safety.register_strict_logger_prefix(PROVIDER_PREFIX)
+    yield PROVIDER_PREFIX
+    lg = logging.getLogger(PROVIDER_PREFIX)
+    for h in [h for h in lg.handlers if getattr(h, "_vektra_assess", False)]:
+        lg.removeHandler(h)
+    lg.setLevel(logging.NOTSET)
+
+
+def test_a_newly_registered_prefix_gets_the_strict_redaction_on_both_stacks(
+    stream: io.StringIO, provider_prefix: str
+) -> None:
+    """ADR-0033 D8: a provider's loggers leave the ``vektra_assess.*`` namespace. Once they
+    register their prefix they are redacted exactly like the vertical's, at every level."""
+    structlog.get_logger(f"{provider_prefix}.client").debug(
+        "lms_call", status=200, token=CANARY, body=CANARY
+    )
+    logging.getLogger(f"{provider_prefix}.client").warning(
+        "lms_call_failed %s", CANARY, extra={"status": 500, "url": CANARY}
+    )
+    first, second = _lines(stream)
+    assert (first["status"], first["token"], first["body"]) == (200, DROPPED, DROPPED)
+    assert (second["status"], second["url"]) == (500, DROPPED)
+    assert CANARY not in stream.getvalue()
+
+
+def test_a_prefix_registered_after_install_is_scrubbed_before_the_root_handlers(
+    caplog: pytest.LogCaptureFixture, provider_prefix: str
+) -> None:
+    """The API installs the stdlib scrub handler at startup; a provider loaded later still gets
+    its own scrub handler, so caplog/uvicorn on the root see the record already scrubbed."""
+    install_assess_stdlib_handler()
+    try:
+        with caplog.at_level(logging.INFO, logger=f"{provider_prefix}.client"):
+            logging.getLogger(f"{provider_prefix}.client").info(
+                "lms_call", extra={"status": 1, "payload": CANARY}
+            )
+        (rec,) = caplog.records
+        assert rec.payload == DROPPED  # type: ignore[attr-defined]
+    finally:
+        _reset()
+
+
+def test_an_unregistered_prefix_is_not_redacted(stream: io.StringIO) -> None:
+    """The negative control: the strictness comes from the registration, not from the name."""
+    structlog.get_logger("vektra_lms_unregistered.client").info(
+        "lms_call", body="visible"
+    )
+    (line,) = _lines(stream)
+    assert line["body"] == "visible"
+
+
+@pytest.mark.parametrize("bad", ["", "a..b", ".a", "a.", "with space", "Upper-Case"])
+def test_a_malformed_prefix_is_refused(bad: str) -> None:
+    from vektra_shared.log_safety import register_strict_logger_prefix
+
+    with pytest.raises(ValueError):
+        register_strict_logger_prefix(bad)
 
 
 def test_dropped_keys_are_counted_on_both_stacks(stream: io.StringIO) -> None:

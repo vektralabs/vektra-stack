@@ -159,6 +159,22 @@ async def _revision(pg: Pg) -> str:
     return str((await pg.run("super", "SELECT version_num FROM alembic_version"))[0][0])
 
 
+async def _restore_head(pg: Pg) -> None:
+    """Cleanup that works whatever assertion failed: the test-owned row is removed (at 0018 any
+    ``assess-discussion`` row is the test's, the reserved one went with the downgrade) or, if
+    the downgrade never ran, the reserved marker is put back; then the schema returns to head."""
+    if await _revision(pg) == "0018":
+        await pg.run("super", "DELETE FROM namespaces WHERE id = 'assess-discussion'")
+    else:
+        await pg.run(
+            "super",
+            "UPDATE namespaces SET config = '{\"reserved\": true}'::jsonb "
+            "WHERE id = 'assess-discussion'",
+        )
+    res = _alembic(pg.super_url, "upgrade", "head")
+    assert res.returncode == 0, res.stderr
+
+
 async def test_upgrade_refuses_a_pre_existing_namespace_and_leaves_it_untouched(
     pg: Pg,
 ) -> None:
@@ -187,39 +203,38 @@ async def test_upgrade_refuses_a_pre_existing_namespace_and_leaves_it_untouched(
             "WHERE table_name = 'query_traces' AND column_name = 'pipeline'",
         )
         assert cols == [(0,)]
-
-        # the documented way out: once the row is gone, the upgrade seeds the reserved one
-        await pg.run("super", "DELETE FROM namespaces WHERE id = 'assess-discussion'")
     finally:
-        res = _alembic(pg.super_url, "upgrade", "head")
-        assert res.returncode == 0, res.stderr
+        # the documented way out (delete the row, upgrade again), and the cleanup too
+        await _restore_head(pg)
     assert await pg.run("super", _NS_ROW) == [
         ("Assess discussion traces (reserved)", '{"reserved": true}')
     ]
 
 
+@pytest.mark.parametrize(
+    "config", ["{}", '{"reserved": false}'], ids=["no-marker", "marker-false"]
+)
 async def test_downgrade_deletes_only_the_reserved_row_the_upgrade_created(
-    pg: Pg,
+    pg: Pg, config: str
 ) -> None:
-    """The marker is the downgrade's second lock: a row without it is not deleted (and the next
-    upgrade then refuses it, as above)."""
+    """The marker is the downgrade's second lock: a row without it, or with any value but
+    ``true``, is not deleted (and the next upgrade then refuses it, as above)."""
     await pg.run(
         "super",
-        "UPDATE namespaces SET config = '{}'::jsonb WHERE id = 'assess-discussion'",
+        "UPDATE namespaces SET config = CAST(:c AS jsonb) WHERE id = 'assess-discussion'",
+        {"c": config},
     )
     try:
         res = _alembic(pg.super_url, "downgrade", "0018")
         assert res.returncode == 0, res.stderr
         assert await pg.run("super", _NS_ROW) == [
-            ("Assess discussion traces (reserved)", "{}")
+            ("Assess discussion traces (reserved)", config)
         ]
         res = _alembic(pg.super_url, "upgrade", "head")
         assert res.returncode != 0
         assert await _revision(pg) == "0018"
-        await pg.run("super", "DELETE FROM namespaces WHERE id = 'assess-discussion'")
     finally:
-        res = _alembic(pg.super_url, "upgrade", "head")
-        assert res.returncode == 0, res.stderr
+        await _restore_head(pg)
     assert await pg.run("super", _NS_ROW) == [
         ("Assess discussion traces (reserved)", '{"reserved": true}')
     ]

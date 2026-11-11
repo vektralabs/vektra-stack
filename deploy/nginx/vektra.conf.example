@@ -160,8 +160,13 @@ server {
         proxy_read_timeout 300s;
     }
 
-    # the closing-screen transcript download (plan 10)
-    location ^~ /api/v1/assess/transcripts/ {
+    # the closing-screen transcript download (plan 10): GET /transcripts/{tid} only. The
+    # download-token mint and the resend (POST .../download-token, .../resend) are server-side
+    # plugin calls and stay on the API origin.
+    location ~ ^/api/v1/assess/transcripts/[^/]+$ {
+        limit_except GET {
+            deny all;
+        }
         proxy_pass http://vektra_backend;
         proxy_http_version 1.1;
         proxy_set_header X-Request-ID $request_id;

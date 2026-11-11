@@ -10,7 +10,7 @@ contract are in the [API reference](../../reference/api.md#assess-ui-the-discuss
 | Origin | Setting | Serves |
 |---|---|---|
 | API | `VEKTRA_ASSESS_API_PUBLIC_ORIGIN` (e.g. `https://vektra.uni.example`) | the plugin's server-side calls (token mint, teacher, privacy), admin, health, every non-UI route; `X-Frame-Options: DENY` on every response |
-| UI | `VEKTRA_ASSESS_UI_ORIGIN` (e.g. `https://assess.vektra-chat.example`) | `GET /api/v1/assess/ui`, its assets, and only the student routes the page calls on its own origin (CSP `connect-src 'self'`): `GET /state`, `/sessions...`, `/transcripts/...`; no `X-Frame-Options` |
+| UI | `VEKTRA_ASSESS_UI_ORIGIN` (e.g. `https://assess.vektra-chat.example`) | `GET /api/v1/assess/ui`, its assets, and only the student routes the page calls on its own origin (CSP `connect-src 'self'`): `GET /state`, `/sessions...`, `GET /transcripts/{tid}`; no `X-Frame-Options` |
 | LMS | each site's `moodle_origin` (e.g. `https://moodle.uni.example`) | the page that frames the UI; the only origin allowed in the UI's CSP `frame-ancestors` and the only peer of its postMessage |
 
 One backend serves both Vektra origins; the reverse proxy decides which routes each one exposes.
@@ -60,8 +60,9 @@ check reads it at start. A disabled or unknown site gets `404` with `frame-ances
 - the UI server (`YOUR_UI_DOMAIN`) adds no `X-Frame-Options` at all, at no level (nginx drops
   every inherited `add_header` as soon as a location declares one, so no location in it declares
   any), proxies `/api/v1/assess/ui`, `= /api/v1/assess/state`, `/api/v1/assess/sessions` (with
-  `proxy_buffering off` for the event stream) and `/api/v1/assess/transcripts/`, and answers
-  `404` for everything else.
+  `proxy_buffering off` for the event stream) and `GET /api/v1/assess/transcripts/{tid}` only
+  (a regex location with `limit_except GET`: the `download-token` and `resend` POSTs are plugin
+  calls and stay on the API origin), and answers `404` for everything else.
 
 Two details the page depends on:
 

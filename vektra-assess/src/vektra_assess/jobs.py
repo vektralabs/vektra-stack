@@ -55,7 +55,7 @@ class JobKind(enum.StrEnum):
     TRANSCRIPT_DELIVER = "transcript_deliver"
     ENROLMENT_RECHECK = "enrolment_recheck"
     PURGE = "purge"
-    ROTATE_KEYS = "rotate_keys"
+    # ``rotate_keys`` was dropped in 0044: key rotation is the operator CLI ``keys rewrap``
     ERASURE = "erasure"
     PREFLIGHT = "preflight"  # plan assess-session-lifecycle (revision 0022)
     RECONCILE_REPLY = "reconcile_reply"  # plan assess-session-lifecycle (revision 0024)

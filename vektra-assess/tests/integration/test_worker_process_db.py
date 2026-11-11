@@ -102,10 +102,10 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
 
         await pg.run(
             "super",
-            # a slot still unbound in production (plan 13's key rotation; the purge is bound
-            # since plan 12)
+            # a slot this worker leaves unbound: no relay is configured, so delivery is not
+            # bound (a production worker binds every slot since 0044 dropped rotate_keys)
             "INSERT INTO assess_jobs (kind, args, max_attempts) "
-            "VALUES ('rotate_keys', '{}'::jsonb, 1)",
+            "VALUES ('transcript_deliver', '{}'::jsonb, 1)",
         )
         await pg.run("super", "SELECT pg_notify('assess_jobs', '')")
 
@@ -133,7 +133,7 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
             "assess_job_dead",
             "handler_not_bound",
             "worker",
-            "rotate_keys",
+            "transcript_deliver",
         )
         assert (await pg.run("super", "SELECT count(*) FROM assess_audit_events"))[0][
             0

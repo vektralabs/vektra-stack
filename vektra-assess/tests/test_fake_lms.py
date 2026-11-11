@@ -14,6 +14,7 @@ from support.fake_lms import (
     ASSIGN_ACTIVITY,
     ASSIGNMENT,
     ATTEMPT,
+    CANARIES,
     COURSE,
     DEFINITION,
     FOREIGN_ACTIVITY,
@@ -25,7 +26,6 @@ from support.fake_lms import (
     SUBMISSION,
     USER,
     FakeLmsProvider,
-    default_world,
 )
 
 from vektra_assess.capabilities import FLAGS
@@ -70,18 +70,16 @@ def _fake_for(
     return fake
 
 
+def _witness(provider: LmsProvider) -> str:
+    """What this fake's read paths consumed in the run: its wire documents, never the list of
+    canaries (review of #203: a witness made of the canaries passes by construction)."""
+    assert isinstance(provider, FakeLmsProvider)
+    return provider.consumed_text()
+
+
 def _target(
     cls: type[FakeLmsProvider] = FakeLmsProvider, name: str = "fake"
 ) -> kit.ConformanceTarget:
-    world = default_world()
-    canaries = tuple(world.hidden.values())
-
-    def witness() -> str:
-        review = world.reviews[ATTEMPT]
-        return repr(world.hidden) + "".join(
-            i.html.html for i in review.items if i.html is not None
-        )
-
     return kit.ConformanceTarget(
         name=name,
         factory=lambda mode: _fake_for(mode, cls),
@@ -100,8 +98,8 @@ def _target(
             foreign_activity_id=FOREIGN_ACTIVITY,
             foreign_course_id=OTHER_COURSE,
         ),
-        canaries=canaries,
-        canary_witness=witness,
+        canaries=CANARIES,
+        canary_witness=_witness,
         secrets=(SECRET,),
         flags=FLAGS,
     )
@@ -136,10 +134,52 @@ class _LeaksHiddenFeedback(FakeLmsProvider):
     async def submission(self, site, assignment_id, user_id):  # type: ignore[no-untyped-def,override]
         res = await super().submission(site, assignment_id, user_id)
         assert isinstance(res, Readable) and res.value.feedback is not None
-        fb = dataclasses.replace(
-            res.value.feedback, comments=(self.world.hidden["hidden_feedback"],)
-        )
+        wire = self.world.wire["submission"]["feedback_hidden_from_student"]
+        fb = dataclasses.replace(res.value.feedback, comments=(wire,))
         return Readable(dataclasses.replace(res.value, feedback=fb))
+
+
+class _LeaksTheUnreleasedGrade(FakeLmsProvider):
+    """Copies the wire answer's grade-before-release into the neutral value: a number."""
+
+    async def grade_item(self, site, course_id, user_id, activity_id):  # type: ignore[no-untyped-def,override]
+        res = await super().grade_item(site, course_id, user_id, activity_id)
+        assert isinstance(res, Readable)
+        grade = self.world.wire["grade_item"]["grade_before_release"]
+        return Readable(dataclasses.replace(res.value, grade=grade))
+
+
+class _ProfileKeepsTheAnswer(FakeLmsProvider):
+    """Ships a profile that forgets to drop the right-answer class."""
+
+    async def attempt_review(self, site, attempt_id):  # type: ignore[no-untyped-def,override]
+        res = await super().attempt_review(site, attempt_id)
+        assert isinstance(res, Readable)
+        items = tuple(
+            dataclasses.replace(
+                i,
+                html=dataclasses.replace(
+                    i.html,
+                    profile=dataclasses.replace(
+                        i.html.profile, drop_classes=frozenset()
+                    ),
+                ),
+            )
+            if i.html is not None
+            else i
+            for i in res.value.items
+        )
+        return Readable(dataclasses.replace(res.value, items=items))
+
+
+class _ReadsNothingWithCanaries(FakeLmsProvider):
+    """Its wire answers hold no canary: a green canary check on it would be vacuous."""
+
+    def __init__(self, *a, **kw) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(*a, **kw)
+        self.world.wire.clear()
+        for r in self.world.reviews.values():
+            self.world.reviews[r.attempt_id] = r.without_html()
 
 
 class _LogsItsCredential(FakeLmsProvider):
@@ -175,6 +215,26 @@ async def test_a_provider_that_returns_the_hinted_course_is_red() -> None:
 async def test_a_provider_that_leaks_a_canary_is_red() -> None:
     with pytest.raises(AssertionError, match="submission returned forbidden content"):
         await kit.check_no_canary(_target(_LeaksHiddenFeedback))
+
+
+async def test_a_provider_that_leaks_an_unreleased_grade_is_red() -> None:
+    """Review of #203: the canary is a number, and the walk now sees numbers."""
+    with pytest.raises(AssertionError, match="grade_item returned forbidden content"):
+        await kit.check_no_canary(_target(_LeaksTheUnreleasedGrade))
+
+
+async def test_a_profile_that_keeps_the_right_answer_is_red() -> None:
+    """Review of #203: the review HTML is walked, as its own profile leaves it."""
+    with pytest.raises(
+        AssertionError, match="attempt_review returned forbidden content"
+    ):
+        await kit.check_no_canary(_target(_ProfileKeepsTheAnswer))
+
+
+async def test_canaries_no_read_path_consumed_make_the_check_red() -> None:
+    """Review of #203: the anti-vacuous guard holds against what was really read."""
+    with pytest.raises(AssertionError, match="vacuous"):
+        await kit.check_no_canary(_target(_ReadsNothingWithCanaries))
 
 
 async def test_a_provider_that_logs_its_credential_is_red() -> None:

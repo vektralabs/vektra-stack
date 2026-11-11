@@ -107,7 +107,11 @@ class LmsProvider(Protocol):
 
     # --- lifecycle --------------------------------------------------------------------------
 
-    def startup_problems(self, env: str) -> tuple[StartupProblem, ...]: ...
+    def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
+        """What must stop the process. ``development`` is the composition root's resolved flag
+        (an explicit ``VEKTRA_ENV=development``), never the raw variable: a provider must not
+        count the platform default as development."""
+        ...
 
     async def aclose(self) -> None: ...
 

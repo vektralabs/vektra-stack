@@ -66,6 +66,16 @@ def test_the_protocol_is_re_exported_as_the_11th() -> None:
     assert "11 Protocol interfaces" in (protocols.__doc__ or "")
 
 
+def test_startup_problems_takes_the_resolved_development_flag_not_the_raw_env() -> None:
+    """A raw ``VEKTRA_ENV`` string would let a provider count the platform default
+    ``development`` as development: the composition root passes the resolved flag."""
+    import inspect
+
+    params = inspect.signature(LmsProvider.startup_problems).parameters
+    assert list(params) == ["self", "development"]
+    assert params["development"].annotation in (bool, "bool")
+
+
 def test_the_protocol_is_runtime_checkable() -> None:
     class Incomplete:
         name = "x"

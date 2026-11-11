@@ -35,12 +35,6 @@ since = "2026-11-08"
 reason = "Composition of the assessment vertical in the app (assessment work)."
 
 [[entry]]
-file = "vektra-app/src/vektra_app/assess_worker.py"
-mentions = 12
-since = "2026-11-08"
-reason = "Entry point of the assessment worker (assessment work)."
-
-[[entry]]
 file = "vektra-app/src/vektra_app/main.py"
 mentions = 1
 since = "2026-11-08"

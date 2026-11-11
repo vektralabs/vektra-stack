@@ -37,6 +37,7 @@ from vektra_assess.parser_protocol import (
     Extracted,
     FileStatus,
     FrameError,
+    ReviewProfile,
     encode_frame,
     parse_header,
     parse_header_length,
@@ -290,6 +291,22 @@ class ParserServer:
                 / 1000
             )
             ext = _ext(header.get("ext_hint"))
+            profile = None
+            if op == "review_item":
+                # the provider's extraction profile (ADR-0033 D4): without a valid one the item
+                # is refused here, before a child is spawned; there is no built-in default
+                parsed = ReviewProfile.from_wire(header.get("profile"))
+                if parsed is None:
+                    status = "NO_PROFILE"
+                    await self._reply(
+                        writer,
+                        {
+                            "req_id": req_id,
+                            **_wire(Extracted(FileStatus.CORRUPT, code="no_profile")),
+                        },
+                    )
+                    return
+                profile = parsed.to_wire()
             async with self._sem:
                 out = await asyncio.get_running_loop().run_in_executor(
                     self._executor,
@@ -300,6 +317,7 @@ class ParserServer:
                     max_pages,
                     max_chars,
                     timeout_s,
+                    profile,
                 )
             status = out.result.status.value
             _event(
@@ -336,7 +354,14 @@ class ParserServer:
                 self._admitted -= 1
             if counted:
                 self._open -= 1
-            if status in (TRANSPORT_BUSY, "BAD_REQUEST", "-", "TOO_LARGE", "pong"):
+            if status in (
+                TRANSPORT_BUSY,
+                "BAD_REQUEST",
+                "-",
+                "TOO_LARGE",
+                "NO_PROFILE",
+                "pong",
+            ):
                 _event(
                     "request",
                     req_id=req_id if isinstance(req_id, str) else None,
@@ -399,10 +424,12 @@ class ParserServer:
         max_pages: int,
         max_chars: int,
         timeout_s: float,
+        profile: dict[str, Any] | None = None,
     ) -> ChildOutcome:
         """Runs in a worker thread: spawn one child, feed it, kill it at the deadline."""
         spec = {
             "op": op,
+            "profile": profile,
             "ext_hint": ext,
             "max_pages": max_pages,
             "max_chars": max_chars,

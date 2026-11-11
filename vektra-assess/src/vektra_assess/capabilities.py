@@ -1,12 +1,12 @@
-"""Capability matrix reads: what a site's Moodle can be read for (ARCH-070). DB only.
+"""Capability matrix reads: what a site's LMS can be read for (ARCH-070). DB only.
 
-No ``httpx`` and no ``vektra_assess.moodle`` import here (contract (c), and an
-external-package contract): both the API and the worker may import this module, and only the
-worker talks to Moodle. The matrix is written by the worker's probes
-(``vektra_assess.moodle.probes``); this module only *reads* it and applies the fail-closed rules:
+No ``httpx`` and no LMS provider here (contract (c), and an external-package contract): both
+the API and the worker may import this module, and only the worker talks to the LMS. The matrix
+is written by the worker's setup check, from the provider's ``probe_capabilities``
+(``vektra_assess.setup``); this module only *reads* it and applies the fail-closed rules:
 
 - a missing row, or a row older than 26 h, is ``Unreadable(not_probed)``;
-- a row probed on another Moodle release than the site's current one is
+- a row probed on another LMS release than the site's current one is
   ``Unreadable(release_changed)``;
 - ``partial`` counts as unreadable for every gate (REQ-091): ``Unreadable(partial)``;
 - only a fresh ``readable`` row on the current release is ``Readable``.
@@ -26,11 +26,14 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from vektra_assess.readable import Readable, Reading, Unreadable, UnreadableReason
+from vektra_shared.lms import Readable, Reading, Unreadable, UnreadableReason
 
 STALE_AFTER = timedelta(hours=26)
 
-#: the closed list of capability flags (matches the CHECK of revision 0016).
+#: the closed list of capability flags (matches the CHECK of revision 0016). This is Vektra's
+#: contract with every LMS provider (ADR-0033 D3): the disclosure policy and the gates consume
+#: these flags, so their names and meaning are Vektra's; a provider only probes them
+#: (``LmsProvider.probe_capabilities``), and a flag it does not return is ``not_probed``.
 FLAGS: tuple[str, ...] = (
     "quiz_overrides", "assign_extensions", "assign_cutoff", "quiz_grace", "attempt_state",
     "per_student_timelimit", "review_html_filterable", "rubric_display_settings",
@@ -100,7 +103,7 @@ type Readiness = Ready | NotReady
 
 
 #: an unreadable row is a legitimate probed answer only for these reasons: the function does
-#: not exist on that Moodle version (the normal case of quiz overrides on 4.3). Anything else
+#: not exist on that LMS version (quiz overrides on an older release). Anything else
 #: (a probe that mismatched, an access error, a timeout...) means the probe could not do its
 #: job, and the site is not ready. ``partial`` (the quiz grace period of a closed quiz) is an
 #: expected, documented answer and is handled per gate by REQ-091.

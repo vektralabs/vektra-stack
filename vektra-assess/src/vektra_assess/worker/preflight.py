@@ -125,8 +125,9 @@ class DbGateFacts:
 
 
 @dataclass(frozen=True)
-class MoodleGateFacts:
-    """The START-gate inputs that come from Moodle, read fresh at pre-flight (plan-4 readers).
+class LmsGateFacts:
+    """The START-gate inputs that come from the LMS, read fresh at pre-flight through the
+    ``LmsProvider`` and derived by ``LmsStartSource``.
 
     ``None`` = unreadable (fails closed). The database-side inputs (enabled, sessions, resets,
     teacher date, end date, privacy) are added by the pre-flight itself.
@@ -148,15 +149,15 @@ class MoodleGateFacts:
 
 
 class StartSource(Protocol):
-    """Where a pre-flight gets its gate inputs and its snapshot: the Moodle readers in production,
-    fakes in tests.
+    """Where a pre-flight gets its gate inputs and its snapshot: ``LmsStartSource`` over the
+    configured LMS provider in production, fakes in tests.
 
-    ``gate_facts`` reads the Moodle half of the START gates; ``capture`` returns ``Built`` (with
+    ``gate_facts`` reads the LMS half of the START gates; ``capture`` returns ``Built`` (with
     the frozen policy), ``CaptureNotEligible`` or ``Failed``. An exception from either is an
     internal error and rolls the Start back as well.
     """
 
-    async def gate_facts(self, target: StartTarget) -> MoodleGateFacts: ...
+    async def gate_facts(self, target: StartTarget) -> LmsGateFacts: ...
 
     async def capture(self, target: StartTarget) -> CaptureResult: ...
 
@@ -392,7 +393,7 @@ NOT_ELIGIBLE_CODE: dict[NotEligibleReason, Code] = {
 }
 
 
-def gate_inputs(target: StartTarget, db: DbGateFacts, m: MoodleGateFacts) -> GateInputs:
+def gate_inputs(target: StartTarget, db: DbGateFacts, m: LmsGateFacts) -> GateInputs:
     return GateInputs(
         now=db.now,
         activity_kind="quiz" if target.activity_type == "quiz" else "assign",
@@ -694,7 +695,7 @@ async def _run(deps: PreflightDeps, acquire: AcquireDb, sid: UUID) -> None:
     # newer than a re-check written right after the commit
     observed_at = db.now - 1
     try:
-        facts: MoodleGateFacts = await _within(
+        facts: LmsGateFacts = await _within(
             deps.source.gate_facts(target), _remaining(deps, elapsed, t_load)
         )
         # the gate's "now" is the database's, read at admission, plus the time spent since (the

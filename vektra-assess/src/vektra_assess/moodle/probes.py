@@ -31,21 +31,19 @@ A flag's state is ``unreadable`` if any check is, else ``partial`` if any check 
 ``evidence_hash`` = sha256 over the canonical SHAPE signature (keys, types, list counts) of what
 the probe saw, plus the release (``moodle/shape.py``): content-free, no value, no id.
 
-The matrix rows of one check run are written by ``persist_matrix`` inside the caller's single
-transaction (after ``capabilities.observe_release``): a crash leaves all of it or none of it.
+The matrix rows of one check run are written by the generic runner
+(``vektra_assess.setup.persist_matrix``) inside its single transaction (after ``capabilities.observe_release``): a crash leaves all of it or none of it.
 """
 
 from __future__ import annotations
 
 import json
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import structlog
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection
 
 from vektra_assess.capabilities import FLAGS
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
@@ -67,6 +65,7 @@ from vektra_assess.moodle.readers import (
 )
 from vektra_assess.moodle.result import Readable, Reading, Unreadable, UnreadableReason
 from vektra_assess.moodle.shape import evidence_for
+from vektra_shared.lms import CapabilityResult
 
 log = structlog.get_logger(__name__)
 
@@ -669,12 +668,8 @@ PROBES: dict[str, Probe] = {
 # --- running -------------------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class FlagResult:
-    flag: str
-    state: str  # readable | partial | unreadable
-    reason_code: str | None  # an UnreadableReason value; None when readable
-    evidence_hash: str
+#: one probed flag: the Protocol's neutral result (ADR-0033 D2)
+FlagResult = CapabilityResult
 
 
 @dataclass(frozen=True)
@@ -718,20 +713,22 @@ async def run_probes(
     manifest: Mapping[str, Any] | None,
     *,
     now: int | None = None,
+    flags: Sequence[str] = FLAGS,
 ) -> tuple[FlagResult, ...]:
-    """Probe every flag; the result always has one entry per flag, in ``FLAGS`` order.
+    """Probe every flag of ``flags``; the result has one entry per flag, in that order. A flag
+    this provider has no probe for is ``unreadable/not_probed``.
 
     ``site.release`` must be the release ``site_info`` reported (``with_release``). A probe
     that raises is ``unreadable/unknown_shape`` (nothing is logged but the class name).
     """
     clock = int(time.time()) if now is None else now
     release = site.release or ""
-    flags: Mapping[str, Any] = (manifest or {}).get("flags", {}) if manifest else {}
+    seeded: Mapping[str, Any] = (manifest or {}).get("flags", {}) if manifest else {}
     ctx = ProbeContext(client, site, int((manifest or {}).get("courseid", 0)))
     out: list[FlagResult] = []
-    for flag in FLAGS:
-        checks = list((flags.get(flag) or {}).get("checks") or [])
-        if not checks:
+    for flag in flags:
+        checks = list((seeded.get(flag) or {}).get("checks") or [])
+        if not checks or flag not in PROBES:
             out.append(
                 FlagResult(
                     flag,
@@ -760,41 +757,3 @@ async def run_probes(
         },
     )
     return tuple(out)
-
-
-async def persist_matrix(
-    conn: AsyncConnection, site_id: Any, release: str, results: tuple[FlagResult, ...]
-) -> None:
-    """Write every flag row. The CALLER owns the transaction (the whole check run is one):
-    all rows or none. ``release`` is the one ``observe_release`` recorded.
-
-    ``assess_sites.release`` is "the release whose capability matrix is valid" (coordinator
-    decision 2026-11-08): the render check and the pre-flight pick their reader model set from
-    it. It moves to ``release`` here, in the same transaction, only when at least one flag was
-    actually probed: a matrix of ``not_probed`` rows (no probe manifest) vouches for nothing.
-    """
-    probed = any(r.reason_code != UnreadableReason.NOT_PROBED.value for r in results)
-    if probed:
-        await conn.execute(
-            text("UPDATE assess_sites SET release = :r WHERE id = :s"),
-            {"r": release, "s": site_id},
-        )
-    for r in results:
-        await conn.execute(
-            text(
-                "INSERT INTO assess_site_capabilities "
-                "(site_id, flag, state, release, reason_code, evidence_hash, checked_at) "
-                "VALUES (:s, :f, :st, :rel, :rc, :eh, now()) "
-                "ON CONFLICT (site_id, flag) DO UPDATE SET state = EXCLUDED.state, "
-                "release = EXCLUDED.release, reason_code = EXCLUDED.reason_code, "
-                "evidence_hash = EXCLUDED.evidence_hash, checked_at = now()"
-            ),
-            {
-                "s": site_id,
-                "f": r.flag,
-                "st": r.state,
-                "rel": release,
-                "rc": r.reason_code,
-                "eh": r.evidence_hash,
-            },
-        )

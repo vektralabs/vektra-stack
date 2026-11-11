@@ -6,8 +6,8 @@ uses with ``VEKTRA_ASSESS_LMS_PROVIDER``. ``load_lms_provider`` resolves that na
 factory with no argument (a provider reads its own settings) and checks what came back.
 
 Every failure is a ``StartupValidationError`` that names the setting and lists the names that
-are installed, so the operator sees what to set instead. Not wired yet: the worker composes its
-LMS client directly until plan task 2a-4b.5.
+are installed, so the operator sees what to set instead. The assess worker loads its one
+provider through here at startup (``assess_worker._load_lms``).
 """
 
 from __future__ import annotations

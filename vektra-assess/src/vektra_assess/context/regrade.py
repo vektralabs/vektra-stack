@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from vektra_assess.context.snapshot import GradeKind, Snapshot
-from vektra_assess.readable import Readable, Unreadable
+from vektra_shared.lms import Readable, Unreadable
 
 
 @dataclass(frozen=True)

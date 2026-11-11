@@ -190,6 +190,10 @@ class Checked:
     #: the heartbeat's and the reapers' own engine; None (tests composing without it) means
     #: they share the job engine
     liveness: Any = None
+    #: the ONE LMS provider of this worker (ADR-0033 D2), loaded by entry point from
+    #: ``VEKTRA_ASSESS_LMS_PROVIDER``: one rate cap, one breaker registry and one connection
+    #: pool serve every caller. None only in a composition test that loads none.
+    lms: Any = None
 
     @property
     def liveness_engine(self) -> Any:
@@ -201,7 +205,35 @@ async def run_checks() -> object:
     return (await _checks()).engine
 
 
-async def _checks() -> Checked:
+def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
+    """The configured LMS provider (ADR-0033 D2), or a refusal naming the setting.
+
+    Unset, unknown or broken is a ``StartupValidationError``: with assess enabled and no
+    provider the vertical is unavailable, and the worker does not start (ADR-0033 D1). A test
+    double loads only with ``VEKTRA_ENV=development`` set explicitly. The provider's own
+    startup problems (a development-only switch outside development...) refuse here too."""
+    from vektra_app.lms_providers import load_lms_provider
+
+    kwargs: dict[str, Any] = {"allow_test_doubles": settings.is_development}
+    if entry_points is not None:
+        kwargs["entry_points"] = entry_points
+    provider = load_lms_provider(settings.lms_provider, **kwargs)
+    # development only when set explicitly (2a-1.11): the field's default is "development",
+    # so an unset VEKTRA_ENV must not reach the provider as "development"
+    if settings.is_development:
+        env = "development"
+    elif settings.env == "development":
+        env = "unset"
+    else:
+        env = str(settings.env)
+    for problem in provider.startup_problems(env):
+        raise StartupValidationError(
+            step=STEP, detail=problem.detail, remediation=problem.remediation
+        )
+    return provider
+
+
+async def _checks(lms_entry_points: Any | None = None) -> Checked:
     from pydantic import ValidationError
 
     from vektra_assess.config import VektraAssessSettings, explain_settings_error
@@ -226,15 +258,7 @@ async def _checks() -> Checked:
             "deployment where assess is disabled."
         )
     loaded = enforce_key_matrix("worker", secrets_dir=settings.secrets_dir, step=STEP)
-    if settings.moodle_allow_http and not settings.is_development:
-        raise StartupValidationError(
-            step=STEP,
-            detail=(
-                "VEKTRA_ASSESS_MOODLE_ALLOW_HTTP=true is only honoured with "
-                f"VEKTRA_ENV=development (this process runs with {settings.env_described})"
-            ),
-            remediation="Unset VEKTRA_ASSESS_MOODLE_ALLOW_HTTP; use https to Moodle.",
-        )
+    lms = _load_lms(settings, lms_entry_points)
     if settings.worker_allow_unbound and not settings.is_development:
         raise StartupValidationError(
             step=STEP,
@@ -292,7 +316,7 @@ async def _checks() -> Checked:
         await engine.dispose()
         await liveness.dispose()
         raise
-    return Checked(engine, settings, worker_url, loaded, liveness=liveness)
+    return Checked(engine, settings, worker_url, loaded, liveness=liveness, lms=lms)
 
 
 def _asyncpg_dsn(sqlalchemy_url: str) -> str:
@@ -316,30 +340,16 @@ SESSION_KEYS = (
 )
 
 
-def _ws_client(checked: Checked) -> Any:
-    """The worker's ONE WS client (review finding 3): ``VEKTRA_ASSESS_WS_RPS`` is a per-worker
-    cap only if one token bucket serves every WS caller, a site's breaker only protects it if
-    every caller sees it, and each client opens its own connection pool. Nothing connects here."""
-    from vektra_assess.moodle.client import MoodleWsClient
-    from vektra_assess.moodle.tokens import secret_token_provider
-
-    settings = checked.settings
-    return MoodleWsClient(
-        settings, token_provider=secret_token_provider(settings.secrets_dir)
-    )
-
-
-def _session_handlers(
-    checked: Checked, audit: Any, ws: Any | None = None
-) -> dict[Any, Any]:
+def _session_handlers(checked: Checked, audit: Any) -> dict[Any, Any]:
     """The plan assess-session-lifecycle bodies: the ``preflight`` handler.
 
-    Built only from a key set that passed the key matrix (``_checks``): without it (a composition
-    test with a lazy engine and no secrets) nothing is bound, and ``assert_all_bound`` refuses to
-    start unless the development override is set. Nothing connects here: the Moodle client, the
-    parser client and the LLM provider open their connections on first use.
+    Built only from a key set that passed the key matrix (``_checks``) and with the worker's
+    LMS provider: without them (a composition test with a lazy engine and no secrets) nothing
+    is bound, and ``assert_all_bound`` refuses to start unless the development override is set.
+    Nothing connects here: the LMS provider, the parser client and the LLM provider open their
+    connections on first use.
     """
-    if not all(k in checked.keys for k in SESSION_KEYS):
+    if checked.lms is None or not all(k in checked.keys for k in SESSION_KEYS):
         return {}
     from vektra_app.assess_llm import build_assess_llm, build_worker_part_b_runner
     from vektra_assess.delivery.recipients import ConfigRecipients
@@ -349,7 +359,7 @@ def _session_handlers(
     from vektra_assess.worker.preflight import PreflightDeps, make_preflight_handler
     from vektra_assess.worker.render import RenderDeps, make_render_handler
     from vektra_assess.worker.reply_reconcile import make_reconcile_handler
-    from vektra_assess.worker.start_source import MoodleStartSource
+    from vektra_assess.worker.start_source import LmsStartSource
     from vektra_assess.worker.teacher_gate import make_teacher_gate_handler
     from vektra_assess.worker.transcript_gen import (
         GenerationDeps,
@@ -363,8 +373,8 @@ def _session_handlers(
         audit=audit,
         llm=build_assess_llm(settings),
     )
-    source = MoodleStartSource(
-        ws if ws is not None else _ws_client(checked),
+    source = LmsStartSource(
+        checked.lms,
         ParserClient.from_settings(settings),
         engine.connect,
         teacher_private=checked.keys["assess_teacher_config_private"],
@@ -649,11 +659,12 @@ class SetupCheckParts:
 
 
 def _setup_check_parts(
-    checked: Checked, ws: Any | None = None, smtp_probe: Any | None = None
+    checked: Checked, smtp_probe: Any | None = None
 ) -> SetupCheckParts:
     """The REQ-079 ``setup_check`` handler and its daily tick (the web-service plan, task F4, carried
-    over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the WS
-    token keyring); otherwise both stay unbound and ``assert_all_bound`` refuses to start.
+    over to plan assess-job-loop). Bound only from a key set that passed the key matrix (the
+    provider's token keyring) and with the worker's LMS provider; otherwise both stay unbound
+    and ``assert_all_bound`` refuses to start.
 
     The item registry is built per composition (never the module-level default, which a second
     composition would register into twice): the built-ins plus the parser's
@@ -661,7 +672,7 @@ def _setup_check_parts(
     setup-check slot"), and the worker's own ``smtp_probe`` and ``db_log_statement_none`` items
     (``worker/setup_items.py``, coordinator decisions 2026-11-08).
     """
-    if "assess_ws_tokens" not in checked.keys:
+    if checked.lms is None or "assess_ws_tokens" not in checked.keys:
         return SetupCheckParts({}, {})
     from vektra_assess.jobs import JobKind
     from vektra_assess.worker.parser_client import ParserClient, register_parser_check
@@ -682,7 +693,6 @@ def _setup_check_parts(
         # the item probes itself when the tick's row is missing or stale (finding 1)
         smtp_probe=smtp_probe,
     )
-    client = ws if ws is not None else _ws_client(checked)
 
     async def setup_check() -> None:
         """The daily tick body: queue one setup check per enabled site."""
@@ -692,7 +702,7 @@ def _setup_check_parts(
         {
             JobKind.SETUP_CHECK: make_setup_check_handler(
                 engine,
-                client,
+                checked.lms,
                 settings,
                 registry=registry,
                 # a running report older than the job's lease is a dead run's (finding 6)
@@ -867,9 +877,9 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
     # ``bindings`` is the test seam (chaos harness): it replaces the production bodies entirely
     delivery = _delivery_parts(checked)
-    # one WS client for every WS caller: one rate cap, one breaker registry, one pool
-    ws = _ws_client(checked) if bindings is None else None
-    setup = _setup_check_parts(checked, ws, delivery.ticks.get("smtp_probe"))
+    # one LMS provider for every caller (``checked.lms``): one rate cap, one breaker registry,
+    # one pool
+    setup = _setup_check_parts(checked, delivery.ticks.get("smtp_probe"))
     privacy_handlers, privacy_ticks = _privacy_parts(checked)
     from vektra_assess.worker.parser_client import ParserClient
 
@@ -881,7 +891,7 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
     privacy_ticks = {**privacy_ticks, "parser_ping": parser_ping}
     extra = bindings or Bindings(
         handlers={
-            **_session_handlers(checked, audit, ws),
+            **_session_handlers(checked, audit),
             **delivery.handlers,
             **setup.handlers,
             **privacy_handlers,
@@ -959,7 +969,7 @@ async def _serve(
                 supervisor = asyncio.create_task(control.supervise())
                 try:
                     # Startup ticks are NOT run inside the reconcile lock: a slow one (the setup
-                    # check makes about twenty live Moodle calls) would hold the lock, delay the
+                    # check makes about twenty live LMS calls) would hold the lock, delay the
                     # first heartbeat and the claim loop, trip the container healthcheck and
                     # ignore SIGTERM.
                     await reconcile(control, acquire_raw, audit)
@@ -1033,7 +1043,9 @@ def check_imports() -> None:
     print("ceiling ok")
 
 
-async def _amain(bindings: Any | None = None) -> int:
+async def _amain(
+    bindings: Any | None = None, lms_entry_points: Any | None = None
+) -> int:
     # A heartbeat left by a previous run must not vouch for this one. The settings may be
     # invalid here: then the path comes from the variable or the default, and the guarded
     # ``_checks`` below reports the error by name, never with the rejected value
@@ -1052,7 +1064,7 @@ async def _amain(bindings: Any | None = None) -> int:
     with contextlib.suppress(FileNotFoundError):
         heartbeat_file.unlink()
     try:
-        checked = await _checks()
+        checked = await _checks(lms_entry_points)
     except DisabledError as exc:
         print(f"[ASSESS WORKER] {exc}", file=sys.stderr)
         return 2
@@ -1076,12 +1088,18 @@ async def _amain(bindings: Any | None = None) -> int:
                 await checked.engine.dispose()
                 if checked.liveness is not None:
                     await checked.liveness.dispose()
+        if checked.lms is not None:
+            with contextlib.suppress(Exception):
+                async with asyncio.timeout(5):
+                    await checked.lms.aclose()
     return 0
 
 
-def main(bindings: Any | None = None) -> None:
-    """Entry point. ``bindings`` is a test seam: the chaos harness binds its own bodies to
-    production slots; ``python -m vektra_app.assess_worker`` always runs with ``None``."""
+def main(bindings: Any | None = None, lms_entry_points: Any | None = None) -> None:
+    """Entry point. ``bindings`` and ``lms_entry_points`` are test seams: the chaos harness
+    binds its own bodies to production slots and offers its development-only provider
+    (a test double, loaded only with ``VEKTRA_ENV=development``);
+    ``python -m vektra_app.assess_worker`` always runs with ``None``."""
     if "--check-imports" in sys.argv[1:]:
         check_imports()
         raise SystemExit(0)
@@ -1090,7 +1108,7 @@ def main(bindings: Any | None = None) -> None:
     from vektra_shared.log_safety import configure_assess_worker_logging
 
     configure_assess_worker_logging()
-    raise SystemExit(asyncio.run(_amain(bindings)))
+    raise SystemExit(asyncio.run(_amain(bindings, lms_entry_points)))
 
 
 if __name__ == "__main__":

@@ -45,8 +45,8 @@ from vektra_assess.context.policy import (
     freeze,
 )
 from vektra_assess.context.qtypes import (
-    EXTRACTION_QTYPES,
-    INFORMATION_QTYPES,
+    EXTRACTION_KINDS,
+    INFORMATION_KINDS,
     is_discussable,
 )
 from vektra_assess.context.snapshot import (
@@ -65,22 +65,26 @@ from vektra_assess.context.snapshot import (
     SubmissionItem,
     mark_str,
 )
-from vektra_assess.moodle.domain import (
-    AssignReleaseState,
-    AssignSettings,
+from vektra_assess.parser_protocol import FileStatus
+from vektra_shared.lms import (
+    AssignmentRelease,
+    AssignmentSettings,
     AttemptReview,
     AttemptState,
     AttemptSummary,
-    GradeReleaseState,
-    GradingView,
-    QuizCloseInputs,
+    GradeItem,
+    GradingDefinition,
+    HtmlExtractionProfile,
+    QuizSettings,
+    Readable,
+    Reading,
+    ReviewHtml,
     RubricFilling,
+    Submission,
     SubmissionFileRef,
-    SubmissionStatus,
-    UserReviewOptions,
+    Unreadable,
 )
-from vektra_assess.moodle.result import Readable, Reading, Unreadable
-from vektra_assess.parser_protocol import FileStatus
+from vektra_shared.lms import ReviewOptions as LmsReviewOptions
 
 log = structlog.get_logger(__name__)
 
@@ -88,39 +92,42 @@ log = structlog.get_logger(__name__)
 
 
 class CaptureReaders(Protocol):
-    """The plan 4 readers, bound to one client and site (``MoodleCaptureReaders``)."""
+    """The LMS reads capture needs, bound to one site: an ``LmsProvider`` behind
+    ``context.capture.bound.SiteReaders`` (ADR-0033 D2). Neutral values only."""
 
-    async def quiz_close_inputs(
-        self, courseid: int, quizid: int
-    ) -> Reading[QuizCloseInputs]: ...
-    async def user_review_options(
-        self, quizid: int, userid: int
-    ) -> Reading[UserReviewOptions]: ...
-    async def user_attempts(
-        self, quizid: int, userid: int
+    async def quiz_settings(
+        self, course_id: int, quiz_id: int
+    ) -> Reading[QuizSettings]: ...
+    async def review_options(
+        self, quiz_id: int, user_id: int
+    ) -> Reading[LmsReviewOptions]: ...
+    async def attempts(
+        self, quiz_id: int, user_id: int
     ) -> Reading[tuple[AttemptSummary, ...]]: ...
-    async def attempt_review(self, attemptid: int) -> Reading[AttemptReview]: ...
-    async def grade_release(
-        self, courseid: int, userid: int, cmid: int
-    ) -> Reading[GradeReleaseState]: ...
-    async def assign_settings(
-        self, courseid: int, assignid: int
-    ) -> Reading[AssignSettings]: ...
-    async def assign_release(
-        self, courseid: int, assignid: int, userid: int
-    ) -> Reading[AssignReleaseState]: ...
-    async def submission_status(
-        self, assignid: int, userid: int
-    ) -> Reading[SubmissionStatus]: ...
-    async def grading_view(self, cmid: int) -> Reading[GradingView]: ...
+    async def attempt_review(self, attempt_id: int) -> Reading[AttemptReview]: ...
+    async def grade_item(
+        self, course_id: int, user_id: int, activity_id: int
+    ) -> Reading[GradeItem]: ...
+    async def assignment_settings(
+        self, course_id: int, assignment_id: int
+    ) -> Reading[AssignmentSettings]: ...
+    async def assignment_release(
+        self, course_id: int, assignment_id: int, user_id: int
+    ) -> Reading[AssignmentRelease]: ...
+    async def submission(
+        self, assignment_id: int, user_id: int
+    ) -> Reading[Submission]: ...
+    async def grading_definition(
+        self, activity_id: int
+    ) -> Reading[GradingDefinition]: ...
     async def rubric_fillings(
-        self, definitionid: int
+        self, definition_id: int
     ) -> Reading[tuple[RubricFilling, ...]]: ...
     async def submission_file(
         self,
-        assignid: int,
+        assignment_id: int,
         ref: SubmissionFileRef,
-        owner_userid: int,
+        owner_user_id: int,
         submission_id: int,
     ) -> Reading[bytes]: ...
 
@@ -139,7 +146,7 @@ class CaptureParser(Protocol):
     async def parse_file(self, data: bytes, ext_hint: str = "") -> Any: ...
     async def sanitize_html(self, html: bytes) -> Any: ...
     async def extract_review_item(
-        self, html: bytes
+        self, html: bytes, profile: HtmlExtractionProfile
     ) -> tuple[str | None, str | None, bool]: ...
 
 
@@ -155,7 +162,7 @@ class TeacherConfigView:
     """
 
     show_solution: bool
-    rubric_source: str  # none | pasted | moodle
+    rubric_source: str  # none | pasted | moodle (the LMS's rubric)
     solution_text: str | None = None
     pasted_rubric: str | None = None
 
@@ -240,7 +247,7 @@ type CaptureResult = Built | CaptureNotEligible | Failed
 # --- helpers -------------------------------------------------------------------------------------
 
 
-def _released(gr: GradeReleaseState) -> bool:
+def _released(gr: GradeItem) -> bool:
     return not gr.hidden and not gr.hidden_by_date
 
 
@@ -281,12 +288,15 @@ def _flags(teacher: TeacherConfigView) -> FrozenFlags:
 
 
 async def _item_text(
-    parser: CaptureParser, html: str | None
+    parser: CaptureParser, html: ReviewHtml | None
 ) -> tuple[str | None, str | None, bool]:
-    """Question text, response and the truncation flag from ONE sidecar call (allowlist)."""
-    if not html:
+    """Question text, response and the truncation flag from ONE sidecar call: allowlist
+    extraction with the profile the provider shipped with the HTML (ADR-0033 D4)."""
+    if html is None or not html.html:
         return None, None, False
-    q, r, truncated = await parser.extract_review_item(html.encode("utf-8"))
+    q, r, truncated = await parser.extract_review_item(
+        html.html.encode("utf-8"), html.profile
+    )
     return (
         q if q and q.strip() else None,
         r if r and r.strip() else None,
@@ -309,17 +319,17 @@ async def capture_quiz(
 ) -> CaptureResult:
     t_now = int(time.time()) if now is None else now
     # 1. policy, before any content is read
-    close = await readers.quiz_close_inputs(target.courseid, target.quizid)
-    review_opts = await readers.user_review_options(target.quizid, target.userid)
-    release = await readers.grade_release(target.courseid, target.userid, target.cmid)
+    close = await readers.quiz_settings(target.courseid, target.quizid)
+    review_opts = await readers.review_options(target.quizid, target.userid)
+    release = await readers.grade_item(target.courseid, target.userid, target.cmid)
     if isinstance(close, Unreadable) or isinstance(release, Unreadable):
         return Failed(FailReason.POLICY_INPUT_UNREADABLE)
     review = (
         ReviewOptions(
-            feedback=review_opts.value.all_attempts.feedback,
-            generalfeedback=review_opts.value.all_attempts.generalfeedback,
-            rightanswer=review_opts.value.all_attempts.rightanswer,
-            overallfeedback=review_opts.value.all_attempts.overallfeedback,
+            feedback=review_opts.value.all_attempts.show_feedback,
+            generalfeedback=review_opts.value.all_attempts.show_general_feedback,
+            rightanswer=review_opts.value.all_attempts.show_right_answer,
+            overallfeedback=review_opts.value.all_attempts.show_overall_feedback,
             marks=review_opts.value.all_attempts.marks,
         )
         if isinstance(review_opts, Readable)
@@ -339,27 +349,27 @@ async def capture_quiz(
     # 2. selection over every attempt. A review read for "fully graded" keeps only the boolean:
     #    its html (teacher visibility) is dropped at once. The first unreadable or ungraded
     #    attempt already makes the result NotEligible, so the reads stop there.
-    attempts = await readers.user_attempts(target.quizid, target.userid)
+    attempts = await readers.attempts(target.quizid, target.userid)
     graded: dict[int, bool | None] = {}
     if isinstance(attempts, Readable):
         for a in attempts.value:
             if a.preview or a.state is not AttemptState.FINISHED:
                 continue
-            r = await readers.attempt_review(a.attemptid)
-            graded[a.attemptid] = (
+            r = await readers.attempt_review(a.attempt_id)
+            graded[a.attempt_id] = (
                 is_fully_graded(r.value) if isinstance(r, Readable) else None
             )
             del r
-            if graded[a.attemptid] is not True:
+            if graded[a.attempt_id] is not True:
                 break
     selected = select_attempt(
-        attempts, close.value.grademethod, graded, released=policy.eligible
+        attempts, close.value.grade_method, graded, released=policy.eligible
     )
     if isinstance(selected, NotEligible):
         return CaptureNotEligible(selected.reason)
     assert isinstance(selected, Selected)
     # 3. read the selected attempt again: the only review whose html is kept, for this frame
-    reread = await readers.attempt_review(selected.attempt.attemptid)
+    reread = await readers.attempt_review(selected.attempt.attempt_id)
     if not isinstance(reread, Readable) or not is_fully_graded(reread.value):
         return CaptureNotEligible(NotEligibleReason.UNREADABLE)
     chosen = reread.value
@@ -367,8 +377,8 @@ async def capture_quiz(
     items: list[QuizItem] = []
     paths = _common_paths(policy)
     degraded = 0
-    for slot in chosen.slots:
-        if slot.qtype in INFORMATION_QTYPES:
+    for slot in chosen.items:
+        if slot.question_kind in INFORMATION_KINDS:
             continue
         label = slot.display_number
         p = f"q{label}"
@@ -385,7 +395,7 @@ async def capture_quiz(
         paths.append(f"{p}.review_html")  # never kept whole, whatever the path
         question_text = response_text = None
         item_degraded = item_truncated = False
-        if slot.qtype in EXTRACTION_QTYPES:
+        if slot.question_kind in EXTRACTION_KINDS:
             question_text, response_text, item_truncated = await _item_text(
                 parser, slot.html
             )
@@ -393,21 +403,21 @@ async def capture_quiz(
         else:
             item_degraded = True  # mark-and-feedback level only (REQ-101), flagged
         degraded += item_degraded
-        zero = slot.maxmark <= 0
+        zero = slot.max_mark <= 0
         items.append(
             QuizItem(
                 label=label,
-                qtype=slot.qtype,
-                discussable=is_discussable(slot.qtype),
-                # state ("gradedright") and status ("Correct") reveal correctness; Moodle's
-                # "correctness" review option is not exposed by the WS, so both follow the marks
+                qtype=slot.question_kind.value,
+                discussable=is_discussable(slot.question_kind),
+                # the state and the status label ("Correct") reveal correctness; the LMS's
+                # "correctness" review option is not readable, so both follow the marks
                 # visibility (fail closed: hidden marks hide correctness too)
-                state=slot.state if policy.marks else None,
-                status=slot.status if policy.marks else None,
+                state=slot.state.value if policy.marks else None,
+                status=slot.status_label if policy.marks else None,
                 mark=mark_str(slot.mark)
                 if policy.marks and not zero and slot.mark is not None
                 else None,
-                max_mark=mark_str(slot.maxmark)
+                max_mark=mark_str(slot.max_mark)
                 if policy.max_marks and not zero
                 else None,
                 marks_hidden=(
@@ -424,20 +434,20 @@ async def capture_quiz(
         )
     del chosen  # the html is not needed past this point
     gr = release.value
-    method = close.value.grademethod
+    method = close.value.grade_method
     snapshot = Snapshot(
         header=SnapshotHeader(
             activity_kind=ActivityKind.QUIZ,
             moodle_release=moodle_release,
             attempt_number=selected.attempt_number,
             attempt_count=selected.attempt_count,
-            grade_method=GradeMethod(method),
+            grade_method=GradeMethod(method.value),
             # the after-close review options apply only once the quiz is closed, and only if
             # they could be read at all (otherwise the fail-closed set was used)
             review_options_closed=(
                 review is not None
-                and close.value.timeclose != 0
-                and t_now >= close.value.timeclose
+                and close.value.time_close != 0
+                and t_now >= close.value.time_close
             ),
             grade_released=True,
             grade_modified_at=None,
@@ -487,11 +497,11 @@ async def capture_assign(
     now: int | None = None,
 ) -> CaptureResult:
     t_now = int(time.time()) if now is None else now
-    settings = await readers.assign_settings(target.courseid, target.assignid)
-    release = await readers.assign_release(
+    settings = await readers.assignment_settings(target.courseid, target.assignid)
+    release = await readers.assignment_release(
         target.courseid, target.assignid, target.userid
     )
-    grading = await readers.grading_view(target.cmid)
+    grading = await readers.grading_definition(target.cmid)
     if any(isinstance(x, Unreadable) for x in (settings, release, grading)):
         return Failed(FailReason.POLICY_INPUT_UNREADABLE)
     assert isinstance(settings, Readable) and isinstance(release, Readable)
@@ -512,29 +522,29 @@ async def capture_assign(
         return CaptureNotEligible(NotEligibleReason.UNSUPPORTED)
     if not policy.eligible:
         return CaptureNotEligible(NotEligibleReason.NOT_RELEASED)
-    status = await readers.submission_status(target.assignid, target.userid)
+    status = await readers.submission(target.assignid, target.userid)
     if isinstance(status, Unreadable):
         return Failed(FailReason.SUBMISSION_UNREADABLE, status.reason.value)
     st = status.value
-    if st.state not in ("submitted",) and not st.files and not st.onlinetext:
+    if st.state not in ("submitted",) and not st.files and not st.online_text:
         return CaptureNotEligible(NotEligibleReason.NO_SUBMISSION)
     fb = st.feedback
     view = grading.value
     rubric = view.rubric if view.method == "rubric" else None
     filling: RubricFilling | None = None
     if rubric is not None:
-        fillings = await readers.rubric_fillings(rubric.definitionid)
+        fillings = await readers.rubric_fillings(rubric.definition_id)
         if isinstance(fillings, Unreadable):
             return CaptureNotEligible(NotEligibleReason.UNREADABLE)
         mine = [
             f for f in fillings.value if fb is not None and f.item_id == fb.grade_id
         ]
         filling = mine[0] if len(mine) == 1 else None
-    levels = {c.criterionid: c.levelid for c in filling.criteria} if filling else None
+    levels = {c.criterion_id: c.level_id for c in filling.criteria} if filling else None
     graded = assign_fully_graded(
         view.method,
         None if fb is None else fb.grade,
-        [c.criterionid for c in rubric.criteria] if rubric else None,
+        [c.criterion_id for c in rubric.criteria] if rubric else None,
         levels,
     )
     if isinstance(graded, NotEligible):
@@ -546,14 +556,18 @@ async def capture_assign(
     # rubric: levels, points and remarks always; descriptors only if permitted (never today)
     criteria: list[AssignCriterion] = []
     if rubric is not None and filling is not None:
-        remarks = {c.criterionid: c.remark for c in filling.criteria}
+        remarks = {c.criterion_id: c.remark for c in filling.criteria}
         for i, crit in enumerate(
-            sorted(rubric.criteria, key=lambda c: c.sortorder), start=1
+            sorted(rubric.criteria, key=lambda c: c.sort_order), start=1
         ):
             ordered = sorted(crit.levels, key=lambda lv: lv.score)
-            chosen_id = levels[crit.criterionid] if levels else None
+            chosen_id = levels[crit.criterion_id] if levels else None
             idx = next(
-                (n for n, lv in enumerate(ordered, start=1) if lv.levelid == chosen_id),
+                (
+                    n
+                    for n, lv in enumerate(ordered, start=1)
+                    if lv.level_id == chosen_id
+                ),
                 None,
             )
             if idx is None:
@@ -573,7 +587,7 @@ async def capture_assign(
                     level_count=len(ordered),
                     points=mark_str(ordered[idx - 1].score),
                     max_points=mark_str(ordered[-1].score),
-                    remark=remarks.get(crit.criterionid, ""),
+                    remark=remarks.get(crit.criterion_id, ""),
                 )
             )
     # grade: points, or the scale label (BR-014: never "punti/max" for a scale)
@@ -596,7 +610,7 @@ async def capture_assign(
             overall_feedback=_feedback(policy, fb.comments),
             grade_read_at=t_now,
         )
-    submission = await _onlinetext(parser, st.onlinetext, limits)
+    submission = await _onlinetext(parser, st.online_text, limits)
     # the online text counts against the same total extracted-text cap (REQ-101 (c))
     used = len(submission.onlinetext or "") if submission is not None else 0
     files = await _files(
@@ -664,7 +678,7 @@ def _ext(name: str) -> str:
 
 async def _files(
     target: AssignTarget,
-    st: SubmissionStatus,
+    st: Submission,
     readers: CaptureReaders,
     parser: CaptureParser,
     limits: CaptureLimits,

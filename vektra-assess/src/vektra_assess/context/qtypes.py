@@ -1,60 +1,65 @@
-"""Question types the bot discusses item by item (REQ-101), and Moodle's question states.
+"""Question kinds the bot discusses item by item (REQ-101), and which question states are final.
 
-The discussable list was verified on Moodle 4.3 and 5.2 by the OQ-025 spike and the plan 4
-recordings (``tests/fixtures/moodle_ws/*/mod_quiz_get_attempt_review__types-*``). Any other type
-(``ddwtos``, ``ddmarker``, ``calculated`` ...) is kept at mark-and-feedback level and flagged.
+Both are Vektra's vocabulary (``vektra_shared.lms.QuestionKind`` / ``QuestionState``, ADR-0033
+D2): the LMS provider maps its own question types and states onto them, and maps anything it
+cannot place onto ``QuestionKind.OTHER`` (kept at mark-and-feedback level and flagged) or
+``QuestionState.UNKNOWN`` (never final: fail closed).
 """
 
 from __future__ import annotations
 
-DISCUSSABLE_QTYPES: frozenset[str] = frozenset(
+from vektra_shared.lms import QuestionKind, QuestionState
+
+DISCUSSABLE_KINDS: frozenset[QuestionKind] = frozenset(
     {
-        "multichoice",
-        "truefalse",
-        "shortanswer",
-        "numerical",
-        "essay",
-        "match",
-        "multianswer",
-        "gapselect",
+        QuestionKind.MULTIPLE_CHOICE,
+        QuestionKind.TRUE_FALSE,
+        QuestionKind.SHORT_ANSWER,
+        QuestionKind.NUMERICAL,
+        QuestionKind.ESSAY,
+        QuestionKind.MATCHING,
+        QuestionKind.EMBEDDED_ANSWERS,
+        QuestionKind.GAP_SELECT,
     }
 )
 
 #: information items: never graded, ignored by "fully graded" (BR-014)
-INFORMATION_QTYPES: frozenset[str] = frozenset({"description"})
+INFORMATION_KINDS: frozenset[QuestionKind] = frozenset({QuestionKind.INFORMATION})
 
-#: question states with a FINAL mark (``question_state`` in Moodle core). "todo", "invalid",
-#: "complete" and "needsgrading" are not final; neither is an unknown state (fail closed).
-FINAL_STATES: frozenset[str] = frozenset(
+#: question states with a FINAL mark. ``PENDING`` is not final; neither is ``UNKNOWN``
+#: (fail closed): a provider state it could not place never counts as graded.
+FINAL_STATES: frozenset[QuestionState] = frozenset(
+    {QuestionState.FINAL_MARKED, QuestionState.FINAL_NO_MARK}
+)
+
+#: final, but the LMS shows no mark (the question was not answered)
+NO_MARK_FINAL_STATES: frozenset[QuestionState] = frozenset(
+    {QuestionState.FINAL_NO_MARK}
+)
+
+#: kinds whose question text and response are extracted from the review HTML by allowlist
+#: (ADR-0032 amendment 2026-11-04), with the provider's extraction profile (ADR-0033 D4). A kind
+#: is enabled only where the provider's per-type oracle on its recorded reviews proves the right
+#: answer, the feedback and the canaries absent from the output. Not enabled, and why:
+#: - embedded answers (cloze): no question-text / response block, the gaps live in the text;
+#: - matching, gap select: extraction looks clean, but every recorded attempt is unanswered, so
+#:   no per-item feedback or correctness markup has been seen yet. Enable after a graded
+#:   recording.
+EXTRACTION_KINDS: frozenset[QuestionKind] = frozenset(
     {
-        "gaveup",
-        "gradedwrong",
-        "gradedpartial",
-        "gradedright",
-        "mangaveup",
-        "mangrwrong",
-        "mangrpartial",
-        "mangrright",
-        "manfinished",
-        "finished",
+        QuestionKind.MULTIPLE_CHOICE,
+        QuestionKind.TRUE_FALSE,
+        QuestionKind.SHORT_ANSWER,
+        QuestionKind.NUMERICAL,
+        QuestionKind.ESSAY,
     }
 )
 
-#: final states in which Moodle shows no mark (the question was not answered)
-NO_MARK_FINAL_STATES: frozenset[str] = frozenset({"gaveup", "mangaveup"})
 
-#: types whose question text and response are extracted from the review HTML by allowlist
-#: (ADR-0032 amendment 2026-11-04). Enabled only where the per-type oracle on the recorded 4.3 and
-#: 5.2 reviews proves the right answer, the feedback and the canaries absent from the output
-#: (``tests/test_review_block_extraction.py``). Not enabled, and why:
-#: - multianswer (cloze): no ``qtext`` / ``ablock`` block, the gaps live in the formulation;
-#: - ddwtos: no ``ablock``, the drag items sit outside it;
-#: - match, gapselect: extraction looks clean, but every recorded attempt is unanswered, so no
-#:   per-item feedback or correctness markup has been seen yet. Enable after a graded recording.
-EXTRACTION_QTYPES: frozenset[str] = frozenset(
-    {"multichoice", "truefalse", "shortanswer", "numerical", "essay"}
-)
+def is_discussable(kind: QuestionKind) -> bool:
+    return kind in DISCUSSABLE_KINDS
 
 
-def is_discussable(qtype: str) -> bool:
-    return qtype in DISCUSSABLE_QTYPES
+def is_final(state: QuestionState) -> bool:
+    """Whether a reviewed item's state carries a final mark; ``UNKNOWN`` never does."""
+    return state in FINAL_STATES

@@ -16,8 +16,10 @@ import asyncio
 import html
 import json
 import os
+import re
 import socket
 import struct
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, NewType
@@ -109,6 +111,78 @@ class Extracted:
     upto_page: int | None = None
     pages_total: int | None = None
     code: str = ""
+
+
+#: the blocks of one reviewed item the vertical may ask the sidecar for (ADR-0033 D4)
+REVIEW_BLOCKS: tuple[str, ...] = ("question_text", "response")
+_CSS_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")
+_PROFILE_VERSION = re.compile(r"[A-Za-z0-9_.-]{1,32}")
+MAX_DROP_CLASSES = 64
+
+
+@dataclass(frozen=True)
+class ReviewProfile:
+    """The wire form of a provider's ``HtmlExtractionProfile`` (ADR-0033 D4): which CSS class
+    marks each kept block and which classes are removed inside a kept block. The sidecar holds
+    the parsing; every class name comes from here, so it contains none of its own.
+
+    Stdlib only, like the rest of this module: the sidecar imports it, the worker builds it from
+    the provider's profile."""
+
+    keep: tuple[tuple[str, str], ...]  # (block, css class), blocks from REVIEW_BLOCKS
+    drop: frozenset[str]
+    version: str
+
+    def block_class(self, block: str) -> str | None:
+        return dict(self.keep).get(block)
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "keep": dict(self.keep),
+            "drop": sorted(self.drop),
+            "version": self.version,
+        }
+
+    @classmethod
+    def build(
+        cls, keep: Mapping[str, str], drop: Iterable[str], version: str
+    ) -> ReviewProfile:
+        """A checked profile; ``ValueError`` when it is not one the sidecar would accept."""
+        profile = cls.from_wire(
+            {"keep": dict(keep), "drop": sorted(drop), "version": version}
+        )
+        if profile is None:
+            raise ValueError("not a valid review extraction profile")
+        return profile
+
+    @classmethod
+    def from_wire(cls, raw: object) -> ReviewProfile | None:
+        """The profile, or None for anything that is not exactly a valid one (fail closed)."""
+        if not isinstance(raw, dict) or set(raw) != {"keep", "drop", "version"}:
+            return None
+        keep, drop, version = raw["keep"], raw["drop"], raw["version"]
+        if (
+            not isinstance(keep, dict)
+            or not keep
+            or not set(keep) <= set(REVIEW_BLOCKS)
+            or not all(
+                isinstance(v, str) and _CSS_CLASS.fullmatch(v) for v in keep.values()
+            )
+        ):
+            return None
+        if (
+            not isinstance(drop, list)
+            or len(drop) > MAX_DROP_CLASSES
+            or not all(isinstance(c, str) and _CSS_CLASS.fullmatch(c) for c in drop)
+        ):
+            return None
+        if not isinstance(version, str) or not _PROFILE_VERSION.fullmatch(version):
+            return None
+        return cls(
+            tuple((b, keep[b]) for b in REVIEW_BLOCKS if b in keep),
+            frozenset(drop),
+            version,
+        )
 
 
 def encode_frame(header: dict[str, Any], payload: bytes = b"") -> bytes:

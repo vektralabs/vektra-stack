@@ -25,14 +25,6 @@ from typing import Any
 import structlog
 
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.setup_check import (
-    DEFAULT_REGISTRY,
-    CheckContext,
-    ItemRegistry,
-    Outcome,
-    missing,
-    ok,
-)
 from vektra_assess.parser_protocol import (
     MAX_HEADER,
     OPS,
@@ -42,12 +34,22 @@ from vektra_assess.parser_protocol import (
     FrameError,
     Limits,
     PlainText,
+    ReviewProfile,
     encode_frame,
     new_req_id,
     parse_header,
     parse_header_length,
 )
 from vektra_assess.parser_protocol import label as status_label
+from vektra_assess.setup import (
+    DEFAULT_REGISTRY,
+    CheckContext,
+    ItemRegistry,
+    Outcome,
+    missing,
+    ok,
+)
+from vektra_shared.lms import HtmlExtractionProfile
 
 log = structlog.get_logger(__name__)
 
@@ -158,23 +160,44 @@ class ParserClient:
         )
 
     async def extract_review_item(
-        self, html: bytes, limits: Limits | None = None
+        self,
+        html: bytes,
+        profile: HtmlExtractionProfile,
+        limits: Limits | None = None,
     ) -> tuple[str | None, str | None, bool]:
         """Question text, student response and whether either was cut, from one sidecar call
-        (allowlist extraction). ``(None, None, False)`` for anything that is not the expected
-        reply: the item then degrades, it is never read as text."""
+        (allowlist extraction with the provider's ``profile``, ADR-0033 D4). ``(None, None,
+        False)`` for anything that is not the expected reply, and for a profile the sidecar
+        would refuse: the item then degrades, it is never read as text."""
         import json
 
-        res = await self._call("review_item", html, "html", limits or self.limits)
+        try:
+            wire = ReviewProfile.build(
+                profile.keep, profile.drop_classes, profile.profile_version
+            )
+        except ValueError:
+            log.warning("assess_review_profile_invalid", reason_code="profile_invalid")
+            return None, None, False
+        res = await self._call(
+            "review_item",
+            html,
+            "html",
+            limits or self.limits,
+            extra={"profile": wire.to_wire()},
+        )
         if res.status is not FileStatus.READ:
             return None, None, False
         try:
             doc = json.loads(res.text)
         except ValueError:
             return None, None, False
-        if not isinstance(doc, dict) or set(doc) != {"qtext", "response", "truncated"}:
+        if not isinstance(doc, dict) or set(doc) != {
+            "question_text",
+            "response",
+            "truncated",
+        }:
             return None, None, False
-        q, r, t = doc["qtext"], doc["response"], doc["truncated"]
+        q, r, t = doc["question_text"], doc["response"], doc["truncated"]
         if not isinstance(t, bool):
             # an unreadable cut flag: the item degrades, its text is never presented as complete
             return None, None, False
@@ -208,7 +231,13 @@ class ParserClient:
     # --- internals ----------------------------------------------------------------
 
     async def _call(
-        self, op: str, data: bytes, ext_hint: str, limits: Limits
+        self,
+        op: str,
+        data: bytes,
+        ext_hint: str,
+        limits: Limits,
+        *,
+        extra: dict[str, Any] | None = None,
     ) -> ParseResult:
         if op not in OPS:  # pragma: no cover - internal misuse
             raise ValueError(op)
@@ -227,6 +256,7 @@ class ParserClient:
                             "req_id": req_id,
                             "ext_hint": ext_hint,
                             "limits": limits.to_wire(),
+                            **(extra or {}),
                         },
                         data,
                         max_payload=limits.max_chars * 4,

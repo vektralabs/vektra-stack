@@ -38,10 +38,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.client import MoodleWsClient, SiteRef
+from vektra_assess.moodle.client import MoodleWsClient
 from vektra_assess.moodle.probes import derive_probe_manifest
-from vektra_assess.moodle.setup_check import CheckOutcome, evaluate, run_setup_check
+from vektra_assess.moodle.provider import MoodleLmsProvider
 from vektra_assess.moodle.tokens import secret_token_provider
+from vektra_assess.setup import CheckOutcome, evaluate, run_setup_check
+from vektra_shared.lms import LmsSite
 
 
 class UsageError(Exception):
@@ -174,7 +176,10 @@ async def _run(args: argparse.Namespace) -> CheckOutcome:
         )
         try:
             return await evaluate(
-                client, SiteRef("spike", base_url), settings, probe_manifest
+                MoodleLmsProvider(client, settings),
+                LmsSite("spike", base_url),
+                settings,
+                probe_manifest,
             )
         finally:
             await client.aclose()
@@ -206,7 +211,10 @@ async def _run(args: argparse.Namespace) -> CheckOutcome:
         client = MoodleWsClient(settings, token_provider=provider, resolver=resolver)
         try:
             return await run_setup_check(
-                engine, site_id=site_id, client=client, settings=settings
+                engine,
+                site_id=site_id,
+                provider=MoodleLmsProvider(client, settings),
+                settings=settings,
             )
         finally:
             await client.aclose()

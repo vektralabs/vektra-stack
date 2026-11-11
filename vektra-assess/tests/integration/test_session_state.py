@@ -8,14 +8,20 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
-from assess_moodle_support import manifest, uid
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.fake_lms import (
+    ASSIGNS,
+    GRADERS,
+    QUIZZES,
+    SCENARIO_RELEASE,
+    STUDENTS,
+)
 from support.preflight import PASSING_FACTS, FakeSource
 from support.recipients import TEACHERS, configure_recipients
 from support.sessions import seed_session
 from support.world import configure_activity, default_settings, err, world
 
-from integration.test_session_preflight import _reset, moodle_source
+from integration.test_session_preflight import _reset, start_source
 from vektra_assess.jobs import JobKind
 from vektra_assess.privacy import MAILBOX_SENTENCE
 from vektra_assess.worker.render import (
@@ -27,12 +33,11 @@ from vektra_assess.worker.runner import JobContext
 
 pytestmark = pytest.mark.integration
 
-M = manifest("4.3")
-STU1 = uid("4.3", "stu1")
+STU1 = STUDENTS["stu1"]
 
 
 def cmid(name: str) -> int:
-    return int(M["assigns"][name]["cmid"])
+    return ASSIGNS[name].cmid
 
 
 async def n(pg, sql: str, **params) -> int:  # type: ignore[no-untyped-def]
@@ -61,7 +66,7 @@ async def render(
     handler = make_render_handler(
         RenderDeps(
             settings=w.settings,
-            source=source or moodle_source(worker),
+            source=source or start_source(worker),
             graders=graders,
             recipients=recipients,
         )
@@ -427,9 +432,9 @@ async def test_eligible_names_the_recipients_masked_from_the_teacher_config(
         await pg.run(
             "super",
             "UPDATE assess_sites SET release = :r, base_url = :b WHERE id = :s",
-            {"r": M["release"], "b": "https://moodle.example.org", "s": w.site},
+            {"r": SCENARIO_RELEASE, "b": "https://lms.example.org", "s": w.site},
         )
-        src = moodle_source(worker)
+        src = start_source(worker)
         config = await configure_recipients(pg, w.site, cm)
         await render(
             w,
@@ -448,7 +453,7 @@ async def test_eligible_names_the_recipients_masked_from_the_teacher_config(
                 {"s": w.site, "c": cm, "u": STU1},
             )
         )[0][0]
-        graders = [uid("4.3", g) for g in ("grader1", "grader2")]
+        graders = list(GRADERS.values())
         assert inputs["graders"] == sorted(graders)
         view = (await state(w, await w.presession(sub=STU1, cmid=cm))).json()
         assert view["pre_session"]["recipients"] == [
@@ -538,7 +543,7 @@ async def test_ended_carries_ended_at(pg, worker) -> None:  # type: ignore[no-un
 
 @pytest.mark.parametrize(
     ("kind", "cm"),
-    [("quiz", int(M["quizzes"]["essay"]["cmid"])), ("assign", cmid("rubric_vis"))],
+    [("quiz", QUIZZES["essay"][0]), ("assign", cmid("rubric_vis"))],
 )
 async def test_graders_are_recorded_for_quizzes_and_assignments_alike(
     pg, worker, kind: str, cm: int
@@ -551,9 +556,9 @@ async def test_graders_are_recorded_for_quizzes_and_assignments_alike(
         await pg.run(
             "super",
             "UPDATE assess_sites SET release = :r, base_url = :b WHERE id = :s",
-            {"r": M["release"], "b": "https://moodle.example.org", "s": w.site},
+            {"r": SCENARIO_RELEASE, "b": "https://lms.example.org", "s": w.site},
         )
-        src = moodle_source(worker)
+        src = start_source(worker)
         await render(w, worker, STU1, cm, src, graders=src)
         inputs = (
             await pg.run(
@@ -563,7 +568,5 @@ async def test_graders_are_recorded_for_quizzes_and_assignments_alike(
                 {"s": w.site, "c": cm, "u": STU1},
             )
         )[0][0]
-        assert inputs["graders"] == sorted(
-            uid("4.3", g) for g in ("grader1", "grader2")
-        )
+        assert inputs["graders"] == sorted(GRADERS.values())
         assert src.cached == 0

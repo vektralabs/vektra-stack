@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from vektra_assess.delivery.probe import run_probe
 from vektra_assess.delivery.smtp import SmtpSender
-from vektra_assess.moodle.setup_check import (
+from vektra_assess.setup import (
     MISSING,
     OK,
     UNVERIFIABLE,

@@ -14,14 +14,16 @@ import uuid
 from typing import Any
 
 import pytest
-from assess_moodle_support import Replay, make_client, now
+from assess_moodle_support import Replay, make_provider, now
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from vektra_assess.jobs import JobKind
+from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
 from vektra_assess.worker import setup_check as handler_mod
 from vektra_assess.worker.runner import JobContext
 
 from .test_setup_check_run import (
+    ENV,
     SETTINGS,
     count,
     full_registry,
@@ -54,10 +56,9 @@ async def handle(  # type: ignore[no-untyped-def]
     try:
         h = handler_mod.make_setup_check_handler(
             engine,
-            make_client(replay),
+            make_provider(replay, clock=lambda: now(BRANCH), **ENV),
             SETTINGS,
             registry=full_registry(),
-            now=lambda: now(BRANCH),
         )
         await h(_ctx(engine, args, job_id))
     finally:
@@ -94,7 +95,7 @@ async def test_a_queued_report_is_run_to_done(pg) -> None:  # type: ignore[no-un
         pg,
         "SELECT count(*) FROM assess_setup_checks WHERE site_id=:s AND result='ok'",
         s=site,
-    ) == len(full_registry().names())
+    ) == len(SERVICE_ACCOUNT_ITEMS) + len(full_registry().names())
 
 
 async def test_a_job_without_a_report_writes_its_own(pg) -> None:  # type: ignore[no-untyped-def]
@@ -199,7 +200,7 @@ async def test_a_real_lookup_error_fails_the_job_instead_of_completing_it(  # ty
 ) -> None:
     """Review finding 5: a KeyError from a bug is not "the report changed": it propagates (the
     job fails and is retried) and the report is marked failed, never treated as stale."""
-    from vektra_assess.moodle import setup_check as sc
+    from vektra_assess.setup import runner as sc
 
     async def broken(*_a: Any, **_k: Any) -> Any:
         raise KeyError("a bug")
@@ -216,7 +217,7 @@ async def test_a_report_taken_by_another_run_is_stale_not_an_error(  # type: ign
     pg, monkeypatch
 ) -> None:
     """The dedicated exception still covers the race the handler's own check cannot see."""
-    from vektra_assess.moodle import setup_check as sc
+    from vektra_assess.setup import runner as sc
 
     async def raced(*_a: Any, **_k: Any) -> Any:
         raise sc.SetupCheckStale("report_not_runnable")
@@ -297,7 +298,7 @@ async def test_a_site_disabled_during_the_check_gets_nothing_written(  # type: i
     """CodeRabbit 4506450163: the site is disabled after the handler's own check, while the
     Moodle calls run. Nothing is persisted (no matrix, no item rows, no release) and the
     report is closed ``failed``; the job completes as stale."""
-    from vektra_assess.moodle import setup_check as sc
+    from vektra_assess.setup import runner as sc
 
     real = sc.evaluate
     site = await make_site(pg)
@@ -342,7 +343,7 @@ async def test_two_persisting_checks_of_a_site_serialise_on_the_site_row(pg) -> 
     from sqlalchemy import text as sql
     from sqlalchemy.exc import DBAPIError
 
-    from vektra_assess.moodle import setup_check as sc
+    from vektra_assess.setup import runner as sc
 
     site = await make_site(pg)
     async with pg.conn("worker") as a, pg.conn("worker") as b:
@@ -451,7 +452,9 @@ async def test_the_item_rows_are_trimmed_with_the_reports(pg) -> None:  # type: 
     rows = await count(
         pg, "SELECT count(*) FROM assess_setup_checks WHERE site_id=:s", s=site
     )
-    assert rows == (handler_mod.KEEP_REPORTS - 1) * 2 + len(full_registry().names())
+    assert rows == (handler_mod.KEEP_REPORTS - 1) * 2 + len(
+        SERVICE_ACCOUNT_ITEMS
+    ) + len(full_registry().names())
     assert (
         await count(
             pg, "SELECT count(*) FROM assess_setup_checks WHERE site_id=:s", s=other

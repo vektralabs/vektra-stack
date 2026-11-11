@@ -18,7 +18,7 @@ from support.world import configure_activity, make_site
 from vektra_assess.crypto import rotation
 from vektra_assess.delivery.recipients import ConfigRecipients
 from vektra_assess.worker.preflight import StartTarget
-from vektra_assess.worker.start_source import MoodleStartSource
+from vektra_assess.worker.start_source import LmsStartSource
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +54,7 @@ async def test_capture_and_delivery_read_their_own_sealed_fields(pg) -> None:  #
             pair=(pub, priv),
             extra={"solution": SOLUTION, "pasted_rubric": RUBRIC},
         )
-        src = MoodleStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
+        src = LmsStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
         got = await src._context(_target(site, 11, show=True, source="pasted"))
         assert got is not None and (got[2], got[3]) == (SOLUTION, RUBRIC)
         hidden = await src._context(_target(site, 11, show=False, source="moodle"))
@@ -68,7 +68,7 @@ async def test_capture_and_delivery_read_their_own_sealed_fields(pg) -> None:  #
         new_pub, new_priv = config_pair("w2")
         async with engine.begin() as conn:
             assert await rotation.reseal_teacher_configs(conn, priv, new_pub) == 0
-        src2 = MoodleStartSource(None, None, engine.connect, teacher_private=new_priv)  # type: ignore[arg-type]
+        src2 = LmsStartSource(None, None, engine.connect, teacher_private=new_priv)  # type: ignore[arg-type]
         got = await src2._context(_target(site, 11, show=True, source="pasted"))
         assert got is not None and (got[2], got[3]) == (SOLUTION, RUBRIC)
         async with engine.connect() as conn:
@@ -84,7 +84,7 @@ async def test_a_config_without_a_solution_reads_none(pg) -> None:  # type: igno
         await configure_activity(pg, site, 12)
         pub, priv = config_pair()
         await configure_recipients(pg, site, 12, pair=(pub, priv))
-        src = MoodleStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
+        src = LmsStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
         got = await src._context(_target(site, 12, show=True, source="pasted"))
         assert got is not None and (got[2], got[3]) == (None, None)
     finally:
@@ -146,7 +146,7 @@ async def test_a_needed_field_that_does_not_open_fails_the_capture_closed(  # ty
         await configure_recipients(
             pg, site, 14, pair=(other_pub, priv), extra={field: "testo"}
         )
-        src = MoodleStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
+        src = LmsStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
         target = _target(
             site, 14, show=flags["show_solution"], source=flags["rubric_source"]
         )
@@ -170,7 +170,7 @@ async def test_without_the_private_key_a_stored_needed_field_fails_closed(pg) ->
         await configure_recipients(
             pg, site, 15, pair=(pub, priv), extra={"solution": "x"}
         )
-        src = MoodleStartSource(None, None, engine.connect, teacher_private=None)  # type: ignore[arg-type]
+        src = LmsStartSource(None, None, engine.connect, teacher_private=None)  # type: ignore[arg-type]
         stored = await src._context(_target(site, 15, show=True))
         assert stored is not None and stored[4] is True
         unset = await src._context(_target(site, 16, show=True))
@@ -216,7 +216,7 @@ async def test_capture_fetches_only_the_fields_it_may_see(  # type: ignore[no-un
             pair=(pub, priv),
             extra={"solution": SOLUTION, "pasted_rubric": RUBRIC},
         )
-        src = MoodleStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
+        src = LmsStartSource(None, None, engine.connect, teacher_private=priv)  # type: ignore[arg-type]
         got = await src._context(_target(site, 17, show=show, source=source))
         assert got is not None
         assert calls == ([] if fetched is None else [fetched])

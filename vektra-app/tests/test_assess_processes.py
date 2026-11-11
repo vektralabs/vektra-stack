@@ -17,6 +17,13 @@ from vektra_app import assess_parser, assess_worker
 from vektra_shared.startup import StartupValidationError
 
 
+@pytest.fixture(autouse=True)
+def _lms_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The worker loads its LMS provider at startup (ADR-0033 D2): name the installed one, so
+    every check below reaches the step it is about. Tests of the provider step unset it."""
+    monkeypatch.setenv("VEKTRA_ASSESS_LMS_PROVIDER", "moodle")
+
+
 def _run_module(module: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     base = {k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")}
     return subprocess.run(
@@ -311,6 +318,7 @@ async def test_worker_checks_against_postgres(
         env = {
             **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
             "VEKTRA_ASSESS_ENABLED": "true",
+            "VEKTRA_ASSESS_LMS_PROVIDER": "moodle",  # loaded at startup (ADR-0033 D2)
             "VEKTRA_ASSESS_SECRETS_DIR": str(d),
             "VEKTRA_DATABASE_URL": admin,
             "VEKTRA_ASSESS_WORKER_DATABASE_URL": worker_url.render_as_string(
@@ -400,7 +408,11 @@ def _checked(monkeypatch: pytest.MonkeyPatch, **env: str):  # type: ignore[no-un
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     url = "postgresql+asyncpg://vektra_assess_worker:x@127.0.0.1:1/db"
-    return assess_worker.Checked(create_async_engine(url), VektraAssessSettings(), url)
+    settings = VektraAssessSettings()
+    # the provider the startup checks load (ADR-0033 D2): built, never connected here
+    return assess_worker.Checked(
+        create_async_engine(url), settings, url, lms=assess_worker._load_lms(settings)
+    )
 
 
 def test_unbound_slots_refuse_to_compose_with_the_owner_named(
@@ -467,6 +479,7 @@ def test_the_worker_keys_bind_the_preflight_handler(
         checked.settings,
         checked.worker_url,
         {name: ring for name in assess_worker.SESSION_KEYS},
+        lms=checked.lms,
     )
     runtime, *_ = assess_worker._compose(keyed)
     bound = {k for k, spec in runtime._handlers.items() if spec.bound}
@@ -610,6 +623,7 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
         checked.settings,
         checked.worker_url,
         {"assess_ws_tokens": Credentials("assess_ws_tokens", {})},
+        lms=checked.lms,
     )
     runtime, scheduler, *_ = assess_worker._compose(keyed)
     spec = runtime._handlers[JobKind.SETUP_CHECK]
@@ -629,46 +643,47 @@ def test_the_ws_token_keyring_binds_the_setup_check_handler_and_tick(
     assert not next(t for t in scheduler._ticks if t.name == "setup_check").bound
 
 
-def test_one_ws_client_serves_every_ws_handler(
+def test_one_lms_provider_serves_every_lms_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Review finding 3: the session handlers and the setup check share ONE WS client, so one
-    token bucket (``VEKTRA_ASSESS_WS_RPS`` is a per-worker cap), one breaker registry and one
-    connection pool; a second client would double the cap and keep the breakers apart."""
+    """Review finding 3, on the Protocol (ADR-0033 D2): the session handlers and the setup check
+    share the ONE provider the startup checks loaded, so one rate cap, one breaker registry and
+    one connection pool; the composition never loads or builds a second one."""
     import os
 
     from vektra_assess.keys import AssessKeyring, Credentials
+    from vektra_assess.worker import setup_check, start_source
 
-    made: list[object] = []
     checked = _checked(
         monkeypatch,
         VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
         VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
     )
-    # the WS client class and its module, as the composition builds it (the vektra-assess
-    # names are not repeated here)
-    ws_client_cls = type(assess_worker._ws_client(checked))
-    client_mod = sys.modules[ws_client_cls.__module__]
+    used: list[object] = []
+    loads: list[object] = []
+    real_source = start_source.LmsStartSource.__init__
+    real_handler = setup_check.make_setup_check_handler
 
-    class Counting(ws_client_cls):  # type: ignore[misc, valid-type]
-        def __init__(self, *a: object, **k: object) -> None:
-            super().__init__(*a, **k)
-            made.append(self)
+    def source_init(self: object, provider: object, *a: object, **k: object) -> None:
+        used.append(provider)
+        real_source(self, provider, *a, **k)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(client_mod, ws_client_cls.__name__, Counting)
-    checked = _checked(
-        monkeypatch,
-        VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND="true",
-        VEKTRA_ASSESS_LLM_MODEL="openai/test-model",
-    )
+    def handler(engine: object, provider: object, *a: object, **k: object) -> object:
+        used.append(provider)
+        return real_handler(engine, provider, *a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(start_source.LmsStartSource, "__init__", source_init)
+    monkeypatch.setattr(setup_check, "make_setup_check_handler", handler)
+    monkeypatch.setattr(assess_worker, "_load_lms", lambda *a, **k: loads.append(a))
     ring = AssessKeyring("k", "k1", {"k1": os.urandom(32)})
     keys: dict[str, object] = {name: ring for name in assess_worker.SESSION_KEYS}
     keys["assess_ws_tokens"] = Credentials("assess_ws_tokens", {})
     full = assess_worker.Checked(
-        checked.engine, checked.settings, checked.worker_url, keys
+        checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
     )
     assess_worker._compose(full)
-    assert len(made) == 1
+    assert len(used) == 2 and all(p is checked.lms for p in used)
+    assert loads == []
 
 
 def test_the_smtp_item_gets_the_probe_tick_body(
@@ -704,7 +719,7 @@ def test_the_smtp_item_gets_the_probe_tick_body(
         "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
     }
     full = assess_worker.Checked(
-        checked.engine, checked.settings, checked.worker_url, keys
+        checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
     )
     _runtime, scheduler, *_ = assess_worker._compose(full)
     tick = next(t for t in scheduler._ticks if t.name == "smtp_probe")
@@ -749,7 +764,7 @@ def _fully_keyed(monkeypatch: pytest.MonkeyPatch, **env: str) -> assess_worker.C
         "assess_ws_tokens": Credentials("assess_ws_tokens", {}),
     }
     return assess_worker.Checked(
-        checked.engine, checked.settings, checked.worker_url, keys
+        checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
     )
 
 
@@ -882,7 +897,7 @@ def test_a_configured_relay_binds_the_delivery_handler_and_ticks(
         "assess_smtp": Credentials("assess_smtp", {}),
     }
     keyed = assess_worker.Checked(
-        checked.engine, checked.settings, checked.worker_url, keys
+        checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
     )
     runtime, scheduler, *_ = assess_worker._compose(keyed)
     assert runtime._handlers[JobKind.TRANSCRIPT_DELIVER].bound
@@ -894,7 +909,11 @@ def test_a_configured_relay_binds_the_delivery_handler_and_ticks(
     with_ops = _checked(monkeypatch, VEKTRA_ASSESS_OPERATOR_EMAIL="ops@uni.example")
     runtime, *_ = assess_worker._compose(
         assess_worker.Checked(
-            with_ops.engine, with_ops.settings, with_ops.worker_url, keys
+            with_ops.engine,
+            with_ops.settings,
+            with_ops.worker_url,
+            keys,
+            lms=with_ops.lms,
         )
     )
     assert runtime._handlers[JobKind.OPERATOR_NOTIFY].bound
@@ -932,7 +951,7 @@ def test_the_delivery_budget_must_cover_the_worst_send(
         "assess_smtp": Credentials("assess_smtp", {}),
     }
     keyed = assess_worker.Checked(
-        checked.engine, checked.settings, checked.worker_url, keys
+        checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
     )
     with pytest.raises(StartupValidationError, match="transcript_deliver budget 60 s"):
         assess_worker._compose(keyed)
@@ -965,7 +984,7 @@ def test_the_notify_budget_must_cover_the_worst_send(
         "assess_smtp": Credentials("assess_smtp", {}),
     }
     keyed = assess_worker.Checked(
-        checked.engine, checked.settings, checked.worker_url, keys
+        checked.engine, checked.settings, checked.worker_url, keys, lms=checked.lms
     )
     with pytest.raises(StartupValidationError, match=f"{kind} budget 30 s"):
         assess_worker._compose(keyed)

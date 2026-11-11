@@ -151,6 +151,7 @@ def _run_worker_once(
         **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
         "VEKTRA_ENV": "development",
         "VEKTRA_ASSESS_ENABLED": "true",
+        "VEKTRA_ASSESS_LMS_PROVIDER": "fake",  # worker_main.py's development-only provider
         "VEKTRA_ASSESS_SECRETS_DIR": str(secrets),
         "VEKTRA_ASSESS_WORKER_DATABASE_URL": dsn,
         "VEKTRA_ASSESS_WORKER_HEARTBEAT_FILE": str(tmp / "hb-refuse"),
@@ -199,8 +200,25 @@ def _run_worker_once(
         ),
         (
             "the unbound override outside development",
-            {"VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": "true", "VEKTRA_ENV": "production"},
+            # outside development only a real provider loads (the fake is a test double)
+            {
+                "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": "true",
+                "VEKTRA_ENV": "production",
+                "VEKTRA_ASSESS_LMS_PROVIDER": "moodle",
+            },
             "only honoured with",
+        ),
+        # ADR-0033 D1: assess enabled and no LMS provider named: the vertical is unavailable
+        (
+            "no LMS provider",
+            {"VEKTRA_ASSESS_LMS_PROVIDER": ""},
+            "VEKTRA_ASSESS_LMS_PROVIDER is unset",
+        ),
+        # the development-only entry point offers a test double: never outside development
+        (
+            "the fake LMS provider outside development",
+            {"VEKTRA_ENV": "production"},
+            "is a test double",
         ),
     ],
 )

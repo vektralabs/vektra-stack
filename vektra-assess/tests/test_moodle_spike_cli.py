@@ -19,7 +19,10 @@ from assess_moodle_support import (
 
 from vektra_assess.capabilities import FLAGS
 from vektra_assess.moodle import spike
-from vektra_assess.moodle.setup_check import BUILTIN_ITEMS, PLUGGABLE_ITEMS
+from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
+from vektra_assess.setup import GENERIC_ITEMS, PLUGGABLE_ITEMS
+
+BUILTIN_ITEMS = (*SERVICE_ACCOUNT_ITEMS, *GENERIC_ITEMS)
 
 
 @pytest.fixture

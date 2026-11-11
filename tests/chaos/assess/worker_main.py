@@ -10,13 +10,22 @@ Job args: ``n`` (the job's reference), ``sleep_ms`` (time spent "working"). Befo
 body touches ``$CHAOS_DIR/started-<job id>-<attempt>`` so the harness can kill the process at a
 chosen moment; after sleeping it writes its effect idempotently into ``assess_chaos_effects``
 (``runs`` counts executions: a job re-run after ``kill -9`` shows ``runs`` > 1 instead of failing).
+
+The worker loads its LMS provider at startup (ADR-0033 D2, ``VEKTRA_ASSESS_LMS_PROVIDER``). This
+harness offers ``FakeLmsProvider`` through a development-only entry point (``LMS_ENTRY_POINTS``,
+name ``fake``): the composition loads a test double only with ``VEKTRA_ENV=development``, which
+the harness sets, and the production entry (``python -m vektra_app.assess_worker``) never sees it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import text
 
@@ -48,6 +57,30 @@ async def chaos_effect(ctx: JobContext) -> None:
         await conn.commit()
 
 
+@dataclass(frozen=True)
+class _DevEntryPoint:
+    """An entry point of ``vektra.lms_providers`` that exists only in this test process."""
+
+    name: str
+
+    def load(self) -> Callable[[], Any]:
+        tests = Path(__file__).resolve().parents[3] / "vektra-assess" / "tests"
+        if str(tests) not in sys.path:
+            sys.path.insert(0, str(tests))
+        from support.fake_lms import scenario_provider
+
+        return scenario_provider
+
+
+def LMS_ENTRY_POINTS() -> list[Any]:
+    """The installed providers, plus the development-only ``fake``."""
+    from importlib.metadata import entry_points
+
+    from vektra_app.lms_providers import GROUP
+
+    return [*entry_points(group=GROUP), _DevEntryPoint("fake")]
+
+
 async def _stub(*_: object) -> None:
     """A body that does nothing: only for measuring the idle footprint, never for behaviour."""
 
@@ -77,4 +110,4 @@ if __name__ == "__main__":
         import types
 
         sys.modules[forbidden] = types.ModuleType(forbidden)
-    assess_worker.main(_bindings())
+    assess_worker.main(_bindings(), lms_entry_points=LMS_ENTRY_POINTS)

@@ -241,16 +241,11 @@ async def test_a_client_gone_after_start_still_commits_and_resumes(pg, worker) -
         start_202 = r.text
         sid = uuid.UUID(r.json()["session_id"])
         # the pre-flight runs with nobody connected
-        from assess_moodle_support import Replay, make_client
         from support.preflight import activate, kek_ring
-        from test_context_capture import InProcessParser
-
-        from vektra_assess.worker.start_source import MoodleStartSource
+        from support.sessions import lms_source
 
         await activate(pg)
-        source = MoodleStartSource(
-            make_client(Replay("4.3")), InProcessParser(), worker.connect
-        )
+        source = lms_source(worker)
         handler = make_preflight_handler(
             deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek_ring())
         )

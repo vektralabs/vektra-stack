@@ -13,7 +13,7 @@ from support.preflight import FakePartB, FakeSource, activate, deps, job_context
 from support.sessions import seed_session
 from support.world import world
 
-from integration.test_session_preflight import _reset, moodle_source
+from integration.test_session_preflight import _reset, start_source
 from vektra_assess.context.capture.capture import Failed, FailReason
 from vektra_assess.worker.preflight import make_preflight_handler
 
@@ -61,7 +61,7 @@ async def test_starting_then_committed_then_closed(pg, worker) -> None:  # type:
         stream = asyncio.create_task(_stream(w, s.session_id, s.session_token))
         await asyncio.sleep(0.2)
         handler = make_preflight_handler(
-            deps(w.settings, w.handoff_public, moodle_source(worker), FakePartB())
+            deps(w.settings, w.handoff_public, start_source(worker), FakePartB())
         )
         await handler(job_context(worker, s.session_id))
         await asyncio.sleep(0.3)

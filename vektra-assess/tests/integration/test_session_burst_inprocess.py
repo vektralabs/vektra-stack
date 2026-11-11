@@ -1,7 +1,8 @@
 """M1.11: the burst script's logic against the in-process stack and FAKES (not the NFR evidence).
 
 40 concurrent Starts through the real API routes on a real Postgres, the real pre-flight handler
-processing the jobs (fake Part B runner, one recorded snapshot reused for every student), admission
+processing the jobs (fake Part B runner, one snapshot captured from the fake LMS provider and
+reused for every student), admission
 K = 10. It checks what does not depend on the target model: every Start gets an outcome, exactly K
 sessions commit, every other Start is refused at the API or rolled back with ``capacity``, and the
 refused ones consumed nothing (row counts). It writes no file under ``tests/nfr/results``: the NFR-018
@@ -17,17 +18,14 @@ import uuid
 from pathlib import Path
 
 import pytest
-from assess_moodle_support import Replay, make_client
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.preflight import FakePartB, FakeSource, activate, deps, job_context
-from support.sessions import fixture_target
+from support.sessions import fixture_target, lms_source, site_release
 from support.world import configure_activity, default_settings, world
-from test_context_capture import InProcessParser
 
-from integration.test_session_preflight import M, _reset
+from integration.test_session_preflight import _reset
 from vektra_assess.worker.preflight import StartTarget, make_preflight_handler
-from vektra_assess.worker.start_source import MoodleStartSource
 
 pytestmark = pytest.mark.integration
 
@@ -53,16 +51,10 @@ async def test_forty_starts_admit_k_and_refuse_the_rest_without_consuming(pg) ->
     try:
         async with world(pg, settings) as w:
             sub, cmid = fixture_target()
-            await pg.run(
-                "super",
-                "UPDATE assess_sites SET release = :r WHERE id = :s",
-                {"r": M["release"], "s": w.site},
-            )
+            await site_release(w)
             await configure_activity(pg, w.site, cmid)
-            # one real capture (stu1's recorded submission), reused for every fake student
-            real = MoodleStartSource(
-                make_client(Replay("4.3")), InProcessParser(), worker.connect
-            )
+            # one real capture (stu1's submission), reused for every fake student
+            real = lms_source(worker)
             built = await real.capture(
                 StartTarget(uuid.uuid4(), w.site, cmid, sub, None, "assign", 1, {})
             )

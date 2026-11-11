@@ -7,8 +7,10 @@ bytes contain nothing of B (canary grep). Cases: A's session token on B's sid; A
 course (ignored, never trusted); an expired token; replay after CLOSED; an unenrolled student; a
 forged Moodle attempt id in a body (refused or ignored, never read).
 
-B's snapshot is a real capture of the branch's recordings (``MoodleStartSource`` over ``Replay``),
-so the matrix runs once per Moodle branch. Integration (testcontainers Postgres).
+B's snapshot is a real capture (``LmsStartSource``) over ``FakeLmsProvider``: the matrix tests the
+vertical's authority (re-resolution, ownership, gates), which no LMS provider takes part in
+(ADR-0033 D1). ``idor_matrix_on_moodle`` runs the same matrix with the Moodle provider for the
+provider's live suite (``integration/test_idor_live.py``). Integration (testcontainers Postgres).
 """
 
 from __future__ import annotations
@@ -21,15 +23,15 @@ from typing import Any
 import jwt
 import pytest
 from assess_moodle_support import (
-    BRANCHES,
     Replay,
-    make_client,
+    make_provider,
     manifest,
     site_for,
     uid,
 )
 from integration.conftest import pg  # noqa: F401  (the real-Postgres fixture)
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.fake_lms import ASSIGN_ACTIVITY, USER, FakeLmsProvider
 from support.preflight import (
     PASSING_FACTS,
     FakePartB,
@@ -42,10 +44,12 @@ from support.preflight import (
 from support.world import configure_activity, err, world
 from test_context_capture import InProcessParser
 
+from vektra_assess.context.capture.capture import Built
 from vektra_assess.worker.preflight import StartTarget, make_preflight_handler
-from vektra_assess.worker.start_source import MoodleStartSource
+from vektra_assess.worker.start_source import LmsStartSource
+from vektra_shared.lms import LmsProvider
 
-pytestmark = [pytest.mark.integration, pytest.mark.parametrize("branch", BRANCHES)]
+pytestmark = [pytest.mark.integration]
 
 CANARY_B = "CANARY-IDOR-student-B-7c41"
 A, B = 4101, 4102
@@ -96,42 +100,72 @@ def _clean(r) -> None:  # type: ignore[no-untyped-def]
     assert CANARY_B not in r.text, "cross-student bytes in the response"
 
 
-async def test_idor_matrix(pg, branch: str) -> None:  # noqa: F811
+async def test_idor_matrix(pg) -> None:  # noqa: F811
+    await _matrix(
+        pg,
+        FakeLmsProvider(),
+        release="1.0",
+        base_url="https://lms.example.org",
+        a_cmid=ASSIGN_ACTIVITY,
+        captured_user=USER,
+    )
+
+
+async def idor_matrix_on_moodle(pg, branch: str) -> None:  # noqa: F811
+    """The same matrix with B's snapshot captured through the Moodle provider (the live suite
+    points ``Replay`` at a seeded dev site with ``use_live``)."""
+    m = manifest(branch)
+    await _matrix(
+        pg,
+        make_provider(Replay(branch)),
+        release=m["release"],
+        base_url=site_for(branch).base_url,
+        a_cmid=int(m["assigns"]["rubric_vis"]["cmid"]),
+        captured_user=uid(branch, "stu1"),
+    )
+
+
+async def _matrix(
+    pg,  # noqa: F811
+    provider: LmsProvider,
+    *,
+    release: str,
+    base_url: str,
+    a_cmid: int,
+    captured_user: int,
+) -> None:
     await _reset(pg)
     await activate(pg)
-    m = manifest(branch)
-    a_cmid = int(m["assigns"]["rubric_vis"]["cmid"])
     worker = create_async_engine(pg.url("worker"))
     try:
         async with world(pg, assess_runner=FakeStreamRunner()) as w:
             await pg.run(
                 "super",
                 "UPDATE assess_sites SET release = :r WHERE id IN (:a, :b)",
-                {"r": m["release"], "a": w.site, "b": w.other_site},
+                {"r": release, "a": w.site, "b": w.other_site},
             )
             # B's capture reads the site's base_url from the DB: on the live run
             # (test_idor_live) it must be the dev site's URL, not the world's placeholder
             await pg.run(
                 "super",
                 "UPDATE assess_sites SET base_url = :u WHERE id = :a",
-                {"u": site_for(branch).base_url, "a": w.site},
+                {"u": base_url, "a": w.site},
             )
             await configure_activity(pg, w.site, a_cmid)
-            real = MoodleStartSource(
-                make_client(Replay(branch)), InProcessParser(), worker.connect
-            )
+            real = LmsStartSource(provider, InProcessParser(), worker.connect)
             built = await real.capture(
                 StartTarget(
                     uuid.uuid4(),
                     w.site,
                     a_cmid,
-                    uid(branch, "stu1"),
+                    captured_user,
                     None,
                     "assign",
                     1,
                     {},
                 )
             )
+            assert isinstance(built, Built), built  # the matrix runs on a real snapshot
             b_sid, b_token = await _session(w, worker, built, B, a_cmid, CANARY_B)
             a_sid, a_token = await _session(
                 w, worker, built, A, a_cmid, "Parliamo di A."
@@ -285,11 +319,10 @@ async def test_idor_matrix(pg, branch: str) -> None:  # noqa: F811
         await worker.dispose()
 
 
-async def test_a_start_body_carries_nothing_the_server_reads(pg, branch: str) -> None:  # noqa: F811
+async def test_a_start_body_carries_nothing_the_server_reads(pg) -> None:  # noqa: F811
     """The Start route reads no body: a forged attempt or user id in it changes nothing."""
     await _reset(pg)
-    m = manifest(branch)
-    a_cmid = int(m["assigns"]["rubric_vis"]["cmid"])
+    a_cmid = ASSIGN_ACTIVITY
     async with world(pg) as w:
         await configure_activity(pg, w.site, a_cmid)
         pre = await w.presession(sub=A, cmid=a_cmid)

@@ -7,6 +7,7 @@ Each sink is asserted NON-EMPTY before it is searched: an unwired sink cannot pa
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import logging
 from collections import Counter
@@ -123,9 +124,15 @@ async def test_the_matrix_detects_a_leak_when_pruning_is_disabled(
     """Negative control: break the sanitizer and the same case must show the planted canaries."""
     from canary.matrix import build_matrix as fresh
 
-    from vektra_assess.parser_sidecar import html_review
+    from vektra_assess.moodle import provider
 
-    monkeypatch.setattr(html_review, "DROP_CLASSES", frozenset())
+    # the class list lives in the provider's profile now (ADR-0033 D4): a profile that drops
+    # nothing is the broken sanitizer
+    monkeypatch.setattr(
+        provider,
+        "MOODLE_REVIEW_PROFILE",
+        dataclasses.replace(provider.MOODLE_REVIEW_PROFILE, drop_classes=frozenset()),
+    )
     case = next(
         c
         for c in fresh()

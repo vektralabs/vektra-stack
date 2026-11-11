@@ -249,12 +249,14 @@ async def test_a_file_is_served_only_to_its_own_submission() -> None:
     assert isinstance(other, Unreadable)
 
 
-def test_the_vertical_re_export_is_the_same_object() -> None:
-    """``vektra_assess.readable`` stays a re-export until 2a-2b deletes it (plan 2a-1.1): one
-    class, not two, or an isinstance check across the boundary would silently fail."""
-    from vektra_assess import readable
+def test_the_provider_re_export_is_the_same_object() -> None:
+    """The Moodle readers' ``result`` module re-exports the shared outcome types: one class, not
+    two, or an isinstance check across the boundary would silently fail. The vertical's own
+    re-export (``vektra_assess.readable``) is gone (plan 2a-2b.4)."""
+    import importlib.util
+
     from vektra_assess.moodle import result
 
-    for mod in (readable, result):
-        assert mod.Readable is Readable and mod.Unreadable is Unreadable
-        assert mod.UnreadableReason is UnreadableReason
+    assert importlib.util.find_spec("vektra_assess.readable") is None
+    assert result.Readable is Readable and result.Unreadable is Unreadable
+    assert result.UnreadableReason is UnreadableReason

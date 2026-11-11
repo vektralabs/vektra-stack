@@ -98,7 +98,7 @@ def test_the_nginx_example_domains_pass_the_same_site_items() -> None:
     import re
     from pathlib import Path
 
-    from vektra_assess.moodle.setup_check import same_site
+    from vektra_assess.setup import same_site
 
     conf = (
         Path(__file__).resolve().parents[2] / "deploy/nginx/vektra.conf.example"

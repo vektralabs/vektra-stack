@@ -1,7 +1,10 @@
 """Module boundaries of vektra_assess (plan assess-foundations 9.1, ARCH-073).
 
-- the contract (c) source list covers every assess sub-package/module except worker,
-  moodle and parser_client, so a new one cannot slip outside it;
+- the contract (c) source lists cover every assess sub-package/module (ADR-0033 D2: no
+  assess module imports the Moodle provider; only the worker imports parser_client and the
+  setup runner), so a new one cannot slip outside them;
+- only the worker, capture, the setup runner and the provider itself name ``LmsProvider``
+  (AST scan, plan 2a-2a.9);
 - (d) ``ContextBundle`` is constructed only in ``vektra_assess.context`` (AST scan;
   import-linter cannot express it);
 - canaries: a forbidden import planted in a temporary copy of the sources makes
@@ -22,9 +25,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "vektra-assess" / "src" / "vektra_assess"
-WORKER_ONLY = {"moodle"}
-WORKER_ONLY_MODULES = {"moodle", "worker.parser_client"}
-CONTRACT_C = "only vektra_assess.worker imports vektra_assess.moodle and parser_client"
+CONTRACT_C = "no vektra_assess module imports the Moodle provider"
+CONTRACT_PARSER_CLIENT = "only vektra_assess.worker imports parser_client"
+CONTRACT_SETUP = "only vektra_assess.worker imports vektra_assess.setup"
 
 
 def _contracts() -> dict[str, dict]:  # type: ignore[type-arg]
@@ -44,20 +47,83 @@ def _children() -> set[str]:
     return out
 
 
-def test_contract_c_covers_every_child() -> None:
+@pytest.mark.parametrize(
+    ("contract", "exempt", "forbidden"),
+    [
+        (CONTRACT_C, {"moodle"}, {"moodle"}),
+        (CONTRACT_PARSER_CLIENT, {"worker", "moodle"}, {"worker.parser_client"}),
+        (CONTRACT_SETUP, {"worker", "moodle", "setup"}, {"setup"}),
+    ],
+)
+def test_contract_c_covers_every_child(
+    contract: str, exempt: set[str], forbidden: set[str]
+) -> None:
     sources = {
         m.removeprefix("vektra_assess.")
-        for m in _contracts()[CONTRACT_C]["source_modules"]
+        for m in _contracts()[contract]["source_modules"]
     }
-    expected = _children() - {"worker"} - WORKER_ONLY
+    expected = _children() - exempt
     assert sources == expected, (
-        f"missing from contract (c): {sorted(expected - sources)}; "
+        f"missing from {contract!r}: {sorted(expected - sources)}; "
         f"stale: {sorted(sources - expected)}"
     )
     assert {
         m.removeprefix("vektra_assess.")
-        for m in _contracts()[CONTRACT_C]["forbidden_modules"]
-    } == WORKER_ONLY_MODULES
+        for m in _contracts()[contract]["forbidden_modules"]
+    } == forbidden
+
+
+# --- who holds an LmsProvider (plan 2a-2a.9) ---------------------------------
+#
+# Only the worker (the composition, the start source, the setup-check handler), capture (the
+# site-bound readers) and the setup runner reach the provider, besides the Moodle provider
+# itself. ``setup/`` is a deviation from the plan's "worker and context.capture": the generic
+# runner (ADR-0033 D3) calls the provider's site_info, service_account_check and
+# probe_capabilities, and contract (c-setup) keeps it out of the API.
+LMS_PROVIDER_HOLDERS = ("worker/", "context/capture/", "setup/", "moodle/")
+
+
+def _lms_provider_refs(root: Path) -> list[str]:
+    sites = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            named = (
+                (isinstance(node, ast.Name) and node.id == "LmsProvider")
+                or (
+                    isinstance(node, ast.alias)
+                    and node.name.split(".")[-1] == "LmsProvider"
+                )
+                or (isinstance(node, ast.Attribute) and node.attr == "LmsProvider")
+            )
+            if named:
+                sites.append(f"{rel}:{getattr(node, 'lineno', 0)}")
+    return sites
+
+
+def _outside_holders(sites: list[str]) -> list[str]:
+    return [s for s in sites if not s.startswith(LMS_PROVIDER_HOLDERS)]
+
+
+def test_only_the_worker_capture_and_setup_name_lms_provider() -> None:
+    sites = _lms_provider_refs(PKG)
+    assert sites, "the scan found no reference at all: the predicate is dead"
+    assert _outside_holders(sites) == []
+
+
+def test_a_planted_lms_provider_reference_is_found(tmp_path: Path) -> None:
+    """Positive control: the same scan on a tree with an API module that names the Protocol."""
+    (tmp_path / "api").mkdir()
+    (tmp_path / "api" / "route.py").write_text(
+        "from vektra_shared.lms import LmsProvider\n\ndef f(p: LmsProvider) -> None: ...\n"
+    )
+    (tmp_path / "worker").mkdir()
+    (tmp_path / "worker" / "ok.py").write_text(
+        "import vektra_shared.lms\nx = vektra_shared.lms.LmsProvider\n"
+    )
+    found = _lms_provider_refs(tmp_path)
+    assert _outside_holders(found) == ["api/route.py:1", "api/route.py:3"]
+    assert any(s.startswith("worker/ok.py") for s in found)
 
 
 PARSER_CONTRACT = "vektra_assess.parser_sidecar imports only parser_protocol"
@@ -182,9 +248,12 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
             "vektra_assess must not import from other vektra components",
         ),
         ("api/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
-        # the capture split (plan assess-context): the API-importable half of context may not
-        # reach Moodle, and nothing but the worker may import capture
+        # ADR-0033 D2: no assess module imports the Moodle provider, the worker included (it
+        # loads the provider by entry point); nothing but the worker may import capture
         ("context/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
+        ("context/capture/_canary.py", "import vektra_assess.moodle\n", CONTRACT_C),
+        ("worker/_canary.py", "import vektra_assess.moodle.provider\n", CONTRACT_C),
+        ("api/_canary.py", "import vektra_assess.setup\n", CONTRACT_SETUP),
         (
             "context/_canary.py",
             "import vektra_assess.context.capture.selection\n",
@@ -206,7 +275,7 @@ def _lint_imports(dst: Path, srcs: list[Path]) -> subprocess.CompletedProcess[st
         (
             "api/_canary.py",
             "import vektra_assess.worker.parser_client\n",
-            CONTRACT_C,
+            CONTRACT_PARSER_CLIENT,
         ),
         (
             "parser_sidecar/_canary.py",

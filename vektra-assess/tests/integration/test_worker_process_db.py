@@ -68,6 +68,8 @@ async def test_worker_process_runs_fails_closed_and_exits_zero_on_sigterm(
         **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
         "VEKTRA_ENV": "development",
         "VEKTRA_ASSESS_ENABLED": "true",
+        # the deployment's provider (ADR-0033 D2), loaded by entry point; nothing connects
+        "VEKTRA_ASSESS_LMS_PROVIDER": "moodle",
         "VEKTRA_ASSESS_SECRETS_DIR": str(secrets),
         "VEKTRA_ASSESS_WORKER_DATABASE_URL": worker_url,
         "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": "true",

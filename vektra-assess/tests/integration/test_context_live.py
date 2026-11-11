@@ -20,9 +20,8 @@ import pytest
 from assess_moodle_support import (
     BRANCHES,
     Replay,
-    make_client,
     manifest,
-    site_for,
+    site_readers,
     uid,
     use_live,
 )
@@ -30,6 +29,7 @@ from canary.runner import real_turn
 from test_context_capture import OFF, InProcessParser
 
 from vektra_assess.context.assemble import assemble_context
+from vektra_assess.context.capture.bound import SiteReaders
 from vektra_assess.context.capture.capture import (
     AssignTarget,
     Built,
@@ -39,7 +39,6 @@ from vektra_assess.context.capture.capture import (
     capture_assign,
     capture_quiz,
 )
-from vektra_assess.context.capture.readers import MoodleCaptureReaders
 from vektra_assess.context.capture.selection import NotEligibleReason
 from vektra_assess.context.part_a import SessionFacts, render_part_a
 from vektra_assess.context.snapshot import canonical_bytes
@@ -65,11 +64,11 @@ def live(branch: str):  # type: ignore[no-untyped-def]
     use_live(branch, None)
 
 
-def _readers(branch: str) -> tuple[Replay, MoodleCaptureReaders, dict[str, Any]]:
+def _readers(branch: str) -> tuple[Replay, SiteReaders, dict[str, Any]]:
     replay = Replay(branch)
     return (
         replay,
-        MoodleCaptureReaders(make_client(replay), site_for(branch)),
+        site_readers(replay),
         manifest(branch),
     )
 

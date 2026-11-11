@@ -347,12 +347,10 @@ async def test_an_older_start_committing_keeps_the_cooldown(pg, worker) -> None:
     """CodeRabbit review 5808100754 (preflight.py 573): only a Start begun in half-open (the
     probe) closes the breaker; one admitted before it opened that commits during the cooldown
     leaves it open."""
-    from assess_moodle_support import Replay, make_client
     from support.preflight import FakePartB, activate, deps, job_context, kek_ring
-    from test_context_capture import InProcessParser
+    from support.sessions import lms_source
 
     from vektra_assess.worker.preflight import make_preflight_handler
-    from vektra_assess.worker.start_source import MoodleStartSource
 
     async with world(pg) as w:
         await activate(pg)
@@ -363,9 +361,7 @@ async def test_an_older_start_committing_keeps_the_cooldown(pg, worker) -> None:
             "VALUES (:s, 'open', now(), now() + interval '10 minutes')",
             {"s": w.site},
         )
-        source = MoodleStartSource(
-            make_client(Replay("4.3")), InProcessParser(), worker.connect
-        )
+        source = lms_source(worker)
         handler = make_preflight_handler(
             deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek_ring())
         )

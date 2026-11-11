@@ -37,9 +37,11 @@ class StubServer(ParserServer):
         super().__init__(cfg)
         self.release = threading.Event()
         self.calls = 0
+        self.profiles: list[object] = []
 
-    def _supervise(self, op, data, ext, max_pages, max_chars, timeout_s):  # type: ignore[no-untyped-def]
+    def _supervise(self, op, data, ext, max_pages, max_chars, timeout_s, profile=None):  # type: ignore[no-untyped-def]
         self.calls += 1
+        self.profiles.append(profile)
         self.release.wait(5)
         return ChildOutcome(Extracted(FileStatus.READ, data.decode()), 1, 0, 0, False)
 
@@ -114,6 +116,37 @@ async def test_too_large_answers_without_a_child(srv: StubServer) -> None:
     header, payload = await _call(srv, _req(), b"x" * 2000)
     assert header["status"] == "TOO_LARGE" and payload == b""
     assert srv.calls == 0
+
+
+PROFILE = {
+    "keep": {"question_text": "qtext", "response": "ablock"},
+    "drop": ["rightanswer"],
+    "version": "t-1",
+}
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [None, {}, {**PROFILE, "keep": {"question_text": "q text"}}, "qtext"],
+    ids=["absent", "empty", "bad_class", "not_a_dict"],
+)
+async def test_a_review_item_without_a_valid_profile_is_refused_without_a_child(
+    srv: StubServer, profile: object
+) -> None:
+    """ADR-0033 D4: the sidecar has no class list of its own to fall back on."""
+    srv.release.set()
+    before = srv.calls
+    extra = {} if profile is None else {"profile": profile}
+    header, payload = await _call(srv, _req("review_item", **extra), b"<p>x</p>")
+    assert (header["status"], header["code"], payload) == ("CORRUPT", "no_profile", b"")
+    assert srv.calls == before
+
+
+async def test_a_valid_profile_reaches_the_child_in_wire_form(srv: StubServer) -> None:
+    srv.release.set()
+    header, _ = await _call(srv, _req("review_item", profile=PROFILE), b"<p>x</p>")
+    assert header["status"] == "READ"
+    assert srv.profiles[-1] == PROFILE
 
 
 async def test_queue_is_bounded_and_beyond_it_busy(srv: StubServer) -> None:
@@ -232,9 +265,9 @@ async def test_max_pages_setting_is_an_upper_bound(
     seen: list[int] = []
     orig = s._supervise
 
-    def spy(op, data, ext, max_pages, max_chars, timeout_s):  # type: ignore[no-untyped-def]
+    def spy(op, data, ext, max_pages, max_chars, timeout_s, profile=None):  # type: ignore[no-untyped-def]
         seen.append(max_pages)
-        return orig(op, data, ext, max_pages, max_chars, timeout_s)
+        return orig(op, data, ext, max_pages, max_chars, timeout_s, profile)
 
     s._supervise = spy  # type: ignore[method-assign]
     s.release.set()

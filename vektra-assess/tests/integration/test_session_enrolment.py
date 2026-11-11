@@ -8,7 +8,7 @@ from support.preflight import FakeSource, FakeStreamRunner
 from support.sessions import seed_session
 from support.world import err, world
 
-from integration.test_session_preflight import _reset, moodle_source
+from integration.test_session_preflight import _reset, start_source
 from vektra_assess.worker.enrolment import queue_rechecks, recheck_one
 
 pytestmark = pytest.mark.integration
@@ -105,7 +105,7 @@ async def test_the_recheck_against_the_recordings_keeps_an_enrolled_student(
         assert await queue_rechecks(worker.connect) == 1
         assert await queue_rechecks(worker.connect) == 0  # deduped while pending
         assert (
-            await recheck_one(worker.connect, moodle_source(worker), s.session_id)
+            await recheck_one(worker.connect, start_source(worker), s.session_id)
             == "enrolled"
         )
         assert (await _turn(w, s)).status_code == 202

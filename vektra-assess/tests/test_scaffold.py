@@ -27,6 +27,7 @@ EXPECTED_SUBPACKAGES = {
     "db",
     "ui",  # the discussion UI page, its headers and origins (plan 9)
     "teacher",  # the config request models and BR-013 rules, pure (plan 11)
+    "setup",  # the REQ-079 setup-check runner and Vektra's own items (ADR-0033 D3)
 }
 EXPECTED_MODULES = {"config", "keys", "errors", "health", "parser_protocol"}
 

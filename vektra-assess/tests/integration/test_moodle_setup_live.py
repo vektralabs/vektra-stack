@@ -25,10 +25,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from vektra_assess.capabilities import FLAGS, Ready, site_readiness
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.moodle import spike
-from vektra_assess.moodle.client import SiteRef
 from vektra_assess.moodle.probes import derive_probe_manifest
-from vektra_assess.moodle.setup_check import (
-    BUILTIN_ITEMS,
+from vektra_assess.moodle.provider import MoodleLmsProvider
+from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
+from vektra_assess.setup import (
+    GENERIC_ITEMS,
     PLUGGABLE_ITEMS,
     CheckOutcome,
     ItemRegistry,
@@ -36,6 +37,10 @@ from vektra_assess.moodle.setup_check import (
     evaluate,
     ok,
 )
+from vektra_shared.lms import LmsSite
+
+#: the provider's service-account items, then Vektra's own (ADR-0033 D3)
+BUILTIN_ITEMS = (*SERVICE_ACCOUNT_ITEMS, *GENERIC_ITEMS)
 
 _ENV = {
     "4.3": ("VEKTRA_ASSESS_MOODLE43_URL", "m43"),
@@ -93,11 +98,12 @@ async def run_check(
     live = _env_with(branch, token)
     use_live(branch, live)
     client = make_client(Replay(branch))
+    cfg_ = VektraAssessSettings(**{**CFG, **env})  # type: ignore[arg-type]
     try:
         out = await evaluate(
-            client,
-            SiteRef(f"live-{branch}", live.url),
-            VektraAssessSettings(**{**CFG, **env}),  # type: ignore[arg-type]
+            MoodleLmsProvider(client, cfg_),
+            LmsSite(f"live-{branch}", live.url),
+            cfg_,
             derive_probe_manifest(live.manifest),
         )
     finally:
@@ -170,13 +176,14 @@ async def test_the_ingestion_item_is_unverifiable_without_the_setting(
     use_live(branch, live)
     client = make_client(Replay(branch))
     cfg = {k: v for k, v in CFG.items() if "INGEST" not in k}
+    cfg_ = VektraAssessSettings(**cfg)  # type: ignore[arg-type]
     try:
         out = await evaluate(
-            client,
-            SiteRef(f"live-{branch}", live.url),
-            VektraAssessSettings(**cfg),  # type: ignore[arg-type]
+            MoodleLmsProvider(client, cfg_),
+            LmsSite(f"live-{branch}", live.url),
+            cfg_,
             derive_probe_manifest(live.manifest),
-            probe=False,
+            probe_flags=False,
         )
     finally:
         await client.aclose()

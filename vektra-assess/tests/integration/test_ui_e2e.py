@@ -39,16 +39,15 @@ from typing import Any
 import pytest
 import structlog
 import uvicorn
-from assess_moodle_support import Replay, make_client, manifest
 from sqlalchemy.ext.asyncio import create_async_engine
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
+from support.fake_lms import SCENARIO_RELEASE
 from support.preflight import FakePartB, activate, deps, job_context, kek_ring
-from support.sessions import fixture_target
+from support.sessions import fixture_target, lms_source
 from support.world import configure_activity, default_settings, world
-from test_context_capture import InProcessParser
 
 from integration.test_session_preflight import _reset
 from vektra_assess.api.pending import PendingTurnDriver
@@ -63,7 +62,6 @@ from vektra_assess.llm.types import (
 from vektra_assess.transcript import store
 from vektra_assess.worker.outage_probe import outage_tick
 from vektra_assess.worker.preflight import make_preflight_handler
-from vektra_assess.worker.start_source import MoodleStartSource
 from vektra_assess.worker.transcript_gen import GenerationDeps, generate_transcript
 
 pytestmark = pytest.mark.integration
@@ -71,7 +69,6 @@ pytestmark = pytest.mark.integration
 log = structlog.get_logger(__name__)
 
 UI_DIR = Path(__file__).resolve().parents[2] / "ui"
-BRANCH = "4.3"
 #: CI sets it: a missing Node toolchain or browser is then a failure, never a skip
 REQUIRED = os.environ.get("VEKTRA_ASSESS_E2E_REQUIRED") == "1"
 #: the specs that must run and pass (the e2e/*.e2e.ts files; plan 10 added the download one)
@@ -160,9 +157,7 @@ class Harness:
         self.host = f"http://127.0.0.1:{ports['stub']}"
         self.third = f"http://localhost:{ports['stub']}"
         self.ui_origin = f"http://localhost:{ports['ui']}"
-        source = MoodleStartSource(
-            make_client(Replay(BRANCH)), InProcessParser(), worker.connect
-        )
+        source = lms_source(worker)
         self.kek = kek_ring()
         self.preflight = make_preflight_handler(
             deps(w.settings, w.handoff_public, source, FakePartB(), kek=self.kek)
@@ -233,7 +228,7 @@ class Harness:
 
     def target(self, request: Request) -> tuple[int, int]:
         q = request.query_params
-        return fixture_target(BRANCH, q.get("a", "rubric_vis"), q.get("who", "stu1"))
+        return fixture_target(q.get("a", "rubric_vis"), q.get("who", "stu1"))
 
     async def mint(self, request: Request) -> Response:
         sub, cmid = self.target(request)
@@ -557,7 +552,7 @@ async def test_the_discussion_ui_in_a_browser_across_two_origins(
             "super",
             "UPDATE assess_sites SET release = :r, moodle_origin = :o WHERE id = :s",
             {
-                "r": manifest(BRANCH)["release"],
+                "r": SCENARIO_RELEASE,
                 "o": f"http://127.0.0.1:{ports['stub']}",
                 "s": w.site,
             },

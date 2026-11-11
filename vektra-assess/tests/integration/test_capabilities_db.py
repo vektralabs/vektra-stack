@@ -16,7 +16,7 @@ from vektra_assess.capabilities import (
     observe_release,
     site_readiness,
 )
-from vektra_assess.readable import Readable, Unreadable, UnreadableReason
+from vektra_shared.lms import Readable, Unreadable, UnreadableReason
 
 pytestmark = pytest.mark.integration
 

@@ -16,7 +16,15 @@ import hashlib
 from collections.abc import Iterator
 
 import pytest
-from assess_moodle_support import BRANCHES, Replay, make_client, use_live
+from assess_moodle_support import (
+    BRANCHES,
+    Replay,
+    make_provider,
+    manifest,
+    site_for,
+    uid,
+    use_live,
+)
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.preflight import (
@@ -34,7 +42,7 @@ from test_context_capture import InProcessParser
 from integration.test_session_preflight import _reset
 from vektra_assess.context.snapshot import canonical_bytes
 from vektra_assess.worker.preflight import StartTarget, make_preflight_handler
-from vektra_assess.worker.start_source import MoodleStartSource
+from vektra_assess.worker.start_source import LmsStartSource
 
 from .test_moodle_live import _load
 from .test_moodle_setup_live import _prov, run_check
@@ -65,8 +73,8 @@ async def moodle_dump_hash(worker, branch: str, sid) -> str:  # type: ignore[no-
         session_no=int(r.session_no),
         flags=dict(r.flags or {}),
     )
-    source = MoodleStartSource(
-        make_client(Replay(branch)), InProcessParser(), worker.connect
+    source = LmsStartSource(
+        make_provider(Replay(branch)), InProcessParser(), worker.connect
     )
     built = await source.capture(target)
     snapshot = getattr(built, "snapshot", None)
@@ -99,11 +107,20 @@ async def test_a_full_session_leaves_moodle_byte_identical(pg, branch: str) -> N
         async with world(pg, assess_runner=FakeStreamRunner()) as w:
             # the baseline is read BEFORE Start's pre-flight touches anything: the session
             # is requested (STARTING), Moodle is read, then the pre-flight runs
-            s = await seed_session(w, worker, "STARTING", branch=branch)
+            m = manifest(branch)
+            s = await seed_session(
+                w,
+                worker,
+                "STARTING",
+                provider=make_provider(Replay(branch)),
+                target=(uid(branch, "stu1"), int(m["assigns"]["rubric_vis"]["cmid"])),
+                release=m["release"],
+                base_url=site_for(branch).base_url,
+            )
             before = await moodle_dump_hash(worker, branch, s.session_id)
             await activate(pg)
-            source = MoodleStartSource(
-                make_client(Replay(branch)), InProcessParser(), worker.connect
+            source = LmsStartSource(
+                make_provider(Replay(branch)), InProcessParser(), worker.connect
             )
             handler = make_preflight_handler(
                 deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek_ring())

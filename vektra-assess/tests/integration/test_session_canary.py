@@ -126,3 +126,63 @@ async def test_no_canary_outside_the_ciphertext(pg, worker) -> None:  # type: ig
     ):
         for canary in (STUDENT, BOT, snapshot_canary):
             assert canary not in blob, (where, canary)
+
+
+SOLUTION_CANARY = "CANARY-solution-toggle-off-5b2d"
+
+
+async def test_hidden_lms_content_and_a_toggled_off_solution_never_reach_the_session(
+    pg, worker
+) -> None:  # type: ignore[no-untyped-def]
+    """NFR-015 / NFR-017 on the fake LMS (ADR-0033 D2, D4): the quiz review the provider hands
+    over carries its right answer and hidden feedback (canaries, in the classes the provider's
+    profile drops), and the activity has a sealed solution with ``show_solution`` OFF. The
+    session commits, and neither the LMS canaries nor the solution reach the opening turns, the
+    audit rows, the job arguments or any log event. The solution is never fetched: its stored
+    blob cannot be opened by this pre-flight (no key), so a fetch would have failed it closed."""
+    from support.fake_lms import SCENARIO_CANARIES, scenario_provider, scenario_target
+    from support.world import configure_activity
+
+    from vektra_assess.crypto.teacher_config import SOLUTION
+
+    fake = scenario_provider()
+    _sub, cmid = scenario_target("essay")
+    with structlog.testing.capture_logs() as logs:
+        async with world(pg) as w:
+            await configure_activity(pg, w.site, cmid, kind="quiz")
+            await pg.run(
+                "super",
+                "INSERT INTO assess_activity_config_sealed (site_id, cmid, field, "
+                "sealed_blob, kid) VALUES (:s, :c, :f, :b, 'k1')",
+                {"s": w.site, "c": cmid, "f": SOLUTION, "b": SOLUTION_CANARY.encode()},
+            )
+            s = await seed_session(
+                w, worker, "ACTIVE", assignment="essay", provider=fake
+            )
+            got = (
+                await w.client.get(
+                    f"/api/v1/assess/sessions/{s.session_id}",
+                    headers=bearer(s.session_token),
+                )
+            ).json()
+            turns = "\n".join(t["text"] for t in got["turns"])
+    # positive controls: the review with the canaries was read, and Part A was rendered
+    assert fake.count("attempt_review") >= 1 and len(got["turns"]) == 2
+    audit = "\n".join(
+        str(r[0])
+        for r in await pg.run(
+            "super", "SELECT row_to_json(a)::text FROM assess_audit_events a"
+        )
+    )
+    jobs = "\n".join(
+        str(r[0]) for r in await pg.run("super", "SELECT args::text FROM assess_jobs")
+    )
+    log_text = "\n".join(repr(e) for e in logs)
+    for where, blob in (
+        ("turns", turns),
+        ("audit", audit),
+        ("jobs", jobs),
+        ("structlog", log_text),
+    ):
+        for canary in (*SCENARIO_CANARIES.values(), SOLUTION_CANARY):
+            assert canary not in blob, (where, canary)

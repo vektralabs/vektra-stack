@@ -121,6 +121,10 @@ settings and `VEKTRA_ASSESS_OPERATOR_EMAIL` (the API needs the relay and the ope
 the SMTP test send). To change a worker-only setting that the overlay does not name, add it to the
 worker's `environment` in a local override file.
 
+**Name the LMS provider.** The worker loads its LMS provider by name at startup
+(`VEKTRA_ASSESS_LMS_PROVIDER`, ADR-0033); the overlay passes it from `.env`. Unset, the worker
+refuses to start and lists the providers installed in the image.
+
 **Set shared values in `.env`, not as shell exports.** Compose interpolation (`${VAR:-}` in the
 overlay) takes a variable from the shell before `.env`, while the API container also reads `.env`
 itself (`env_file`). For a setting the overlay passes to the worker only, such as

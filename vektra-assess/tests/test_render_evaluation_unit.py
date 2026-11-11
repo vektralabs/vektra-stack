@@ -67,9 +67,9 @@ class Source:
     async def gate_facts(self, target: Any) -> Any:
         if self.exc is not None:
             raise self.exc
-        from vektra_assess.worker.preflight import MoodleGateFacts
+        from vektra_assess.worker.preflight import LmsGateFacts
 
-        return MoodleGateFacts()
+        return LmsGateFacts()
 
     def forget(self, sid: Any) -> None:
         self.forgot.append(sid)
@@ -147,8 +147,8 @@ class Graders:
         (Graders(exc=RuntimeError("x")), None),
         (Graders(result=None), None),
         (
-            Graders(result=[SimpleNamespace(userid=9), SimpleNamespace(userid=3),
-                            SimpleNamespace(userid=9)]),
+            Graders(result=[SimpleNamespace(user_id=9), SimpleNamespace(user_id=3),
+                            SimpleNamespace(user_id=9)]),
             (3, 9),
         ),
     ],
@@ -200,7 +200,7 @@ async def test_the_handler_stores_the_evaluation_and_forgets_the_scratch_key() -
     sink: list[Any] = []
     source = Source()
     handle = r.make_render_handler(
-        deps(source, graders=Graders(result=[SimpleNamespace(userid=4)]))
+        deps(source, graders=Graders(result=[SimpleNamespace(user_id=4)]))
     )
     ctx = SimpleNamespace(
         args={"site_id": str(SITE), "student_userid": 5, "cmid": 9, "courseid": 7},

@@ -1,6 +1,9 @@
-"""BR-012 attempt selection and BR-014 "fully graded", on the recorded 4.3 / 5.2 responses.
+"""BR-012 attempt selection and BR-014 "fully graded".
 
-Expected attempts come from the SEED MANIFEST (what the seeder created), never from Moodle.
+The pure cases run on the neutral values of ``vektra_shared.lms`` (what any LMS provider hands
+the vertical). The recorded cases run the same selection on the 4.3 / 5.2 responses through the
+Moodle provider, so its state mapping is checked end to end; expected attempts come from the SEED
+MANIFEST (what the seeder created), never from the LMS.
 """
 
 from __future__ import annotations
@@ -8,8 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from assess_moodle_support import BRANCHES, uid
-from test_moodle_readers import env, ok
+from assess_moodle_support import BRANCHES, Replay, manifest, site_readers, uid
 
 from vektra_assess.context.capture.selection import (
     NotEligible,
@@ -19,14 +21,18 @@ from vektra_assess.context.capture.selection import (
     is_fully_graded,
     select_attempt,
 )
-from vektra_assess.moodle.domain import (
+from vektra_assess.context.qtypes import is_final
+from vektra_shared.lms import (
     AttemptReview,
     AttemptState,
     AttemptSummary,
-    ReviewSlot,
+    QuestionKind,
+    QuestionState,
+    Readable,
+    ReviewItem,
+    Unreadable,
+    UnreadableReason,
 )
-from vektra_assess.moodle.readers import read_attempt_review, read_user_attempts
-from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
 
 
 @pytest.fixture(params=BRANCHES)
@@ -35,14 +41,16 @@ def branch(request: pytest.FixtureRequest) -> str:
 
 
 async def _select(branch: str, quiz: str, user: str, *, released: bool = True) -> Any:
-    replay, client, site, m = env(branch)
+    replay = Replay(branch)
+    lms, m = site_readers(replay), manifest(branch)
     q = m["quizzes"][quiz]
-    attempts = await read_user_attempts(client, site, q["id"], uid(branch, user))
+    attempts = await lms.attempts(q["id"], uid(branch, user))
+    assert isinstance(attempts, Readable), attempts
     graded: dict[int, bool | None] = {}
-    for a in ok(attempts):
+    for a in attempts.value:
         if a.state is AttemptState.FINISHED:
-            review = await read_attempt_review(client, site, a.attemptid)
-            graded[a.attemptid] = (
+            review = await lms.attempt_review(a.attempt_id)
+            graded[a.attempt_id] = (
                 is_fully_graded(review.value) if isinstance(review, Readable) else None
             )
     out = select_attempt(
@@ -111,14 +119,14 @@ def _a(
     **kw: Any,
 ) -> AttemptSummary:
     return AttemptSummary(
-        attemptid=100 + n,
+        attempt_id=100 + n,
         attempt_number=n,
-        userid=1,
+        user_id=1,
         state=state,
         preview=kw.get("preview", False),
-        timestart=0,
-        timefinish=1,
-        sumgrades=s,
+        time_start=0,
+        time_finish=1,
+        sum_grades=s,
     )
 
 
@@ -142,21 +150,24 @@ def test_previews_are_ignored_and_not_counted() -> None:
     )
 
 
+K, S = QuestionKind, QuestionState
+
+
 def _slot(
-    qtype: str,
-    state: str | None,
+    kind: QuestionKind,
+    state: QuestionState,
     mark: float | None,
     maxmark: float,
     needs: bool = False,
-) -> ReviewSlot:
-    return ReviewSlot(
+) -> ReviewItem:
+    return ReviewItem(
         slot=1,
         display_number="1",
-        qtype=qtype,
+        question_kind=kind,
         state=state,
-        status=None,
+        status_label=None,
         mark=mark,
-        maxmark=maxmark,
+        max_mark=maxmark,
         needs_grading=needs,
         html=None,
     )
@@ -165,18 +176,21 @@ def _slot(
 @pytest.mark.parametrize(
     ("slot", "graded"),
     [
-        (_slot("multichoice", "gradedright", 1, 1), True),
-        (_slot("description", None, None, 0), True),
-        (_slot("truefalse", None, None, 0), True),  # zero-mark: ignored
-        (_slot("essay", "needsgrading", None, 5, needs=True), False),
-        (_slot("essay", "complete", None, 5), False),
-        (_slot("multichoice", "weird_new_state", 1, 1), False),  # unknown: fail closed
-        (_slot("multichoice", None, 1, 1), False),
-        (_slot("match", "gaveup", None, 1), True),  # not answered: final, no mark
-        (_slot("multichoice", "gradedright", None, 1), False),  # graded without a mark
+        (_slot(K.MULTIPLE_CHOICE, S.FINAL_MARKED, 1, 1), True),
+        (_slot(K.INFORMATION, S.UNKNOWN, None, 0), True),
+        (_slot(K.TRUE_FALSE, S.UNKNOWN, None, 0), True),  # zero-mark: ignored
+        (_slot(K.ESSAY, S.PENDING, None, 5, needs=True), False),
+        (_slot(K.ESSAY, S.PENDING, None, 5), False),
+        (_slot(K.MULTIPLE_CHOICE, S.UNKNOWN, 1, 1), False),  # unknown: fail closed
+        (_slot(K.MATCHING, S.FINAL_NO_MARK, None, 1), True),  # not answered: no mark
+        (_slot(K.MULTIPLE_CHOICE, S.FINAL_MARKED, None, 1), False),  # no mark: refused
+        (
+            _slot(K.OTHER, S.FINAL_MARKED, 1, 1),
+            True,
+        ),  # an unplaced kind is still graded
     ],
 )
-def test_is_fully_graded(slot: ReviewSlot, graded: bool) -> None:
+def test_is_fully_graded(slot: ReviewItem, graded: bool) -> None:
     review = AttemptReview(1, 1, 1, AttemptState.FINISHED, 1.0, 1.0, (slot,))
     assert is_fully_graded(review) is graded
 
@@ -189,9 +203,23 @@ def test_regrade_in_progress_counts_as_not_graded() -> None:
         AttemptState.FINISHED,
         None,
         None,
-        (_slot("multichoice", "gradedright", 1, 1),),
+        (_slot(K.MULTIPLE_CHOICE, S.FINAL_MARKED, 1, 1),),
     )
     assert is_fully_graded(review) is False
+
+
+@pytest.mark.parametrize("state", list(QuestionState))
+def test_an_unknown_provider_state_is_never_final(state: QuestionState) -> None:
+    """ADR-0033 D2: a state the provider could not place is never final, so the attempt it
+    belongs to is never "fully graded" (fail closed, BR-014)."""
+    assert is_final(state) is (
+        state in (QuestionState.FINAL_MARKED, QuestionState.FINAL_NO_MARK)
+    )
+    if state is QuestionState.UNKNOWN:
+        review = AttemptReview(
+            1, 1, 1, AttemptState.FINISHED, 1.0, 1.0, (_slot(K.ESSAY, state, 1, 1),)
+        )
+        assert is_fully_graded(review) is False
 
 
 @pytest.mark.parametrize(

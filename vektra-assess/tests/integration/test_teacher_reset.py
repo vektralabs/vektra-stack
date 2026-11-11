@@ -409,7 +409,7 @@ async def test_a_slow_render_is_dated_when_its_reads_began(pg, worker) -> None: 
     than the bound for fresh ones."""
     import logging
 
-    from integration.test_session_state import moodle_source
+    from integration.test_session_state import start_source
     from vektra_assess.jobs import JobKind
     from vektra_assess.worker.render import RenderDeps, make_render_handler
     from vektra_assess.worker.runner import JobContext
@@ -429,7 +429,7 @@ async def test_a_slow_render_is_dated_when_its_reads_began(pg, worker) -> None: 
         s = await seed_session(w, worker, "CLOSED")
         (before,) = (await pg.run("super", "SELECT clock_timestamp()"))[0]
         handler = make_render_handler(
-            RenderDeps(settings=w.settings, source=Slow(moodle_source(worker)))
+            RenderDeps(settings=w.settings, source=Slow(start_source(worker)))
         )
         await handler(
             JobContext(
@@ -497,7 +497,7 @@ async def test_the_queued_render_unblocks_the_reset(pg, worker) -> None:  # type
     handler runs it (recorded Moodle), and the retried reset is granted."""
     import logging
 
-    from integration.test_session_state import moodle_source
+    from integration.test_session_state import start_source
     from vektra_assess.jobs import JobKind
     from vektra_assess.worker.render import RenderDeps, make_render_handler
     from vektra_assess.worker.runner import JobContext
@@ -517,7 +517,7 @@ async def test_the_queued_render_unblocks_the_reset(pg, worker) -> None:  # type
             )
         )[0]
         handler = make_render_handler(
-            RenderDeps(settings=w.settings, source=moodle_source(worker))
+            RenderDeps(settings=w.settings, source=start_source(worker))
         )
         await handler(
             JobContext(

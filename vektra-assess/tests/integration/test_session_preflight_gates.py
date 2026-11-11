@@ -1,15 +1,15 @@
 """M2.2: the pre-flight evaluates the START gates on fresh reads and rolls back with the gate code.
 
-Crafted Starts (through the real API) on the recorded 4.3 fixtures: each failing gate ends in a
-rollback whose reason is the gate's code, with 0 session, snapshot, key, turn and hand-off rows
-left. A team submission is also audited ``assess_team_submission_refused``.
+Crafted Starts (through the real API) on the fake LMS provider's scenario world: each failing gate
+ends in a rollback whose reason is the gate's code, with 0 session, snapshot, key, turn and
+hand-off rows left, and the capture-only reads (attempt review, rubric fillings, files) never made. A team submission is also audited ``assess_team_submission_refused``.
 """
 
 from __future__ import annotations
 
 import pytest
-from assess_moodle_support import manifest, uid
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.fake_lms import ASSIGNS, STUDENTS, scenario_provider
 from support.preflight import FakePartB, activate, deps, job_context
 from support.world import configure_activity, default_settings, world
 
@@ -18,18 +18,17 @@ from integration.test_session_preflight import (
     _reset,
     _rolled_back,
     _start,
-    moodle_source,
+    start_source,
 )
 from vektra_assess.worker.preflight import make_preflight_handler
 
 pytestmark = pytest.mark.integration
 
-M = manifest("4.3")
-STU1 = uid("4.3", "stu1")
+STU1 = STUDENTS["stu1"]
 
 
 def cmid(name: str) -> int:
-    return int(M["assigns"][name]["cmid"])
+    return ASSIGNS[name].cmid
 
 
 @pytest.fixture
@@ -41,13 +40,22 @@ async def worker(pg):  # type: ignore[no-untyped-def]
     await engine.dispose()
 
 
+#: what only the capture reads: a gate refusal must never have reached them
+CAPTURE_ONLY = ("attempt_review", "rubric_fillings", "submission_file")
+
+
 async def _run(w, worker, sid, settings=None):  # type: ignore[no-untyped-def]
+    fake = scenario_provider()
     handler = make_preflight_handler(
         deps(
-            settings or w.settings, w.handoff_public, moodle_source(worker), FakePartB()
+            settings or w.settings,
+            w.handoff_public,
+            start_source(worker, fake),
+            FakePartB(),
         )
     )
     await handler(job_context(worker, sid))
+    return fake
 
 
 @pytest.mark.parametrize(
@@ -55,7 +63,7 @@ async def _run(w, worker, sid, settings=None):  # type: ignore[no-untyped-def]
     [
         ("team", "team_submission"),
         ("guide", "marking_guide"),
-        # the recorded no-cut-off assignment is also ungraded: BR-014 comes first
+        # the no-cut-off assignment is also ungraded: BR-014 comes first
         ("nocutoff", "not_fully_graded"),
         ("hiddengrade", "not_released"),
     ],
@@ -66,8 +74,9 @@ async def test_a_failing_moodle_gate_rolls_back_with_its_code(  # type: ignore[n
     async with world(pg) as w:
         await configure_activity(pg, w.site, cmid(assignment))
         sid = await _start(w, sub=STU1, cmid=cmid(assignment))
-        await _run(w, worker, sid)
+        fake = await _run(w, worker, sid)
         await _rolled_back(pg, sid, reason)
+        fake.assert_never_read(*CAPTURE_ONLY)
         team_audits = (
             await pg.run(
                 "super",
@@ -151,16 +160,11 @@ async def test_no_cutoff_is_refused_even_with_a_teacher_date(pg, worker) -> None
 
 
 async def test_a_student_not_in_the_course_is_not_enrolled(pg, worker) -> None:  # type: ignore[no-untyped-def]
-    from assess_moodle_support import Replay, make_client
-    from test_context_capture import InProcessParser
-
-    from vektra_assess.worker.start_source import MoodleStartSource
-
-    replay = Replay("4.3")
-    replay.mutate = lambda fn, body: (
-        [] if fn == "core_enrol_get_users_courses" else body
-    )
-    source = MoodleStartSource(make_client(replay), InProcessParser(), worker.connect)
+    # the LMS lists no course for the student: the activity cannot be re-resolved inside the
+    # student's own courses, whatever course the plugin hinted (REQ-095)
+    fake = scenario_provider()
+    fake.world.courses_of[STU1] = set()
+    source = start_source(worker, fake)
     async with world(pg) as w:
         await configure_activity(pg, w.site, cmid("rubric_vis"))
         sid = await _start(w, sub=STU1, cmid=cmid("rubric_vis"))
@@ -178,6 +182,7 @@ async def test_a_student_not_in_the_course_is_not_enrolled(pg, worker) -> None: 
             )
         )[0][0]
         assert reason == "not_enrolled"
+        fake.assert_never_read("enrolment", *CAPTURE_ONLY)
 
 
 async def test_every_gate_passing_commits(pg, worker) -> None:  # type: ignore[no-untyped-def]

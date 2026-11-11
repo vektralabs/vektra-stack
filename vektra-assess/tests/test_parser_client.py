@@ -19,13 +19,20 @@ from typing import Any
 import pytest
 import structlog
 
-from vektra_assess.moodle.setup_check import MISSING, OK, ItemRegistry
 from vektra_assess.parser_protocol import FileStatus, Limits, encode_frame, read_frame
+from vektra_assess.setup import MISSING, OK, ItemRegistry
 from vektra_assess.worker.parser_client import (
     ParserClient,
     ParserUnavailableError,
     parser_setup_check,
     register_parser_check,
+)
+from vektra_shared.lms import HtmlExtractionProfile
+
+PROFILE = HtmlExtractionProfile(
+    keep={"question_text": "q-text", "response": "q-answer"},
+    drop_classes=frozenset({"q-solution", "q-feedback"}),
+    profile_version="test-1",
 )
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -117,32 +124,61 @@ async def test_review_item_op_and_reply_parsing(fake: Fake) -> None:
 
     fake.responder = lie(
         lambda r: reply(
-            r, text=json.dumps({"qtext": "Q", "response": "[x] A", "truncated": True})
+            r,
+            text=json.dumps(
+                {"question_text": "Q", "response": "[x] A", "truncated": True}
+            ),
         )
     )
-    out = await client_for(fake).extract_review_item(b"<div class='qtext'>x</div>")
-    assert fake.requests[0]["op"] == "review_item" and out == ("Q", "[x] A", True)
+    out = await client_for(fake).extract_review_item(
+        b"<div class='q-text'>x</div>", PROFILE
+    )
+    req = fake.requests[0]
+    assert req["op"] == "review_item" and out == ("Q", "[x] A", True)
+    # the provider's profile travels in the header, in the sidecar's wire form (ADR-0033 D4)
+    assert req["profile"] == {
+        "keep": {"question_text": "q-text", "response": "q-answer"},
+        "drop": ["q-feedback", "q-solution"],
+        "version": "test-1",
+    }
+
+
+async def test_an_invalid_profile_degrades_without_a_request(fake: Fake) -> None:
+    bad = HtmlExtractionProfile(
+        keep={"question_text": "not a class"},
+        drop_classes=frozenset(),
+        profile_version="test-1",
+    )
+    assert await client_for(fake).extract_review_item(b"<p>x</p>", bad) == (
+        None,
+        None,
+        False,
+    )
+    assert fake.requests == []
 
 
 @pytest.mark.parametrize(
     "text",
     [
         "not json",
-        '{"qtext": "Q"}',
+        '{"question_text": "Q"}',
         '["Q", "A"]',
-        '{"qtext": 1, "response": null}',
-        '{"qtext": "Q", "response": "A"}',  # a reply without the truncation flag is not trusted
+        '{"question_text": 1, "response": null}',
+        # a reply without the truncation flag is not trusted
+        '{"question_text": "Q", "response": "A"}',
+        # the old key is not the reply shape any more
+        '{"qtext": "Q", "response": "A", "truncated": false}',
         # a cut flag that is not a bool is malformed, not "not truncated"
-        '{"qtext": "Q", "response": "A", "truncated": "yes"}',
-        '{"qtext": "Q", "response": "A", "truncated": 1}',
-        '{"qtext": "Q", "response": "A", "truncated": null}',
+        '{"question_text": "Q", "response": "A", "truncated": "yes"}',
+        '{"question_text": "Q", "response": "A", "truncated": 1}',
+        '{"question_text": "Q", "response": "A", "truncated": null}',
     ],
 )
 async def test_a_bad_review_item_reply_degrades_to_nothing(
     fake: Fake, text: str
 ) -> None:
     fake.responder = lie(lambda r: reply(r, text=text))
-    assert await client_for(fake).extract_review_item(b"<p>x</p>") == (
+    assert await client_for(fake).extract_review_item(b"<p>x</p>", PROFILE) == (
         None,
         None,
         False,

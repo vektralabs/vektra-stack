@@ -16,7 +16,7 @@ from integration.test_session_preflight import (
     _reset,
     _rolled_back,
     _start,
-    moodle_source,
+    start_source,
 )
 from vektra_assess.jobs import JobKind
 from vektra_assess.worker.preflight import make_preflight_handler
@@ -59,7 +59,7 @@ async def test_reaper_waits_for_a_live_lease_then_rolls_back_a_stalled_start(
             release = asyncio.Event()
             runner = FakePartB(release=release)
             handler = make_preflight_handler(
-                deps(settings, w.handoff_public, moodle_source(worker), runner)
+                deps(settings, w.handoff_public, start_source(worker), runner)
             )
             task = asyncio.create_task(handler(job_context(worker, sid)))
             await asyncio.wait_for(runner.started.wait(), 30)  # stalled inside Part B
@@ -123,7 +123,7 @@ async def test_a_budget_cancellation_rolls_back_at_once(pg) -> None:  # type: ig
             sid = await _start(w)
             runner = FakePartB(release=asyncio.Event())  # never answers
             handler = make_preflight_handler(
-                deps(settings, w.handoff_public, moodle_source(worker), runner)
+                deps(settings, w.handoff_public, start_source(worker), runner)
             )
             # the runtime wraps every handler in asyncio.timeout(budget); a short one here
             with pytest.raises(TimeoutError):

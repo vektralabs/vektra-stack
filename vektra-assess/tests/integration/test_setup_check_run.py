@@ -13,18 +13,24 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from assess_moodle_support import BASE_URL, FIXTURES, Replay, make_client, manifest, now
+from assess_moodle_support import (
+    BASE_URL,
+    FIXTURES,
+    Replay,
+    make_provider,
+    manifest,
+    now,
+)
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from structlog.testing import capture_logs
 
+from vektra_assess import setup as sc
 from vektra_assess.capabilities import FLAGS, NotReady, Ready, site_readiness
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle import setup_check as sc
-from vektra_assess.moodle.probes import (
-    FlagResult,
-    derive_probe_manifest,
-    persist_matrix,
-)
+from vektra_assess.moodle.probes import derive_probe_manifest
+from vektra_assess.moodle.setup_check import SERVICE_ACCOUNT_ITEMS
+from vektra_assess.setup import persist_matrix, runner
+from vektra_shared.lms import CapabilityResult as FlagResult
 
 from .conftest import Pg
 
@@ -39,6 +45,8 @@ ENV = {
 }
 SETTINGS = VektraAssessSettings(**ENV)  # type: ignore[arg-type]
 SITE_INFO = "core_webservice_get_site_info"
+#: the provider's service-account items, then Vektra's own (ADR-0033 D3)
+BUILTIN_ITEMS = (*SERVICE_ACCOUNT_ITEMS, *sc.GENERIC_ITEMS)
 
 
 def full_registry() -> sc.ItemRegistry:
@@ -99,16 +107,15 @@ async def run(pg, site, *, mutate=None, report_id=None, registry=None):
     replay = Replay(BRANCH)
     replay.mutate = mutate
     serve_files(replay)
-    client = make_client(replay)
+    provider = make_provider(replay, clock=lambda: now(BRANCH), **ENV)
     async with worker_engine(pg) as engine:
         return await sc.run_setup_check(
             engine,
             site_id=site,
-            client=client,
+            provider=provider,
             settings=SETTINGS,
             registry=registry or full_registry(),
             report_id=report_id,
-            now=now(BRANCH),
         )
 
 
@@ -141,7 +148,7 @@ async def test_a_run_writes_the_matrix_and_a_done_report_and_the_site_is_ready(p
     ) and finished is not None
     assert {i["result"] for i in items} == {"OK"}
     assert set(items[0]) == {"name", "result", "reason_code"}
-    assert len(items) == len(sc.BUILTIN_ITEMS) + len(sc.PLUGGABLE_ITEMS)
+    assert len(items) == len(BUILTIN_ITEMS) + len(sc.PLUGGABLE_ITEMS)
     assert await count(
         pg,
         "SELECT count(*) FROM assess_setup_checks WHERE site_id=:s AND result='ok'",
@@ -172,7 +179,7 @@ async def test_a_crash_mid_run_leaves_no_partial_matrix(pg, monkeypatch):
         await persist_matrix(conn, site_id, release, results[:5])
         raise RuntimeError("worker died")
 
-    monkeypatch.setattr(sc, "persist_matrix", half)
+    monkeypatch.setattr(runner, "persist_matrix", half)
     with pytest.raises(RuntimeError, match="worker died"):
         await run(pg, site)
     assert (

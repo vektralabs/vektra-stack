@@ -172,7 +172,10 @@ test("resume after a reload: the plugin sends no sid; an explicit sid works too"
   await expect.poll(() => botReplies(request, t)).toBe(1);
   let server = await serverSession(request, t);
 
-  // the plugin's resume: mode "resume" and no sid
+  // the plugin's resume: mode "resume" and no sid. Leave the old page first: its UI keeps
+  // polling the open session, and a GET /sessions/{sid} still in flight from it would land in
+  // the log ahead of the new page's /state lookup.
+  await page.goto("about:blank");
   let api = apiLog(page);
   await page.goto(hostUrl(t, { mode: "resume" }));
   ui = await uiFrame(page);
@@ -189,6 +192,7 @@ test("resume after a reload: the plugin sends no sid; an explicit sid works too"
 
   // a parent that does send the sid: no /state lookup
   server = await serverSession(request, t);
+  await page.goto("about:blank");
   api = apiLog(page);
   await page.goto(hostUrl(t, { mode: "resume", sid: server.session_id! }));
   ui = await uiFrame(page);

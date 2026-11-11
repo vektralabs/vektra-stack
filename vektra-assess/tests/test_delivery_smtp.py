@@ -226,6 +226,28 @@ async def test_implicit_tls_sends_and_an_untrusted_certificate_is_tls(
         sink.stop()
 
 
+@pytest.mark.parametrize("implicit", [False, True], ids=["starttls", "implicit"])
+async def test_a_trusted_certificate_for_another_hostname_is_a_tls_failure(
+    tmp_path: Path, implicit: bool
+) -> None:
+    """The relay on the configured address presents a certificate from the TRUSTED CA, but
+    issued to another name: only the hostname check refuses it (the chain is valid, so
+    ``CERT_REQUIRED`` alone would let AUTH and MAIL through)."""
+    wrong = MailSink(
+        tmp_path / "wrong-name",
+        implicit=implicit,
+        leaf_names=("relay.example.org",),
+    ).start()  # the guard has proven the chain verifies against wrong.ca_file
+    try:
+        res = await SmtpSender(
+            sink_config(wrong, tls_mode="implicit" if implicit else "starttls")
+        ).send(_msg(), "prof@uni.example")
+        assert not res.ok and res.error_class is ErrorClass.TLS
+        assert wrong.messages == [] and wrong.auth_attempts == []
+    finally:
+        wrong.stop()
+
+
 async def test_a_cancelled_connect_closes_the_connection() -> None:
     """CodeRabbit 4504362607: a job cancelled (drain, budget) while the session is being
     opened must not leave the socket open."""

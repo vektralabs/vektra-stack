@@ -94,7 +94,7 @@ def test_feedback_index_holds_only_what_the_bundle_shows() -> None:
     assert "domanda 2" not in idx  # structured-only path: no review text in the bundle
 
 
-def test_commento_del_docente_dice_is_a_quote_lead() -> None:
+def test_teacher_comment_says_lead_is_a_quote_lead() -> None:
     ok = 'Il Commento del docente dice: "manca la conclusione".'
     assert feedback_quote.check(ok, INDEX).text == ok
     out = feedback_quote.check('Il Commento del docente dice: "ottimo lavoro".', INDEX)
@@ -114,7 +114,7 @@ def test_a_quote_citing_an_item_without_feedback_is_replaced(sentence: str) -> N
     assert out.replaced == 1 and MISSING in out.text
 
 
-def test_running_text_domanda_is_not_a_citation() -> None:
+def test_running_text_question_word_is_not_a_citation() -> None:
     s = 'La domanda chiedeva altro. Commento del docente: "manca la conclusione".'
     assert feedback_quote.check(s, INDEX).text == s
 

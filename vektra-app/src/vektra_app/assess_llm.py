@@ -31,8 +31,15 @@ STEP = "assess_llm_check"
 
 
 def build_assess_safeguard(
-    mode: str, *, factory: Callable[[str], SafeguardHook] | None = None
+    settings: VektraAssessSettings,
+    *,
+    factory: Callable[[str], SafeguardHook] | None = None,
 ) -> SafeguardHook:
+    """The discussion safeguard for ``settings``: mode, model locality and the explicit
+    development flag. The safeguard/locality rule is enforced HERE, so every caller (startup
+    step 13, the eval adapter) gets it; step 13 also checks it first, for its message."""
+    check_safeguard_locality(settings)
+    mode = settings.safeguard_mode
     if mode == "none":
         return PassthroughSafeguard()
     if factory is None:
@@ -363,7 +370,7 @@ async def step_13_assess_llm_check(
         )
     check_safeguard_locality(settings)
     app.state.assess_safeguard = build_assess_safeguard(
-        settings.safeguard_mode, factory=safeguard_factory
+        settings, factory=safeguard_factory
     )
     app.state.assess_llm = build_assess_llm(settings)
     app.state.assess_metrics = (

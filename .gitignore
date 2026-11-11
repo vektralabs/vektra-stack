@@ -103,3 +103,6 @@ temp/
 secrets/
 # Assess eval reports (synthetic runs, regenerated; real-data runs stay on-prem)
 tests/eval/assess/results/
+# NFR run results (scripts/assess_burst.py, assess_nfr_report.py): machine- and run-specific,
+# uploaded as CI artifacts, never committed; the scripts create the directory
+tests/nfr/results/*.json

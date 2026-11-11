@@ -401,7 +401,7 @@ async def _close_facts(deps: GenerationDeps, row: Any) -> CloseFacts:
     if deps.facts is None:
         return CloseFacts()
     # each part lands here as soon as it is read: past the timeout the transcript keeps the
-    # course and the grade already read, only the rest is "non disponibile" (4503029420)
+    # course and the grade already read, only the rest is "non disponibile"
     sink: dict[str, Any] = {}
     try:
         async with asyncio.timeout(deps.facts_timeout_s):

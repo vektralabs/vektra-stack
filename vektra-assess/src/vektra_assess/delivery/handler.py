@@ -361,7 +361,7 @@ async def _unresolved(
     """No readable recipient: due rows wait (RETRYING, backoff) or end FAILED past the window."""
     out.unresolved = True
     # a crash-marked row keeps its marker (the resend must audit the possible duplicate) but
-    # waits like the others instead of being offered again on every tick (4504591109)
+    # waits like the others instead of being offered again on every tick
     waiting = (
         await conn.execute(
             _STALE_WAITING, {"t": t.id, "now": now, "stale": now - deps.stale_after}

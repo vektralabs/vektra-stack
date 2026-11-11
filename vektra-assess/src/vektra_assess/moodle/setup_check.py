@@ -667,8 +667,8 @@ async def run_setup_check(
             moodle_origin=moodle_origin,
         )
         async with engine.begin() as conn:
-            # a site disabled while the network part ran gets nothing written (CodeRabbit
-            # 4506450163): FOR UPDATE holds off a concurrent disable until this commits, and a
+            # a site disabled while the network part ran gets nothing written:
+            # FOR UPDATE holds off a concurrent disable until this commits, and a
             # disable that committed first is seen here. FOR UPDATE, not FOR SHARE: it is the
             # lock observe_release asks for, taken first so two persists of one site serialise
             # instead of deadlocking

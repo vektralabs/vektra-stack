@@ -165,7 +165,7 @@ export class App {
       body = (await r.json()) as { session_id: string; token: string };
     } catch {
       // accepted, but its answer was lost: the server is preparing the session, so the
-      // student resumes it by reloading (the plugin then mints for a resume, 4501070014)
+      // student resumes it by reloading (the plugin then mints for a resume)
       this.token = null;
       this.dispatch({ type: "unavailable" });
       return this.setStatus(M.reloadToResume);
@@ -178,7 +178,7 @@ export class App {
 
   /** The session is committed: show it only once its snapshot (opening, deadline, turns) is
    *  loaded, retrying a failed read; if every attempt fails the discussion is unavailable
-   *  (reloading resumes it), never an empty open conversation (4501067234). */
+   *  (reloading resumes it), never an empty open conversation. */
   private async loadCommitted(): Promise<void> {
     for (let attempt = 0; ; attempt++) {
       if (await this.refresh()) return this.dispatch({ type: "committed" });
@@ -270,7 +270,7 @@ export class App {
     this.replyPending = view.reply_pending;
     if (view.state === "OUTAGE" && !stateIsOlder) {
       // a resume into an outage gets no outage_start replayed: the snapshot says it, and the
-      // frozen time left comes from it (4501070038, 4501070048)
+      // frozen time left comes from it
       this.showOutage();
       if (typeof view.remaining_s === "number")
         this.controls.setTime(minutesLeft(view.remaining_s * 1000, 0));
@@ -317,7 +317,7 @@ export class App {
         return this.loadCommitted();
       case "state":
         // the stream's first event is a state snapshot: a session that committed before the
-        // stream opened sends ACTIVE (or OUTAGE) and no committed event (4501070029)
+        // stream opened sends ACTIVE (or OUTAGE) and no committed event
         if (this.state.name === "preparing" && (data.state === "ACTIVE" || data.state === "OUTAGE"))
           return this.loadCommitted();
         return;
@@ -334,7 +334,7 @@ export class App {
         }
         return;
       // reply events count only while a reply is owed: after a resume the stream may replay
-      // the events of replies the snapshot already shows (4501070057)
+      // the events of replies the snapshot already shows
       case "reply_delta":
         if (this.replyPending && typeof data.text === "string") this.chat.delta(data.text);
         return;
@@ -343,7 +343,7 @@ export class App {
         if (!this.replyPending) return;
         // the end of a reply the snapshot already shows (the stream replays its ring when it
         // opens without a cursor): its replayed text goes, no read, no announcement; the
-        // owed reply's events follow it in the ring (4501070057 follow-up)
+        // owed reply's events follow it in the ring
         if (typeof data.turn_no === "number" && data.turn_no <= this.lastTurnNo) {
           this.chat.discardStreaming();
           return;
@@ -390,7 +390,7 @@ export class App {
   private async sendTurn(): Promise<void> {
     const text = this.chat.composer.value;
     if (!text.trim() || this.state.name !== "active") return;
-    // the server's count: code points (4501070009); the student keeps the text to shorten it
+    // the server's count: code points; the student keeps the text to shorten it
     if ([...text].length > this.maxChars) return this.chat.setEnabled(true, M.tooLong(this.maxChars));
     this.chat.setEnabled(false, "");
     // owed from the moment it is sent: the reply's events may arrive before the 202 is read
@@ -421,7 +421,7 @@ export class App {
   }
 
   /** A turn that did not go through: the composer opens again only if the session is still
-   *  ACTIVE with no reply owed (an outage or a close meanwhile keeps it closed, 4501070043). */
+   *  ACTIVE with no reply owed (an outage or a close meanwhile keeps it closed). */
   private sendFailed(help: string): void {
     this.replyPending = false; // nothing was accepted, so nothing is owed
     if (this.state.name === "active" && !this.replyPending) this.chat.setEnabled(true, help);
@@ -529,7 +529,7 @@ export class App {
   }
 
   private async downloadWith(tid: string, token: string): Promise<void> {
-    clearTimeout(this.downloadTimer); // answered: this request's deadline is gone (4501067245)
+    clearTimeout(this.downloadTimer); // answered: this request's deadline is gone
     this.pendingDownload = null;
     const button = this.main.querySelector(".closing button") as HTMLButtonElement | null;
     if (button) button.disabled = false;
@@ -581,7 +581,7 @@ export class App {
         this.chat.setEnabled(false, "");
         const closing = new ClosingView(s.reason, this.closedAt, () => this.requestDownload());
         this.banner.hidden = true;
-        // a question about a session that no longer takes flags is withdrawn (4501067248)
+        // a question about a session that no longer takes flags is withdrawn
         if (this.flagDialog.dialog.open) this.flagDialog.dialog.close("cancel");
         if (this.controls.dialog.open) this.controls.dialog.close("cancel");
         this.main.replaceChildren(...(keep as Node[]), closing.root, this.chat.root);

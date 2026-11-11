@@ -390,8 +390,7 @@ class TurnDriver:
             if not claimed:
                 log.info("assess_reply_not_claimed")  # another driver answers this turn
                 return
-            # the claim may come after another driver answered (CodeRabbit review
-            # 5808100754): generate only while this very student turn is still pending
+            # the claim may come after another driver answered: generate only while this very student turn is still pending
             if expected_seq is not None and not await self._still_pending(
                 sid, epoch, expected_seq
             ):

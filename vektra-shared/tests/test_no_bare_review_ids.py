@@ -18,7 +18,17 @@ from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-BARE_REVIEW_ID = re.compile(r"CodeRabbit [0-9]{6,}|[Rr]eview [0-9]{6,}")
+#: three forms: a labelled id (``CodeRabbit 4498473548``, ``review 5812478913``); an
+#: unlabelled one, which is the shape of every review-thread id the hosting service has issued
+#: here (ten digits starting with 4 or 5: ``(4504591109)``), standing alone so a hex hash or an
+#: identifier that merely contains such digits is not one (a real constant of that size is
+#: written with separators, ``4_294_967_295``); and, across lines, a label that ends one
+#: comment line with its digits starting the next.
+BARE_REVIEW_ID = re.compile(
+    r"CodeRabbit [0-9]{6,}|[Rr]eview [0-9]{6,}|(?<![\w.])[45][0-9]{9}(?!\w)"
+)
+_LABEL_AT_END = re.compile(r"(?:CodeRabbit(?: review)?|[Rr]eview)\s*$")
+_DIGITS_AT_START = re.compile(r"^\s*(?:#:?|//|\*)?\s*[0-9]{6,}")
 _TEXT_SUFFIXES = {".py", ".ts", ".js", ".mjs", ".cjs", ".jsx", ".tsx", ".html", ".css"}
 
 
@@ -41,11 +51,17 @@ def _perimeter() -> list[PurePosixPath]:
 
 
 def offences(text: str) -> list[tuple[int, str]]:
-    return [
-        (n, line.strip())
-        for n, line in enumerate(text.splitlines(), start=1)
-        if BARE_REVIEW_ID.search(line)
-    ]
+    lines = text.splitlines()
+    found: list[tuple[int, str]] = []
+    for n, line in enumerate(lines, start=1):
+        split = (
+            n < len(lines)
+            and _LABEL_AT_END.search(line) is not None
+            and _DIGITS_AT_START.match(lines[n]) is not None
+        )
+        if split or BARE_REVIEW_ID.search(line):
+            found.append((n, line.strip()))
+    return found
 
 
 def test_the_perimeter_is_not_empty() -> None:
@@ -64,7 +80,25 @@ def test_the_matcher_finds_the_forms_it_exists_for() -> None:
         '"""Review 1234567 said so."""\n'
     )
     assert [n for n, _ in offences(bad)] == [1, 2, 3, 4]
-    fine = "# review fix 6\n# plan 13a\n# REQ-071, ERR-ASSESS-009, revision 0034\n"
+    unlabelled = (
+        "# waits like the others (4504591109)\n"  # 1
+        "// mints for a resume, 4501070014)\n"  # 2
+        "x = 1\n"
+        "# the other pools (CodeRabbit\n"  # 4: the label, split from its digits
+        "# 123456 on the next line)\n"  # 5: six digits, caught only through line 4
+        "    # reads the rejected value (CodeRabbit review\n"  # 6
+        "    # 5808100754): generate\n"  # 7: also an unlabelled id by itself
+    )
+    assert [n for n, _ in offences(unlabelled)] == [1, 2, 4, 6, 7]
+    fine = (
+        "# review fix 6\n# plan 13a\n# REQ-071, ERR-ASSESS-009, revision 0034\n"
+        'STYLE_SHA256 = "d435a52514347012e4cdb9d0cba58f3f1b5cdeb3c6aedd99aa0566599ee103c7"\n'
+        '"seeded_at": 1793619221,\n'  # an epoch timestamp
+        "MAX = 4_294_967_295\n"  # a constant written with separators
+        "h = 0x4501070014\nv = 1.4501070014\nname_4501070014 = 1\n"
+        "# 45010700141 has eleven digits\n"
+        "# a code review\n# 2026 was the year\n"  # a label at the end, no id after it
+    )
     assert offences(fine) == []
 
 

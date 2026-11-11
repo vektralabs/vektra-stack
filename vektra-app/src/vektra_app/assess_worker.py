@@ -1036,8 +1036,7 @@ def check_imports() -> None:
 async def _amain(bindings: Any | None = None) -> int:
     # A heartbeat left by a previous run must not vouch for this one. The settings may be
     # invalid here: then the path comes from the variable or the default, and the guarded
-    # ``_checks`` below reports the error by name, never with the rejected value (CodeRabbit
-    # 4525094921)
+    # ``_checks`` below reports the error by name, never with the rejected value
     from pydantic import ValidationError
 
     from vektra_assess.config import VektraAssessSettings

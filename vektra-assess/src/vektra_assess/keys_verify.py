@@ -131,8 +131,8 @@ CHECKS: tuple[Check, ...] = (
     ),
     # in practice fingerprint-only: the API, which holds the private key, may not read the
     # hand-off table (it reads a live hand-off through a definer function), so this reports
-    # ``skipped``; the worker reads the table but never holds the private key (CodeRabbit
-    # 4525094929). Kept so a future grant makes it a real presence check.
+    # ``skipped``; the worker reads the table but never holds the private key.
+    # Kept so a future grant makes it a real presence check.
     Check(
         "assess_handoff_private",
         "assess_session_handoff.handoff_kid",

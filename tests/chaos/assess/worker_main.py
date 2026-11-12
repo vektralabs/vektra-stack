@@ -84,6 +84,10 @@ def _installed_stand_in() -> Any:
     class StandIn(FakeLmsProvider):
         __vektra_test_double__ = False  # the registry reads the marker on the class
 
+        @property
+        def name(self) -> str:  # the registry key: it must equal the entry point's name
+            return "stub"
+
     return StandIn(scenario_world())
 
 

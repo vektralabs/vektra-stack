@@ -18,7 +18,7 @@ from vektra_lms_moodle.client import MoodleWsClient, SiteRef
 from vektra_lms_moodle.config import MoodleSettings
 from vektra_lms_moodle.result import Readable, UnreadableReason
 
-TOKEN = "0123456789abcdef0123456789abcdef"
+TOKEN = "0123456789abcdef0123456789abcdef"  # gitleaks:allow
 
 
 def _key():

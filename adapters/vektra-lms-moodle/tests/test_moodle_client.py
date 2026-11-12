@@ -17,7 +17,7 @@ from vektra_lms_moodle.config import MoodleSettings
 from vektra_lms_moodle.ratelimit import AsyncTokenBucket
 from vektra_lms_moodle.result import Readable, Unreadable, UnreadableReason
 
-TOKEN = "0123456789abcdef0123456789abcdef"
+TOKEN = "0123456789abcdef0123456789abcdef"  # gitleaks:allow
 SITE = SiteRef("site-1", "https://moodle.example.org", release="5.2.4+")
 
 

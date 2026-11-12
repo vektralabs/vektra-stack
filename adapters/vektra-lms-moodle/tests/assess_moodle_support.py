@@ -29,7 +29,7 @@ from vektra_shared.lms import LmsSite
 FIXTURES = Path(__file__).parent / "fixtures" / "moodle_ws"
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 BRANCHES = ("4.3", "5.2")
-TOKEN = "0123456789abcdef0123456789abcdef"
+TOKEN = "0123456789abcdef0123456789abcdef"  # gitleaks:allow
 BASE_URL = "https://moodle.example.org"
 _STD = {"wstoken", "wsfunction", "moodlewsrestformat"}
 

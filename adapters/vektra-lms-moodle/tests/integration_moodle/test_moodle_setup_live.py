@@ -204,7 +204,10 @@ async def test_the_ingestion_item_is_unverifiable_without_the_setting(
 
 async def test_an_unknown_token_reads_as_revoked(branch: str) -> None:
     """A token Moodle does not know answers ``invalidtoken``: the same signal as a deleted one."""
-    out, items = await run_check(branch, "0123456789abcdef0123456789abcdef")
+    out, items = await run_check(
+        branch,
+        "0123456789abcdef0123456789abcdef",  # gitleaks:allow
+    )
     print(
         f"\n[{branch}] unknown token: {items['token_works']} rejected={out.token_rejected}"
     )

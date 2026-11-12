@@ -661,3 +661,56 @@ async def test_pg_dump_by_a_role_rls_restricts_fails_loudly(pg: Pg) -> None:
     assert code != 0
     assert "query would be affected by row-level security policy" in stderr
     assert (await dump("test", "test"))[0] == 0
+
+
+async def test_an_invalidated_transaction_keeps_its_own_error_and_leaves_no_stale_site(
+    pg: Pg,
+) -> None:
+    """CI e2e on #209: a transaction whose connection was invalidated (a disconnect inside
+    the block) rolls back, and the rollback listener touched ``conn.info``, which on an
+    invalidated connection raises ``PendingRollbackError`` and masked the original error. The
+    listener must never raise; the next transaction on the engine works and is bound to the
+    request's site only (no marker left from the dead connection)."""
+    from sqlalchemy.exc import DBAPIError, PendingRollbackError
+
+    a, b, sid_a, _sid_b = await _two_sites(pg)
+    engine = install_site_binding(
+        create_async_engine(pg.url("api"), pool_size=1, max_overflow=0)
+    )
+    try:
+        # 1. invalidated by hand, then the block raises its own error
+        set_request_site(a)
+        with pytest.raises(LookupError, match="the original"):
+            async with engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+                await conn.invalidate()
+                raise LookupError("the original")
+        # 2. a real disconnect: the session's own backend terminated mid-transaction
+        with pytest.raises(DBAPIError) as exc:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("SELECT pg_terminate_backend(pg_backend_pid())")
+                )
+        assert not isinstance(exc.value, PendingRollbackError)
+        # the engine still serves, bound to the request's site
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(text("SELECT id FROM assess_sessions"))
+            ).fetchall()
+            assert [r[0] for r in rows] == [sid_a]
+            await conn.rollback()
+        # a new request (no site yet) is unbound: no stale marker made bind_site skip
+        reset_site()
+        async with engine.connect() as conn:
+            assert (
+                await conn.execute(text("SELECT count(*) FROM assess_sessions"))
+            ).scalar() == 0
+            await bind_site(conn, b)
+            seen = (
+                await conn.execute(text("SELECT DISTINCT site_id FROM assess_sessions"))
+            ).fetchall()
+            assert [r[0] for r in seen] == [b]
+            await conn.rollback()
+    finally:
+        reset_site()
+        await engine.dispose()

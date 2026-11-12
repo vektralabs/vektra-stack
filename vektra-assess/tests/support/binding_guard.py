@@ -57,7 +57,10 @@ class BindingGuard:
         self._engines.clear()
 
     def _end(self, conn: Any) -> None:
-        conn.info.pop(_FLAG, None)
+        # never touch ``info`` of an invalidated connection: it revalidates and raises
+        # PendingRollbackError inside the rollback (site_binding._on_end explains)
+        if not conn.invalidated:
+            conn.info.pop(_FLAG, None)
 
     def _before(
         self,

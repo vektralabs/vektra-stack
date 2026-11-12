@@ -110,7 +110,21 @@ def _on_begin(conn: Any) -> None:
 
 
 def _on_end(conn: Any) -> None:
-    conn.info.pop(_TX_SITE, None)
+    """Commit / rollback listener: forget the transaction's site. It never raises.
+
+    ``Connection.info`` is the pool record's dict (``_ConnectionRecord.info``), reached through
+    ``Connection.connection``, which REVALIDATES: on a connection invalidated inside the block
+    (a disconnect, a cancelled query) it raises ``PendingRollbackError`` from inside the
+    rollback dispatch, masking the error that caused the rollback. An invalidated connection
+    has no DBAPI connection left, and the pool clears the record's ``info`` before it connects
+    the record again (``_ConnectionRecord.get_connection``: ``self.info.clear()``), so no
+    marker can survive it: skip. Otherwise clear it; a failure there is not worth a mask."""
+    if conn.invalidated:
+        return
+    try:
+        conn.info.pop(_TX_SITE, None)
+    except Exception:  # pragma: no cover - the guard above covers the known case
+        return
 
 
 def install_site_binding(engine: AsyncEngine) -> AsyncEngine:

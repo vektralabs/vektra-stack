@@ -196,3 +196,27 @@ def test_a_download_token_whose_site_is_refused_is_the_download_401(
         assert exc.value.status_code == 401
 
     _fresh.run(run)
+
+
+def test_the_end_listener_never_touches_an_invalidated_connection() -> None:
+    """CI e2e on #209: ``Connection.info`` on an invalidated connection revalidates and
+    raises inside the rollback, masking the real error. The listener skips it."""
+
+    class Invalidated:
+        invalidated = True
+
+        @property
+        def info(self) -> dict[str, Any]:
+            raise AssertionError("info read on an invalidated connection")
+
+    sb._on_end(Invalidated())  # no exception
+
+    class Valid:
+        invalidated = False
+
+        def __init__(self) -> None:
+            self.info: dict[str, Any] = {"vektra_assess_tx_site": uuid.uuid4()}
+
+    conn = Valid()
+    sb._on_end(conn)
+    assert conn.info == {}

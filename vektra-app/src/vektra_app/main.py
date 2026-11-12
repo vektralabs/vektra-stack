@@ -31,9 +31,9 @@ from starlette.types import ASGIApp
 
 from vektra_app import __version__
 from vektra_app.assess_llm import step_13_assess_llm_check
+from vektra_app.assess_switch import migration_branches
 from vektra_app.assess_wiring import (
     include_assess_router,
-    migration_branches,
     start_assess_background,
     step_12_assess_check,
     stop_assess_background,

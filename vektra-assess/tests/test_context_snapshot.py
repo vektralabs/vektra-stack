@@ -83,9 +83,9 @@ def test_the_schema_is_version_2_and_a_v1_snapshot_does_not_validate() -> None:
     """Schema 2 (ADR-0033 D2): items carry the neutral kind and state. OD-1: no assess data
     survives the separation, so there is no v1 reader and a v1 header is refused."""
     snap = make()
-    assert snap.header.schema_version == 2
+    assert snap.header.schema_version == 3
     doc = json.loads(canonical_bytes(snap))
-    assert doc["header"]["schema_version"] == 2
+    assert doc["header"]["schema_version"] == 3
     doc["header"]["schema_version"] = 1
     with pytest.raises(ValidationError):
         Snapshot.model_validate(doc)

@@ -186,7 +186,7 @@ printed, because some settings carry connection strings.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `VEKTRA_ASSESS_ENABLED` | bool | `false` | Master switch (see above). Also read by `docker/entrypoint.sh`, which runs `alembic upgrade assess@head` only when it is true (`1`, `true`, `t`, `yes`, `y`, `on`, any case). |
+| `VEKTRA_ASSESS_ENABLED` | bool | `false` | Master switch (see above). Also decides the migrations: `docker/entrypoint.sh` asks `python -m vektra_app.assess_switch` (the helper the API uses for its routes and schema step) and runs `alembic upgrade assess@head` only when it is true. An assess configuration that does not validate reads as off. |
 | `VEKTRA_ASSESS_API_DATABASE_URL` | str | - | DSN of the `vektra_assess_api` role, **without a password** (read from the `assess_db_api_password` secret). A DSN with a password, or one that logs in as the `VEKTRA_DATABASE_URL` user, is refused at startup. |
 | `VEKTRA_ASSESS_WORKER_DATABASE_URL` | str | - | DSN of the `vektra_assess_worker` role, without a password (`assess_db_worker_password` secret). Worker only. |
 | `VEKTRA_ASSESS_SECRETS_DIR` | path | `/run/secrets` | Directory holding the assess secret files. |

@@ -32,7 +32,9 @@ from vektra_assess.parser_protocol import FileStatus
 #: ``QuestionState`` values (``multiple_choice``, ``final_marked``), no longer an LMS's own type
 #: and state names. Under OD-1 no assess data survives the separation, so there is no v1 reader:
 #: a v1 snapshot does not validate.
-SCHEMA_VERSION: Literal[2] = 2
+#: 3 (ADR-0033 D5, PR 2a-3): the header's release field is ``lms_release`` (was named after the
+#: LMS product). An older snapshot is ``UnsupportedSchemaError`` by its version, read first.
+SCHEMA_VERSION: Literal[3] = 3
 
 
 def mark_str(value: float | int | None) -> str | None:
@@ -213,7 +215,7 @@ class FrozenFlags(_Frozen):
 
 
 class SnapshotHeader(_Frozen):
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     activity_kind: ActivityKind
     lms_release: str
     attempt_number: int  # "#k"

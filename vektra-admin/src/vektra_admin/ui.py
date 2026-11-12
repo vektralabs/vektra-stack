@@ -44,6 +44,12 @@ _STATIC_DIR = _BASE_DIR / "static"
 
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
+
+def _assess_enabled(request: Request) -> bool:
+    """Set by the app's assess startup step; an app without it has assess off."""
+    return bool(getattr(request.app.state, "assess_enabled", False))
+
+
 ui_router = APIRouter(prefix="/admin", tags=["admin-ui"])
 
 
@@ -279,7 +285,13 @@ async def keys_page(
         }
         for row in rows
     ]
-    return _render(request, "keys.html", active="keys", keys=keys)
+    return _render(
+        request,
+        "keys.html",
+        active="keys",
+        keys=keys,
+        assess_enabled=_assess_enabled(request),
+    )
 
 
 def _key_row(row: ApiKeyOrm) -> dict[str, Any]:
@@ -307,7 +319,7 @@ async def keys_create(
 
     label = form.get("label", "") or None
     scopes = [str(s) for s in form.getlist("scopes")] or ["admin"]
-    scope_error = scope_set_error(scopes)
+    scope_error = scope_set_error(scopes, assess_enabled=_assess_enabled(request))
     if scope_error is not None:
         result = await session.execute(select(ApiKeyOrm))
         return templates.TemplateResponse(

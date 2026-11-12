@@ -55,7 +55,7 @@
    "grade_released": true,
    "lms_release": "5.2",
    "review_options_closed": true,
-   "schema_version": 2
+   "schema_version": 3
   },
   "overall": {
    "grade": "5",

@@ -5,7 +5,7 @@ assess data survives the separation, decided 2026-11-11). It creates their head 
 neutral names of ADR-0033 D5: ``assess_sites.lms_site_uuid``, ``assess_sites.lms_origin`` (CHECK
 ``ck_assess_sites_lms_origin``) and ``assess_setup_check_reports.lms_release``.
 
-It lives on the ``assess`` branch, which depends on the platform's 0008 and is applied only where
+It lives on the ``assess`` branch, which depends on the platform's 0009 and is applied only where
 assess is enabled: ``docker/entrypoint.sh`` runs ``alembic upgrade platform@head`` always and
 ``alembic upgrade assess@head`` only with ``VEKTRA_ASSESS_ENABLED=true``. A deployment that never
 enables assess gets none of these tables, roles or functions, and needs no CREATEROLE.
@@ -22,9 +22,14 @@ What the old chain guaranteed and this revision keeps:
 - the three NOLOGIN roles, created here when missing; without CREATEROLE the upgrade stops with
   the managed-Postgres recipe, naming all three roles (formerly 0009 and 0012);
 - the reserved ``assess-discussion`` namespace, refused when it already exists (formerly 0019),
-  the ``query_traces.pipeline`` column and the worker's RESTRICTIVE insert policy (0020);
+  and the worker's RESTRICTIVE insert policy on ``query_traces`` (0020); the
+  ``query_traces.pipeline`` column it narrows is the platform's (revision 0009: analytics maps
+  and filters on it with assess off too);
 - the SECURITY DEFINER functions, owned by ``vektra_assess_definer``: ``ALTER FUNCTION ... OWNER
-  TO`` needs the migration user to be able to ``SET ROLE vektra_assess_definer``;
+  TO`` needs the migration user to be able to ``SET ROLE vektra_assess_definer``. A CREATEROLE
+  user that creates the role here grants it to itself (PostgreSQL 16 gives the creator ADMIN
+  only); a user that cannot SET ROLE to a pre-created one is stopped up front with the recipe
+  (:data:`DEFINER_MEMBERSHIP_MESSAGE`);
 - every table, CHECK constraint, index and trigger of 0044, and the grant matrix
   (:data:`GRANT_STATEMENTS`, rendered by ``vektra_assess.db.grants.render_statements``).
 
@@ -36,7 +41,7 @@ evidence), then drops every assess object and restores the platform tables it to
 are cluster-level, shared with other databases, and stay.
 
 Revision ID: a0001
-Revises: (base of the ``assess`` branch; depends on 0008)
+Revises: (base of the ``assess`` branch; depends on 0009)
 """
 
 from __future__ import annotations
@@ -47,7 +52,7 @@ from alembic import op
 revision = "a0001"
 down_revision = None
 branch_labels = ("assess",)
-depends_on = "0008"
+depends_on = "0009"
 
 ROLE_ATTRS = "NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOINHERIT"
 ROLES = ("vektra_assess_api", "vektra_assess_worker", "vektra_assess_definer")
@@ -60,6 +65,14 @@ CREATEROLE_MESSAGE = (
     f"vektra_assess_worker and vektra_assess_definer, as {ROLE_ATTRS}; make the migration "
     "user a member of vektra_assess_definer, so that it can SET ROLE vektra_assess_definer "
     "(the definer functions are owned by it); then re-run the migration."
+)
+
+#: the message of a migration user that cannot SET ROLE to the definer it did not create
+DEFINER_MEMBERSHIP_MESSAGE = (
+    "assess base revision a0001: the migration user cannot SET ROLE vektra_assess_definer, "
+    "which owns the SECURITY DEFINER functions (ALTER FUNCTION ... OWNER TO needs it). "
+    "An administrator runs GRANT vektra_assess_definer TO <migration user>; "
+    "then re-run the migration. Nothing was changed."
 )
 
 ASSESS_NAMESPACE = "assess-discussion"
@@ -89,8 +102,6 @@ PLATFORM: tuple[str, ...] = (
     "ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_assess_scope_exclusive "
     f"CHECK (NOT (scopes && ARRAY[{ASSESS_SCOPES}]::text[]) "
     f"OR NOT (scopes && {_LEGACY_SCOPES}))",
-    # NULL for every RAG trace; 'assess-discussion' for the discussion runner's traces
-    "ALTER TABLE query_traces ADD COLUMN pipeline VARCHAR(32) NULL",
     "INSERT INTO namespaces (id, display_name, config) "
     f"VALUES ('{ASSESS_NAMESPACE}', 'Assess discussion traces (reserved)', "
     """'{"reserved": true}'::jsonb)""",
@@ -2030,6 +2041,11 @@ def _create_roles() -> None:
                     EXCEPTION WHEN insufficient_privilege THEN
                         RAISE EXCEPTION '{CREATEROLE_MESSAGE}', r;
                     END;
+                    -- PostgreSQL 16: a CREATEROLE non-superuser gets ADMIN on the role it
+                    -- creates, not SET; the definer must be SET-able for OWNER TO below
+                    IF r = '{DEFINER}' AND NOT pg_has_role(current_user, r, 'SET') THEN
+                        EXECUTE format('GRANT %I TO %I', r, current_user);
+                    END IF;
                 END IF;
             END LOOP;
         END
@@ -2056,6 +2072,15 @@ def upgrade() -> None:
     if existing is not None:
         raise RuntimeError(PRE_EXISTING_MESSAGE)
     _create_roles()
+    # a pre-created definer the migration user cannot SET ROLE to: stop with the recipe before
+    # any DDL, never with the raw ALTER FUNCTION error halfway through
+    can_set = (
+        op.get_bind()
+        .execute(sa.text("SELECT pg_has_role(current_user, :r, 'SET')"), {"r": DEFINER})
+        .scalar()
+    )
+    if not can_set:
+        raise RuntimeError(DEFINER_MEMBERSHIP_MESSAGE)
     for stmt in (*PLATFORM, *TABLES, *FOREIGN_KEYS, *FUNCTIONS, *TRIGGERS, POLICY):
         op.execute(stmt)
     # ALTER FUNCTION ... OWNER TO needs CREATE on the schema for the new owner (unless the
@@ -2110,7 +2135,6 @@ def downgrade() -> None:
         f"DELETE FROM namespaces WHERE id = '{ASSESS_NAMESPACE}' "
         "AND config->>'reserved' = 'true'"
     )
-    op.execute("ALTER TABLE query_traces DROP COLUMN pipeline")
     op.execute(
         "ALTER TABLE api_keys DROP CONSTRAINT ck_api_keys_assess_scope_exclusive"
     )

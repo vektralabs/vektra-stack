@@ -271,21 +271,46 @@ class TestScopeSetError:
     def test_valid_sets(self):
         from vektra_shared.auth import scope_set_error
 
-        assert scope_set_error(["admin", "query"]) is None
-        assert scope_set_error(["assess:mint", "assess:privacy-erase"]) is None
+        assert scope_set_error(["admin", "query"], assess_enabled=False) is None
+        assert scope_set_error(["admin", "query"], assess_enabled=True) is None
+        assert (
+            scope_set_error(
+                ["assess:mint", "assess:privacy-erase"], assess_enabled=True
+            )
+            is None
+        )
+
+    def test_assess_scopes_are_refused_while_assess_is_off(self):
+        """ADR-0033 D7: with assess off the assess migration branch never ran, so the
+        database's ck_api_keys_scopes knows no assess scope; the caller answers 422 before
+        the insert instead of a 500 from the IntegrityError (review of #206)."""
+        from vektra_shared.auth import (
+            ASSESS_SCOPES,
+            LEGACY_SCOPES,
+            available_scopes,
+            scope_set_error,
+        )
+
+        assert available_scopes(assess_enabled=False) == LEGACY_SCOPES
+        assert available_scopes(assess_enabled=True) == LEGACY_SCOPES | ASSESS_SCOPES
+        for scope in ASSESS_SCOPES:
+            msg = scope_set_error([scope], assess_enabled=False)
+            assert msg is not None and "VEKTRA_ASSESS_ENABLED" in msg, scope
 
     def test_invalid_and_empty(self):
         from vektra_shared.auth import scope_set_error
 
-        assert "Invalid scopes" in (scope_set_error(["root"]) or "")
-        assert scope_set_error([]) is not None
+        assert "Invalid scopes" in (
+            scope_set_error(["root"], assess_enabled=True) or ""
+        )
+        assert scope_set_error([], assess_enabled=True) is not None
 
     def test_mixed_refused_for_every_pair(self):
         from vektra_shared.auth import ASSESS_SCOPES, LEGACY_SCOPES, scope_set_error
 
         for legacy in LEGACY_SCOPES:
             for assess in ASSESS_SCOPES:
-                msg = scope_set_error([legacy, assess])
+                msg = scope_set_error([legacy, assess], assess_enabled=True)
                 assert msg is not None and "ck_api_keys_assess_scope_exclusive" in msg
 
     def test_model_constraints_mirror_the_vocabulary(self):

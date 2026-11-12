@@ -36,9 +36,9 @@ from vektra_admin import bootstrap as _bootstrap
 from vektra_admin import health as _health
 from vektra_admin.keys import generate_key
 from vektra_shared.auth import (
-    ALL_SCOPES,
     ApiKeyInfo,
     KeyStoreProvider,
+    available_scopes,
     require_scope,
     scope_set_error,
 )
@@ -346,15 +346,18 @@ async def create_api_key(
 
     # --- Validate scopes ---
     requested_scopes = body.scopes if body.scopes is not None else ["admin"]
-    scope_error = scope_set_error(requested_scopes)
+    # set by the app's assess startup step; absent (an app without it) means off
+    assess_enabled = bool(getattr(request.app.state, "assess_enabled", False))
+    scope_error = scope_set_error(requested_scopes, assess_enabled=assess_enabled)
     if scope_error is not None:
         err = ErrorResponse(
             category=ErrorCategory.PERMANENT,
             code="ERR-ADMIN-001",
             message=scope_error,
             remediation=(
-                f"Use only valid scopes: {sorted(ALL_SCOPES)}; a key with an "
-                "assess:* scope holds no admin, ingest or query scope."
+                "Use only valid scopes: "
+                f"{sorted(available_scopes(assess_enabled=assess_enabled))}; a key with "
+                "an assess:* scope holds no admin, ingest or query scope."
             ),
         )
         raise HTTPException(status_code=422, detail=err.to_envelope())

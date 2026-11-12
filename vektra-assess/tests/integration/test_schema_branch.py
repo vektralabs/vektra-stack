@@ -134,7 +134,7 @@ async def test_a_with_assess_off_the_entrypoint_creates_no_assess_object(
     url = await _database(server, "assess_off")
     out = _entrypoint(url, assess=None)
     assert "Assess is disabled" in out
-    assert [r[0] for r in await _sql(url, VERSIONS)] == ["0008"]
+    assert [r[0] for r in await _sql(url, VERSIONS)] == ["0009"]
     assert await _counts(url) == (0, 0, 0)
     # "false" is as off as unset
     _entrypoint(url, assess="false")
@@ -156,7 +156,7 @@ async def test_a_with_assess_off_the_entrypoint_creates_no_assess_object(
             await check_database_schema(url, ini, branches=("platform",))
         assert "unknown to this release: ['0044']" in exc.value.detail
     finally:
-        await _sql(url, "UPDATE alembic_version SET version_num = '0008'")
+        await _sql(url, "UPDATE alembic_version SET version_num = '0009'")
 
 
 async def test_b_with_assess_on_the_entrypoint_migrates_both_branches(
@@ -164,7 +164,7 @@ async def test_b_with_assess_on_the_entrypoint_migrates_both_branches(
 ) -> None:
     url = await _database(server, "assess_on")
     _entrypoint(url, assess="true")
-    # Alembic records the assess base only: it depends on 0008, which is implied
+    # Alembic records the assess base only: it depends on 0009, which is implied
     assert [r[0] for r in await _sql(url, VERSIONS)] == ["a0001"]
     assert await _counts(url) == (TABLES, ROLES, FUNCTIONS)
     # the startup schema step agrees: both branches at head, and a disabled deployment that
@@ -179,7 +179,7 @@ async def test_b_with_assess_on_the_entrypoint_migrates_both_branches(
 async def test_c_the_squash_equals_the_old_chain(server: Any) -> None:
     """Schema and effective privileges, byte for byte, against the goldens of 0044."""
     url = await _database(server, "squash")
-    _run(url, "alembic", "upgrade", "0008")
+    _run(url, "alembic", "upgrade", "0009")
     _run(url, "alembic", "upgrade", "assess@head")
     schema, privileges = await _dumps(server, url)
     assert "CREATE TABLE public.assess_sessions" in schema, "the migrations did not run"
@@ -194,8 +194,8 @@ async def test_c_the_squash_equals_the_old_chain(server: Any) -> None:
 
 
 async def test_d_the_downgrade_gives_back_the_platform_schema(server: Any) -> None:
-    """``alembic downgrade assess@base`` leaves exactly the platform schema at 0008: the api_keys
-    constraint restored, the trace column and the reserved namespace gone."""
+    """``alembic downgrade assess@base`` leaves exactly the platform schema at 0009: the api_keys
+    constraint restored, the reserved namespace gone (the trace column is the platform's)."""
     platform = await _database(server, "platform_only")
     _run(platform, "alembic", "upgrade", "platform@head")
     want, _ = await _dumps(server, platform)
@@ -203,7 +203,7 @@ async def test_d_the_downgrade_gives_back_the_platform_schema(server: Any) -> No
     url = await _database(server, "round_trip")
     _run(url, "alembic", "upgrade", "heads")
     _run(url, "alembic", "downgrade", "assess@base")
-    assert [r[0] for r in await _sql(url, VERSIONS)] == ["0008"]
+    assert [r[0] for r in await _sql(url, VERSIONS)] == ["0009"]
     got, _ = await _dumps(server, url)
     assert got == want
     tables, _, functions = await _counts(url)

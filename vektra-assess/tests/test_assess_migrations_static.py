@@ -1,7 +1,7 @@
 """The assess migration branch, statically (ADR-0033 D7, plan 2a-3).
 
 What the branch must be, read from its files without a database: one base revision on the
-``assess`` branch depending on the platform's 0008, naming no LMS (the LMS boundary guard's own
+``assess`` branch depending on the platform's 0009, naming no LMS (the LMS boundary guard's own
 matcher), carrying the rendered grant matrix, and refusing a migration user without CREATEROLE
 with a message that names all three roles. The database side is
 ``integration/test_schema_branch.py``.
@@ -41,7 +41,7 @@ def test_one_base_revision_on_the_assess_branch() -> None:
     assert mod.revision == "a0001"
     assert mod.down_revision is None
     assert mod.branch_labels == ("assess",)
-    assert mod.depends_on == "0008"
+    assert mod.depends_on == "0009"
 
 
 def test_the_assess_branch_names_no_lms() -> None:

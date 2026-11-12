@@ -70,8 +70,17 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 
 
+#: both migration layouts (ADR-0033 D7): assess on (both branches) and off (the platform only)
+BRANCHES = {"assess-on": "heads", "assess-off": "platform@head"}
+
+
+@pytest.fixture(scope="module", params=sorted(BRANCHES))
+def layout(request) -> str:
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def db_url():
+def db_url(layout):
     """Start a PostgreSQL container, apply migrations, yield the async URL."""
     from testcontainers.postgres import PostgresContainer
 
@@ -86,8 +95,7 @@ def db_url():
         env["VEKTRA_DATABASE_URL"] = async_url
 
         result = subprocess.run(
-            # both branches: the assess scopes and the reserved namespace are tested here
-            ["uv", "run", "alembic", "upgrade", "heads"],
+            ["uv", "run", "alembic", "upgrade", BRANCHES[layout]],
             capture_output=True,
             text=True,
             cwd=project_root,
@@ -150,7 +158,12 @@ def registry(fresh_engine):
 
 
 @pytest.fixture
-def app(registry):
+def assess_on(layout) -> bool:
+    return layout == "assess-on"
+
+
+@pytest.fixture
+def app(registry, assess_on):
     """Per-test FastAPI app with admin router, UI router, AuditMiddleware, RequestIdMiddleware."""
     from vektra_admin.api import router
     from vektra_admin.middleware import AuditMiddleware
@@ -168,6 +181,8 @@ def app(registry):
     _app = FastAPI()
     _app.state.registry = registry
     _app.state.version = "test-0.1.0"
+    # what the app's assess startup step sets (vektra_app.assess_wiring)
+    _app.state.assess_enabled = assess_on
     _app.add_middleware(AuditMiddleware)
     _app.add_middleware(RequestIdMiddleware)
     _app.mount("/admin/static", get_static_files(), name="admin-static")
@@ -445,14 +460,58 @@ async def _login_cookie(client, bootstrap_key: str) -> str:
     return admin_key
 
 
-async def test_assess_scopes_create_and_exclusivity(client, bootstrap_key, session):
+async def test_assess_scopes_are_refused_with_422_while_assess_is_off(
+    client, bootstrap_key, session, assess_on
+):
+    """Assess off (platform branch only): an assess:* scope is a 422 before the insert, never
+    a 500 from the platform's ck_api_keys_scopes, and the keys page offers no assess scope
+    (review of #206)."""
+    from sqlalchemy import text
+
+    if assess_on:
+        pytest.skip("assess on: the scopes are accepted (the next test)")
+    admin_key = await _create_admin_key(client, bootstrap_key)
+    auth = {"Authorization": f"Bearer {admin_key}"}
+    before = (await session.execute(text("SELECT count(*) FROM api_keys"))).scalar()
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"label": "site", "scopes": ["assess:mint"]},
+        headers=auth,
+    )
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["error"]["code"] == "ERR-ADMIN-001"
+    assert "VEKTRA_ASSESS_ENABLED" in body["error"]["message"]
+    assert "assess:mint" not in body["error"]["remediation"]
+
+    client.cookies.set(_COOKIE, admin_key)
+    page = await client.get("/admin/keys")
+    assert page.status_code == 200
+    assert 'value="admin"' in page.text and "assess:mint" not in page.text
+    resp = await client.post(
+        "/admin/keys/create", data={"label": "ui-site", "scopes": ["assess:mint"]}
+    )
+    assert resp.status_code == 200
+    assert "flash-error" in resp.text and "Key created" not in resp.text
+    after = (await session.execute(text("SELECT count(*) FROM api_keys"))).scalar()
+    assert after == before, "a refused request must not create a key"
+
+
+async def test_assess_scopes_create_and_exclusivity(
+    client, bootstrap_key, session, assess_on
+):
     """assess:* keys can be created alone; mixing with admin/ingest/query is refused
     with ERR-ADMIN-001 before the insert, by the API and by the UI (plan
     assess-foundations 4.4, ARCH-067)."""
     from sqlalchemy import text
 
+    if not assess_on:
+        pytest.skip("assess off: the scopes are refused (the previous test)")
     admin_key = await _create_admin_key(client, bootstrap_key)
     auth = {"Authorization": f"Bearer {admin_key}"}
+    client.cookies.set(_COOKIE, admin_key)
+    page = await client.get("/admin/keys")
+    assert "assess:mint" in page.text  # offered only with assess on
 
     resp = await client.post(
         "/api/v1/api-keys",

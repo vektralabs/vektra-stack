@@ -58,6 +58,21 @@ def test_an_old_schema_is_its_own_error_not_a_parse_failure() -> None:
         raise AssertionError("an old schema must not parse")
 
 
+def test_the_lms_release_rename_is_schema_3_and_a_schema_2_header_is_unsupported() -> (
+    None
+):
+    """Review of #206: the header field ``lms_release`` (D5) changed the sealed format, so it
+    has its own version; a version-2 snapshot (``moodle_release``) is refused by version."""
+    assert SCHEMA_VERSION == 3
+    v2 = json.dumps({"header": {"schema_version": 2, "moodle_release": "4.3"}}).encode()
+    try:
+        from_canonical_bytes(v2)
+    except UnsupportedSchemaError as exc:
+        assert exc.version == 2
+    else:  # pragma: no cover
+        raise AssertionError("a schema-2 snapshot must not parse")
+
+
 async def test_an_intact_old_snapshot_is_audited_as_unsupported_not_tampered() -> None:
     """Finding 6: the AEAD tag holds and only the format is old: ``unsupported_schema``, not
     ``unparseable`` (which reads as damage)."""

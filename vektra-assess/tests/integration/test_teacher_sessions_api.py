@@ -31,6 +31,7 @@ from support.teacher_ops import (
 from support.world import auth, configure_activity, err, make_key, world
 
 from integration.test_session_preflight import _reset
+from integration.test_teacher_extra_time import caps
 from vektra_assess.api import teacher_sessions
 from vektra_assess.crypto import rotation
 from vektra_assess.crypto.envelope import InvalidTag
@@ -470,9 +471,14 @@ async def test_an_unreadable_reason_does_not_take_the_list_down(pg, worker) -> N
 async def test_the_panel_shows_the_opening_start_waits_for(pg) -> None:  # type: ignore[no-untyped-def]
     """CodeRabbit 4506916932: with a readable automatic close (an override past the quiz
     close, plus grace) the panel and the config view show it, not the quiz's own close; the
-    holder's id stays hidden from a non-viewer."""
+    holder's id stays hidden from a non-viewer. The capability matrix holds the quiz's close
+    inputs readable (otherwise the REQ-091 path applies, whatever the last facts read got)."""
     async with world(pg) as w:
         with_transcript_key(w)
+        await caps(
+            pg, w.site, "4.5 (Build: 20250101)", quiz_overrides="readable",
+            quiz_grace="readable",
+        )  # fmt: skip
         await configure_activity(pg, w.site, 908, kind="quiz", attested=False)
         await seed_teacher_gate(
             pg, w.site, 908, kind="quiz", close_at=1_900_000_000,
@@ -484,9 +490,106 @@ async def test_the_panel_shows_the_opening_start_waits_for(pg) -> None:  # type:
         config = (
             await w.client.get("/api/v1/assess/activities/908/config", headers=headers)
         ).json()
-        expected = {"at": "2030-03-17T19:47:40+00:00", "source": "activity_close"}
+        expected = {
+            "at": "2030-03-17T19:47:40+00:00",
+            "source": "activity_close",
+            "fallback_required": False,
+        }
         assert panel["opening"] == config["opening"] == expected
         assert "override_holder" not in panel
+
+
+async def expect_opening(
+    w: Any, cmid: int, kind: str, at: str | None, source: str, required: bool
+) -> None:
+    """The config view's ``opening`` and the gate panel's are both exactly this."""
+    headers = {**list_headers(), "X-Assess-Activity-Type": kind}
+    config = await w.client.get(
+        f"/api/v1/assess/activities/{cmid}/config", headers=headers
+    )
+    panel = await w.client.get(list_url(cmid), headers=headers)
+    assert config.status_code == panel.status_code == 200, (config.text, panel.text)
+    expected = {"at": at, "source": source, "fallback_required": required}
+    assert config.json()["opening"] == expected
+    assert panel.json()["gate"]["opening"] == expected
+
+
+async def test_both_views_ask_for_the_fallback_start_needs(pg) -> None:  # type: ignore[no-untyped-def]
+    """Plugin-team report (2026-11-12): GET config said ``activity_close`` while ``/state``
+    said ``not_open/close_unreadable``. An assignment without a REQ-091 date (its extensions
+    are never listable) and a quiz whose overrides were unreadable now read ``unreadable`` with
+    ``fallback_required`` in both views; the PUT of the date turns them ``attested``."""
+    close_at = 1_900_000_000
+    async with world(pg) as w:
+        with_transcript_key(w)
+        # an assignment: the Start gate always takes the REQ-091 path
+        await configure_activity(pg, w.site, 910, attested=False)
+        await seed_teacher_gate(pg, w.site, 910, close_at=close_at, editors=[GRADER])
+        await expect_opening(w, 910, "assign", None, "unreadable", True)
+        r = await w.client.put(
+            "/api/v1/assess/activities/910/opening-fallback",
+            json=body(
+                opening_at="2030-03-17T18:00:00+00:00",
+                attestation=True,
+                attestation_text_version="it-2026-1",
+            ),
+            headers=teacher(),
+        )
+        assert r.status_code == 200, r.text
+        await expect_opening(
+            w, 910, "assign", "2030-03-17T18:00:00+00:00", "attested", False
+        )
+
+        # a quiz whose overrides were unreadable (no automatic close), a 10-minute grace
+        await configure_activity(pg, w.site, 911, kind="quiz", attested=False)
+        await seed_teacher_gate(
+            pg, w.site, 911, kind="quiz", close_at=close_at, automatic_close_at=None,
+            grace_s=600, editors=[GRADER],
+        )  # fmt: skip
+        await expect_opening(w, 911, "quiz", None, "unreadable", True)
+        # a teacher date inside the grace: the gate opens at close + grace, as Start does
+        await pg.run(
+            "super",
+            "UPDATE assess_activity_config SET attested_opening_at = "
+            "to_timestamp(:t) WHERE site_id = :s AND cmid = 911",
+            {"s": w.site, "t": close_at + 60},
+        )
+        # at: close_at + 600
+        await expect_opening(
+            w, 911, "quiz", "2030-03-17T17:56:40+00:00", "activity_close", False
+        )
+
+        # the activity's own close unreadable: a teacher date cannot open it
+        await seed_teacher_gate(
+            pg, w.site, 911, kind="quiz", close_at=None, editors=[GRADER]
+        )
+        await expect_opening(w, 911, "quiz", None, "unreadable", False)
+
+
+async def test_the_opening_fallback_body_requires_the_common_fields(pg) -> None:  # type: ignore[no-untyped-def]
+    """docs/reference/api.md: ``courseid`` and ``activity_type`` are required (with
+    ``actor_userid``); a missing one is ``400 ERR-ASSESS-014`` ``missing:<field>``."""
+    async with world(pg) as w:
+        await configure_activity(pg, w.site, 912, attested=False)
+        await seed_teacher_gate(pg, w.site, 912)
+        full = body(
+            opening_at="2030-03-17T18:00:00+00:00",
+            attestation=True,
+            attestation_text_version="it-2026-1",
+        )
+        for name in ("courseid", "activity_type", "actor_userid"):
+            sent = {k: val for k, val in full.items() if k != name}
+            r = await w.client.put(
+                "/api/v1/assess/activities/912/opening-fallback",
+                json=sent,
+                headers=teacher(),
+            )
+            assert r.status_code == 400, r.text
+            e = err(r)
+            assert (e["code"], e["details"]["reason"]) == (
+                "ERR-ASSESS-014",
+                f"missing:{name}",
+            )
 
 
 async def test_an_out_of_range_close_still_renders_the_list(pg, worker) -> None:  # type: ignore[no-untyped-def]

@@ -106,7 +106,12 @@ async def test_a_new_activity_reads_safe_defaults(pg, pair) -> None:  # type: ig
         }
         assert got["transcript_recipients_state"] == "non impostata"
         assert got["rubric_source"] == "lms" and got["active_sessions"] == 0
-        assert got["opening"]["source"] == "activity_close"
+        # an assignment without a REQ-091 date: Start refuses close_unreadable (REQ-091)
+        assert got["opening"] == {
+            "at": None,
+            "source": "unreadable",
+            "fallback_required": True,
+        }
         assert r.headers["cache-control"] == "no-store"
     finally:
         await ctx.__aexit__(None, None, None)

@@ -643,7 +643,10 @@ def test_the_fallback_is_refused_when_every_close_input_is_readable(
     world: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     w = world(fallback_script())
+    # readable in the matrix AND in the last facts read (an automatic close): Start opens
+    # without a teacher date
     w.readable = {"quiz_overrides": True, "quiz_grace": True}
+    w.facts["automatic_close_at"] = NOW - 3600
     status, detail = refused(fallback(monkeypatch, at(NOW + 600), attestation=False))
     assert status == 400
     assert fields(detail) == [

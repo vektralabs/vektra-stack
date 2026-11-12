@@ -592,7 +592,7 @@ async def test_ui_keys_crud(client, bootstrap_key, session):
     assert "Key revoked" in resp.text
 
 
-async def test_ui_namespaces_crud(client, bootstrap_key, session):
+async def test_ui_namespaces_crud(client, bootstrap_key, session, assess_on):
     """Namespaces page: create, list with doc count, delete."""
     admin_key = await _login_cookie(client, bootstrap_key)
     client.cookies.set(_COOKIE, admin_key)
@@ -624,7 +624,8 @@ async def test_ui_namespaces_crud(client, bootstrap_key, session):
     resp = await client.request("DELETE", "/admin/namespaces/assess-discussion")
     assert resp.status_code == 403
     resp = await client.get("/admin/namespaces")
-    assert "assess-discussion" in resp.text
+    # the reserved row exists only where the assess branch ran; the refusals above hold either way
+    assert ("assess-discussion" in resp.text) == assess_on
 
 
 async def test_ui_audit_page(client, bootstrap_key, session):
@@ -686,12 +687,13 @@ async def _seed_namespace(fresh_engine, ns_id: str, config: dict | None = None) 
         await s.commit()
 
 
-async def _read_namespace_config(fresh_engine, ns_id: str) -> dict:
+async def _read_namespace_config(fresh_engine, ns_id: str) -> dict | None:
+    """The row's config; None when the namespace has no row (the reserved one with assess off)."""
     async with fresh_engine() as s:
         result = await s.execute(
             text("SELECT config FROM namespaces WHERE id = :ns"), {"ns": ns_id}
         )
-        return result.scalar_one()
+        return result.scalar_one_or_none()
 
 
 async def test_namespace_config_patch_sets_grounding_mode(
@@ -1157,11 +1159,14 @@ async def test_namespace_config_patch_rejects_citations_enabled_non_bool(
 
 
 async def test_namespace_config_patch_refuses_the_reserved_assess_namespace(
-    client, bootstrap_key, fresh_engine
+    client, bootstrap_key, fresh_engine, assess_on
 ):
-    """assess-discussion (revision 0019) holds assess traces only: its config is not writable."""
+    """assess-discussion (the assess branch's reserved row) holds assess traces only: its config
+    is not writable. The refusal is the platform's, by id: it holds with assess off too, where
+    the row does not exist (and the PATCH must not create it)."""
     admin_key = await _create_admin_key(client, bootstrap_key)
     before = await _read_namespace_config(fresh_engine, "assess-discussion")
+    assert (before is not None) == assess_on
     resp = await client.patch(
         "/api/v1/admin/namespaces/assess-discussion/config",
         json={"grounding_mode": "hybrid"},

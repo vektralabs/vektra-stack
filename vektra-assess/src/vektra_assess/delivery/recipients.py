@@ -43,12 +43,12 @@ RECIPIENTS_KEY = TRANSCRIPT_RECIPIENTS
 
 
 class GraderLike(Protocol):
-    """A user holding the grading capability (``moodle.domain.GraderView`` fits; this package
-    must not import ``vektra_assess.moodle``, import-linter contract (c)). Graders still decide
-    who may download or resend (``api.graders``); they are no longer the recipients."""
+    """A user holding the grading capability (``vektra_shared.lms.StaffMember`` fits; this
+    package holds no LMS provider, import-linter contract (c)). Graders still decide who may
+    download or resend (``api.graders``); they are no longer the recipients."""
 
     @property
-    def userid(self) -> int: ...
+    def user_id(self) -> int: ...
 
     @property
     def fullname(self) -> str: ...

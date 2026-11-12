@@ -207,6 +207,7 @@ OTHER_MEMBERS = frozenset(
     {
         "name",
         "setup_items",
+        "required_secrets",
         "startup_problems",
         "aclose",
         "service_account_check",
@@ -559,6 +560,8 @@ async def check_capabilities(target: ConformanceTarget) -> None:
 
 async def check_lifecycle(target: ConformanceTarget) -> None:
     async with built(target, TransportMode.RECORDED) as provider:
+        secrets = provider.required_secrets
+        assert isinstance(secrets, tuple) and all(isinstance(s, str) for s in secrets)
         for development in (True, False):
             problems = provider.startup_problems(development)
             assert isinstance(problems, tuple)

@@ -1,4 +1,7 @@
-"""capture_quiz / capture_assign on the recorded 4.3 and 5.2 responses (plan assess-context C).
+"""capture_quiz / capture_assign on the recorded 4.3 and 5.2 responses (plan assess-context C),
+through the Moodle LMS provider: Vektra's capture and canary sinks over the provider's recorded
+reviews, the joint BR-011 guarantee of ADR-0033 D4. The capture logic on neutral values alone is
+in ``test_capture_fake.py``.
 
 The parser is the sidecar's own dispatch (``child.run``) called in-process, so file and HTML
 statuses are the real ones without a socket. Expectations come from the seed manifest.
@@ -14,12 +17,12 @@ from assess_moodle_support import (
     BRANCHES,
     FIXTURES,
     Replay,
-    make_client,
     manifest,
-    site_for,
+    site_readers,
     uid,
 )
 
+from vektra_assess.context.capture.bound import SiteReaders
 from vektra_assess.context.capture.capture import (
     AssignTarget,
     Built,
@@ -32,13 +35,12 @@ from vektra_assess.context.capture.capture import (
     capture_assign,
     capture_quiz,
 )
-from vektra_assess.context.capture.readers import MoodleCaptureReaders
 from vektra_assess.context.capture.selection import NotEligibleReason
 from vektra_assess.context.snapshot import GradeKind, canonical_bytes
-from vektra_assess.moodle.readers import read_submission_status
-from vektra_assess.moodle.result import Readable
-from vektra_assess.parser_protocol import FileStatus
+from vektra_assess.moodle.provider import MOODLE_REVIEW_PROFILE
+from vektra_assess.parser_protocol import FileStatus, ReviewProfile
 from vektra_assess.parser_sidecar.child import run
+from vektra_shared.lms import HtmlExtractionProfile, Readable
 from vektra_testkit.recorders import find_canaries
 
 OFF = TeacherConfigView(show_solution=False, rubric_source="none")
@@ -49,6 +51,7 @@ class InProcessParser:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.profiles: list[str] = []
 
     async def parse_file(self, data: bytes, ext_hint: str = "") -> Any:
         self.calls.append("parse")
@@ -59,15 +62,31 @@ class InProcessParser:
         return run("sanitize_html", html, "html", max_pages=1, max_chars=200_000)
 
     async def extract_review_item(
-        self, html: bytes
+        self, html: bytes, profile: HtmlExtractionProfile
     ) -> tuple[str | None, str | None, bool]:
-        """The real client's parsing of the sidecar's reply, without the socket."""
+        """The real client's parsing of the sidecar's reply, without the socket: the
+        provider's profile goes over the wire form the sidecar validates (ADR-0033 D4)."""
         import json
 
         self.calls.append("review_item")
-        res = run("review_item", html, "html", max_pages=1, max_chars=200_000)
+        self.profiles.append(profile.profile_version)
+        res = run(
+            "review_item",
+            html,
+            "html",
+            max_pages=1,
+            max_chars=200_000,
+            profile=wire_profile(profile),
+        )
         doc = json.loads(res.text)
-        return doc["qtext"], doc["response"], doc["truncated"]
+        return doc["question_text"], doc["response"], doc["truncated"]
+
+
+def wire_profile(profile: HtmlExtractionProfile) -> ReviewProfile:
+    """What ``ParserClient`` sends for ``profile`` (and the sidecar re-validates)."""
+    return ReviewProfile.build(
+        profile.keep, profile.drop_classes, profile.profile_version
+    )
 
 
 @pytest.fixture(params=BRANCHES)
@@ -75,13 +94,11 @@ def branch(request: pytest.FixtureRequest) -> str:
     return str(request.param)
 
 
-def _env(branch: str) -> tuple[Replay, MoodleCaptureReaders, dict[str, Any]]:
+def _env(branch: str) -> tuple[Replay, SiteReaders, dict[str, Any]]:
+    """The recordings behind the Moodle provider, bound to the branch's site: Vektra's capture
+    and canary sinks over the provider's recorded reviews (the joint guarantee, ADR-0033 D4)."""
     replay = Replay(branch)
-    return (
-        replay,
-        MoodleCaptureReaders(make_client(replay), site_for(branch)),
-        manifest(branch),
-    )
+    return replay, site_readers(replay), manifest(branch)
 
 
 def _all_canaries(m: dict[str, Any]) -> list[str]:
@@ -131,14 +148,15 @@ async def test_quiz_items_carry_question_and_answer_for_enabled_types(
     out, m, parser = await _quiz(branch, "types")
     assert isinstance(out, Built), out
     by_type = {i.qtype: i for i in out.snapshot.quiz_items}
-    for qtype in ("truefalse", "multichoice", "shortanswer", "numerical"):
+    # the provider's neutral kinds (ADR-0033 D2), not Moodle's qtype names
+    for qtype in ("true_false", "multiple_choice", "short_answer", "numerical"):
         item = by_type[qtype]
         assert item.question_text and "VISIBLE-QTEXT" in item.question_text, qtype
         assert item.response_text, qtype
         assert not item.degraded, qtype
-    for qtype in ("multianswer", "ddwtos", "match", "gapselect"):
+    for qtype in ("embedded_answers", "other", "matching", "gap_select"):
         assert by_type[qtype].question_text is None and by_type[qtype].degraded, qtype
-    assert "description" not in by_type  # information items are not discussion items
+    assert "information" not in by_type  # information items are not discussion items
     assert out.snapshot.degraded_count == sum(
         i.degraded for i in out.snapshot.quiz_items
     )
@@ -152,7 +170,8 @@ async def test_quiz_items_carry_question_and_answer_for_enabled_types(
     extracted = [
         i
         for i in out.snapshot.quiz_items
-        if i.qtype in ("truefalse", "multichoice", "shortanswer", "numerical", "essay")
+        if i.qtype
+        in ("true_false", "multiple_choice", "short_answer", "numerical", "essay")
     ]
     assert parser.calls.count("review_item") == len(extracted)
 
@@ -299,15 +318,12 @@ async def _intake(
     branch: str, user: str, limits: CaptureLimits = CaptureLimits()
 ) -> Any:
     replay, readers, m = _env(branch)
-    client = make_client(replay)
-    site = site_for(branch)
     a = m["assigns"]["files"]
-    status = await read_submission_status(client, site, a["id"], uid(branch, user))
+    status = await readers.submission(a["id"], uid(branch, user))
     assert isinstance(status, Readable)
     for f in status.value.files:
         local = FIXTURES / branch / "files" / f"{user}__{f.filename}"
-        replay.files[urlsplit(f.fileurl).path] = local.read_bytes()
-    readers = MoodleCaptureReaders(client, site)
+        replay.files[urlsplit(f.locator).path] = local.read_bytes()
     audit: list[Any] = []
     target = AssignTarget(
         courseid=m["courseid"],
@@ -363,11 +379,9 @@ async def test_oversized_files_are_not_downloaded(branch: str) -> None:
 async def test_a_foreign_file_is_rejected_and_audited(branch: str) -> None:
     """REQ-101 (a): the reader re-checks ownership against the selected submission at download
     time; a file that is not in it (here: the listing changes between list and fetch) is refused."""
-    replay, _readers, m = _env(branch)
-    client = make_client(replay)
-    site = site_for(branch)
+    replay, readers, m = _env(branch)
     a = m["assigns"]["files"]
-    status = await read_submission_status(client, site, a["id"], uid(branch, "stu1"))
+    status = await readers.submission(a["id"], uid(branch, "stu1"))
     assert isinstance(status, Readable)
 
     def swap(wsfunction: str, body: Any) -> Any:
@@ -384,7 +398,7 @@ async def test_a_foreign_file_is_rejected_and_audited(branch: str) -> None:
     out = await _files(
         target,
         status.value,
-        MoodleCaptureReaders(client, site),
+        readers,
         InProcessParser(),
         CaptureLimits(),
         audit,
@@ -444,7 +458,9 @@ async def test_tex_mathml_code_and_tables_survive_into_the_context(
     from vektra_assess.context.snapshot import QuizItem
 
     html = f"<div class='que'><div class='qtext'>{snippet}</div><fieldset class='ablock'>[x] A</fieldset></div>"
-    qtext, _response, _cut = await InProcessParser().extract_review_item(html.encode())
+    qtext, _response, _cut = await InProcessParser().extract_review_item(
+        html.encode(), MOODLE_REVIEW_PROFILE
+    )
     assert qtext
     item = QuizItem(
         label="1",
@@ -518,9 +534,9 @@ async def test_review_options_closed_follows_the_quiz_close_date(branch: str) ->
     replay, readers, m = _env(branch)
     q = m["quizzes"]["gm_highest"]
     target = QuizTarget(m["courseid"], q["id"], q["cmid"], uid(branch, "stu1"))
-    close = await readers.quiz_close_inputs(m["courseid"], q["id"])
+    close = await readers.quiz_settings(m["courseid"], q["id"])
     assert isinstance(close, Readable)
-    timeclose = close.value.timeclose
+    timeclose = close.value.time_close
     for now in (1, 2_000_000_000):
         out = await capture_quiz(
             target,
@@ -631,21 +647,28 @@ class _SmallCapParser(InProcessParser):
     """The real sidecar extraction with a small char cap: the recorded items come back cut."""
 
     async def extract_review_item(
-        self, html: bytes
+        self, html: bytes, profile: HtmlExtractionProfile
     ) -> tuple[str | None, str | None, bool]:
         import json
 
         self.calls.append("review_item")
-        res = run("review_item", html, "html", max_pages=1, max_chars=90)
+        res = run(
+            "review_item",
+            html,
+            "html",
+            max_pages=1,
+            max_chars=90,
+            profile=wire_profile(profile),
+        )
         doc = json.loads(res.text)
-        return doc["qtext"], doc["response"], doc["truncated"]
+        return doc["question_text"], doc["response"], doc["truncated"]
 
 
 class _NoQuestionParser(InProcessParser):
     """The question block cannot be isolated, a long response is extracted and cut."""
 
     async def extract_review_item(
-        self, html: bytes
+        self, html: bytes, profile: HtmlExtractionProfile
     ) -> tuple[str | None, str | None, bool]:
         self.calls.append("review_item")
         return None, "risposta lunga " * 20, True

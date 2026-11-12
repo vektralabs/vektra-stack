@@ -24,11 +24,13 @@ from vektra_shared.lms import (
     UnreadableReason,
 )
 
-#: ADR-0033 D2, the 23 members: name it here so a silent change of the Protocol is red
+#: ADR-0033 D2, the 23 members plus `required_secrets` (PR 2a-2 review): name them here so a
+#: silent change of the Protocol is red
 PROTOCOL_MEMBERS = frozenset(
     {
         "name",
         "setup_items",
+        "required_secrets",
         "startup_problems",
         "aclose",
         "site_info",
@@ -54,8 +56,8 @@ PROTOCOL_MEMBERS = frozenset(
 )
 
 
-def test_the_protocol_has_the_23_members_of_adr_0033() -> None:
-    assert len(PROTOCOL_MEMBERS) == 23
+def test_the_protocol_has_the_24_members() -> None:
+    assert len(PROTOCOL_MEMBERS) == 24
     assert set(LmsProvider.__protocol_attrs__) == PROTOCOL_MEMBERS  # type: ignore[attr-defined]
 
 

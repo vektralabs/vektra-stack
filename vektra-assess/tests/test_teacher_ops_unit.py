@@ -26,13 +26,13 @@ from vektra_assess.api.teachers import TeacherCheck, TeacherGate
 from vektra_assess.audit import AssessAuditEvent
 from vektra_assess.crypto.teacher_reason import decrypt_reason
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.readable import Readable
 from vektra_assess.teacher.schemas import (
     ExtraTimePut,
     OpeningFallbackPut,
     ResetPost,
     TerminatePost,
 )
+from vektra_shared.lms import Readable
 
 SITE = uuid.uuid4()
 NOW = 1_800_000_000

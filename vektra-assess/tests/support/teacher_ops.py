@@ -1,10 +1,11 @@
 """Seeding helpers of the teacher-operation tests (plan assess-teacher-ops 11b).
 
 Sessions are reached through the REAL code paths: mint and Start through the production routes,
-then the production pre-flight handler. ``live_sessions`` reuses one real capture (stu1's recorded
-submission) for several fake students, as the in-process burst does, so an activity can hold N
-ACTIVE sessions with real snapshots, keys and hand-off rows. The worker-written facts
-(``assess_teacher_gate``, ``assess_gate_inputs``) are seeded as the worker would write them.
+then the production pre-flight handler. ``live_sessions`` reuses one real capture (stu1's
+submission in the fake LMS's scenario world) for several fake students, as the in-process burst
+does, so an activity can hold N ACTIVE sessions with real snapshots, keys and hand-off rows. The
+worker-written facts (``assess_teacher_gate``, ``assess_gate_inputs``) are seeded as the worker
+would write them.
 """
 
 from __future__ import annotations
@@ -14,20 +15,19 @@ import os
 import uuid
 from typing import Any
 
-from assess_moodle_support import Replay, make_client, manifest, site_for
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
-from test_context_capture import InProcessParser
 
+from support.fake_lms import SCENARIO_COURSE
 from support.preflight import FakePartB, FakeSource, activate, deps, job_context
-from support.sessions import BRANCH, fixture_target
+from support.sessions import fixture_target, lms_source
+from support.sessions import site_release as _site_release
 from support.world import World, auth, configure_activity
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.transcript import store
 from vektra_assess.worker.preflight import StartTarget, make_preflight_handler
-from vektra_assess.worker.start_source import MoodleStartSource
 
-GRADER, NOT_GRADER, COURSE = 41, 42, 7
+GRADER, NOT_GRADER, COURSE = 41, 42, SCENARIO_COURSE
 EDITOR = 31  # the editor of test_teacher_authz.seed_gate's defaults
 
 
@@ -115,11 +115,7 @@ async def seed_render(
 
 
 async def site_release(w: World) -> None:
-    await w.pg.run(
-        "super",
-        "UPDATE assess_sites SET release = :r, base_url = :u WHERE id = :s",
-        {"r": manifest(BRANCH)["release"], "u": site_for(BRANCH).base_url, "s": w.site},
-    )
+    await _site_release(w)
 
 
 async def start(w: World, student: int, cmid: int) -> tuple[uuid.UUID, str]:
@@ -135,7 +131,7 @@ async def start(w: World, student: int, cmid: int) -> tuple[uuid.UUID, str]:
 async def live_sessions(
     w: World, worker: AsyncEngine, students: list[int], *, cap_minutes: int = 30
 ) -> tuple[int, dict[int, tuple[uuid.UUID, str]]]:
-    """(cmid, {student: (session id, session token)}): every student ACTIVE on the recorded
+    """(cmid, {student: (session id, session token)}): every student ACTIVE on the scenario
     assignment, through Start and the real pre-flight (one real capture reused)."""
     sub, cmid = fixture_target()
     await site_release(w)
@@ -147,9 +143,7 @@ async def live_sessions(
         )
     )[0][0]:
         await activate(w.pg)
-    real = MoodleStartSource(
-        make_client(Replay(BRANCH)), InProcessParser(), worker.connect
-    )
+    real = lms_source(worker)
     built = await real.capture(
         StartTarget(uuid.uuid4(), w.site, cmid, sub, None, "assign", 1, {})
     )

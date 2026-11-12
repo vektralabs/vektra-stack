@@ -35,10 +35,12 @@ from typing import Any
 import structlog
 
 from vektra_shared.lms import (
+    FILE_NOT_IN_SUBMISSION,
     NOT_IN_USER_COURSES,
     PROVIDER_ERROR,
     SETUP_OK,
     SETUP_UNVERIFIABLE,
+    SUBMISSION_MISMATCH,
     ActivityKind,
     ActivityRef,
     AssignmentDates,
@@ -139,12 +141,14 @@ class FakeLmsProvider:
         setup_items: Sequence[str] = ("token_works", "required_reads"),
         secret: str = "fake-transport-credential",
         problems: Sequence[StartupProblem] = (),
+        required_secrets: Sequence[str] = (),
     ) -> None:
         self.world = world if world is not None else default_world()
         self._name = name
         self._setup_items = tuple(setup_items)
         self.secret = secret
         self._problems = tuple(problems)
+        self._required_secrets = tuple(required_secrets)
         self.calls: list[FakeCall] = []
         #: members whose wire answer was consumed (a read that reached the transport)
         self.consumed: list[str] = []
@@ -239,6 +243,10 @@ class FakeLmsProvider:
     @property
     def setup_items(self) -> tuple[str, ...]:
         return self._setup_items
+
+    @property
+    def required_secrets(self) -> tuple[str, ...]:
+        return self._required_secrets
 
     def startup_problems(self, development: bool) -> tuple[StartupProblem, ...]:
         self.calls.append(FakeCall("startup_problems", {"development": development}))
@@ -401,20 +409,22 @@ class FakeLmsProvider:
         submission_id: int,
     ) -> Reading[bytes]:
         sub = self.world.submissions.get((assignment_id, owner_user_id))
-        owned = (
-            sub is not None
-            and sub.submission_id == submission_id
-            and any(f.locator == ref.locator for f in sub.files)
-        )
-        return self._read(
+        res: Reading[bytes] = self._read(
             "submission_file",
             {
                 "assignment_id": assignment_id,
                 "owner_user_id": owner_user_id,
                 "submission_id": submission_id,
             },
-            self.world.files.get(ref.locator) if owned else None,
+            self.world.files.get(ref.locator),
         )
+        if isinstance(res, Readable):
+            # the ownership re-check, with the Protocol's neutral refusal codes
+            if sub is None or sub.submission_id != submission_id:
+                return Unreadable(UnreadableReason.PARTIAL, SUBMISSION_MISMATCH)
+            if not any(f.locator == ref.locator for f in sub.files):
+                return Unreadable(UnreadableReason.PARTIAL, FILE_NOT_IN_SUBMISSION)
+        return res
 
     async def assignment_release(
         self, site: LmsSite, course_id: int, assignment_id: int, user_id: int
@@ -470,6 +480,15 @@ PROFILE = HtmlExtractionProfile(
     keep={"question_text": "fake-qtext", "response": "fake-response"},
     drop_classes=frozenset({"fake-rightanswer", "fake-feedback"}),
     profile_version="fake-1",
+    kinds=frozenset(
+        {
+            QuestionKind.MULTIPLE_CHOICE,
+            QuestionKind.TRUE_FALSE,
+            QuestionKind.SHORT_ANSWER,
+            QuestionKind.NUMERICAL,
+            QuestionKind.ESSAY,
+        }
+    ),
 )
 
 
@@ -653,14 +672,303 @@ def default_world() -> FakeLmsWorld:
     )
 
 
+# --- the scenario world of the integration suites (plan 2a-2b.1) --------------------------------
+#
+# One course with five students and two graders, and one activity per gate scenario the suites
+# exercise. Neutral values only: the suites seed sessions through the production pre-flight with
+# ``LmsStartSource`` over this world, so they no longer depend on one LMS's recordings.
+
+SCENARIO_RELEASE = "1.0"
+SCENARIO_COURSE = 3
+SCENARIO_SHORTNAME = "EAASSESS"
+STUDENTS: dict[str, int] = {f"stu{i}": 700 + i for i in range(1, 6)}
+GRADERS: dict[str, int] = {"grader1": 801, "grader2": 802}
+#: the past close of every closed activity (the Start gates need a passed close)
+CLOSED_AT = 1_700_000_000
+
+
+@dataclass(frozen=True)
+class AssignScenario:
+    cmid: int
+    assignment_id: int
+    method: str = "simple"  # none | simple | rubric | guide
+    grade_type: str = "point"
+    team: bool = False
+    cutoff: int = CLOSED_AT
+    graded: bool = True
+    released: bool = True
+    files: int = 0
+    marking_workflow: bool = False
+
+
+#: name -> scenario; the names are the ones the suites used for the recorded activities
+ASSIGNS: dict[str, AssignScenario] = {
+    "rubric_vis": AssignScenario(101, 201, method="rubric"),
+    "simple": AssignScenario(102, 202),
+    "scale": AssignScenario(103, 203, grade_type="scale"),
+    "files": AssignScenario(104, 204, files=2),
+    "guide": AssignScenario(105, 205, method="guide"),
+    "team": AssignScenario(106, 206, team=True),
+    "nocutoff": AssignScenario(107, 207, cutoff=0, graded=False),
+    "hiddengrade": AssignScenario(108, 208, released=False),
+    # the browser e2e (vektra-assess/ui/e2e) opens these two: a released rubric assignment
+    # (the rubric's descriptors are never shown, BR-011) and one released through a marking
+    # workflow (BR-010)
+    "rubric_hidden": AssignScenario(109, 209, method="rubric"),
+    "wf": AssignScenario(110, 210, marking_workflow=True),
+}
+#: name -> (cmid, quiz id): one closed, graded essay quiz
+QUIZZES: dict[str, tuple[int, int]] = {"essay": (111, 211)}
+#: the scenario world's content canaries (hidden LMS content; never in a returned value)
+SCENARIO_CANARIES: dict[str, str] = {
+    "right_answer": "CNRY-scenario-right_answer-7001",
+    "hidden_feedback": "CNRY-scenario-hidden_feedback-7002",
+}
+
+
+def scenario_target(name: str = "rubric_vis", user: str = "stu1") -> tuple[int, int]:
+    """(student user id, activity id) of a scenario activity (assignment or quiz)."""
+    cmid = ASSIGNS[name].cmid if name in ASSIGNS else QUIZZES[name][0]
+    return STUDENTS[user], cmid
+
+
+def scenario_kind(name: str) -> ActivityKind:
+    return "assign" if name in ASSIGNS else "quiz"
+
+
+def _assign_world(world: FakeLmsWorld, name: str, a: AssignScenario) -> None:
+    c = SCENARIO_COURSE
+    world.activities[("assign", a.cmid)] = ActivityRef(
+        c, a.assignment_id, SCENARIO_SHORTNAME
+    )
+    world.assignments[(c, a.assignment_id)] = AssignmentSettings(
+        assignment_id=a.assignment_id,
+        activity_id=a.cmid,
+        course_id=c,
+        name=f"Assignment {name}",
+        due_date=a.cutoff,
+        cutoff_date=a.cutoff,
+        grading_due_date=0,
+        allow_submissions_from=CLOSED_AT - 86_400,
+        team_submission=a.team,
+        marking_workflow=a.marking_workflow,
+        grade_type="scale" if a.grade_type == "scale" else "point",
+        scale_id=5 if a.grade_type == "scale" else None,
+        grade_max=None if a.grade_type == "scale" else 100.0,
+    )
+    definition = 300 + a.assignment_id
+    rubric = None
+    if a.method == "rubric":
+        rubric = RubricDefinition(
+            definition,
+            f"Rubric {name}",
+            tuple(
+                RubricCriterion(
+                    cid,
+                    cid,
+                    label,
+                    (
+                        RubricLevel(cid * 10 + 1, 0.0, "insufficient"),
+                        RubricLevel(cid * 10 + 2, 5.0, "adequate"),
+                        RubricLevel(cid * 10 + 3, 10.0, "good"),
+                    ),
+                )
+                for cid, label in ((1, "Clarity"), (2, "Method"))
+            ),
+        )
+    world.gradings[a.cmid] = GradingDefinition(a.cmid, a.method, rubric, None)
+    fillings: list[RubricFilling] = []
+    for user, uid in STUDENTS.items():
+        grade_id = 9000 + a.assignment_id * 10 + int(user[-1])
+        refs = tuple(
+            SubmissionFileRef(
+                f"relazione-{n}.txt",
+                "/",
+                64,
+                "text/plain",
+                f"fake://{name}/{user}/{n}",
+                CLOSED_AT - 3600,
+            )
+            for n in range(1, a.files + 1)
+        )
+        for n, ref in enumerate(refs, start=1):
+            world.files[ref.locator] = (
+                f"Relazione {n} di {user} per {name}: testo consegnato.".encode()
+            )
+        grade = 75.0 if a.graded else None
+        world.submissions[(a.assignment_id, uid)] = Submission(
+            assignment_id=a.assignment_id,
+            user_id=uid,
+            submission_id=5000 + a.assignment_id * 10 + int(user[-1]),
+            team_submission=a.team,
+            state="submitted",
+            time_modified=CLOSED_AT - 3600,
+            online_text=f"<p>VISIBLE-ONLINETEXT-{name}-{user} risposta consegnata</p>",
+            files=refs,
+            grading_status="graded" if a.graded else "notgraded",
+            graded=a.graded,
+            extension_due_date=None,
+            feedback=Feedback(
+                grade_id, grade, "75.00", CLOSED_AT + 3600, ("Buon lavoro.",)
+            )
+            if a.graded
+            else None,
+        )
+        world.dates[(a.assignment_id, uid)] = AssignmentDates(
+            a.assignment_id, uid, a.cutoff, a.cutoff, CLOSED_AT - 86_400, None, False
+        )
+        item = GradeItem(
+            activity_id=a.cmid,
+            kind="assign",
+            hidden=not a.released,
+            hidden_by_date=False,
+            locked=False,
+            grade=grade if a.released else None,
+            grade_formatted=("75.00" if a.grade_type != "scale" else "Buono")
+            if a.released and a.graded
+            else None,
+            grade_max=100.0,
+            range_formatted="0.00-100.00",
+            feedback=None,
+        )
+        world.grade_items[(c, uid, a.cmid)] = item
+        world.releases[(c, a.assignment_id, uid)] = AssignmentRelease(
+            a.assignment_id,
+            uid,
+            item,
+            # with a marking workflow, "released" is the workflow state that releases it (BR-010)
+            ("released" if a.marking_workflow else "graded")
+            if a.graded
+            else "notgraded",
+            a.marking_workflow,
+            a.released,
+        )
+        if rubric is not None:
+            fillings.append(
+                RubricFilling(
+                    8000 + grade_id,
+                    grade_id,
+                    0,
+                    (
+                        RubricCriterionFilling(1, 13, "chiaro"),
+                        RubricCriterionFilling(2, 22, "metodo da rivedere"),
+                    ),
+                )
+            )
+    if rubric is not None:
+        world.fillings[definition] = tuple(fillings)
+
+
+def _quiz_world(world: FakeLmsWorld, name: str, cmid: int, quiz_id: int) -> None:
+    c = SCENARIO_COURSE
+    world.activities[("quiz", cmid)] = ActivityRef(c, quiz_id, SCENARIO_SHORTNAME)
+    visible = ReviewVisibility(True, True, False, True, 2)
+    world.quizzes[(c, quiz_id)] = QuizSettings(
+        quiz_id=quiz_id,
+        course_id=c,
+        name=f"Quiz {name}",
+        time_open=CLOSED_AT - 86_400,
+        time_close=CLOSED_AT,
+        time_limit_s=1800,
+        grade_method=GradeMethod.HIGHEST,
+        attempts_allowed=1,
+        grace=Readable(GracePolicy(0, OverdueMode.AUTOSUBMIT)),
+        review_after_close=Readable(visible),
+        overrides=Readable(()),
+    )
+    item = ReviewItem(
+        slot=1,
+        display_number="1",
+        question_kind=QuestionKind.ESSAY,
+        state=QuestionState.FINAL_MARKED,
+        status_label="Valutata",
+        mark=8.0,
+        max_mark=10.0,
+        needs_grading=False,
+        html=ReviewHtml(
+            '<div class="fake-qtext">VISIBLE-QTEXT-essay Descrivi il metodo usato.</div>'
+            '<div class="fake-response">Ho usato il metodo descritto a lezione.</div>'
+            f'<div class="fake-rightanswer">{SCENARIO_CANARIES["right_answer"]}</div>'
+            f'<div class="fake-feedback">{SCENARIO_CANARIES["hidden_feedback"]}</div>',
+            PROFILE,
+        ),
+    )
+    grade_item = GradeItem(
+        cmid, "quiz", False, False, False, 8.0, "8.00", 10.0, "0.00-10.00", None
+    )
+    for user, uid in STUDENTS.items():
+        attempt = 6000 + quiz_id * 10 + int(user[-1])
+        world.review_options[(quiz_id, uid)] = ReviewOptions(visible, visible)
+        world.attempts[(quiz_id, uid)] = (
+            AttemptSummary(
+                attempt,
+                1,
+                uid,
+                AttemptState.FINISHED,
+                False,
+                CLOSED_AT - 7200,
+                CLOSED_AT - 3600,
+                8.0,
+            ),
+        )
+        world.reviews[attempt] = AttemptReview(
+            attempt, quiz_id, uid, AttemptState.FINISHED, 8.0, 8.0, (item,)
+        )
+        world.grade_items[(c, uid, cmid)] = grade_item
+
+
+def scenario_world() -> FakeLmsWorld:
+    """The integration suites' world: every scenario activity, every student enrolled."""
+    c = SCENARIO_COURSE
+    staff = tuple(
+        StaffMember(uid, f"Grader {name[-1]}", None, ("teacher",))
+        for name, uid in GRADERS.items()
+    )
+    world = FakeLmsWorld(
+        site_info=LmsSiteInfo(release=SCENARIO_RELEASE, branch="1"),
+        courses_of={uid: {c} for uid in STUDENTS.values()},
+        enrolments={
+            (c, uid): Enrolment(c, uid, True, True, ("student",))
+            for uid in STUDENTS.values()
+        },
+        staff={
+            (c, StaffRole.GRADER): staff,
+            (c, StaffRole.EDITOR): staff[:1],
+            (c, StaffRole.OVERRIDE_MANAGER): staff[:1],
+        },
+        # the quiz review's own answer carries them (the HTML too, under dropped classes)
+        wire={"attempt_review": dict(SCENARIO_CANARIES)},
+    )
+    for name, a in ASSIGNS.items():
+        _assign_world(world, name, a)
+    for name, (cmid, quiz_id) in QUIZZES.items():
+        _quiz_world(world, name, cmid, quiz_id)
+    return world
+
+
+def scenario_provider(**kw: Any) -> FakeLmsProvider:
+    return FakeLmsProvider(scenario_world(), **kw)
+
+
 __all__ = [
     "ALL",
+    "ASSIGNS",
     "CANARIES",
+    "GRADERS",
     "HIDDEN_FEEDBACK",
+    "QUIZZES",
     "RIGHT_ANSWER",
+    "SCENARIO_CANARIES",
+    "SCENARIO_COURSE",
+    "SCENARIO_RELEASE",
+    "STUDENTS",
     "UNRELEASED_GRADE",
     "FakeCall",
     "FakeLmsProvider",
     "FakeLmsWorld",
     "default_world",
+    "scenario_kind",
+    "scenario_provider",
+    "scenario_target",
+    "scenario_world",
 ]

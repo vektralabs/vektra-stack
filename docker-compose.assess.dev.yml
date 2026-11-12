@@ -16,6 +16,8 @@ services:
     environment:
       VEKTRA_ENV: development
       VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND: "true"
+      # the one LMS provider the image installs (ADR-0033): dev and CI stacks need a provider to start
+      VEKTRA_ASSESS_LMS_PROVIDER: ${VEKTRA_ASSESS_LMS_PROVIDER:-moodle}
       # the pre-flight builds the Part B model at start: the same dev model and bypass as the API
       VEKTRA_ASSESS_LLM_MODEL: ${VEKTRA_ASSESS_LLM_MODEL:-ollama/dev-unactivated}
       VEKTRA_ASSESS_LLM_ALLOW_UNACTIVATED: "true"

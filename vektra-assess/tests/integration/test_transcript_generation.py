@@ -20,12 +20,11 @@ from support.recipients import configure_recipients, refs
 from support.sessions import seed_session
 from support.world import world
 
-from integration.test_session_preflight import _reset, moodle_source
+from integration.test_session_preflight import _reset, start_source
 from vektra_assess.context.regrade import GradeReading
 from vektra_assess.crypto import envelope
 from vektra_assess.crypto.kek import unwrap_dek
 from vektra_assess.keys import AssessKeyring
-from vektra_assess.readable import Readable
 from vektra_assess.transcript import allowlist, naming, store
 from vektra_assess.transcript.facts import CloseFacts
 from vektra_assess.worker.transcript_gen import (
@@ -33,6 +32,7 @@ from vektra_assess.worker.transcript_gen import (
     IntegrityFailure,
     generate_transcript,
 )
+from vektra_shared.lms import Readable
 
 pytestmark = pytest.mark.integration
 
@@ -92,7 +92,7 @@ async def test_a_closed_session_gets_one_verified_transcript_and_recipient_rows(
         deps = GenerationDeps(
             kek=s.kek,
             transcript_kek=ring,
-            facts=Facts(moodle_source(worker)),
+            facts=Facts(start_source(worker)),
             recipients=await configure_recipients(pg, w.site, s.cmid),
         )
         got = await generate_transcript(deps, worker.connect, s.session_id)
@@ -403,22 +403,20 @@ async def test_a_missing_kek_kid_is_retryable_not_an_integrity_failure(
 
 
 async def test_close_facts_read_the_course_list_once(pg, worker) -> None:  # type: ignore[no-untyped-def]
-    """Review #10: the short name comes with the activity resolution (one
-    core_enrol_get_users_courses), and the resolution is not left in the source's cache."""
-    from assess_moodle_support import Replay, make_client
-    from test_context_capture import InProcessParser
-
-    from vektra_assess.worker.start_source import MoodleStartSource
+    """Review #10: the short name comes with the activity resolution (one resolution, no
+    second course read), and the resolution is not left in the source's cache."""
+    from support.fake_lms import scenario_provider
+    from support.sessions import lms_source
 
     ring = transcript_ring()
     async with world(pg) as w:
         s = await _closed(w, worker)
-        replay = Replay("4.3")
-        src = MoodleStartSource(make_client(replay), InProcessParser(), worker.connect)
+        fake = scenario_provider()
+        src = lms_source(worker, fake)
         deps = GenerationDeps(kek=s.kek, transcript_kek=ring, facts=src)
         assert await generate_transcript(deps, worker.connect, s.session_id)
-        names = [c[0] for c in replay.calls]
-        assert names.count("core_enrol_get_users_courses") == 1, names
+        assert fake.count("resolve_activity") == 1, fake.calls
+        assert fake.count("resolve_in_course") == 0, fake.calls
         assert "EAASSESS" in (await _open(pg, ring, s.session_id)).decode()
         assert src.cached == 0
 
@@ -428,23 +426,18 @@ async def test_graders_resolve_after_the_student_left_the_course(pg, worker) -> 
     graders (who may download and resend) are read through the session's course hint,
     accepted because the cmid is found in that course; a hint naming a course without the
     cmid resolves nothing."""
-    from assess_moodle_support import Replay, make_client, manifest, uid
-    from test_context_capture import InProcessParser
+    from support.fake_lms import GRADERS, SCENARIO_COURSE, scenario_provider
+    from support.sessions import lms_source
 
     from vektra_assess.worker.preflight import StartTarget
-    from vektra_assess.worker.start_source import MoodleStartSource
 
-    course = int(manifest("4.3")["courseid"])
+    course = SCENARIO_COURSE
     for hint, expect in ((course, 2), (course + 999, None)):
         async with world(pg) as w:
             s = await _closed(w, worker)
-            replay = Replay("4.3")
-            replay.mutate = lambda fn, body: (
-                [] if fn == "core_enrol_get_users_courses" else body
-            )
-            src = MoodleStartSource(
-                make_client(replay), InProcessParser(), worker.connect
-            )
+            fake = scenario_provider()
+            fake.world.courses_of[s.sub] = set()  # the student left every course
+            src = lms_source(worker, fake)
             target = StartTarget(
                 session_id=uuid.uuid4(),
                 site_id=w.site,
@@ -459,10 +452,9 @@ async def test_graders_resolve_after_the_student_left_the_course(pg, worker) -> 
             if expect is None:
                 assert got is None
             else:
-                assert got is not None and {g.userid for g in got} == {
-                    uid("4.3", "grader1"),
-                    uid("4.3", "grader2"),
-                }
+                assert got is not None and {g.user_id for g in got} == set(
+                    GRADERS.values()
+                )
 
 
 async def test_four_configured_addresses_make_three_rows(pg, worker) -> None:  # type: ignore[no-untyped-def]

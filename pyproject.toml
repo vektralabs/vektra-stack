@@ -225,23 +225,33 @@ type = "forbidden"
 source_modules = ["vektra_assess"]
 forbidden_modules = ["vektra_core", "vektra_analytics", "vektra_learn", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_app"]
 
-# (c) only the worker reaches Moodle and the parser sidecar. The source list must equal
-# the assess sub-packages/modules minus worker, moodle, parser_client: a test in
-# vektra-assess/tests/test_boundaries.py fails when a new one is not listed here.
+# (c) the vertical depends on the LMS Protocol only (ADR-0033 D2, plan 2a-2a.9): no assess
+# sub-package or module imports the Moodle provider, which the worker reaches only through the
+# entry point ``vektra.lms_providers`` (vektra_app.lms_providers). The source list must equal the
+# assess children minus moodle: vektra-assess/tests/test_boundaries.py fails when a new one is
+# not listed here.
 [[tool.importlinter.contracts]]
-name = "only vektra_assess.worker imports vektra_assess.moodle and parser_client"
+name = "no vektra_assess module imports the Moodle provider"
 type = "forbidden"
-source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar"]
-forbidden_modules = ["vektra_assess.moodle", "vektra_assess.worker.parser_client"]
-# the one exception (plan assess-context): worker-only capture code lives in
-# vektra_assess.context.capture, and the next contract keeps it reachable from the worker only
-ignore_imports = [
-    "vektra_assess.context.capture.** -> vektra_assess.moodle",
-    "vektra_assess.context.capture.** -> vektra_assess.moodle.**",
-    "vektra_assess.context.capture.** -> vektra_assess.worker.parser_client",
-]
-# capture is built task by task: an exception that is not used yet is not an error
-unmatched_ignore_imports_alerting = "none"
+source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.setup", "vektra_assess.worker"]
+forbidden_modules = ["vektra_assess.moodle"]
+
+# (c-parser) only the worker reaches the parser sidecar. The source list must equal the assess
+# children minus worker and moodle (test_boundaries.py).
+[[tool.importlinter.contracts]]
+name = "only vektra_assess.worker imports parser_client"
+type = "forbidden"
+source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.setup"]
+forbidden_modules = ["vektra_assess.worker.parser_client"]
+
+# (c-setup) the setup-check runner calls the LMS provider: only the worker (and the provider's own
+# operator CLI) may import it, never the API. The source list must equal the assess children
+# minus worker, moodle and setup (test_boundaries.py).
+[[tool.importlinter.contracts]]
+name = "only vektra_assess.worker imports vektra_assess.setup"
+type = "forbidden"
+source_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar"]
+forbidden_modules = ["vektra_assess.setup"]
 
 # (c-ctx) capture reads Moodle and the parser: only the worker may import it, never the API or the
 # API-importable half of vektra_assess.context (snapshot, policy, assembly, Part A, payload)
@@ -251,7 +261,7 @@ type = "forbidden"
 # "vektra_assess.context.*", not "vektra_assess.context": import-linter SKIPS a source that contains
 # the forbidden module ("overlapping modules"), so the parent package would check nothing. The
 # wildcard checks every child of context; capture itself overlaps and is skipped, as intended.
-source_modules = ["vektra_assess.api", "vektra_assess.context.*", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle", "vektra_app.main"]
+source_modules = ["vektra_assess.api", "vektra_assess.context.*", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.setup", "vektra_assess.moodle", "vektra_app.main"]
 forbidden_modules = ["vektra_assess.context.capture"]
 
 # (d) the only constructor of ContextBundle is private to vektra_assess.context (plan assess-context):
@@ -263,23 +273,17 @@ forbidden_modules = ["vektra_assess.context.capture"]
 name = "vektra_assess.context._assembly is private to vektra_assess.context"
 type = "forbidden"
 allow_indirect_imports = true
-source_modules = ["vektra_assess.api", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle", "vektra_assess.worker", "vektra_app"]
+source_modules = ["vektra_assess.api", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.setup", "vektra_assess.moodle", "vektra_assess.worker", "vektra_app"]
 forbidden_modules = ["vektra_assess.context._assembly"]
 
 # (d-ctx) the model context holds no vector store, retrieval or HTTP client: structural NFR-015
-# evidence (RAG OFF means no path to a retriever). Capture reaches Moodle through the readers, which
-# use httpx: those edges are the one exception.
+# evidence (RAG OFF means no path to a retriever). Capture reads the LMS through the
+# ``LmsProvider`` Protocol only (ADR-0033 D2), which imports no HTTP client: no exception.
 [[tool.importlinter.contracts]]
 name = "vektra_assess.context imports no retrieval stack and no HTTP client"
 type = "forbidden"
 source_modules = ["vektra_assess.context"]
 forbidden_modules = ["vektra_index", "vektra_core", "vektra_ingest", "qdrant_client", "httpx"]
-ignore_imports = [
-    "vektra_assess.context.capture.** -> vektra_assess.moodle",
-    "vektra_assess.context.capture.** -> vektra_assess.moodle.**",
-    "vektra_assess.context.capture.** -> vektra_assess.worker.parser_client",
-]
-unmatched_ignore_imports_alerting = "none"
 
 # (llm) the discussion runner reaches no retrieval, analytics or ML stack (plan assess-llm-runner,
 # NFR-015 structural evidence): the LLM provider, safeguard and trace writer are injected by vektra_app
@@ -295,7 +299,7 @@ forbidden_modules = ["vektra_core", "vektra_analytics", "vektra_ingest", "vektra
 [[tool.importlinter.contracts]]
 name = "only vektra_assess.api and vektra_assess.worker import vektra_assess.llm"
 type = "forbidden"
-source_modules = ["vektra_assess.context", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.moodle"]
+source_modules = ["vektra_assess.context", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.parser_protocol", "vektra_assess.parser_sidecar", "vektra_assess.setup", "vektra_assess.moodle"]
 forbidden_modules = ["vektra_assess.llm"]
 
 # (e) the worker's import ceiling: no ML stack, vector store client or document parser
@@ -312,7 +316,7 @@ forbidden_modules = ["sentence_transformers", "torch", "transformers", "qdrant_c
 name = "vektra_assess.parser_sidecar imports only parser_protocol"
 type = "forbidden"
 source_modules = ["vektra_assess.parser_sidecar"]
-forbidden_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.readable", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.worker", "vektra_assess.moodle", "vektra_shared", "vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app", "sqlalchemy", "asyncpg", "httpx", "litellm", "pydantic", "pydantic_settings", "structlog", "fastapi"]
+forbidden_modules = ["vektra_assess.api", "vektra_assess.context", "vektra_assess.llm", "vektra_assess.transcript", "vektra_assess.delivery", "vektra_assess.crypto", "vektra_assess.db", "vektra_assess.health", "vektra_assess.metrics", "vektra_assess.keys_verify", "vektra_assess.keys_rewrap", "vektra_assess.config", "vektra_assess.keys", "vektra_assess.errors", "vektra_assess.capabilities", "vektra_assess.jobs", "vektra_assess.audit", "vektra_assess.tokens", "vektra_assess.gates", "vektra_assess.turn_markers", "vektra_assess.timing", "vektra_assess.start_rules", "vektra_assess.privacy", "vektra_assess.teacher", "vektra_assess.ui", "vektra_assess.setup", "vektra_assess.worker", "vektra_assess.moodle", "vektra_shared", "vektra_core", "vektra_ingest", "vektra_index", "vektra_admin", "vektra_analytics", "vektra_learn", "vektra_app", "sqlalchemy", "asyncpg", "httpx", "litellm", "pydantic", "pydantic_settings", "structlog", "fastapi"]
 
 # (h) the API never reaches the worker (plan assess-job-loop): the worker holds the KEK, the Moodle
 # tokens and the SMTP account, and the API process must not be able to import any of that code. The

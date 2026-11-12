@@ -25,14 +25,6 @@ from typing import Any
 import structlog
 
 from vektra_assess.config import VektraAssessSettings
-from vektra_assess.moodle.setup_check import (
-    DEFAULT_REGISTRY,
-    CheckContext,
-    ItemRegistry,
-    Outcome,
-    missing,
-    ok,
-)
 from vektra_assess.parser_protocol import (
     MAX_HEADER,
     OPS,
@@ -42,12 +34,22 @@ from vektra_assess.parser_protocol import (
     FrameError,
     Limits,
     PlainText,
+    ReviewProfile,
     encode_frame,
     new_req_id,
     parse_header,
     parse_header_length,
 )
 from vektra_assess.parser_protocol import label as status_label
+from vektra_assess.setup import (
+    DEFAULT_REGISTRY,
+    CheckContext,
+    ItemRegistry,
+    Outcome,
+    missing,
+    ok,
+)
+from vektra_shared.lms import HtmlExtractionProfile
 
 log = structlog.get_logger(__name__)
 
@@ -55,6 +57,7 @@ PROTOCOL_VIOLATION_CODE = "assess_parser_protocol_violation"
 _CTRL = {c: None for c in [*range(0, 9), *range(11, 32), 127]}  # keep \t and \n
 _TEXT_STATUSES = frozenset({FileStatus.READ, FileStatus.READ_PARTIAL})
 _QUEUE_ALLOWANCE_S = 15.0
+_MAX_PROFILES = 16
 
 
 class ParserUnavailableError(Exception):
@@ -67,6 +70,13 @@ class _Violation(Exception):
 
 class _Unavailable(Exception):
     pass
+
+
+class _RequestTooLarge(Exception):
+    """The request does not fit the protocol's header: a client-side limit, not the sidecar's."""
+
+
+REQUEST_TOO_LARGE_CODE = "request_too_large"
 
 
 @dataclass(frozen=True)
@@ -132,6 +142,7 @@ class ParserClient:
         self.connect_timeout_s = connect_timeout_s
         self.busy_retries = busy_retries
         self.busy_backoff_s = busy_backoff_s
+        self._profiles: dict[tuple[Any, ...], dict[str, Any] | None] = {}
 
     @classmethod
     def from_settings(cls, settings: VektraAssessSettings) -> ParserClient:
@@ -158,23 +169,40 @@ class ParserClient:
         )
 
     async def extract_review_item(
-        self, html: bytes, limits: Limits | None = None
+        self,
+        html: bytes,
+        profile: HtmlExtractionProfile,
+        limits: Limits | None = None,
     ) -> tuple[str | None, str | None, bool]:
         """Question text, student response and whether either was cut, from one sidecar call
-        (allowlist extraction). ``(None, None, False)`` for anything that is not the expected
-        reply: the item then degrades, it is never read as text."""
+        (allowlist extraction with the provider's ``profile``, ADR-0033 D4). ``(None, None,
+        False)`` for anything that is not the expected reply, and for a profile the sidecar
+        would refuse: the item then degrades, it is never read as text."""
         import json
 
-        res = await self._call("review_item", html, "html", limits or self.limits)
+        wire = self._wire_profile(profile)
+        if wire is None:
+            return None, None, False
+        res = await self._call(
+            "review_item",
+            html,
+            "html",
+            limits or self.limits,
+            extra={"profile": wire},
+        )
         if res.status is not FileStatus.READ:
             return None, None, False
         try:
             doc = json.loads(res.text)
         except ValueError:
             return None, None, False
-        if not isinstance(doc, dict) or set(doc) != {"qtext", "response", "truncated"}:
+        if not isinstance(doc, dict) or set(doc) != {
+            "question_text",
+            "response",
+            "truncated",
+        }:
             return None, None, False
-        q, r, t = doc["qtext"], doc["response"], doc["truncated"]
+        q, r, t = doc["question_text"], doc["response"], doc["truncated"]
         if not isinstance(t, bool):
             # an unreadable cut flag: the item degrades, its text is never presented as complete
             return None, None, False
@@ -183,6 +211,28 @@ class ParserClient:
             r if isinstance(r, str) else None,
             t,
         )
+
+    def _wire_profile(self, profile: HtmlExtractionProfile) -> dict[str, Any] | None:
+        """The profile's validated wire form, built once per profile (a provider constant) and
+        then reused for every item; None for one the sidecar would refuse (cached too)."""
+        key = (
+            tuple(sorted(profile.keep.items())),
+            profile.drop_classes,
+            profile.profile_version,
+        )
+        if key not in self._profiles:
+            if len(self._profiles) >= _MAX_PROFILES:
+                self._profiles.clear()  # bounded: profiles are per provider, a handful
+            try:
+                self._profiles[key] = ReviewProfile.build(
+                    profile.keep, profile.drop_classes, profile.profile_version
+                ).to_wire()
+            except ValueError:
+                self._profiles[key] = None
+        wire = self._profiles[key]
+        if wire is None:
+            log.warning("assess_review_profile_invalid", reason_code="profile_invalid")
+        return wire
 
     async def ping(self, deep: bool = False) -> float:
         """Round-trip in seconds. ``ParserUnavailableError`` unless the sidecar answers
@@ -208,7 +258,13 @@ class ParserClient:
     # --- internals ----------------------------------------------------------------
 
     async def _call(
-        self, op: str, data: bytes, ext_hint: str, limits: Limits
+        self,
+        op: str,
+        data: bytes,
+        ext_hint: str,
+        limits: Limits,
+        *,
+        extra: dict[str, Any] | None = None,
     ) -> ParseResult:
         if op not in OPS:  # pragma: no cover - internal misuse
             raise ValueError(op)
@@ -227,6 +283,7 @@ class ParserClient:
                             "req_id": req_id,
                             "ext_hint": ext_hint,
                             "limits": limits.to_wire(),
+                            **(extra or {}),
                         },
                         data,
                         max_payload=limits.max_chars * 4,
@@ -237,6 +294,10 @@ class ParserClient:
                 raise ParserUnavailableError("client_timeout") from None
             except _Unavailable as exc:
                 raise ParserUnavailableError(str(exc)) from None
+            except _RequestTooLarge:
+                # the item degrades (CORRUPT); the log says it was this request, not the sidecar
+                log.warning("assess_parser_request_too_large", reason_code=op)
+                return ParseResult(FileStatus.CORRUPT, code=REQUEST_TOO_LARGE_CODE)
             except _Violation as exc:
                 return _violation_result(str(exc))
             if header.get("code") == TRANSPORT_BUSY and header.get("status") is None:
@@ -254,6 +315,12 @@ class ParserClient:
         self, header: dict[str, Any], payload: bytes, *, max_payload: int
     ) -> tuple[dict[str, Any], bytes]:
         try:
+            frame = encode_frame({"v": PROTOCOL_VERSION, **header}, payload)
+        except FrameError:
+            # a request this client cannot even frame (a header over MAX_HEADER): this
+            # worker's own fault, found before any connection, never blamed on the sidecar
+            raise _RequestTooLarge() from None
+        try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(self.socket_path), self.connect_timeout_s
             )
@@ -261,7 +328,7 @@ class ParserClient:
             raise _Unavailable(type(exc).__name__) from None
         try:
             try:
-                writer.write(encode_frame({"v": PROTOCOL_VERSION, **header}, payload))
+                writer.write(frame)
                 await writer.drain()
             except (ConnectionError, OSError):
                 pass  # the sidecar may answer (e.g. TOO_LARGE) and close before reading it all

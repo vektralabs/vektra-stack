@@ -15,7 +15,7 @@ import warnings
 from multiprocessing.connection import Connection
 from typing import Any
 
-from vektra_assess.parser_protocol import Extracted, FileStatus
+from vektra_assess.parser_protocol import Extracted, FileStatus, ReviewProfile
 from vektra_assess.parser_sidecar.docx import extract_docx
 from vektra_assess.parser_sidecar.html_review import (
     extract_review_item,
@@ -32,14 +32,25 @@ PR_SET_DUMPABLE = 4
 
 
 def run(
-    op: str, data: bytes, ext_hint: str, *, max_pages: int, max_chars: int
+    op: str,
+    data: bytes,
+    ext_hint: str,
+    *,
+    max_pages: int,
+    max_chars: int,
+    profile: ReviewProfile | None = None,
 ) -> Extracted:
-    """Pure dispatch (no process hygiene): what the child computes for one item."""
+    """Pure dispatch (no process hygiene): what the child computes for one item.
+
+    ``review_item`` needs the provider's extraction profile (ADR-0033 D4): without one it is
+    refused, never run with a built-in guess of which classes to keep or drop."""
     try:
         if op == "sanitize_html":
             return sanitize_review_html(data, max_chars)
         if op == "review_item":
-            return extract_review_item(data, max_chars)
+            if profile is None:
+                return Extracted(FileStatus.CORRUPT, code="no_profile")
+            return extract_review_item(data, max_chars, profile)
         sn = sniff(data, ext_hint)
         if sn.kind is Kind.REFUSED:
             assert sn.status is not None
@@ -151,6 +162,7 @@ def child_main(
             spec["ext_hint"],
             max_pages=int(spec["max_pages"]),
             max_chars=int(spec["max_chars"]),
+            profile=ReviewProfile.from_wire(spec.get("profile")),
         )
         out_conn.send_bytes(serialise(res, int(spec["max_chars"])))
         code = 0

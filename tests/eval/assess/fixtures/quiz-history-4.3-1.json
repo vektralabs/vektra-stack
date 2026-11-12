@@ -55,7 +55,7 @@
    "grade_released": true,
    "moodle_release": "4.3",
    "review_options_closed": true,
-   "schema_version": 1
+   "schema_version": 2
   },
   "overall": {
    "grade": "6",
@@ -75,12 +75,13 @@
     "mark": "0",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "multichoice",
+    "qtype": "multiple_choice",
     "question_text": "In che anno fu firmato il trattato di Roma?",
     "response_text": "Ho scelto il 1957.",
     "review_text": null,
-    "state": "gradedwrong",
-    "status": "Errata"
+    "state": "final_marked",
+    "status": "Errata",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -89,12 +90,13 @@
     "mark": "1",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "truefalse",
+    "qtype": "true_false",
     "question_text": "La Costituzione italiana entrò in vigore nel 1948.",
     "response_text": "Vero.",
     "review_text": null,
-    "state": "gradedright",
-    "status": "Corretta"
+    "state": "final_marked",
+    "status": "Corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -103,12 +105,13 @@
     "mark": "1",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "shortanswer",
+    "qtype": "short_answer",
     "question_text": "Chi fu il primo presidente della Repubblica italiana?",
     "response_text": "Enrico De Nicola",
     "review_text": null,
-    "state": "gradedright",
-    "status": "Corretta"
+    "state": "final_marked",
+    "status": "Corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -121,8 +124,9 @@
     "question_text": "Descrivi due cause della prima guerra mondiale.",
     "response_text": "Il sistema delle alleanze e il nazionalismo.",
     "review_text": null,
-    "state": "gradedright",
-    "status": "Corretta"
+    "state": "final_marked",
+    "status": "Corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -131,12 +135,13 @@
     "mark": "0.5",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "multichoice",
+    "qtype": "multiple_choice",
     "question_text": "Quale evento segna la fine dell'Impero romano d'Occidente?",
     "response_text": "Ho scelto il 476.",
     "review_text": null,
-    "state": "gradedpartial",
-    "status": "Parzialmente corretta"
+    "state": "final_marked",
+    "status": "Parzialmente corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -145,12 +150,13 @@
     "mark": "1",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "truefalse",
+    "qtype": "true_false",
     "question_text": "Il Congresso di Vienna si tenne nel 1815.",
     "response_text": "Falso.",
     "review_text": null,
-    "state": "gradedright",
-    "status": "Corretta"
+    "state": "final_marked",
+    "status": "Corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -159,12 +165,13 @@
     "mark": "0.5",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "shortanswer",
+    "qtype": "short_answer",
     "question_text": "In quale città fu firmata la Magna Carta?",
     "response_text": "Londra",
     "review_text": null,
-    "state": "gradedpartial",
-    "status": "Parzialmente corretta"
+    "state": "final_marked",
+    "status": "Parzialmente corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -177,8 +184,9 @@
     "question_text": "Spiega il ruolo delle corporazioni nel Medioevo.",
     "response_text": "Regolavano i mestieri e i prezzi.",
     "review_text": null,
-    "state": "gradedwrong",
-    "status": "Errata"
+    "state": "final_marked",
+    "status": "Errata",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -187,12 +195,13 @@
     "mark": "0",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "multichoice",
+    "qtype": "multiple_choice",
     "question_text": "Quale trattato chiuse la guerra dei Trent'anni?",
     "response_text": "Ho scelto Vestfalia.",
     "review_text": null,
-    "state": "gradedwrong",
-    "status": "Errata"
+    "state": "final_marked",
+    "status": "Errata",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -201,12 +210,13 @@
     "mark": "0",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "truefalse",
+    "qtype": "true_false",
     "question_text": "La rivoluzione francese iniziò nel 1789.",
     "response_text": "Vero.",
     "review_text": null,
-    "state": "gradedwrong",
-    "status": "Errata"
+    "state": "final_marked",
+    "status": "Errata",
+    "truncated": false
    }
   ],
   "solution_text": null,

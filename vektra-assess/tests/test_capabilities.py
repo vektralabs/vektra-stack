@@ -18,7 +18,7 @@ from vektra_assess.capabilities import (
     classify,
     evaluate_readiness,
 )
-from vektra_assess.readable import Readable, Unreadable, UnreadableReason
+from vektra_shared.lms import Readable, Unreadable, UnreadableReason
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 REL = "5.2.4+"
@@ -149,11 +149,10 @@ def _imports(path: Path) -> set[str]:
 
 
 def test_db_only_modules_do_not_import_httpx_or_the_moodle_package():
-    """capabilities and the API never talk to Moodle (plan group D); import-linter contract (c)
-    covers vektra_assess.moodle, this covers the external httpx package."""
+    """capabilities and the API never talk to the LMS (plan group D); import-linter contract
+    (c) covers vektra_assess.moodle, this covers the external httpx package."""
     files = [
         SRC / "capabilities.py",
-        SRC / "readable.py",
         *sorted((SRC / "api").rglob("*.py")),
     ]
     for f in files:

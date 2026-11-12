@@ -487,7 +487,9 @@ async def test_the_client_returns_plain_text_for_review_html(tmp_path) -> None:
     from vektra_assess.worker.parser_client import ParserClient, SanitizeResult
 
     class Fake(ParserServer):
-        def _supervise(self, op, data, ext, max_pages, max_chars, timeout_s):  # type: ignore[no-untyped-def]
+        def _supervise(
+            self, op, data, ext, max_pages, max_chars, timeout_s, profile=None
+        ):  # type: ignore[no-untyped-def]
             from vektra_assess.parser_sidecar.child import run
             from vektra_assess.parser_sidecar.server import ChildOutcome
 

@@ -2,7 +2,7 @@
 
 The real sidecar (``vektra_assess.parser_sidecar.server``: supervisor, forkserver, one child per
 item) runs as its own process group on a private unix socket; the worker side is the production
-``ParserClient`` inside the production pre-flight, over the recorded Moodle 4.3 site.
+``ParserClient`` inside the production pre-flight, over the fake LMS provider's scenario world.
 
 The kill point: the first extraction request of the capture is on the sidecar's socket and no
 reply has been sent. The sidecar is frozen (SIGSTOP) before the request so the request cannot be
@@ -34,16 +34,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from assess_moodle_support import Replay, make_client
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.fake_lms import scenario_provider
 from support.preflight import FakePartB, activate, deps, job_context, kek_ring
-from support.sessions import _site_release, fixture_target
+from support.sessions import fixture_target, site_release
 from support.world import configure_activity, world
 
 from integration.test_session_preflight import _reset
 from vektra_assess.worker.parser_client import ParserClient, ParserUnavailableError
 from vektra_assess.worker.preflight import make_preflight_handler
-from vektra_assess.worker.start_source import MoodleStartSource
+from vektra_assess.worker.start_source import LmsStartSource
 
 sys.path.insert(
     0, str(Path(__file__).resolve().parents[3] / "tests" / "chaos" / "assess")
@@ -142,8 +142,10 @@ class KillPoint:
     async def sanitize_html(self, html: bytes) -> Any:
         return await self._call("sanitize_html", self.client.sanitize_html, html)
 
-    async def extract_review_item(self, html: bytes) -> Any:
-        return await self._call("review_item", self.client.extract_review_item, html)
+    async def extract_review_item(self, html: bytes, profile: Any) -> Any:
+        return await self._call(
+            "review_item", self.client.extract_review_item, html, profile
+        )
 
 
 async def rows(pg: Any, site: Any, cmid: int, sub: int) -> dict[str, int]:
@@ -203,7 +205,7 @@ async def test_parser_killed_mid_extraction_rolls_the_start_back_then_restarts_c
         await sidecar.start()
         async with world(pg) as w:
             sub, cmid = fixture_target()
-            await _site_release(w, "4.3")
+            await site_release(w)
             await configure_activity(pg, w.site, cmid)
             await activate(pg)
             kek = kek_ring()
@@ -211,9 +213,7 @@ async def test_parser_killed_mid_extraction_rolls_the_start_back_then_restarts_c
             assert set(empty.values()) == {0}
 
             def handler(parser: Any) -> Any:
-                source = MoodleStartSource(
-                    make_client(Replay("4.3")), parser, worker.connect
-                )
+                source = LmsStartSource(scenario_provider(), parser, worker.connect)
                 return make_preflight_handler(
                     deps(w.settings, w.handoff_public, source, FakePartB(), kek=kek)
                 )

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
-from assess_moodle_support import FIXTURES, Replay, make_client, manifest, site_for, uid
+from assess_moodle_support import FIXTURES, Replay, manifest, site_readers, uid
 from test_context_capture import InProcessParser
 
 from canary.matrix import ASSIGN_FIELDS, REVIEW_VARIANTS, Case, canary, finalize_quiz
@@ -37,12 +37,10 @@ from vektra_assess.context.capture.capture import (
     capture_assign,
     capture_quiz,
 )
-from vektra_assess.context.capture.readers import MoodleCaptureReaders
 from vektra_assess.context.part_a import SessionFacts, render_part_a
 from vektra_assess.context.snapshot import canonical_bytes
 from vektra_assess.crypto import envelope
-from vektra_assess.moodle.readers import read_submission_status
-from vektra_assess.moodle.result import Readable
+from vektra_shared.lms import Readable
 from vektra_shared.types import Message
 from vektra_testkit.recorders import (
     RecordingLLMProvider,
@@ -206,9 +204,9 @@ async def run_case(case: Case) -> Outcome:
     )
     replay = Replay(case.version)
     replay.mutate = case.mutate
-    client = make_client(replay)
-    site = site_for(case.version)
-    readers = MoodleCaptureReaders(client, site)
+    # the vertical's capture over the Moodle provider's recorded reviews: Vektra's canary
+    # sinks over a provider's recordings (the joint BR-011 guarantee, ADR-0033 D4)
+    readers = site_readers(replay)
     parser = InProcessParser()
     now = 1_800_000_000
     if case.kind == "quiz":
@@ -303,22 +301,21 @@ async def _assign_case(
 async def _intake(version: str, replay: Replay, m: dict[str, Any]) -> list[Any]:
     """Files of stu1 (one per format) and stu2 (11 text files), relabelled F1..Fn, through the
     real intake: 10-file cap, ownership re-check, sidecar statuses."""
-    client = make_client(replay)
-    site = site_for(version)
+    readers = site_readers(replay)
     a = m["assigns"]["files"]
     out = []
     for user in ("stu1", "stu2"):
-        status = await read_submission_status(client, site, a["id"], uid(version, user))
+        status = await readers.submission(a["id"], uid(version, user))
         assert isinstance(status, Readable)
         for f in status.value.files:
-            replay.files[urlsplit(f.fileurl).path] = (
+            replay.files[urlsplit(f.locator).path] = (
                 FIXTURES / version / "files" / f"{user}__{f.filename}"
             ).read_bytes()
         target = AssignTarget(m["courseid"], a["id"], a["cmid"], uid(version, user))
         out += await _files(
             target,
             status.value,
-            MoodleCaptureReaders(client, site),
+            readers,
             InProcessParser(),
             _limits(),
             [],

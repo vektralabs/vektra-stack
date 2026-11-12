@@ -28,6 +28,11 @@ dependencies = [
     "prometheus-client>=0.20",
 ]
 
+# The Moodle LMS provider (ADR-0033 D2), staged here until plan 2a-4 moves it to
+# adapters/vektra-lms-moodle, whose own distribution then declares this entry point.
+[project.entry-points."vektra.lms_providers"]
+moodle = "vektra_assess.moodle.provider:build_provider"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

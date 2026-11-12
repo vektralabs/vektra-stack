@@ -30,23 +30,31 @@ from vektra_assess.capabilities import FLAGS
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef
 from vektra_assess.moodle.probes import derive_probe_manifest
+from vektra_assess.moodle.provider import MoodleLmsProvider
 from vektra_assess.moodle.readers import read_own_auth, read_site_info
 from vektra_assess.moodle.result import Readable, Unreadable, UnreadableReason
 from vektra_assess.moodle.setup_check import (
-    BUILTIN_ITEMS,
-    DEFAULT_REGISTRY,
     GRADE_WRITE_FUNCTIONS,
+    SERVICE_ACCOUNT_ITEMS,
+    is_grade_write_function,
+)
+from vektra_assess.setup import (
+    DEFAULT_REGISTRY,
+    GENERIC_ITEMS,
     PLUGGABLE_ITEMS,
     CheckOutcome,
     ItemRegistry,
     Outcome,
     evaluate,
-    is_grade_write_function,
     ok,
     same_site,
 )
+from vektra_shared.lms import LmsSite
 
 pytestmark = pytest.mark.parametrize("branch", BRANCHES)
+
+#: the provider's service-account items, then Vektra's own built-in items (ADR-0033 D3)
+BUILTIN_ITEMS = (*SERVICE_ACCOUNT_ITEMS, *GENERIC_ITEMS)
 
 SITE_INFO = "core_webservice_get_site_info"
 ENV = {
@@ -76,6 +84,15 @@ def serve_files(replay: Replay, branch: str) -> None:
                     replay.files[urlsplit(f["fileurl"]).path] = local.read_bytes()
 
 
+def provider(client: MoodleWsClient, branch: str) -> MoodleLmsProvider:
+    """The Moodle provider over ``client``, with the branch's recorded clock for the probes."""
+    return MoodleLmsProvider(client, client._s, clock=lambda: now(branch))
+
+
+def lms(branch: str) -> LmsSite:
+    return LmsSite("site-1", site_for(branch).base_url)
+
+
 def patch(**by_function: Callable[[Any], Any]) -> Callable[[str, Any], Any]:
     def mutate(fn: str, body: Any) -> Any:
         return by_function[fn](body) if fn in by_function else body
@@ -89,13 +106,14 @@ async def good(
     replay = Replay(branch)
     serve_files(replay, branch)
     replay.mutate = kw.pop("mutate", None)
+    cfg = kw.pop("cfg", None) or settings()
+    client = kw.pop("client", None) or make_client(replay)
     out = await evaluate(
-        kw.pop("client", None) or make_client(replay),
-        SiteRef("site-1", site_for(branch).base_url),
-        kw.pop("cfg", None) or settings(),
+        MoodleLmsProvider(client, cfg, clock=lambda: now(branch)),
+        lms(branch),
+        cfg,
         kw.pop("pm", None) or derive_probe_manifest(manifest(branch)),
         registry=kw.pop("registry", None),
-        now=now(branch),
         **({"moodle_origin": kw.pop("moodle_origin")} if "moodle_origin" in kw else {}),
     )
     assert not replay.unmatched
@@ -120,7 +138,7 @@ async def test_every_builtin_item_is_ok_on_the_good_account(branch: str) -> None
 
 async def test_a_registered_pluggable_item_is_reported(branch: str) -> None:
     reg = ItemRegistry()
-    for name in BUILTIN_ITEMS:
+    for name in GENERIC_ITEMS:
         c = DEFAULT_REGISTRY.get(name)
         assert c is not None
         reg.register(name, c)
@@ -244,11 +262,10 @@ async def test_a_reader_group_that_breaks_is_named(branch: str) -> None:
 async def test_without_a_probe_manifest_the_reads_are_unverifiable(branch: str) -> None:
     replay = Replay(branch)
     out = await evaluate(
-        make_client(replay),
-        SiteRef("site-1", site_for(branch).base_url),
+        provider(make_client(replay), branch),
+        lms(branch),
         settings(),
         None,
-        now=now(branch),
     )
     items = {i.name: (i.result, i.reason_code) for i in out.items}
     for g in ("quiz", "assign", "grade", "grading", "enrol", "files"):
@@ -267,11 +284,10 @@ async def test_a_revoked_token_fails_token_works_and_stops_the_calls(
     replay = Replay(branch)
     replay.mutate = lambda _fn, _body: envelope
     out = await evaluate(
-        make_client(replay),
-        SiteRef("site-1", site_for(branch).base_url),
+        provider(make_client(replay), branch),
+        lms(branch),
         settings(),
         derive_probe_manifest(manifest(branch)),
-        now=now(branch),
     )
     items = {i.name: (i.result, i.reason_code) for i in out.items}
     assert items["token_works"] == ("MISSING", "invalidtoken")
@@ -292,11 +308,10 @@ async def test_no_token_is_not_a_rejection(branch: str) -> None:
         resolver=resolver(),
     )
     out = await evaluate(
-        client,
-        SiteRef("site-1", site_for(branch).base_url),
+        provider(client, branch),
+        lms(branch),
         settings(),
         None,
-        now=now(branch),
     )
     items = {i.name: (i.result, i.reason_code) for i in out.items}
     assert items["token_works"] == ("MISSING", "no_token")
@@ -314,11 +329,10 @@ async def test_a_slow_or_broken_site_is_unverifiable_not_revoked(branch: str) ->
         resolver=resolver(),
     )
     out = await evaluate(
-        client,
-        SiteRef("site-1", site_for(branch).base_url),
+        provider(client, branch),
+        lms(branch),
         settings(),
         None,
-        now=now(branch),
     )
     items = {i.name: (i.result, i.reason_code) for i in out.items}
     assert items["token_works"][0] == "UNVERIFIABLE"
@@ -341,11 +355,10 @@ async def test_the_report_is_content_free(branch: str) -> None:
 async def test_the_files_group_needs_the_download(branch: str) -> None:
     replay = Replay(branch)  # no files served: the download is a 404
     out = await evaluate(
-        make_client(replay),
-        SiteRef("site-1", site_for(branch).base_url),
+        provider(make_client(replay), branch),
+        lms(branch),
         settings(),
         derive_probe_manifest(manifest(branch)),
-        now=now(branch),
     )
     items = {i.name: (i.result, i.reason_code) for i in out.items}
     assert items["required_reads_files"][0] == "MISSING"

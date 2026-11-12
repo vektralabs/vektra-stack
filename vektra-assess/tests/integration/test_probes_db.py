@@ -7,7 +7,8 @@ import uuid
 import pytest
 
 from vektra_assess.capabilities import FLAGS, observe_release
-from vektra_assess.moodle.probes import FlagResult, persist_matrix
+from vektra_assess.setup import persist_matrix
+from vektra_shared.lms import CapabilityResult as FlagResult
 
 pytestmark = pytest.mark.integration
 

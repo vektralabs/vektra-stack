@@ -30,7 +30,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from vektra_assess.moodle.setup_check import (
+from vektra_assess.setup import (
     CheckContext,
     ItemCheck,
     ItemRegistry,
@@ -38,15 +38,15 @@ from vektra_assess.moodle.setup_check import (
     builtin_registry,
     missing,
     ok,
+    reason_code,
     unverifiable,
 )
-from vektra_assess.moodle.setup_check import _code as reason_code
 from vektra_assess.worker.runner import AcquireDb
 from vektra_assess.worker.slots import SMTP_PROBE_INTERVAL_S
 
 SMTP_PROBE_MAX_AGE_S = 3 * SMTP_PROBE_INTERVAL_S
 #: the cap on the item's own probe: a quarter of the 120 s setup-check budget. A healthy relay
-#: answers EHLO/STARTTLS/AUTH in seconds; the rest of the budget is kept for the Moodle items,
+#: answers EHLO/STARTTLS/AUTH in seconds; the rest of the budget is kept for the provider's items,
 #: the capability probes and the report
 SMTP_ITEM_PROBE_MAX_S = 30.0
 

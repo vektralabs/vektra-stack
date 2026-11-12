@@ -1,8 +1,8 @@
-"""M1.5: the pre-flight handler on a real database, worker role, recorded Moodle responses.
+"""M1.5: the pre-flight handler on a real database, worker role, the fake LMS provider.
 
 Start goes through the real API route (``support.world``); the handler runs in-process with the
-production ``MoodleStartSource`` over the 4.3 recordings and the in-process parser, a fake Part B
-runner, and the real crypto. Every outcome is asserted by counting rows, and a committed session
+production ``LmsStartSource`` over ``FakeLmsProvider`` (the scenario world of
+``support.fake_lms``) and the in-process parser, a fake Part B runner, and the real crypto. Every outcome is asserted by counting rows, and a committed session
 is opened back through ``get_session_material`` as the API role.
 """
 
@@ -13,12 +13,12 @@ import uuid
 from typing import Any
 
 import pytest
-from assess_moodle_support import Replay, make_client, manifest, uid
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+from support.fake_lms import FakeLmsProvider
 from support.preflight import FakePartB, FakeSource, activate, deps, job_context
+from support.sessions import fixture_target, lms_source, site_release
 from support.world import configure_activity, default_settings, world
-from test_context_capture import InProcessParser
 
 from vektra_assess.context.capture.capture import Failed, FailReason
 from vektra_assess.crypto import envelope, hashing
@@ -29,14 +29,11 @@ from vektra_assess.worker.preflight import (
     make_preflight_handler,
     rollback_start,
 )
-from vektra_assess.worker.start_source import MoodleStartSource
+from vektra_assess.worker.start_source import LmsStartSource
 
 pytestmark = pytest.mark.integration
 
-BRANCH = "4.3"
-M = manifest(BRANCH)
-CMID = M["assigns"]["rubric_vis"]["cmid"]
-STU = uid(BRANCH, "stu1")
+STU, CMID = fixture_target("rubric_vis")
 
 
 async def n(pg, sql: str, **params) -> int:  # type: ignore[no-untyped-def]
@@ -66,17 +63,14 @@ async def _start(w, sub: int = STU, cmid: int = CMID) -> uuid.UUID:  # type: ign
 
 
 async def pg_release(w) -> None:  # type: ignore[no-untyped-def]
-    await w.pg.run(
-        "super",
-        "UPDATE assess_sites SET release = :r WHERE id = :s",
-        {"r": M["release"], "s": w.site},
-    )
+    await site_release(w)
 
 
-def moodle_source(worker_engine: Any) -> MoodleStartSource:
-    return MoodleStartSource(
-        make_client(Replay(BRANCH)), InProcessParser(), worker_engine.connect
-    )
+def start_source(
+    worker_engine: Any, provider: FakeLmsProvider | None = None
+) -> LmsStartSource:
+    """The production start source over the fake LMS provider's scenario world."""
+    return lms_source(worker_engine, provider)
 
 
 async def _counts(pg, sid: uuid.UUID) -> dict[str, int]:  # type: ignore[no-untyped-def]
@@ -149,7 +143,7 @@ async def test_commit_writes_the_whole_session_and_the_api_can_open_it(  # type:
         )
         sid = await _start(w)
         handler = make_preflight_handler(
-            deps(w.settings, w.handoff_public, moodle_source(worker_engine))
+            deps(w.settings, w.handoff_public, start_source(worker_engine))
         )
         await handler(job_context(worker_engine, sid))
         assert await _counts(pg, sid) == {
@@ -236,7 +230,7 @@ async def test_unactivated_triple_is_refused_then_accepted_without_restart(  # t
     async with world(pg) as w:
         await configure_activity(pg, w.site, CMID)
         handler = make_preflight_handler(
-            deps(w.settings, w.handoff_public, moodle_source(worker_engine))
+            deps(w.settings, w.handoff_public, start_source(worker_engine))
         )
         sid = await _start(w)
         await handler(job_context(worker_engine, sid))
@@ -259,7 +253,7 @@ async def test_allow_unactivated_is_honoured_only_in_development(  # type: ignor
             await configure_activity(pg, w.site, CMID)
             sid = await _start(w)
             handler = make_preflight_handler(
-                deps(settings, w.handoff_public, moodle_source(worker_engine))
+                deps(settings, w.handoff_public, start_source(worker_engine))
             )
             await handler(job_context(worker_engine, sid))
             if committed:
@@ -295,7 +289,7 @@ async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-
     )
     async with world(pg, settings) as w:
         await configure_activity(pg, w.site, CMID)
-        source: Any = moodle_source(worker_engine)
+        source: Any = start_source(worker_engine)
         runner: Any = None
         if case == "capture_failed":
             source = FakeSource(Failed(FailReason.POLICY_INPUT_UNREADABLE))
@@ -313,9 +307,9 @@ async def test_every_failure_rolls_back_to_eligible(  # type: ignore[no-untyped-
                 fail=ProviderOutageError(ProviderCallRecord(now, None, now, "error"))
             )
         elif case == "ws_unreachable":
-            from vektra_assess.worker.preflight import MoodleGateFacts
+            from vektra_assess.worker.preflight import LmsGateFacts
 
-            source = FakeSource(facts=MoodleGateFacts())
+            source = FakeSource(facts=LmsGateFacts())
         sid = await _start(w)
         if case == "not_configured":
             await configure_activity(pg, w.site, CMID, enabled=False)
@@ -361,7 +355,7 @@ async def test_a_stalled_part_b_is_cut_inside_t(pg, worker_engine) -> None:  # t
         )
         runner = FakePartB(delay_s=30)
         handler = make_preflight_handler(
-            deps(settings, w.handoff_public, moodle_source(worker_engine), runner)
+            deps(settings, w.handoff_public, start_source(worker_engine), runner)
         )
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "start_timeout")
@@ -426,7 +420,7 @@ async def test_the_gate_clock_includes_the_time_spent_reading_moodle(  # type: i
             pg, w.site, CMID, end_at_sql="now() + interval '60 seconds'"
         )
         sid = await _start(w)
-        built = await moodle_source(worker_engine).capture(
+        built = await start_source(worker_engine).capture(
             StartTarget(uuid.uuid4(), w.site, CMID, STU, None, "assign", 1, {})
         )
         d = dc_replace(
@@ -464,7 +458,7 @@ async def test_a_commit_that_overruns_t_rolls_back(
             {"s": sid},
         )
         handler = make_preflight_handler(
-            deps(settings, w.handoff_public, moodle_source(worker_engine))
+            deps(settings, w.handoff_public, start_source(worker_engine))
         )
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "start_timeout")
@@ -500,7 +494,7 @@ async def test_an_audit_write_that_overruns_t_rolls_back(
             {"s": sid},
         )
         handler = make_preflight_handler(
-            deps(settings, w.handoff_public, moodle_source(worker_engine))
+            deps(settings, w.handoff_public, start_source(worker_engine))
         )
         await handler(job_context(worker_engine, sid))
         await _rolled_back(pg, sid, "start_timeout")
@@ -532,7 +526,7 @@ async def test_the_session_clock_starts_at_the_end_of_the_commit_transaction(
         await configure_activity(pg, w.site, CMID)
         sid = await _start(w)
         handler = make_preflight_handler(
-            deps(settings, w.handoff_public, moodle_source(worker_engine))
+            deps(settings, w.handoff_public, start_source(worker_engine))
         )
         await handler(job_context(worker_engine, sid))
         state, waited, span, duration = (
@@ -620,7 +614,7 @@ async def test_an_ambiguous_commit_is_resolved_by_rereading_the_row(  # type: ig
         await configure_activity(pg, w.site, CMID)
         sid = await _start(w)
         handler = make_preflight_handler(
-            deps(w.settings, w.handoff_public, moodle_source(worker_engine))
+            deps(w.settings, w.handoff_public, start_source(worker_engine))
         )
         ctx = JobContext(
             1,
@@ -662,7 +656,7 @@ async def test_the_first_enrolment_check_keeps_its_observation_time(  # type: ig
     settings = default_settings()
     async with world(pg, settings) as w:
         await configure_activity(pg, w.site, CMID)
-        inner = moodle_source(worker_engine)
+        inner = start_source(worker_engine)
 
         class SlowGate(FakeSource):
             async def gate_facts(self, target):  # type: ignore[no-untyped-def]

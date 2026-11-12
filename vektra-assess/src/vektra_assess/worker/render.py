@@ -46,7 +46,7 @@ from vektra_assess.gates import (
 from vektra_assess.jobs import JobKind, enqueue_job, render_dedupe_key
 from vektra_assess.worker.preflight import (
     DbGateFacts,
-    MoodleGateFacts,
+    LmsGateFacts,
     PrivacyCheck,
     StartSource,
     StartTarget,
@@ -167,7 +167,7 @@ async def evaluate_render(
         facts = await deps.source.gate_facts(target)
     except Exception as exc:  # unreadable, never a guess
         log.warning("assess_render_facts_error", error_type=type(exc).__name__)
-        facts = MoodleGateFacts()
+        facts = LmsGateFacts()
     return evaluate_start_gates(gate_inputs(target, db, facts)), target
 
 
@@ -185,7 +185,7 @@ async def read_graders(deps: RenderDeps, target: StartTarget) -> GradersRead | N
         return None
     if graders is None:
         return None
-    return GradersRead(tuple(sorted({g.userid for g in graders})))
+    return GradersRead(tuple(sorted({g.user_id for g in graders})))
 
 
 async def read_recipients(

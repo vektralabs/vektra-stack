@@ -7,8 +7,8 @@ factory with no argument (a provider reads its own settings) and checks what cam
 
 Every failure is a ``StartupValidationError`` that names the setting and lists the names that
 are installed, so the operator sees what to set instead. A test double is refused before it is
-built when its factory carries the marker; anything built and then refused is closed. Not wired
-yet: the worker composes its LMS client directly until plan task 2a-4b.5.
+built when its factory carries the marker; anything built and then refused is closed. The assess
+worker loads its one provider through here at startup (``assess_worker._load_lms``).
 """
 
 from __future__ import annotations

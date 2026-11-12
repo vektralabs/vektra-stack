@@ -96,7 +96,7 @@
    "grade_released": true,
    "moodle_release": "4.3",
    "review_options_closed": false,
-   "schema_version": 1
+   "schema_version": 2
   },
   "overall": {
    "grade": "26",

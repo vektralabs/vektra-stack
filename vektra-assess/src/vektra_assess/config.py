@@ -476,7 +476,7 @@ class VektraAssessSettings(BaseSettings):
         None,
         alias="VEKTRA_ASSESS_LMS_PROVIDER",
         pattern=r"^[a-z][a-z0-9_-]{0,63}$",
-        description="Name of the LMS provider to load from the entry-point group vektra.lms_providers (ADR-0033 D2). Read by nothing yet: the worker composes its LMS client directly until plan task 2a-4b.5.",
+        description="Name of the LMS provider the worker loads from the entry-point group vektra.lms_providers (ADR-0033 D2), for example moodle. Required with VEKTRA_ASSESS_ENABLED=true: unset, the worker refuses to start and lists the installed providers.",
     )
 
     @field_validator("lms_provider", mode="before")

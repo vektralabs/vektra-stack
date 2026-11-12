@@ -85,6 +85,8 @@ def start_worker(
         **{k: v for k, v in os.environ.items() if not k.startswith("VEKTRA_")},
         "VEKTRA_ENV": "development",
         "VEKTRA_ASSESS_ENABLED": "true",
+        # the fake LMS provider, offered by worker_main.py's development-only entry point
+        "VEKTRA_ASSESS_LMS_PROVIDER": "fake",
         "VEKTRA_ASSESS_SECRETS_DIR": str(secrets),
         "VEKTRA_ASSESS_WORKER_DATABASE_URL": dsn,
         "VEKTRA_ASSESS_WORKER_ALLOW_UNBOUND": "true",

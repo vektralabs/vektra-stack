@@ -49,7 +49,6 @@ from vektra_assess.delivery.recipients import ConfigRecipients, recipient_ref
 from vektra_assess.jobs import JobKind, enqueue_job
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.language import detect
-from vektra_assess.readable import Unreadable, UnreadableReason
 from vektra_assess.transcript import allowlist, naming, render, store
 from vektra_assess.transcript.facts import CloseFacts, CloseFactsSource
 from vektra_assess.transcript.hashing import (
@@ -60,6 +59,7 @@ from vektra_assess.transcript.hashing import (
 )
 from vektra_assess.worker.runner import AcquireDb, JobContext
 from vektra_assess.worker.runtime import PermanentJobError
+from vektra_shared.lms import Unreadable, UnreadableReason
 
 log = structlog.get_logger(__name__)
 

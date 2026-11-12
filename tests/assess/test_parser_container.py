@@ -482,13 +482,16 @@ def test_stopped_sidecar_is_unavailable_and_the_check_fails() -> None:
 FLOOD = r"""
 import asyncio, json, struct, sys
 from vektra_assess.config import VektraAssessSettings
+from vektra_assess.parser_protocol import PROTOCOL_VERSION
 from vektra_assess.worker.parser_client import ParserClient
 
 N, CLAIM, SENT = 80, 10 * 1024 * 1024, 1024 * 1024
 
 async def sender(path, i):
     r, w = await asyncio.open_unix_connection(path)
-    head = json.dumps({"v": 1, "op": "parse", "req_id": f"flood{i}", "ext_hint": "txt",
+    # the current protocol version: a stale one is refused from the header as BAD_REQUEST,
+    # which the tally below would count as admitted-then-released
+    head = json.dumps({"v": PROTOCOL_VERSION, "op": "parse", "req_id": f"flood{i}", "ext_hint": "txt",
                        "limits": {}, "payload_len": CLAIM}).encode()
 
     async def reply():

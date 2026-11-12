@@ -13,12 +13,19 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from vektra_assess.context.qtypes import (
-    FINAL_STATES,
-    INFORMATION_QTYPES,
+    INFORMATION_KINDS,
     NO_MARK_FINAL_STATES,
+    is_final,
 )
-from vektra_assess.moodle.domain import AttemptReview, AttemptState, AttemptSummary
-from vektra_assess.moodle.result import Readable, Reading, Unreadable
+from vektra_shared.lms import (
+    AttemptReview,
+    AttemptState,
+    AttemptSummary,
+    GradeMethod,
+    Readable,
+    Reading,
+    Unreadable,
+)
 
 
 class NotEligibleReason(StrEnum):
@@ -46,22 +53,23 @@ _OPEN = {AttemptState.IN_PROGRESS, AttemptState.OVERDUE}
 
 
 def is_fully_graded(review: AttemptReview) -> bool:
-    """Quiz BR-014: every item with max > 0 has a final mark; info and zero-mark items ignored."""
-    for slot in review.slots:
-        if slot.qtype in INFORMATION_QTYPES or slot.maxmark <= 0:
+    """Quiz BR-014: every item with max > 0 has a final mark; info and zero-mark items ignored.
+    A state the provider could not place (``UNKNOWN``) is never final (fail closed)."""
+    for item in review.items:
+        if item.question_kind in INFORMATION_KINDS or item.max_mark <= 0:
             continue
-        if slot.needs_grading or slot.state is None or slot.state not in FINAL_STATES:
+        if item.needs_grading or not is_final(item.state):
             return False
         # an unanswered question is final with no mark ("requires grading" = 0); any other
         # final state without a mark is inconsistent and fails closed
-        if slot.mark is None and slot.state not in NO_MARK_FINAL_STATES:
+        if item.mark is None and item.state not in NO_MARK_FINAL_STATES:
             return False
-    return review.sumgrades is not None
+    return review.sum_grades is not None
 
 
 def select_attempt(
     attempts: Reading[tuple[AttemptSummary, ...]],
-    grade_method: str,
+    grade_method: GradeMethod | str,
     fully_graded: Mapping[int, bool | None],
     *,
     released: bool,
@@ -82,14 +90,14 @@ def select_attempt(
     if not finished:
         return NotEligible(NotEligibleReason.NO_SUBMISSION)
     for a in finished:
-        graded = fully_graded.get(a.attemptid)
+        graded = fully_graded.get(a.attempt_id)
         if graded is None:
             return NotEligible(NotEligibleReason.UNREADABLE)
-        if not graded or a.sumgrades is None:
+        if not graded or a.sum_grades is None:
             return NotEligible(NotEligibleReason.NOT_GRADED)
     if not released:
         return NotEligible(NotEligibleReason.NOT_RELEASED)
-    chosen = _choose(finished, grade_method)
+    chosen = _choose(finished, str(grade_method))
     return Selected(chosen, chosen.attempt_number, len(real))
 
 
@@ -99,9 +107,9 @@ def _choose(finished: Sequence[AttemptSummary], grade_method: str) -> AttemptSum
     if grade_method in ("last", "average"):
         # average: the grade is a mean, no attempt determines it; discuss the last one
         return finished[-1]
-    best = max(a.sumgrades or 0.0 for a in finished)
+    best = max(a.sum_grades or 0.0 for a in finished)
     # highest: ties go to the EARLIEST attempt (finished is sorted by attempt number)
-    return next(a for a in finished if (a.sumgrades or 0.0) == best)
+    return next(a for a in finished if (a.sum_grades or 0.0) == best)
 
 
 # --- assignments ---------------------------------------------------------------------------------

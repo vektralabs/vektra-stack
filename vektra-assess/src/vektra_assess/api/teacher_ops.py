@@ -55,7 +55,6 @@ from vektra_assess.errors import (
     session_not_found,
     terminate_count_mismatch,
 )
-from vektra_assess.readable import Readable
 from vektra_assess.teacher import validation as v
 from vektra_assess.teacher.schemas import (
     ExtraTimePut,
@@ -68,6 +67,7 @@ from vektra_assess.teacher.schemas import (
 )
 from vektra_assess.timing import session_duration_s
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
+from vektra_shared.lms import Readable
 
 log = structlog.get_logger(__name__)
 router = APIRouter()

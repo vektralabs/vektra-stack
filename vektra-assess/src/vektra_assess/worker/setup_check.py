@@ -1,8 +1,8 @@
 """The REQ-079 setup check on the job loop: the ``setup_check`` handler and the daily tick.
 
 Plan assess-moodle-ws task F4, carried over to plan assess-job-loop and bound on 2026-11-08.
-The check itself is ``vektra_assess.moodle.setup_check.run_setup_check``; this module adds what
-the job loop needs around it:
+The check itself is ``vektra_assess.setup.run_setup_check`` over the configured ``LmsProvider``
+(ADR-0033 D3); this module adds what the job loop needs around it:
 
 - **handler** (kind ``setup_check``, pool ``setup``, hard timeout 120 s from ``worker/policy.py``):
   ids only in ``args`` (``site_id``, optional ``report_id``). It re-validates the rows before
@@ -14,10 +14,11 @@ the job loop needs around it:
   a queued or running report is never trimmed.
 - **tick** (daily, also on startup): one ``setup_check`` job per enabled site, with the same
   ``dedupe_key`` as the release-change enqueue, so a pending check is never queued twice. The
-  tick only queues: the Moodle calls run in the handler's own pool, under its own timeout.
+  tick only queues: the LMS calls run in the handler's own pool, under its own timeout.
 
 The capability matrix (``assess_site_capabilities``) is written by the probes of every run
-(``run_probes`` + ``persist_matrix``): this check is what keeps the 26 h freshness of the flags.
+(``LmsProvider.probe_capabilities`` + ``persist_matrix``): this check is what keeps the 26 h
+freshness of the flags.
 """
 
 from __future__ import annotations
@@ -31,14 +32,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.jobs import JobKind, enqueue_job
-from vektra_assess.moodle.client import MoodleWsClient
-from vektra_assess.moodle.setup_check import (
-    ItemRegistry,
-    SetupCheckStale,
-    run_setup_check,
-)
+from vektra_assess.setup import ItemRegistry, SetupCheckStale, run_setup_check
 from vektra_assess.worker.policy import KIND_DEFAULTS
 from vektra_assess.worker.runner import AcquireDb, JobContext
+from vektra_shared.lms import LmsProvider
 
 log = structlog.get_logger(__name__)
 
@@ -151,11 +148,10 @@ def _uuid(value: object) -> UUID | None:
 
 def make_setup_check_handler(
     engine: AsyncEngine,
-    client: MoodleWsClient,
+    provider: LmsProvider,
     settings: VektraAssessSettings,
     *,
     registry: ItemRegistry | None = None,
-    now: Callable[[], int] | None = None,
     orphan_after_s: float = ORPHAN_AFTER_S,
 ) -> Callable[[JobContext], Awaitable[None]]:
     """``engine`` is the worker's engine: ``run_setup_check`` owns its transactions on it."""
@@ -173,7 +169,7 @@ def make_setup_check_handler(
             if site is None:
                 stale = "unknown_site"
             elif site.disabled:
-                # never a Moodle call, an audit row or a matrix write for a disabled site; a
+                # never an LMS call, an audit row or a matrix write for a disabled site; a
                 # report the API queued before the site was disabled is closed, not left queued
                 stale = "site_disabled"
                 if report_id is not None:
@@ -209,11 +205,10 @@ def make_setup_check_handler(
             await run_setup_check(
                 engine,
                 site_id=site_id,
-                client=client,
+                provider=provider,
                 settings=settings,
                 registry=registry,
                 report_id=report_id,
-                now=None if now is None else now(),
             )
         except SetupCheckStale as exc:
             # the site or the report changed between the check above and the claim inside,

@@ -55,7 +55,7 @@
    "grade_released": true,
    "moodle_release": "5.2",
    "review_options_closed": true,
-   "schema_version": 1
+   "schema_version": 2
   },
   "overall": {
    "grade": "5",
@@ -75,12 +75,13 @@
     "mark": "0",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "multichoice",
+    "qtype": "multiple_choice",
     "question_text": "Qual è la derivata di x^2 + 3x?",
     "response_text": "Ho scelto 2x + 3.",
     "review_text": null,
-    "state": "gradedwrong",
-    "status": "Errata"
+    "state": "final_marked",
+    "status": "Errata",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -89,12 +90,13 @@
     "mark": "0.5",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "multichoice",
+    "qtype": "multiple_choice",
     "question_text": "Quale matrice è invertibile tra A e B?",
     "response_text": "Ho scelto la matrice A.",
     "review_text": null,
-    "state": "gradedpartial",
-    "status": "Parzialmente corretta"
+    "state": "final_marked",
+    "status": "Parzialmente corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -103,12 +105,13 @@
     "mark": "0.5",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "truefalse",
+    "qtype": "true_false",
     "question_text": "Ogni funzione continua è derivabile.",
     "response_text": "Vero.",
     "review_text": null,
-    "state": "gradedpartial",
-    "status": "Parzialmente corretta"
+    "state": "final_marked",
+    "status": "Parzialmente corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -117,12 +120,13 @@
     "mark": "0.5",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "shortanswer",
+    "qtype": "short_answer",
     "question_text": "Scrivi il valore di lim x->0 sin(x)/x.",
     "response_text": "0",
     "review_text": null,
-    "state": "gradedpartial",
-    "status": "Parzialmente corretta"
+    "state": "final_marked",
+    "status": "Parzialmente corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -135,8 +139,9 @@
     "question_text": "Calcola l'integrale di 2x tra 0 e 3.",
     "response_text": "9",
     "review_text": null,
-    "state": "gradedwrong",
-    "status": "Errata"
+    "state": "final_marked",
+    "status": "Errata",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -149,8 +154,9 @@
     "question_text": "Dimostra che la somma di due numeri pari è pari.",
     "response_text": "Se a=2k e b=2h allora a+b=2(k+h).",
     "review_text": null,
-    "state": "gradedwrong",
-    "status": "Errata"
+    "state": "final_marked",
+    "status": "Errata",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -159,12 +165,13 @@
     "mark": "0.5",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "multichoice",
+    "qtype": "multiple_choice",
     "question_text": "Qual è il rango della matrice identità 3x3?",
     "response_text": "Ho scelto 2.",
     "review_text": null,
-    "state": "gradedpartial",
-    "status": "Parzialmente corretta"
+    "state": "final_marked",
+    "status": "Parzialmente corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -173,12 +180,13 @@
     "mark": "1",
     "marks_hidden": null,
     "max_mark": "1",
-    "qtype": "truefalse",
+    "qtype": "true_false",
     "question_text": "Il determinante di una matrice singolare è nullo.",
     "response_text": "Vero.",
     "review_text": null,
-    "state": "gradedright",
-    "status": "Corretta"
+    "state": "final_marked",
+    "status": "Corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -191,8 +199,9 @@
     "question_text": "Risolvi 3x - 6 = 0.",
     "response_text": "2",
     "review_text": null,
-    "state": "gradedright",
-    "status": "Corretta"
+    "state": "final_marked",
+    "status": "Corretta",
+    "truncated": false
    },
    {
     "degraded": false,
@@ -205,8 +214,9 @@
     "question_text": "Spiega il teorema di Rolle con un esempio.",
     "response_text": "Se f(a)=f(b) esiste c con f'(c)=0, ad esempio x^2 su [-1,1].",
     "review_text": null,
-    "state": "gradedpartial",
-    "status": "Parzialmente corretta"
+    "state": "final_marked",
+    "status": "Parzialmente corretta",
+    "truncated": false
    }
   ],
   "solution_text": null,

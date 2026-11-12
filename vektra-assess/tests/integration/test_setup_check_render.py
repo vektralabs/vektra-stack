@@ -2,7 +2,7 @@
 
 Coordinator decision 2026-11-08 (plan assess-moodle-ws Notes): ``assess_sites.release`` is the
 release whose capability matrix is valid. A setup-check run whose probes were persisted sets it,
-in the matrix's own transaction; the render check (``MoodleStartSource``) reads it. Before this,
+in the matrix's own transaction; the render check (``LmsStartSource``) reads it. Before this,
 no production code wrote ``release``, so a registered site rendered ``unreadable`` forever and
 ``/state`` never left "checking" for a student.
 """
@@ -13,25 +13,35 @@ import json
 import logging
 
 import pytest
-from assess_moodle_support import Replay, make_client, manifest, uid
+from assess_moodle_support import Replay, make_provider, manifest, uid
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.world import configure_activity, world
+from test_context_capture import InProcessParser
 
-from integration.test_session_preflight import _reset, moodle_source
+from integration.test_session_preflight import _reset
 from vektra_assess.capabilities import FLAGS
 from vektra_assess.jobs import JobKind
 from vektra_assess.moodle.probes import derive_probe_manifest
 from vektra_assess.worker.render import RenderDeps, make_render_handler
 from vektra_assess.worker.runner import JobContext
 from vektra_assess.worker.setup_check import make_setup_check_handler
+from vektra_assess.worker.start_source import LmsStartSource
 
-from .test_setup_check_run import SETTINGS, full_registry
+from .test_setup_check_run import ENV, SETTINGS, full_registry
 
 pytestmark = pytest.mark.integration
 
 BRANCH = "4.3"  # the branch the render tests' recorded source serves
 M = manifest(BRANCH)
 STU1 = uid(BRANCH, "stu1")
+
+
+def moodle_source(engine) -> LmsStartSource:  # type: ignore[no-untyped-def]
+    """The render check's source over the Moodle provider and the recorded 4.3 site: this
+    suite proves the PROVIDER's setup check makes a real site render (the joint path)."""
+    return LmsStartSource(
+        make_provider(Replay(BRANCH)), InProcessParser(), engine.connect
+    )
 
 
 def _ctx(engine, kind: JobKind, args) -> JobContext:  # type: ignore[no-untyped-def]
@@ -84,7 +94,7 @@ async def test_a_never_checked_site_renders_unreadable_until_its_first_setup_che
 
             check = make_setup_check_handler(
                 engine,
-                make_client(Replay(BRANCH)),
+                make_provider(Replay(BRANCH), **ENV),
                 SETTINGS,
                 registry=full_registry(),
             )
@@ -130,7 +140,7 @@ async def test_a_run_without_probes_leaves_the_release_unset(pg) -> None:  # typ
                 "message": "bad",
             }
             check = make_setup_check_handler(
-                engine, make_client(replay), SETTINGS, registry=full_registry()
+                engine, make_provider(replay, **ENV), SETTINGS, registry=full_registry()
             )
             await check(_ctx(engine, JobKind.SETUP_CHECK, {"site_id": str(w.site)}))
             assert (
@@ -158,7 +168,10 @@ async def test_a_run_without_a_probe_manifest_leaves_the_release_unset(pg) -> No
                 {"s": w.site},
             )
             check = make_setup_check_handler(
-                engine, make_client(Replay(BRANCH)), SETTINGS, registry=full_registry()
+                engine,
+                make_provider(Replay(BRANCH), **ENV),
+                SETTINGS,
+                registry=full_registry(),
             )
             await check(_ctx(engine, JobKind.SETUP_CHECK, {"site_id": str(w.site)}))
             release, last_seen = (

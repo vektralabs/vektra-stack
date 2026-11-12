@@ -6,11 +6,14 @@ the audit log), never inferred from a function's return value.
 
 from __future__ import annotations
 
+import dataclasses
 import os
+from typing import Any
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from support.fake_lms import SCENARIO_RELEASE
 
 from vektra_assess.context.capture.store import (
     Mismatch,
@@ -28,6 +31,22 @@ from .conftest import Pg, make_session
 pytestmark = pytest.mark.integration
 
 CANARY = "CNRY-submission-onlinetext-77aa11bb"
+
+
+def _quiz(provider: Any) -> tuple[Any, Any]:
+    """(the capture readers, the target) of the scenario world's graded essay quiz, read
+    through ``provider`` bound to the scenario site (the fake LMS, ADR-0033)."""
+    from support.fake_lms import QUIZZES, SCENARIO_COURSE, scenario_target
+
+    from vektra_assess.context.capture.bound import SiteReaders
+    from vektra_assess.context.capture.capture import QuizTarget
+    from vektra_shared.lms import LmsSite
+
+    sub, cmid = scenario_target("essay")
+    readers = SiteReaders(
+        provider, LmsSite("site-1", "https://lms.example.org", SCENARIO_RELEASE)
+    )
+    return readers, QuizTarget(SCENARIO_COURSE, QUIZZES["essay"][1], cmid, sub)
 
 
 def _snapshot():  # type: ignore[no-untyped-def]
@@ -58,6 +77,8 @@ async def test_committed_hash_equals_the_recomputed_hash(pg: Pg) -> None:
         loaded = await load_snapshot(c, sid, dek)
         await c.commit()
     assert isinstance(res, Ok) and loaded == _snapshot()
+    # the sealed snapshot is schema 2: neutral item kind and state (ADR-0033 D2)
+    assert loaded.header.schema_version == 2
     # the stored bytes are ciphertext: the canary is not in the row
     rows = await pg.run(
         "super",
@@ -196,26 +217,24 @@ async def test_a_failed_audit_write_aborts_the_transaction(pg: Pg) -> None:
 async def test_persist_capture_writes_snapshot_and_exclusion_event_together(
     pg: Pg,
 ) -> None:
-    from assess_moodle_support import uid
-    from test_context_capture import OFF, InProcessParser, _env  # recorded 5.2 quiz
+    from support.fake_lms import scenario_provider
+    from test_context_capture import OFF, InProcessParser
 
     from vektra_assess.context.capture.capture import (
         Built,
         Capabilities,
-        QuizTarget,
         capture_quiz,
         persist_capture,
     )
 
-    _replay, readers, m = _env("5.2")
-    q = m["quizzes"]["review_mixed"]
+    readers, target = _quiz(scenario_provider())
     built = await capture_quiz(
-        QuizTarget(m["courseid"], q["id"], q["cmid"], uid("5.2", "stu1")),
+        target,
         readers,
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=m["release"],
+        moodle_release=SCENARIO_RELEASE,
         now=1,
     )
     assert isinstance(built, Built)
@@ -292,14 +311,13 @@ async def test_a_regrade_between_capture_and_close_changes_only_the_flag(
 ) -> None:
     """BR-008 / BR-015 AC2: Moodle regrades after Start; the snapshot, its hash and Part A stay
     as captured, and the close-time comparison reports changed(old, new)."""
-    from assess_moodle_support import uid
-    from test_context_capture import OFF, InProcessParser, _env
+    from support.fake_lms import scenario_provider
+    from test_context_capture import OFF, InProcessParser
 
     from vektra_assess.context.assemble import assemble_context
     from vektra_assess.context.capture.capture import (
         Built,
         Capabilities,
-        QuizTarget,
         capture_quiz,
         persist_capture,
     )
@@ -311,18 +329,17 @@ async def test_a_regrade_between_capture_and_close_changes_only_the_flag(
         compare_grade,
     )
     from vektra_assess.context.snapshot import mark_str
-    from vektra_assess.readable import Readable
+    from vektra_shared.lms import Readable
 
-    replay, readers, m = _env("5.2")
-    q = m["quizzes"]["gm_highest"]
-    target = QuizTarget(m["courseid"], q["id"], q["cmid"], uid("5.2", "stu1"))
+    fake = scenario_provider()
+    readers, target = _quiz(fake)
     built = await capture_quiz(
         target,
         readers,
         InProcessParser(),
         OFF,
         Capabilities(),
-        moodle_release=m["release"],
+        moodle_release=SCENARIO_RELEASE,
         now=1,
     )
     assert isinstance(built, Built)
@@ -334,21 +351,17 @@ async def test_a_regrade_between_capture_and_close_changes_only_the_flag(
         assemble_context(built.snapshot, built.frozen_policy), SessionFacts(1, 30)
     ).text
 
-    def regrade(wsfunction: str, body):  # type: ignore[no-untyped-def]
-        if wsfunction == "gradereport_user_get_grade_items":
-            for item in body["usergrades"][0]["gradeitems"]:
-                if item.get("cmid") == q["cmid"]:
-                    item["graderaw"] = 6.5
-                    item["gradeformatted"] = "6.50"
-        return body
-
-    replay.mutate = regrade
-    now = await readers.grade_release(m["courseid"], uid("5.2", "stu1"), q["cmid"])
+    # the teacher regrades in the LMS after Start
+    key = (target.courseid, target.userid, target.cmid)
+    fake.world.grade_items[key] = dataclasses.replace(
+        fake.world.grade_items[key], grade=6.5, grade_formatted="6.50"
+    )
+    now = await readers.grade_item(target.courseid, target.userid, target.cmid)
     assert isinstance(now, Readable) and now.value.grade == 6.5
     flag = compare_grade(
         built.snapshot, Readable(GradeReading(True, mark_str(now.value.grade)))
     )
-    assert flag == RegradeFlag(RegradeKind.CHANGED, old="10", new="6.5")
+    assert flag == RegradeFlag(RegradeKind.CHANGED, old="8", new="6.5")
     async with pg.conn("worker") as c:
         res = await verify_snapshot_integrity(c, sid, dek, digest)
         await c.commit()

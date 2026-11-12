@@ -28,7 +28,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validat
 
 from vektra_assess.parser_protocol import FileStatus
 
-SCHEMA_VERSION: Literal[1] = 1
+#: 2 (ADR-0033 D2, PR 2a-2): ``QuizItem.qtype`` and ``state`` hold the neutral ``QuestionKind`` /
+#: ``QuestionState`` values (``multiple_choice``, ``final_marked``), no longer an LMS's own type
+#: and state names. Under OD-1 no assess data survives the separation, so there is no v1 reader:
+#: a v1 snapshot does not validate.
+SCHEMA_VERSION: Literal[2] = 2
 
 
 def mark_str(value: float | int | None) -> str | None:
@@ -88,9 +92,9 @@ class QuizItem(_Frozen):
     """One question of the selected attempt, as the student may see it."""
 
     label: str  # display numbering as on the review page: "3", "i"
-    qtype: str
+    qtype: str  # a ``vektra_shared.lms.QuestionKind`` value (schema 2)
     discussable: bool  # REQ-101 list; others are mark-and-feedback level and flagged
-    state: str | None
+    state: str | None  # a ``QuestionState`` value; None when the marks are hidden
     status: str | None  # the student-visible state label ("Corretta" ...)
     mark: Mark | None  # None when hidden or not applicable (see marks_hidden)
     max_mark: Mark | None
@@ -209,7 +213,7 @@ class FrozenFlags(_Frozen):
 
 
 class SnapshotHeader(_Frozen):
-    schema_version: Literal[1] = SCHEMA_VERSION
+    schema_version: Literal[2] = SCHEMA_VERSION
     activity_kind: ActivityKind
     moodle_release: str
     attempt_number: int  # "#k"
@@ -279,6 +283,32 @@ def content_hash(snapshot: Snapshot) -> str:
     return hashlib.sha256(canonical_bytes(snapshot)).hexdigest()
 
 
+class UnsupportedSchemaError(ValueError):
+    """A decrypted snapshot of another ``schema_version``: not tampering, an old format (OD-1:
+    none should survive the upgrade, and none is read)."""
+
+    def __init__(self, version: object) -> None:
+        super().__init__("unsupported snapshot schema version")
+        self.version = version
+
+
+def schema_version_of(data: bytes) -> object:
+    """The ``header.schema_version`` of a decrypted snapshot, read before strict validation;
+    None when the document has none (then strict validation decides)."""
+    import json
+
+    try:
+        doc = json.loads(data)
+    except (ValueError, RecursionError):
+        return None
+    header = doc.get("header") if isinstance(doc, dict) else None
+    return header.get("schema_version") if isinstance(header, dict) else None
+
+
 def from_canonical_bytes(data: bytes) -> Snapshot:
-    """Parse a decrypted snapshot. Strict: an unknown field or a wrong type is an error."""
+    """Parse a decrypted snapshot. Strict: an unknown field or a wrong type is an error. A
+    snapshot of another schema version is ``UnsupportedSchemaError``, told apart from damage."""
+    version = schema_version_of(data)
+    if version is not None and version != SCHEMA_VERSION:
+        raise UnsupportedSchemaError(version)
     return Snapshot.model_validate_json(data)

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from vektra_assess.parser_protocol import (
+    PROTOCOL_VERSION,
     Extracted,
     FileStatus,
     encode_frame,
@@ -37,9 +38,11 @@ class StubServer(ParserServer):
         super().__init__(cfg)
         self.release = threading.Event()
         self.calls = 0
+        self.profiles: list[object] = []
 
-    def _supervise(self, op, data, ext, max_pages, max_chars, timeout_s):  # type: ignore[no-untyped-def]
+    def _supervise(self, op, data, ext, max_pages, max_chars, timeout_s, profile=None):  # type: ignore[no-untyped-def]
         self.calls += 1
+        self.profiles.append(profile)
         self.release.wait(5)
         return ChildOutcome(Extracted(FileStatus.READ, data.decode()), 1, 0, 0, False)
 
@@ -68,7 +71,14 @@ async def _call(
 
 
 def _req(op: str = "parse", **kw: object) -> dict:  # type: ignore[type-arg]
-    return {"v": 1, "op": op, "req_id": "r1", "ext_hint": "txt", "limits": {}, **kw}
+    return {
+        "v": PROTOCOL_VERSION,
+        "op": op,
+        "req_id": "r1",
+        "ext_hint": "txt",
+        "limits": {},
+        **kw,
+    }
 
 
 async def test_socket_is_0600(srv: StubServer) -> None:
@@ -78,11 +88,13 @@ async def test_socket_is_0600(srv: StubServer) -> None:
 @pytest.mark.parametrize(
     "bad",
     [
-        {"v": 2, "op": "parse", "req_id": "r"},
-        {"v": 1, "op": "format_disk", "req_id": "r"},
-        {"v": 1, "op": "parse"},
-        {"v": 1, "op": "parse", "req_id": "x" * 65},
-        {"v": 1, "op": "parse", "req_id": 5},
+        {"v": PROTOCOL_VERSION + 1, "op": "parse", "req_id": "r"},
+        # a worker of the previous protocol (before the review_item profile): refused loudly
+        {"v": PROTOCOL_VERSION - 1, "op": "parse", "req_id": "r"},
+        {"v": PROTOCOL_VERSION, "op": "format_disk", "req_id": "r"},
+        {"v": PROTOCOL_VERSION, "op": "parse"},
+        {"v": PROTOCOL_VERSION, "op": "parse", "req_id": "x" * 65},
+        {"v": PROTOCOL_VERSION, "op": "parse", "req_id": 5},
     ],
 )
 async def test_bad_requests_get_bad_request(srv: StubServer, bad: dict) -> None:  # type: ignore[type-arg]
@@ -106,7 +118,7 @@ async def test_garbage_and_oversize_header_do_not_kill_the_server(
         w.write_eof()
         await asyncio.wait_for(r.read(), 5)
         w.close()
-    header, _ = await _call(srv, {"v": 1, "op": "ping", "req_id": "p"})
+    header, _ = await _call(srv, {"v": PROTOCOL_VERSION, "op": "ping", "req_id": "p"})
     assert header["code"] == "pong"
 
 
@@ -114,6 +126,37 @@ async def test_too_large_answers_without_a_child(srv: StubServer) -> None:
     header, payload = await _call(srv, _req(), b"x" * 2000)
     assert header["status"] == "TOO_LARGE" and payload == b""
     assert srv.calls == 0
+
+
+PROFILE = {
+    "keep": {"question_text": "qtext", "response": "ablock"},
+    "drop": ["rightanswer"],
+    "version": "t-1",
+}
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [None, {}, {**PROFILE, "keep": {"question_text": "q text"}}, "qtext"],
+    ids=["absent", "empty", "bad_class", "not_a_dict"],
+)
+async def test_a_review_item_without_a_valid_profile_is_refused_without_a_child(
+    srv: StubServer, profile: object
+) -> None:
+    """ADR-0033 D4: the sidecar has no class list of its own to fall back on."""
+    srv.release.set()
+    before = srv.calls
+    extra = {} if profile is None else {"profile": profile}
+    header, payload = await _call(srv, _req("review_item", **extra), b"<p>x</p>")
+    assert (header["status"], header["code"], payload) == ("CORRUPT", "no_profile", b"")
+    assert srv.calls == before
+
+
+async def test_a_valid_profile_reaches_the_child_in_wire_form(srv: StubServer) -> None:
+    srv.release.set()
+    header, _ = await _call(srv, _req("review_item", profile=PROFILE), b"<p>x</p>")
+    assert header["status"] == "READ"
+    assert srv.profiles[-1] == PROFILE
 
 
 async def test_queue_is_bounded_and_beyond_it_busy(srv: StubServer) -> None:
@@ -134,7 +177,7 @@ async def test_queue_is_bounded_and_beyond_it_busy(srv: StubServer) -> None:
 
 async def test_shallow_ping_needs_no_child(srv: StubServer) -> None:
     before = srv.calls
-    header, _ = await _call(srv, {"v": 1, "op": "ping", "req_id": "p2"})
+    header, _ = await _call(srv, {"v": PROTOCOL_VERSION, "op": "ping", "req_id": "p2"})
     assert header["code"] == "pong" and header["status"] is None and srv.calls == before
 
 
@@ -232,9 +275,9 @@ async def test_max_pages_setting_is_an_upper_bound(
     seen: list[int] = []
     orig = s._supervise
 
-    def spy(op, data, ext, max_pages, max_chars, timeout_s):  # type: ignore[no-untyped-def]
+    def spy(op, data, ext, max_pages, max_chars, timeout_s, profile=None):  # type: ignore[no-untyped-def]
         seen.append(max_pages)
-        return orig(op, data, ext, max_pages, max_chars, timeout_s)
+        return orig(op, data, ext, max_pages, max_chars, timeout_s, profile)
 
     s._supervise = spy  # type: ignore[method-assign]
     s.release.set()

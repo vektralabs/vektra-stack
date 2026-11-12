@@ -19,7 +19,7 @@ from vektra_assess.jobs import JobKind
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.llm.types import ProviderCallRecord, TurnResult, TurnUsage
 from vektra_assess.worker.preflight import (
-    MoodleGateFacts,
+    LmsGateFacts,
     PreflightDeps,
     StartSource,
     StartTarget,
@@ -89,7 +89,7 @@ class FakePartB:
 
 
 #: Moodle gate facts that pass every gate (a closed, graded, released, enrolled activity)
-PASSING_FACTS = MoodleGateFacts(
+PASSING_FACTS = LmsGateFacts(
     team_submission=False,
     grading_method="rubric",
     attempt_in_progress=False,
@@ -116,7 +116,7 @@ class FakeSource:
         raises: BaseException | None = None,
         stall: bool = False,
         inner: StartSource | None = None,
-        facts: MoodleGateFacts = PASSING_FACTS,
+        facts: LmsGateFacts = PASSING_FACTS,
         enrolled: bool | None = True,
     ) -> None:
         self.enrolled_value = enrolled
@@ -132,7 +132,7 @@ class FakeSource:
             return await self.inner.enrolled(target)
         return self.enrolled_value
 
-    async def gate_facts(self, target: StartTarget) -> MoodleGateFacts:
+    async def gate_facts(self, target: StartTarget) -> LmsGateFacts:
         if self.inner is not None:
             return await self.inner.gate_facts(target)
         return self.facts

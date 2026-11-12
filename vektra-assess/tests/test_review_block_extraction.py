@@ -17,9 +17,40 @@ from typing import Any
 import html5lib
 import pytest
 
-from vektra_assess.context.qtypes import EXTRACTION_QTYPES
-from vektra_assess.parser_protocol import FileStatus
+from vektra_assess.context.qtypes import EXTRACTION_KINDS
+from vektra_assess.moodle.provider import MOODLE_REVIEW_PROFILE, QUESTION_KINDS
+from vektra_assess.parser_protocol import Extracted, FileStatus, ReviewProfile
+from vektra_assess.parser_sidecar.child import run
 from vektra_assess.parser_sidecar.html_review import extract_review_block
+
+#: the Moodle provider's profile, in the wire form the sidecar receives (ADR-0033 D4): the
+#: oracle below proves THIS profile, passed explicitly, removes what Moodle hides
+PROFILE = ReviewProfile.build(
+    MOODLE_REVIEW_PROFILE.keep,
+    MOODLE_REVIEW_PROFILE.drop_classes,
+    MOODLE_REVIEW_PROFILE.profile_version,
+)
+#: the Moodle question types whose kind is enabled for extraction
+EXTRACTION_QTYPES = {t for t, k in QUESTION_KINDS.items() if k in EXTRACTION_KINDS}
+
+
+def _block(data: bytes, name: str, max_chars: int) -> Extracted:
+    """One block with the Moodle profile (``qtext`` is the question-text block)."""
+    return extract_review_block(
+        data, "question_text" if name == "qtext" else name, max_chars, PROFILE
+    )
+
+
+def _item(data: bytes, ext: str, *, max_pages: int, max_chars: int) -> Extracted:
+    return run(
+        "review_item",
+        data,
+        ext,
+        max_pages=max_pages,
+        max_chars=max_chars,
+        profile=PROFILE,
+    )
+
 
 FIXTURES = Path(__file__).parent / "fixtures" / "moodle_ws"
 EXCLUDED = {
@@ -81,8 +112,8 @@ def test_enabled_types_keep_question_and_answer_and_drop_the_rest(
     name: str, q: dict[str, Any]
 ) -> None:
     html = q["html"].encode()
-    qtext = extract_review_block(html, "qtext", 100_000)
-    resp = extract_review_block(html, "response", 100_000)
+    qtext = _block(html, "qtext", 100_000)
+    resp = _block(html, "response", 100_000)
     assert qtext.status is FileStatus.READ, (name, qtext.code)
     assert re.search(r"VISIBLE-QTEXT-\w+", qtext.text), name
     out = qtext.text + "\n" + resp.text
@@ -95,10 +126,10 @@ def test_enabled_types_keep_question_and_answer_and_drop_the_rest(
 def test_cloze_and_drag_types_fail_closed() -> None:
     for name, q in QUESTIONS:
         if q["type"] == "multianswer":
-            e = extract_review_block(q["html"].encode(), "qtext", 100_000)
+            e = _block(q["html"].encode(), "qtext", 100_000)
             assert (e.status, e.code) == (FileStatus.NO_TEXT, "block_missing"), name
         if q["type"] == "ddwtos":
-            e = extract_review_block(q["html"].encode(), "response", 100_000)
+            e = _block(q["html"].encode(), "response", 100_000)
             assert e.status is FileStatus.NO_TEXT, name
 
 
@@ -110,7 +141,7 @@ def test_the_essay_grader_comment_never_comes_out() -> None:
             for block in ("qtext", "response"):
                 assert (
                     "CANARY-ESSAYCOMMENT"
-                    not in extract_review_block(q["html"].encode(), block, 100_000).text
+                    not in _block(q["html"].encode(), block, 100_000).text
                 ), name
 
 
@@ -119,7 +150,7 @@ def test_answers_given_are_kept() -> None:
     for _, q in QUESTIONS:
         if q["type"] in EXTRACTION_QTYPES and q.get("state", "").startswith("graded"):
             by_type.setdefault(q["type"], []).append(
-                extract_review_block(q["html"].encode(), "response", 100_000).text
+                _block(q["html"].encode(), "response", 100_000).text
             )
     assert any("[x]" in t for t in by_type["multichoice"])
     assert any("[x]" in t for t in by_type["truefalse"])
@@ -135,7 +166,7 @@ def test_answers_given_are_kept() -> None:
     ],
 )
 def test_unexpected_shapes_fail_closed(html: bytes, code: str) -> None:
-    e = extract_review_block(html, "qtext", 1000)
+    e = _block(html, "qtext", 1000)
     assert (e.status, e.code, e.text) == (FileStatus.NO_TEXT, code, "")
 
 
@@ -144,14 +175,14 @@ def test_feedback_nested_in_a_kept_block_is_pruned_and_tails_survive() -> None:
         b"<div class='qtext'>Quanto fa 2+2? <span class='feedbackspan'>Giusto: 4</span>"
         b" fine domanda<div class='specificfeedback'>Bravo</div> coda</div>"
     )
-    e = extract_review_block(html, "qtext", 1000)
+    e = _block(html, "qtext", 1000)
     assert "Giusto" not in e.text and "Bravo" not in e.text
     assert "Quanto fa 2+2?" in e.text and "fine domanda" in e.text and "coda" in e.text
 
 
 def test_unknown_block_name_is_refused() -> None:
     assert (
-        extract_review_block(b"<div class='qtext'>a</div>", "rightanswer", 100).code
+        _block(b"<div class='qtext'>a</div>", "rightanswer", 100).code
         == "unknown_block"
     )
 
@@ -159,18 +190,16 @@ def test_unknown_block_name_is_refused() -> None:
 def test_the_child_returns_both_blocks_from_one_parse() -> None:
     import json
 
-    from vektra_assess.parser_sidecar.child import run
-
     html = b"<div class='qtext'>Domanda</div><fieldset class='ablock'>[x] A</fieldset>"
-    doc = json.loads(run("review_item", html, "html", max_pages=1, max_chars=100).text)
-    assert doc["qtext"] == "Domanda" and "A" in doc["response"]
-    doc = json.loads(
-        run("review_item", b"<p>nothing</p>", "html", max_pages=1, max_chars=100).text
-    )
-    assert doc == {"qtext": None, "response": None, "truncated": False}
+    doc = json.loads(_item(html, "html", max_pages=1, max_chars=100).text)
+    assert doc["question_text"] == "Domanda" and "A" in doc["response"]
+    doc = json.loads(_item(b"<p>nothing</p>", "html", max_pages=1, max_chars=100).text)
+    assert doc == {"question_text": None, "response": None, "truncated": False}
     big = b"<div class='qtext'>" + b"x" * 500 + b"</div>"
-    out = run("review_item", big, "html", max_pages=1, max_chars=200).text
-    assert len(out) <= 200 and json.loads(out)["qtext"]  # the JSON itself fits the cap
+    out = _item(big, "html", max_pages=1, max_chars=200).text
+    assert (
+        len(out) <= 200 and json.loads(out)["question_text"]
+    )  # the JSON itself fits the cap
     assert json.loads(out)["truncated"] is True  # and the cut is flagged
 
 
@@ -183,47 +212,86 @@ def test_the_child_returns_both_blocks_from_one_parse() -> None:
 )
 def test_correctness_icons_inside_the_response_are_dropped(icon: str) -> None:
     html = f"<fieldset class='ablock'><div class='answer'><div class='r0 correct'>[x] Vero {icon}</div></div></fieldset>"
-    text = extract_review_block(html.encode(), "response", 1000).text
+    text = _block(html.encode(), "response", 1000).text
     assert "Vero" in text and "Correct" not in text
 
 
 def test_review_item_json_fits_the_cap_even_when_escaping_grows_it() -> None:
-    from vektra_assess.parser_sidecar.child import run
-
     # every quote and backslash doubles under JSON escaping: half-capped values alone overflow
     body = '"\\' * 200
     html = (
         f"<div class='qtext'>{body}</div>"
         f"<fieldset class='ablock'><div class='answer'>{body}</div></fieldset>"
     ).encode()
-    out = run("review_item", html, "html", max_pages=1, max_chars=300).text
+    out = _item(html, "html", max_pages=1, max_chars=300).text
     assert len(out) <= 300
     doc = json.loads(out)  # still valid JSON, not cut
-    assert doc["qtext"] and doc["response"]
+    assert doc["question_text"] and doc["response"]
 
 
 def test_review_item_flags_a_block_cut_at_its_cap() -> None:
-    from vektra_assess.parser_sidecar.child import run
-
     html = (
         "<div class='qtext'>" + "parola " * 400 + "</div>"
         "<fieldset class='ablock'><div class='answer'>breve</div></fieldset>"
     ).encode()
-    doc = json.loads(run("review_item", html, "html", max_pages=1, max_chars=400).text)
+    doc = json.loads(_item(html, "html", max_pages=1, max_chars=400).text)
     assert doc["truncated"] is True and doc["response"] == "breve"
     short = b"<div class='qtext'>Domanda breve</div>"
-    doc = json.loads(run("review_item", short, "html", max_pages=1, max_chars=400).text)
+    doc = json.loads(_item(short, "html", max_pages=1, max_chars=400).text)
     assert doc["truncated"] is False
 
 
 def test_review_item_flags_values_shortened_by_the_json_cap() -> None:
-    from vektra_assess.parser_sidecar.child import run
-
     body = '"\\' * 90  # each block fits its half cap, but escaping overflows the JSON
     html = (
         f"<div class='qtext'>{body}</div>"
         f"<fieldset class='ablock'><div class='answer'>{body}</div></fieldset>"
     ).encode()
-    out = run("review_item", html, "html", max_pages=1, max_chars=300).text
+    out = _item(html, "html", max_pages=1, max_chars=300).text
     doc = json.loads(out)
     assert len(out) <= 300 and doc["truncated"] is True
+
+
+def test_the_child_refuses_a_review_item_without_a_profile() -> None:
+    """ADR-0033 D4: the sidecar has no built-in class list to fall back on."""
+    html = b"<div class='qtext'>Domanda</div><fieldset class='ablock'>[x] A</fieldset>"
+    e = run("review_item", html, "html", max_pages=1, max_chars=1000)
+    assert (e.status, e.code, e.text) == (FileStatus.CORRUPT, "no_profile", "")
+
+
+def test_the_sidecar_holds_no_moodle_class_name() -> None:
+    """The class names live in the provider's profile, not in the parser."""
+    import vektra_assess.parser_sidecar.html_review as hr
+
+    source = Path(hr.__file__).read_text(encoding="utf-8")
+    for cls in ("qtext", "ablock", "rightanswer", "specificfeedback"):
+        assert f'"{cls}"' not in source and f"'{cls}'" not in source, cls
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        {},
+        {"keep": {"question_text": "qtext"}, "drop": [], "version": "v1", "x": 1},
+        {"keep": {}, "drop": [], "version": "v1"},
+        {"keep": {"solution": "rightanswer"}, "drop": [], "version": "v1"},
+        {"keep": {"question_text": "q text"}, "drop": [], "version": "v1"},
+        {"keep": {"question_text": "qtext"}, "drop": ["bad class"], "version": "v1"},
+        {"keep": {"question_text": "qtext"}, "drop": ["x"] * 65, "version": "v1"},
+        {"keep": {"question_text": "qtext"}, "drop": [], "version": ""},
+    ],
+)
+def test_an_invalid_wire_profile_is_refused(raw: Any) -> None:
+    assert ReviewProfile.from_wire(raw) is None
+
+
+def test_a_profile_keeps_only_its_own_blocks() -> None:
+    only_q = ReviewProfile.build({"question_text": "qtext"}, (), "t1")
+    html = b"<div class='qtext'>Domanda</div><fieldset class='ablock'>[x] A</fieldset>"
+    doc = json.loads(
+        run(
+            "review_item", html, "html", max_pages=1, max_chars=1000, profile=only_q
+        ).text
+    )
+    assert doc == {"question_text": "Domanda", "response": None, "truncated": False}

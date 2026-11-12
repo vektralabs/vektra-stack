@@ -1,8 +1,7 @@
-"""Re-export of the typed read outcome: it lives in ``vektra_assess.readable`` so that the
-DB-only ``capabilities`` module (importable by the API) can use it without importing this
-package (contract (c): only the worker imports ``vektra_assess.moodle``)."""
+"""Re-export of the typed read outcome, which lives in ``vektra_shared.lms.types`` (ADR-0033 D2):
+the Moodle readers return the same ``Reading`` the ``LmsProvider`` Protocol does."""
 
-from vektra_assess.readable import (
+from vektra_shared.lms import (
     Readable,
     Reading,
     ShapeEvidence,

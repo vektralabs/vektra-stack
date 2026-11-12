@@ -11,7 +11,7 @@ from vektra_assess.context.regrade import (
     compare_grade,
 )
 from vektra_assess.context.snapshot import GradeKind, OverallItem, content_hash
-from vektra_assess.readable import Readable, Unreadable, UnreadableReason
+from vektra_shared.lms import Readable, Unreadable, UnreadableReason
 
 
 def test_flags() -> None:

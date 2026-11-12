@@ -7,9 +7,10 @@ because the templates interpolate snapshot text and the student's messages.
 The model data come from ``bundle_to_model_payload`` only (the single serializer of plan 6): the
 templates wrap it, they add no other data source.
 
-``prompt_version`` is SHA-256[:8] over every template, every shipped string file and the
-post-check lexicon version, so changing a template, a core sentence or a lexicon entry changes the
-version and requires a new NFR-023 activation.
+``prompt_version`` is SHA-256[:8] over every template, every shipped string file, the
+post-check lexicon version and the model payload's version, so changing a template, a core
+sentence, a lexicon entry or the payload vocabulary changes the version and requires a new
+NFR-023 activation.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import jinja2
 from jinja2.sandbox import SandboxedEnvironment
 
 from vektra_assess.context.bundle import ContextBundle
-from vektra_assess.context.payload import bundle_to_model_payload
+from vektra_assess.context.payload import PAYLOAD_VERSION, bundle_to_model_payload
 from vektra_assess.context.references import canonical_labels
 from vektra_assess.llm.types import PriorTurn
 from vektra_shared.types import Message
@@ -37,12 +38,18 @@ PART_B_MAX_LABELS = 3
 
 
 def compute_prompt_version(
-    templates_dir: Path, strings_dir: Path, lexicon_version: str
+    templates_dir: Path,
+    strings_dir: Path,
+    lexicon_version: str,
+    payload_version: int = PAYLOAD_VERSION,
 ) -> str:
-    """SHA-256[:8] over the template sources, the string files and the lexicon version.
+    """SHA-256[:8] over the template sources, the string files, the lexicon version and the
+    model payload's version (``context.payload.PAYLOAD_VERSION``).
 
     Each file enters as its name and its bytes, in name order, so renaming, editing, adding or
-    removing a file all change the version; a missing strings directory counts as empty.
+    removing a file all change the version; a missing strings directory counts as empty. The
+    payload version covers what the templates wrap: a change of the data vocabulary the model
+    reads (an item type's spelling, say) needs a new activation as much as a template edit.
     """
     h = hashlib.sha256()
     for name in TEMPLATE_NAMES:
@@ -54,6 +61,7 @@ def compute_prompt_version(
         h.update(f"\0strings:{path.name}\0".encode())
         h.update(path.read_bytes())
     h.update(f"\0lexicon:{lexicon_version}".encode())
+    h.update(f"\0payload:{payload_version}".encode())
     return h.hexdigest()[:8]
 
 

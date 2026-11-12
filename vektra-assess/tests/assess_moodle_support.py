@@ -21,7 +21,10 @@ from urllib.parse import parse_qsl
 import httpx
 
 from vektra_assess.config import VektraAssessSettings
+from vektra_assess.context.capture.bound import SiteReaders
 from vektra_assess.moodle.client import MoodleWsClient, SiteRef, flatten_params
+from vektra_assess.moodle.provider import MoodleLmsProvider
+from vektra_shared.lms import LmsSite
 
 FIXTURES = Path(__file__).parent / "fixtures" / "moodle_ws"
 BRANCHES = ("4.3", "5.2")
@@ -200,3 +203,22 @@ def make_client(replay: Replay, **env: str) -> MoodleWsClient:
         transport=httpx.MockTransport(replay.handler),
         resolver=resolver(),
     )
+
+
+def make_provider(
+    replay: Replay, *, clock: Callable[[], int] | None = None, **env: str
+) -> MoodleLmsProvider:
+    """The Moodle provider (ADR-0033) over the replayed (or live) client of ``make_client``."""
+    client = make_client(replay, **env)
+    return MoodleLmsProvider(client, client._s, clock=clock)
+
+
+def lms_site(branch: str) -> LmsSite:
+    """``site_for`` as the Protocol's neutral ``LmsSite``."""
+    s = site_for(branch)
+    return LmsSite(s.site_id, s.base_url, s.release)
+
+
+def site_readers(replay: Replay, **env: str) -> SiteReaders:
+    """``CaptureReaders`` over the recordings: the Moodle provider bound to the branch's site."""
+    return SiteReaders(make_provider(replay, **env), lms_site(replay.branch))

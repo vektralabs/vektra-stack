@@ -120,10 +120,15 @@ async def step_12_assess_check(
     Registers the ``("health", "assess")`` readiness check in both cases, so
     ``GET /health/assess`` reports ``disabled`` rather than "no check registered".
     """
+    from vektra_app.lms_providers import installed_provider_secrets
     from vektra_assess.health import make_readiness_check
     from vektra_assess.keys import enforce_key_matrix
 
     settings = load_assess_settings()
+    # ARCH-066 (review of #207, finding 1): the secrets every installed LMS provider declares
+    # on its entry point, read without building it, are refused to the API in the environment
+    # too, assess enabled or not
+    provider_secrets = installed_provider_secrets()
     assert_no_parser_surface(settings.parser_socket)
     app.state.assess_enabled = settings.enabled
     if registry is not None:
@@ -139,7 +144,11 @@ async def step_12_assess_check(
         )
     if not settings.enabled:
         enforce_key_matrix(
-            "api", secrets_dir=settings.secrets_dir, forbidden_only=True, step=STEP
+            "api",
+            secrets_dir=settings.secrets_dir,
+            forbidden_only=True,
+            step=STEP,
+            provider_secrets=provider_secrets,
         )
         log.info("startup_step", step=STEP, status="disabled")
         return
@@ -165,7 +174,10 @@ async def step_12_assess_check(
             ),
         )
     loaded: dict[str, Any] = enforce_key_matrix(
-        "api", secrets_dir=settings.secrets_dir, step=STEP
+        "api",
+        secrets_dir=settings.secrets_dir,
+        step=STEP,
+        provider_secrets=provider_secrets,
     )
     run_crypto_selftest()
     if not settings.api_database_url:

@@ -109,6 +109,13 @@ KEY_BYTES = 32
 #: every secret a provider declares carries it, so a role that loads no provider can refuse it
 PROVIDER_SECRET_PREFIX = "assess_"
 _PROVIDER_SECRET = re.compile(r"assess_[a-z0-9_]{1,57}")
+
+
+def is_provider_secret_name(name: str) -> bool:
+    """A name an LMS provider may declare: ``assess_<name>``, lower case, not an assess key."""
+    return bool(_PROVIDER_SECRET.fullmatch(name)) and name not in KEY_MATRIX
+
+
 # Env var fragments that make a parser environment unsafe (DSNs, key material).
 _PARSER_FORBIDDEN_ENV_FRAGMENTS = ("DATABASE_URL", "DSN", "PASSWORD", "SECRET", "TOKEN")
 
@@ -261,11 +268,13 @@ def enforce_key_matrix(
 ) -> dict[str, Loaded]:
     """Apply ``KEY_MATRIX`` for ``role``; return the loaded required/allowed secrets.
 
-    ``provider_secrets`` are the names the worker's LMS provider declares
-    (``LmsProvider.required_secrets``, plan task 2a-4b.13): each is required for the worker and
-    loaded as credentials. The API and the parser do not load a provider, so they cannot know
-    the names: they refuse every ``assess_*`` file the matrix does not grant them, which is
-    why a provider's secret must carry that prefix.
+    ``provider_secrets`` are the names an LMS provider declares statically (its entry point's
+    ``REQUIRED_SECRETS``, which ``LmsProvider.required_secrets`` repeats; plan task 2a-4b.13).
+    For the worker each is required and loaded as credentials. For the API and the parser each
+    is forbidden: an environment variable carrying it is refused like one carrying a forbidden
+    assess key (the names are read from the installed entry points, no provider is built).
+    Those roles also refuse every ``assess_*`` file the matrix does not grant them, whatever
+    a provider calls its secret, which is why a provider's secret must carry that prefix.
 
     Raises ``StartupValidationError(step=step)`` naming every violated key. With
     ``forbidden_only`` only the "must not hold" half runs (the API when assess is off).
@@ -275,24 +284,24 @@ def enforce_key_matrix(
     loaded: dict[str, Loaded] = {}
 
     for name in provider_secrets:
-        if not _PROVIDER_SECRET.fullmatch(name) or name in KEY_MATRIX:
+        if not is_provider_secret_name(name):
             problems.append(
                 f"{name!r}: not a valid LMS provider secret name (assess_<name>, lower "
                 "case, and not an assess key)"
             )
             continue
         if role != "worker":
-            continue  # refused below with every other assess_* file the role holds
-        if not ((secrets_dir / name).exists() or (secrets_dir / name).is_symlink()):
-            problems.append(
-                f"{name}: required for {role} by the LMS provider but missing in "
-                f"{secrets_dir}"
-            )
+            # the file is refused below with every other assess_* file the role holds
+            carriers = _env_names_carrying(name, env)
+            if carriers:
+                problems.append(
+                    f"{name}: forbidden for {role} but carried by env var(s) {carriers}"
+                )
             continue
         try:
             loaded[name] = load_provider_secret(name, secrets_dir)
         except KeyringError as exc:
-            problems.append(str(exc))
+            problems.append(f"{name}: required for {role} by the LMS provider: {exc}")
 
     for name, spec in KEY_MATRIX.items():
         need = spec.need(role)
@@ -325,15 +334,13 @@ def enforce_key_matrix(
         # an LMS provider's credentials (whatever it names them) and any other assess secret
         # the matrix does not list are the worker's alone: the API and the parser load no
         # provider, so they refuse every assess_* file they were not granted
+        # (a matrix key is judged by the matrix above, granted or forbidden)
         if secrets_dir.is_dir():
-            granted = {
-                n for n, s in KEY_MATRIX.items() if s.need(role) is not Need.FORBIDDEN
-            }
             problems.extend(
                 f"{p.name}: forbidden for {role} (not an assess key of this role; an LMS "
                 f"provider's credentials belong to the worker) but mounted at {p}"
                 for p in sorted(secrets_dir.glob(PROVIDER_SECRET_PREFIX + "*"))
-                if p.name not in KEY_MATRIX and p.name not in granted
+                if p.name not in KEY_MATRIX
             )
 
     if role == "parser":
@@ -363,8 +370,10 @@ def _parser_environment_problems(
         problems.append(f"parser: secrets dir {secrets_dir} must be absent or empty")
     for k in sorted(env):
         up = k.upper()
+        # VEKTRA_* and the bare ASSESS_* names: a secret is carried as ASSESS_<NAME> too
+        # (``_env_names_carrying``), and an LMS provider's secret names start with assess_
         if (
-            up.startswith("VEKTRA_")
+            up.startswith(("VEKTRA_", "ASSESS_"))
             and up not in _PARSER_ENV_ALLOWED
             and any(f in up for f in _PARSER_FORBIDDEN_ENV_FRAGMENTS)
         ):
@@ -419,7 +428,7 @@ def generate(
     missing = set(KEY_MATRIX) - set(docs) - set(passwords)
     assert not missing, missing
     for name in provider_secrets:
-        if not _PROVIDER_SECRET.fullmatch(name) or name in KEY_MATRIX:
+        if not is_provider_secret_name(name):
             raise ValueError(f"{name!r}: not a valid LMS provider secret name")
         docs[name] = {}
     names = [*KEY_MATRIX, *dict.fromkeys(provider_secrets)]

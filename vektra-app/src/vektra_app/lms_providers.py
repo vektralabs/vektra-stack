@@ -2,8 +2,20 @@
 
 ``vektra_app`` does not name a provider. A provider distribution declares an entry point in the
 group ``vektra.lms_providers`` (``<name> = <module>:<factory>``); the deployment names the one it
-uses with ``VEKTRA_ASSESS_LMS_PROVIDER``. ``load_lms_provider`` resolves that name, calls the
-factory with no argument (a provider reads its own settings) and checks what came back.
+uses with ``VEKTRA_ASSESS_LMS_PROVIDER``. Two steps, so nothing of the provider runs before the
+process is known to be safe (review of #207, findings 1 and 7):
+
+- ``find_lms_provider`` resolves the name and loads the entry-point object, without calling it.
+  The object carries ``REQUIRED_SECRETS`` (``declared_secrets``): the worker's key matrix checks
+  those secrets before the provider is built, and the API refuses an environment variable
+  carrying one (``installed_provider_secrets``), without building anything either;
+- ``build_lms_provider`` calls the factory with one keyword argument, ``development`` (the
+  composition root's resolved flag; a provider never re-derives it), and checks what came back:
+  the Protocol, the test-double marker, its name, and that its ``required_secrets`` are the
+  declared ones. A ``ProviderConfigurationError`` (an invalid provider setting) is surfaced
+  with its own detail, which names the variable and the rule, never the value.
+
+``load_lms_provider`` is both steps.
 
 Every failure is a ``StartupValidationError`` that names the setting and lists the names that
 are installed, so the operator sees what to set instead. A test double is refused before it is
@@ -17,7 +29,11 @@ import importlib.metadata
 from collections.abc import Callable, Iterable
 from typing import Any, Protocol
 
-from vektra_shared.lms import LmsProvider
+from vektra_shared.lms import (
+    REQUIRED_SECRETS_ATTRIBUTE,
+    LmsProvider,
+    ProviderConfigurationError,
+)
 from vektra_shared.registry import TEST_DOUBLE_MARKER
 from vektra_shared.startup import StartupValidationError
 
@@ -30,6 +46,10 @@ __all__ = [
     "SETTING",
     "TEST_DOUBLE_MARKER",
     "available_lms_providers",
+    "build_lms_provider",
+    "declared_secrets",
+    "find_lms_provider",
+    "installed_provider_secrets",
     "load_lms_provider",
 ]
 
@@ -42,6 +62,13 @@ class _EntryPoint(Protocol):
 
 def _installed() -> Iterable[_EntryPoint]:
     return importlib.metadata.entry_points(group=GROUP)
+
+
+def _entry_points(
+    entry_points: Callable[[], Iterable[_EntryPoint]] | None,
+) -> list[_EntryPoint]:
+    # read at call time, so a test can stand in for the installed distributions
+    return list((entry_points or _installed)())
 
 
 def available_lms_providers(
@@ -73,14 +100,58 @@ async def _close(built: Any) -> None:
         pass
 
 
-async def load_lms_provider(
+def _load_entry(name: str, ep: _EntryPoint) -> Any:
+    try:
+        return ep.load()
+    except Exception as exc:
+        # only the type: the provider's own error text may carry configuration values
+        raise _refuse(
+            f"the LMS provider {name} failed to load ({type(exc).__name__})",
+            "Check that the provider's distribution is installed completely.",
+        ) from None
+
+
+def declared_secrets(name: str, factory: Any) -> tuple[str, ...]:
+    """The secrets ``factory``'s provider will declare, read without calling it. A factory with
+    no declaration declares none; one that cannot be read, or is not a tuple of names, is a
+    refusal (it is what the API and the key matrix rely on)."""
+    try:
+        raw = getattr(factory, REQUIRED_SECRETS_ATTRIBUTE, ())
+    except Exception as exc:
+        raise _refuse(
+            f"the LMS provider {name} has an unreadable {REQUIRED_SECRETS_ATTRIBUTE} "
+            f"({type(exc).__name__})",
+            "Fix the provider: its entry point declares its secrets as a tuple of names.",
+        ) from None
+    if not isinstance(raw, tuple) or not all(isinstance(s, str) for s in raw):
+        raise _refuse(
+            f"the LMS provider {name} declares {REQUIRED_SECRETS_ATTRIBUTE} as "
+            f"{type(raw).__name__}, not a tuple of names",
+            "Fix the provider: its entry point declares its secrets as a tuple of names.",
+        )
+    return raw
+
+
+def installed_provider_secrets(
+    entry_points: Callable[[], Iterable[_EntryPoint]] | None = None,
+) -> tuple[str, ...]:
+    """Every secret an installed provider declares, from the entry points alone (no factory is
+    called, no provider built): what the API and the parser must never hold, in a file or in
+    the environment, whichever provider the deployment names (ARCH-066)."""
+    found: dict[str, None] = {}
+    for ep in _entry_points(entry_points):
+        found.update(dict.fromkeys(declared_secrets(ep.name, _load_entry(ep.name, ep))))
+    return tuple(found)
+
+
+def find_lms_provider(
     name: str | None,
     *,
-    entry_points: Callable[[], Iterable[_EntryPoint]] = _installed,
+    entry_points: Callable[[], Iterable[_EntryPoint]] | None = None,
     allow_test_doubles: bool = False,
-) -> LmsProvider:
-    """The provider registered as ``name`` in ``vektra.lms_providers``, built and checked."""
-    eps = list(entry_points())
+) -> Any:
+    """The entry-point object registered as ``name``, loaded but not called."""
+    eps = _entry_points(entry_points)
     names = sorted({ep.name for ep in eps})
     listed = ", ".join(names) if names else "none installed"
     install = (
@@ -100,22 +171,34 @@ async def load_lms_provider(
             f"{SETTING}={name} is declared by {len(matches)} installed distributions",
             "Uninstall all but one distribution that declares this provider name.",
         )
-    test_double = _refuse(
+    factory = _load_entry(name, matches[0])
+    if _is_test_double(factory) and not allow_test_doubles:
+        raise _test_double(name)  # refused before anything is built
+    return factory
+
+
+def _test_double(name: str) -> StartupValidationError:
+    return _refuse(
         f"the LMS provider {name} is a test double",
         f"Set {SETTING} to a real provider; test doubles load only in development tests.",
     )
+
+
+async def build_lms_provider(
+    name: str,
+    factory: Any,
+    *,
+    development: bool,
+    allow_test_doubles: bool = False,
+) -> LmsProvider:
+    """``factory(development=...)``, checked; anything built and then refused is closed."""
+    declared = declared_secrets(name, factory)
+    test_double = _test_double(name)
     try:
-        factory = matches[0].load()
-    except Exception as exc:
-        # only the type: the provider's own error text may carry configuration values
-        raise _refuse(
-            f"the LMS provider {name} failed to load ({type(exc).__name__})",
-            "Check that the provider's distribution is installed completely.",
-        ) from None
-    if _is_test_double(factory) and not allow_test_doubles:
-        raise test_double  # refused before anything is built
-    try:
-        provider = factory()
+        provider = factory(development=development)
+    except ProviderConfigurationError as exc:
+        # the provider's own explanation: the variables and the rules, never a value
+        raise _refuse(exc.detail, exc.remediation) from None
     except Exception as exc:
         raise _refuse(
             f"the LMS provider {name} failed to load ({type(exc).__name__})",
@@ -147,8 +230,38 @@ async def load_lms_provider(
                 "The entry point name and the provider's name must agree (it is the "
                 "registry key).",
             )
+        if problem is None:
+            try:
+                built_secrets: object = tuple(provider.required_secrets)
+            except Exception as exc:
+                built_secrets = f"<unreadable: {type(exc).__name__}>"
+            if built_secrets != declared:
+                problem = _refuse(
+                    f"the LMS provider {name} declares {REQUIRED_SECRETS_ATTRIBUTE} "
+                    f"{list(declared)} on its entry point but required_secrets "
+                    f"{list(built_secrets) if isinstance(built_secrets, tuple) else built_secrets}",
+                    "Fix the provider: the two declarations must be the same names (the key "
+                    "matrix checks the static one before the provider is built).",
+                )
     if problem is not None:
         await _close(provider)
         raise problem
     checked: LmsProvider = provider  # isinstance-checked above
     return checked
+
+
+async def load_lms_provider(
+    name: str | None,
+    *,
+    development: bool,
+    entry_points: Callable[[], Iterable[_EntryPoint]] | None = None,
+    allow_test_doubles: bool = False,
+) -> LmsProvider:
+    """The provider registered as ``name`` in ``vektra.lms_providers``, found, built, checked."""
+    factory = find_lms_provider(
+        name, entry_points=entry_points, allow_test_doubles=allow_test_doubles
+    )
+    assert name  # find_lms_provider refused an unset one
+    return await build_lms_provider(
+        name, factory, development=development, allow_test_doubles=allow_test_doubles
+    )

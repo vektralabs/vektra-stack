@@ -25,6 +25,7 @@ class _Provider:
     name = "fake"
     setup_items: tuple[str, ...] = ()
     required_secrets: tuple[str, ...] = ("provider_secret",)
+    call_deadline_s = 30.0
 
     def __init__(self) -> None:
         self.closed = 0
@@ -115,13 +116,17 @@ async def test_a_later_startup_refusal_closes_the_loaded_provider(
     monkeypatch.setenv("VEKTRA_ASSESS_ENABLED", "true")
     monkeypatch.setattr(keys, "enforce_key_matrix", lambda *a, **k: {})
 
-    async def load(settings: Any, entry_points: Any = None) -> Any:
+    def find(settings: Any, entry_points: Any = None) -> Any:
+        return object()  # an entry-point object declaring no secret
+
+    async def build(settings: Any, factory: Any) -> Any:
         return provider
 
     async def refuse(*_a: Any) -> Any:
         raise StartupValidationError(step="x", detail="refused", remediation="fix")
 
-    monkeypatch.setattr(assess_worker, "_load_lms", load)
+    monkeypatch.setattr(assess_worker, "_find_lms", find)
+    monkeypatch.setattr(assess_worker, "_build_lms", build)
     monkeypatch.setattr(assess_worker, "_checks_with_lms", refuse)
     with pytest.raises(StartupValidationError):
         await assess_worker._checks()

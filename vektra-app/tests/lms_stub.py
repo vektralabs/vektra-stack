@@ -22,9 +22,19 @@ STUB_SECRET = "assess_stub_lms_tokens"
 
 
 class StubLmsProvider:
+    """The entry-point object is the class itself: called with ``development``, and declaring
+    ``REQUIRED_SECRETS`` statically (what ``required_secrets`` returns)."""
+
+    REQUIRED_SECRETS: tuple[str, ...] = (STUB_SECRET,)
     name = NAME
     setup_items: tuple[str, ...] = ()
-    required_secrets: tuple[str, ...] = (STUB_SECRET,)
+    required_secrets: tuple[str, ...] = REQUIRED_SECRETS
+    call_deadline_s: float = 30.0
+    #: every development flag a factory call received, and how many were built
+    built: list[bool] = []
+
+    def __init__(self, *, development: bool) -> None:
+        type(self).built.append(development)
 
     def startup_problems(self, development: bool) -> tuple[Any, ...]:
         return ()
@@ -51,18 +61,12 @@ def entry_points() -> list[_EP]:
 
 
 def install(setattr_: Any = None) -> None:
-    """Make ``vektra_app.lms_providers.load_lms_provider`` see the stub as the installed group.
-    ``setattr_`` is ``monkeypatch.setattr`` in a test (undone after it); a subprocess passes
-    nothing and patches for its lifetime."""
+    """Make the stub the installed group of ``vektra.lms_providers`` for the loader (discovery,
+    the static secret declaration and the build alike). ``setattr_`` is ``monkeypatch.setattr``
+    in a test (undone after it); a subprocess passes nothing and patches for its lifetime."""
     from vektra_app import lms_providers
 
-    real = lms_providers.load_lms_provider
-
-    async def load(name: str | None, **kw: Any) -> Any:
-        kw.setdefault("entry_points", entry_points)
-        return await real(name, **kw)
-
-    (setattr_ or setattr)(lms_providers, "load_lms_provider", load)
+    (setattr_ or setattr)(lms_providers, "_installed", entry_points)
 
 
 def write_secret(secrets_dir: Path) -> None:

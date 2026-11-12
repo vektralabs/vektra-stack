@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import os
 import socket
 import sys
@@ -205,24 +206,50 @@ async def run_checks() -> object:
     return (await _checks()).engine
 
 
-async def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
-    """The configured LMS provider (ADR-0033 D2), or a refusal naming the setting.
+def _find_lms(settings: Any, entry_points: Any | None = None) -> Any:
+    """The configured provider's entry-point object (ADR-0033 D2), loaded but NOT called, or a
+    refusal naming the setting. Unset, unknown or broken is a ``StartupValidationError``: with
+    assess enabled and no provider the vertical is unavailable (ADR-0033 D1). A test double is
+    found only with ``VEKTRA_ENV=development`` set explicitly."""
+    from vektra_app.lms_providers import find_lms_provider
 
-    Unset, unknown or broken is a ``StartupValidationError``: with assess enabled and no
-    provider the vertical is unavailable, and the worker does not start (ADR-0033 D1). A test
-    double loads only with ``VEKTRA_ENV=development`` set explicitly. The provider's own
-    startup problems (a development-only switch outside development...) refuse here too."""
-    from vektra_app.lms_providers import load_lms_provider
-    from vektra_shared.lms import guarded
+    return find_lms_provider(
+        settings.lms_provider,
+        entry_points=entry_points,
+        allow_test_doubles=settings.is_development,
+    )
 
-    kwargs: dict[str, Any] = {"allow_test_doubles": settings.is_development}
-    if entry_points is not None:
-        kwargs["entry_points"] = entry_points
+
+async def _build_lms(settings: Any, factory: Any) -> Any:
+    """The provider built from ``factory`` with the resolved development flag, behind the one
+    fail-closed wrapper; its own startup problems and an unusable call deadline refuse here."""
+    from vektra_app.lms_providers import build_lms_provider
+    from vektra_shared.lms import MAX_CALL_DEADLINE_S, StartupProblem, guarded
+
     # behind the one fail-closed wrapper (ADR-0033 D2, invariant 1): every caller of this
     # worker reads through it
-    provider = guarded(await load_lms_provider(settings.lms_provider, **kwargs))
+    provider = guarded(
+        await build_lms_provider(
+            settings.lms_provider,
+            factory,
+            development=settings.is_development,
+            allow_test_doubles=settings.is_development,
+        )
+    )
     # the resolved flag (2a-1.11): development only when VEKTRA_ENV=development is explicit
-    problems = provider.startup_problems(settings.is_development)
+    problems = list(provider.startup_problems(settings.is_development))
+    deadline = provider.call_deadline_s
+    if not (math.isfinite(deadline) and 0 < deadline <= MAX_CALL_DEADLINE_S):
+        problems.append(
+            StartupProblem(
+                setting="VEKTRA_ASSESS_LMS_PROVIDER",
+                detail=(
+                    f"the LMS provider {provider.name} reports call_deadline_s={deadline!r}, "
+                    f"not in (0, {MAX_CALL_DEADLINE_S:g}]: no job budget can be derived"
+                ),
+                remediation="Fix the provider's call timeout setting.",
+            )
+        )
     if problems:
         with contextlib.suppress(Exception):
             await provider.aclose()
@@ -232,9 +259,15 @@ async def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
     return provider
 
 
+async def _load_lms(settings: Any, entry_points: Any | None = None) -> Any:
+    """``_find_lms`` then ``_build_lms``: the provider, built and checked."""
+    return await _build_lms(settings, _find_lms(settings, entry_points))
+
+
 async def _checks(lms_entry_points: Any | None = None) -> Checked:
     from pydantic import ValidationError
 
+    from vektra_app.lms_providers import declared_secrets
     from vektra_assess.config import VektraAssessSettings, explain_settings_error
     from vektra_assess.keys import enforce_key_matrix
 
@@ -250,16 +283,38 @@ async def _checks(lms_entry_points: Any | None = None) -> Checked:
             "VEKTRA_ASSESS_ENABLED is not true: the assess worker does not run on a "
             "deployment where assess is disabled."
         )
-    # the provider first: the key matrix loads the secrets it declares (plan task 2a-4b.13),
-    # not a name the platform knows
-    lms = await _load_lms(settings, lms_entry_points)
+    # Review of #207, finding 7: the key matrix runs BEFORE any provider is built, on the
+    # secrets the provider declares statically (its entry point's REQUIRED_SECRETS), so no
+    # provider code runs with a forbidden secret mounted, and a missing provider and the key
+    # violations are reported together.
+    lms_problem: StartupValidationError | None = None
+    factory: Any = None
+    declared: tuple[str, ...] = ()
+    try:
+        factory = _find_lms(settings, lms_entry_points)
+        # found: the name is set (find_lms_provider refuses an unset one)
+        declared = declared_secrets(str(settings.lms_provider), factory)
+    except StartupValidationError as exc:
+        lms_problem = exc
     try:
         loaded = enforce_key_matrix(
             "worker",
             secrets_dir=settings.secrets_dir,
             step=STEP,
-            provider_secrets=lms.required_secrets,
+            provider_secrets=declared,
         )
+    except StartupValidationError as keys_problem:
+        if lms_problem is None:
+            raise
+        raise StartupValidationError(
+            step=STEP,
+            detail=f"{keys_problem.detail}; {lms_problem.detail}",
+            remediation=f"{keys_problem.remediation} {lms_problem.remediation}",
+        ) from None
+    if lms_problem is not None:
+        raise lms_problem
+    lms = await _build_lms(settings, factory)
+    try:
         return await _checks_with_lms(settings, loaded, lms)
     except BaseException:
         # a later check refused: the provider it loaded is closed, not leaked
@@ -356,6 +411,13 @@ SESSION_KEYS = (
     "assess_teacher_config_private",
     "assess_transcript_kek",  # plan transcript-delivery: the transcript_generate handler
 )
+
+
+def _lms_call_deadline(checked: Checked) -> float:
+    """The composed provider's call deadline, which budgets the jobs that make sequential LMS
+    calls (review of #207, finding 3). Without a provider no handler that reads the LMS is
+    bound (``_bound_lms``), so there is nothing to budget: zero."""
+    return float(checked.lms.call_deadline_s) if checked.lms is not None else 0.0
 
 
 def _bound_lms(checked: Checked) -> Any | None:
@@ -520,7 +582,9 @@ def _delivery_parts(checked: Checked) -> DeliveryParts:
     from vektra_assess.worker.policy import load_policy
 
     sender = SmtpSender(smtp_config(settings, checked.keys["assess_smtp"]))
-    policy_all = load_policy(os.environ)
+    policy_all = load_policy(
+        os.environ, lms_call_deadline_s=_lms_call_deadline(checked)
+    )
     policy = policy_all.kinds[JobKind.TRANSCRIPT_DELIVER]
     lease = policy.lease_s
     # every row of a job runs concurrently: one row's worst case (bounded slot wait + send
@@ -737,7 +801,9 @@ def _setup_check_parts(
                 settings,
                 registry=registry,
                 # a running report older than the job's lease is a dead run's (finding 6)
-                orphan_after_s=load_policy(os.environ)
+                orphan_after_s=load_policy(
+                    os.environ, lms_call_deadline_s=_lms_call_deadline(checked)
+                )
                 .kinds[JobKind.SETUP_CHECK]
                 .lease_s,
             )
@@ -829,7 +895,9 @@ def _compose(checked: Checked, bindings: Any | None = None) -> Any:
 
     settings, engine = checked.settings, checked.engine
     try:
-        policy = load_policy(os.environ)
+        policy = load_policy(
+            os.environ, lms_call_deadline_s=_lms_call_deadline(checked)
+        )
     except WorkerPolicyError as exc:
         raise StartupValidationError(
             step=STEP,

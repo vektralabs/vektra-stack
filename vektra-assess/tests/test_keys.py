@@ -422,3 +422,50 @@ def test_the_generator_writes_the_provider_secrets(tmp_path: Path) -> None:
     assert (tmp_path / "g" / "assess_x").read_text() == "{}"
     with pytest.raises(ValueError, match="not a valid LMS provider secret name"):
         generate(tmp_path / "h", provider_secrets=("assess_kek",))
+
+
+# --- review of #207, finding 1: the env-var refusal of a provider's secret, without the provider ---
+
+
+@pytest.mark.parametrize(
+    "carrier", ["ASSESS_LMS_TOKENS", "VEKTRA_ASSESS_LMS_TOKENS_FILE"]
+)
+@pytest.mark.parametrize("forbidden_only", [True, False])
+def test_the_api_refuses_an_env_var_carrying_a_declared_provider_secret(
+    full_set: Path, tmp_path: Path, carrier: str, forbidden_only: bool
+) -> None:
+    """ARCH-066: the API never holds the LMS credentials, in a file or in the environment. It
+    knows the names from the provider's static declaration (``REQUIRED_SECRETS``), never by
+    building the provider; with assess disabled (``forbidden_only``) and enabled alike."""
+    d = _role_set(full_set, tmp_path, "api")
+    detail = _refusal(
+        "api",
+        d,
+        {carrier: "x"},
+        forbidden_only=forbidden_only,
+        provider_secrets=(PROVIDER_SECRET,),
+    )
+    assert (
+        f"{PROVIDER_SECRET}: forbidden for api but carried by env var(s) ['{carrier}']"
+        in detail
+    )
+
+
+def test_the_parser_refuses_an_assess_token_variable_without_the_vektra_prefix(
+    tmp_path: Path,
+) -> None:
+    detail = _refusal("parser", tmp_path / "none", {"ASSESS_WS_TOKENS": "x"})
+    assert "parser: env var ASSESS_WS_TOKENS must not be set" in detail
+
+
+def test_a_declared_secret_that_is_missing_says_so_through_the_file_check(
+    full_set: Path, tmp_path: Path
+) -> None:
+    """Finding 9: the not-found case comes from the one file check, under the provider's
+    requirement."""
+    d = _role_set(full_set, tmp_path, "worker")
+    detail = _refusal("worker", d, provider_secrets=("assess_other_tokens",))
+    assert (
+        "assess_other_tokens: required for worker by the LMS provider: "
+        "assess_other_tokens: file not found"
+    ) in detail

@@ -74,7 +74,7 @@ class _DevEntryPoint:
         return _installed_stand_in
 
 
-def _installed_stand_in() -> Any:
+def _installed_stand_in(*, development: bool = False) -> Any:
     """``stub``: the scenario fake WITHOUT the test-double marker, standing in for an installed
     provider. The platform installs none (ADR-0033 D6), and a production-mode refusal that comes
     after the provider load (the unbound override outside development) needs one that a
@@ -88,7 +88,7 @@ def _installed_stand_in() -> Any:
         def name(self) -> str:  # the registry key: it must equal the entry point's name
             return "stub"
 
-    return StandIn(scenario_world())
+    return StandIn(scenario_world(), development=development)
 
 
 def LMS_ENTRY_POINTS() -> list[Any]:

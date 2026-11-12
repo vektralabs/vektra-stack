@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from support.recipients import config_pair
-from support.world import auth, default_settings, err, make_key, world
+from support.world import auth, bind, default_settings, err, make_key, world
 
 from integration.test_teacher_authz import COURSE, EDITOR, OTHER, seed_gate
 from vektra_assess.api import teacher_config as route
@@ -466,6 +466,7 @@ async def test_two_concurrent_first_saves_yield_one_row_and_a_409(pg, pair) -> N
         other = create_async_engine(pg.url("api"))
         try:
             async with other.connect() as conn:
+                await bind(conn, w.site)  # as the route's own transaction is bound
                 await conn.execute(
                     sql(
                         "INSERT INTO assess_activity_config (site_id, cmid, activity_type, "

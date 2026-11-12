@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from vektra_assess.api.site_binding import bind_site, install_site_binding
 from vektra_assess.errors import assess_unavailable, bad_request, key_not_bound
 from vektra_shared.errors import ErrorResponse, http_status_for
 
@@ -23,22 +24,35 @@ from vektra_shared.errors import ErrorResponse, http_status_for
 MAX_BODY_BYTES = 64 * 1024
 
 
-#: the enabled site a key is bound to for ``purpose`` (``mint`` | ``teacher``); shared by every
-#: route that resolves its site from the caller's key
+#: the site a key is bound to for ``purpose`` (``mint`` | ``teacher`` | ``privacy-*``), whether it
+#: is disabled, and its plugin minimum. A SECURITY DEFINER function (revision a0002): the API
+#: role's own reads of ``assess_site_keys`` are bound to one site by RLS, and this lookup is what
+#: names the site, so it runs before the binding
 SITE_OF_KEY = text(
-    "SELECT s.id, s.min_plugin_version FROM assess_site_keys k "
-    "JOIN assess_sites s ON s.id = k.site_id "
-    "WHERE k.api_key_id = :k AND k.purpose = :p AND s.disabled_at IS NULL"
+    "SELECT id, min_plugin_version, disabled FROM assess_site_of_key(:k, :p)"
 )
 
 
-async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
-    """The enabled site the caller's key is bound to for ``purpose``; 403 ``ERR-ASSESS-007``
-    when it is bound to none (one rule for every site-bound route)."""
-    site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": purpose})).scalar()
-    if site is None:
+async def key_site_row(conn: Any, key: Any, purpose: str) -> Any:
+    """The key's site row for ``purpose`` (id, min_plugin_version, disabled), or None. Binds
+    nothing: the caller decides first whether the site is acceptable."""
+    return (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": purpose})).first()
+
+
+async def site_row_of_key(conn: Any, key: Any, purpose: str) -> Any:
+    """The ENABLED site row a key is bound to for ``purpose``, now bound for this request and
+    this transaction (ADR-0033 D9.2); 403 ``ERR-ASSESS-007`` when it is bound to none (one rule
+    for every site-bound route)."""
+    row = await key_site_row(conn, key, purpose)
+    if row is None or row.disabled:
         raise fail(key_not_bound(purpose))
-    return site
+    await bind_site(conn, row.id)
+    return row
+
+
+async def site_of_key(conn: Any, key: Any, purpose: str) -> Any:
+    """The enabled site a key is bound to for ``purpose``, bound for the rest of the request."""
+    return (await site_row_of_key(conn, key, purpose)).id
 
 
 def iso_time(value: Any) -> str | None:
@@ -67,10 +81,12 @@ def fail(err: ErrorResponse, headers: dict[str, str] | None = None) -> HTTPExcep
 
 
 def engine_of(request: Request) -> AsyncEngine:
+    """The API engine, every transaction of which is bound to the request's site at its start
+    (``site_binding.install_site_binding``, idempotent)."""
     engine = getattr(request.app.state, "assess_engine", None)
     if engine is None:
         raise fail(assess_unavailable("assess_database"))
-    return engine  # type: ignore[no-any-return]
+    return install_site_binding(engine)
 
 
 async def read_capped_body(

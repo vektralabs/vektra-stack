@@ -1,23 +1,32 @@
 """The structural backstop of ADR-0033 D9: every API statement that reads a site-scoped table
 names the site.
 
-No ``assess_*`` table has a row-level-security policy (D9 records the deviation from ADR-0009;
-RLS for the API role is phase 3). Until then, isolation between sites rests on the column
-grants, the SECURITY DEFINER functions and a ``site_id`` predicate in every route. This test
-parses every SQL text in ``vektra_assess.api`` (string literals, implicitly concatenated, and
-f-strings with their expressions blanked) and fails when a statement reads a site-scoped table
-(a mapped table with a ``site_id`` column, read from ``db/models.py``) without a ``site_id``
-predicate. A statement that is safe for another reason is in ``ALLOWED``, with its reason.
+Isolation between sites rests on the column grants, the SECURITY DEFINER functions, a
+``site_id`` predicate in every route and, since revision ``a0002`` (D9.2, plan 3.2), row-level
+security for the API role on every site-scoped table it reads: a transaction not bound to the
+request's site reads nothing. This test is the first of those last two layers. It parses every
+SQL text in ``vektra_assess.api`` (string literals, implicitly concatenated, and f-strings with
+their expressions blanked) and fails when a statement reads a site-scoped table (a mapped table
+with a ``site_id`` column, read from ``db/models.py``) without a ``site_id`` predicate. A
+statement that is safe for another reason is in ``ALLOWED``, with its reason.
 
 It is a static check of the text, not a proof: it cannot see a predicate on the wrong value.
-That is what the IDOR matrix (``test_idor.py``) and, in phase 3, the RLS test prove.
+That is what the IDOR matrix (``test_idor.py``) proves for the routes, and what the RLS test
+(``integration/test_api_rls.py``) proves for the database: an API connection bound to site A
+running a route's statement with the predicate removed reads 0 rows of site B. Every route test
+also runs under the runtime binding guard (``support/binding_guard.py``), which fails when a
+statement reaches a site-scoped table before the site is bound.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 from pathlib import Path
+from typing import Any
+
+from vektra_assess.db import grants as g
 
 PKG = Path(__file__).resolve().parents[1] / "src" / "vektra_assess"
 API = PKG / "api"
@@ -35,21 +44,20 @@ _DEFINER = re.compile(r"\bassess_\w+\s*\(", re.I)
 #: reason the text alone does not show. A statement is identified by its file and the first
 #: 60 characters of its normalised text. Keep the list short and every reason checkable.
 #:
-#: Measured on the first run (2026-11-11): 14 statements. None reads another site's rows; they
-#: are of three kinds, and phase 3's RLS (D9.2) is what makes each one safe in the database too.
-#: - the site resolution itself (the API key -> site lookup);
-#: - a lookup by an unguessable row identity the route obtained from a token it already verified
-#:   for this site (session id, transcript id, download-token hash, jti, erasure id), whose
-#:   site the code then compares again (``session_gate.py:183``, ``transcripts.py:218,330,428``);
-#: - one cross-site aggregate (a count), which returns no row.
+#: Measured on the first run (2026-11-11): 14 statements, of three kinds. Revision a0002 (RLS
+#: for the API role, D9.2, plan 3.2) closed that list: the two that could not be bound moved to
+#: SECURITY DEFINER functions (the key -> site lookup, ``assess_site_of_key``; the
+#: deployment-wide live-session count, ``assess_live_session_count``), and each of the 12 left
+#: runs in a transaction bound to the request's site, so the database itself returns no row of
+#: another site even where the text has no predicate (``integration/test_api_rls.py``). They are
+#: lookups by an unguessable row identity the route obtained from a token it already verified for
+#: this site (session id, transcript id, download-token hash, jti, erasure id), whose site the
+#: code then compares again (``session_gate.py:183``, ``transcripts.py:218,330,428``).
 _SESSION_OF_TOKEN = (
     "keyed by the session id of a session token already verified for this site "
     "(session_gate.load_owned checks the row's site_id)"
 )
 ALLOWED: dict[tuple[str, str], str] = {
-    ("common.py", "SELECT s.id, s.min_plugin_version FROM assess_site_keys k JO"): (
-        "the site resolution itself: the API key's own binding is what names the site"
-    ),
     (
         "session_gate.py",
         "SELECT id, site_id, cmid, student_userid, session_no, epoch,",
@@ -100,10 +108,6 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("privacy.py", "SELECT completed_at, outcome, rows_deleted FROM assess_erasu"): (
         "the erasure record this same request queued or found for its own site "
         "(_pending_or_queue); returns counts and an outcome, no content"
-    ),
-    ("start.py", "SELECT count(*) FROM assess_sessions WHERE state <> 'CLOSED'"): (
-        "the deployment-wide live-session cap: an aggregate over every site by design, "
-        "returns one number and no row"
     ),
 }
 
@@ -227,3 +231,33 @@ def test_a_route_without_the_predicate_turns_it_red(tmp_path: Path) -> None:
         "SELECT s.id, s.state FROM assess_sessions s WHERE s.cmid = :c "
         "AND s.student_userid = :u"
     ]
+
+
+def _rls_revision() -> Any:
+    path = PKG / "migrations" / "versions" / "a0002_assess_api_rls.py"
+    spec = importlib.util.spec_from_file_location("assess_rls_static", path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_rls_revision_covers_every_site_scoped_table_the_api_reads() -> None:
+    """D9.2: the policy set is exactly the site-scoped tables the API role may SELECT (the
+    grant matrix): a new such table without a policy, or a stale policy, fails here first."""
+    readable = {
+        t for t in site_scoped_tables() if "SELECT" in g.MATRIX[g.API].get(t, {})
+    }
+    assert set(_rls_revision().SITE_TABLES) == readable
+
+
+def test_every_allowlisted_statement_is_backed_by_rls() -> None:
+    """The statements without a ``site_id`` predicate read only tables the RLS revision binds:
+    for each of them the database, not the text, keeps another site's rows out."""
+    rls = set(_rls_revision().SITE_TABLES)
+    scoped = site_scoped_tables()
+    statements = {(f, s[:60]): s for f, s in sql_texts()}
+    assert len(ALLOWED) == 12
+    for key in ALLOWED:
+        tables = {t.lower() for t in _READ.findall(statements[key])} & scoped
+        assert tables and tables <= rls, (key, tables - rls)

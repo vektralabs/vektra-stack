@@ -22,6 +22,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from vektra_assess.api.common import key_site_row
+from vektra_assess.api.site_binding import bind_site, install_site_binding
 from vektra_assess.errors import (
     assess_unavailable,
     setup_check_not_found,
@@ -47,10 +49,12 @@ def _engine(request: Request) -> AsyncEngine:
     engine = getattr(request.app.state, "assess_engine", None)
     if engine is None:
         raise _fail(assess_unavailable("assess_database"))
-    return engine  # type: ignore[no-any-return]
+    return install_site_binding(engine)
 
 
 async def _authorize(conn: AsyncConnection, key: ApiKeyInfo, site_id: UUID) -> None:
+    """The path site exists and the caller may act on it (any site for an operator's admin key,
+    its own site for a teacher key); then the request is bound to it (ADR-0033 D9.2)."""
     exists = (
         await conn.execute(
             text("SELECT 1 FROM assess_sites WHERE id = :s"), {"s": site_id}
@@ -58,19 +62,13 @@ async def _authorize(conn: AsyncConnection, key: ApiKeyInfo, site_id: UUID) -> N
     ).first()
     if exists is None:
         raise _fail(setup_check_not_found())
-    if "admin" in key.scopes:
-        return
-    bound = (
-        await conn.execute(
-            text(
-                "SELECT 1 FROM assess_site_keys WHERE api_key_id = :k AND site_id = :s "
-                "AND purpose = 'teacher'"
-            ),
-            {"k": key.key_id, "s": site_id},
-        )
-    ).first()
-    if bound is None:
-        raise _fail(setup_check_not_found())
+    if "admin" not in key.scopes:
+        # the key's own site, through the definer lookup (it precedes the binding); a disabled
+        # site's teacher may still read its reports, as before
+        own = await key_site_row(conn, key, "teacher")
+        if own is None or own.id != site_id:
+            raise _fail(setup_check_not_found())
+    await bind_site(conn, site_id)
 
 
 @router.post("", status_code=202)

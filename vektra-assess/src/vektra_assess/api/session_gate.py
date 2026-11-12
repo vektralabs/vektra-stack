@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from vektra_assess.api.common import engine_of, fail
 from vektra_assess.api.deps import settings_of
 from vektra_assess.api.material import MaterialUnavailable
+from vektra_assess.api.site_binding import bind_site
 from vektra_assess.audit import AssessAuditEvent, write_event
 from vektra_assess.errors import (
     assess_unavailable,
@@ -173,7 +174,10 @@ async def gate(
             "sid_mismatch",
             AssessAuditEvent.OWNERSHIP_MISMATCH_REJECTED,
         )
-    # 3. the live row, matching owner, site and activity (and number and epoch for a session token)
+    # 3. the live row, matching owner, site and activity (and number and epoch for a session token).
+    #    Read in a transaction bound to the token's site (ADR-0033 D9.2): the verifier bound the
+    #    request already; binding here too makes the gate hold on its own, whoever calls it
+    await bind_site(conn, claims.site)
     raw = (
         await conn.execute(_ROW_LOCKED if lock else _ROW_PLAIN, {"sid": sid})
     ).first()

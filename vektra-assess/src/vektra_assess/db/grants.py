@@ -413,6 +413,12 @@ MATRIX: Mapping[str, Mapping[str, Privs]] = {
         # round, and inserts round n+1; it never updates or deletes a delivery
         "assess_transcripts": {"SELECT": _ALL},
         "assess_deliveries": {"SELECT": _ALL, "INSERT": _ALL},
+        # revision a0002 (ADR-0033 D9.2, RLS for the API role): the API reads its key's site
+        # (assess_site_of_key) and the deployment-wide health count (assess_configured_site_count)
+        # through the definer, column by column, never a whole row
+        "assess_site_keys": {"SELECT": ("site_id", "api_key_id", "purpose")},
+        "assess_sites": {"SELECT": ("id", "min_plugin_version", "disabled_at")},
+        "assess_privacy_config": {"SELECT": ("site_id", "notice_url")},
     },
 }
 
@@ -478,6 +484,19 @@ FUNCTIONS: Mapping[str, tuple[str, ...]] = {
     "assess_audit_sealed_change()": (),
     # revision 0041 (plan 12b): the content-free counts behind the API's /metrics collector
     "assess_metrics_snapshot()": (API,),
+    # revision a0002 (ADR-0033 D9.2): the API's reads that need no site binding or span every
+    # site, now that its own reads of the site-scoped tables are bound by RLS. Each returns ids
+    # or counts, never content.
+    # the key -> site resolution itself (it precedes the binding)
+    "assess_site_of_key(uuid,text)": (API,),
+    # the deployment-wide live-session admission cap (REQ-071, start.py)
+    "assess_live_session_count()": (API,),
+    # /health/assess: sites with a complete privacy notice, over every site
+    "assess_configured_site_count()": (API,),
+    # the PendingTurnDriver's scan over every site: (session, site) to bind each answer to
+    "assess_pending_replies(double precision,integer)": (API,),
+    # an operator's (admin key) transcript resend: the site to bind before reading the row
+    "assess_transcript_site(uuid)": (API,),
 }
 
 

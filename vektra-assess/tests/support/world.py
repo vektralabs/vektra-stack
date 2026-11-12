@@ -27,6 +27,8 @@ from vektra_shared.auth import ApiKeyInfo
 from vektra_shared.http_errors import register_error_handlers
 from vektra_shared.registry import ProviderRegistry
 
+from .binding_guard import BindingGuard
+
 PLUGIN = "1.0.0"
 
 
@@ -159,6 +161,16 @@ _ABSENT = object()
 ABSENT = _ABSENT
 
 
+async def bind(conn: Any, site: uuid.UUID) -> None:
+    """Bind a test's own API-role transaction to ``site``, as a route binds its request
+    (RLS for the API role, ADR-0033 D9.2): unbound, the API role reads no site-scoped row."""
+    from sqlalchemy import text
+
+    await conn.execute(
+        text("SELECT set_config('app.assess_site_id', :s, true)"), {"s": str(site)}
+    )
+
+
 def auth(name: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {name}"}
 
@@ -202,6 +214,8 @@ async def world(
     app.state.registry = registry
     engine = create_async_engine(pg.url("api"))
     app.state.assess_engine = engine
+    # D9.2: a route statement on a site-scoped table without the site bound fails the test
+    guard = BindingGuard(engine)
     app.state.assess_settings = cfg
     from vektra_admin.rate_limit import RateLimiter
     from vektra_assess.api.state import LIMITER_NAMES
@@ -223,7 +237,27 @@ async def world(
             transport=httpx.ASGITransport(app=app), base_url="http://t"
         ) as client:
             yield World(
-                pg, client, app, engine, site, other, keys, signing, pub, priv, cfg
+                pg,
+                client,
+                app,
+                engine,
+                site,
+                other,
+                keys,
+                signing,
+                pub,
+                priv,
+                cfg,
+                extra={"binding_guard": guard},
             )
-    finally:
+    except BaseException:
+        guard.remove()
         await engine.dispose()
+        raise
+    guard.remove()
+    await engine.dispose()
+    unbound = guard.take()
+    assert unbound == [], (
+        "an assess route read a site-scoped table before binding its site "
+        f"(ADR-0033 D9.2): {unbound}"
+    )

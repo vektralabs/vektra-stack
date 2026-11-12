@@ -23,11 +23,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from vektra_assess.api.common import SITE_OF_KEY, engine_of, fail, parse_body
+from vektra_assess.api.common import engine_of, fail, parse_body, site_row_of_key
 from vektra_assess.api.deps import settings_of, tokens_of, version_at_least
 from vektra_assess.api.models import MintRequest
 from vektra_assess.audit import AssessAuditEvent, write_event
-from vektra_assess.errors import key_not_bound, loginas_refused, plugin_too_old
+from vektra_assess.errors import loginas_refused, plugin_too_old
 from vektra_shared.auth import ApiKeyInfo, require_exact_scope
 
 router = APIRouter()
@@ -46,9 +46,8 @@ async def mint_token(
     body = await parse_body(request, MintRequest)
     settings = settings_of(request)
     async with engine_of(request).begin() as conn:
-        site = (await conn.execute(SITE_OF_KEY, {"k": key.key_id, "p": "mint"})).first()
-        if site is None:
-            raise fail(key_not_bound())
+        # 403 ERR-ASSESS-007 when unbound; binds the site for the rest of the request
+        site = await site_row_of_key(conn, key, "mint")
         site_id = site.id
         if not body.asserts_not_loginas():
             await write_event(

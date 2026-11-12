@@ -20,6 +20,7 @@ from vektra_assess.api import (
     retry,
     sessions,
     setup_check,
+    site_binding,
     start,
     state,
     teacher_config,
@@ -34,8 +35,13 @@ PREFIX = "/api/v1/assess"
 router = APIRouter(
     prefix=PREFIX,
     tags=["assess"],
-    # in-memory sweeps on request (no lifespan, BUG-025): DEKs, event channels, limiter keys
-    dependencies=[Depends(housekeeping.assess_housekeeping)],
+    dependencies=[
+        # first: every request starts bound to no site (ADR-0033 D9.2); the token verifiers,
+        # the key's site lookup and the admin routes bind it (``site_binding``)
+        Depends(site_binding.reset_site_dependency),
+        # in-memory sweeps on request (no lifespan, BUG-025): DEKs, event channels, limiter keys
+        Depends(housekeeping.assess_housekeeping),
+    ],
 )
 router.include_router(setup_check.router)
 router.include_router(model_activations.router)

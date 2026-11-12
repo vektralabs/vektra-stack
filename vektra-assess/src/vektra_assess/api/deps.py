@@ -1,4 +1,6 @@
-"""Per-process state of the student routes: settings, the token service, the bearer token.
+"""Per-process state of the student routes: settings, the token service, the bearer token, and
+the request's site binding (ADR-0033 D9.2: ``bind_site`` / ``set_request_site``, defined in
+``vektra_assess.api.site_binding``, which says where each kind of request gets its site).
 
 ``bearer_token`` reads the ``Authorization`` header and nothing else: never the query string,
 never a cookie (ADR-0030). A request carrying ``?token=`` or ``?access_token=`` without the header
@@ -11,10 +13,32 @@ from fastapi import Request
 
 from vektra_assess.api.common import fail
 from vektra_assess.api.material import DekCache
+from vektra_assess.api.site_binding import (
+    SITE_SETTING,
+    bind_site,
+    bound_site,
+    reset_site,
+    set_request_site,
+)
 from vektra_assess.config import VektraAssessSettings
 from vektra_assess.errors import assess_unavailable, token_invalid
 from vektra_assess.keys import AssessKeyring
 from vektra_assess.tokens import SIGNING_SECRET, AssessTokens
+
+__all__ = [
+    "SITE_SETTING",
+    "bearer_token",
+    "bind_site",
+    "bound_site",
+    "dek_cache_of",
+    "handoff_private_of",
+    "parse_version",
+    "reset_site",
+    "set_request_site",
+    "settings_of",
+    "tokens_of",
+    "version_at_least",
+]
 
 
 def settings_of(request: Request) -> VektraAssessSettings:

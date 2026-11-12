@@ -100,7 +100,8 @@ def test_an_unbound_teacher_key_is_told_to_use_a_teacher_key() -> None:
 
     class Conn:
         async def execute(self, *_a: object) -> SimpleNamespace:
-            return SimpleNamespace(scalar=lambda: None)
+            # the definer lookup (assess_site_of_key) finds no binding
+            return SimpleNamespace(first=lambda: None, scalar=lambda: None)
 
     key = SimpleNamespace(key_id=uuid.uuid4())
     for purpose, scope in (("teacher", "assess:teacher"), ("mint", "assess:mint")):

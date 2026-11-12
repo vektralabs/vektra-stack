@@ -220,9 +220,9 @@ async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
     current = _alembic(url, "current")
     assert heads.returncode == 0 and current.returncode == 0, current.stderr
     want = sorted(line.split()[0] for line in heads.stdout.splitlines() if line.strip())
-    assert want == ["0009", "a0001"], heads.stdout
-    # the assess base is recorded; 0009, which it depends on, is implied
-    assert "a0001" in current.stdout, current.stdout
+    assert want == ["0009", "a0002"], heads.stdout
+    # the assess head is recorded; the base and the 0009 it depends on are implied
+    assert "a0002" in current.stdout, current.stdout
     # the definer functions really are owned by the definer
     owners = await _admin(
         server,
@@ -231,3 +231,25 @@ async def test_c_pre_created_roles_and_the_membership_are_enough_for_head(
         database=db,
     )
     assert [r[0] for r in owners] == ["vektra_assess_definer"]
+    # RLS for the API role (a0002) is enabled and NOT forced: the migration user, a plain
+    # owner here (no superuser, no BYPASSRLS), still reads every site's rows unbound, so a
+    # later data migration sees what is there. FORCE would leave it 0 rows (no owner policy).
+    await _admin(
+        url,
+        "INSERT INTO assess_sites (id, lms_site_uuid, base_url) VALUES "
+        "('00000000-0000-4000-8000-00000000000a', 'site-a', 'https://a.example'), "
+        "('00000000-0000-4000-8000-00000000000b', 'site-b', 'https://b.example')",
+        "INSERT INTO assess_start_attempts (site_id, cmid, student_userid, outcome) "
+        "SELECT id, 1, 1, 'requested' FROM assess_sites",
+    )
+    seen = await _admin(
+        url, "SELECT count(DISTINCT site_id) FROM assess_start_attempts"
+    )
+    assert seen[0][0] == 2
+    forced = await _admin(
+        url,
+        "SELECT count(*) FILTER (WHERE relrowsecurity), "
+        "count(*) FILTER (WHERE relforcerowsecurity) FROM pg_class "
+        "WHERE relnamespace = 'public'::regnamespace AND relname LIKE 'assess\\_%'",
+    )
+    assert tuple(forced[0]) == (20, 0)

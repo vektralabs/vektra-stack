@@ -50,7 +50,8 @@ async def configure_recipients(
     the refs are those of the strings."""
     pub, priv = pair or config_pair()
     items = [a for a in addresses if isinstance(a, str)]
-    async with pg.conn("api") as conn:
+    # bound to the site, as the teacher-config route is (RLS for the API role, ADR-0033 D9.2)
+    async with pg.conn("api", site=site) as conn:
         await store_sealed_field(
             conn,
             pub,

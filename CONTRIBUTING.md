@@ -266,6 +266,52 @@ vektra_app        <-  may import all (assembly layer)
 If a component needs functionality from another, it should go through a Protocol interface
 in `vektra_shared`.
 
+## The Moodle LMS provider
+
+The assessment vertical reads its LMS only through the `LmsProvider` Protocol
+(`vektra_shared.lms`, ADR-0033). The Moodle implementation, the distribution `vektra-lms-moodle`
+(package `vektra_lms_moodle`), is **not in this repository**: it lives in
+[vektra-moodle-discuss](https://github.com/vektralabs/vektra-moodle-discuss) under `provider/`,
+with its tests, its 4.3 and 5.2 recordings, the canary matrix and the joint suites. That
+repository's CI runs them against the vektra-stack commit pinned in `provider/vektra-stack.ref`,
+including the weekly live contract run against the dev Moodle sites, and releases the wheel
+(`provider-v<version>` tags, with its sha256).
+
+**What this repository keeps.** The image variant `lms-moodle` (`INSTALL_LMS_PROVIDER=moodle`,
+what `docker-compose.assess.yml` builds) installs that released wheel, pinned by version, URL and
+sha256 in [`docker/lms-providers/moodle.txt`](docker/lms-providers/moodle.txt), the one place the
+pin lives. The checks here are about the platform and the image, not the provider's behaviour:
+`vektra-shared/tests/test_image_content_boundary.py` (the stage installs that pin with
+`--require-hashes`, a wrong hash fails the install, the default image resolves no provider) and,
+in the `assess-stack` CI job, `tests/assess/test_lms_provider_image.py` (the built variant holds
+exactly the pinned wheel's files, and the platform's loader builds the provider from it) plus a
+worker that starts on it.
+
+**Working on the provider** (in its repository; this workspace supplies `vektra-shared` and the
+vertical's test harness, so the provider is installed into this workspace's venv):
+
+```bash
+git clone git@github.com:vektralabs/vektra-moodle-discuss.git ../vektra-moodle-discuss
+uv sync --dev --frozen
+uv pip install --no-deps -e ../vektra-moodle-discuss/provider
+export VEKTRA_STACK_ROOT="$PWD"    # the joint suites import vektra-assess/tests from here
+cd ../vektra-moodle-discuss
+UV_NO_SYNC=1 "$VEKTRA_STACK_ROOT/.venv/bin/python" -m pytest provider/tests
+```
+
+`--no-deps`: the provider requires `vektra-shared`, which is on no index; this workspace's is
+used. `UV_NO_SYNC=1`, and no `uv run`/`uv sync` here while you work on it: the provider is not in
+`uv.lock`, so a sync removes it from the venv (the joint suites' fixtures call `uv run alembic`).
+Run `uv sync` again to return to the plain workspace.
+
+**Bumping the pin** after a provider release: replace the one requirement line of
+`docker/lms-providers/moodle.txt` (version, URL and sha256 change together; check the hash of
+the downloaded wheel yourself), build the variant (`docker compose -f docker-compose.yml
+-f docker-compose.assess.yml build vektra`; the build fails if the wheel's hash differs or a
+requirement of the wheel is not met by the image), and run
+`VEKTRA_ASSESS_STACK=1 uv run pytest tests/assess/test_lms_provider_image.py` against it. Note the
+bump in the CHANGELOG.
+
 ## Documentation standards
 
 Follow [Diataxis](https://diataxis.fr/): identify whether your doc is a tutorial, how-to

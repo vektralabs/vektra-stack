@@ -134,7 +134,10 @@ refuses to start and lists the providers installed in the image.
 **The image with the provider.** The platform image installs no LMS provider (ADR-0033 D6). The
 overlay builds the variant with the Moodle one (`INSTALL_LMS_PROVIDER=moodle`, tagged
 `vektra-stack-lms-moodle`) and runs every assess service from it; the released equivalent is
-`ghcr.io/vektralabs/vektra:<version>-lms-moodle`. The provider has its own settings,
+`ghcr.io/vektralabs/vektra:<version>-lms-moodle`. The variant installs the provider's released
+wheel, pinned by version and sha256 in `docker/lms-providers/moodle.txt`: the build downloads it
+from the provider's GitHub release (the build host needs to reach github.com) and fails if its
+hash differs. The provider has its own settings,
 `VEKTRA_LMS_MOODLE_*` ([configuration](../../reference/configuration.md#moodle-lms-provider-vektra-lms-moodle));
 the overlay does not name them, so set the ones you need in the worker's `environment` of a local
 override file.
